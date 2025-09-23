@@ -23,10 +23,10 @@ jobs:
         include:
           - name: backend
             dockerfile: docker/backend.Dockerfile
-            image: ${{ github.repository_owner }}/patchmon-backend
+            image: ${{ github.repository }}/patchmon-backend
           - name: frontend
             dockerfile: docker/frontend.Dockerfile
-            image: ${{ github.repository_owner }}/patchmon-frontend
+            image: ${{ github.repository }}/patchmon-frontend
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
