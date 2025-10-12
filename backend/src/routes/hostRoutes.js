@@ -536,6 +536,9 @@ router.post(
 						status: "success",
 					},
 				});
+			}, {
+				maxWait: 5000, // default: 2000
+				timeout: 10000 // default: 5000
 			});
 
 			// Agent auto-update is now handled client-side by the agent itself
