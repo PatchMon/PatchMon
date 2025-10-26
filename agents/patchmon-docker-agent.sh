@@ -7,8 +7,8 @@
 PATCHMON_SERVER="${PATCHMON_SERVER:-http://localhost:3001}"
 API_VERSION="v1"
 AGENT_VERSION="1.3.0"
-CONFIG_FILE="/etc/patchmon/agent.conf"
-CREDENTIALS_FILE="/etc/patchmon/credentials"
+CONFIG_FILE="/etc/patchmon/config.yml"
+CREDENTIALS_FILE="/etc/patchmon/credentials.yml"
 LOG_FILE="/var/log/patchmon-docker-agent.log"
 
 # Curl flags placeholder (replaced by server based on SSL settings)
@@ -64,33 +64,45 @@ check_docker() {
     fi
 }
 
-# Load credentials
+# Check for yq (YAML processor) presence
+# This function is crucial as yq is a dependency.
+check_yq_installed() {
+    if ! command -v yq &> /dev/null; then
+        error "yq (YAML processor) is not installed. Please install it to parse YAML files."
+        echo "Refer to https://github.com/mikefarah/yq for installation instructions." >&2
+    fi
+}
+
+# Load credentials from YAML file
 load_credentials() {
     if [[ ! -f "$CREDENTIALS_FILE" ]]; then
         error "Credentials file not found at $CREDENTIALS_FILE. Please configure the main PatchMon agent first."
     fi
     
-    source "$CREDENTIALS_FILE"
-    
-    if [[ -z "$API_ID" ]] || [[ -z "$API_KEY" ]]; then
-        error "API credentials not found in $CREDENTIALS_FILE"
+    # Extract API_ID with raw output (-r)
+    API_ID=$(yq -r '.api_id' "$CREDENTIALS_FILE")
+    if [[ $? -ne 0 ]] || [[ "$API_ID" == "null" ]] || [[ -z "$API_ID" ]]; then
+        error "API_ID not found, is 'null', or is empty in $CREDENTIALS_FILE"
     fi
-    
-    # Use PATCHMON_URL from credentials if available, otherwise use default
-    if [[ -n "$PATCHMON_URL" ]]; then
-        PATCHMON_SERVER="$PATCHMON_URL"
+
+    # Extract API_KEY with raw output (-r)
+    API_KEY=$(yq -r '.api_key' "$CREDENTIALS_FILE")
+    if [[ $? -ne 0 ]] || [[ "$API_KEY" == "null" ]] || [[ -z "$API_KEY" ]]; then
+        error "API_KEY not found, is 'null', or is empty in $CREDENTIALS_FILE"
     fi
 }
 
-# Load configuration
+# Load configuration from YAML file
 load_config() {
     if [[ -f "$CONFIG_FILE" ]]; then
-        source "$CONFIG_FILE"
-        if [[ -n "$SERVER_URL" ]]; then
-            PATCHMON_SERVER="$SERVER_URL"
+        # Extract optional patchmon_server from config file with raw output (-r)
+        local extracted_patchmon_server=$(yq -r '.patchmon_server // null' "$CONFIG_FILE")
+        if [[ $? -eq 0 ]] && [[ "$extracted_patchmon_server" != "null" ]] && [[ -n "$extracted_patchmon_server" ]]; then
+            PATCHMON_SERVER="$extracted_patchmon_server"
         fi
     fi
 }
+
 
 # Collect Docker containers
 collect_containers() {
@@ -474,11 +486,13 @@ main() {
     case "$1" in
         "collect")
             check_docker
+            check_yq_installed
             load_config
             send_docker_data
             ;;
         "test")
             check_docker
+            check_yq_installed
             load_config
             test_collection
             ;;
