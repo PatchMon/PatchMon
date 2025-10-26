@@ -68,8 +68,7 @@ check_docker() {
 # This function is crucial as yq is a dependency.
 check_yq_installed() {
     if ! command -v yq &> /dev/null; then
-        error "yq (YAML processor) is not installed. Please install it to parse YAML files."
-        echo "Refer to https://github.com/mikefarah/yq for installation instructions." >&2
+        error "yq (YAML processor) is not installed, but is required to run this agent."
     fi
 }
 
