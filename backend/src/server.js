@@ -424,10 +424,15 @@ app.get("/health", (_req, res) => {
 	res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
-
 // API routes
 const apiVersion = process.env.API_VERSION || "v1";
+
+// Swagger
+app.use(
+	`/api/${apiVersion}/api-docs`,
+	swaggerUi.serve,
+	swaggerUi.setup(swaggerDocument),
+);
 
 // Per-route rate limits with monitoring
 const authLimiter = rateLimit({
