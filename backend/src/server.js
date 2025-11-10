@@ -47,6 +47,9 @@ const {
 } = require("./config/prisma");
 const winston = require("winston");
 
+const swaggerUi = require("swagger-ui-express");
+const swaggerDocument = require("./swagger_output.json");
+
 // Import routes
 const authRoutes = require("./routes/authRoutes");
 const hostRoutes = require("./routes/hostRoutes");
@@ -420,6 +423,8 @@ if (process.env.ENABLE_LOGGING === "true") {
 app.get("/health", (_req, res) => {
 	res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
+
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 // API routes
 const apiVersion = process.env.API_VERSION || "v1";
