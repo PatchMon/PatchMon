@@ -47,6 +47,9 @@ const {
 } = require("./config/prisma");
 const winston = require("winston");
 
+const swaggerUi = require("swagger-ui-express");
+const swaggerDocument = require("./swagger_output.json");
+
 // Import routes
 const authRoutes = require("./routes/authRoutes");
 const hostRoutes = require("./routes/hostRoutes");
@@ -424,6 +427,13 @@ app.get("/health", (_req, res) => {
 
 // API routes
 const apiVersion = process.env.API_VERSION || "v1";
+
+// Swagger
+app.use(
+	`/api/${apiVersion}/api-docs`,
+	swaggerUi.serve,
+	swaggerUi.setup(swaggerDocument),
+);
 
 // Per-route rate limits with monitoring
 const authLimiter = rateLimit({
