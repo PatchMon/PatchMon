@@ -1645,10 +1645,8 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 	const [showApiKey, setShowApiKey] = useState(false);
 	const [activeTab, setActiveTab] = useState("quick-install");
 	const [forceInstall, setForceInstall] = useState(false);
-	const [architecture, setArchitecture] = useState("amd64");
 	const apiIdInputId = useId();
 	const apiKeyInputId = useId();
-	const architectureSelectId = useId();
 
 	const { data: serverUrlData } = useQuery({
 		queryKey: ["serverUrl"],
@@ -1668,13 +1666,13 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 		return settings?.ignore_ssl_self_signed ? "-sk" : "-s";
 	};
 
-	// Helper function to build installation URL with optional force flag and architecture
+	// Helper function to build installation URL with optional force flag
 	const getInstallUrl = () => {
 		const baseUrl = `${serverUrl}/api/v1/hosts/install`;
-		const params = new URLSearchParams();
-		if (forceInstall) params.append("force", "true");
-		params.append("arch", architecture);
-		return `${baseUrl}?${params.toString()}`;
+		if (forceInstall) {
+			return `${baseUrl}?force=true`;
+		}
+		return baseUrl;
 	};
 
 	const copyToClipboard = async (text) => {
@@ -1787,30 +1785,6 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 								<p className="text-xs text-primary-600 dark:text-primary-400 mt-1">
 									Enable this if the target host has broken packages
 									(CloudPanel, WHM, etc.) that block apt-get operations
-								</p>
-							</div>
-
-							{/* Architecture Selection */}
-							<div className="mb-3">
-								<label
-									htmlFor={architectureSelectId}
-									className="block text-sm font-medium text-primary-800 dark:text-primary-200 mb-2"
-								>
-									Target Architecture
-								</label>
-								<select
-									id={architectureSelectId}
-									value={architecture}
-									onChange={(e) => setArchitecture(e.target.value)}
-									className="px-3 py-2 border border-primary-300 dark:border-primary-600 rounded-md bg-white dark:bg-secondary-800 text-sm text-secondary-900 dark:text-white focus:ring-primary-500 focus:border-primary-500"
-								>
-									<option value="amd64">AMD64 (x86_64) - Default</option>
-									<option value="386">386 (i386) - 32-bit</option>
-									<option value="arm64">ARM64 (aarch64) - ARM 64-bit</option>
-									<option value="arm">ARM (armv7l/armv6l) - ARM 32-bit</option>
-								</select>
-								<p className="text-xs text-primary-600 dark:text-primary-400 mt-1">
-									Select the architecture of the target host
 								</p>
 							</div>
 
