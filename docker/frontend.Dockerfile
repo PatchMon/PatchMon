@@ -6,7 +6,7 @@ WORKDIR /app
 COPY package*.json ./
 COPY frontend/ ./frontend/
 
-RUN npm ci --ignore-scripts
+RUN npm install --workspace=frontend --ignore-scripts
 
 WORKDIR /app/frontend
 
@@ -15,7 +15,8 @@ EXPOSE 3000
 CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "3000"]
 
 # Builder stage for production
-FROM node:lts-alpine AS builder
+# Use Debian-based Node for better QEMU ARM64 compatibility
+FROM node:lts-slim AS builder
 
 WORKDIR /app/frontend
 

@@ -20,9 +20,7 @@ COPY --chown=node:node agents ./agents_backup
 COPY --chown=node:node agents ./agents
 COPY --chmod=755 docker/backend.docker-entrypoint.sh ./entrypoint.sh
 
-WORKDIR /app/backend
-
-RUN npm ci --ignore-scripts && npx prisma generate
+RUN npm install --workspace=backend --ignore-scripts && cd backend && npx prisma generate
 
 EXPOSE 3001
 
@@ -35,22 +33,22 @@ ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["/app/entrypoint.sh"]
 
 # Builder stage for production
-FROM node:lts-alpine AS builder
+# Use Debian-based Node for better QEMU ARM64 compatibility
+FROM node:lts-slim AS builder
 
-RUN apk add --no-cache openssl
+# Install OpenSSL for Prisma
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY --chown=node:node package*.json ./
 COPY --chown=node:node backend/ ./backend/
 
-WORKDIR /app/backend
-
 RUN npm cache clean --force &&\
     rm -rf node_modules ~/.npm /root/.npm &&\
-    npm ci --ignore-scripts --legacy-peer-deps --no-audit --prefer-online --fetch-retries=3 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 &&\
-    PRISMA_CLI_BINARY_TYPE=binary npm run db:generate &&\
-    npm prune --omit=dev &&\
+    npm install --workspace=backend --ignore-scripts --legacy-peer-deps --no-audit --prefer-online --fetch-retries=3 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 &&\
+    cd backend && npx prisma generate &&\
+    cd .. && npm prune --omit=dev --workspace=backend &&\
     npm cache clean --force
 
 # Production stage
@@ -72,8 +70,8 @@ USER node
 
 WORKDIR /app
 
-COPY --from=builder /app/backend ./backend
-COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/backend ./backend
+COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node agents ./agents_backup
 COPY --chown=node:node agents ./agents
 COPY --chmod=755 docker/backend.docker-entrypoint.sh ./entrypoint.sh

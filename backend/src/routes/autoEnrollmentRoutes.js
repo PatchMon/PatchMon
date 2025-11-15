@@ -125,6 +125,10 @@ router.post(
 			.optional({ nullable: true, checkFalsy: true })
 			.isISO8601()
 			.withMessage("Invalid date format"),
+		body("scopes")
+			.optional()
+			.isObject()
+			.withMessage("Scopes must be an object"),
 	],
 	async (req, res) => {
 		try {
@@ -140,6 +144,7 @@ router.post(
 				default_host_group_id,
 				expires_at,
 				metadata = {},
+				scopes,
 			} = req.body;
 
 			// Validate host group if provided
@@ -150,6 +155,32 @@ router.post(
 
 				if (!host_group) {
 					return res.status(400).json({ error: "Host group not found" });
+				}
+			}
+
+			// Validate scopes for API tokens
+			if (metadata.integration_type === "api" && scopes) {
+				// Validate scopes structure
+				if (typeof scopes !== "object" || scopes === null) {
+					return res.status(400).json({ error: "Scopes must be an object" });
+				}
+
+				// Validate each resource in scopes
+				for (const [resource, actions] of Object.entries(scopes)) {
+					if (!Array.isArray(actions)) {
+						return res.status(400).json({
+							error: `Scopes for resource "${resource}" must be an array of actions`,
+						});
+					}
+
+					// Validate action names
+					for (const action of actions) {
+						if (typeof action !== "string") {
+							return res.status(400).json({
+								error: `All actions in scopes must be strings`,
+							});
+						}
+					}
 				}
 			}
 
@@ -168,6 +199,7 @@ router.post(
 					default_host_group_id: default_host_group_id || null,
 					expires_at: expires_at ? new Date(expires_at) : null,
 					metadata: { integration_type: "proxmox-lxc", ...metadata },
+					scopes: metadata.integration_type === "api" ? scopes || null : null,
 					updated_at: new Date(),
 				},
 				include: {
@@ -201,6 +233,7 @@ router.post(
 					default_host_group: token.host_groups,
 					created_by: token.users,
 					expires_at: token.expires_at,
+					scopes: token.scopes,
 				},
 				warning: "⚠️ Save the token_secret now - it cannot be retrieved later!",
 			});
@@ -232,6 +265,7 @@ router.get(
 					created_at: true,
 					default_host_group_id: true,
 					metadata: true,
+					scopes: true,
 					host_groups: {
 						select: {
 							id: true,
@@ -314,6 +348,10 @@ router.patch(
 		body("max_hosts_per_day").optional().isInt({ min: 1, max: 1000 }),
 		body("allowed_ip_ranges").optional().isArray(),
 		body("expires_at").optional().isISO8601(),
+		body("scopes")
+			.optional()
+			.isObject()
+			.withMessage("Scopes must be an object"),
 	],
 	async (req, res) => {
 		try {
@@ -323,6 +361,16 @@ router.patch(
 			}
 
 			const { tokenId } = req.params;
+
+			// First, get the existing token to check its integration type
+			const existing_token = await prisma.auto_enrollment_tokens.findUnique({
+				where: { id: tokenId },
+			});
+
+			if (!existing_token) {
+				return res.status(404).json({ error: "Token not found" });
+			}
+
 			const update_data = { updated_at: new Date() };
 
 			if (req.body.is_active !== undefined)
@@ -333,6 +381,41 @@ router.patch(
 				update_data.allowed_ip_ranges = req.body.allowed_ip_ranges;
 			if (req.body.expires_at !== undefined)
 				update_data.expires_at = new Date(req.body.expires_at);
+
+			// Handle scopes updates for API tokens only
+			if (req.body.scopes !== undefined) {
+				if (existing_token.metadata?.integration_type === "api") {
+					// Validate scopes structure
+					const scopes = req.body.scopes;
+					if (typeof scopes !== "object" || scopes === null) {
+						return res.status(400).json({ error: "Scopes must be an object" });
+					}
+
+					// Validate each resource in scopes
+					for (const [resource, actions] of Object.entries(scopes)) {
+						if (!Array.isArray(actions)) {
+							return res.status(400).json({
+								error: `Scopes for resource "${resource}" must be an array of actions`,
+							});
+						}
+
+						// Validate action names
+						for (const action of actions) {
+							if (typeof action !== "string") {
+								return res.status(400).json({
+									error: `All actions in scopes must be strings`,
+								});
+							}
+						}
+					}
+
+					update_data.scopes = scopes;
+				} else {
+					return res.status(400).json({
+						error: "Scopes can only be updated for API integration tokens",
+					});
+				}
+			}
 
 			const token = await prisma.auto_enrollment_tokens.update({
 				where: { id: tokenId },
@@ -398,24 +481,46 @@ router.delete(
 );
 
 // ========== AUTO-ENROLLMENT ENDPOINTS (Used by Scripts) ==========
-// Future integrations can follow this pattern:
-//   - /proxmox-lxc     - Proxmox LXC containers
-//   - /vmware-esxi     - VMware ESXi VMs
-//   - /docker          - Docker containers
-//   - /kubernetes      - Kubernetes pods
-//   - /aws-ec2         - AWS EC2 instances
+// Universal script-serving endpoint with type parameter
+// Supported types:
+//   - proxmox-lxc     - Proxmox LXC containers
+//   - direct-host     - Direct host enrollment
+// Future types:
+//   - vmware-esxi     - VMware ESXi VMs
+//   - docker          - Docker containers
+//   - kubernetes      - Kubernetes pods
 
-// Serve the Proxmox LXC enrollment script with credentials injected
-router.get("/proxmox-lxc", async (req, res) => {
+// Serve auto-enrollment scripts with credentials injected
+router.get("/script", async (req, res) => {
 	try {
-		// Get token from query params
+		// Get parameters from query params
 		const token_key = req.query.token_key;
 		const token_secret = req.query.token_secret;
+		const script_type = req.query.type;
 
 		if (!token_key || !token_secret) {
 			return res
 				.status(401)
 				.json({ error: "Token key and secret required as query parameters" });
+		}
+
+		if (!script_type) {
+			return res.status(400).json({
+				error:
+					"Script type required as query parameter (e.g., ?type=proxmox-lxc or ?type=direct-host)",
+			});
+		}
+
+		// Map script types to script file paths
+		const scriptMap = {
+			"proxmox-lxc": "proxmox_auto_enroll.sh",
+			"direct-host": "direct_host_auto_enroll.sh",
+		};
+
+		if (!scriptMap[script_type]) {
+			return res.status(400).json({
+				error: `Invalid script type: ${script_type}. Supported types: ${Object.keys(scriptMap).join(", ")}`,
+			});
 		}
 
 		// Validate token
@@ -443,13 +548,13 @@ router.get("/proxmox-lxc", async (req, res) => {
 
 		const script_path = path.join(
 			__dirname,
-			"../../../agents/proxmox_auto_enroll.sh",
+			`../../../agents/${scriptMap[script_type]}`,
 		);
 
 		if (!fs.existsSync(script_path)) {
-			return res
-				.status(404)
-				.json({ error: "Proxmox enrollment script not found" });
+			return res.status(404).json({
+				error: `Enrollment script not found: ${scriptMap[script_type]}`,
+			});
 		}
 
 		let script = fs.readFileSync(script_path, "utf8");
@@ -484,7 +589,7 @@ router.get("/proxmox-lxc", async (req, res) => {
 		const force_install = req.query.force === "true" || req.query.force === "1";
 
 		// Inject the token credentials, server URL, curl flags, and force flag into the script
-		const env_vars = `#!/bin/bash
+		const env_vars = `#!/bin/sh
 # PatchMon Auto-Enrollment Configuration (Auto-generated)
 export PATCHMON_URL="${server_url}"
 export AUTO_ENROLLMENT_KEY="${token.token_key}"
@@ -508,11 +613,11 @@ export FORCE_INSTALL="${force_install ? "true" : "false"}"
 		res.setHeader("Content-Type", "text/plain");
 		res.setHeader(
 			"Content-Disposition",
-			'inline; filename="proxmox_auto_enroll.sh"',
+			`inline; filename="${scriptMap[script_type]}"`,
 		);
 		res.send(script);
 	} catch (error) {
-		console.error("Proxmox script serve error:", error);
+		console.error("Script serve error:", error);
 		res.status(500).json({ error: "Failed to serve enrollment script" });
 	}
 });
@@ -526,8 +631,11 @@ router.post(
 			.isLength({ min: 1, max: 255 })
 			.withMessage("Friendly name is required"),
 		body("machine_id")
+			.optional()
 			.isLength({ min: 1, max: 255 })
-			.withMessage("Machine ID is required"),
+			.withMessage(
+				"Machine ID must be between 1 and 255 characters if provided",
+			),
 		body("metadata").optional().isObject(),
 	],
 	async (req, res) => {
@@ -543,24 +651,7 @@ router.post(
 			const api_id = `patchmon_${crypto.randomBytes(8).toString("hex")}`;
 			const api_key = crypto.randomBytes(32).toString("hex");
 
-			// Check if host already exists by machine_id (not hostname)
-			const existing_host = await prisma.hosts.findUnique({
-				where: { machine_id },
-			});
-
-			if (existing_host) {
-				return res.status(409).json({
-					error: "Host already exists",
-					host_id: existing_host.id,
-					api_id: existing_host.api_id,
-					machine_id: existing_host.machine_id,
-					friendly_name: existing_host.friendly_name,
-					message:
-						"This machine is already enrolled in PatchMon (matched by machine ID)",
-				});
-			}
-
-			// Create host
+			// Create host (no duplicate check - using config.yml checking instead)
 			const host = await prisma.hosts.create({
 				data: {
 					id: uuidv4(),
@@ -677,30 +768,7 @@ router.post(
 				try {
 					const { friendly_name, machine_id } = host_data;
 
-					if (!machine_id) {
-						results.failed.push({
-							friendly_name,
-							error: "Machine ID is required",
-						});
-						continue;
-					}
-
-					// Check if host already exists by machine_id
-					const existing_host = await prisma.hosts.findUnique({
-						where: { machine_id },
-					});
-
-					if (existing_host) {
-						results.skipped.push({
-							friendly_name,
-							machine_id,
-							reason: "Machine already enrolled",
-							api_id: existing_host.api_id,
-						});
-						continue;
-					}
-
-					// Generate credentials
+					// Generate credentials (no duplicate check - using config.yml checking instead)
 					const api_id = `patchmon_${crypto.randomBytes(8).toString("hex")}`;
 					const api_key = crypto.randomBytes(32).toString("hex");
 

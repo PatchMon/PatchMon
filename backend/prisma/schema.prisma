@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -81,7 +82,7 @@ model host_repositories {
 
 model hosts {
   id                      String                    @id
-  machine_id              String                    @unique
+  machine_id              String?
   friendly_name           String
   ip                      String?
   os_type                 String
@@ -288,6 +289,7 @@ model auto_enrollment_tokens {
   last_used_at          DateTime?
   expires_at            DateTime?
   metadata              Json?
+  scopes                Json?
   users                 users?       @relation(fields: [created_by_user_id], references: [id], onDelete: SetNull)
   host_groups           host_groups? @relation(fields: [default_host_group_id], references: [id], onDelete: SetNull)
 

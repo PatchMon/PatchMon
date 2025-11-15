@@ -1,7 +1,8 @@
-#!/bin/bash
+#!/bin/sh
 
 # PatchMon Agent Removal Script
-# Usage: curl -s {PATCHMON_URL}/api/v1/hosts/remove | bash
+# POSIX-compliant shell script (works with dash, ash, bash, etc.)
+# Usage: curl -s {PATCHMON_URL}/api/v1/hosts/remove | sh
 # This script completely removes PatchMon from the system
 
 set -e
@@ -20,24 +21,24 @@ NC='\033[0m' # No Color
 
 # Functions
 error() {
-    echo -e "${RED}❌ ERROR: $1${NC}" >&2
+    printf "%b\n" "${RED}❌ ERROR: $1${NC}" >&2
     exit 1
 }
 
 info() {
-    echo -e "${BLUE}ℹ️  $1${NC}"
+    printf "%b\n" "${BLUE}ℹ️  $1${NC}"
 }
 
 success() {
-    echo -e "${GREEN}✅ $1${NC}"
+    printf "%b\n" "${GREEN}✅ $1${NC}"
 }
 
 warning() {
-    echo -e "${YELLOW}⚠️  $1${NC}"
+    printf "%b\n" "${YELLOW}⚠️  $1${NC}"
 }
 
 # Check if running as root
-if [[ $EUID -ne 0 ]]; then
+if [ "$(id -u)" -ne 0 ]; then
    error "This script must be run as root (use sudo)"
 fi
 
@@ -67,7 +68,7 @@ fi
 
 # Step 3: Remove agent script
 info "📄 Removing agent script..."
-if [[ -f "/usr/local/bin/patchmon-agent.sh" ]]; then
+if [ -f "/usr/local/bin/patchmon-agent.sh" ]; then
     warning "Removing agent script: /usr/local/bin/patchmon-agent.sh"
     rm -f /usr/local/bin/patchmon-agent.sh
     success "Agent script removed"
@@ -77,7 +78,7 @@ fi
 
 # Step 4: Remove configuration directory and files
 info "📁 Removing configuration files..."
-if [[ -d "/etc/patchmon" ]]; then
+if [ -d "/etc/patchmon" ]; then
     warning "Removing configuration directory: /etc/patchmon"
     
     # Show what's being removed
@@ -95,7 +96,7 @@ fi
 
 # Step 5: Remove log files
 info "📝 Removing log files..."
-if [[ -f "/var/log/patchmon-agent.log" ]]; then
+if [ -f "/var/log/patchmon-agent.log" ]; then
     warning "Removing log file: /var/log/patchmon-agent.log"
     rm -f /var/log/patchmon-agent.log
     success "Log file removed"
@@ -109,29 +110,29 @@ BACKUP_COUNT=0
 
 # Count credential backups
 CRED_BACKUPS=$(ls /etc/patchmon/credentials.backup.* 2>/dev/null | wc -l || echo "0")
-if [[ $CRED_BACKUPS -gt 0 ]]; then
+if [ "$CRED_BACKUPS" -gt 0 ]; then
     BACKUP_COUNT=$((BACKUP_COUNT + CRED_BACKUPS))
 fi
 
 # Count agent backups
 AGENT_BACKUPS=$(ls /usr/local/bin/patchmon-agent.sh.backup.* 2>/dev/null | wc -l || echo "0")
-if [[ $AGENT_BACKUPS -gt 0 ]]; then
+if [ "$AGENT_BACKUPS" -gt 0 ]; then
     BACKUP_COUNT=$((BACKUP_COUNT + AGENT_BACKUPS))
 fi
 
 # Count log backups
 LOG_BACKUPS=$(ls /var/log/patchmon-agent.log.old.* 2>/dev/null | wc -l || echo "0")
-if [[ $LOG_BACKUPS -gt 0 ]]; then
+if [ "$LOG_BACKUPS" -gt 0 ]; then
     BACKUP_COUNT=$((BACKUP_COUNT + LOG_BACKUPS))
 fi
 
-if [[ $BACKUP_COUNT -gt 0 ]]; then
+if [ "$BACKUP_COUNT" -gt 0 ]; then
     warning "Found $BACKUP_COUNT backup files"
     echo ""
-    echo -e "${YELLOW}📋 Backup files found:${NC}"
+    printf "%b\n" "${YELLOW}📋 Backup files found:${NC}"
     
     # Show credential backups
-    if [[ $CRED_BACKUPS -gt 0 ]]; then
+    if [ "$CRED_BACKUPS" -gt 0 ]; then
         echo "   Credential backups:"
         ls /etc/patchmon/credentials.backup.* 2>/dev/null | while read -r file; do
             echo "     • $file"
@@ -139,7 +140,7 @@ if [[ $BACKUP_COUNT -gt 0 ]]; then
     fi
     
     # Show agent backups
-    if [[ $AGENT_BACKUPS -gt 0 ]]; then
+    if [ "$AGENT_BACKUPS" -gt 0 ]; then
         echo "   Agent script backups:"
         ls /usr/local/bin/patchmon-agent.sh.backup.* 2>/dev/null | while read -r file; do
             echo "     • $file"
@@ -147,7 +148,7 @@ if [[ $BACKUP_COUNT -gt 0 ]]; then
     fi
     
     # Show log backups
-    if [[ $LOG_BACKUPS -gt 0 ]]; then
+    if [ "$LOG_BACKUPS" -gt 0 ]; then
         echo "   Log file backups:"
         ls /var/log/patchmon-agent.log.old.* 2>/dev/null | while read -r file; do
             echo "     • $file"
@@ -155,8 +156,8 @@ if [[ $BACKUP_COUNT -gt 0 ]]; then
     fi
     
     echo ""
-    echo -e "${BLUE}💡 Note: Backup files are preserved for safety${NC}"
-    echo -e "${BLUE}💡 You can remove them manually if not needed${NC}"
+    printf "%b\n" "${BLUE}💡 Note: Backup files are preserved for safety${NC}"
+    printf "%b\n" "${BLUE}💡 You can remove them manually if not needed${NC}"
 else
     info "No backup files found"
 fi
@@ -165,16 +166,16 @@ fi
 info "📦 Checking for PatchMon-specific dependencies..."
 if command -v jq >/dev/null 2>&1; then
     warning "jq is installed (used by PatchMon)"
-    echo -e "${BLUE}💡 Note: jq may be used by other applications${NC}"
-    echo -e "${BLUE}💡 Consider keeping it unless you're sure it's not needed${NC}"
+    printf "%b\n" "${BLUE}💡 Note: jq may be used by other applications${NC}"
+    printf "%b\n" "${BLUE}💡 Consider keeping it unless you're sure it's not needed${NC}"
 else
     info "jq not found"
 fi
 
 if command -v curl >/dev/null 2>&1; then
     warning "curl is installed (used by PatchMon)"
-    echo -e "${BLUE}💡 Note: curl is commonly used by many applications${NC}"
-    echo -e "${BLUE}💡 Consider keeping it unless you're sure it's not needed${NC}"
+    printf "%b\n" "${BLUE}💡 Note: curl is commonly used by many applications${NC}"
+    printf "%b\n" "${BLUE}💡 Consider keeping it unless you're sure it's not needed${NC}"
 else
     info "curl not found"
 fi
@@ -183,15 +184,15 @@ fi
 info "🔍 Verifying removal..."
 REMAINING_FILES=0
 
-if [[ -f "/usr/local/bin/patchmon-agent.sh" ]]; then
+if [ -f "/usr/local/bin/patchmon-agent.sh" ]; then
     REMAINING_FILES=$((REMAINING_FILES + 1))
 fi
 
-if [[ -d "/etc/patchmon" ]]; then
+if [ -d "/etc/patchmon" ]; then
     REMAINING_FILES=$((REMAINING_FILES + 1))
 fi
 
-if [[ -f "/var/log/patchmon-agent.log" ]]; then
+if [ -f "/var/log/patchmon-agent.log" ]; then
     REMAINING_FILES=$((REMAINING_FILES + 1))
 fi
 
@@ -199,15 +200,15 @@ if crontab -l 2>/dev/null | grep -q "patchmon-agent.sh"; then
     REMAINING_FILES=$((REMAINING_FILES + 1))
 fi
 
-if [[ $REMAINING_FILES -eq 0 ]]; then
+if [ "$REMAINING_FILES" -eq 0 ]; then
     success "✅ PatchMon has been completely removed from the system!"
 else
     warning "⚠️  Some PatchMon files may still remain ($REMAINING_FILES items)"
-    echo -e "${BLUE}💡 You may need to remove them manually${NC}"
+    printf "%b\n" "${BLUE}💡 You may need to remove them manually${NC}"
 fi
 
 echo ""
-echo -e "${GREEN}📋 Removal Summary:${NC}"
+printf "%b\n" "${GREEN}📋 Removal Summary:${NC}"
 echo "   • Agent script: Removed"
 echo "   • Configuration files: Removed"
 echo "   • Log files: Removed"
@@ -215,7 +216,7 @@ echo "   • Crontab entries: Removed"
 echo "   • Running processes: Stopped"
 echo "   • Backup files: Preserved (if any)"
 echo ""
-echo -e "${BLUE}🔧 Manual cleanup (if needed):${NC}"
+printf "%b\n" "${BLUE}🔧 Manual cleanup (if needed):${NC}"
 echo "   • Remove backup files: rm /etc/patchmon/credentials.backup.* /usr/local/bin/patchmon-agent.sh.backup.* /var/log/patchmon-agent.log.old.*"
 echo "   • Remove dependencies: apt remove jq curl (if not needed by other apps)"
 echo ""
