@@ -13,6 +13,7 @@ import {
 	Eye as EyeIcon,
 	EyeOff as EyeOffIcon,
 	Filter,
+	FolderPlus,
 	GripVertical,
 	Plus,
 	RefreshCw,
@@ -21,7 +22,6 @@ import {
 	Server,
 	Square,
 	Trash2,
-	Users,
 	Wifi,
 	X,
 } from "lucide-react";
@@ -94,8 +94,8 @@ const AddHostModal = ({ isOpen, onClose, onSuccess }) => {
 	if (!isOpen) return null;
 
 	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-			<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 w-full max-w-md">
+		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+			<div className="bg-white dark:bg-secondary-800 rounded-lg p-4 sm:p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
 				<div className="flex justify-between items-center mb-4">
 					<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
 						Add New Host
@@ -125,7 +125,7 @@ const AddHostModal = ({ isOpen, onClose, onSuccess }) => {
 							onChange={(e) =>
 								setFormData({ ...formData, friendly_name: e.target.value })
 							}
-							className="block w-full px-3 py-2.5 text-base border-2 border-secondary-300 dark:border-secondary-600 rounded-lg shadow-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white transition-all duration-200"
+							className="block w-full px-3 py-3 sm:py-2.5 text-base border-2 border-secondary-300 dark:border-secondary-600 rounded-lg shadow-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white transition-all duration-200 min-h-[44px]"
 							placeholder="server.example.com"
 						/>
 						<p className="mt-2 text-sm text-secondary-500 dark:text-secondary-400">
@@ -197,18 +197,18 @@ const AddHostModal = ({ isOpen, onClose, onSuccess }) => {
 						</div>
 					)}
 
-					<div className="flex justify-end space-x-3 pt-2">
+					<div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-2">
 						<button
 							type="button"
 							onClick={onClose}
-							className="px-6 py-3 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-700 border-2 border-secondary-300 dark:border-secondary-600 rounded-lg hover:bg-secondary-50 dark:hover:bg-secondary-600 transition-all duration-200"
+							className="px-6 py-3 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-700 border-2 border-secondary-300 dark:border-secondary-600 rounded-lg hover:bg-secondary-50 dark:hover:bg-secondary-600 transition-all duration-200 min-h-[44px] w-full sm:w-auto"
 						>
 							Cancel
 						</button>
 						<button
 							type="submit"
 							disabled={isSubmitting}
-							className="px-6 py-3 text-sm font-medium text-white bg-primary-600 border-2 border-transparent rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-all duration-200"
+							className="px-6 py-3 text-sm font-medium text-white bg-primary-600 border-2 border-transparent rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-all duration-200 min-h-[44px] w-full sm:w-auto"
 						>
 							{isSubmitting ? "Creating..." : "Create Host"}
 						</button>
@@ -1122,11 +1122,17 @@ const Hosts = () => {
 						}
 					>
 						<div
-							className={`w-2 h-2 rounded-full mr-1.5 ${
+							className={`w-2 h-2 rounded-full ${wsStatus.connected ? "mr-1.5" : "mr-1.5 md:mr-0"} ${
 								wsStatus.connected ? "bg-green-500 animate-pulse" : "bg-red-500"
 							}`}
 						></div>
-						{wsStatus.connected ? (wsStatus.secure ? "WSS" : "WS") : "Offline"}
+						<span className="hidden md:inline">
+							{wsStatus.connected
+								? wsStatus.secure
+									? "WSS"
+									: "WS"
+								: "Offline"}
+						</span>
 					</span>
 				);
 			}
@@ -1301,14 +1307,14 @@ const Hosts = () => {
 	}
 
 	return (
-		<div className="h-[calc(100vh-7rem)] flex flex-col overflow-hidden">
+		<div className="min-h-0 flex flex-col md:h-[calc(100vh-7rem)] md:overflow-hidden">
 			{/* Page Header */}
 			<div className="flex items-center justify-between mb-6">
 				<div>
 					<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
 						Hosts
 					</h1>
-					<p className="text-sm text-secondary-600 dark:text-secondary-400 mt-1">
+					<p className="text-sm text-secondary-600 dark:text-white/80 mt-1">
 						Manage and monitor your connected hosts
 					</p>
 				</div>
@@ -1336,7 +1342,7 @@ const Hosts = () => {
 			</div>
 
 			{/* Stats Summary */}
-			<div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-6">
+			<div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
 				<button
 					type="button"
 					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full"
@@ -1420,7 +1426,7 @@ const Hosts = () => {
 											<span className="text-sm font-medium text-secondary-900 dark:text-white">
 												{connectedCount}
 											</span>
-											<span className="text-xs text-secondary-500 dark:text-secondary-400">
+											<span className="text-xs text-secondary-500 dark:text-secondary-400 hidden sm:inline">
 												Connected
 											</span>
 										</div>
@@ -1429,7 +1435,7 @@ const Hosts = () => {
 											<span className="text-sm font-medium text-secondary-900 dark:text-white">
 												{offlineCount}
 											</span>
-											<span className="text-xs text-secondary-500 dark:text-secondary-400">
+											<span className="text-xs text-secondary-500 dark:text-secondary-400 hidden sm:inline">
 												Offline
 											</span>
 										</div>
@@ -1442,37 +1448,39 @@ const Hosts = () => {
 			</div>
 
 			{/* Hosts List */}
-			<div className="card flex-1 flex flex-col overflow-hidden min-h-0">
-				<div className="px-4 py-4 sm:p-4 flex-1 flex flex-col overflow-hidden min-h-0">
-					<div className="flex items-center justify-end mb-4">
+			<div className="card flex-1 flex flex-col md:overflow-hidden min-h-0">
+				<div className="px-4 py-4 sm:p-4 flex-1 flex flex-col md:overflow-hidden min-h-0">
+					<div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3 mb-4">
 						{selectedHosts.length > 0 && (
-							<div className="flex items-center gap-3">
-								<span className="text-sm text-secondary-600">
+							<div className="flex flex-wrap items-center gap-2 sm:gap-3">
+								<span className="text-sm text-secondary-600 dark:text-white/80 flex-shrink-0">
 									{selectedHosts.length} host
 									{selectedHosts.length !== 1 ? "s" : ""} selected
 								</span>
 								<button
 									type="button"
 									onClick={() => setShowBulkAssignModal(true)}
-									className="btn-outline flex items-center gap-2"
+									className="btn-outline flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 min-h-[44px] text-xs sm:text-sm"
 								>
-									<Users className="h-4 w-4" />
-									Assign to Group
+									<FolderPlus className="h-4 w-4 flex-shrink-0" />
+									<span className="hidden sm:inline">Assign to Group</span>
+									<span className="sm:hidden">Assign</span>
 								</button>
 								<button
 									type="button"
 									onClick={() => setShowBulkDeleteModal(true)}
-									className="btn-danger flex items-center gap-2"
+									className="btn-danger flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 min-h-[44px] text-xs sm:text-sm"
 								>
-									<Trash2 className="h-4 w-4" />
-									Delete
+									<Trash2 className="h-4 w-4 flex-shrink-0" />
+									<span>Delete</span>
 								</button>
 								<button
 									type="button"
 									onClick={() => setSelectedHosts([])}
-									className="text-sm text-secondary-500 hover:text-secondary-700"
+									className="text-xs sm:text-sm text-secondary-500 dark:text-white/70 hover:text-secondary-700 dark:hover:text-white/90 min-h-[44px] px-2"
 								>
-									Clear Selection
+									<span className="hidden sm:inline">Clear Selection</span>
+									<span className="sm:hidden">Clear</span>
 								</button>
 							</div>
 						)}
@@ -1494,28 +1502,28 @@ const Hosts = () => {
 									/>
 								</div>
 							</div>
-							<div className="flex gap-2">
+							<div className="flex flex-wrap gap-2">
 								<button
 									type="button"
 									onClick={() => setShowFilters(!showFilters)}
-									className={`btn-outline flex items-center gap-2 ${showFilters ? "bg-primary-50 border-primary-300" : ""}`}
+									className={`btn-outline flex items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-2 min-h-[44px] text-xs sm:text-sm ${showFilters ? "bg-primary-50 border-primary-300" : ""}`}
 								>
-									<Filter className="h-4 w-4" />
-									Filters
+									<Filter className="h-4 w-4 flex-shrink-0" />
+									<span className="hidden sm:inline">Filters</span>
 								</button>
 								<button
 									type="button"
 									onClick={() => setShowColumnSettings(true)}
-									className="btn-outline flex items-center gap-2"
+									className="btn-outline flex items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-2 min-h-[44px] text-xs sm:text-sm"
 								>
-									<Columns className="h-4 w-4" />
-									Columns
+									<Columns className="h-4 w-4 flex-shrink-0" />
+									<span className="hidden sm:inline">Columns</span>
 								</button>
 								<div className="relative">
 									<select
 										value={groupBy}
 										onChange={(e) => setGroupBy(e.target.value)}
-										className="appearance-none bg-white dark:bg-secondary-800 border-2 border-secondary-300 dark:border-secondary-600 rounded-lg px-2 py-2 pr-6 text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-secondary-900 dark:text-white hover:border-secondary-400 dark:hover:border-secondary-500 transition-colors min-w-[120px]"
+										className="appearance-none bg-white dark:bg-secondary-800 border-2 border-secondary-300 dark:border-secondary-600 rounded-lg px-2 py-2 pr-6 text-xs sm:text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-secondary-900 dark:text-white hover:border-secondary-400 dark:hover:border-secondary-500 transition-colors min-w-[100px] sm:min-w-[120px] min-h-[44px]"
 									>
 										<option value="none">No Grouping</option>
 										<option value="group">By Group</option>
@@ -1527,18 +1535,18 @@ const Hosts = () => {
 								<button
 									type="button"
 									onClick={() => setHideStale(!hideStale)}
-									className={`btn-outline flex items-center gap-2 ${hideStale ? "bg-primary-50 border-primary-300" : ""}`}
+									className={`btn-outline flex items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-2 min-h-[44px] text-xs sm:text-sm ${hideStale ? "bg-primary-50 border-primary-300" : ""}`}
 								>
-									<AlertTriangle className="h-4 w-4" />
-									Hide Stale
+									<AlertTriangle className="h-4 w-4 flex-shrink-0" />
+									<span className="hidden sm:inline">Hide Stale</span>
 								</button>
 							</div>
 						</div>
 
 						{/* Advanced Filters */}
 						{showFilters && (
-							<div className="bg-secondary-50 dark:bg-secondary-700 p-4 rounded-lg border dark:border-secondary-600">
-								<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+							<div className="bg-secondary-50 dark:bg-secondary-700 p-3 sm:p-4 rounded-lg border dark:border-secondary-600">
+								<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
 									<div>
 										<label
 											htmlFor={hostGroupFilterId}
@@ -1550,7 +1558,7 @@ const Hosts = () => {
 											id={hostGroupFilterId}
 											value={groupFilter}
 											onChange={(e) => setGroupFilter(e.target.value)}
-											className="w-full border border-secondary-300 dark:border-secondary-600 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"
+											className="w-full border border-secondary-300 dark:border-secondary-600 rounded-lg px-3 py-2.5 sm:py-2 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white min-h-[44px]"
 										>
 											<option value="all">All Groups</option>
 											<option value="ungrouped">Ungrouped</option>
@@ -1572,7 +1580,7 @@ const Hosts = () => {
 											id={statusFilterId}
 											value={statusFilter}
 											onChange={(e) => setStatusFilter(e.target.value)}
-											className="w-full border border-secondary-300 dark:border-secondary-600 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"
+											className="w-full border border-secondary-300 dark:border-secondary-600 rounded-lg px-3 py-2.5 sm:py-2 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white min-h-[44px]"
 										>
 											<option value="all">All Status</option>
 											<option value="active">Active</option>
@@ -1592,7 +1600,7 @@ const Hosts = () => {
 											id={osFilterId}
 											value={osFilter}
 											onChange={(e) => setOsFilter(e.target.value)}
-											className="w-full border border-secondary-300 dark:border-secondary-600 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"
+											className="w-full border border-secondary-300 dark:border-secondary-600 rounded-lg px-3 py-2.5 sm:py-2 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white min-h-[44px]"
 										>
 											<option value="all">All OS</option>
 											{uniqueOsTypes.map((osType) => (
@@ -1613,7 +1621,7 @@ const Hosts = () => {
 												setGroupBy("none");
 												setHideStale(false);
 											}}
-											className="btn-outline w-full"
+											className="btn-outline w-full min-h-[44px]"
 										>
 											Clear Filters
 										</button>
@@ -1623,7 +1631,7 @@ const Hosts = () => {
 						)}
 					</div>
 
-					<div className="flex-1 overflow-hidden">
+					<div className="flex-1 md:overflow-hidden">
 						{!hosts || hosts.length === 0 ? (
 							<div className="text-center py-8">
 								<Server className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
@@ -1644,7 +1652,7 @@ const Hosts = () => {
 								</p>
 							</div>
 						) : (
-							<div className="h-full overflow-auto">
+							<div className="md:h-full overflow-auto">
 								<div className="space-y-6">
 									{Object.entries(groupedHosts).map(
 										([groupName, groupHosts]) => (
@@ -1658,15 +1666,234 @@ const Hosts = () => {
 													</div>
 												)}
 
-												{/* Table for this group */}
-												<div className="overflow-x-auto">
-													<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+												{/* Mobile Card Layout */}
+												<div className="md:hidden space-y-3">
+													{groupHosts.map((host) => {
+														const isInactive =
+															(host.effectiveStatus || host.status) ===
+															"inactive";
+														const isSelected = selectedHosts.includes(host.id);
+														const wsStatus = wsStatusMap[host.api_id];
+														const groupIds =
+															host.host_group_memberships?.map(
+																(membership) => membership.host_groups.id,
+															) || [];
+														const groups =
+															hostGroups?.filter((g) =>
+																groupIds.includes(g.id),
+															) || [];
+
+														return (
+															<div
+																key={host.id}
+																className={`card p-4 space-y-3 ${
+																	isSelected
+																		? "ring-2 ring-primary-500 bg-primary-50 dark:bg-primary-900/20"
+																		: isInactive
+																			? "bg-red-50 dark:bg-red-900/20"
+																			: ""
+																}`}
+															>
+																{/* Header with select and main info */}
+																<div className="flex items-start justify-between gap-3">
+																	<div className="flex items-center gap-2 flex-1 min-w-0">
+																		{visibleColumns.some(
+																			(col) => col.id === "select",
+																		) && (
+																			<button
+																				type="button"
+																				onClick={() =>
+																					handleSelectHost(host.id)
+																				}
+																				className="flex-shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center"
+																			>
+																				{isSelected ? (
+																					<CheckSquare className="h-5 w-5 text-primary-600" />
+																				) : (
+																					<Square className="h-5 w-5 text-secondary-400" />
+																				)}
+																			</button>
+																		)}
+																		<div className="flex-1 min-w-0">
+																			{visibleColumns.some(
+																				(col) => col.id === "host",
+																			) && (
+																				<Link
+																					to={`/hosts/${host.id}`}
+																					className="text-base font-semibold text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 block truncate"
+																				>
+																					{host.friendly_name || "Unnamed Host"}
+																				</Link>
+																			)}
+																			{visibleColumns.some(
+																				(col) => col.id === "hostname",
+																			) &&
+																				host.hostname && (
+																					<div className="text-sm text-secondary-500 dark:text-secondary-400 font-mono truncate">
+																						{host.hostname}
+																					</div>
+																				)}
+																		</div>
+																	</div>
+																	{visibleColumns.some(
+																		(col) => col.id === "actions",
+																	) && (
+																		<Link
+																			to={`/hosts/${host.id}`}
+																			className="btn-primary text-sm px-3 py-2 min-h-[44px] flex items-center gap-1 flex-shrink-0"
+																		>
+																			View
+																			<ExternalLink className="h-4 w-4" />
+																		</Link>
+																	)}
+																</div>
+
+																{/* Status and connection info */}
+																<div className="flex flex-wrap items-center gap-2">
+																	{visibleColumns.some(
+																		(col) => col.id === "status",
+																	) && (
+																		<span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-300">
+																			{(host.effectiveStatus || host.status)
+																				.charAt(0)
+																				.toUpperCase() +
+																				(
+																					host.effectiveStatus || host.status
+																				).slice(1)}
+																		</span>
+																	)}
+																	{visibleColumns.some(
+																		(col) => col.id === "ws_status",
+																	) &&
+																		wsStatus && (
+																			<span
+																				className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${
+																					wsStatus.connected
+																						? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+																						: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+																				}`}
+																			>
+																				<div
+																					className={`w-2 h-2 rounded-full ${wsStatus.connected ? "mr-1.5" : "mr-1.5 md:mr-0"} ${
+																						wsStatus.connected
+																							? "bg-green-500 animate-pulse"
+																							: "bg-red-500"
+																					}`}
+																				></div>
+																				<span className="hidden md:inline">
+																					{wsStatus.connected
+																						? wsStatus.secure
+																							? "WSS"
+																							: "WS"
+																						: "Offline"}
+																				</span>
+																			</span>
+																		)}
+																	{visibleColumns.some(
+																		(col) => col.id === "needs_reboot",
+																	) &&
+																		(host.needs_reboot ? (
+																			<span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+																				<RotateCcw className="h-3 w-3" />
+																				Reboot Required
+																			</span>
+																		) : null)}
+																</div>
+
+																{/* OS and Group info */}
+																<div className="flex flex-wrap items-center gap-3 text-sm">
+																	{visibleColumns.some(
+																		(col) => col.id === "os",
+																	) && (
+																		<div className="flex items-center gap-2">
+																			<OSIcon
+																				osType={host.os_type}
+																				className="h-4 w-4"
+																			/>
+																			<span className="text-secondary-700 dark:text-secondary-300">
+																				{getOSDisplayName(host.os_type)}
+																			</span>
+																		</div>
+																	)}
+																	{visibleColumns.some(
+																		(col) => col.id === "group",
+																	) &&
+																		groups.length > 0 && (
+																			<div className="flex items-center gap-1 flex-wrap">
+																				<span className="text-secondary-500 dark:text-secondary-400">
+																					Groups:
+																				</span>
+																				{groups.map((g, idx) => (
+																					<span
+																						key={g.id}
+																						className="text-secondary-700 dark:text-secondary-300"
+																					>
+																						{g.name}
+																						{idx < groups.length - 1 ? "," : ""}
+																					</span>
+																				))}
+																			</div>
+																		)}
+																</div>
+
+																{/* Updates info */}
+																<div className="flex items-center gap-4 pt-2 border-t border-secondary-200 dark:border-secondary-600">
+																	{visibleColumns.some(
+																		(col) => col.id === "updates",
+																	) && (
+																		<button
+																			type="button"
+																			onClick={() =>
+																				navigate(
+																					`/packages?host=${host.id}&filter=outdated`,
+																				)
+																			}
+																			className="text-sm text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300 font-medium min-h-[44px] flex items-center"
+																		>
+																			{host.updatesCount || 0} Updates
+																		</button>
+																	)}
+																	{visibleColumns.some(
+																		(col) => col.id === "security_updates",
+																	) && (
+																		<button
+																			type="button"
+																			onClick={() =>
+																				navigate(
+																					`/packages?host=${host.id}&filter=security-updates`,
+																				)
+																			}
+																			className="text-sm text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 font-medium min-h-[44px] flex items-center"
+																		>
+																			{host.securityUpdatesCount || 0} Security
+																		</button>
+																	)}
+																	{visibleColumns.some(
+																		(col) => col.id === "last_update",
+																	) && (
+																		<div className="text-xs text-secondary-500 dark:text-secondary-400 ml-auto">
+																			Updated{" "}
+																			{formatRelativeTime(host.last_update)}
+																		</div>
+																	)}
+																</div>
+															</div>
+														);
+													})}
+												</div>
+
+												{/* Desktop Table Layout */}
+												<div className="hidden md:block overflow-x-auto">
+													<table
+														className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600"
+														style={{ minWidth: "max-content" }}
+													>
 														<thead className="bg-secondary-50 dark:bg-secondary-700">
 															<tr>
 																{visibleColumns.map((column) => (
 																	<th
 																		key={column.id}
-																		className="px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider"
+																		className="px-3 sm:px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider whitespace-nowrap"
 																	>
 																		{column.id === "select" ? (
 																			<button
@@ -1842,7 +2069,7 @@ const Hosts = () => {
 																		{visibleColumns.map((column) => (
 																			<td
 																				key={column.id}
-																				className="px-4 py-2 whitespace-nowrap text-center"
+																				className="px-3 sm:px-4 py-2 whitespace-nowrap text-center"
 																			>
 																				{renderCellContent(column, host)}
 																			</td>
@@ -2184,7 +2411,6 @@ const ColumnSettingsModal = ({
 								key={column.id}
 								type="button"
 								draggable
-								tabIndex={0}
 								aria-label={`Drag to reorder ${column.label} column`}
 								onDragStart={(e) => handleDragStart(e, index)}
 								onDragOver={handleDragOver}
@@ -2195,7 +2421,7 @@ const ColumnSettingsModal = ({
 										// Focus handling for keyboard users
 									}
 								}}
-								className={`flex items-center justify-between p-2.5 border rounded-lg cursor-move w-full text-left transition-colors ${
+								className={`flex items-center justify-between p-2.5 border rounded-lg cursor-move w-full transition-colors ${
 									draggedIndex === index
 										? "opacity-50"
 										: "hover:bg-secondary-50 dark:hover:bg-secondary-700"
@@ -2209,12 +2435,20 @@ const ColumnSettingsModal = ({
 								</div>
 								<button
 									type="button"
-									onClick={() => onToggleVisibility(column.id)}
-									className={`p-1 rounded transition-colors flex-shrink-0 ${
+									onClick={(e) => {
+										e.stopPropagation();
+										onToggleVisibility(column.id);
+									}}
+									className={`p-1 rounded transition-colors flex-shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center ${
 										column.visible
 											? "text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
 											: "text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
 									}`}
+									aria-label={
+										column.visible
+											? `Hide ${column.label} column`
+											: `Show ${column.label} column`
+									}
 								>
 									{column.visible ? (
 										<EyeIcon className="h-4 w-4" />
