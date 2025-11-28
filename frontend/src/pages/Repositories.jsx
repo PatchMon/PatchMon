@@ -293,7 +293,7 @@ const Repositories = () => {
 	}
 
 	return (
-		<div className="h-[calc(100vh-7rem)] flex flex-col overflow-hidden">
+		<div className="min-h-screen flex flex-col">
 			{/* Delete Confirmation Modal */}
 			{deleteModalData && (
 				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -371,7 +371,7 @@ const Repositories = () => {
 			</div>
 
 			{/* Summary Stats */}
-			<div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-6 flex-shrink-0">
+			<div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6 flex-shrink-0">
 				<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
 					<div className="flex items-center">
 						<Database className="h-5 w-5 text-primary-600 mr-2" />
@@ -430,8 +430,8 @@ const Repositories = () => {
 			</div>
 
 			{/* Repositories List */}
-			<div className="card flex-1 flex flex-col overflow-hidden min-h-0">
-				<div className="px-4 py-4 sm:p-4 flex-1 flex flex-col overflow-hidden min-h-0">
+			<div className="card flex-1 flex flex-col md:overflow-hidden min-h-0">
+				<div className="px-4 py-4 sm:p-4 flex-1 flex flex-col md:overflow-hidden min-h-0">
 					<div className="flex items-center justify-end mb-4">
 						{/* Empty selection controls area to match packages page spacing */}
 					</div>
@@ -534,47 +534,167 @@ const Repositories = () => {
 								)}
 							</div>
 						) : (
-							<div className="h-full overflow-auto">
-								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
-									<thead className="bg-secondary-50 dark:bg-secondary-700 sticky top-0 z-10">
-										<tr>
-											{visibleColumns.map((column) => (
-												<th
-													key={column.id}
-													className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider"
-												>
-													<button
-														type="button"
-														onClick={() => handleSort(column.id)}
-														className="flex items-center justify-start gap-1 hover:text-secondary-700 dark:hover:text-secondary-200 transition-colors"
-													>
-														{column.label}
-														{getSortIcon(column.id)}
-													</button>
-												</th>
-											))}
-										</tr>
-									</thead>
-									<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
-										{filteredAndSortedRepositories.map((repo) => (
-											<tr
+							<>
+								{/* Mobile Card Layout */}
+								<div className="md:hidden space-y-3 overflow-y-auto h-full pb-4">
+									{filteredAndSortedRepositories.map((repo) => {
+										const isSecure =
+											repo.isSecure !== undefined
+												? repo.isSecure
+												: repo.url.startsWith("https://");
+										return (
+											<button
 												key={repo.id}
-												className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors cursor-pointer"
+												type="button"
 												onClick={() => handleRowClick(repo)}
+												className="card p-4 space-y-3 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow w-full text-left"
 											>
+												{/* Header with name and status */}
+												<div className="flex items-start justify-between gap-3">
+													<div className="flex items-center gap-2 flex-1 min-w-0">
+														<Database className="h-5 w-5 text-secondary-400 flex-shrink-0" />
+														<div className="flex-1 min-w-0">
+															<h3 className="text-base font-semibold text-secondary-900 dark:text-white truncate">
+																{repo.name}
+															</h3>
+															{visibleColumns.some(
+																(col) => col.id === "distribution",
+															) && (
+																<p className="text-sm text-secondary-500 dark:text-secondary-400 mt-0.5">
+																	{repo.distribution}
+																</p>
+															)}
+														</div>
+													</div>
+													{visibleColumns.some(
+														(col) => col.id === "status",
+													) && (
+														<span
+															className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ${
+																repo.is_active
+																	? "bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300"
+																	: "bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300"
+															}`}
+														>
+															{repo.is_active ? "Active" : "Inactive"}
+														</span>
+													)}
+												</div>
+
+												{/* URL */}
+												{visibleColumns.some((col) => col.id === "url") && (
+													<div>
+														<p className="text-xs text-secondary-500 dark:text-secondary-400 mb-1">
+															URL
+														</p>
+														<p
+															className="text-sm text-secondary-900 dark:text-white font-mono truncate"
+															title={repo.url}
+														>
+															{repo.url}
+														</p>
+													</div>
+												)}
+
+												{/* Security and Hosts */}
+												<div className="flex flex-wrap items-center gap-3 pt-2 border-t border-secondary-200 dark:border-secondary-600">
+													{visibleColumns.some(
+														(col) => col.id === "security",
+													) && (
+														<div className="flex items-center gap-1">
+															{isSecure ? (
+																<>
+																	<Lock className="h-4 w-4 text-green-600" />
+																	<span className="text-sm text-green-600 font-medium">
+																		Secure
+																	</span>
+																</>
+															) : (
+																<>
+																	<Unlock className="h-4 w-4 text-orange-600" />
+																	<span className="text-sm text-orange-600 font-medium">
+																		Insecure
+																	</span>
+																</>
+															)}
+														</div>
+													)}
+													{visibleColumns.some(
+														(col) => col.id === "hostCount",
+													) && (
+														<div className="flex items-center gap-1">
+															<Server className="h-4 w-4 text-secondary-400" />
+															<span className="text-sm text-secondary-700 dark:text-secondary-300">
+																{repo.hostCount} Host
+																{repo.hostCount !== 1 ? "s" : ""}
+															</span>
+														</div>
+													)}
+												</div>
+
+												{/* Actions */}
+												{visibleColumns.some((col) => col.id === "actions") && (
+													<div className="flex items-center justify-end pt-2 border-t border-secondary-200 dark:border-secondary-600">
+														<button
+															type="button"
+															onClick={(e) => handleDeleteRepository(repo, e)}
+															className="text-orange-600 hover:text-red-900 dark:text-orange-600 dark:hover:text-red-400 flex items-center gap-1"
+															disabled={deleteRepositoryMutation.isPending}
+															title="Delete repository"
+														>
+															<Trash2 className="h-4 w-4" />
+															<span className="text-sm">Delete</span>
+														</button>
+													</div>
+												)}
+											</button>
+										);
+									})}
+								</div>
+
+								{/* Desktop Table Layout */}
+								<div className="hidden md:block h-full overflow-auto">
+									<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+										<thead className="bg-secondary-50 dark:bg-secondary-700 sticky top-0 z-10">
+											<tr>
 												{visibleColumns.map((column) => (
-													<td
+													<th
 														key={column.id}
-														className="px-4 py-2 whitespace-nowrap text-left"
+														className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider"
 													>
-														{renderCellContent(column, repo)}
-													</td>
+														<button
+															type="button"
+															onClick={() => handleSort(column.id)}
+															className="flex items-center justify-start gap-1 hover:text-secondary-700 dark:hover:text-secondary-200 transition-colors"
+														>
+															{column.label}
+															{getSortIcon(column.id)}
+														</button>
+													</th>
 												))}
 											</tr>
-										))}
-									</tbody>
-								</table>
-							</div>
+										</thead>
+										<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+											{filteredAndSortedRepositories.map((repo) => (
+												<tr
+													key={repo.id}
+													className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors cursor-pointer"
+													onClick={() => handleRowClick(repo)}
+												>
+													{visibleColumns.map((column) => (
+														<td
+															key={column.id}
+															className="px-4 py-2 whitespace-nowrap text-left"
+														>
+															{renderCellContent(column, repo)}
+														</td>
+													))}
+												</tr>
+											))}
+										</tbody>
+									</table>
+								</div>
+							</>
 						)}
 					</div>
 				</div>
