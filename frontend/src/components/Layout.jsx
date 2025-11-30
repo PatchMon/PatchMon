@@ -1183,7 +1183,7 @@ const Layout = ({ children }) => {
 					<div className="h-6 w-px bg-secondary-200 dark:bg-secondary-600 lg:hidden" />
 
 					<div className="flex flex-1 gap-x-2 sm:gap-x-4 self-stretch lg:gap-x-6 min-w-0">
-						{/* Page title - hidden on dashboard, hosts, repositories, packages, automation, docker, and host details to give more space to search */}
+						{/* Page title - hidden on dashboard, hosts, repositories, packages, automation, docker, settings, and host details to give more space to search */}
 						{![
 							"/",
 							"/hosts",
@@ -1193,7 +1193,9 @@ const Layout = ({ children }) => {
 							"/docker",
 						].includes(location.pathname) &&
 							!location.pathname.startsWith("/hosts/") &&
-							!location.pathname.startsWith("/docker/") && (
+							!location.pathname.startsWith("/docker/") &&
+							!location.pathname.startsWith("/packages/") &&
+							!location.pathname.startsWith("/settings/") && (
 								<div className="relative flex items-center flex-shrink-0">
 									<h2 className="text-base sm:text-lg font-semibold text-secondary-900 dark:text-secondary-100 whitespace-nowrap">
 										{getPageTitle()}
@@ -1203,7 +1205,7 @@ const Layout = ({ children }) => {
 
 						{/* Global Search Bar */}
 						<div
-							className={`flex items-center min-w-0 ${["/", "/hosts", "/repositories", "/packages", "/automation", "/docker"].includes(location.pathname) || location.pathname.startsWith("/hosts/") || location.pathname.startsWith("/docker/") ? "flex-1 max-w-none" : "flex-1 md:flex-none md:max-w-sm"}`}
+							className={`flex items-center min-w-0 ${["/", "/hosts", "/repositories", "/packages", "/automation", "/docker"].includes(location.pathname) || location.pathname.startsWith("/hosts/") || location.pathname.startsWith("/docker/") || location.pathname.startsWith("/packages/") || location.pathname.startsWith("/settings/") ? "flex-1 max-w-none" : "flex-1 md:flex-none md:max-w-sm"}`}
 						>
 							<GlobalSearch />
 						</div>

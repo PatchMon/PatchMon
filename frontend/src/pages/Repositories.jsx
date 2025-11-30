@@ -543,11 +543,19 @@ const Repositories = () => {
 												? repo.isSecure
 												: repo.url.startsWith("https://");
 										return (
-											<button
+											// biome-ignore lint/a11y/useSemanticElements: Complex card layout requires div
+											<div
 												key={repo.id}
-												type="button"
+												role="button"
+												tabIndex={0}
 												onClick={() => handleRowClick(repo)}
-												className="card p-4 space-y-3 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow w-full text-left"
+												onKeyDown={(e) => {
+													if (e.key === "Enter" || e.key === " ") {
+														e.preventDefault();
+														handleRowClick(repo);
+													}
+												}}
+												className="card p-4 space-y-3 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow w-full"
 											>
 												{/* Header with name and status */}
 												<div className="flex items-start justify-between gap-3">
@@ -637,7 +645,10 @@ const Repositories = () => {
 													<div className="flex items-center justify-end pt-2 border-t border-secondary-200 dark:border-secondary-600">
 														<button
 															type="button"
-															onClick={(e) => handleDeleteRepository(repo, e)}
+															onClick={(e) => {
+																e.stopPropagation();
+																handleDeleteRepository(repo, e);
+															}}
 															className="text-orange-600 hover:text-red-900 dark:text-orange-600 dark:hover:text-red-400 flex items-center gap-1"
 															disabled={deleteRepositoryMutation.isPending}
 															title="Delete repository"
@@ -647,7 +658,7 @@ const Repositories = () => {
 														</button>
 													</div>
 												)}
-											</button>
+											</div>
 										);
 									})}
 								</div>
@@ -848,14 +859,16 @@ const ColumnSettingsModal = ({
 
 				<div className="space-y-3">
 					{columnConfig.map((column, index) => (
-						<button
-							type="button"
+						// biome-ignore lint/a11y/useSemanticElements: Draggable element requires div
+						<div
 							key={column.id}
+							role="button"
+							tabIndex={0}
 							draggable
 							onDragStart={(e) => handleDragStart(e, index)}
 							onDragOver={handleDragOver}
 							onDrop={(e) => handleDrop(e, index)}
-							className="flex items-center justify-between p-3 bg-secondary-50 dark:bg-secondary-700 rounded-lg cursor-move hover:bg-secondary-100 dark:hover:bg-secondary-600 transition-colors w-full text-left"
+							className="flex items-center justify-between p-3 bg-secondary-50 dark:bg-secondary-700 rounded-lg cursor-move hover:bg-secondary-100 dark:hover:bg-secondary-600 transition-colors w-full"
 						>
 							<div className="flex items-center gap-3">
 								<GripVertical className="h-4 w-4 text-secondary-400" />
@@ -865,7 +878,10 @@ const ColumnSettingsModal = ({
 							</div>
 							<button
 								type="button"
-								onClick={() => onToggleVisibility(column.id)}
+								onClick={(e) => {
+									e.stopPropagation();
+									onToggleVisibility(column.id);
+								}}
 								className={`w-4 h-4 rounded border-2 flex items-center justify-center ${
 									column.visible
 										? "bg-primary-600 border-primary-600"
@@ -874,7 +890,7 @@ const ColumnSettingsModal = ({
 							>
 								{column.visible && <Check className="h-3 w-3 text-white" />}
 							</button>
-						</button>
+						</div>
 					))}
 				</div>
 

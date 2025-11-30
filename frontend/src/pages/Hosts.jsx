@@ -265,6 +265,10 @@ const Hosts = () => {
 			setShowFilters(true);
 			setStatusFilter("all");
 			// We'll filter hosts that are stale in the filtering logic
+		} else if (filter === "selected") {
+			setShowFilters(true);
+			setStatusFilter("all");
+			// We'll filter hosts by selected hosts in the filtering logic
 		} else if (showFiltersParam === "true") {
 			setShowFilters(true);
 		}
@@ -714,7 +718,7 @@ const Hosts = () => {
 				osFilter === "all" ||
 				host.os_type?.toLowerCase() === osFilter.toLowerCase();
 
-			// URL filter for hosts needing updates, inactive hosts, up-to-date hosts, stale hosts, offline hosts, or reboot required
+			// URL filter for hosts needing updates, inactive hosts, up-to-date hosts, stale hosts, offline hosts, reboot required, or selected hosts
 			const filter = searchParams.get("filter");
 			const rebootParam = searchParams.get("reboot");
 			const matchesUrlFilter =
@@ -726,6 +730,7 @@ const Hosts = () => {
 				(filter !== "stale" || host.isStale) &&
 				(filter !== "offline" ||
 					wsStatusMap[host.api_id]?.connected !== true) &&
+				(filter !== "selected" || selectedHosts.includes(host.id)) &&
 				(!rebootParam || host.needs_reboot === true);
 
 			// Hide stale filter
@@ -841,6 +846,7 @@ const Hosts = () => {
 		searchParams,
 		hideStale,
 		wsStatusMap,
+		selectedHosts,
 	]);
 
 	// Get unique OS types from hosts for dynamic dropdown
@@ -1121,12 +1127,10 @@ const Hosts = () => {
 								: "Agent not connected"
 						}
 					>
-						<div
-							className={`w-2 h-2 rounded-full ${wsStatus.connected ? "mr-1.5" : "mr-1.5 md:mr-0"} ${
-								wsStatus.connected ? "bg-green-500 animate-pulse" : "bg-red-500"
-							}`}
-						></div>
-						<span className="hidden md:inline">
+						{wsStatus.connected && (
+							<div className="w-2 h-2 rounded-full mr-1.5 bg-green-500 animate-pulse"></div>
+						)}
+						<span>
 							{wsStatus.connected
 								? wsStatus.secure
 									? "WSS"
@@ -1748,64 +1752,12 @@ const Hosts = () => {
 																	)}
 																</div>
 
-																{/* Status and connection info */}
-																<div className="flex flex-wrap items-center gap-2">
-																	{visibleColumns.some(
-																		(col) => col.id === "status",
-																	) && (
-																		<span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-300">
-																			{(host.effectiveStatus || host.status)
-																				.charAt(0)
-																				.toUpperCase() +
-																				(
-																					host.effectiveStatus || host.status
-																				).slice(1)}
-																		</span>
-																	)}
-																	{visibleColumns.some(
-																		(col) => col.id === "ws_status",
-																	) &&
-																		wsStatus && (
-																			<span
-																				className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${
-																					wsStatus.connected
-																						? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-																						: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
-																				}`}
-																			>
-																				<div
-																					className={`w-2 h-2 rounded-full ${wsStatus.connected ? "mr-1.5" : "mr-1.5 md:mr-0"} ${
-																						wsStatus.connected
-																							? "bg-green-500 animate-pulse"
-																							: "bg-red-500"
-																					}`}
-																				></div>
-																				<span className="hidden md:inline">
-																					{wsStatus.connected
-																						? wsStatus.secure
-																							? "WSS"
-																							: "WS"
-																						: "Offline"}
-																				</span>
-																			</span>
-																		)}
-																	{visibleColumns.some(
-																		(col) => col.id === "needs_reboot",
-																	) &&
-																		(host.needs_reboot ? (
-																			<span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
-																				<RotateCcw className="h-3 w-3" />
-																				Reboot Required
-																			</span>
-																		) : null)}
-																</div>
-
-																{/* OS and Group info */}
-																<div className="flex flex-wrap items-center gap-3 text-sm">
+																{/* OS, Status and connection info */}
+																<div className="flex items-center justify-between gap-2">
 																	{visibleColumns.some(
 																		(col) => col.id === "os",
 																	) && (
-																		<div className="flex items-center gap-2">
+																		<div className="flex items-center gap-2 text-sm">
 																			<OSIcon
 																				osType={host.os_type}
 																				className="h-4 w-4"
@@ -1815,6 +1767,60 @@ const Hosts = () => {
 																			</span>
 																		</div>
 																	)}
+																	<div className="flex flex-wrap items-center gap-2">
+																		{visibleColumns.some(
+																			(col) => col.id === "status",
+																		) && (
+																			<span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-300">
+																				{(host.effectiveStatus || host.status)
+																					.charAt(0)
+																					.toUpperCase() +
+																					(
+																						host.effectiveStatus || host.status
+																					).slice(1)}
+																			</span>
+																		)}
+																		{visibleColumns.some(
+																			(col) => col.id === "ws_status",
+																		) &&
+																			wsStatus && (
+																				<span
+																					className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${
+																						wsStatus.connected
+																							? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+																							: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+																					}`}
+																				>
+																					{wsStatus.connected && (
+																						<div className="w-2 h-2 rounded-full mr-1.5 bg-green-500 animate-pulse"></div>
+																					)}
+																					<span>
+																						{wsStatus.connected
+																							? wsStatus.secure
+																								? "WSS"
+																								: "WS"
+																							: "Offline"}
+																					</span>
+																				</span>
+																			)}
+																	</div>
+																</div>
+
+																{/* Reboot Required */}
+																{visibleColumns.some(
+																	(col) => col.id === "needs_reboot",
+																) &&
+																	host.needs_reboot && (
+																		<div>
+																			<span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+																				<RotateCcw className="h-3 w-3" />
+																				Reboot Required
+																			</span>
+																		</div>
+																	)}
+
+																{/* Group info */}
+																<div className="flex flex-wrap items-center gap-3 text-sm">
 																	{visibleColumns.some(
 																		(col) => col.id === "group",
 																	) &&

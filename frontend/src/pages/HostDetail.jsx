@@ -2568,23 +2568,55 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 	if (!isOpen || !host) return null;
 
 	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-			<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
-				<div className="flex justify-between items-center mb-4">
-					<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+			<div className="bg-white dark:bg-secondary-800 rounded-lg p-4 md:p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+				<div className="flex justify-between items-center mb-4 gap-3">
+					<h3 className="text-base md:text-lg font-medium text-secondary-900 dark:text-white truncate">
 						Host Setup - {host.friendly_name}
 					</h3>
 					<button
 						type="button"
 						onClick={onClose}
-						className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+						className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300 flex-shrink-0"
 					>
 						<X className="h-5 w-5" />
 					</button>
 				</div>
 
-				{/* Tabs */}
-				<div className="border-b border-secondary-200 dark:border-secondary-600 mb-6">
+				{/* Mobile Button Navigation */}
+				<div className="md:hidden space-y-2 mb-4">
+					<button
+						type="button"
+						onClick={() => setActiveTab("quick-install")}
+						className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+							activeTab === "quick-install"
+								? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
+								: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+						}`}
+					>
+						<span>Quick Install</span>
+						{activeTab === "quick-install" && (
+							<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+						)}
+					</button>
+					<button
+						type="button"
+						onClick={() => setActiveTab("credentials")}
+						className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+							activeTab === "credentials"
+								? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
+								: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+						}`}
+					>
+						<span>API Credentials</span>
+						{activeTab === "credentials" && (
+							<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+						)}
+					</button>
+				</div>
+
+				{/* Desktop Tab Navigation */}
+				<div className="hidden md:block border-b border-secondary-200 dark:border-secondary-600 mb-4 md:mb-6">
 					<nav className="-mb-px flex space-x-8">
 						<button
 							type="button"
@@ -2614,18 +2646,18 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 				{/* Tab Content */}
 				{activeTab === "quick-install" && (
 					<div className="space-y-4">
-						<div className="bg-primary-50 dark:bg-primary-900 border border-primary-200 dark:border-primary-700 rounded-lg p-4">
-							<h4 className="text-sm font-medium text-primary-900 dark:text-primary-200 mb-2">
+						<div className="bg-primary-50 dark:bg-primary-900 border border-primary-200 dark:border-primary-700 rounded-lg p-3 md:p-4">
+							<h4 className="text-xs md:text-sm font-medium text-primary-900 dark:text-primary-200 mb-2">
 								One-Line Installation
 							</h4>
-							<p className="text-sm text-primary-700 dark:text-primary-300 mb-3">
+							<p className="text-xs md:text-sm text-primary-700 dark:text-primary-300 mb-3">
 								Copy and run this command on the target host to securely install
 								and configure the PatchMon agent:
 							</p>
 
 							{/* Force Install Toggle */}
 							<div className="mb-3">
-								<label className="flex items-center gap-2 text-sm">
+								<label className="flex items-center gap-2 text-xs md:text-sm">
 									<input
 										type="checkbox"
 										checked={forceInstall}
@@ -2642,12 +2674,12 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 								</p>
 							</div>
 
-							<div className="flex items-center gap-2">
+							<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 								<input
 									type="text"
 									value={`curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${host.api_id}" -H "X-API-KEY: ${host.api_key}" | sh`}
 									readOnly
-									className="flex-1 px-3 py-2 border border-primary-300 dark:border-primary-600 rounded-md bg-white dark:bg-secondary-800 text-sm font-mono text-secondary-900 dark:text-white"
+									className="flex-1 px-3 py-2 border border-primary-300 dark:border-primary-600 rounded-md bg-white dark:bg-secondary-800 text-xs md:text-sm font-mono text-secondary-900 dark:text-white break-all"
 								/>
 								<button
 									type="button"
@@ -2656,7 +2688,7 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 											`curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${host.api_id}" -H "X-API-KEY: ${host.api_key}" | sh`,
 										)
 									}
-									className="btn-primary flex items-center gap-1"
+									className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap"
 								>
 									<Copy className="h-4 w-4" />
 									Copy
@@ -2667,31 +2699,31 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 				)}
 
 				{activeTab === "credentials" && (
-					<div className="space-y-6">
-						<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4">
-							<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-3">
+					<div className="space-y-4 md:space-y-6">
+						<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-3 md:p-4">
+							<h4 className="text-xs md:text-sm font-medium text-secondary-900 dark:text-white mb-3">
 								API Credentials
 							</h4>
 							<div className="space-y-4">
 								<div>
 									<label
 										htmlFor={apiIdInputId}
-										className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-1"
+										className="block text-xs md:text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-1"
 									>
 										API ID
 									</label>
-									<div className="flex items-center gap-2">
+									<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 										<input
 											id={apiIdInputId}
 											type="text"
 											value={host.api_id}
 											readOnly
-											className="flex-1 px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-800 text-sm font-mono text-secondary-900 dark:text-white"
+											className="flex-1 px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-800 text-xs md:text-sm font-mono text-secondary-900 dark:text-white break-all"
 										/>
 										<button
 											type="button"
 											onClick={() => copyToClipboard(host.api_id)}
-											className="btn-outline flex items-center gap-1"
+											className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap"
 										>
 											<Copy className="h-4 w-4" />
 											Copy
@@ -2702,22 +2734,22 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 								<div>
 									<label
 										htmlFor={apiKeyInputId}
-										className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-1"
+										className="block text-xs md:text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-1"
 									>
 										API Key
 									</label>
-									<div className="flex items-center gap-2">
+									<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 										<input
 											id={apiKeyInputId}
 											type={showApiKey ? "text" : "password"}
 											value={host.api_key}
 											readOnly
-											className="flex-1 px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-800 text-sm font-mono text-secondary-900 dark:text-white"
+											className="flex-1 px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-800 text-xs md:text-sm font-mono text-secondary-900 dark:text-white break-all"
 										/>
 										<button
 											type="button"
 											onClick={() => setShowApiKey(!showApiKey)}
-											className="btn-outline flex items-center gap-1"
+											className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap"
 										>
 											{showApiKey ? (
 												<EyeOff className="h-4 w-4" />
@@ -2728,7 +2760,7 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 										<button
 											type="button"
 											onClick={() => copyToClipboard(host.api_key)}
-											className="btn-outline flex items-center gap-1"
+											className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap"
 										>
 											<Copy className="h-4 w-4" />
 											Copy
@@ -2738,14 +2770,14 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 							</div>
 						</div>
 
-						<div className="bg-warning-50 dark:bg-warning-900 border border-warning-200 dark:border-warning-700 rounded-lg p-4">
-							<div className="flex">
-								<AlertTriangle className="h-5 w-5 text-warning-400 dark:text-warning-300" />
-								<div className="ml-3">
-									<h3 className="text-sm font-medium text-warning-800 dark:text-warning-200">
+						<div className="bg-warning-50 dark:bg-warning-900 border border-warning-200 dark:border-warning-700 rounded-lg p-3 md:p-4">
+							<div className="flex items-start gap-3">
+								<AlertTriangle className="h-5 w-5 text-warning-400 dark:text-warning-300 flex-shrink-0 mt-0.5" />
+								<div className="min-w-0">
+									<h3 className="text-xs md:text-sm font-medium text-warning-800 dark:text-warning-200">
 										Security Notice
 									</h3>
-									<p className="text-sm text-warning-700 dark:text-warning-300 mt-1">
+									<p className="text-xs md:text-sm text-warning-700 dark:text-warning-300 mt-1">
 										Keep these credentials secure. They provide full access to
 										this host's monitoring data.
 									</p>
@@ -2755,8 +2787,12 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 					</div>
 				)}
 
-				<div className="flex justify-end pt-6">
-					<button type="button" onClick={onClose} className="btn-primary">
+				<div className="flex justify-end pt-4 md:pt-6">
+					<button
+						type="button"
+						onClick={onClose}
+						className="btn-primary w-full sm:w-auto"
+					>
 						Close
 					</button>
 				</div>
@@ -3001,7 +3037,7 @@ const AgentQueueTab = ({ hostId }) => {
 							{jobHistory.map((job) => (
 								<div key={job.id} className="card p-3">
 									{/* First Line: Job Name, Job ID + Attempt (centered), Status (right) */}
-									<div className="flex items-center justify-between gap-2 mb-2">
+									<div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
 										<span className="text-sm font-semibold text-secondary-900 dark:text-white truncate">
 											{formatJobType(job.job_name)}
 										</span>
@@ -3034,9 +3070,10 @@ const AgentQueueTab = ({ hostId }) => {
 										</div>
 									</div>
 
-									{/* Second Line: Date/Time and Error/Output */}
+									{/* Second Line: Date/Time with Clock Icon */}
 									<div className="space-y-0.5">
-										<div className="text-xs text-secondary-600 dark:text-secondary-300">
+										<div className="flex items-center gap-1.5 text-xs text-secondary-600 dark:text-secondary-300">
+											<Clock className="h-3.5 w-3.5 text-secondary-500 dark:text-secondary-400" />
 											{new Date(job.created_at).toLocaleString()}
 										</div>
 										{(job.error_message || job.output) && (

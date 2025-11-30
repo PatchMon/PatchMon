@@ -112,7 +112,7 @@ const SettingsHostGroups = () => {
 					<button
 						type="button"
 						onClick={() => setShowCreateModal(true)}
-						className="btn-primary flex items-center gap-2"
+						className="btn-primary flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-end"
 						title="Create host group"
 					>
 						<Plus className="h-4 w-4" />
@@ -122,131 +122,186 @@ const SettingsHostGroups = () => {
 
 				{/* Host Groups Table */}
 				<div className="bg-white dark:bg-secondary-800 shadow overflow-hidden sm:rounded-lg">
-					<div className="overflow-x-auto">
-						<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
-							<thead className="bg-secondary-50 dark:bg-secondary-700">
-								<tr>
-									<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
-										Group
-									</th>
-									<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
-										Description
-									</th>
-									<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
-										Color
-									</th>
-									<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
-										Hosts
-									</th>
-									<th className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
-										Actions
-									</th>
-								</tr>
-							</thead>
-							<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
-								{isLoading ? (
-									<tr>
-										<td colSpan="5" className="px-6 py-12 text-center">
-											<div className="flex items-center justify-center">
-												<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
-											</div>
-										</td>
-									</tr>
-								) : error ? (
-									<tr>
-										<td colSpan="5" className="px-6 py-12 text-center">
-											<div className="bg-danger-50 border border-danger-200 rounded-md p-4">
-												<div className="flex">
-													<AlertTriangle className="h-5 w-5 text-danger-400" />
-													<div className="ml-3">
-														<h3 className="text-sm font-medium text-danger-800">
-															Error loading host groups
-														</h3>
-														<p className="text-sm text-danger-700 mt-1">
-															{error.message || "Failed to load host groups"}
-														</p>
-													</div>
+					{hostGroups && hostGroups.length > 0 ? (
+						<>
+							{/* Mobile Card Layout */}
+							<div className="md:hidden space-y-3 p-4">
+								{hostGroups.map((group) => (
+									<div key={group.id} className="card p-4 space-y-3">
+										{/* Group Name and Color */}
+										<div className="flex items-center gap-3">
+											<div
+												className="w-4 h-4 rounded-full flex-shrink-0"
+												style={{ backgroundColor: group.color }}
+											/>
+											<div className="flex-1 min-w-0">
+												<div className="text-base font-semibold text-secondary-900 dark:text-white truncate">
+													{group.name}
 												</div>
 											</div>
-										</td>
-									</tr>
-								) : hostGroups && hostGroups.length > 0 ? (
-									hostGroups.map((group) => (
-										<tr
-											key={group.id}
-											className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
-										>
-											<td className="px-6 py-4 whitespace-nowrap">
-												<div className="flex items-center">
-													<div
-														className="w-3 h-3 rounded-full mr-3"
-														style={{ backgroundColor: group.color }}
-													/>
-													<div className="text-sm font-medium text-secondary-900 dark:text-white">
-														{group.name}
-													</div>
-												</div>
-											</td>
-											<td className="px-6 py-4">
-												<div className="text-sm text-secondary-500 dark:text-secondary-300">
-													{group.description || (
-														<span className="text-secondary-400 italic">
-															No description
-														</span>
-													)}
-												</div>
-											</td>
-											<td className="px-6 py-4 whitespace-nowrap">
-												<div className="flex items-center">
-													<div
-														className="w-6 h-6 rounded border border-secondary-300"
-														style={{ backgroundColor: group.color }}
-													/>
-													<span className="ml-2 text-sm text-secondary-500 dark:text-secondary-300">
-														{group.color}
-													</span>
-												</div>
-											</td>
-											<td className="px-6 py-4 whitespace-nowrap">
-												<button
-													type="button"
-													onClick={() => handleHostsClick(group.id)}
-													className="flex items-center text-sm text-secondary-500 dark:text-secondary-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
-													title={`View hosts in ${group.name}`}
-												>
-													<Server className="h-4 w-4 mr-2" />
-													{group._count?.hosts || 0} host
-													{group._count?.hosts !== 1 ? "s" : ""}
-												</button>
-											</td>
-											<td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-												<button
-													type="button"
-													onClick={() => handleEdit(group)}
-													className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
-													title="Edit group"
-												>
-													<Edit className="h-4 w-4" />
-												</button>
-											</td>
+											<button
+												type="button"
+												onClick={() => handleEdit(group)}
+												className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300 flex-shrink-0"
+												title="Edit group"
+											>
+												<Edit className="h-4 w-4" />
+											</button>
+										</div>
+
+										{/* Description */}
+										{group.description && (
+											<div className="text-sm text-secondary-500 dark:text-secondary-300">
+												{group.description}
+											</div>
+										)}
+
+										{/* Color and Hosts */}
+										<div className="flex items-center justify-between gap-3 pt-2 border-t border-secondary-200 dark:border-secondary-600">
+											<div className="flex items-center gap-2">
+												<div
+													className="w-6 h-6 rounded border border-secondary-300 dark:border-secondary-600 flex-shrink-0"
+													style={{ backgroundColor: group.color }}
+												/>
+												<span className="text-xs text-secondary-500 dark:text-secondary-400 font-mono">
+													{group.color}
+												</span>
+											</div>
+											<button
+												type="button"
+												onClick={() => handleHostsClick(group.id)}
+												className="flex items-center text-sm text-secondary-500 dark:text-secondary-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
+												title={`View hosts in ${group.name}`}
+											>
+												<Server className="h-4 w-4 mr-1" />
+												{group._count?.hosts || 0} host
+												{group._count?.hosts !== 1 ? "s" : ""}
+											</button>
+										</div>
+									</div>
+								))}
+							</div>
+
+							{/* Desktop Table Layout */}
+							<div className="hidden md:block overflow-x-auto">
+								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+									<thead className="bg-secondary-50 dark:bg-secondary-700">
+										<tr>
+											<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+												Group
+											</th>
+											<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+												Description
+											</th>
+											<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+												Color
+											</th>
+											<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+												Hosts
+											</th>
+											<th className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+												Actions
+											</th>
 										</tr>
-									))
-								) : (
-									<tr>
-										<td colSpan="5" className="px-6 py-12 text-center">
-											<Server className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
-											<p className="text-secondary-500 dark:text-secondary-300">
-												No host groups found
-											</p>
-											<p className="text-sm text-secondary-400 dark:text-secondary-400 mt-2">
-												Click "Create Group" to create the first host group
-											</p>
-										</td>
-									</tr>
-								)}
-							</tbody>
-						</table>
-					</div>
+									</thead>
+									<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+										{hostGroups.map((group) => (
+											<tr
+												key={group.id}
+												className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
+											>
+												<td className="px-6 py-4 whitespace-nowrap">
+													<div className="flex items-center">
+														<div
+															className="w-3 h-3 rounded-full mr-3"
+															style={{ backgroundColor: group.color }}
+														/>
+														<div className="text-sm font-medium text-secondary-900 dark:text-white">
+															{group.name}
+														</div>
+													</div>
+												</td>
+												<td className="px-6 py-4">
+													<div className="text-sm text-secondary-500 dark:text-secondary-300">
+														{group.description || (
+															<span className="text-secondary-400 italic">
+																No description
+															</span>
+														)}
+													</div>
+												</td>
+												<td className="px-6 py-4 whitespace-nowrap">
+													<div className="flex items-center">
+														<div
+															className="w-6 h-6 rounded border border-secondary-300"
+															style={{ backgroundColor: group.color }}
+														/>
+														<span className="ml-2 text-sm text-secondary-500 dark:text-secondary-300">
+															{group.color}
+														</span>
+													</div>
+												</td>
+												<td className="px-6 py-4 whitespace-nowrap">
+													<button
+														type="button"
+														onClick={() => handleHostsClick(group.id)}
+														className="flex items-center text-sm text-secondary-500 dark:text-secondary-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
+														title={`View hosts in ${group.name}`}
+													>
+														<Server className="h-4 w-4 mr-2" />
+														{group._count?.hosts || 0} host
+														{group._count?.hosts !== 1 ? "s" : ""}
+													</button>
+												</td>
+												<td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+													<button
+														type="button"
+														onClick={() => handleEdit(group)}
+														className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+														title="Edit group"
+													>
+														<Edit className="h-4 w-4" />
+													</button>
+												</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</div>
+						</>
+					) : isLoading ? (
+						<div className="p-12 text-center">
+							<div className="flex items-center justify-center">
+								<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+							</div>
+						</div>
+					) : error ? (
+						<div className="p-6">
+							<div className="bg-danger-50 dark:bg-danger-900 border border-danger-200 dark:border-danger-700 rounded-md p-4">
+								<div className="flex">
+									<AlertTriangle className="h-5 w-5 text-danger-400 dark:text-danger-300" />
+									<div className="ml-3">
+										<h3 className="text-sm font-medium text-danger-800 dark:text-danger-200">
+											Error loading host groups
+										</h3>
+										<p className="text-sm text-danger-700 dark:text-danger-300 mt-1">
+											{error.message || "Failed to load host groups"}
+										</p>
+									</div>
+								</div>
+							</div>
+						</div>
+					) : (
+						<div className="p-12 text-center">
+							<Server className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
+							<p className="text-secondary-500 dark:text-secondary-300">
+								No host groups found
+							</p>
+							<p className="text-sm text-secondary-400 dark:text-secondary-400 mt-2">
+								Click "Create Group" to create the first host group
+							</p>
+						</div>
+					)}
 				</div>
 
 				{/* Create Modal */}
