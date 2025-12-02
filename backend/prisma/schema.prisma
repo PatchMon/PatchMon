@@ -112,6 +112,7 @@ model hosts {
   system_uptime           String?
   notes                   String?
   needs_reboot            Boolean?                  @default(false)
+  docker_enabled          Boolean                   @default(false)
   host_packages           host_packages[]
   host_repositories       host_repositories[]
   host_group_memberships  host_group_memberships[]
