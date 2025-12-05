@@ -1379,7 +1379,8 @@ server {
 
 # HTTPS server block
 server {
-    listen 443 ssl http2;
+    listen 443 ssl;
+    http2 on;
     server_name $fqdn;
     
     # SSL Configuration
