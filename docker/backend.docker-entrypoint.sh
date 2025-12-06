@@ -143,15 +143,19 @@ update_agents() {
 log "PatchMon Backend Container Starting..."
 log "Environment: ${NODE_ENV:-production}"
 
+# Add workspace node_modules to PATH for workspace binaries and set NODE_PATH for module resolution
+export PATH="/app/node_modules/.bin:$PATH"
+export NODE_PATH="/app/node_modules:/app/backend/node_modules:$NODE_PATH"
+
 # Update agents (version-aware)
 update_agents
 
 log "Running database migrations..."
-npx prisma migrate deploy
+cd /app/backend && npx --package=prisma@6.1.0 prisma migrate deploy
 
 log "Starting application..."
 if [ "${NODE_ENV}" = "development" ]; then
-    exec npm run dev
+    cd /app && exec npm run --workspace=backend dev
 else
-    exec npm start
+    cd /app && exec npm run --workspace=backend start
 fi
