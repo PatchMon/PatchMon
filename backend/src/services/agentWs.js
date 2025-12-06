@@ -4,6 +4,7 @@
 const WebSocket = require("ws");
 const url = require("node:url");
 const { get_current_time } = require("../utils/timezone");
+const { handleSshTerminalUpgrade } = require("./sshTerminalWs");
 
 // Connection registry by api_id
 const apiIdToSocket = new Map();
@@ -76,6 +77,12 @@ function init(server, prismaClient) {
 					});
 				});
 				return;
+			}
+
+			// Handle SSH terminal WebSocket connections
+			if (pathname.startsWith("/api/") && pathname.includes("/ssh-terminal/")) {
+				const handled = await handleSshTerminalUpgrade(request, socket, head, pathname);
+				if (handled) return;
 			}
 
 			// Handle agent WebSocket connections
