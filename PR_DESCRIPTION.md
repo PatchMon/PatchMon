@@ -99,16 +99,16 @@ npm test
 ## Screenshots
 
 ### SSH Terminal Modal View
-![SSH Terminal Modal](docs/images/ssh-terminal/ssh-terminal-modal.png)
+![SSH Terminal Modal](docs/images/ssh-terminal/Screenshot%20From%202025-12-06%2012-12-19.png)
 
 ### Active SSH Connection
-![SSH Terminal Connected](docs/images/ssh-terminal/ssh-terminal-connected.png)
+![SSH Terminal Connected](docs/images/ssh-terminal/Screenshot%20From%202025-12-06%2012-12-31.png)
 
 ### Embedded Mode on HostDetail Page
-![SSH Terminal Embedded](docs/images/ssh-terminal/ssh-terminal-embedded.png)
+![SSH Terminal Embedded](docs/images/ssh-terminal/Screenshot%20From%202025-12-06%2012-12-55.png)
 
 ### Authentication Methods
-![SSH Terminal Auth Methods](docs/images/ssh-terminal/ssh-terminal-auth-methods.png)
+![SSH Terminal Auth Methods](docs/images/ssh-terminal/Screenshot%20From%202025-12-06%2012-13-14.png)
 
 ## Technical Details
 
