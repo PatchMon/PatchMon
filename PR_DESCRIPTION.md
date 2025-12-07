@@ -100,20 +100,18 @@ npm test
 
 ### SSH Terminal Feature
 
-Please describe what each screenshot shows and I'll update the labels:
+1. **ssh-terminal-modal.png** - SSH Terminal modal view
+2. **ssh-terminal-connected.png** - Active SSH connection
+3. **ssh-terminal-embedded.png** - Embedded mode on HostDetail page
+4. **ssh-terminal-auth-methods.png** - Terminal with Install Agent dropdown
 
-1. **ssh-terminal-modal.png** - _[What does this show?]_
-2. **ssh-terminal-connected.png** - _[What does this show?]_
-3. **ssh-terminal-embedded.png** - _[What does this show?]_
-4. **ssh-terminal-auth-methods.png** - _[What does this show?]_
+![SSH Terminal Modal View](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-modal.png)
 
-![SSH Terminal Screenshot 1](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-modal.png)
+![Active SSH Connection](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-connected.png)
 
-![SSH Terminal Screenshot 2](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-connected.png)
+![Embedded Mode on HostDetail Page](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-embedded.png)
 
-![SSH Terminal Screenshot 3](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-embedded.png)
-
-![SSH Terminal Screenshot 4](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-auth-methods.png)
+![Terminal with Install Agent Feature](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-auth-methods.png)
 
 ## Technical Details
 
