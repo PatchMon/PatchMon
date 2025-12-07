@@ -127,6 +127,8 @@ export const adminHostsAPI = {
 		api.patch(`/hosts/${hostId}/friendly-name`, {
 			friendly_name: friendlyName,
 		}),
+	updateConnection: (hostId, connectionInfo) =>
+		api.patch(`/hosts/${hostId}/connection`, connectionInfo),
 	updateNotes: (hostId, notes) =>
 		api.patch(`/hosts/${hostId}/notes`, {
 			notes: notes,
