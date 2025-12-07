@@ -99,16 +99,16 @@ npm test
 ## Screenshots
 
 ### SSH Terminal Modal View
-![SSH Terminal Modal](docs/images/ssh-terminal/Screenshot%20From%202025-12-06%2012-12-19.png)
+![SSH Terminal Modal](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/Screenshot%20From%202025-12-06%2012-12-19.png)
 
 ### Active SSH Connection
-![SSH Terminal Connected](docs/images/ssh-terminal/Screenshot%20From%202025-12-06%2012-12-31.png)
+![SSH Terminal Connected](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/Screenshot%20From%202025-12-06%2012-12-31.png)
 
 ### Embedded Mode on HostDetail Page
-![SSH Terminal Embedded](docs/images/ssh-terminal/Screenshot%20From%202025-12-06%2012-12-55.png)
+![SSH Terminal Embedded](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/Screenshot%20From%202025-12-06%2012-12-55.png)
 
 ### Authentication Methods
-![SSH Terminal Auth Methods](docs/images/ssh-terminal/Screenshot%20From%202025-12-06%2012-13-14.png)
+![SSH Terminal Auth Methods](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/Screenshot%20From%202025-12-06%2012-13-14.png)
 
 ## Technical Details
 
