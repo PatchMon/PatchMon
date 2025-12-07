@@ -100,12 +100,12 @@ npm test
 
 ### SSH Terminal Feature
 
-1. **ssh-terminal-modal.png** - SSH Terminal modal view
+1. **ssh-terminal-modal.png** - Password authentication option
 2. **ssh-terminal-connected.png** - SSH key authentication option
 3. **ssh-terminal-embedded.png** - Current SSH terminal session
 4. **ssh-terminal-auth-methods.png** - Terminal with Install Agent dropdown
 
-![SSH Terminal Modal View](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-modal.png)
+![Password Authentication Option](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-modal.png)
 
 ![SSH Key Authentication Option](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-connected.png)
 
