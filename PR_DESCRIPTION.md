@@ -98,17 +98,22 @@ npm test
 
 ## Screenshots
 
-### SSH Terminal Modal View
-![SSH Terminal Modal](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-modal.png)
+### SSH Terminal Feature
 
-### Active SSH Connection
-![SSH Terminal Connected](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-connected.png)
+Please describe what each screenshot shows and I'll update the labels:
 
-### Embedded Mode on HostDetail Page
-![SSH Terminal Embedded](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-embedded.png)
+1. **ssh-terminal-modal.png** - _[What does this show?]_
+2. **ssh-terminal-connected.png** - _[What does this show?]_
+3. **ssh-terminal-embedded.png** - _[What does this show?]_
+4. **ssh-terminal-auth-methods.png** - _[What does this show?]_
 
-### Authentication Methods
-![SSH Terminal Auth Methods](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-auth-methods.png)
+![SSH Terminal Screenshot 1](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-modal.png)
+
+![SSH Terminal Screenshot 2](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-connected.png)
+
+![SSH Terminal Screenshot 3](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-embedded.png)
+
+![SSH Terminal Screenshot 4](https://raw.githubusercontent.com/slibonati/PatchMon/feature/ssh-terminal-access/docs/images/ssh-terminal/ssh-terminal-auth-methods.png)
 
 ## Technical Details
 
