@@ -155,5 +155,5 @@ npm test
 ## Notes
 
 - Console logging is used for debugging (can be replaced with proper logging library if preferred)
-- Some TODOs in code are outdated (password/key auth is fully implemented)
+- User permission checking for host access is a future enhancement (currently all authenticated users can access any host)
 - Integration tests provide structure for future expansion with real test infrastructure

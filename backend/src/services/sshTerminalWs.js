@@ -180,14 +180,11 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 
 						// Connect to SSH server
 						// Use host's IP address and default SSH port
-						// For now, we'll need SSH credentials - this is a TODO
-						// The user will need to provide credentials or use SSH keys
+						// User provides credentials (password or SSH key) via WebSocket message
 						const sshConfig = {
 							host: host.ip || host.hostname,
 							port: data.port || 22,
 							username: data.username || "root",
-							// password: data.password, // TODO: Handle password auth securely
-							// privateKey: data.privateKey, // TODO: Handle key auth
 							readyTimeout: 20000,
 						};
 
