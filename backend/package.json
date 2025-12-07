@@ -11,7 +11,10 @@
 		"db:generate": "prisma generate",
 		"db:migrate": "prisma migrate dev",
 		"db:push": "prisma db push",
-		"db:studio": "prisma studio"
+		"db:studio": "prisma studio",
+		"test": "jest",
+		"test:watch": "jest --watch",
+		"test:coverage": "jest --coverage"
 	},
 	"dependencies": {
 		"@bull-board/api": "^6.13.1",
@@ -39,6 +42,7 @@
 	},
 	"devDependencies": {
 		"@types/bcryptjs": "^2.4.6",
+		"jest": "^29.7.0",
 		"nodemon": "^3.1.9",
 		"prisma": "^6.1.0"
 	},
