@@ -2149,7 +2149,7 @@ router.get(
 			// Get host to verify it exists
 			const host = await prisma.hosts.findUnique({
 				where: { id: hostId },
-				select: { id: true, api_id: true, friendly_name: true },
+				select: { id: true, api_id: true, friendly_name: true, docker_enabled: true },
 			});
 
 			if (!host) {
@@ -2159,11 +2159,11 @@ router.get(
 			// Check if agent is connected
 			const connected = isConnected(host.api_id);
 
-			// Get integration states from cache (or defaults if not cached)
-			// Default: all integrations are disabled
+			// Get integration states from database (persisted) with cache fallback
+			// Database is source of truth, cache is used for quick WebSocket lookups
 			const cachedState = integrationStateCache.get(host.api_id) || {};
 			const integrations = {
-				docker: cachedState.docker || false, // Default: disabled
+				docker: host.docker_enabled ?? cachedState.docker ?? false,
 				// Future integrations can be added here
 			};
 
@@ -2214,7 +2214,7 @@ router.post(
 			// Get host to verify it exists
 			const host = await prisma.hosts.findUnique({
 				where: { id: hostId },
-				select: { id: true, api_id: true, friendly_name: true },
+				select: { id: true, api_id: true, friendly_name: true, docker_enabled: true },
 			});
 
 			if (!host) {
@@ -2244,7 +2244,15 @@ router.post(
 				});
 			}
 
-			// Update cache with new state
+			// Persist integration state to database
+			if (integrationName === "docker") {
+				await prisma.hosts.update({
+					where: { id: hostId },
+					data: { docker_enabled: enabled },
+				});
+			}
+
+			// Update cache with new state (for quick WebSocket lookups)
 			if (!integrationStateCache.has(host.api_id)) {
 				integrationStateCache.set(host.api_id, {});
 			}
