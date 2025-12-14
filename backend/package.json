@@ -34,12 +34,12 @@
 		"speakeasy": "^2.0.0",
 		"uuid": "^11.0.3",
 		"winston": "^3.17.0",
+		"prisma": "^6.1.0",
 		"ws": "^8.18.0"
 	},
 	"devDependencies": {
 		"@types/bcryptjs": "^2.4.6",
-		"nodemon": "^3.1.9",
-		"prisma": "^6.1.0"
+		"nodemon": "^3.1.9"
 	},
 	"engines": {
 		"node": ">=18.0.0"
