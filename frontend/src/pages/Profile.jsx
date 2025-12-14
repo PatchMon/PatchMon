@@ -188,32 +188,32 @@ const Profile = () => {
 			</div>
 
 			{/* User Info Card */}
-			<div className="bg-white dark:bg-secondary-800 shadow rounded-lg p-6">
-				<div className="flex items-center space-x-4">
+			<div className="bg-white dark:bg-secondary-800 shadow rounded-lg p-4 md:p-6">
+				<div className="flex items-center space-x-3 md:space-x-4">
 					<div className="flex-shrink-0">
-						<div className="h-16 w-16 rounded-full bg-primary-100 flex items-center justify-center">
-							<User className="h-8 w-8 text-primary-600" />
+						<div className="h-12 w-12 md:h-16 md:w-16 rounded-full bg-primary-100 dark:bg-primary-900 flex items-center justify-center">
+							<User className="h-6 w-6 md:h-8 md:w-8 text-primary-600 dark:text-primary-400" />
 						</div>
 					</div>
-					<div className="flex-1">
-						<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+					<div className="flex-1 min-w-0">
+						<h3 className="text-base md:text-lg font-medium text-secondary-900 dark:text-white truncate">
 							{user?.first_name && user?.last_name
 								? `${user.first_name} ${user.last_name}`
 								: user?.first_name || user?.username}
 						</h3>
-						<p className="text-sm text-secondary-600 dark:text-secondary-300">
+						<p className="text-sm text-secondary-600 dark:text-secondary-300 truncate">
 							{user?.email}
 						</p>
 						<div className="mt-2">
 							<span
 								className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium ${
 									user?.role === "admin"
-										? "bg-primary-100 text-primary-800"
+										? "bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200"
 										: user?.role === "host_manager"
-											? "bg-green-100 text-green-800"
+											? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
 											: user?.role === "readonly"
-												? "bg-yellow-100 text-yellow-800"
-												: "bg-secondary-100 text-secondary-800"
+												? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+												: "bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
 								}`}
 							>
 								<Shield className="h-3 w-3 mr-1" />
@@ -227,7 +227,35 @@ const Profile = () => {
 
 			{/* Tabs */}
 			<div className="bg-white dark:bg-secondary-800 shadow rounded-lg">
-				<div className="border-b border-secondary-200 dark:border-secondary-600">
+				{/* Mobile Button Navigation */}
+				<div className="md:hidden p-4 space-y-2 border-b border-secondary-200 dark:border-secondary-600">
+					{tabs.map((tab) => {
+						const Icon = tab.icon;
+						return (
+							<button
+								type="button"
+								key={tab.id}
+								onClick={() => setActiveTab(tab.id)}
+								className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+									activeTab === tab.id
+										? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
+										: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+								}`}
+							>
+								<div className="flex items-center space-x-3">
+									<Icon className="h-5 w-5" />
+									<span>{tab.name}</span>
+								</div>
+								{activeTab === tab.id && (
+									<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+								)}
+							</button>
+						);
+					})}
+				</div>
+
+				{/* Desktop Tab Navigation */}
+				<div className="hidden md:block border-b border-secondary-200 dark:border-secondary-600">
 					<nav className="-mb-px flex space-x-8 px-6">
 						{tabs.map((tab) => {
 							const Icon = tab.icon;
@@ -250,7 +278,7 @@ const Profile = () => {
 					</nav>
 				</div>
 
-				<div className="p-6">
+				<div className="p-4 md:p-6">
 					{/* Success/Error Message */}
 					{message.text && (
 						<div
@@ -372,13 +400,13 @@ const Profile = () => {
 							</div>
 
 							{/* Theme Settings */}
-							<div className="border-t border-secondary-200 dark:border-secondary-600 pt-6">
+							<div className="border-t border-secondary-200 dark:border-secondary-600 pt-4 md:pt-6">
 								<h4 className="text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-3">
 									Appearance
 								</h4>
 								<div className="max-w-md">
-									<div className="flex items-center justify-between">
-										<div className="flex items-center space-x-3">
+									<div className="flex items-center justify-between gap-3">
+										<div className="flex items-center space-x-2 md:space-x-3 flex-1 min-w-0">
 											<div className="flex-shrink-0">
 												{isDark ? (
 													<Moon className="h-5 w-5 text-secondary-600 dark:text-secondary-400" />
@@ -386,11 +414,11 @@ const Profile = () => {
 													<Sun className="h-5 w-5 text-secondary-600 dark:text-secondary-400" />
 												)}
 											</div>
-											<div>
-												<p className="text-sm font-medium text-secondary-900 dark:text-white">
+											<div className="min-w-0">
+												<p className="text-sm font-medium text-secondary-900 dark:text-white truncate">
 													{isDark ? "Dark Mode" : "Light Mode"}
 												</p>
-												<p className="text-xs text-secondary-500 dark:text-secondary-400">
+												<p className="text-xs text-secondary-500 dark:text-secondary-400 truncate">
 													{isDark
 														? "Switch to light mode"
 														: "Switch to dark mode"}
@@ -417,7 +445,7 @@ const Profile = () => {
 								</div>
 
 								{/* Color Theme Settings */}
-								<div className="mt-6 pt-6 border-t border-secondary-200 dark:border-secondary-600">
+								<div className="mt-4 md:mt-6 pt-4 md:pt-6 border-t border-secondary-200 dark:border-secondary-600">
 									<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-2">
 										Color Theme
 									</h4>
@@ -425,7 +453,7 @@ const Profile = () => {
 										Choose your preferred color scheme for the application
 									</p>
 
-									<div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+									<div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
 										{Object.entries(THEME_PRESETS).map(([themeKey, theme]) => {
 											const isSelected = colorTheme === themeKey;
 											const gradientColors = theme.login.xColors;
@@ -483,7 +511,7 @@ const Profile = () => {
 								<button
 									type="submit"
 									disabled={isLoading}
-									className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+									className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 w-full sm:w-auto justify-center sm:justify-end"
 								>
 									<Save className="h-4 w-4 mr-2" />
 									{isLoading ? "Saving..." : "Save Changes"}
@@ -607,7 +635,7 @@ const Profile = () => {
 								<button
 									type="submit"
 									disabled={isLoading}
-									className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+									className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 w-full sm:w-auto justify-center sm:justify-end"
 								>
 									<Key className="h-4 w-4 mr-2" />
 									{isLoading ? "Changing..." : "Change Password"}
@@ -869,19 +897,19 @@ const TfaTab = () => {
 
 			{/* TFA Status */}
 			{setupStep === "status" && (
-				<div className="space-y-6">
-					<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg p-6">
-						<div className="flex items-center justify-between">
-							<div className="flex items-center space-x-3">
+				<div className="space-y-4 md:space-y-6">
+					<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 md:p-6">
+						<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+							<div className="flex items-center space-x-3 flex-1 min-w-0">
 								<div
-									className={`p-2 rounded-full ${tfaStatus?.enabled ? "bg-green-100 dark:bg-green-900" : "bg-secondary-100 dark:bg-secondary-700"}`}
+									className={`p-2 rounded-full flex-shrink-0 ${tfaStatus?.enabled ? "bg-green-100 dark:bg-green-900" : "bg-secondary-100 dark:bg-secondary-700"}`}
 								>
 									<Smartphone
-										className={`h-6 w-6 ${tfaStatus?.enabled ? "text-green-600 dark:text-green-400" : "text-secondary-600 dark:text-secondary-400"}`}
+										className={`h-5 w-5 md:h-6 md:w-6 ${tfaStatus?.enabled ? "text-green-600 dark:text-green-400" : "text-secondary-600 dark:text-secondary-400"}`}
 									/>
 								</div>
-								<div>
-									<h4 className="text-lg font-medium text-secondary-900 dark:text-white">
+								<div className="min-w-0">
+									<h4 className="text-base md:text-lg font-medium text-secondary-900 dark:text-white">
 										{tfaStatus?.enabled
 											? "Two-Factor Authentication Enabled"
 											: "Two-Factor Authentication Disabled"}
@@ -893,12 +921,12 @@ const TfaTab = () => {
 									</p>
 								</div>
 							</div>
-							<div>
+							<div className="flex-shrink-0">
 								{tfaStatus?.enabled ? (
 									<button
 										type="button"
 										onClick={() => setSetupStep("disable")}
-										className="btn-outline text-danger-600 border-danger-300 hover:bg-danger-50"
+										className="btn-outline text-danger-600 border-danger-300 hover:bg-danger-50 w-full sm:w-auto"
 									>
 										<Trash2 className="h-4 w-4 mr-2" />
 										Disable TFA
@@ -908,7 +936,7 @@ const TfaTab = () => {
 										type="button"
 										onClick={handleSetup}
 										disabled={setupMutation.isPending}
-										className="btn-primary"
+										className="btn-primary w-full sm:w-auto"
 									>
 										<Smartphone className="h-4 w-4 mr-2" />
 										{setupMutation.isPending ? "Setting up..." : "Enable TFA"}
@@ -919,8 +947,8 @@ const TfaTab = () => {
 					</div>
 
 					{tfaStatus?.enabled && (
-						<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg p-6">
-							<h4 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+						<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 md:p-6">
+							<h4 className="text-base md:text-lg font-medium text-secondary-900 dark:text-white mb-3 md:mb-4">
 								Backup Codes
 							</h4>
 							<p className="text-sm text-secondary-600 dark:text-secondary-300 mb-4">
@@ -931,7 +959,7 @@ const TfaTab = () => {
 								type="button"
 								onClick={handleRegenerateBackupCodes}
 								disabled={regenerateBackupCodesMutation.isPending}
-								className="btn-outline"
+								className="btn-outline w-full sm:w-auto"
 							>
 								<RefreshCw
 									className={`h-4 w-4 mr-2 ${regenerateBackupCodesMutation.isPending ? "animate-spin" : ""}`}
@@ -947,9 +975,9 @@ const TfaTab = () => {
 
 			{/* TFA Setup */}
 			{setupStep === "setup" && setupMutation.data && (
-				<div className="space-y-6">
-					<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg p-6">
-						<h4 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+				<div className="space-y-4 md:space-y-6">
+					<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 md:p-6">
+						<h4 className="text-base md:text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							Setup Two-Factor Authentication
 						</h4>
 						<div className="space-y-4">
@@ -957,19 +985,19 @@ const TfaTab = () => {
 								<img
 									src={setupMutation.data.qrCode}
 									alt="QR Code"
-									className="mx-auto h-48 w-48 border border-secondary-200 dark:border-secondary-600 rounded-lg"
+									className="mx-auto h-40 w-40 md:h-48 md:w-48 border border-secondary-200 dark:border-secondary-600 rounded-lg"
 								/>
 								<p className="text-sm text-secondary-600 dark:text-secondary-300 mt-2">
 									Scan this QR code with your authenticator app
 								</p>
 							</div>
 
-							<div className="bg-secondary-50 dark:bg-secondary-700 p-4 rounded-lg">
+							<div className="bg-secondary-50 dark:bg-secondary-700 p-3 md:p-4 rounded-lg">
 								<p className="text-sm font-medium text-secondary-900 dark:text-white mb-2">
 									Manual Entry Key:
 								</p>
-								<div className="flex items-center space-x-2">
-									<code className="flex-1 bg-white dark:bg-secondary-800 px-3 py-2 rounded border text-sm font-mono">
+								<div className="flex items-center gap-2">
+									<code className="flex-1 bg-white dark:bg-secondary-800 px-2 md:px-3 py-2 rounded border text-xs md:text-sm font-mono break-all">
 										{setupMutation.data.manualEntryKey}
 									</code>
 									<button
@@ -977,7 +1005,7 @@ const TfaTab = () => {
 										onClick={() =>
 											copyToClipboard(setupMutation.data.manualEntryKey)
 										}
-										className="p-2 text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-300"
+										className="p-2 text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-300 flex-shrink-0"
 										title="Copy to clipboard"
 									>
 										<Copy className="h-4 w-4" />
@@ -989,7 +1017,7 @@ const TfaTab = () => {
 								<button
 									type="button"
 									onClick={() => setSetupStep("verify")}
-									className="btn-primary"
+									className="btn-primary w-full sm:w-auto"
 								>
 									Continue to Verification
 								</button>
@@ -1001,9 +1029,9 @@ const TfaTab = () => {
 
 			{/* TFA Verification */}
 			{setupStep === "verify" && (
-				<div className="space-y-6">
-					<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg p-6">
-						<h4 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+				<div className="space-y-4 md:space-y-6">
+					<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 md:p-6">
+						<h4 className="text-base md:text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							Verify Setup
 						</h4>
 						<p className="text-sm text-secondary-600 dark:text-secondary-300 mb-4">
@@ -1028,18 +1056,18 @@ const TfaTab = () => {
 										)
 									}
 									placeholder="000000"
-									className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white text-center text-lg font-mono tracking-widest"
+									className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white text-center text-base md:text-lg font-mono tracking-widest"
 									maxLength="6"
 									required
 								/>
 							</div>
-							<div className="flex space-x-3">
+							<div className="flex flex-col sm:flex-row gap-3">
 								<button
 									type="submit"
 									disabled={
 										verifyMutation.isPending || verificationToken.length !== 6
 									}
-									className="btn-primary"
+									className="btn-primary w-full sm:w-auto"
 								>
 									{verifyMutation.isPending
 										? "Verifying..."
@@ -1048,7 +1076,7 @@ const TfaTab = () => {
 								<button
 									type="button"
 									onClick={() => setSetupStep("status")}
-									className="btn-outline"
+									className="btn-outline w-full sm:w-auto"
 								>
 									Cancel
 								</button>
@@ -1060,17 +1088,17 @@ const TfaTab = () => {
 
 			{/* Backup Codes */}
 			{setupStep === "backup-codes" && backupCodes.length > 0 && (
-				<div className="space-y-6">
-					<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg p-6">
-						<h4 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+				<div className="space-y-4 md:space-y-6">
+					<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 md:p-6">
+						<h4 className="text-base md:text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							Backup Codes
 						</h4>
 						<p className="text-sm text-secondary-600 dark:text-secondary-300 mb-4">
 							Save these backup codes in a safe place. Each code can only be
 							used once.
 						</p>
-						<div className="bg-secondary-50 dark:bg-secondary-700 p-4 rounded-lg mb-4">
-							<div className="grid grid-cols-2 gap-2 font-mono text-sm">
+						<div className="bg-secondary-50 dark:bg-secondary-700 p-3 md:p-4 rounded-lg mb-4">
+							<div className="grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono text-xs md:text-sm">
 								{backupCodes.map((code, index) => (
 									<div
 										key={code}
@@ -1079,18 +1107,18 @@ const TfaTab = () => {
 										<span className="text-secondary-600 dark:text-secondary-400">
 											{index + 1}.
 										</span>
-										<span className="text-secondary-900 dark:text-white">
+										<span className="text-secondary-900 dark:text-white break-all ml-2">
 											{code}
 										</span>
 									</div>
 								))}
 							</div>
 						</div>
-						<div className="flex space-x-3">
+						<div className="flex flex-col sm:flex-row gap-3">
 							<button
 								type="button"
 								onClick={downloadBackupCodes}
-								className="btn-outline"
+								className="btn-outline w-full sm:w-auto"
 							>
 								<Download className="h-4 w-4 mr-2" />
 								Download Codes
@@ -1101,7 +1129,7 @@ const TfaTab = () => {
 									setSetupStep("status");
 									queryClient.invalidateQueries(["tfaStatus"]);
 								}}
-								className="btn-primary"
+								className="btn-primary w-full sm:w-auto"
 							>
 								Done
 							</button>
@@ -1112,9 +1140,9 @@ const TfaTab = () => {
 
 			{/* Disable TFA */}
 			{setupStep === "disable" && (
-				<div className="space-y-6">
-					<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg p-6">
-						<h4 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+				<div className="space-y-4 md:space-y-6">
+					<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 md:p-6">
+						<h4 className="text-base md:text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							Disable Two-Factor Authentication
 						</h4>
 						<p className="text-sm text-secondary-600 dark:text-secondary-300 mb-4">
@@ -1137,18 +1165,18 @@ const TfaTab = () => {
 									required
 								/>
 							</div>
-							<div className="flex space-x-3">
+							<div className="flex flex-col sm:flex-row gap-3">
 								<button
 									type="submit"
 									disabled={disableMutation.isPending || !password}
-									className="btn-danger"
+									className="btn-danger w-full sm:w-auto"
 								>
 									{disableMutation.isPending ? "Disabling..." : "Disable TFA"}
 								</button>
 								<button
 									type="button"
 									onClick={() => setSetupStep("status")}
-									className="btn-outline"
+									className="btn-outline w-full sm:w-auto"
 								>
 									Cancel
 								</button>
@@ -1314,7 +1342,7 @@ const SessionsTab = () => {
 								type="button"
 								onClick={handleRevokeAllSessions}
 								disabled={revokeAllSessionsMutation.isPending}
-								className="inline-flex items-center px-4 py-2 border border-danger-300 text-sm font-medium rounded-md text-danger-700 bg-white hover:bg-danger-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-danger-500 disabled:opacity-50"
+								className="inline-flex items-center px-4 py-2 border border-danger-300 text-sm font-medium rounded-md text-danger-700 bg-white hover:bg-danger-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-danger-500 disabled:opacity-50 w-full sm:w-auto justify-center sm:justify-end"
 							>
 								<LogOut className="h-4 w-4 mr-2" />
 								{revokeAllSessionsMutation.isPending
@@ -1328,57 +1356,57 @@ const SessionsTab = () => {
 					{sessionsData.sessions.map((session) => (
 						<div
 							key={session.id}
-							className={`border rounded-lg p-4 ${
+							className={`border rounded-lg p-3 md:p-4 ${
 								session.is_current_session
 									? "border-primary-200 bg-primary-50 dark:border-primary-800 dark:bg-primary-900/20"
 									: "border-secondary-200 bg-white dark:border-secondary-700 dark:bg-secondary-800"
 							}`}
 						>
-							<div className="flex items-start justify-between">
-								<div className="flex-1">
-									<div className="flex items-center space-x-3">
-										<Monitor className="h-5 w-5 text-secondary-500" />
-										<div>
-											<div className="flex items-center space-x-2">
+							<div className="flex items-start justify-between gap-3">
+								<div className="flex-1 min-w-0">
+									<div className="flex items-start space-x-2 md:space-x-3">
+										<Monitor className="h-4 w-4 md:h-5 md:w-5 text-secondary-500 flex-shrink-0 mt-0.5" />
+										<div className="flex-1 min-w-0">
+											<div className="flex flex-wrap items-center gap-2">
 												<h4 className="text-sm font-medium text-secondary-900 dark:text-secondary-100">
 													{session.device_info?.browser} on{" "}
 													{session.device_info?.os}
 												</h4>
 												{session.is_current_session && (
-													<span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200">
+													<span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200 flex-shrink-0">
 														Current Session
 													</span>
 												)}
 												{session.tfa_remember_me && (
-													<span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-success-100 text-success-800 dark:bg-success-900 dark:text-success-200">
+													<span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-success-100 text-success-800 dark:bg-success-900 dark:text-success-200 flex-shrink-0">
 														Remembered
 													</span>
 												)}
 											</div>
-											<p className="text-sm text-secondary-600 dark:text-secondary-400">
+											<p className="text-sm text-secondary-600 dark:text-secondary-400 mt-1">
 												{session.device_info?.device} • {session.ip_address}
 											</p>
 										</div>
 									</div>
 
-									<div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-secondary-600 dark:text-secondary-400">
+									<div className="mt-3 space-y-2 text-sm text-secondary-600 dark:text-secondary-400">
 										<div className="flex items-center space-x-2">
-											<MapPin className="h-4 w-4" />
-											<span>
+											<MapPin className="h-4 w-4 flex-shrink-0" />
+											<span className="truncate">
 												{session.location_info?.city},{" "}
 												{session.location_info?.country}
 											</span>
 										</div>
 										<div className="flex items-center space-x-2">
-											<Clock className="h-4 w-4" />
+											<Clock className="h-4 w-4 flex-shrink-0" />
 											<span>
 												Last active: {formatRelativeTime(session.last_activity)}
 											</span>
 										</div>
-										<div className="flex items-center space-x-2">
+										<div className="text-xs md:text-sm">
 											<span>Created: {formatDate(session.created_at)}</span>
 										</div>
-										<div className="flex items-center space-x-2">
+										<div className="text-xs md:text-sm">
 											<span>Login count: {session.login_count}</span>
 										</div>
 									</div>
@@ -1389,7 +1417,7 @@ const SessionsTab = () => {
 										type="button"
 										onClick={() => handleRevokeSession(session.id)}
 										disabled={revokeSessionMutation.isPending}
-										className="ml-4 inline-flex items-center px-3 py-2 border border-danger-300 text-sm font-medium rounded-md text-danger-700 bg-white hover:bg-danger-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-danger-500 disabled:opacity-50"
+										className="inline-flex items-center px-3 py-2 border border-danger-300 text-sm font-medium rounded-md text-danger-700 bg-white hover:bg-danger-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-danger-500 disabled:opacity-50 flex-shrink-0"
 									>
 										<LogOut className="h-4 w-4" />
 									</button>

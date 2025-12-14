@@ -215,7 +215,7 @@ const GlobalSearch = () => {
 				<input
 					ref={inputRef}
 					type="text"
-					className="block w-full rounded-lg border border-secondary-200 bg-white py-2 pl-10 pr-10 text-sm text-secondary-900 placeholder-secondary-500 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-secondary-600 dark:bg-secondary-700 dark:text-white dark:placeholder-secondary-400"
+					className="block w-full rounded-lg border border-secondary-200 bg-white py-2.5 sm:py-2 pl-10 pr-10 text-sm text-secondary-900 placeholder-secondary-500 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-secondary-600 dark:bg-secondary-700 dark:text-white dark:placeholder-secondary-400 min-h-[44px]"
 					placeholder="Search hosts, packages, repos, users..."
 					value={query}
 					onChange={handleInputChange}
@@ -228,7 +228,8 @@ const GlobalSearch = () => {
 					<button
 						type="button"
 						onClick={handleClear}
-						className="absolute inset-y-0 right-0 flex items-center pr-3 text-secondary-400 hover:text-secondary-600"
+						className="absolute inset-y-0 right-0 flex items-center pr-3 text-secondary-400 hover:text-secondary-600 min-w-[44px] min-h-[44px] justify-center"
+						aria-label="Clear search"
 					>
 						<X className="h-4 w-4" />
 					</button>
@@ -237,9 +238,9 @@ const GlobalSearch = () => {
 
 			{/* Dropdown Results */}
 			{isOpen && (
-				<div className="absolute z-50 mt-2 w-full rounded-lg border border-secondary-200 bg-white shadow-lg dark:border-secondary-600 dark:bg-secondary-800">
+				<div className="absolute z-50 mt-2 w-full sm:w-[calc(100vw-2rem)] sm:max-w-md rounded-lg border border-secondary-200 bg-white shadow-lg dark:border-secondary-600 dark:bg-secondary-800 left-0 sm:left-auto right-0 sm:right-auto">
 					{isLoading ? (
-						<div className="px-4 py-2 text-center text-sm text-secondary-500">
+						<div className="px-4 py-2 text-center text-sm text-secondary-500 dark:text-white/70">
 							Searching...
 						</div>
 					) : hasResults ? (
@@ -247,7 +248,7 @@ const GlobalSearch = () => {
 							{/* Hosts */}
 							{results.hosts?.length > 0 && (
 								<div>
-									<div className="sticky top-0 z-10 bg-secondary-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-secondary-500 dark:bg-secondary-700 dark:text-secondary-400">
+									<div className="sticky top-0 z-10 bg-secondary-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-secondary-500 dark:bg-secondary-700 dark:text-white/80">
 										Hosts
 									</div>
 									{results.hosts.map((host, _idx) => {
@@ -260,7 +261,7 @@ const GlobalSearch = () => {
 												type="button"
 												key={host.id}
 												onClick={() => handleResultClick(host)}
-												className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors ${
+												className={`flex w-full items-center gap-2 px-3 py-3 sm:py-1.5 text-left transition-colors min-h-[44px] ${
 													globalIdx === selectedIndex
 														? "bg-primary-50 dark:bg-primary-900/20"
 														: "hover:bg-secondary-50 dark:hover:bg-secondary-700"
@@ -271,12 +272,14 @@ const GlobalSearch = () => {
 													<span className="text-sm font-medium text-secondary-900 dark:text-white truncate">
 														{display.primary}
 													</span>
-													<span className="text-xs text-secondary-400">•</span>
-													<span className="text-xs text-secondary-500 dark:text-secondary-400 truncate">
+													<span className="text-xs text-secondary-400 dark:text-white/50">
+														•
+													</span>
+													<span className="text-xs text-secondary-500 dark:text-white/70 truncate">
 														{display.secondary}
 													</span>
 												</div>
-												<div className="flex-shrink-0 text-xs text-secondary-400">
+												<div className="flex-shrink-0 text-xs text-secondary-400 dark:text-white/60">
 													{host.os_type}
 												</div>
 											</button>
@@ -288,7 +291,7 @@ const GlobalSearch = () => {
 							{/* Packages */}
 							{results.packages?.length > 0 && (
 								<div>
-									<div className="sticky top-0 z-10 bg-secondary-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-secondary-500 dark:bg-secondary-700 dark:text-secondary-400">
+									<div className="sticky top-0 z-10 bg-secondary-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-secondary-500 dark:bg-secondary-700 dark:text-white/80">
 										Packages
 									</div>
 									{results.packages.map((pkg, _idx) => {
@@ -301,7 +304,7 @@ const GlobalSearch = () => {
 												type="button"
 												key={pkg.id}
 												onClick={() => handleResultClick(pkg)}
-												className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors ${
+												className={`flex w-full items-center gap-2 px-3 py-3 sm:py-1.5 text-left transition-colors min-h-[44px] ${
 													globalIdx === selectedIndex
 														? "bg-primary-50 dark:bg-primary-900/20"
 														: "hover:bg-secondary-50 dark:hover:bg-secondary-700"
@@ -317,13 +320,13 @@ const GlobalSearch = () => {
 															<span className="text-xs text-secondary-400">
 																•
 															</span>
-															<span className="text-xs text-secondary-500 dark:text-secondary-400 truncate">
+															<span className="text-xs text-secondary-500 dark:text-white/70 truncate">
 																{display.secondary}
 															</span>
 														</>
 													)}
 												</div>
-												<div className="flex-shrink-0 text-xs text-secondary-400">
+												<div className="flex-shrink-0 text-xs text-secondary-400 dark:text-white/60">
 													{pkg.host_count} hosts
 												</div>
 											</button>
@@ -335,7 +338,7 @@ const GlobalSearch = () => {
 							{/* Repositories */}
 							{results.repositories?.length > 0 && (
 								<div>
-									<div className="sticky top-0 z-10 bg-secondary-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-secondary-500 dark:bg-secondary-700 dark:text-secondary-400">
+									<div className="sticky top-0 z-10 bg-secondary-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-secondary-500 dark:bg-secondary-700 dark:text-white/80">
 										Repositories
 									</div>
 									{results.repositories.map((repo, _idx) => {
@@ -348,7 +351,7 @@ const GlobalSearch = () => {
 												type="button"
 												key={repo.id}
 												onClick={() => handleResultClick(repo)}
-												className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors ${
+												className={`flex w-full items-center gap-2 px-3 py-3 sm:py-1.5 text-left transition-colors min-h-[44px] ${
 													globalIdx === selectedIndex
 														? "bg-primary-50 dark:bg-primary-900/20"
 														: "hover:bg-secondary-50 dark:hover:bg-secondary-700"
@@ -359,12 +362,14 @@ const GlobalSearch = () => {
 													<span className="text-sm font-medium text-secondary-900 dark:text-white truncate">
 														{display.primary}
 													</span>
-													<span className="text-xs text-secondary-400">•</span>
-													<span className="text-xs text-secondary-500 dark:text-secondary-400 truncate">
+													<span className="text-xs text-secondary-400 dark:text-white/50">
+														•
+													</span>
+													<span className="text-xs text-secondary-500 dark:text-white/70 truncate">
 														{display.secondary}
 													</span>
 												</div>
-												<div className="flex-shrink-0 text-xs text-secondary-400">
+												<div className="flex-shrink-0 text-xs text-secondary-400 dark:text-white/60">
 													{repo.host_count} hosts
 												</div>
 											</button>
@@ -376,7 +381,7 @@ const GlobalSearch = () => {
 							{/* Users */}
 							{results.users?.length > 0 && (
 								<div>
-									<div className="sticky top-0 z-10 bg-secondary-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-secondary-500 dark:bg-secondary-700 dark:text-secondary-400">
+									<div className="sticky top-0 z-10 bg-secondary-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-secondary-500 dark:bg-secondary-700 dark:text-white/80">
 										Users
 									</div>
 									{results.users.map((user, _idx) => {
@@ -389,7 +394,7 @@ const GlobalSearch = () => {
 												type="button"
 												key={user.id}
 												onClick={() => handleResultClick(user)}
-												className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors ${
+												className={`flex w-full items-center gap-2 px-3 py-3 sm:py-1.5 text-left transition-colors min-h-[44px] ${
 													globalIdx === selectedIndex
 														? "bg-primary-50 dark:bg-primary-900/20"
 														: "hover:bg-secondary-50 dark:hover:bg-secondary-700"
@@ -400,12 +405,14 @@ const GlobalSearch = () => {
 													<span className="text-sm font-medium text-secondary-900 dark:text-white truncate">
 														{display.primary}
 													</span>
-													<span className="text-xs text-secondary-400">•</span>
-													<span className="text-xs text-secondary-500 dark:text-secondary-400 truncate">
+													<span className="text-xs text-secondary-400 dark:text-white/50">
+														•
+													</span>
+													<span className="text-xs text-secondary-500 dark:text-white/70 truncate">
 														{display.secondary}
 													</span>
 												</div>
-												<div className="flex-shrink-0 text-xs text-secondary-400">
+												<div className="flex-shrink-0 text-xs text-secondary-400 dark:text-white/60">
 													{user.role}
 												</div>
 											</button>
@@ -415,7 +422,7 @@ const GlobalSearch = () => {
 							)}
 						</div>
 					) : query.trim() ? (
-						<div className="px-4 py-2 text-center text-sm text-secondary-500">
+						<div className="px-4 py-2 text-center text-sm text-secondary-500 dark:text-white/70">
 							No results found for "{query}"
 						</div>
 					) : null}

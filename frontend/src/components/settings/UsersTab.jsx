@@ -132,177 +132,316 @@ const UsersTab = () => {
 		<div className="space-y-6">
 			{/* Users Table */}
 			<div className="bg-white dark:bg-secondary-800 shadow overflow-hidden sm:rounded-lg">
-				<div className="overflow-x-auto">
-					<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
-						<thead className="bg-secondary-50 dark:bg-secondary-700">
-							<tr>
-								<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
-									User
-								</th>
-								<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
-									Email
-								</th>
-								<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
-									Role
-								</th>
-								<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
-									Status
-								</th>
-								<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
-									Created
-								</th>
-								<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
-									Last Login
-								</th>
-								<th className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
-									Actions
-								</th>
-							</tr>
-						</thead>
-						<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
-							{users && Array.isArray(users) && users.length > 0 ? (
-								users.map((user) => (
-									<tr
-										key={user.id}
-										className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
-									>
-										<td className="px-6 py-4 whitespace-nowrap">
-											<div className="flex items-center">
-												<div className="flex-shrink-0 h-10 w-10">
-													<div className="h-10 w-10 rounded-full bg-primary-100 flex items-center justify-center">
-														<User className="h-5 w-5 text-primary-600" />
-													</div>
-												</div>
-												<div className="ml-4">
-													<div className="flex items-center">
-														<div className="text-sm font-medium text-secondary-900 dark:text-white">
-															{user.username}
-														</div>
-														{user.id === currentUser?.id && (
-															<span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-blue-100 text-blue-800">
-																You
-															</span>
-														)}
-													</div>
-												</div>
+				{users && Array.isArray(users) && users.length > 0 ? (
+					<>
+						{/* Mobile Card Layout */}
+						<div className="md:hidden space-y-3 p-4">
+							{users.map((user) => (
+								<div key={user.id} className="card p-4 space-y-3">
+									{/* User Name and Avatar */}
+									<div className="flex items-center gap-3">
+										<div className="flex-shrink-0 h-10 w-10">
+											<div className="h-10 w-10 rounded-full bg-primary-100 dark:bg-primary-900 flex items-center justify-center">
+												<User className="h-5 w-5 text-primary-600 dark:text-primary-400" />
 											</div>
-										</td>
-										<td className="px-6 py-4 whitespace-nowrap">
-											<div className="flex items-center text-sm text-secondary-500 dark:text-secondary-300">
-												<Mail className="h-4 w-4 mr-2" />
-												{user.email}
+										</div>
+										<div className="flex-1 min-w-0">
+											<div className="flex items-center gap-2">
+												<div className="text-base font-semibold text-secondary-900 dark:text-white truncate">
+													{user.username}
+												</div>
+												{user.id === currentUser?.id && (
+													<span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 flex-shrink-0">
+														You
+													</span>
+												)}
 											</div>
-										</td>
-										<td className="px-6 py-4 whitespace-nowrap">
-											<span
-												className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium ${
-													user.role === "admin"
-														? "bg-primary-100 text-primary-800"
-														: user.role === "host_manager"
-															? "bg-green-100 text-green-800"
-															: user.role === "readonly"
-																? "bg-yellow-100 text-yellow-800"
-																: "bg-secondary-100 text-secondary-800"
-												}`}
-											>
-												<Shield className="h-3 w-3 mr-1" />
-												{user.role.charAt(0).toUpperCase() +
-													user.role.slice(1).replace("_", " ")}
+										</div>
+									</div>
+
+									{/* Email */}
+									<div className="flex items-center gap-2 text-sm">
+										<Mail className="h-4 w-4 text-secondary-400 flex-shrink-0" />
+										<span className="text-secondary-900 dark:text-white truncate">
+											{user.email}
+										</span>
+									</div>
+
+									{/* Role and Status */}
+									<div className="flex items-center justify-between gap-2">
+										<span
+											className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium ${
+												user.role === "admin"
+													? "bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200"
+													: user.role === "host_manager"
+														? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+														: user.role === "readonly"
+															? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+															: "bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
+											}`}
+										>
+											<Shield className="h-3 w-3 mr-1" />
+											{user.role.charAt(0).toUpperCase() +
+												user.role.slice(1).replace("_", " ")}
+										</span>
+										{user.is_active ? (
+											<div className="flex items-center text-green-600 dark:text-green-400">
+												<CheckCircle className="h-4 w-4 mr-1" />
+												<span className="text-xs font-medium">Active</span>
+											</div>
+										) : (
+											<div className="flex items-center text-red-600 dark:text-red-400">
+												<XCircle className="h-4 w-4 mr-1" />
+												<span className="text-xs font-medium">Inactive</span>
+											</div>
+										)}
+									</div>
+
+									{/* Created and Last Login */}
+									<div className="space-y-2 pt-2 border-t border-secondary-200 dark:border-secondary-600">
+										<div className="flex items-center gap-2 text-sm">
+											<Calendar className="h-4 w-4 text-secondary-400 flex-shrink-0" />
+											<span className="text-secondary-500 dark:text-secondary-400">
+												Created:&nbsp;
 											</span>
-										</td>
-										<td className="px-6 py-4 whitespace-nowrap">
-											{user.is_active ? (
-												<div className="flex items-center text-green-600">
-													<CheckCircle className="h-4 w-4 mr-1" />
-													<span className="text-sm">Active</span>
-												</div>
-											) : (
-												<div className="flex items-center text-red-600">
-													<XCircle className="h-4 w-4 mr-1" />
-													<span className="text-sm">Inactive</span>
-												</div>
-											)}
-										</td>
-										<td className="px-6 py-4 whitespace-nowrap">
-											<div className="flex items-center text-sm text-secondary-500 dark:text-secondary-300">
-												<Calendar className="h-4 w-4 mr-2" />
+											<span className="text-secondary-900 dark:text-white">
 												{new Date(user.created_at).toLocaleDateString()}
-											</div>
-										</td>
-										<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500 dark:text-secondary-300">
-											{user.last_login ? (
-												new Date(user.last_login).toLocaleDateString()
-											) : (
-												<span className="text-secondary-400">Never</span>
-											)}
-										</td>
-										<td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-											<div className="flex items-center justify-end space-x-2">
-												<button
-													type="button"
-													onClick={() => handleEditUser(user)}
-													className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
-													title="Edit user"
-												>
-													<Edit className="h-4 w-4" />
-												</button>
-												<button
-													type="button"
-													onClick={() => handleResetPassword(user)}
-													className="text-blue-400 hover:text-blue-600 dark:text-blue-500 dark:hover:text-blue-300 disabled:text-gray-300 disabled:cursor-not-allowed"
-													title={
-														!user.is_active
-															? "Cannot reset password for inactive user"
-															: "Reset password"
-													}
-													disabled={!user.is_active}
-												>
-													<Key className="h-4 w-4" />
-												</button>
-												<button
-													type="button"
-													onClick={() =>
-														handleDeleteUser(user.id, user.username)
-													}
-													className="text-danger-400 hover:text-danger-600 dark:text-danger-500 dark:hover:text-danger-400 disabled:text-gray-300 disabled:cursor-not-allowed"
-													title={
-														user.id === currentUser?.id
-															? "Cannot delete your own account"
-															: user.role === "admin" &&
-																	users.filter((u) => u.role === "admin")
-																		.length === 1
-																? "Cannot delete the last admin user"
-																: "Delete user"
-													}
-													disabled={
-														user.id === currentUser?.id ||
-														(user.role === "admin" &&
+											</span>
+										</div>
+										<div className="text-sm">
+											<span className="text-secondary-500 dark:text-secondary-400">
+												Last Login:&nbsp;
+											</span>
+											<span className="text-secondary-900 dark:text-white">
+												{user.last_login
+													? new Date(user.last_login).toLocaleDateString()
+													: "Never"}
+											</span>
+										</div>
+									</div>
+
+									{/* Actions */}
+									<div className="flex items-center justify-end gap-3 pt-2 border-t border-secondary-200 dark:border-secondary-600">
+										<button
+											type="button"
+											onClick={() => handleEditUser(user)}
+											className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300 inline-flex items-center gap-1 text-sm"
+											title="Edit user"
+										>
+											<Edit className="h-4 w-4" />
+											Edit
+										</button>
+										<button
+											type="button"
+											onClick={() => handleResetPassword(user)}
+											className="text-blue-400 hover:text-blue-600 dark:text-blue-500 dark:hover:text-blue-300 disabled:text-gray-300 disabled:cursor-not-allowed inline-flex items-center gap-1 text-sm"
+											title={
+												!user.is_active
+													? "Cannot reset password for inactive user"
+													: "Reset password"
+											}
+											disabled={!user.is_active}
+										>
+											<Key className="h-4 w-4" />
+											Reset
+										</button>
+										<button
+											type="button"
+											onClick={() => handleDeleteUser(user.id, user.username)}
+											className="text-danger-400 hover:text-danger-600 dark:text-danger-500 dark:hover:text-danger-400 disabled:text-gray-300 disabled:cursor-not-allowed inline-flex items-center gap-1 text-sm"
+											title={
+												user.id === currentUser?.id
+													? "Cannot delete your own account"
+													: user.role === "admin" &&
 															users.filter((u) => u.role === "admin").length ===
-																1)
-													}
-												>
-													<Trash2 className="h-4 w-4" />
-												</button>
-											</div>
-										</td>
+																1
+														? "Cannot delete the last admin user"
+														: "Delete user"
+											}
+											disabled={
+												user.id === currentUser?.id ||
+												(user.role === "admin" &&
+													users.filter((u) => u.role === "admin").length === 1)
+											}
+										>
+											<Trash2 className="h-4 w-4" />
+											Delete
+										</button>
+									</div>
+								</div>
+							))}
+						</div>
+
+						{/* Desktop Table Layout */}
+						<div className="hidden md:block overflow-x-auto">
+							<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+								<thead className="bg-secondary-50 dark:bg-secondary-700">
+									<tr>
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+											User
+										</th>
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+											Email
+										</th>
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+											Role
+										</th>
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+											Status
+										</th>
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+											Created
+										</th>
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+											Last Login
+										</th>
+										<th className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+											Actions
+										</th>
 									</tr>
-								))
-							) : (
-								<tr>
-									<td colSpan="7" className="px-6 py-12 text-center">
-										<User className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
-										<p className="text-secondary-500 dark:text-secondary-300">
-											No users found
-										</p>
-										<p className="text-sm text-secondary-400 dark:text-secondary-400 mt-2">
-											Click "Add User" to create the first user
-										</p>
-									</td>
-								</tr>
-							)}
-						</tbody>
-					</table>
-				</div>
+								</thead>
+								<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+									{users.map((user) => (
+										<tr
+											key={user.id}
+											className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
+										>
+											<td className="px-6 py-4 whitespace-nowrap">
+												<div className="flex items-center">
+													<div className="flex-shrink-0 h-10 w-10">
+														<div className="h-10 w-10 rounded-full bg-primary-100 flex items-center justify-center">
+															<User className="h-5 w-5 text-primary-600" />
+														</div>
+													</div>
+													<div className="ml-4">
+														<div className="flex items-center">
+															<div className="text-sm font-medium text-secondary-900 dark:text-white">
+																{user.username}
+															</div>
+															{user.id === currentUser?.id && (
+																<span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-blue-100 text-blue-800">
+																	You
+																</span>
+															)}
+														</div>
+													</div>
+												</div>
+											</td>
+											<td className="px-6 py-4 whitespace-nowrap">
+												<div className="flex items-center text-sm text-secondary-500 dark:text-secondary-300">
+													<Mail className="h-4 w-4 mr-2" />
+													{user.email}
+												</div>
+											</td>
+											<td className="px-6 py-4 whitespace-nowrap">
+												<span
+													className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium ${
+														user.role === "admin"
+															? "bg-primary-100 text-primary-800"
+															: user.role === "host_manager"
+																? "bg-green-100 text-green-800"
+																: user.role === "readonly"
+																	? "bg-yellow-100 text-yellow-800"
+																	: "bg-secondary-100 text-secondary-800"
+													}`}
+												>
+													<Shield className="h-3 w-3 mr-1" />
+													{user.role.charAt(0).toUpperCase() +
+														user.role.slice(1).replace("_", " ")}
+												</span>
+											</td>
+											<td className="px-6 py-4 whitespace-nowrap">
+												{user.is_active ? (
+													<div className="flex items-center text-green-600">
+														<CheckCircle className="h-4 w-4 mr-1" />
+														<span className="text-sm">Active</span>
+													</div>
+												) : (
+													<div className="flex items-center text-red-600">
+														<XCircle className="h-4 w-4 mr-1" />
+														<span className="text-sm">Inactive</span>
+													</div>
+												)}
+											</td>
+											<td className="px-6 py-4 whitespace-nowrap">
+												<div className="flex items-center text-sm text-secondary-500 dark:text-secondary-300">
+													<Calendar className="h-4 w-4 mr-2" />
+													{new Date(user.created_at).toLocaleDateString()}
+												</div>
+											</td>
+											<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500 dark:text-secondary-300">
+												{user.last_login ? (
+													new Date(user.last_login).toLocaleDateString()
+												) : (
+													<span className="text-secondary-400">Never</span>
+												)}
+											</td>
+											<td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+												<div className="flex items-center justify-end space-x-2">
+													<button
+														type="button"
+														onClick={() => handleEditUser(user)}
+														className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+														title="Edit user"
+													>
+														<Edit className="h-4 w-4" />
+													</button>
+													<button
+														type="button"
+														onClick={() => handleResetPassword(user)}
+														className="text-blue-400 hover:text-blue-600 dark:text-blue-500 dark:hover:text-blue-300 disabled:text-gray-300 disabled:cursor-not-allowed"
+														title={
+															!user.is_active
+																? "Cannot reset password for inactive user"
+																: "Reset password"
+														}
+														disabled={!user.is_active}
+													>
+														<Key className="h-4 w-4" />
+													</button>
+													<button
+														type="button"
+														onClick={() =>
+															handleDeleteUser(user.id, user.username)
+														}
+														className="text-danger-400 hover:text-danger-600 dark:text-danger-500 dark:hover:text-danger-400 disabled:text-gray-300 disabled:cursor-not-allowed"
+														title={
+															user.id === currentUser?.id
+																? "Cannot delete your own account"
+																: user.role === "admin" &&
+																		users.filter((u) => u.role === "admin")
+																			.length === 1
+																	? "Cannot delete the last admin user"
+																	: "Delete user"
+														}
+														disabled={
+															user.id === currentUser?.id ||
+															(user.role === "admin" &&
+																users.filter((u) => u.role === "admin")
+																	.length === 1)
+														}
+													>
+														<Trash2 className="h-4 w-4" />
+													</button>
+												</div>
+											</td>
+										</tr>
+									))}
+								</tbody>
+							</table>
+						</div>
+					</>
+				) : (
+					<div className="p-12 text-center">
+						<User className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
+						<p className="text-secondary-500 dark:text-secondary-300">
+							No users found
+						</p>
+						<p className="text-sm text-secondary-400 dark:text-secondary-400 mt-2">
+							Click "Add User" to create the first user
+						</p>
+					</div>
+				)}
 			</div>
 
 			{/* Add User Modal */}

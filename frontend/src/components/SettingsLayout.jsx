@@ -1,6 +1,7 @@
 import {
 	BarChart3,
 	Bell,
+	ChevronDown,
 	ChevronLeft,
 	ChevronRight,
 	Code,
@@ -14,7 +15,7 @@ import {
 	Wrench,
 } from "lucide-react";
 import { useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 
 const SettingsLayout = ({ children }) => {
@@ -155,29 +156,73 @@ const SettingsLayout = ({ children }) => {
 	};
 
 	const secondaryNavigation = buildSecondaryNavigation();
+	const navigate = useNavigate();
 
 	const isActive = (path) => location.pathname === path;
 
-	const _getPageTitle = () => {
-		const path = location.pathname;
+	// Flatten all navigation items for dropdown
+	const getAllNavItems = () => {
+		const items = [];
+		secondaryNavigation.forEach((section) => {
+			section.items.forEach((item) => {
+				if (!item.comingSoon) {
+					items.push({
+						...item,
+						section: section.section,
+					});
+				}
+			});
+		});
+		return items;
+	};
 
-		if (path.startsWith("/settings/users")) return "Users";
-		if (path.startsWith("/settings/host-groups")) return "Host Groups";
-		if (path.startsWith("/settings/notifications")) return "Notifications";
-		if (path.startsWith("/settings/agent-config")) return "Agent Config";
-		if (path.startsWith("/settings/server-config")) return "Server Config";
+	const allNavItems = getAllNavItems();
 
-		return "Settings";
+	const _getCurrentPageTitle = () => {
+		const currentItem = allNavItems.find((item) => isActive(item.href));
+		return currentItem ? currentItem.name : "Settings";
+	};
+
+	const handleDropdownChange = (e) => {
+		const selectedHref = e.target.value;
+		if (selectedHref) {
+			navigate(selectedHref);
+		}
 	};
 
 	return (
 		<div className="bg-transparent">
 			{/* Within-page secondary navigation and content */}
 			<div className="px-2 sm:px-4 lg:px-6">
+				{/* Mobile Dropdown */}
+				<div className="md:hidden mb-4">
+					<label
+						htmlFor="settings-select"
+						className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2"
+					>
+						Settings Section
+					</label>
+					<div className="relative">
+						<select
+							id="settings-select"
+							value={location.pathname}
+							onChange={handleDropdownChange}
+							className="block w-full pl-3 pr-10 py-2 text-base border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 appearance-none"
+						>
+							{allNavItems.map((item) => (
+								<option key={item.href} value={item.href}>
+									{item.section} - {item.name}
+								</option>
+							))}
+						</select>
+						<ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-secondary-400 pointer-events-none" />
+					</div>
+				</div>
+
 				<div className="flex gap-4">
-					{/* Left secondary nav (within page) */}
+					{/* Left secondary nav (within page) - Hidden on mobile */}
 					<aside
-						className={`${sidebarCollapsed ? "w-14" : "w-56"} transition-all duration-300 flex-shrink-0`}
+						className={`hidden md:block ${sidebarCollapsed ? "w-14" : "w-56"} transition-all duration-300 flex-shrink-0`}
 					>
 						<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg">
 							{/* Collapse button */}

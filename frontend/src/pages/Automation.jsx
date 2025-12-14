@@ -459,7 +459,7 @@ const Automation = () => {
 			</div>
 
 			{/* Stats Cards */}
-			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+			<div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
 				{/* Scheduled Tasks Card */}
 				<div className="card p-4">
 					<div className="flex items-center">
@@ -554,7 +554,7 @@ const Automation = () => {
 
 			{/* Tab Content */}
 			{activeTab === "overview" && (
-				<div className="card p-6">
+				<div className="card p-4 md:p-6">
 					{overviewLoading ? (
 						<div className="text-center py-8">
 							<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
@@ -563,136 +563,238 @@ const Automation = () => {
 							</p>
 						</div>
 					) : (
-						<div className="overflow-x-auto">
-							<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
-								<thead className="bg-secondary-50 dark:bg-secondary-700">
-									<tr>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
-											Run
-										</th>
-										<th
-											className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
-											onClick={() => handleSort("name")}
-										>
-											<div className="flex items-center gap-1">
-												Task
-												{getSortIcon("name")}
-											</div>
-										</th>
-										<th
-											className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
-											onClick={() => handleSort("schedule")}
-										>
-											<div className="flex items-center gap-1">
-												Frequency
-												{getSortIcon("schedule")}
-											</div>
-										</th>
-										<th
-											className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
-											onClick={() => handleSort("lastRunTimestamp")}
-										>
-											<div className="flex items-center gap-1">
-												Last Run
-												{getSortIcon("lastRunTimestamp")}
-											</div>
-										</th>
-										<th
-											className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
-											onClick={() => handleSort("nextRunTimestamp")}
-										>
-											<div className="flex items-center gap-1">
-												Next Run
-												{getSortIcon("nextRunTimestamp")}
-											</div>
-										</th>
-										<th
-											className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
-											onClick={() => handleSort("status")}
-										>
-											<div className="flex items-center gap-1">
-												Status
-												{getSortIcon("status")}
-											</div>
-										</th>
-									</tr>
-								</thead>
-								<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
-									{sortedAutomations.map((automation) => (
-										<tr
-											key={automation.queue}
-											className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
-										>
-											<td className="px-4 py-2 whitespace-nowrap">
-												{automation.schedule !== "Manual only" ? (
-													<button
-														type="button"
-														onClick={() => {
-															if (automation.queue.includes("github")) {
-																triggerManualJob("github");
-															} else if (automation.queue.includes("session")) {
-																triggerManualJob("sessions");
-															} else if (
-																automation.queue.includes("orphaned-repo")
-															) {
-																triggerManualJob("orphaned-repos");
-															} else if (
-																automation.queue.includes("orphaned-package")
-															) {
-																triggerManualJob("orphaned-packages");
-															} else if (
-																automation.queue.includes("docker-inventory")
-															) {
-																triggerManualJob("docker-inventory");
-															} else if (
-																automation.queue.includes("agent-commands")
-															) {
-																triggerManualJob("agent-collection");
-															} else if (
-																automation.queue.includes("system-statistics")
-															) {
-																triggerManualJob("system-statistics");
-															}
-														}}
-														className="inline-flex items-center justify-center w-6 h-6 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200"
-														title="Run Now"
-													>
-														<Play className="h-3 w-3" />
-													</button>
-												) : (
-													<span className="text-gray-400 text-xs">Manual</span>
-												)}
-											</td>
-											<td className="px-4 py-2 whitespace-nowrap">
-												<div>
-													<div className="text-sm font-medium text-secondary-900 dark:text-white">
-														{automation.name}
-													</div>
-													<div className="text-xs text-secondary-500 dark:text-secondary-400">
+						<>
+							{/* Mobile Card Layout */}
+							<div className="md:hidden space-y-3">
+								{sortedAutomations.map((automation) => (
+									<div key={automation.queue} className="card p-4 space-y-3">
+										{/* Task Name and Run Button */}
+										<div className="flex items-start justify-between gap-3">
+											<div className="flex-1 min-w-0">
+												<div className="text-base font-semibold text-secondary-900 dark:text-white">
+													{automation.name}
+												</div>
+												{automation.description && (
+													<div className="text-sm text-secondary-500 dark:text-secondary-400 mt-1">
 														{automation.description}
 													</div>
-												</div>
-											</td>
-											<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
-												{automation.schedule}
-											</td>
-											<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
-												{automation.lastRun}
-											</td>
-											<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
-												{getNextRunTime(
-													automation.schedule,
-													automation.lastRun,
 												)}
-											</td>
-											<td className="px-4 py-2 whitespace-nowrap">
-												{getStatusBadge(automation.status)}
-											</td>
+											</div>
+											{automation.schedule !== "Manual only" ? (
+												<button
+													type="button"
+													onClick={() => {
+														if (automation.queue.includes("github")) {
+															triggerManualJob("github");
+														} else if (automation.queue.includes("session")) {
+															triggerManualJob("sessions");
+														} else if (
+															automation.queue.includes("orphaned-repo")
+														) {
+															triggerManualJob("orphaned-repos");
+														} else if (
+															automation.queue.includes("orphaned-package")
+														) {
+															triggerManualJob("orphaned-packages");
+														} else if (
+															automation.queue.includes("docker-inventory")
+														) {
+															triggerManualJob("docker-inventory");
+														} else if (
+															automation.queue.includes("agent-commands")
+														) {
+															triggerManualJob("agent-collection");
+														} else if (
+															automation.queue.includes("system-statistics")
+														) {
+															triggerManualJob("system-statistics");
+														}
+													}}
+													className="inline-flex items-center justify-center w-8 h-8 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200 flex-shrink-0"
+													title="Run Now"
+												>
+													<Play className="h-4 w-4" />
+												</button>
+											) : (
+												<span className="text-xs text-secondary-400 dark:text-secondary-500 flex-shrink-0">
+													Manual
+												</span>
+											)}
+										</div>
+
+										{/* Status */}
+										<div>{getStatusBadge(automation.status)}</div>
+
+										{/* Schedule and Run Times */}
+										<div className="space-y-2 pt-2 border-t border-secondary-200 dark:border-secondary-600">
+											<div className="flex items-center justify-between text-sm">
+												<span className="text-secondary-500 dark:text-secondary-400">
+													Frequency:
+												</span>
+												<span className="text-secondary-900 dark:text-white font-medium">
+													{automation.schedule}
+												</span>
+											</div>
+											<div className="flex items-center justify-between text-sm">
+												<span className="text-secondary-500 dark:text-secondary-400">
+													Last Run:
+												</span>
+												<span className="text-secondary-900 dark:text-white">
+													{automation.lastRun}
+												</span>
+											</div>
+											<div className="flex items-center justify-between text-sm">
+												<span className="text-secondary-500 dark:text-secondary-400">
+													Next Run:
+												</span>
+												<span className="text-secondary-900 dark:text-white">
+													{getNextRunTime(
+														automation.schedule,
+														automation.lastRun,
+													)}
+												</span>
+											</div>
+										</div>
+									</div>
+								))}
+							</div>
+
+							{/* Desktop Table Layout */}
+							<div className="hidden md:block overflow-x-auto">
+								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+									<thead className="bg-secondary-50 dark:bg-secondary-700">
+										<tr>
+											<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+												Run
+											</th>
+											<th
+												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
+												onClick={() => handleSort("name")}
+											>
+												<div className="flex items-center gap-1">
+													Task
+													{getSortIcon("name")}
+												</div>
+											</th>
+											<th
+												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
+												onClick={() => handleSort("schedule")}
+											>
+												<div className="flex items-center gap-1">
+													Frequency
+													{getSortIcon("schedule")}
+												</div>
+											</th>
+											<th
+												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
+												onClick={() => handleSort("lastRunTimestamp")}
+											>
+												<div className="flex items-center gap-1">
+													Last Run
+													{getSortIcon("lastRunTimestamp")}
+												</div>
+											</th>
+											<th
+												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
+												onClick={() => handleSort("nextRunTimestamp")}
+											>
+												<div className="flex items-center gap-1">
+													Next Run
+													{getSortIcon("nextRunTimestamp")}
+												</div>
+											</th>
+											<th
+												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
+												onClick={() => handleSort("status")}
+											>
+												<div className="flex items-center gap-1">
+													Status
+													{getSortIcon("status")}
+												</div>
+											</th>
 										</tr>
-									))}
-								</tbody>
-							</table>
-						</div>
+									</thead>
+									<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+										{sortedAutomations.map((automation) => (
+											<tr
+												key={automation.queue}
+												className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
+											>
+												<td className="px-4 py-2 whitespace-nowrap">
+													{automation.schedule !== "Manual only" ? (
+														<button
+															type="button"
+															onClick={() => {
+																if (automation.queue.includes("github")) {
+																	triggerManualJob("github");
+																} else if (
+																	automation.queue.includes("session")
+																) {
+																	triggerManualJob("sessions");
+																} else if (
+																	automation.queue.includes("orphaned-repo")
+																) {
+																	triggerManualJob("orphaned-repos");
+																} else if (
+																	automation.queue.includes("orphaned-package")
+																) {
+																	triggerManualJob("orphaned-packages");
+																} else if (
+																	automation.queue.includes("docker-inventory")
+																) {
+																	triggerManualJob("docker-inventory");
+																} else if (
+																	automation.queue.includes("agent-commands")
+																) {
+																	triggerManualJob("agent-collection");
+																} else if (
+																	automation.queue.includes("system-statistics")
+																) {
+																	triggerManualJob("system-statistics");
+																}
+															}}
+															className="inline-flex items-center justify-center w-6 h-6 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200"
+															title="Run Now"
+														>
+															<Play className="h-3 w-3" />
+														</button>
+													) : (
+														<span className="text-gray-400 text-xs">
+															Manual
+														</span>
+													)}
+												</td>
+												<td className="px-4 py-2 whitespace-nowrap">
+													<div>
+														<div className="text-sm font-medium text-secondary-900 dark:text-white">
+															{automation.name}
+														</div>
+														<div className="text-xs text-secondary-500 dark:text-secondary-400">
+															{automation.description}
+														</div>
+													</div>
+												</td>
+												<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
+													{automation.schedule}
+												</td>
+												<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
+													{automation.lastRun}
+												</td>
+												<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
+													{getNextRunTime(
+														automation.schedule,
+														automation.lastRun,
+													)}
+												</td>
+												<td className="px-4 py-2 whitespace-nowrap">
+													{getStatusBadge(automation.status)}
+												</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</div>
+						</>
 					)}
 				</div>
 			)}

@@ -333,69 +333,118 @@ const Integrations = () => {
 			<div className="space-y-6">
 				{/* Header */}
 				<div>
-					<h1 className="text-2xl font-bold text-secondary-900 dark:text-white">
+					<h1 className="text-xl md:text-2xl font-bold text-secondary-900 dark:text-white">
 						Integrations
 					</h1>
-					<p className="mt-1 text-sm text-secondary-600 dark:text-secondary-400">
+					<p className="mt-1 text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
 						Manage auto-enrollment tokens for Proxmox and other integrations
 					</p>
 				</div>
 
 				{/* Tabs Navigation */}
 				<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg overflow-hidden">
-					<div className="border-b border-secondary-200 dark:border-secondary-600 flex">
+					{/* Mobile Button Navigation */}
+					<div className="md:hidden space-y-2 p-4">
 						<button
 							type="button"
 							onClick={() => handleTabChange("auto-enrollment")}
-							className={`px-6 py-3 text-sm font-medium ${
+							className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
 								activeTab === "auto-enrollment"
-									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
-									: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+									? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
+									: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
 							}`}
 						>
-							Auto-Enrollment & API
+							<span>Auto-Enrollment & API</span>
+							{activeTab === "auto-enrollment" && (
+								<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+							)}
 						</button>
 						<button
 							type="button"
 							onClick={() => handleTabChange("gethomepage")}
-							className={`px-6 py-3 text-sm font-medium ${
+							className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
 								activeTab === "gethomepage"
-									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
-									: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+									? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
+									: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
 							}`}
 						>
-							GetHomepage
+							<span>GetHomepage</span>
+							{activeTab === "gethomepage" && (
+								<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+							)}
 						</button>
 						<button
 							type="button"
 							onClick={() => handleTabChange("docker")}
-							className={`px-6 py-3 text-sm font-medium ${
+							className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
 								activeTab === "docker"
-									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
-									: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+									? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
+									: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
 							}`}
 						>
-							Docker
+							<span>Docker</span>
+							{activeTab === "docker" && (
+								<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+							)}
 						</button>
-						{/* Future tabs can be added here */}
+					</div>
+
+					{/* Desktop Tab Navigation */}
+					<div className="hidden md:block border-b border-secondary-200 dark:border-secondary-600">
+						<div className="flex">
+							<button
+								type="button"
+								onClick={() => handleTabChange("auto-enrollment")}
+								className={`px-6 py-3 text-sm font-medium ${
+									activeTab === "auto-enrollment"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
+										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+								}`}
+							>
+								Auto-Enrollment & API
+							</button>
+							<button
+								type="button"
+								onClick={() => handleTabChange("gethomepage")}
+								className={`px-6 py-3 text-sm font-medium ${
+									activeTab === "gethomepage"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
+										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+								}`}
+							>
+								GetHomepage
+							</button>
+							<button
+								type="button"
+								onClick={() => handleTabChange("docker")}
+								className={`px-6 py-3 text-sm font-medium ${
+									activeTab === "docker"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
+										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+								}`}
+							>
+								Docker
+							</button>
+							{/* Future tabs can be added here */}
+						</div>
 					</div>
 
 					{/* Tab Content */}
-					<div className="p-6">
+					<div className="p-4 md:p-6">
 						{/* Auto-Enrollment & API Tab */}
 						{activeTab === "auto-enrollment" && (
 							<div className="space-y-6">
 								{/* Header with New Token Button */}
-								<div className="flex items-center justify-between">
-									<div className="flex items-center gap-3">
-										<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center">
+								<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+									<div className="flex items-center gap-3 flex-1 min-w-0">
+										<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
 											<Server className="h-5 w-5 text-primary-600 dark:text-primary-400" />
 										</div>
-										<div>
-											<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+										<div className="min-w-0">
+											<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
 												Auto-Enrollment & API Credentials
 											</h3>
-											<p className="text-sm text-secondary-600 dark:text-secondary-400">
+											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
 												Manage tokens for Proxmox LXC auto-enrollment and API
 												access
 											</p>
@@ -404,7 +453,7 @@ const Integrations = () => {
 									<button
 										type="button"
 										onClick={() => setShowCreateModal(true)}
-										className="btn-primary flex items-center gap-2"
+										className="btn-primary flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-start"
 									>
 										<Plus className="h-4 w-4" />
 										New Token
@@ -549,12 +598,12 @@ const Integrations = () => {
 																)}
 															</div>
 														</div>
-														<div className="flex items-center gap-2">
+														<div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
 															{token.metadata?.integration_type === "api" && (
 																<button
 																	type="button"
 																	onClick={() => open_edit_modal(token)}
-																	className="px-3 py-1 text-sm rounded bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300"
+																	className="px-3 py-1 text-xs md:text-sm rounded bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300"
 																>
 																	Edit
 																</button>
@@ -564,7 +613,7 @@ const Integrations = () => {
 																onClick={() =>
 																	toggle_token_active(token.id, token.is_active)
 																}
-																className={`px-3 py-1 text-sm rounded ${
+																className={`px-3 py-1 text-xs md:text-sm rounded ${
 																	token.is_active
 																		? "bg-secondary-100 text-secondary-700 hover:bg-secondary-200 dark:bg-secondary-700 dark:text-secondary-300"
 																		: "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900 dark:text-green-300"
@@ -589,8 +638,8 @@ const Integrations = () => {
 								)}
 
 								{/* Documentation Section */}
-								<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-6">
-									<h3 className="text-lg font-semibold text-primary-900 dark:text-primary-200 mb-4">
+								<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
+									<h3 className="text-base md:text-lg font-semibold text-primary-900 dark:text-primary-200 mb-4">
 										Documentation
 									</h3>
 									<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -648,16 +697,16 @@ const Integrations = () => {
 						{activeTab === "gethomepage" && (
 							<div className="space-y-6">
 								{/* Header with New API Key Button */}
-								<div className="flex items-center justify-between">
-									<div className="flex items-center gap-3">
-										<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center">
+								<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+									<div className="flex items-center gap-3 flex-1 min-w-0">
+										<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
 											<Server className="h-5 w-5 text-primary-600 dark:text-primary-400" />
 										</div>
-										<div>
-											<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+										<div className="min-w-0">
+											<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
 												GetHomepage Widget Integration
 											</h3>
-											<p className="text-sm text-secondary-600 dark:text-secondary-400">
+											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
 												Create API keys to display PatchMon statistics in your
 												GetHomepage dashboard
 											</p>
@@ -666,7 +715,7 @@ const Integrations = () => {
 									<button
 										type="button"
 										onClick={() => setShowCreateModal(true)}
-										className="btn-primary flex items-center gap-2"
+										className="btn-primary flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-start"
 									>
 										<Plus className="h-4 w-4" />
 										New API Key
@@ -699,12 +748,12 @@ const Integrations = () => {
 											.map((token) => (
 												<div
 													key={token.id}
-													className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 hover:border-primary-300 dark:hover:border-primary-700 transition-colors"
+													className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-3 md:p-4 hover:border-primary-300 dark:hover:border-primary-700 transition-colors"
 												>
-													<div className="flex justify-between items-start">
-														<div className="flex-1">
+													<div className="flex flex-col sm:flex-row justify-between items-start gap-3">
+														<div className="flex-1 min-w-0">
 															<div className="flex items-center gap-2 flex-wrap">
-																<h4 className="font-medium text-secondary-900 dark:text-white">
+																<h4 className="text-sm md:text-base font-medium text-secondary-900 dark:text-white truncate">
 																	{token.token_name}
 																</h4>
 																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
@@ -720,9 +769,9 @@ const Integrations = () => {
 																	</span>
 																)}
 															</div>
-															<div className="mt-2 space-y-1 text-sm text-secondary-600 dark:text-secondary-400">
+															<div className="mt-2 space-y-1 text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
 																<div className="flex items-center gap-2">
-																	<span className="font-mono text-xs bg-secondary-100 dark:bg-secondary-700 px-2 py-1 rounded">
+																	<span className="font-mono text-xs bg-secondary-100 dark:bg-secondary-700 px-2 py-1 rounded break-all flex-1 min-w-0">
 																		{token.token_key}
 																	</span>
 																	<button
@@ -733,7 +782,7 @@ const Integrations = () => {
 																				`key-${token.id}`,
 																			)
 																		}
-																		className="text-primary-600 hover:text-primary-700 dark:text-primary-400"
+																		className="text-primary-600 hover:text-primary-700 dark:text-primary-400 flex-shrink-0"
 																	>
 																		{copy_success[`key-${token.id}`] ? (
 																			<CheckCircle className="h-4 w-4" />
@@ -761,13 +810,13 @@ const Integrations = () => {
 																)}
 															</div>
 														</div>
-														<div className="flex items-center gap-2">
+														<div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
 															<button
 																type="button"
 																onClick={() =>
 																	toggle_token_active(token.id, token.is_active)
 																}
-																className={`px-3 py-1 text-sm rounded ${
+																className={`px-3 py-1 text-xs md:text-sm rounded ${
 																	token.is_active
 																		? "bg-secondary-100 text-secondary-700 hover:bg-secondary-200 dark:bg-secondary-700 dark:text-secondary-300"
 																		: "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900 dark:text-green-300"
@@ -792,16 +841,16 @@ const Integrations = () => {
 								)}
 
 								{/* Documentation Section */}
-								<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-6">
-									<div className="flex items-center justify-between mb-4">
-										<h3 className="text-lg font-semibold text-primary-900 dark:text-primary-200">
+								<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
+									<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+										<h3 className="text-base md:text-lg font-semibold text-primary-900 dark:text-primary-200">
 											How to Use GetHomepage Integration
 										</h3>
 										<a
 											href="https://docs.patchmon.net/books/patchmon-application-documentation/page/gethomepagedev-dashboard-card"
 											target="_blank"
 											rel="noopener noreferrer"
-											className="px-4 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg flex items-center gap-2 transition-colors"
+											className="px-4 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg flex items-center gap-2 transition-colors w-full sm:w-auto justify-center sm:justify-start"
 										>
 											<BookOpen className="h-4 w-4" />
 											Documentation
@@ -909,33 +958,33 @@ const Integrations = () => {
 							<div className="space-y-6">
 								{/* Header */}
 								<div className="flex items-center gap-3">
-									<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center">
+									<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
 										<Container className="h-5 w-5 text-primary-600 dark:text-primary-400" />
 									</div>
-									<div>
-										<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+									<div className="min-w-0">
+										<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
 											Docker Inventory Collection
 										</h3>
-										<p className="text-sm text-secondary-600 dark:text-secondary-400">
+										<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
 											Docker monitoring is now built into the PatchMon Go agent
 										</p>
 									</div>
 								</div>
 
 								{/* Info Message */}
-								<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-6">
+								<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
 									<div className="flex items-start gap-3">
 										<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400 flex-shrink-0 mt-0.5" />
-										<div>
-											<h4 className="text-md font-semibold text-primary-900 dark:text-primary-200 mb-2">
+										<div className="min-w-0">
+											<h4 className="text-sm md:text-base font-semibold text-primary-900 dark:text-primary-200 mb-2">
 												Automatic Docker Discovery
 											</h4>
-											<p className="text-sm text-primary-800 dark:text-primary-300 mb-3">
+											<p className="text-xs md:text-sm text-primary-800 dark:text-primary-300 mb-3">
 												The PatchMon Go agent automatically discovers Docker
 												when it's available on your host and collects
 												comprehensive inventory information:
 											</p>
-											<ul className="list-disc list-inside space-y-2 text-sm text-primary-800 dark:text-primary-300 ml-2">
+											<ul className="list-disc list-inside space-y-2 text-xs md:text-sm text-primary-800 dark:text-primary-300 ml-2">
 												<li>
 													<strong>Containers</strong> - Running and stopped
 													containers with status, images, ports, and labels
@@ -962,11 +1011,11 @@ const Integrations = () => {
 								</div>
 
 								{/* How It Works */}
-								<div className="bg-white dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-600 rounded-lg p-6">
-									<h4 className="text-md font-semibold text-secondary-900 dark:text-white mb-4">
+								<div className="bg-white dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 md:p-6">
+									<h4 className="text-sm md:text-base font-semibold text-secondary-900 dark:text-white mb-4">
 										How It Works
 									</h4>
-									<ol className="list-decimal list-inside space-y-3 text-sm text-secondary-700 dark:text-secondary-300">
+									<ol className="list-decimal list-inside space-y-3 text-xs md:text-sm text-secondary-700 dark:text-secondary-300">
 										<li>
 											Install the PatchMon Go agent on your host (see the Hosts
 											page for installation instructions)
@@ -997,10 +1046,10 @@ const Integrations = () => {
 								</div>
 
 								{/* No Configuration Required */}
-								<div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
+								<div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 md:p-4">
 									<div className="flex items-start gap-2">
 										<CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
-										<div className="text-sm text-green-800 dark:text-green-200">
+										<div className="text-xs md:text-sm text-green-800 dark:text-green-200">
 											<p className="font-semibold mb-1">
 												No Additional Configuration Required
 											</p>
@@ -1015,10 +1064,10 @@ const Integrations = () => {
 								</div>
 
 								{/* Requirements */}
-								<div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+								<div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 md:p-4">
 									<div className="flex items-start gap-2">
 										<AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
-										<div className="text-sm text-blue-800 dark:text-blue-200">
+										<div className="text-xs md:text-sm text-blue-800 dark:text-blue-200">
 											<p className="font-semibold mb-2">Requirements:</p>
 											<ul className="list-disc list-inside space-y-1 ml-2">
 												<li>PatchMon Go agent must be installed and running</li>
@@ -1048,9 +1097,9 @@ const Integrations = () => {
 			{show_create_modal && (
 				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
 					<div className="bg-white dark:bg-secondary-800 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-						<div className="p-6">
+						<div className="p-4 md:p-6">
 							<div className="flex items-center justify-between mb-4">
-								<h2 className="text-xl font-bold text-secondary-900 dark:text-white">
+								<h2 className="text-lg md:text-xl font-bold text-secondary-900 dark:text-white">
 									{activeTab === "gethomepage"
 										? "Create GetHomepage API Key"
 										: "Create Token"}
@@ -1064,17 +1113,17 @@ const Integrations = () => {
 									}}
 									className="text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200"
 								>
-									<X className="h-6 w-6" />
+									<X className="h-5 w-5 md:h-6 md:w-6" />
 								</button>
 							</div>
 
 							{/* Tabs for Auto-enrollment modal */}
 							{activeTab === "auto-enrollment" && (
-								<div className="flex border-b border-secondary-200 dark:border-secondary-700 mb-6">
+								<div className="flex border-b border-secondary-200 dark:border-secondary-700 mb-4 md:mb-6 overflow-x-auto">
 									<button
 										type="button"
 										onClick={() => setUsageType("proxmox-lxc")}
-										className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+										className={`px-3 md:px-4 py-2 text-xs md:text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
 											usage_type === "proxmox-lxc"
 												? "text-primary-600 dark:text-primary-400 border-primary-500"
 												: "text-secondary-500 dark:text-secondary-400 border-transparent hover:text-secondary-700 dark:hover:text-secondary-300"
@@ -1085,7 +1134,7 @@ const Integrations = () => {
 									<button
 										type="button"
 										onClick={() => setUsageType("api")}
-										className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+										className={`px-3 md:px-4 py-2 text-xs md:text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
 											usage_type === "api"
 												? "text-primary-600 dark:text-primary-400 border-primary-500"
 												: "text-secondary-500 dark:text-secondary-400 border-transparent hover:text-secondary-700 dark:hover:text-secondary-300"
@@ -1259,10 +1308,10 @@ const Integrations = () => {
 									/>
 								</label>
 
-								<div className="flex gap-3 pt-4">
+								<div className="flex flex-col sm:flex-row gap-3 pt-4">
 									<button
 										type="submit"
-										className="flex-1 btn-primary py-2 px-4 rounded-md"
+										className="flex-1 btn-primary py-2 px-4 rounded-md w-full sm:w-auto"
 									>
 										Create Token
 									</button>
@@ -1272,7 +1321,7 @@ const Integrations = () => {
 											setShowCreateModal(false);
 											setUsageType("proxmox-lxc");
 										}}
-										className="flex-1 bg-secondary-100 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 py-2 px-4 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600"
+										className="flex-1 bg-secondary-100 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 py-2 px-4 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600 w-full sm:w-auto"
 									>
 										Cancel
 									</button>
@@ -1287,11 +1336,11 @@ const Integrations = () => {
 			{new_token && (
 				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
 					<div className="bg-white dark:bg-secondary-800 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-						<div className="p-6">
-							<div className="flex items-center justify-between mb-4">
-								<div className="flex items-center gap-2">
-									<CheckCircle className="h-6 w-6 text-green-600 dark:text-green-400" />
-									<h2 className="text-lg font-bold text-secondary-900 dark:text-white">
+						<div className="p-4 md:p-6">
+							<div className="flex items-center justify-between mb-4 gap-3">
+								<div className="flex items-center gap-2 min-w-0">
+									<CheckCircle className="h-5 w-5 md:h-6 md:w-6 text-green-600 dark:text-green-400 flex-shrink-0" />
+									<h2 className="text-base md:text-lg font-bold text-secondary-900 dark:text-white truncate">
 										{new_token.metadata?.integration_type === "gethomepage" ||
 										activeTab === "gethomepage"
 											? "API Key Created Successfully"
@@ -1309,7 +1358,7 @@ const Integrations = () => {
 										setUsageType("proxmox-lxc");
 										setSelectedScriptType("proxmox-lxc");
 									}}
-									className="text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200"
+									className="text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200 flex-shrink-0"
 								>
 									<X className="h-5 w-5" />
 								</button>
@@ -1356,14 +1405,14 @@ const Integrations = () => {
 												type="text"
 												value={new_token.token_key}
 												readOnly
-												className="flex-1 px-3 py-2 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono"
+												className="flex-1 px-3 py-2 text-xs md:text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono break-all"
 											/>
 											<button
 												type="button"
 												onClick={() =>
 													copy_to_clipboard(new_token.token_key, "new-key")
 												}
-												className="btn-primary p-2"
+												className="btn-primary p-2 flex-shrink-0"
 												title="Copy Key"
 											>
 												{copy_success["new-key"] ? (
@@ -1388,12 +1437,12 @@ const Integrations = () => {
 												type={show_secret ? "text" : "password"}
 												value={new_token.token_secret}
 												readOnly
-												className="flex-1 px-3 py-2 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono"
+												className="flex-1 px-3 py-2 text-xs md:text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono break-all"
 											/>
 											<button
 												type="button"
 												onClick={() => setShowSecret(!show_secret)}
-												className="p-2 text-secondary-600 hover:text-secondary-800 dark:text-secondary-400"
+												className="p-2 text-secondary-600 hover:text-secondary-800 dark:text-secondary-400 flex-shrink-0"
 												title="Toggle visibility"
 											>
 												{show_secret ? (
@@ -1410,7 +1459,7 @@ const Integrations = () => {
 														"new-secret",
 													)
 												}
-												className="btn-primary p-2"
+												className="btn-primary p-2 flex-shrink-0"
 												title="Copy Secret"
 											>
 												{copy_success["new-secret"] ? (
@@ -1460,12 +1509,12 @@ const Integrations = () => {
 												<p className="text-xs text-secondary-600 dark:text-secondary-400 mb-2">
 													Basic cURL request:
 												</p>
-												<div className="flex items-center gap-2">
+												<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 													<input
 														type="text"
 														value={`curl -u "${new_token.token_key}:${new_token.token_secret}" ${server_url}/api/v1/api/hosts`}
 														readOnly
-														className="flex-1 px-3 py-2 text-xs border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono"
+														className="flex-1 px-3 py-2 text-xs border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono break-all"
 													/>
 													<button
 														type="button"
@@ -1475,7 +1524,7 @@ const Integrations = () => {
 																"api-curl-basic",
 															)
 														}
-														className="btn-primary p-2"
+														className="btn-primary p-2 flex-shrink-0"
 														title="Copy cURL command"
 													>
 														{copy_success["api-curl-basic"] ? (
@@ -1490,12 +1539,12 @@ const Integrations = () => {
 												<p className="text-xs text-secondary-600 dark:text-secondary-400 mb-2">
 													Filter by host group:
 												</p>
-												<div className="flex items-center gap-2">
+												<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 													<input
 														type="text"
 														value={`curl -u "${new_token.token_key}:${new_token.token_secret}" "${server_url}/api/v1/api/hosts?hostgroup=Production"`}
 														readOnly
-														className="flex-1 px-3 py-2 text-xs border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono"
+														className="flex-1 px-3 py-2 text-xs border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono break-all"
 													/>
 													<button
 														type="button"
@@ -1505,7 +1554,7 @@ const Integrations = () => {
 																"api-curl-filter",
 															)
 														}
-														className="btn-primary p-2"
+														className="btn-primary p-2 flex-shrink-0"
 														title="Copy cURL command"
 													>
 														{copy_success["api-curl-filter"] ? (
@@ -1583,12 +1632,12 @@ const Integrations = () => {
 											</p>
 										</div>
 
-										<div className="flex items-center gap-2">
+										<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 											<input
 												type="text"
 												value={`curl ${curl_flags} "${getEnrollmentUrl()}" | ${selected_script_type === "proxmox-lxc" ? "bash" : "sh"}`}
 												readOnly
-												className="flex-1 px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono text-xs"
+												className="flex-1 px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono text-xs break-all"
 											/>
 											<button
 												type="button"
@@ -1598,7 +1647,7 @@ const Integrations = () => {
 														"enrollment-command",
 													)
 												}
-												className="btn-primary flex items-center gap-1 px-3 py-2 whitespace-nowrap"
+												className="btn-primary flex items-center justify-center gap-1 px-3 py-2 whitespace-nowrap"
 											>
 												{copy_success["enrollment-command"] ? (
 													<>
@@ -1636,7 +1685,7 @@ const Integrations = () => {
 											>
 												Base64 Encoded Credentials
 											</label>
-											<div className="flex items-center gap-2">
+											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 												<input
 													id={token_base64_id}
 													type="text"
@@ -1644,7 +1693,7 @@ const Integrations = () => {
 														`${new_token.token_key}:${new_token.token_secret}`,
 													)}
 													readOnly
-													className="flex-1 px-3 py-2 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono"
+													className="flex-1 px-3 py-2 text-xs md:text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono break-all"
 												/>
 												<button
 													type="button"
@@ -1656,7 +1705,7 @@ const Integrations = () => {
 															"base64-creds",
 														)
 													}
-													className="btn-primary p-2"
+													className="btn-primary p-2 flex-shrink-0"
 													title="Copy Base64"
 												>
 													{copy_success["base64-creds"] ? (
@@ -1762,7 +1811,7 @@ const Integrations = () => {
 										setUsageType("proxmox-lxc");
 										setSelectedScriptType("proxmox-lxc");
 									}}
-									className="w-full btn-primary py-2 px-4 rounded-md"
+									className="w-full btn-primary py-2 px-4 rounded-md text-sm md:text-base"
 								>
 									I've Saved the Credentials
 								</button>
@@ -1776,9 +1825,9 @@ const Integrations = () => {
 			{show_edit_modal && edit_token && (
 				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
 					<div className="bg-white dark:bg-secondary-800 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-						<div className="p-6">
-							<div className="flex items-center justify-between mb-6">
-								<h2 className="text-xl font-bold text-secondary-900 dark:text-white">
+						<div className="p-4 md:p-6">
+							<div className="flex items-center justify-between mb-4 md:mb-6 gap-3">
+								<h2 className="text-lg md:text-xl font-bold text-secondary-900 dark:text-white">
 									Edit API Credential
 								</h2>
 								<button
@@ -1787,9 +1836,9 @@ const Integrations = () => {
 										setShowEditModal(false);
 										setEditToken(null);
 									}}
-									className="text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200"
+									className="text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200 flex-shrink-0"
 								>
-									<X className="h-6 w-6" />
+									<X className="h-5 w-5 md:h-6 md:w-6" />
 								</button>
 							</div>
 
@@ -1896,10 +1945,10 @@ const Integrations = () => {
 									/>
 								</label>
 
-								<div className="flex gap-3 pt-4">
+								<div className="flex flex-col sm:flex-row gap-3 pt-4">
 									<button
 										type="submit"
-										className="flex-1 btn-primary py-2 px-4 rounded-md"
+										className="flex-1 btn-primary py-2 px-4 rounded-md w-full sm:w-auto"
 									>
 										Update Credential
 									</button>
@@ -1909,7 +1958,7 @@ const Integrations = () => {
 											setShowEditModal(false);
 											setEditToken(null);
 										}}
-										className="flex-1 bg-secondary-100 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 py-2 px-4 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600"
+										className="flex-1 bg-secondary-100 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 py-2 px-4 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600 w-full sm:w-auto"
 									>
 										Cancel
 									</button>

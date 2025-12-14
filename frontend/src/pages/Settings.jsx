@@ -78,7 +78,7 @@ const Settings = () => {
 	// Fallback clipboard copy function for HTTP and older browsers
 	const copyToClipboard = async (text) => {
 		// Try modern clipboard API first
-		if (navigator.clipboard && navigator.clipboard.writeText) {
+		if (navigator.clipboard?.writeText) {
 			try {
 				await navigator.clipboard.writeText(text);
 				return true;

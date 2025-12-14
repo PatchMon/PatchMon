@@ -22,7 +22,6 @@ import {
 	Server,
 	Settings,
 	Shield,
-	TrendingUp,
 	Users,
 	WifiOff,
 } from "lucide-react";
@@ -59,6 +58,7 @@ const Dashboard = () => {
 	const [packageTrendsHost, setPackageTrendsHost] = useState("all"); // host filter
 	const [systemStatsJobId, setSystemStatsJobId] = useState(null); // Track job ID for system statistics
 	const [isTriggeringJob, setIsTriggeringJob] = useState(false);
+	const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
 	const navigate = useNavigate();
 	const { isDark } = useTheme();
 	const { user } = useAuth();
@@ -312,6 +312,15 @@ const Dashboard = () => {
 		};
 	}, []);
 
+	// Track window size for responsive chart options
+	useEffect(() => {
+		const handleResize = () => {
+			setIsMobile(window.innerWidth < 640);
+		};
+		window.addEventListener("resize", handleResize);
+		return () => window.removeEventListener("resize", handleResize);
+	}, []);
+
 	// Helper function to check if a card should be displayed
 	const isCardEnabled = (cardId) => {
 		const card = cardPreferences.find((c) => c.cardId === cardId);
@@ -358,11 +367,11 @@ const Dashboard = () => {
 	const getGroupClassName = (cardType) => {
 		switch (cardType) {
 			case "stats":
-				return "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4";
+				return "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4";
 			case "charts":
-				return "grid grid-cols-1 lg:grid-cols-3 gap-6";
+				return "grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6";
 			case "widecharts":
-				return "grid grid-cols-1 lg:grid-cols-3 gap-6";
+				return "grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6";
 			case "fullwidth":
 				return "space-y-6";
 			default:
@@ -377,7 +386,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
 						onClick={handleNeedsRebootClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -405,7 +414,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
 						onClick={handleTotalHostsClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -434,7 +443,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
 						onClick={handleHostsNeedingUpdatesClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -463,7 +472,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
 						onClick={handleUpToDateClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -492,7 +501,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
 						onClick={handleOutdatedPackagesClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -521,7 +530,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
 						onClick={handleSecurityUpdatesClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -550,7 +559,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
 						onClick={handleHostGroupsClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -579,7 +588,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
 						onClick={handleUsersClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -608,7 +617,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
 						onClick={handleRepositoriesClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -741,7 +750,7 @@ const Dashboard = () => {
 
 			case "osDistribution":
 				return (
-					<div className="card p-6 w-full">
+					<div className="card p-4 sm:p-6 w-full">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							OS Distribution
 						</h3>
@@ -755,7 +764,7 @@ const Dashboard = () => {
 
 			case "osDistributionDoughnut":
 				return (
-					<div className="card p-6 w-full">
+					<div className="card p-4 sm:p-6 w-full">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							OS Distribution
 						</h3>
@@ -769,7 +778,7 @@ const Dashboard = () => {
 
 			case "osDistributionBar":
 				return (
-					<div className="card p-6 w-full">
+					<div className="card p-4 sm:p-6 w-full">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							OS Distribution
 						</h3>
@@ -783,7 +792,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-6 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left"
+						className="card p-4 sm:p-6 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left"
 						onClick={handleUpdateStatusClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -808,7 +817,7 @@ const Dashboard = () => {
 
 			case "packagePriority":
 				return (
-					<div className="card p-6 w-full">
+					<div className="card p-4 sm:p-6 w-full">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							Outdated Packages by Priority
 						</h3>
@@ -825,13 +834,13 @@ const Dashboard = () => {
 
 			case "packageTrends":
 				return (
-					<div className="card p-6 w-full">
-						<div className="flex items-center justify-between mb-4">
+					<div className="card p-4 sm:p-6 w-full">
+						<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
 							<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
 								Package Trends Over Time
 							</h3>
 							<div className="flex flex-col gap-2">
-								<div className="flex items-center gap-3">
+								<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
 									{/* Refresh Button */}
 									<button
 										type="button"
@@ -869,7 +878,7 @@ const Dashboard = () => {
 											}
 										}}
 										disabled={packageTrendsFetching || isTriggeringJob}
-										className="px-3 py-1.5 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white hover:bg-secondary-50 dark:hover:bg-secondary-700 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+										className="px-3 py-2.5 sm:py-1.5 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white hover:bg-secondary-50 dark:hover:bg-secondary-700 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 min-h-[44px]"
 										title={
 											packageTrendsHost === "all"
 												? "Trigger system statistics collection"
@@ -890,7 +899,7 @@ const Dashboard = () => {
 									<select
 										value={packageTrendsPeriod}
 										onChange={(e) => setPackageTrendsPeriod(e.target.value)}
-										className="px-3 py-1.5 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+										className="px-3 py-2.5 sm:py-1.5 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500 min-h-[44px]"
 									>
 										<option value="1">Last 24 hours</option>
 										<option value="7">Last 7 days</option>
@@ -908,7 +917,7 @@ const Dashboard = () => {
 											// Clear job ID message when host selection changes
 											setSystemStatsJobId(null);
 										}}
-										className="px-3 py-1.5 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+										className="px-3 py-2.5 sm:py-1.5 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500 min-h-[44px]"
 									>
 										<option value="all">All Hosts</option>
 										{packageTrendsData?.hosts?.length > 0 ? (
@@ -928,7 +937,7 @@ const Dashboard = () => {
 								</div>
 								{/* Job ID Message */}
 								{systemStatsJobId && packageTrendsHost === "all" && (
-									<p className="text-xs text-secondary-600 dark:text-secondary-400 ml-1">
+									<p className="text-xs text-secondary-600 dark:text-white/70 ml-1">
 										Ran collection job #{systemStatsJobId}
 									</p>
 								)}
@@ -946,7 +955,7 @@ const Dashboard = () => {
 									options={packageTrendsChartOptions}
 								/>
 							) : (
-								<div className="flex items-center justify-center h-full text-secondary-500 dark:text-secondary-400">
+								<div className="flex items-center justify-center h-full text-secondary-500 dark:text-white/70">
 									No data available
 								</div>
 							)}
@@ -984,7 +993,7 @@ const Dashboard = () => {
 						: 0;
 
 				return (
-					<div className="card p-6">
+					<div className="card p-4 sm:p-6">
 						<div className="flex items-center justify-between mb-4">
 							<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
 								System Overview
@@ -995,10 +1004,10 @@ const Dashboard = () => {
 								<div className="text-2xl font-bold text-primary-600">
 									{updatePercentage}%
 								</div>
-								<div className="text-sm text-secondary-500 dark:text-secondary-300">
+								<div className="text-sm text-secondary-500 dark:text-white/70">
 									Need Updates
 								</div>
-								<div className="text-xs text-secondary-400 dark:text-secondary-500">
+								<div className="text-xs text-secondary-400 dark:text-white/60">
 									{stats.cards.hostsNeedingUpdates}/{stats.cards.totalHosts}{" "}
 									hosts
 								</div>
@@ -1007,10 +1016,10 @@ const Dashboard = () => {
 								<div className="text-2xl font-bold text-danger-600">
 									{stats.cards.securityUpdates}
 								</div>
-								<div className="text-sm text-secondary-500 dark:text-secondary-300">
+								<div className="text-sm text-secondary-500 dark:text-white/70">
 									Security Issues
 								</div>
-								<div className="text-xs text-secondary-400 dark:text-secondary-500">
+								<div className="text-xs text-secondary-400 dark:text-white/60">
 									{securityPercentage}% of updates
 								</div>
 							</div>
@@ -1018,10 +1027,10 @@ const Dashboard = () => {
 								<div className="text-2xl font-bold text-success-600">
 									{onlinePercentage}%
 								</div>
-								<div className="text-sm text-secondary-500 dark:text-secondary-300">
+								<div className="text-sm text-secondary-500 dark:text-white/70">
 									Online
 								</div>
-								<div className="text-xs text-secondary-400 dark:text-secondary-500">
+								<div className="text-xs text-secondary-400 dark:text-white/60">
 									{onlineHosts}/{stats.cards.totalHosts} hosts
 								</div>
 							</div>
@@ -1029,10 +1038,10 @@ const Dashboard = () => {
 								<div className="text-2xl font-bold text-secondary-600">
 									{avgPackagesPerHost}
 								</div>
-								<div className="text-sm text-secondary-500 dark:text-secondary-300">
+								<div className="text-sm text-secondary-500 dark:text-white/70">
 									Avg per Host
 								</div>
-								<div className="text-xs text-secondary-400 dark:text-secondary-500">
+								<div className="text-xs text-secondary-400 dark:text-white/60">
 									outdated packages
 								</div>
 							</div>
@@ -1043,7 +1052,7 @@ const Dashboard = () => {
 
 			case "recentUsers":
 				return (
-					<div className="card p-6">
+					<div className="card p-4 sm:p-6">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							Recent Users Logged in
 						</h3>
@@ -1057,7 +1066,7 @@ const Dashboard = () => {
 										<div className="text-sm font-medium text-secondary-900 dark:text-white">
 											{u.username}
 										</div>
-										<div className="text-sm text-secondary-500 dark:text-secondary-400">
+										<div className="text-sm text-secondary-500 dark:text-white/70">
 											{u.last_login
 												? formatRelativeTime(u.last_login)
 												: "Never"}
@@ -1065,7 +1074,7 @@ const Dashboard = () => {
 									</div>
 								))}
 								{(!recentUsers || recentUsers.length === 0) && (
-									<div className="text-center text-secondary-500 dark:text-secondary-400 py-4">
+									<div className="text-center text-secondary-500 dark:text-white/70 py-4">
 										No users found
 									</div>
 								)}
@@ -1076,7 +1085,7 @@ const Dashboard = () => {
 
 			case "recentCollection":
 				return (
-					<div className="card p-6">
+					<div className="card p-4 sm:p-6">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							Recent Collection
 						</h3>
@@ -1094,7 +1103,7 @@ const Dashboard = () => {
 										>
 											{host.friendly_name || host.hostname}
 										</button>
-										<div className="text-sm text-secondary-500 dark:text-secondary-400">
+										<div className="text-sm text-secondary-500 dark:text-white/70">
 											{host.last_update
 												? formatRelativeTime(host.last_update)
 												: "Never"}
@@ -1102,7 +1111,7 @@ const Dashboard = () => {
 									</div>
 								))}
 								{(!recentCollection || recentCollection.length === 0) && (
-									<div className="text-center text-secondary-500 dark:text-secondary-400 py-4">
+									<div className="text-center text-secondary-500 dark:text-white/70 py-4">
 										No hosts found
 									</div>
 								)}
@@ -1154,13 +1163,13 @@ const Dashboard = () => {
 		maintainAspectRatio: false,
 		plugins: {
 			legend: {
-				position: "right",
+				position: isMobile ? "bottom" : "right",
 				labels: {
 					color: isDark ? "#ffffff" : "#374151",
 					font: {
-						size: 12,
+						size: isMobile ? 10 : 12,
 					},
-					padding: 15,
+					padding: isMobile ? 10 : 15,
 					usePointStyle: true,
 					pointStyle: "circle",
 				},
@@ -1168,7 +1177,7 @@ const Dashboard = () => {
 		},
 		layout: {
 			padding: {
-				right: 20,
+				right: isMobile ? 10 : 20,
 			},
 		},
 		onClick: handleOSChartClick,
@@ -1179,13 +1188,13 @@ const Dashboard = () => {
 		maintainAspectRatio: false,
 		plugins: {
 			legend: {
-				position: "right",
+				position: isMobile ? "bottom" : "right",
 				labels: {
 					color: isDark ? "#ffffff" : "#374151",
 					font: {
-						size: 12,
+						size: isMobile ? 10 : 12,
 					},
-					padding: 15,
+					padding: isMobile ? 10 : 15,
 					usePointStyle: true,
 					pointStyle: "circle",
 				},
@@ -1193,7 +1202,7 @@ const Dashboard = () => {
 		},
 		layout: {
 			padding: {
-				right: 20,
+				right: isMobile ? 10 : 20,
 			},
 		},
 		onClick: handleOSChartClick,
@@ -1584,10 +1593,10 @@ const Dashboard = () => {
 			{/* Page Header */}
 			<div className="flex items-center justify-between">
 				<div>
-					<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
+					<h1 className="text-xl sm:text-2xl font-semibold text-secondary-900 dark:text-white">
 						Welcome back, {user?.first_name || user?.username || "User"} 👋
 					</h1>
-					<p className="text-sm text-secondary-600 dark:text-secondary-400 mt-1">
+					<p className="text-sm text-secondary-600 dark:text-white/80 mt-1">
 						Overview of your PatchMon infrastructure
 					</p>
 				</div>
@@ -1595,7 +1604,7 @@ const Dashboard = () => {
 					<button
 						type="button"
 						onClick={() => setShowSettingsModal(true)}
-						className="btn-outline flex items-center gap-2"
+						className="hidden md:flex btn-outline items-center gap-2"
 						title="Customize dashboard layout"
 					>
 						<Settings className="h-4 w-4" />
@@ -1604,7 +1613,7 @@ const Dashboard = () => {
 						type="button"
 						onClick={() => refetch()}
 						disabled={isFetching}
-						className="btn-outline flex items-center gap-2"
+						className="btn-outline flex items-center gap-2 min-h-[44px] min-w-[44px] justify-center"
 						title="Refresh dashboard data"
 					>
 						<RefreshCw

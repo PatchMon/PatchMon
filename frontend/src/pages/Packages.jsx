@@ -80,17 +80,31 @@ const Packages = () => {
 	};
 
 	// Handle hosts click (view hosts where package is installed)
-	const handlePackageHostsClick = (pkg) => {
-		const packageHosts = pkg.packageHosts || [];
-		const hostIds = packageHosts.map((host) => host.hostId);
+	const handlePackageHostsClick = async (pkg) => {
+		try {
+			// Fetch all hosts for this package (packageHosts may only include hosts needing updates)
+			const response = await packagesAPI.getHosts(pkg.id, { limit: 1000 });
+			const hosts = response.data?.hosts || [];
+			const hostIds = hosts.map((host) => host.hostId).filter(Boolean);
 
-		// Create URL with selected hosts and filter
-		const params = new URLSearchParams();
-		params.set("selected", hostIds.join(","));
-		params.set("filter", "selected");
+			if (hostIds.length === 0) {
+				// No hosts found, navigate without filter
+				navigate("/hosts");
+				return;
+			}
 
-		// Navigate to hosts page with selected hosts
-		navigate(`/hosts?${params.toString()}`);
+			// Create URL with selected hosts and filter
+			const params = new URLSearchParams();
+			params.set("selected", hostIds.join(","));
+			params.set("filter", "selected");
+
+			// Navigate to hosts page with selected hosts
+			navigate(`/hosts?${params.toString()}`);
+		} catch (error) {
+			console.error("Error fetching package hosts:", error);
+			// Fallback: navigate to hosts page without filter
+			navigate("/hosts");
+		}
 	};
 
 	// Handle URL filter parameters
@@ -505,7 +519,7 @@ const Packages = () => {
 	}
 
 	return (
-		<div className="h-[calc(100vh-7rem)] flex flex-col overflow-hidden">
+		<div className="md:h-[calc(100vh-7rem)] flex flex-col md:overflow-hidden min-h-0">
 			{/* Page Header */}
 			<div className="flex items-center justify-between mb-6">
 				<div>
@@ -533,7 +547,7 @@ const Packages = () => {
 			</div>
 
 			{/* Summary Stats */}
-			<div className="grid grid-cols-1 sm:grid-cols-5 gap-4 mb-6 flex-shrink-0">
+			<div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6 flex-shrink-0">
 				<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
 					<div className="flex items-center">
 						<Package className="h-5 w-5 text-primary-600 mr-2" />
@@ -631,8 +645,8 @@ const Packages = () => {
 			</div>
 
 			{/* Packages List */}
-			<div className="card flex-1 flex flex-col overflow-hidden min-h-0">
-				<div className="px-4 py-4 sm:p-4 flex-1 flex flex-col overflow-hidden min-h-0">
+			<div className="card md:flex-1 flex flex-col md:overflow-hidden min-h-0">
+				<div className="px-4 py-4 sm:p-4 md:flex-1 flex flex-col md:overflow-hidden min-h-0">
 					<div className="flex items-center justify-end mb-4">
 						{/* Empty selection controls area to match hosts page spacing */}
 					</div>
@@ -641,8 +655,8 @@ const Packages = () => {
 					<div className="mb-4 space-y-4">
 						<div className="flex flex-col sm:flex-row gap-4">
 							{/* Search */}
-							<div className="flex-1">
-								<div className="relative">
+							<div className="hidden md:flex flex-1">
+								<div className="relative w-full">
 									<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-secondary-500" />
 									<input
 										type="text"
@@ -705,7 +719,7 @@ const Packages = () => {
 							</div>
 
 							{/* Columns Button */}
-							<div className="flex items-center">
+							<div className="hidden md:flex items-center">
 								<button
 									type="button"
 									onClick={() => setShowColumnSettings(true)}
@@ -718,7 +732,7 @@ const Packages = () => {
 						</div>
 					</div>
 
-					<div className="flex-1 overflow-hidden">
+					<div className="md:flex-1 md:overflow-hidden">
 						{filteredAndSortedPackages.length === 0 ? (
 							<div className="text-center py-8">
 								<Package className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
@@ -735,46 +749,143 @@ const Packages = () => {
 								)}
 							</div>
 						) : (
-							<div className="h-full overflow-auto">
-								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
-									<thead className="bg-secondary-50 dark:bg-secondary-700 sticky top-0 z-10">
-										<tr>
-											{visibleColumns.map((column) => (
-												<th
-													key={column.id}
-													className="px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider"
-												>
-													<button
-														type="button"
-														onClick={() => handleSort(column.id)}
-														className="flex items-center gap-1 hover:text-secondary-700 dark:hover:text-secondary-200 transition-colors"
-													>
-														{column.label}
-														{getSortIcon(column.id)}
-													</button>
-												</th>
-											))}
-										</tr>
-									</thead>
-									<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
-										{paginatedPackages.map((pkg) => (
-											<tr
-												key={pkg.id}
-												className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
+							<>
+								{/* Mobile Card Layout */}
+								<div className="md:hidden space-y-3 pb-4">
+									{paginatedPackages.map((pkg) => (
+										<div key={pkg.id} className="card p-4 space-y-3">
+											{/* Package Name */}
+											<button
+												type="button"
+												onClick={() => navigate(`/packages/${pkg.id}`)}
+												className="text-left w-full"
 											>
+												<div className="flex items-center gap-3">
+													<Package className="h-5 w-5 text-secondary-400 flex-shrink-0" />
+													<div className="text-base font-semibold text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400">
+														{pkg.name}
+													</div>
+												</div>
+											</button>
+
+											{/* Status and Hosts on same line */}
+											<div className="flex items-center justify-between gap-2">
+												<div className="flex items-center gap-1.5">
+													{(() => {
+														const needsUpdates =
+															(pkg.stats?.updatesNeeded || 0) > 0;
+														if (!needsUpdates) {
+															return (
+																<span className="badge-success text-xs">
+																	Up to Date
+																</span>
+															);
+														}
+														return pkg.isSecurityUpdate ? (
+															<span className="badge-danger text-xs flex items-center gap-1">
+																<Shield className="h-3 w-3" />
+																Security
+															</span>
+														) : (
+															<span className="badge-warning text-xs">
+																Update
+															</span>
+														);
+													})()}
+												</div>
+												<button
+													type="button"
+													onClick={() => handlePackageHostsClick(pkg)}
+													className="text-sm hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded px-2 py-1 -mx-2 transition-colors"
+												>
+													<span className="text-secondary-500 dark:text-secondary-400">
+														On:&nbsp;
+													</span>
+													<span className="text-secondary-900 dark:text-white font-semibold">
+														{(() => {
+															const installedHostsCount =
+																pkg.packageHostsCount ||
+																pkg.stats?.totalInstalls ||
+																pkg.packageHosts?.length ||
+																0;
+															const hostsNeedingUpdates =
+																pkg.stats?.updatesNeeded || 0;
+															return hostsNeedingUpdates > 0 &&
+																hostsNeedingUpdates < installedHostsCount
+																? `${hostsNeedingUpdates}/${installedHostsCount}`
+																: installedHostsCount;
+														})()}
+													</span>
+													<span className="text-secondary-500 dark:text-secondary-400">
+														{(() => {
+															const installedHostsCount =
+																pkg.packageHostsCount ||
+																pkg.stats?.totalInstalls ||
+																pkg.packageHosts?.length ||
+																0;
+															return ` host${installedHostsCount !== 1 ? "s" : ""}`;
+														})()}
+													</span>
+												</button>
+											</div>
+
+											{/* Version Info */}
+											<div className="pt-2 border-t border-secondary-200 dark:border-secondary-600">
+												<div className="text-sm">
+													<span className="text-secondary-500 dark:text-secondary-400">
+														Latest:&nbsp;
+													</span>
+													<span className="text-secondary-900 dark:text-white font-mono text-sm">
+														{pkg.latestVersion || "Unknown"}
+													</span>
+												</div>
+											</div>
+										</div>
+									))}
+								</div>
+
+								{/* Desktop Table Layout */}
+								<div className="hidden md:block h-full overflow-auto">
+									<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+										<thead className="bg-secondary-50 dark:bg-secondary-700 sticky top-0 z-10">
+											<tr>
 												{visibleColumns.map((column) => (
-													<td
+													<th
 														key={column.id}
-														className="px-4 py-2 whitespace-nowrap text-center"
+														className="px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider"
 													>
-														{renderCellContent(column, pkg)}
-													</td>
+														<button
+															type="button"
+															onClick={() => handleSort(column.id)}
+															className="flex items-center gap-1 hover:text-secondary-700 dark:hover:text-secondary-200 transition-colors"
+														>
+															{column.label}
+															{getSortIcon(column.id)}
+														</button>
+													</th>
 												))}
 											</tr>
-										))}
-									</tbody>
-								</table>
-							</div>
+										</thead>
+										<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+											{paginatedPackages.map((pkg) => (
+												<tr
+													key={pkg.id}
+													className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
+												>
+													{visibleColumns.map((column) => (
+														<td
+															key={column.id}
+															className="px-4 py-2 whitespace-nowrap text-center"
+														>
+															{renderCellContent(column, pkg)}
+														</td>
+													))}
+												</tr>
+											))}
+										</tbody>
+									</table>
+								</div>
+							</>
 						)}
 					</div>
 
@@ -891,14 +1002,16 @@ const ColumnSettingsModal = ({
 
 				<div className="space-y-2">
 					{columnConfig.map((column, index) => (
-						<button
-							type="button"
+						// biome-ignore lint/a11y/useSemanticElements: Draggable element requires div
+						<div
 							key={column.id}
+							role="button"
+							tabIndex={0}
 							draggable
 							onDragStart={(e) => handleDragStart(e, index)}
 							onDragOver={handleDragOver}
 							onDrop={(e) => handleDrop(e, index)}
-							className={`flex items-center justify-between p-3 border rounded-lg cursor-move w-full text-left ${
+							className={`flex items-center justify-between p-3 border rounded-lg cursor-move w-full ${
 								draggedIndex === index
 									? "opacity-50"
 									: "hover:bg-secondary-50 dark:hover:bg-secondary-700"
@@ -912,7 +1025,10 @@ const ColumnSettingsModal = ({
 							</div>
 							<button
 								type="button"
-								onClick={() => onToggleVisibility(column.id)}
+								onClick={(e) => {
+									e.stopPropagation();
+									onToggleVisibility(column.id);
+								}}
 								className={`p-1 rounded ${
 									column.visible
 										? "text-primary-600 hover:text-primary-700"
@@ -925,7 +1041,7 @@ const ColumnSettingsModal = ({
 									<EyeOffIcon className="h-4 w-4" />
 								)}
 							</button>
-						</button>
+						</div>
 					))}
 				</div>
 
