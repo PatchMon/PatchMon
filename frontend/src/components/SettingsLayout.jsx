@@ -90,7 +90,6 @@ const SettingsLayout = ({ children }) => {
 						name: "Notifications",
 						href: "/settings/notifications",
 						icon: Bell,
-						comingSoon: true,
 					},
 				],
 			});

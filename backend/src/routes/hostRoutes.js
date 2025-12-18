@@ -13,6 +13,7 @@ const {
 const { queueManager, QUEUE_NAMES } = require("../services/automation");
 const { pushIntegrationToggle, isConnected } = require("../services/agentWs");
 const { compareVersions } = require("../services/automation/shared/utils");
+const NotificationService = require("../services/NotificationService");
 
 const router = express.Router();
 const prisma = getPrismaClient();
@@ -555,6 +556,9 @@ router.post(
 				updated_at: new Date(),
 			};
 
+			// Track agent version for change detection
+			const previousAgentVersion = host.agent_version;
+
 			// Update machine_id if provided and current one is a placeholder or null
 			if (
 				req.body.machineId &&
@@ -801,6 +805,48 @@ router.post(
 				},
 			);
 
+			// Send notifications for package updates and agent updates
+			try {
+				const notificationService = new NotificationService();
+
+				// Send notifications for each package update
+				for (const packageData of packages) {
+					if (packageData.needsUpdate) {
+						// Determine event type based on security update flag
+						const eventType = packageData.isSecurityUpdate
+							? "security_update"
+							: "package_update";
+
+						// Send notification with package details
+						await notificationService.sendNotification(eventType, {
+							host_id: host.id,
+							host_name: host.friendly_name || host.hostname,
+							package_name: packageData.name,
+							package_version: packageData.currentVersion,
+							available_version: packageData.availableVersion,
+							is_security_update: packageData.isSecurityUpdate,
+						});
+					}
+				}
+
+				// Send notification if agent version changed
+				if (
+					req.body.agentVersion &&
+					previousAgentVersion &&
+					req.body.agentVersion !== previousAgentVersion
+				) {
+					await notificationService.sendNotification("agent_update", {
+						host_id: host.id,
+						host_name: host.friendly_name || host.hostname,
+						agent_version: req.body.agentVersion,
+						previous_agent_version: previousAgentVersion,
+					});
+				}
+			} catch (notificationError) {
+				// Log notification error but don't fail the host update
+				console.error("Error sending notifications:", notificationError);
+			}
+
 			// Agent auto-update is now handled client-side by the agent itself
 
 			const response = {
@@ -898,6 +944,9 @@ router.post("/ping", validateApiCredentials, async (req, res) => {
 			}
 		}
 
+		// Track previous status for change detection
+		const previousStatus = req.hostRecord.status;
+
 		// Update last update timestamp and set status to active
 		await prisma.hosts.update({
 			where: { id: req.hostRecord.id },
@@ -907,6 +956,25 @@ router.post("/ping", validateApiCredentials, async (req, res) => {
 				status: "active",
 			},
 		});
+
+		// Send notification if host status changed
+		try {
+			if (previousStatus !== "active") {
+				const notificationService = new NotificationService();
+				await notificationService.sendNotification("host_status_change", {
+					host_id: req.hostRecord.id,
+					host_name: req.hostRecord.friendly_name || req.hostRecord.hostname,
+					host_status: "active",
+					previous_status: previousStatus,
+				});
+			}
+		} catch (notificationError) {
+			// Log notification error but don't fail the ping
+			console.error(
+				"Error sending host status change notification:",
+				notificationError,
+			);
+		}
 
 		const response = {
 			message: "Ping successful",

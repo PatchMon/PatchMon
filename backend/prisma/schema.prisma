@@ -248,6 +248,8 @@ model users {
   dashboard_preferences  dashboard_preferences[]
   user_sessions          user_sessions[]
   auto_enrollment_tokens auto_enrollment_tokens[]
+  notification_channels  notification_channels[]
+  notification_rules     notification_rules[]
 }
 
 model user_sessions {
@@ -434,4 +436,88 @@ model job_history {
   @@index([api_id])
   @@index([status])
   @@index([created_at])
+}
+
+model notification_channels {
+  id                    String   @id @default(cuid())
+  name                  String
+  channel_type          String   @default("gotify")
+  server_url            String
+  token                 String
+  priority              Int      @default(5)
+  status                String   @default("connected")
+  last_tested_at        DateTime?
+  last_error            String?
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+  created_by_user_id    String?
+  users                 users?   @relation(fields: [created_by_user_id], references: [id], onDelete: SetNull)
+  notification_rules    notification_rule_channels[]
+  notification_history  notification_history[]
+
+  @@index([status])
+  @@index([created_by_user_id])
+}
+
+model notification_rules {
+  id                    String   @id @default(cuid())
+  name                  String
+  description           String?
+  event_type            String
+  enabled               Boolean  @default(true)
+  priority              Int      @default(5)
+  message_title         String?
+  message_template      String?
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+  created_by_user_id    String?
+  users                 users?   @relation(fields: [created_by_user_id], references: [id], onDelete: SetNull)
+  channels              notification_rule_channels[]
+  filters               notification_rule_filters[]
+  notification_history  notification_history[]
+
+  @@index([event_type])
+  @@index([enabled])
+  @@index([created_by_user_id])
+}
+
+model notification_rule_channels {
+  id         String   @id @default(cuid())
+  rule_id    String
+  channel_id String
+  rules      notification_rules @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+  channels   notification_channels @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+
+  @@unique([rule_id, channel_id])
+  @@index([rule_id])
+  @@index([channel_id])
+}
+
+model notification_rule_filters {
+  id            String   @id @default(cuid())
+  rule_id       String
+  filter_type   String
+  filter_value  String
+  rules         notification_rules @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+
+  @@index([rule_id])
+}
+
+model notification_history {
+  id              String   @id @default(cuid())
+  rule_id         String?
+  channel_id      String
+  event_type      String
+  status          String
+  message_title   String?
+  message_content String?
+  error_message   String?
+  sent_at         DateTime @default(now())
+  rules           notification_rules? @relation(fields: [rule_id], references: [id], onDelete: SetNull)
+  channels        notification_channels @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+
+  @@index([sent_at])
+  @@index([channel_id])
+  @@index([status])
+  @@index([event_type])
 }
