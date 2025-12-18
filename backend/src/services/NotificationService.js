@@ -34,7 +34,7 @@ class NotificationService {
 	 * @param {boolean} [eventData.is_security_update] - Whether this is a security update
 	 * @param {string} [eventData.host_status] - New host status (for status change events)
 	 * @param {string} [eventData.agent_version] - Agent version (for agent update events)
-	 * @returns {Promise<Object>} Summary of notifications sent {sent: number, failed: number}
+	 * @returns {Promise<Object>} Summary of notifications sent {sent: number, failed: number, skipped: number}
 	 */
 	async sendNotification(eventType, eventData) {
 		try {
@@ -43,6 +43,7 @@ class NotificationService {
 
 			let sentCount = 0;
 			let failedCount = 0;
+			let skippedCount = 0;
 
 			// Process each matching rule
 			for (const rule of matchingRules) {
@@ -60,6 +61,19 @@ class NotificationService {
 
 					// Format the message
 					const message = this._formatMessage(rule, eventData);
+
+					// Check for duplicate notification
+					const isDuplicate = await this._isDuplicateNotification(
+						channel.id,
+						rule.id,
+						eventType,
+						message.body,
+					);
+
+					if (isDuplicate) {
+						skippedCount++;
+						continue;
+					}
 
 					// Send to Gotify
 					const sendResult = await this.gotifyService.sendMessage(
@@ -111,6 +125,7 @@ class NotificationService {
 			return {
 				sent: sentCount,
 				failed: failedCount,
+				skipped: skippedCount,
 			};
 		} catch (error) {
 			console.error("Error sending notifications:", error);
@@ -327,6 +342,45 @@ class NotificationService {
 		});
 
 		return rendered;
+	}
+
+	/**
+	 * Check if a notification is a duplicate of a recently sent one
+	 *
+	 * Prevents duplicate alerts by checking if the same message was sent to the same
+	 * channel within the last day (86400 seconds).
+	 *
+	 * @private
+	 * @param {string} channelId - ID of the notification channel
+	 * @param {string} ruleId - ID of the notification rule
+	 * @param {string} eventType - Type of event
+	 * @param {string} messageContent - The message content
+	 * @returns {Promise<boolean>} True if this is a duplicate notification
+	 */
+	async _isDuplicateNotification(channelId, ruleId, eventType, messageContent) {
+		try {
+			// Check for identical message sent to same channel in the last day
+			const oneDayAgo = new Date(Date.now() - 86400 * 1000);
+
+			const recentNotification =
+				await this.prisma.notification_history.findFirst({
+					where: {
+						channel_id: channelId,
+						rule_id: ruleId,
+						event_type: eventType,
+						message_content: messageContent,
+						sent_at: {
+							gte: oneDayAgo,
+						},
+					},
+				});
+
+			return !!recentNotification;
+		} catch (error) {
+			console.error("Error checking for duplicate notification:", error);
+			// If there's an error checking, don't block the notification
+			return false;
+		}
 	}
 
 	/**
