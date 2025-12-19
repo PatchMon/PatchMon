@@ -369,7 +369,10 @@ const PackageDetail = () => {
 											</div>
 											<div className="flex flex-col gap-2 items-end">
 												{host.needsReboot && (
-													<span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+													<span
+														className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
+														title={host.rebootReason || "Reboot required"}
+													>
 														<RotateCcw className="h-3 w-3" />
 														Reboot Required
 													</span>
@@ -450,7 +453,10 @@ const PackageDetail = () => {
 												</td>
 												<td className="px-6 py-4 whitespace-nowrap">
 													{host.needsReboot ? (
-														<span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+														<span
+															className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
+															title={host.rebootReason || "Reboot required"}
+														>
 															<RotateCcw className="h-3 w-3" />
 															Required
 														</span>

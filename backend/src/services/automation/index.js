@@ -250,6 +250,40 @@ class QueueManager {
 						const { update_interval } = job.data;
 						agentWs.pushSettingsUpdate(api_id, update_interval);
 					} else if (type === "update_agent") {
+						// Check if bypass_settings flag is set (for true force updates)
+						const bypassSettings = job.data.bypass_settings === true;
+
+						if (!bypassSettings) {
+							// Check general server auto_update setting
+							const settings = await prisma.settings.findFirst();
+							if (!settings || !settings.auto_update) {
+								console.log(
+									`⚠️ Auto-update is disabled in server settings, skipping update_agent command for agent ${api_id}`,
+								);
+								throw new Error("Auto-update is disabled in server settings");
+							}
+
+							// Check per-host auto_update setting
+							const host = await prisma.hosts.findUnique({
+								where: { api_id: api_id },
+								select: { auto_update: true },
+							});
+
+							if (!host) {
+								console.log(
+									`⚠️ Host not found for agent ${api_id}, skipping update_agent command`,
+								);
+								throw new Error("Host not found");
+							}
+
+							if (!host.auto_update) {
+								console.log(
+									`⚠️ Auto-update is disabled for host ${api_id}, skipping update_agent command`,
+								);
+								throw new Error("Auto-update is disabled for this host");
+							}
+						}
+
 						// Force agent to update by sending WebSocket command
 						const ws = agentWs.getConnectionByApiId(api_id);
 						if (ws && ws.readyState === 1) {

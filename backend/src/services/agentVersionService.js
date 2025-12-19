@@ -623,6 +623,49 @@ class AgentVersionService {
 				`🔍 Checking update for agent ${agentApiId} (version: ${agentVersion})`,
 			);
 
+			// Check general server auto_update setting
+			const { getPrismaClient } = require("../config/prisma");
+			const prisma = getPrismaClient();
+			const settings = await prisma.settings.findFirst();
+			if (!settings || !settings.auto_update) {
+				console.log(
+					`⚠️ Auto-update is disabled in server settings, skipping update check for agent ${agentApiId}`,
+				);
+				return {
+					needsUpdate: false,
+					reason: "auto-update-disabled-server",
+					message: "Auto-update is disabled in server settings",
+				};
+			}
+
+			// Check per-host auto_update setting
+			const host = await prisma.hosts.findUnique({
+				where: { api_id: agentApiId },
+				select: { auto_update: true },
+			});
+
+			if (!host) {
+				console.log(
+					`⚠️ Host not found for agent ${agentApiId}, skipping update check`,
+				);
+				return {
+					needsUpdate: false,
+					reason: "host-not-found",
+					message: "Host not found",
+				};
+			}
+
+			if (!host.auto_update) {
+				console.log(
+					`⚠️ Auto-update is disabled for host ${agentApiId}, skipping update check`,
+				);
+				return {
+					needsUpdate: false,
+					reason: "auto-update-disabled-host",
+					message: "Auto-update is disabled for this host",
+				};
+			}
+
 			// Get current server version info
 			const versionInfo = await this.getVersionInfo();
 
@@ -711,6 +754,22 @@ class AgentVersionService {
 			console.log(
 				`🔍 Checking updates for all connected agents (force: ${force})`,
 			);
+
+			// Check general server auto_update setting
+			const { getPrismaClient } = require("../config/prisma");
+			const prisma = getPrismaClient();
+			const settings = await prisma.settings.findFirst();
+			if (!settings || !settings.auto_update) {
+				console.log(
+					`⚠️ Auto-update is disabled in server settings, skipping bulk update check`,
+				);
+				return {
+					success: false,
+					message: "Auto-update is disabled in server settings",
+					updatedAgents: 0,
+					totalAgents: 0,
+				};
+			}
 
 			// Import agentWs service to get connected agents
 			const { pushUpdateNotificationToAll } = require("./agentWs");
