@@ -310,9 +310,37 @@ function pushUpdateNotification(apiId, updateInfo) {
 async function pushUpdateNotificationToAll(updateInfo) {
 	let notifiedCount = 0;
 	let failedCount = 0;
+	let skippedCount = 0;
+
+	// Get all hosts with their auto_update settings
+	const hosts = await prisma.hosts.findMany({
+		where: {
+			api_id: { in: Array.from(apiIdToSocket.keys()) },
+		},
+		select: {
+			api_id: true,
+			auto_update: true,
+		},
+	});
+
+	// Create a map for quick lookup
+	const hostAutoUpdateMap = new Map();
+	for (const host of hosts) {
+		hostAutoUpdateMap.set(host.api_id, host.auto_update);
+	}
 
 	for (const [apiId, ws] of apiIdToSocket) {
 		if (ws && ws.readyState === WebSocket.OPEN) {
+			// Check per-host auto_update setting
+			const hostAutoUpdate = hostAutoUpdateMap.get(apiId);
+			if (hostAutoUpdate === false) {
+				skippedCount++;
+				console.log(
+					`⚠️ Skipping update notification for agent ${apiId} (auto-update disabled for host)`,
+				);
+				continue;
+			}
+
 			try {
 				safeSend(
 					ws,
@@ -336,10 +364,11 @@ async function pushUpdateNotificationToAll(updateInfo) {
 		}
 	}
 
+	const totalAgents = apiIdToSocket.size;
 	console.log(
-		`📤 Update notification sent to ${notifiedCount} agents, ${failedCount} failed`,
+		`📤 Update notification sent to ${notifiedCount} agents, ${failedCount} failed, ${skippedCount} skipped (auto-update disabled)`,
 	);
-	return { notifiedCount, failedCount };
+	return { notifiedCount, failedCount, skippedCount, totalAgents };
 }
 
 // Notify all subscribers when connection status changes

@@ -21,6 +21,35 @@ const prisma = getPrismaClient();
 // This stores the last known state from successful toggles
 const integrationStateCache = new Map();
 
+// Middleware to validate API credentials
+const validateApiCredentials = async (req, res, next) => {
+	try {
+		const apiId = req.headers["x-api-id"] || req.body.apiId;
+		const apiKey = req.headers["x-api-key"] || req.body.apiKey;
+
+		if (!apiId || !apiKey) {
+			return res.status(401).json({ error: "API ID and Key required" });
+		}
+
+		const host = await prisma.hosts.findFirst({
+			where: {
+				api_id: apiId,
+				api_key: apiKey,
+			},
+		});
+
+		if (!host) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
+		req.hostRecord = host;
+		next();
+	} catch (error) {
+		console.error("API credential validation error:", error);
+		res.status(500).json({ error: "API credential validation failed" });
+	}
+};
+
 // Secure endpoint to download the agent script/binary (requires API authentication)
 router.get("/agent/download", async (req, res) => {
 	try {
@@ -130,10 +159,31 @@ router.get("/agent/download", async (req, res) => {
 });
 
 // Version check endpoint for agents
-router.get("/agent/version", async (req, res) => {
+router.get("/agent/version", validateApiCredentials, async (req, res) => {
 	try {
 		const fs = require("node:fs");
 		const path = require("node:path");
+
+		// Check general server auto_update setting
+		const settings = await prisma.settings.findFirst();
+		const serverAutoUpdateEnabled = settings?.auto_update;
+
+		// Check per-host auto_update setting (req.hostRecord is set by validateApiCredentials middleware)
+		const host = req.hostRecord;
+		const hostAutoUpdateEnabled = host?.auto_update;
+
+		// Determine if auto-update is disabled
+		const autoUpdateDisabled =
+			!serverAutoUpdateEnabled || !hostAutoUpdateEnabled;
+		let autoUpdateDisabledReason = null;
+		if (!serverAutoUpdateEnabled && !hostAutoUpdateEnabled) {
+			autoUpdateDisabledReason =
+				"Auto-update is disabled in server settings and for this host";
+		} else if (!serverAutoUpdateEnabled) {
+			autoUpdateDisabledReason = "Auto-update is disabled in server settings";
+		} else if (!hostAutoUpdateEnabled) {
+			autoUpdateDisabledReason = "Auto-update is disabled for this host";
+		}
 
 		// Get architecture parameter (default to amd64 for Go agents)
 		const architecture = req.query.arch || "amd64";
@@ -163,9 +213,16 @@ router.get("/agent/version", async (req, res) => {
 
 			res.json({
 				currentVersion: currentVersion,
+				latestVersion: currentVersion,
+				hasUpdate: false,
+				autoUpdateDisabled: autoUpdateDisabled,
+				autoUpdateDisabledReason: autoUpdateDisabled
+					? autoUpdateDisabledReason
+					: null,
 				downloadUrl: `/api/v1/hosts/agent/download`,
 				releaseNotes: `PatchMon Agent v${currentVersion}`,
 				minServerVersion: null,
+				agentType: "legacy",
 			});
 		} else {
 			// Go agent version check
@@ -235,10 +292,15 @@ router.get("/agent/version", async (req, res) => {
 					// Proper semantic version comparison: only update if server version is NEWER
 					const hasUpdate = compareVersions(serverVersion, agentVersion) > 0;
 
+					// Return update info, but indicate if auto-update is disabled
 					return res.json({
 						currentVersion: agentVersion,
 						latestVersion: serverVersion,
-						hasUpdate: hasUpdate,
+						hasUpdate: hasUpdate && !autoUpdateDisabled, // Only true if update available AND auto-update enabled
+						autoUpdateDisabled: autoUpdateDisabled,
+						autoUpdateDisabledReason: autoUpdateDisabled
+							? autoUpdateDisabledReason
+							: null,
 						downloadUrl: `/api/v1/hosts/agent/download?arch=${architecture}`,
 						releaseNotes: `PatchMon Agent v${serverVersion}`,
 						minServerVersion: null,
@@ -261,6 +323,10 @@ router.get("/agent/version", async (req, res) => {
 				currentVersion: agentVersion,
 				latestVersion: null,
 				hasUpdate: false,
+				autoUpdateDisabled: autoUpdateDisabled,
+				autoUpdateDisabledReason: autoUpdateDisabled
+					? autoUpdateDisabledReason
+					: null,
 				architecture: architecture,
 				agentType: "go",
 			});
@@ -276,35 +342,6 @@ const generateApiCredentials = () => {
 	const apiId = `patchmon_${crypto.randomBytes(8).toString("hex")}`;
 	const apiKey = crypto.randomBytes(32).toString("hex");
 	return { apiId, apiKey };
-};
-
-// Middleware to validate API credentials
-const validateApiCredentials = async (req, res, next) => {
-	try {
-		const apiId = req.headers["x-api-id"] || req.body.apiId;
-		const apiKey = req.headers["x-api-key"] || req.body.apiKey;
-
-		if (!apiId || !apiKey) {
-			return res.status(401).json({ error: "API ID and Key required" });
-		}
-
-		const host = await prisma.hosts.findFirst({
-			where: {
-				api_id: apiId,
-				api_key: apiKey,
-			},
-		});
-
-		if (!host) {
-			return res.status(401).json({ error: "Invalid API credentials" });
-		}
-
-		req.hostRecord = host;
-		next();
-	} catch (error) {
-		console.error("API credential validation error:", error);
-		res.status(500).json({ error: "API credential validation failed" });
-	}
 };
 
 // Admin endpoint to create a new host manually (replaces auto-registration)
@@ -324,6 +361,10 @@ router.post(
 			.optional()
 			.isUUID()
 			.withMessage("Each host group ID must be a valid UUID"),
+		body("docker_enabled")
+			.optional()
+			.isBoolean()
+			.withMessage("Docker enabled must be a boolean"),
 	],
 	async (req, res) => {
 		try {
@@ -332,7 +373,7 @@ router.post(
 				return res.status(400).json({ errors: errors.array() });
 			}
 
-			const { friendly_name, hostGroupIds } = req.body;
+			const { friendly_name, hostGroupIds, docker_enabled } = req.body;
 
 			// Generate unique API credentials for this host
 			const { apiId, apiKey } = generateApiCredentials();
@@ -363,6 +404,7 @@ router.post(
 					api_id: apiId,
 					api_key: apiKey,
 					status: "pending", // Will change to 'active' when agent connects
+					docker_enabled: docker_enabled ?? false, // Set integration state if provided
 					updated_at: new Date(),
 					// Create host group memberships if hostGroupIds are provided
 					host_group_memberships:
@@ -602,6 +644,8 @@ router.post(
 			// Reboot Status
 			if (req.body.needsReboot !== undefined)
 				updateData.needs_reboot = req.body.needsReboot;
+			if (req.body.rebootReason !== undefined)
+				updateData.reboot_reason = req.body.rebootReason;
 
 			// If this is the first update (status is 'pending'), change to 'active'
 			if (host.status === "pending") {
@@ -875,6 +919,38 @@ router.get("/info", validateApiCredentials, async (req, res) => {
 	}
 });
 
+// Get integration status for agent (uses API credentials)
+router.get("/integrations", validateApiCredentials, async (req, res) => {
+	try {
+		const host = await prisma.hosts.findUnique({
+			where: { id: req.hostRecord.id },
+			select: {
+				id: true,
+				docker_enabled: true,
+				// Future: add other integration fields here
+			},
+		});
+
+		if (!host) {
+			return res.status(404).json({ error: "Host not found" });
+		}
+
+		// Return integration states from database (source of truth)
+		const integrations = {
+			docker: host.docker_enabled ?? false,
+			// Future integrations can be added here
+		};
+
+		res.json({
+			success: true,
+			integrations: integrations,
+		});
+	} catch (error) {
+		console.error("Get integration status error:", error);
+		res.status(500).json({ error: "Failed to get integration status" });
+	}
+});
+
 // Ping endpoint for health checks (now uses API credentials)
 router.post("/ping", validateApiCredentials, async (req, res) => {
 	try {
@@ -913,6 +989,13 @@ router.post("/ping", validateApiCredentials, async (req, res) => {
 			timestamp: now.toISOString(),
 			friendlyName: req.hostRecord.friendly_name,
 			agentStartup: isStartup,
+		};
+
+		// Include integration states in ping response for initial agent configuration
+		// This allows agent to sync config.yml with database state during setup
+		response.integrations = {
+			docker: req.hostRecord.docker_enabled ?? false,
+			// Future integrations can be added here
 		};
 
 		// Check if this is a crontab update trigger
@@ -1589,12 +1672,14 @@ router.post(
 				});
 			}
 
-			// Add job to queue
+			// Add job to queue with bypass_settings flag for true force updates
+			// This allows the force endpoint to bypass auto_update settings
 			const job = await queue.add(
 				"update_agent",
 				{
 					api_id: host.api_id,
 					type: "update_agent",
+					bypass_settings: true, // Force endpoint bypasses settings
 				},
 				{
 					attempts: 3,
@@ -2149,7 +2234,12 @@ router.get(
 			// Get host to verify it exists
 			const host = await prisma.hosts.findUnique({
 				where: { id: hostId },
-				select: { id: true, api_id: true, friendly_name: true },
+				select: {
+					id: true,
+					api_id: true,
+					friendly_name: true,
+					docker_enabled: true,
+				},
 			});
 
 			if (!host) {
@@ -2159,11 +2249,11 @@ router.get(
 			// Check if agent is connected
 			const connected = isConnected(host.api_id);
 
-			// Get integration states from cache (or defaults if not cached)
-			// Default: all integrations are disabled
+			// Get integration states from database (persisted) with cache fallback
+			// Database is source of truth, cache is used for quick WebSocket lookups
 			const cachedState = integrationStateCache.get(host.api_id) || {};
 			const integrations = {
-				docker: cachedState.docker || false, // Default: disabled
+				docker: host.docker_enabled ?? cachedState.docker ?? false,
 				// Future integrations can be added here
 			};
 
@@ -2214,7 +2304,12 @@ router.post(
 			// Get host to verify it exists
 			const host = await prisma.hosts.findUnique({
 				where: { id: hostId },
-				select: { id: true, api_id: true, friendly_name: true },
+				select: {
+					id: true,
+					api_id: true,
+					friendly_name: true,
+					docker_enabled: true,
+				},
 			});
 
 			if (!host) {
@@ -2244,7 +2339,15 @@ router.post(
 				});
 			}
 
-			// Update cache with new state
+			// Persist integration state to database
+			if (integrationName === "docker") {
+				await prisma.hosts.update({
+					where: { id: hostId },
+					data: { docker_enabled: enabled },
+				});
+			}
+
+			// Update cache with new state (for quick WebSocket lookups)
 			if (!integrationStateCache.has(host.api_id)) {
 				integrationStateCache.set(host.api_id, {});
 			}

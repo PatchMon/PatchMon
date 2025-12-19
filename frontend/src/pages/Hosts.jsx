@@ -7,6 +7,7 @@ import {
 	CheckCircle,
 	CheckSquare,
 	ChevronDown,
+	ChevronUp,
 	Clock,
 	Columns,
 	ExternalLink,
@@ -44,9 +45,11 @@ const AddHostModal = ({ isOpen, onClose, onSuccess }) => {
 	const [formData, setFormData] = useState({
 		friendly_name: "",
 		hostGroupIds: [], // Changed to array for multiple selection
+		docker_enabled: false, // Integration states
 	});
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState("");
+	const [integrationsExpanded, setIntegrationsExpanded] = useState(false);
 
 	// Fetch host groups for selection
 	const { data: hostGroups } = useQuery({
@@ -66,7 +69,12 @@ const AddHostModal = ({ isOpen, onClose, onSuccess }) => {
 			const response = await adminHostsAPI.create(formData);
 			console.log("Host created successfully:", formData.friendly_name);
 			onSuccess(response.data);
-			setFormData({ friendly_name: "", hostGroupIds: [] });
+			setFormData({
+				friendly_name: "",
+				hostGroupIds: [],
+				docker_enabled: false,
+			});
+			setIntegrationsExpanded(false);
 			onClose();
 		} catch (err) {
 			console.error("Full error object:", err);
@@ -187,6 +195,65 @@ const AddHostModal = ({ isOpen, onClose, onSuccess }) => {
 							Optional: Select one or more groups to assign this host to for
 							better organization.
 						</p>
+					</div>
+
+					{/* Integrations Section */}
+					<div className="border-2 border-secondary-200 dark:border-secondary-700 rounded-lg">
+						<button
+							type="button"
+							onClick={() => setIntegrationsExpanded(!integrationsExpanded)}
+							className="w-full flex items-center justify-between p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors rounded-t-lg"
+						>
+							<div className="flex items-center gap-2">
+								<span className="text-sm font-medium text-secondary-700 dark:text-secondary-200">
+									Integrations
+								</span>
+								<span className="text-xs text-secondary-500 dark:text-secondary-400">
+									(Optional)
+								</span>
+							</div>
+							{integrationsExpanded ? (
+								<ChevronUp className="h-5 w-5 text-secondary-400 dark:text-secondary-500" />
+							) : (
+								<ChevronDown className="h-5 w-5 text-secondary-400 dark:text-secondary-500" />
+							)}
+						</button>
+
+						{integrationsExpanded && (
+							<div className="p-4 pt-0 space-y-4 border-t border-secondary-200 dark:border-secondary-700">
+								{/* Docker Integration */}
+								<label className="flex items-center justify-between p-3 border-2 rounded-lg transition-all duration-200 cursor-pointer bg-white dark:bg-secondary-700 hover:border-secondary-400 dark:hover:border-secondary-500 border-secondary-300 dark:border-secondary-600">
+									<div className="flex items-center gap-3">
+										<div className="flex-shrink-0">
+											<Server className="h-5 w-5 text-secondary-600 dark:text-secondary-400" />
+										</div>
+										<div>
+											<div className="text-sm font-medium text-secondary-700 dark:text-secondary-200">
+												Docker Integration
+											</div>
+											<div className="text-xs text-secondary-500 dark:text-secondary-400">
+												Enable Docker container monitoring for this host
+											</div>
+										</div>
+									</div>
+									<input
+										type="checkbox"
+										checked={formData.docker_enabled}
+										onChange={(e) =>
+											setFormData({
+												...formData,
+												docker_enabled: e.target.checked,
+											})
+										}
+										className="w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+									/>
+								</label>
+								<p className="text-xs text-secondary-500 dark:text-secondary-400">
+									Integration settings will be synced to the agent's config.yml
+									during installation.
+								</p>
+							</div>
+						)}
 					</div>
 
 					{error && (
@@ -1812,7 +1879,13 @@ const Hosts = () => {
 																) &&
 																	host.needs_reboot && (
 																		<div>
-																			<span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+																			<span
+																				className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
+																				title={
+																					host.reboot_reason ||
+																					"Reboot required"
+																				}
+																			>
 																				<RotateCcw className="h-3 w-3" />
 																				Reboot Required
 																			</span>
