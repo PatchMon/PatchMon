@@ -140,6 +140,70 @@ router.get(
 	},
 );
 
+// GET /api/v1/api/hosts/:id/stats - Get host statistics
+router.get(
+	"/hosts/:id/stats",
+	authenticateApiToken("api"),
+	requireApiScope("host", "get"),
+	async (req, res) => {
+		try {
+			const { id } = req.params;
+
+			// Verify host exists
+			const host = await prisma.hosts.findUnique({
+				where: { id },
+				select: { id: true },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			// Calculate statistics for this specific host
+			const [totalInstalledPackages, outdatedPackagesCount, securityUpdatesCount, totalRepos] = await Promise.all([
+				// Total packages installed on this host
+				prisma.host_packages.count({
+					where: {
+						host_id: id,
+					},
+				}),
+				// Total packages that need updates on this host
+				prisma.host_packages.count({
+					where: {
+						host_id: id,
+						needs_update: true,
+					},
+				}),
+				// Total packages with security updates on this host
+				prisma.host_packages.count({
+					where: {
+						host_id: id,
+						needs_update: true,
+						is_security_update: true,
+					},
+				}),
+				// Total repositories associated with this host
+				prisma.host_repositories.count({
+					where: {
+						host_id: id,
+					},
+				}),
+			]);
+
+			res.json({
+				host_id: id,
+				total_installed_packages: totalInstalledPackages,
+				outdated_packages: outdatedPackagesCount,
+				security_updates: securityUpdatesCount,
+				total_repos: totalRepos,
+			});
+		} catch (error) {
+			console.error("Error fetching host statistics:", error);
+			res.status(500).json({ error: "Failed to fetch host statistics" });
+		}
+	},
+);
+
 // GET /api/v1/api/hosts/:id/info - Get detailed host information
 router.get(
 	"/hosts/:id/info",
