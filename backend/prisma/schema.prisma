@@ -202,6 +202,7 @@ model settings {
   metrics_enabled        Boolean   @default(true)
   metrics_anonymous_id   String?
   metrics_last_sent      DateTime?
+  show_github_version_on_login Boolean @default(true)
 }
 
 model update_history {
@@ -250,6 +251,7 @@ model users {
   dashboard_preferences  dashboard_preferences[]
   user_sessions          user_sessions[]
   auto_enrollment_tokens auto_enrollment_tokens[]
+  release_notes_acceptances release_notes_acceptances[]
 }
 
 model user_sessions {
@@ -436,4 +438,16 @@ model job_history {
   @@index([api_id])
   @@index([status])
   @@index([created_at])
+}
+
+model release_notes_acceptances {
+  id         String   @id @default(uuid())
+  user_id    String
+  version    String
+  accepted_at DateTime @default(now())
+  users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, version])
+  @@index([user_id])
+  @@index([version])
 }

@@ -71,7 +71,12 @@ export const AuthProvider = ({ children }) => {
 		if (storedToken && storedUser) {
 			try {
 				setToken(storedToken);
-				setUser(JSON.parse(storedUser));
+				const parsedUser = JSON.parse(storedUser);
+				setUser({
+					...parsedUser,
+					accepted_release_notes_versions:
+						parsedUser.accepted_release_notes_versions || [],
+				});
 				// Fetch permissions from backend
 				fetchPermissions(storedToken);
 				// User is authenticated, skip setup check
@@ -128,9 +133,20 @@ export const AuthProvider = ({ children }) => {
 
 				// Regular successful login
 				setToken(data.token);
-				setUser(data.user);
+				setUser({
+					...data.user,
+					accepted_release_notes_versions:
+						data.user.accepted_release_notes_versions || [],
+				});
 				localStorage.setItem("token", data.token);
-				localStorage.setItem("user", JSON.stringify(data.user));
+				localStorage.setItem(
+					"user",
+					JSON.stringify({
+						...data.user,
+						accepted_release_notes_versions:
+							data.user.accepted_release_notes_versions || [],
+					}),
+				);
 
 				// Fetch user permissions after successful login
 				const userPermissions = await fetchPermissions(data.token);
@@ -237,8 +253,19 @@ export const AuthProvider = ({ children }) => {
 				}
 
 				// Update both state and localStorage atomically
-				setUser(data.user);
-				localStorage.setItem("user", JSON.stringify(data.user));
+				setUser({
+					...data.user,
+					accepted_release_notes_versions:
+						data.user.accepted_release_notes_versions || [],
+				});
+				localStorage.setItem(
+					"user",
+					JSON.stringify({
+						...data.user,
+						accepted_release_notes_versions:
+							data.user.accepted_release_notes_versions || [],
+					}),
+				);
 
 				return { success: true, user: data.user };
 			} else {
@@ -349,6 +376,48 @@ export const AuthProvider = ({ children }) => {
 		}
 	};
 
+	const acceptReleaseNotes = async (version) => {
+		try {
+			const response = await fetch("/api/v1/release-notes-acceptance/accept", {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${token}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ version }),
+			});
+
+			const data = await response.json();
+
+			if (response.ok) {
+				// Update user state immediately with new accepted version
+				const updatedAcceptedVersions = [
+					...(user?.accepted_release_notes_versions || []),
+					version,
+				];
+
+				const updatedUser = {
+					...user,
+					accepted_release_notes_versions: updatedAcceptedVersions,
+				};
+
+				// Update both state and localStorage atomically
+				setUser(updatedUser);
+				localStorage.setItem("user", JSON.stringify(updatedUser));
+
+				return { success: true };
+			} else {
+				return {
+					success: false,
+					error: data.error || "Failed to accept release notes",
+				};
+			}
+		} catch (error) {
+			console.error("Error accepting release notes:", error);
+			return { success: false, error: "Network error occurred" };
+		}
+	};
+
 	const isAdmin = () => {
 		return user?.role === "admin";
 	};
@@ -411,14 +480,25 @@ export const AuthProvider = ({ children }) => {
 		// Use flushSync to ensure all state updates are applied synchronously
 		flushSync(() => {
 			setToken(authToken);
-			setUser(authUser);
+			setUser({
+				...authUser,
+				accepted_release_notes_versions:
+					authUser.accepted_release_notes_versions || [],
+			});
 			setNeedsFirstTimeSetup(false);
 			setAuthPhase(AUTH_PHASES.READY);
 		});
 
 		// Store in localStorage after state is updated
 		localStorage.setItem("token", authToken);
-		localStorage.setItem("user", JSON.stringify(authUser));
+		localStorage.setItem(
+			"user",
+			JSON.stringify({
+				...authUser,
+				accepted_release_notes_versions:
+					authUser.accepted_release_notes_versions || [],
+			}),
+		);
 
 		// Fetch permissions immediately for the new authenticated user
 		fetchPermissions(authToken);
@@ -458,6 +538,7 @@ export const AuthProvider = ({ children }) => {
 		canViewReports,
 		canExportData,
 		canManageSettings,
+		acceptReleaseNotes,
 	};
 
 	return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
