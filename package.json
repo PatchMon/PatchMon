@@ -26,7 +26,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.3.4",
-		"concurrently": "^8.2.2",
+		"concurrently": "^9.0.0",
 		"lefthook": "^1.13.4"
 	},
 	"engines": {
