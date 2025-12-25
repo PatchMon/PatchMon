@@ -844,6 +844,24 @@ router.post(
 				req,
 			);
 
+			// Get accepted release notes versions
+			let acceptedVersions = [];
+			try {
+				if (prisma.release_notes_acceptances) {
+					acceptedVersions = await prisma.release_notes_acceptances.findMany({
+						where: { user_id: user.id },
+						select: { version: true },
+					});
+				}
+			} catch (error) {
+				// If table doesn't exist yet or Prisma client not regenerated, use empty array
+				console.warn(
+					"Could not fetch release notes acceptances:",
+					error.message,
+				);
+				acceptedVersions = [];
+			}
+
 			res.json({
 				message: "Login successful",
 				token: session.access_token,
@@ -863,6 +881,9 @@ router.post(
 					// Include user preferences so they're available immediately after login
 					theme_preference: user.theme_preference,
 					color_theme: user.color_theme,
+					accepted_release_notes_versions: acceptedVersions.map(
+						(a) => a.version,
+					),
 				},
 			});
 		} catch (error) {
@@ -986,13 +1007,36 @@ router.post(
 				req,
 			);
 
+			// Get accepted release notes versions
+			let acceptedVersions = [];
+			try {
+				if (prisma.release_notes_acceptances) {
+					acceptedVersions = await prisma.release_notes_acceptances.findMany({
+						where: { user_id: user.id },
+						select: { version: true },
+					});
+				}
+			} catch (error) {
+				// If table doesn't exist yet or Prisma client not regenerated, use empty array
+				console.warn(
+					"Could not fetch release notes acceptances:",
+					error.message,
+				);
+				acceptedVersions = [];
+			}
+
 			res.json({
 				message: "Login successful",
 				token: session.access_token,
 				refresh_token: session.refresh_token,
 				expires_at: session.expires_at,
 				tfa_bypass_until: session.tfa_bypass_until,
-				user: updatedUser,
+				user: {
+					...updatedUser,
+					accepted_release_notes_versions: acceptedVersions.map(
+						(a) => a.version,
+					),
+				},
 			});
 		} catch (error) {
 			console.error("TFA verification error:", error);

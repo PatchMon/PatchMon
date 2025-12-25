@@ -1,4 +1,6 @@
 // Common utilities for automation jobs
+const path = require("node:path");
+const fs = require("node:fs");
 
 /**
  * Compare two semantic versions
@@ -36,7 +38,10 @@ async function checkPublicRepo(owner, repo) {
 		// Get current version for User-Agent (or use generic if unavailable)
 		let currentVersion = "unknown";
 		try {
-			const packageJson = require("../../../package.json");
+			// Use __dirname to construct absolute path to package.json
+			const packageJsonPath = path.join(__dirname, "../../../package.json");
+			const packageJsonContent = fs.readFileSync(packageJsonPath, "utf8");
+			const packageJson = JSON.parse(packageJsonContent);
 			if (packageJson?.version) {
 				currentVersion = packageJson.version;
 			}

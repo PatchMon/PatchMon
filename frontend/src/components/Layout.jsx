@@ -35,6 +35,7 @@ import { dashboardAPI, versionAPI } from "../utils/api";
 import DiscordIcon from "./DiscordIcon";
 import GlobalSearch from "./GlobalSearch";
 import Logo from "./Logo";
+import ReleaseNotesModal from "./ReleaseNotesModal";
 import UpgradeNotificationIcon from "./UpgradeNotificationIcon";
 
 const Layout = ({ children }) => {
@@ -47,6 +48,7 @@ const Layout = ({ children }) => {
 	const [_userMenuOpen, setUserMenuOpen] = useState(false);
 	const [githubStars, setGithubStars] = useState(null);
 	const [mobileLinksOpen, setMobileLinksOpen] = useState(false);
+	const [showReleaseNotes, setShowReleaseNotes] = useState(false);
 	const location = useLocation();
 	const navigate = useNavigate();
 	const {
@@ -85,6 +87,37 @@ const Layout = ({ children }) => {
 		queryFn: () => versionAPI.getCurrent().then((res) => res.data),
 		staleTime: 300000, // Consider data stale after 5 minutes
 	});
+
+	// Check for new release notes when user or version changes
+	useEffect(() => {
+		if (!user || !versionInfo?.version) return;
+
+		// Get accepted versions from user object (loaded on login)
+		const acceptedVersions = user.accepted_release_notes_versions || [];
+		const currentVersion = versionInfo.version;
+
+		// If already accepted, don't show
+		if (acceptedVersions.includes(currentVersion)) {
+			return;
+		}
+
+		// Check if release notes exist for this version
+		fetch(`/api/v1/release-notes/${currentVersion}`, {
+			headers: {
+				Authorization: `Bearer ${localStorage.getItem("token")}`,
+			},
+		})
+			.then((res) => res.json())
+			.then((data) => {
+				// Only show if release notes exist and version not accepted
+				if (data.exists && !acceptedVersions.includes(currentVersion)) {
+					setShowReleaseNotes(true);
+				}
+			})
+			.catch((error) => {
+				console.error("Error checking release notes:", error);
+			});
+	}, [user, versionInfo]);
 
 	// Build navigation based on permissions
 	const buildNavigation = () => {
@@ -1536,6 +1569,12 @@ const Layout = ({ children }) => {
 					<div className="px-4 sm:px-6 lg:px-8">{children}</div>
 				</main>
 			</div>
+
+			{/* Release Notes Modal */}
+			<ReleaseNotesModal
+				isOpen={showReleaseNotes}
+				onAccept={() => setShowReleaseNotes(false)}
+			/>
 		</div>
 	);
 };

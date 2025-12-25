@@ -134,6 +134,10 @@ router.put(
 			.optional()
 			.isLength({ min: 1 })
 			.withMessage("Favicon path must be a non-empty string"),
+		body("showGithubVersionOnLogin")
+			.optional()
+			.isBoolean()
+			.withMessage("Show GitHub version on login must be a boolean"),
 	],
 	async (req, res) => {
 		try {
@@ -159,6 +163,7 @@ router.put(
 				logoLight,
 				favicon,
 				colorTheme,
+				showGithubVersionOnLogin,
 			} = req.body;
 
 			// Get current settings to check for update interval changes
@@ -191,6 +196,8 @@ router.put(
 			if (logoLight !== undefined) updateData.logo_light = logoLight;
 			if (favicon !== undefined) updateData.favicon = favicon;
 			if (colorTheme !== undefined) updateData.color_theme = colorTheme;
+			if (showGithubVersionOnLogin !== undefined)
+				updateData.show_github_version_on_login = showGithubVersionOnLogin;
 
 			const updatedSettings = await updateSettings(
 				currentSettings.id,
@@ -251,6 +258,21 @@ router.get("/server-url", async (_req, res) => {
 	} catch (error) {
 		console.error("Server URL fetch error:", error);
 		res.status(500).json({ error: "Failed to fetch server URL" });
+	}
+});
+
+// Get login settings for public use (used by login screen)
+router.get("/login-settings", async (_req, res) => {
+	try {
+		const settings = await getSettings();
+		res.json({
+			show_github_version_on_login:
+				settings.show_github_version_on_login !== false,
+			signup_enabled: settings.signup_enabled || false,
+		});
+	} catch (error) {
+		console.error("Failed to fetch login settings:", error);
+		res.status(500).json({ error: "Failed to fetch login settings" });
 	}
 });
 

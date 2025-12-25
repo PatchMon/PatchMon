@@ -18,12 +18,7 @@ import {
 import { useEffect, useId, useState } from "react";
 import UpgradeNotificationIcon from "../components/UpgradeNotificationIcon";
 import { useUpdateNotification } from "../contexts/UpdateNotificationContext";
-import {
-	agentFileAPI,
-	permissionsAPI,
-	settingsAPI,
-	versionAPI,
-} from "../utils/api";
+import { agentFileAPI, settingsAPI, versionAPI } from "../utils/api";
 
 const Settings = () => {
 	const repoPublicId = useId();
@@ -33,7 +28,6 @@ const Settings = () => {
 	const hostId = useId();
 	const portId = useId();
 	const updateIntervalId = useId();
-	const defaultRoleId = useId();
 	const githubRepoUrlId = useId();
 	const sshKeyPathId = useId();
 	const _scriptFileId = useId();
@@ -44,8 +38,6 @@ const Settings = () => {
 		serverPort: 3001,
 		updateInterval: 60,
 		autoUpdate: false,
-		signupEnabled: false,
-		defaultUserRole: "user",
 		githubRepoUrl: "git@github.com:9technologygroup/patchmon.net.git",
 		repositoryType: "public",
 		sshKeyPath: "",
@@ -175,12 +167,6 @@ const Settings = () => {
 		return settings?.ignore_ssl_self_signed ? "-sk" : "-s";
 	};
 
-	// Fetch available roles for default user role dropdown
-	const { data: roles, isLoading: rolesLoading } = useQuery({
-		queryKey: ["rolePermissions"],
-		queryFn: () => permissionsAPI.getRoles().then((res) => res.data),
-	});
-
 	// Update form data when settings are loaded
 	useEffect(() => {
 		if (settings) {
@@ -190,9 +176,6 @@ const Settings = () => {
 				serverPort: settings.server_port || 3001,
 				updateInterval: settings.update_interval || 60,
 				autoUpdate: settings.auto_update || false,
-				// biome-ignore lint/complexity/noUselessTernary: Seems to be desired given the comment
-				signupEnabled: settings.signup_enabled === true ? true : false, // Explicit boolean conversion
-				defaultUserRole: settings.default_user_role || "user",
 				githubRepoUrl:
 					settings.github_repo_url ||
 					"https://github.com/PatchMon/PatchMon.git",
@@ -994,66 +977,6 @@ const Settings = () => {
 									When enabled, agents will automatically update themselves when
 									a newer version is available during their regular update
 									cycle.
-								</p>
-							</div>
-
-							{/* User Signup Setting */}
-							<div>
-								<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2">
-									<div className="flex items-center gap-2">
-										<input
-											type="checkbox"
-											checked={formData.signupEnabled}
-											onChange={(e) =>
-												handleInputChange("signupEnabled", e.target.checked)
-											}
-											className="rounded border-secondary-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
-										/>
-										Enable User Self-Registration
-									</div>
-								</label>
-
-								{/* Default User Role Dropdown */}
-								{formData.signupEnabled && (
-									<div className="mt-3 ml-6">
-										<label
-											htmlFor={defaultRoleId}
-											className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2"
-										>
-											Default Role for New Users
-										</label>
-										<select
-											id={defaultRoleId}
-											value={formData.defaultUserRole}
-											onChange={(e) =>
-												handleInputChange("defaultUserRole", e.target.value)
-											}
-											className="w-full max-w-xs border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
-											disabled={rolesLoading}
-										>
-											{rolesLoading ? (
-												<option>Loading roles...</option>
-											) : roles && Array.isArray(roles) ? (
-												roles.map((role) => (
-													<option key={role.role} value={role.role}>
-														{role.role.charAt(0).toUpperCase() +
-															role.role.slice(1)}
-													</option>
-												))
-											) : (
-												<option value="user">User</option>
-											)}
-										</select>
-										<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
-											New users will be assigned this role when they register.
-										</p>
-									</div>
-								)}
-
-								<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
-									When enabled, users can create their own accounts through the
-									signup page. When disabled, only administrators can create
-									user accounts.
 								</p>
 							</div>
 

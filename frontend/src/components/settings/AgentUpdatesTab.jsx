@@ -1,19 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, CheckCircle, Save, Shield, X } from "lucide-react";
 import { useEffect, useId, useState } from "react";
-import { permissionsAPI, settingsAPI } from "../../utils/api";
+import { settingsAPI } from "../../utils/api";
 
 const AgentUpdatesTab = () => {
 	const updateIntervalId = useId();
 	const autoUpdateId = useId();
-	const signupEnabledId = useId();
-	const defaultRoleId = useId();
 	const ignoreSslId = useId();
 	const [formData, setFormData] = useState({
 		updateInterval: 60,
 		autoUpdate: false,
-		signupEnabled: false,
-		defaultUserRole: "user",
 		ignoreSslSelfSigned: false,
 	});
 	const [errors, setErrors] = useState({});
@@ -82,20 +78,12 @@ const AgentUpdatesTab = () => {
 		queryFn: () => settingsAPI.get().then((res) => res.data),
 	});
 
-	// Fetch available roles for default user role dropdown
-	const { data: roles, isLoading: rolesLoading } = useQuery({
-		queryKey: ["rolePermissions"],
-		queryFn: () => permissionsAPI.getRoles().then((res) => res.data),
-	});
-
 	// Update form data when settings are loaded
 	useEffect(() => {
 		if (settings) {
 			const newFormData = {
 				updateInterval: settings.update_interval || 60,
 				autoUpdate: settings.auto_update || false,
-				signupEnabled: settings.signup_enabled === true,
-				defaultUserRole: settings.default_user_role || "user",
 				ignoreSslSelfSigned: settings.ignore_ssl_self_signed === true,
 			};
 			setFormData(newFormData);
@@ -423,85 +411,6 @@ const AgentUpdatesTab = () => {
 						ignore SSL certificate validation errors. Use with caution on
 						production systems as this reduces security.
 					</p>
-				</div>
-
-				{/* User Signup Setting */}
-				<div>
-					<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2">
-						<div className="flex items-center gap-2">
-							<input
-								id={signupEnabledId}
-								type="checkbox"
-								checked={formData.signupEnabled}
-								onChange={(e) =>
-									handleInputChange("signupEnabled", e.target.checked)
-								}
-								className="rounded border-secondary-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
-							/>
-							<label htmlFor={signupEnabledId}>
-								Enable User Self-Registration
-							</label>
-						</div>
-					</label>
-
-					{/* Default User Role Dropdown */}
-					{formData.signupEnabled && (
-						<div className="mt-3 ml-6">
-							<label
-								htmlFor={defaultRoleId}
-								className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2"
-							>
-								Default Role for New Users
-							</label>
-							<select
-								id={defaultRoleId}
-								value={formData.defaultUserRole}
-								onChange={(e) =>
-									handleInputChange("defaultUserRole", e.target.value)
-								}
-								className="w-full max-w-xs border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
-								disabled={rolesLoading}
-							>
-								{rolesLoading ? (
-									<option>Loading roles...</option>
-								) : roles && Array.isArray(roles) ? (
-									roles.map((role) => (
-										<option key={role.role} value={role.role}>
-											{role.role.charAt(0).toUpperCase() + role.role.slice(1)}
-										</option>
-									))
-								) : (
-									<option value="user">User</option>
-								)}
-							</select>
-							<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
-								New users will be assigned this role when they register.
-							</p>
-						</div>
-					)}
-
-					<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
-						When enabled, users can create their own accounts through the signup
-						page. When disabled, only administrators can create user accounts.
-					</p>
-				</div>
-
-				{/* Security Notice */}
-				<div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-md p-4">
-					<div className="flex">
-						<Shield className="h-5 w-5 text-blue-400 dark:text-blue-300" />
-						<div className="ml-3">
-							<h3 className="text-sm font-medium text-blue-800 dark:text-blue-200">
-								Security Notice
-							</h3>
-							<p className="mt-1 text-sm text-blue-700 dark:text-blue-300">
-								When enabling user self-registration, exercise caution on
-								internal networks. Consider restricting access to trusted
-								networks only and ensure proper role assignments to prevent
-								unauthorized access to sensitive systems.
-							</p>
-						</div>
-					</div>
 				</div>
 
 				{/* Save Button */}

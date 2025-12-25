@@ -72,6 +72,9 @@ const agentVersionRoutes = require("./routes/agentVersionRoutes");
 const metricsRoutes = require("./routes/metricsRoutes");
 const userPreferencesRoutes = require("./routes/userPreferencesRoutes");
 const apiHostsRoutes = require("./routes/apiHostsRoutes");
+const releaseNotesRoutes = require("./routes/releaseNotesRoutes");
+const releaseNotesAcceptanceRoutes = require("./routes/releaseNotesAcceptanceRoutes");
+const buyMeACoffeeRoutes = require("./routes/buyMeACoffeeRoutes");
 const { initSettings } = require("./services/settingsService");
 const { queueManager } = require("./services/automation");
 const { authenticateToken, requireAdmin } = require("./middleware/auth");
@@ -482,6 +485,12 @@ app.use(`/api/${apiVersion}/agent`, agentVersionRoutes);
 app.use(`/api/${apiVersion}/metrics`, metricsRoutes);
 app.use(`/api/${apiVersion}/user/preferences`, userPreferencesRoutes);
 app.use(`/api/${apiVersion}/api`, authLimiter, apiHostsRoutes);
+app.use(`/api/${apiVersion}/release-notes`, releaseNotesRoutes);
+app.use(
+	`/api/${apiVersion}/release-notes-acceptance`,
+	releaseNotesAcceptanceRoutes,
+);
+app.use(`/api/${apiVersion}/buy-me-a-coffee`, buyMeACoffeeRoutes);
 
 // Bull Board - will be populated after queue manager initializes
 let bullBoardRouter = null;
