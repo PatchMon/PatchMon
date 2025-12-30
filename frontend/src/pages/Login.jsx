@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { FaReddit, FaYoutube } from "react-icons/fa";
+import { FaLinkedin, FaYoutube } from "react-icons/fa";
 
 import { useNavigate } from "react-router-dom";
 import DiscordIcon from "../components/DiscordIcon";
@@ -52,7 +52,13 @@ const Login = () => {
 	const [showGithubVersionOnLogin, setShowGithubVersionOnLogin] =
 		useState(true);
 	const [latestRelease, setLatestRelease] = useState(null);
-	const [githubStars, setGithubStars] = useState(null);
+	const [socialMediaStats, setSocialMediaStats] = useState({
+		github_stars: null,
+		discord_members: null,
+		buymeacoffee_supporters: null,
+		youtube_subscribers: null,
+		linkedin_followers: null,
+	});
 	const canvasRef = useRef(null);
 	const { themeConfig } = useColorTheme();
 
@@ -175,51 +181,41 @@ const Login = () => {
 		checkLoginSettings();
 	}, []);
 
-	// Fetch latest release and stars from GitHub
+	// Fetch latest release and social media stats
 	useEffect(() => {
 		// Only fetch if the setting allows it
 		if (!showGithubVersionOnLogin) {
 			return;
 		}
 
-		const fetchGitHubData = async () => {
+		const fetchData = async () => {
 			try {
-				// Try to get cached data first
+				// Try to get cached release data first
 				const cachedRelease = localStorage.getItem("githubLatestRelease");
-				const cachedStars = localStorage.getItem("githubStarsCount");
 				const cacheTime = localStorage.getItem("githubReleaseCacheTime");
 				const now = Date.now();
 
-				// Load cached data immediately
+				// Load cached release data immediately
 				if (cachedRelease) {
 					setLatestRelease(JSON.parse(cachedRelease));
 				}
-				if (cachedStars) {
-					setGithubStars(parseInt(cachedStars, 10));
+
+				// Fetch social media stats from cache
+				const statsResponse = await fetch("/api/v1/social-media-stats");
+				if (statsResponse.ok) {
+					const statsData = await statsResponse.json();
+					setSocialMediaStats({
+						github_stars: statsData.github_stars,
+						discord_members: statsData.discord_members,
+						buymeacoffee_supporters: statsData.buymeacoffee_supporters,
+						youtube_subscribers: statsData.youtube_subscribers,
+						linkedin_followers: statsData.linkedin_followers,
+					});
 				}
 
 				// Use cache if less than 1 hour old
 				if (cacheTime && now - parseInt(cacheTime, 10) < 3600000) {
 					return;
-				}
-
-				// Fetch repository info (includes star count)
-				const repoResponse = await fetch(
-					"https://api.github.com/repos/PatchMon/PatchMon",
-					{
-						headers: {
-							Accept: "application/vnd.github.v3+json",
-						},
-					},
-				);
-
-				if (repoResponse.ok) {
-					const repoData = await repoResponse.json();
-					setGithubStars(repoData.stargazers_count);
-					localStorage.setItem(
-						"githubStarsCount",
-						repoData.stargazers_count.toString(),
-					);
 				}
 
 				// Fetch latest release
@@ -271,7 +267,7 @@ const Login = () => {
 			}
 		};
 
-		fetchGitHubData();
+		fetchData();
 	}, [showGithubVersionOnLogin]); // Run once on mount
 
 	const handleSubmit = async (e) => {
@@ -572,11 +568,11 @@ const Login = () => {
 										title="GitHub Repository"
 									>
 										<Github className="h-5 w-5 text-white" />
-										{githubStars !== null && (
+										{socialMediaStats.github_stars !== null && (
 											<div className="flex items-center gap-1">
 												<Star className="h-3.5 w-3.5 fill-current text-yellow-400" />
 												<span className="text-sm font-medium text-white">
-													{githubStars}
+													{socialMediaStats.github_stars}
 												</span>
 											</div>
 										)}
@@ -632,18 +628,18 @@ const Login = () => {
 										className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
 										title="YouTube Channel"
 									>
-										<FaYoutube className="h-5 w-5 text-white" />
+										<FaYoutube className="h-5 w-5 text-[#FF0000]" />
 									</a>
 
 									{/* Reddit */}
 									<a
-										href="https://www.reddit.com/r/patchmon"
+										href="https://linkedin.com/company/patchmon"
 										target="_blank"
 										rel="noopener noreferrer"
 										className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
-										title="Reddit Community"
+										title="LinkedIn Company Page"
 									>
-										<FaReddit className="h-5 w-5 text-white" />
+										<FaLinkedin className="h-5 w-5 text-[#0077B5]" />
 									</a>
 
 									{/* Website */}

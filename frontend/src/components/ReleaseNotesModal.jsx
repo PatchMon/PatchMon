@@ -35,15 +35,11 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 		enabled: isOpen && !!versionInfo?.version,
 	});
 
-	// Fetch supporter count from Buy Me a Coffee
-	const { data: supporterData, isLoading: isLoadingSupporters } = useQuery({
-		queryKey: ["buyMeACoffeeSupporters"],
+	// Fetch supporter count from social media stats
+	const { data: socialMediaStats, isLoading: isLoadingSupporters } = useQuery({
+		queryKey: ["socialMediaStats"],
 		queryFn: async () => {
-			const response = await fetch("/api/v1/buy-me-a-coffee/supporter-count", {
-				headers: {
-					Authorization: `Bearer ${localStorage.getItem("token")}`,
-				},
-			});
+			const response = await fetch("/api/v1/social-media-stats");
 			if (!response.ok) return null;
 			return response.json();
 		},
@@ -322,12 +318,15 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 								{/* Supporter/Member count - only show for self-hosted */}
 								{!isCloudVersion &&
 									!isLoadingSupporters &&
-									supporterData?.count !== undefined && (
+									socialMediaStats?.buymeacoffee_supporters !== undefined &&
+									socialMediaStats?.buymeacoffee_supporters !== null && (
 										<p className="text-sm text-secondary-600 dark:text-secondary-400 text-center sm:text-left">
 											<span className="font-semibold text-secondary-900 dark:text-secondary-100">
-												{supporterData.count}
+												{socialMediaStats.buymeacoffee_supporters}
 											</span>{" "}
-											{supporterData.count === 1 ? "person has" : "people have"}{" "}
+											{socialMediaStats.buymeacoffee_supporters === 1
+												? "person has"
+												: "people have"}{" "}
 											bought me a coffee so far!
 										</p>
 									)}
