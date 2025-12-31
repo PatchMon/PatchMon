@@ -147,7 +147,13 @@ log "Environment: ${NODE_ENV:-production}"
 update_agents
 
 log "Running database migrations..."
-npx prisma migrate deploy
+cd /app/backend
+if [ -f "./node_modules/.bin/prisma" ]; then
+    ./node_modules/.bin/prisma migrate deploy
+else
+    # Fallback to npx with explicit version
+    npx -y prisma@6.1.0 migrate deploy
+fi
 
 log "Starting application..."
 if [ "${NODE_ENV}" = "development" ]; then
