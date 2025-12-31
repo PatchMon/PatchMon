@@ -222,12 +222,18 @@ router.get("/agent/download", async (req, res) => {
 				});
 			}
 
-			const binaryName = `patchmon-agent-linux-${architecture}`;
+			// Determine OS (default to linux for backward compatibility)
+			const os = req.query.os || "linux";
+			
+			// Determine binary name based on OS
+			const binaryName = os === "windows" 
+				? `patchmon-agent-windows-${architecture}.exe`
+				: `patchmon-agent-linux-${architecture}`;
 			const binaryPath = path.join(__dirname, "../../../agents", binaryName);
 
 			if (!fs.existsSync(binaryPath)) {
 				return res.status(404).json({
-					error: `Agent binary not found for architecture: ${architecture}`,
+					error: `Agent binary not found for ${os} architecture: ${architecture}`,
 				});
 			}
 
@@ -816,8 +822,8 @@ router.post(
 			if (req.body.rebootReason !== undefined)
 				updateData.reboot_reason = req.body.rebootReason;
 
-			// If this is the first update (status is 'pending'), change to 'active'
-			if (host.status === "pending") {
+			// Set status to 'active' if it's pending or offline (host is reporting, so it's online)
+			if (host.status === "pending" || host.status === "offline") {
 				updateData.status = "active";
 			}
 
@@ -2353,22 +2359,16 @@ router.get("/install", async (req, res) => {
 		const fs = require("node:fs");
 		const path = require("node:path");
 
-		const scriptPath = path.join(
-			__dirname,
-			"../../../agents/patchmon_install.sh",
-		);
-
-		if (!fs.existsSync(scriptPath)) {
-			return res.status(404).json({ error: "Installation script not found" });
-		}
-
-		let script = fs.readFileSync(scriptPath, "utf8");
-
-		// Convert Windows line endings to Unix line endings
-		script = script.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+		// Detect OS from User-Agent header
+		const userAgent = (req.headers["user-agent"] || "").toLowerCase();
+		const isWindows = userAgent.includes("windows") || userAgent.includes("powershell");
 
 		// Get the configured server URL from settings
-		let serverUrl = "http://localhost:3001";
+		// Use SERVER_HOST and SERVER_PORT from environment, or fall back to settings
+		let serverUrl = process.env.SERVER_HOST && process.env.SERVER_PORT
+			? `${process.env.SERVER_PROTOCOL || "http"}://${process.env.SERVER_HOST}:${process.env.SERVER_PORT}`
+			: "http://localhost:3001";
+		
 		try {
 			const settings = await prisma.settings.findFirst();
 			if (settings?.server_url) {
@@ -2381,36 +2381,97 @@ router.get("/install", async (req, res) => {
 			);
 		}
 
-		// Determine curl flags dynamically from settings (ignore self-signed)
-		let curlFlags = "-s";
-		let skipSSLVerify = "false";
-		try {
-			const settings = await prisma.settings.findFirst();
-			if (settings && settings.ignore_ssl_self_signed === true) {
-				curlFlags = "-sk";
-				skipSSLVerify = "true";
+		if (isWindows) {
+			// Serve PowerShell script for Windows
+			const scriptPath = path.join(
+				__dirname,
+				"../../../agents/patchmon_install_windows.ps1",
+			);
+
+			if (!fs.existsSync(scriptPath)) {
+				return res.status(404).json({ error: "Windows installation script not found" });
 			}
-		} catch (sslSettingsError) {
-			logger.warn("Could not fetch SSL settings:", sslSettingsError.message);
-		}
 
-		// Check for --force parameter
-		const forceInstall = req.query.force === "true" || req.query.force === "1";
+			// Generate bootstrap token (same secure flow as Linux - no embedding of API key)
+			const bootstrapToken = await generateBootstrapToken(host.api_id, apiKey);
 
-		// Get architecture parameter (only set if explicitly provided, otherwise let script auto-detect)
-		const architecture = req.query.arch;
+			let script = fs.readFileSync(scriptPath, "utf8");
 
-		// Generate a secure bootstrap token instead of embedding the API key directly
-		// The agent will exchange this token for actual credentials via a secure API call
-		// IMPORTANT: Use the plaintext apiKey from the request headers, NOT host.api_key (which is the hash)
-		const bootstrapToken = await generateBootstrapToken(host.api_id, apiKey);
+			// Inject bootstrap token and server URL into param() block
+			// PowerShell param() must be first - we replace defaults with actual values
+			const lines = script.split("\n");
+			for (let i = 0; i < lines.length; i++) {
+				const line = lines[i].trim();
+				if (line.startsWith("param(")) {
+					let paramEnd = i;
+					for (let j = i; j < lines.length; j++) {
+						if (lines[j].trim() === ")") {
+							paramEnd = j;
+							break;
+						}
+					}
+					const newParamBlock = `param(
+    [string]$ServerURL = "${serverUrl}",
+    [string]$BootstrapToken = "${bootstrapToken}",
+    [string]$APIID = "",
+    [string]$APIKey = "",
+    [string]$Version = "latest",
+    [string]$InstallPath = "C:\\Program Files\\PatchMon",
+    [string]$ConfigPath = "C:\\ProgramData\\PatchMon"
+)`;
+					lines.splice(i, paramEnd - i + 1, ...newParamBlock.split("\n"));
+					break;
+				}
+			}
+			script = lines.join("\n");
 
-		// Inject bootstrap token and server URL into the script
-		// The actual API credentials are NOT embedded - they will be fetched securely
-		const archExport = architecture
-			? `export ARCHITECTURE="${architecture}"\n`
-			: "";
-		const envVars = `#!/bin/sh
+			res.setHeader("Content-Type", "text/plain; charset=utf-8");
+			res.setHeader(
+				"Content-Disposition",
+				'inline; filename="patchmon_install.ps1"',
+			);
+			res.send(script);
+		} else {
+			// Serve bash script for Linux/Unix (existing behavior)
+			const scriptPath = path.join(
+				__dirname,
+				"../../../agents/patchmon_install.sh",
+			);
+
+			if (!fs.existsSync(scriptPath)) {
+				return res.status(404).json({ error: "Installation script not found" });
+			}
+
+			let script = fs.readFileSync(scriptPath, "utf8");
+
+			// Convert Windows line endings to Unix line endings
+			script = script.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+			// Determine curl flags dynamically from settings (ignore self-signed)
+			let curlFlags = "-s";
+			let skipSSLVerify = "false";
+			try {
+				const settings = await prisma.settings.findFirst();
+				if (settings && settings.ignore_ssl_self_signed === true) {
+					curlFlags = "-sk";
+					skipSSLVerify = "true";
+				}
+			} catch (_) {}
+
+			// Check for --force parameter
+			const forceInstall = req.query.force === "true" || req.query.force === "1";
+
+			// Get architecture parameter (only set if explicitly provided, otherwise let script auto-detect)
+			const architecture = req.query.arch;
+
+			// Generate bootstrap token (secure flow - no embedding of API key)
+			const apiKey = req.headers["x-api-key"];
+			const bootstrapToken = await generateBootstrapToken(host.api_id, apiKey);
+
+			const archExport = architecture
+				? `export ARCHITECTURE="${architecture}"\n`
+				: "";
+			const envVars = `#!/bin/sh
 export PATCHMON_URL="${serverUrl}"
 export BOOTSTRAP_TOKEN="${bootstrapToken}"
 export CURL_FLAGS="${curlFlags}"
@@ -2440,16 +2501,17 @@ fetch_credentials() {
 fetch_credentials
 `;
 
-		// Remove the shebang from the original script and prepend our env vars
-		script = script.replace(/^#!/, "#");
-		script = envVars + script;
+			// Remove the shebang from the original script and prepend our env vars
+			script = script.replace(/^#!/, "#");
+			script = envVars + script;
 
-		res.setHeader("Content-Type", "text/plain");
-		res.setHeader(
-			"Content-Disposition",
-			'inline; filename="patchmon_install.sh"',
-		);
-		res.send(script);
+			res.setHeader("Content-Type", "text/plain");
+			res.setHeader(
+				"Content-Disposition",
+				'inline; filename="patchmon_install.sh"',
+			);
+			res.send(script);
+		}
 	} catch (error) {
 		logger.error("Installation script error:", error);
 		res.status(500).json({ error: "Failed to serve installation script" });
@@ -2489,49 +2551,74 @@ router.post("/bootstrap/exchange", async (req, res) => {
 
 // Serve the removal script (public - no authentication required)
 // The script is static and only removes PatchMon files from the system
-router.get("/remove", async (_req, res) => {
+router.get("/remove", async (req, res) => {
 	try {
 		const fs = require("node:fs");
 		const path = require("node:path");
 
-		const scriptPath = path.join(
-			__dirname,
-			"../../../agents/patchmon_remove.sh",
-		);
+		// Detect OS from User-Agent header
+		const userAgent = (req.headers["user-agent"] || "").toLowerCase();
+		const isWindows = userAgent.includes("windows") || userAgent.includes("powershell");
 
-		if (!fs.existsSync(scriptPath)) {
-			return res.status(404).json({ error: "Removal script not found" });
-		}
+		if (isWindows) {
+			// Serve PowerShell script for Windows
+			const scriptPath = path.join(
+				__dirname,
+				"../../../agents/patchmon_remove_windows.ps1",
+			);
 
-		// Read the script content
-		let script = fs.readFileSync(scriptPath, "utf8");
-
-		// Convert line endings
-		script = script.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-
-		// Determine curl flags dynamically from settings for consistency
-		let curlFlags = "-s";
-		try {
-			const settings = await prisma.settings.findFirst();
-			if (settings && settings.ignore_ssl_self_signed === true) {
-				curlFlags = "-sk";
+			if (!fs.existsSync(scriptPath)) {
+				return res.status(404).json({ error: "Windows removal script not found" });
 			}
-		} catch (settingsError) {
-			logger.warn("Could not fetch settings:", settingsError.message);
+
+			const script = fs.readFileSync(scriptPath, "utf8");
+
+			// Set appropriate headers for PowerShell script
+			res.setHeader("Content-Type", "text/plain; charset=utf-8");
+			res.setHeader(
+				"Content-Disposition",
+				'inline; filename="patchmon_remove_windows.ps1"',
+			);
+			res.send(script);
+		} else {
+			// Serve bash script for Linux/Unix
+			const scriptPath = path.join(
+				__dirname,
+				"../../../agents/patchmon_remove.sh",
+			);
+
+			if (!fs.existsSync(scriptPath)) {
+				return res.status(404).json({ error: "Removal script not found" });
+			}
+
+			// Read the script content
+			let script = fs.readFileSync(scriptPath, "utf8");
+
+			// Convert line endings
+			script = script.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+			// Determine curl flags dynamically from settings for consistency
+			let curlFlags = "-s";
+			try {
+				const settings = await prisma.settings.findFirst();
+				if (settings && settings.ignore_ssl_self_signed === true) {
+					curlFlags = "-sk";
+				}
+			} catch (_) {}
+
+			// Prepend environment for CURL_FLAGS so script can use it if needed
+			const envPrefix = `#!/bin/sh\nexport CURL_FLAGS="${curlFlags}"\n\n`;
+			script = script.replace(/^#!/, "#");
+			script = envPrefix + script;
+
+			// Set appropriate headers for script download
+			res.setHeader("Content-Type", "text/plain");
+			res.setHeader(
+				"Content-Disposition",
+				'inline; filename="patchmon_remove.sh"',
+			);
+			res.send(script);
 		}
-
-		// Prepend environment for CURL_FLAGS so script can use it if needed
-		const envPrefix = `#!/bin/sh\nexport CURL_FLAGS="${curlFlags}"\n\n`;
-		script = script.replace(/^#!/, "#");
-		script = envPrefix + script;
-
-		// Set appropriate headers for script download
-		res.setHeader("Content-Type", "text/plain");
-		res.setHeader(
-			"Content-Disposition",
-			'inline; filename="patchmon_remove.sh"',
-		);
-		res.send(script);
 	} catch (error) {
 		logger.error("Removal script error:", error.message);
 		res.status(500).json({ error: "Failed to serve removal script" });

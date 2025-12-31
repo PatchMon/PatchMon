@@ -72,8 +72,11 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 		return settings?.ignore_ssl_self_signed ? "-sk" : "-s";
 	};
 
-	// Helper function to get the install URL
-	const getInstallUrl = () => `${serverUrl}/api/v1/hosts/install`;
+	// Helper function to get the install URL (with optional force flag)
+	const getInstallUrl = () => {
+		const baseUrl = `${serverUrl}/api/v1/hosts/install`;
+		return forceInstall ? `${baseUrl}?force=true` : baseUrl;
+	};
 
 	// Helper function to build the shell command suffix (sudo sh with optional --force)
 	const getShellCommand = () =>
@@ -217,8 +220,9 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 								One-Line Installation
 							</h4>
 							<p className="text-xs md:text-sm text-primary-700 dark:text-primary-300 mb-3">
-								Copy and run this command on the target host to securely install
-								and configure the PatchMon agent:
+								Copy and run the appropriate command for your target host's
+								operating system. The server automatically detects the OS and
+								serves the correct installation script:
 							</p>
 
 							{/* Force Install Toggle */}
@@ -270,34 +274,78 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 								</div>
 							)}
 
-							<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-								<input
-									type="text"
-									value={
-										isApiKeyHash
-											? "API key not available - click Regenerate above"
-											: `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`
-									}
-									readOnly
-									disabled={isApiKeyHash}
-									className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-primary-300 dark:border-primary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
-								/>
-								<button
-									type="button"
-									onClick={async () => {
-										const command = `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`;
-										await copyToClipboard(command);
-										// Show waiting screen after copying
-										if (!isApiKeyHash) {
-											setShowWaitingScreen(true);
+							{/* Linux/Unix Installation Command */}
+							<div className="mb-4">
+								<label className="block text-xs md:text-sm font-medium text-primary-900 dark:text-primary-200 mb-2">
+									For Linux/Unix (run with bash or sh):
+								</label>
+								<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+									<input
+										type="text"
+										value={
+											isApiKeyHash
+												? "API key not available - click Regenerate above"
+												: `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`
 										}
-									}}
-									disabled={isApiKeyHash}
-									className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
-								>
-									<Copy className="h-4 w-4" />
-									Copy
-								</button>
+										readOnly
+										disabled={isApiKeyHash}
+										className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-primary-300 dark:border-primary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
+									/>
+									<button
+										type="button"
+										onClick={async () => {
+											const command = `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`;
+											await copyToClipboard(command);
+											if (!isApiKeyHash) {
+												setShowWaitingScreen(true);
+											}
+										}}
+										disabled={isApiKeyHash}
+										className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+									>
+										<Copy className="h-4 w-4" />
+										Copy
+									</button>
+								</div>
+							</div>
+
+							{/* Windows Installation Command */}
+							<div>
+								<label className="block text-xs md:text-sm font-medium text-primary-900 dark:text-primary-200 mb-2">
+									For Windows (run PowerShell as Administrator):
+								</label>
+								<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+									<input
+										type="text"
+										value={
+											isApiKeyHash
+												? "API key not available - click Regenerate above"
+												: `$script = Invoke-WebRequest -Uri "${getInstallUrl()}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-install.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-install.ps1"`
+										}
+										readOnly
+										disabled={isApiKeyHash}
+										className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-primary-300 dark:border-primary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
+									/>
+									<button
+										type="button"
+										onClick={async () => {
+											const command = `$script = Invoke-WebRequest -Uri "${getInstallUrl()}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-install.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-install.ps1"`;
+											await copyToClipboard(command);
+											if (!isApiKeyHash) {
+												setShowWaitingScreen(true);
+											}
+										}}
+										disabled={isApiKeyHash}
+										className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+									>
+										<Copy className="h-4 w-4" />
+										Copy
+									</button>
+								</div>
+								<p className="text-xs text-primary-600 dark:text-primary-400 mt-2">
+									Downloads the script, saves to a temp file, then executes. Run
+									PowerShell as Administrator.
+								</p>
 							</div>
 						</div>
 					</div>
