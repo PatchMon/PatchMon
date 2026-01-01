@@ -73,7 +73,7 @@ function isLocalAuthDisabled() {
 
 /**
  * Generate the authorization URL to redirect the user to the IdP
- * @returns {Object} { url: string, state: string, codeVerifier: string }
+ * @returns {Object} { url: string, state: string, codeVerifier: string, nonce: string }
  */
 function getAuthorizationUrl() {
 	if (!oidcClient) {
@@ -87,25 +87,30 @@ function getAuthorizationUrl() {
 	// Generate state for CSRF protection
 	const state = generators.state();
 
+	// Generate nonce for replay attack protection
+	const nonce = generators.nonce();
+
 	const scopes = process.env.OIDC_SCOPES || "openid email profile";
 
 	const url = oidcClient.authorizationUrl({
 		scope: scopes,
 		state: state,
+		nonce: nonce,
 		code_challenge: codeChallenge,
 		code_challenge_method: "S256",
 	});
 
-	return { url, state, codeVerifier };
+	return { url, state, codeVerifier, nonce };
 }
 
 /**
  * Handle the callback from the IdP
  * @param {string} code - Authorization code from the IdP
  * @param {string} codeVerifier - PKCE code verifier from the initial request
+ * @param {string} expectedNonce - Expected nonce value for validation
  * @returns {Object} User claims from the ID token
  */
-async function handleCallback(code, codeVerifier) {
+async function handleCallback(code, codeVerifier, expectedNonce) {
 	if (!oidcClient) {
 		throw new Error("OIDC client not initialized");
 	}
@@ -116,7 +121,10 @@ async function handleCallback(code, codeVerifier) {
 	const tokenSet = await oidcClient.callback(
 		redirectUri,
 		{ code },
-		{ code_verifier: codeVerifier },
+		{
+			code_verifier: codeVerifier,
+			nonce: expectedNonce,
+		},
 	);
 
 	// Validate that we received an ID token
@@ -134,6 +142,16 @@ async function handleCallback(code, codeVerifier) {
 
 	if (!claims.email) {
 		throw new Error('ID token missing required "email" claim');
+	}
+
+	// Validate nonce matches (defense in depth - openid-client also validates this)
+	if (expectedNonce && claims.nonce !== expectedNonce) {
+		throw new Error("Nonce mismatch - possible replay attack");
+	}
+
+	// Validate issuer matches (defense in depth)
+	if (claims.iss !== oidcIssuer.metadata.issuer) {
+		throw new Error("Issuer mismatch - token may be from wrong IdP");
 	}
 
 	return {

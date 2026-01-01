@@ -196,44 +196,35 @@ const Login = () => {
 		fetchOidcConfig();
 	}, []);
 
-	// Handle OIDC callback tokens from URL
+	// Handle OIDC callback (tokens are now in httpOnly cookies)
 	useEffect(() => {
 		const urlParams = new URLSearchParams(window.location.search);
-		const oidcToken = urlParams.get("oidc_token");
-		const oidcRefresh = urlParams.get("oidc_refresh");
+		const oidcSuccess = urlParams.get("oidc");
 		const oidcError = urlParams.get("error");
 
 		if (oidcError) {
 			setError(decodeURIComponent(oidcError));
 			// Clean up URL
 			window.history.replaceState({}, document.title, "/login");
-		} else if (oidcToken && oidcRefresh) {
-			// Store tokens and redirect to dashboard
-			localStorage.setItem("token", oidcToken);
-			localStorage.setItem("refresh_token", oidcRefresh);
-
-			// Fetch user info and update auth state
+		} else if (oidcSuccess === "success") {
+			// Tokens are in httpOnly cookies, fetch user profile to verify auth
 			const fetchUserAndRedirect = async () => {
 				try {
+					// The token cookie will be sent automatically with credentials
 					const response = await fetch("/api/v1/auth/profile", {
-						headers: {
-							Authorization: `Bearer ${oidcToken}`,
-						},
+						credentials: "include",
 					});
 					if (response.ok) {
 						const data = await response.json();
-						setAuthState(oidcToken, data.user);
+						// Store minimal info for UI state (token is in httpOnly cookie)
+						setAuthState(null, data.user);
 						navigate("/");
 					} else {
-						setError("Failed to fetch user profile after OIDC login");
-						localStorage.removeItem("token");
-						localStorage.removeItem("refresh_token");
+						setError("Failed to complete OIDC login");
 					}
 				} catch (err) {
 					console.error("Error fetching user after OIDC login:", err);
 					setError("Failed to complete OIDC login");
-					localStorage.removeItem("token");
-					localStorage.removeItem("refresh_token");
 				}
 				// Clean up URL
 				window.history.replaceState({}, document.title, "/login");

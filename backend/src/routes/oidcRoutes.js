@@ -21,28 +21,43 @@ const { create_session } = require("../utils/session_manager");
 const {
 	createDefaultDashboardPreferences,
 } = require("./dashboardPreferencesRoutes");
+const { redis } = require("../services/automation/shared/redis");
 
 const prisma = getPrismaClient();
 
-/**
- * Temporary session store for OIDC state
- * Uses in-memory Map with automatic cleanup
- */
-const oidcSessions = new Map();
+// Redis key prefix for OIDC sessions
+const OIDC_SESSION_PREFIX = "oidc:session:";
+const OIDC_SESSION_TTL = 600; // 10 minutes in seconds
 
-// Clean up old sessions every 5 minutes
-setInterval(
-	() => {
-		const now = Date.now();
-		const maxAge = 10 * 60 * 1000; // 10 minutes
-		for (const [key, session] of oidcSessions.entries()) {
-			if (now - session.createdAt > maxAge) {
-				oidcSessions.delete(key);
-			}
+/**
+ * Store OIDC session data in Redis
+ * @param {string} state - The state parameter
+ * @param {object} sessionData - Session data to store
+ */
+async function storeOIDCSession(state, sessionData) {
+	const key = `${OIDC_SESSION_PREFIX}${state}`;
+	await redis.setex(key, OIDC_SESSION_TTL, JSON.stringify(sessionData));
+}
+
+/**
+ * Retrieve and delete OIDC session data from Redis
+ * @param {string} state - The state parameter
+ * @returns {object|null} Session data or null if not found
+ */
+async function getAndDeleteOIDCSession(state) {
+	const key = `${OIDC_SESSION_PREFIX}${state}`;
+	const data = await redis.get(key);
+	if (data) {
+		await redis.del(key);
+		try {
+			return JSON.parse(data);
+		} catch (e) {
+			console.error("Failed to parse OIDC session data:", e);
+			return null;
 		}
-	},
-	5 * 60 * 1000,
-);
+	}
+	return null;
+}
 
 /**
  * GET /api/v1/auth/oidc/config
@@ -56,7 +71,7 @@ router.get("/config", (_req, res) => {
  * GET /api/v1/auth/oidc/login
  * Initiates the OIDC login flow
  */
-router.get("/login", (req, res) => {
+router.get("/login", async (req, res) => {
 	try {
 		if (!isOIDCEnabled()) {
 			return res
@@ -64,20 +79,21 @@ router.get("/login", (req, res) => {
 				.json({ error: "OIDC authentication is not enabled" });
 		}
 
-		const { url, state, codeVerifier } = getAuthorizationUrl();
+		const { url, state, codeVerifier, nonce } = getAuthorizationUrl();
 
-		// Store state and code verifier for validation in callback
-		oidcSessions.set(state, {
+		// Store state, code verifier, and nonce in Redis for validation in callback
+		await storeOIDCSession(state, {
 			codeVerifier,
+			nonce,
 			createdAt: Date.now(),
 		});
 
-		// Set state in a secure cookie as backup
+		// Set state in a secure cookie as backup validation
 		res.cookie("oidc_state", state, {
 			httpOnly: true,
 			secure: process.env.NODE_ENV === "production",
-			sameSite: "lax",
-			maxAge: 10 * 60 * 1000, // 10 minutes
+			sameSite: "strict",
+			maxAge: OIDC_SESSION_TTL * 1000,
 		});
 
 		res.redirect(url);
@@ -103,10 +119,9 @@ router.get("/callback", async (req, res) => {
 
 		// Check for errors from the IdP
 		if (error) {
-			console.error(`OIDC error from IdP: ${error} - ${error_description}`);
-			return res.redirect(
-				`/login?error=${encodeURIComponent(error_description || error)}`,
-			);
+			console.error(`OIDC error from IdP: ${error}`);
+			// Don't expose detailed error messages to users
+			return res.redirect("/login?error=Authentication+failed");
 		}
 
 		// Validate state parameter
@@ -115,19 +130,25 @@ router.get("/callback", async (req, res) => {
 			return res.redirect("/login?error=Invalid+authentication+response");
 		}
 
-		// Retrieve session data
-		const session = oidcSessions.get(state);
+		// Validate state matches cookie (additional CSRF protection)
+		const cookieState = req.cookies?.oidc_state;
+		if (cookieState && cookieState !== state) {
+			console.error("OIDC state mismatch between cookie and query param");
+			return res.redirect("/login?error=Invalid+authentication+response");
+		}
+
+		// Retrieve session data from Redis
+		const session = await getAndDeleteOIDCSession(state);
 		if (!session) {
 			console.error("OIDC state not found or expired");
 			return res.redirect("/login?error=Session+expired");
 		}
 
-		// Clean up the session
-		oidcSessions.delete(state);
+		// Clear the state cookie
 		res.clearCookie("oidc_state");
 
-		// Exchange code for tokens and get user info
-		const userInfo = await handleCallback(code, session.codeVerifier);
+		// Exchange code for tokens and get user info (with nonce validation)
+		const userInfo = await handleCallback(code, session.codeVerifier, session.nonce);
 
 		// Find existing user by OIDC subject or email
 		let user = await prisma.users.findFirst({
@@ -140,8 +161,11 @@ router.get("/callback", async (req, res) => {
 		if (!user && process.env.OIDC_AUTO_CREATE_USERS === "true") {
 			const defaultRole = process.env.OIDC_DEFAULT_ROLE || "user";
 
-			// Generate a unique username from email
-			let baseUsername = userInfo.email.split("@")[0];
+			// Generate a unique username from email (sanitize special characters)
+			let baseUsername = userInfo.email
+				.split("@")[0]
+				.replace(/[^a-zA-Z0-9_-]/g, "_")
+				.substring(0, 32);
 			let username = baseUsername;
 			let counter = 1;
 
@@ -175,16 +199,35 @@ router.get("/callback", async (req, res) => {
 		}
 
 		// Link OIDC to existing user if they matched by email but don't have OIDC linked
+		// Only link if email is verified at the IdP to prevent account takeover
 		if (user && !user.oidc_sub) {
-			await prisma.users.update({
-				where: { id: user.id },
-				data: {
-					oidc_sub: userInfo.sub,
-					oidc_provider: new URL(process.env.OIDC_ISSUER_URL).hostname,
-					updated_at: new Date(),
-				},
-			});
-			console.log(`Linked OIDC to existing user: ${user.email}`);
+			if (userInfo.emailVerified) {
+				// Check if this oidc_sub is already linked to another user
+				const existingOidcUser = await prisma.users.findFirst({
+					where: { oidc_sub: userInfo.sub },
+				});
+
+				if (existingOidcUser) {
+					console.error(
+						`OIDC subject already linked to another user: ${existingOidcUser.email}`,
+					);
+					return res.redirect("/login?error=Account+linking+failed");
+				}
+
+				await prisma.users.update({
+					where: { id: user.id },
+					data: {
+						oidc_sub: userInfo.sub,
+						oidc_provider: new URL(process.env.OIDC_ISSUER_URL).hostname,
+						updated_at: new Date(),
+					},
+				});
+				console.log(`Linked OIDC to existing user: ${user.email}`);
+			} else {
+				console.warn(
+					`Skipping OIDC linking for unverified email: ${userInfo.email}`,
+				);
+			}
 		}
 
 		if (!user) {
@@ -220,15 +263,33 @@ router.get("/callback", async (req, res) => {
 			req,
 		);
 
-		// Redirect to frontend with token
-		// The frontend will extract the token from the URL and store it
+		// Set tokens in secure HTTP-only cookies instead of URL parameters
+		const isProduction = process.env.NODE_ENV === "production";
+		const cookieOptions = {
+			httpOnly: true,
+			secure: isProduction,
+			sameSite: "strict",
+			path: "/",
+		};
+
+		// Set access token cookie (short-lived)
+		res.cookie("token", sessionData.access_token, {
+			...cookieOptions,
+			maxAge: 60 * 60 * 1000, // 1 hour
+		});
+
+		// Set refresh token cookie (longer-lived)
+		res.cookie("refresh_token", sessionData.refresh_token, {
+			...cookieOptions,
+			maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+		});
+
+		// Redirect to frontend with success indicator (no tokens in URL)
 		const frontendUrl = process.env.CORS_ORIGIN || "http://localhost:3000";
-		res.redirect(
-			`${frontendUrl}/login?oidc_token=${encodeURIComponent(sessionData.access_token)}&oidc_refresh=${encodeURIComponent(sessionData.refresh_token)}`,
-		);
+		res.redirect(`${frontendUrl}/login?oidc=success`);
 	} catch (error) {
 		console.error("OIDC callback error:", error);
-		res.redirect("/login?error=" + encodeURIComponent("Authentication failed"));
+		res.redirect("/login?error=Authentication+failed");
 	}
 });
 

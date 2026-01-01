@@ -371,15 +371,23 @@ app.use(
 			// Allow Bull Board requests from the same origin as CORS_ORIGIN
 			if (origin === bullBoardOrigin) return callback(null, true);
 
-			// Allow same-origin requests (e.g., Bull Board accessing its own API)
-			// This allows http://hostname:3001 to make requests to http://hostname:3001
-			if (origin?.includes(":3001")) return callback(null, true);
+			// Allow same-origin requests from backend port (localhost/127.0.0.1 only)
+			// This safely allows Bull Board to access its own API without allowing arbitrary origins
+			try {
+				const originUrl = new URL(origin);
+				const isLocalhost = originUrl.hostname === "localhost" || originUrl.hostname === "127.0.0.1";
+				const isBackendPort = originUrl.port === "3001";
+				if (isLocalhost && isBackendPort) {
+					return callback(null, true);
+				}
 
-			// Allow Bull Board requests from the frontend origin (same host, different port)
-			// This handles cases where frontend is on port 3000 and backend on 3001
-			const frontendOrigin = origin?.replace(/:3001$/, ":3000");
-			if (frontendOrigin && allowedOrigins.includes(frontendOrigin)) {
-				return callback(null, true);
+				// Allow requests from same hostname but different port (frontend on 3000, backend on 3001)
+				const corsUrl = new URL(process.env.CORS_ORIGIN || "http://localhost:3000");
+				if (originUrl.hostname === corsUrl.hostname && originUrl.port === "3001") {
+					return callback(null, true);
+				}
+			} catch (e) {
+				// Invalid URL, reject
 			}
 
 			return callback(new Error("Not allowed by CORS"));
@@ -550,13 +558,13 @@ app.use(`/bullboard`, async (req, res, next) => {
 				return res.status(403).json({ error: "Admin access required" });
 			}
 
-			// Set a simple auth cookie that will persist for the session
+			// Set a secure auth cookie that will persist for the session
 			res.cookie("bull-board-auth", token, {
-				httpOnly: false,
-				secure: false,
+				httpOnly: true,
+				secure: process.env.NODE_ENV === "production",
 				maxAge: 3600000, // 1 hour
 				path: "/bullboard",
-				sameSite: "lax",
+				sameSite: "strict",
 			});
 
 			console.log("Bull Board - Authentication successful, cookie set");
