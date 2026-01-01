@@ -19,9 +19,123 @@ const {
 	revoke_all_user_sessions,
 	generate_device_fingerprint,
 } = require("../utils/session_manager");
+const { redis } = require("../services/automation/shared/redis");
 
 const router = express.Router();
 const prisma = getPrismaClient();
+
+// Account lockout configuration
+const LOCKOUT_PREFIX = "login:lockout:";
+const FAILED_ATTEMPTS_PREFIX = "login:failed:";
+const MAX_FAILED_ATTEMPTS = parseInt(process.env.MAX_LOGIN_ATTEMPTS, 10) || 5;
+const LOCKOUT_DURATION = parseInt(process.env.LOCKOUT_DURATION_MINUTES, 10) || 15; // minutes
+const FAILED_ATTEMPT_TTL = 60 * 15; // 15 minutes in seconds
+
+/**
+ * Check if an account is locked
+ * @param {string} identifier - Username or email
+ * @returns {Promise<{locked: boolean, remainingTime: number}>}
+ */
+async function isAccountLocked(identifier) {
+	const key = `${LOCKOUT_PREFIX}${identifier.toLowerCase()}`;
+	const lockoutTime = await redis.get(key);
+	if (lockoutTime) {
+		const ttl = await redis.ttl(key);
+		return { locked: true, remainingTime: ttl };
+	}
+	return { locked: false, remainingTime: 0 };
+}
+
+/**
+ * Record a failed login attempt
+ * @param {string} identifier - Username or email
+ * @returns {Promise<{attempts: number, locked: boolean}>}
+ */
+async function recordFailedAttempt(identifier) {
+	const key = `${FAILED_ATTEMPTS_PREFIX}${identifier.toLowerCase()}`;
+	const attempts = await redis.incr(key);
+
+	// Set TTL on first attempt
+	if (attempts === 1) {
+		await redis.expire(key, FAILED_ATTEMPT_TTL);
+	}
+
+	// Lock account if max attempts exceeded
+	if (attempts >= MAX_FAILED_ATTEMPTS) {
+		const lockKey = `${LOCKOUT_PREFIX}${identifier.toLowerCase()}`;
+		await redis.setex(lockKey, LOCKOUT_DURATION * 60, Date.now().toString());
+		// Clear failed attempts counter
+		await redis.del(key);
+		return { attempts, locked: true };
+	}
+
+	return { attempts, locked: false };
+}
+
+/**
+ * Clear failed login attempts on successful login
+ * @param {string} identifier - Username or email
+ */
+async function clearFailedAttempts(identifier) {
+	const key = `${FAILED_ATTEMPTS_PREFIX}${identifier.toLowerCase()}`;
+	await redis.del(key);
+}
+
+/**
+ * Password complexity requirements
+ * - Minimum 8 characters
+ * - At least one uppercase letter
+ * - At least one lowercase letter
+ * - At least one number
+ * - At least one special character
+ */
+const PASSWORD_MIN_LENGTH = parseInt(process.env.PASSWORD_MIN_LENGTH, 10) || 8;
+const PASSWORD_REQUIRE_UPPERCASE = process.env.PASSWORD_REQUIRE_UPPERCASE !== "false";
+const PASSWORD_REQUIRE_LOWERCASE = process.env.PASSWORD_REQUIRE_LOWERCASE !== "false";
+const PASSWORD_REQUIRE_NUMBER = process.env.PASSWORD_REQUIRE_NUMBER !== "false";
+const PASSWORD_REQUIRE_SPECIAL = process.env.PASSWORD_REQUIRE_SPECIAL !== "false";
+
+/**
+ * Validate password complexity
+ * @param {string} password - The password to validate
+ * @returns {{valid: boolean, errors: string[]}}
+ */
+function validatePasswordComplexity(password) {
+	const errors = [];
+
+	if (!password || password.length < PASSWORD_MIN_LENGTH) {
+		errors.push(`Password must be at least ${PASSWORD_MIN_LENGTH} characters`);
+	}
+
+	if (PASSWORD_REQUIRE_UPPERCASE && !/[A-Z]/.test(password)) {
+		errors.push("Password must contain at least one uppercase letter");
+	}
+
+	if (PASSWORD_REQUIRE_LOWERCASE && !/[a-z]/.test(password)) {
+		errors.push("Password must contain at least one lowercase letter");
+	}
+
+	if (PASSWORD_REQUIRE_NUMBER && !/[0-9]/.test(password)) {
+		errors.push("Password must contain at least one number");
+	}
+
+	if (PASSWORD_REQUIRE_SPECIAL && !/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+		errors.push("Password must contain at least one special character");
+	}
+
+	return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Express-validator custom validator for password complexity
+ */
+const passwordComplexityValidator = (value) => {
+	const result = validatePasswordComplexity(value);
+	if (!result.valid) {
+		throw new Error(result.errors.join(". "));
+	}
+	return true;
+};
 
 /**
  * Parse user agent string to extract browser and OS info
@@ -108,8 +222,7 @@ router.post(
 		body("username").isLength({ min: 1 }).withMessage("Username is required"),
 		body("email").isEmail().withMessage("Valid email is required"),
 		body("password")
-			.isLength({ min: 8 })
-			.withMessage("Password must be at least 8 characters for security"),
+			.custom(passwordComplexityValidator),
 	],
 	async (req, res) => {
 		try {
@@ -262,8 +375,7 @@ router.post(
 			.withMessage("Username must be at least 3 characters"),
 		body("email").isEmail().withMessage("Valid email is required"),
 		body("password")
-			.isLength({ min: 6 })
-			.withMessage("Password must be at least 6 characters"),
+			.custom(passwordComplexityValidator),
 		body("first_name")
 			.optional()
 			.isLength({ min: 1 })
@@ -555,8 +667,7 @@ router.post(
 	requireManageUsers,
 	[
 		body("newPassword")
-			.isLength({ min: 6 })
-			.withMessage("New password must be at least 6 characters"),
+			.custom(passwordComplexityValidator),
 	],
 	async (req, res) => {
 		try {
@@ -645,8 +756,7 @@ router.post(
 			.withMessage("Username must be at least 3 characters"),
 		body("email").isEmail().withMessage("Valid email is required"),
 		body("password")
-			.isLength({ min: 6 })
-			.withMessage("Password must be at least 6 characters"),
+			.custom(passwordComplexityValidator),
 	],
 	async (req, res) => {
 		try {
@@ -759,6 +869,17 @@ router.post(
 
 			const { username, password } = req.body;
 
+			// Check if account is locked due to too many failed attempts
+			const lockStatus = await isAccountLocked(username);
+			if (lockStatus.locked) {
+				const remainingMinutes = Math.ceil(lockStatus.remainingTime / 60);
+				return res.status(429).json({
+					error: "Account temporarily locked due to too many failed login attempts",
+					lockedUntil: remainingMinutes,
+					message: `Please try again in ${remainingMinutes} minute${remainingMinutes !== 1 ? 's' : ''}`,
+				});
+			}
+
 			// Find user by username or email
 			const user = await prisma.users.findFirst({
 				where: {
@@ -782,6 +903,8 @@ router.post(
 			});
 
 			if (!user) {
+				// Record failed attempt even if user doesn't exist (prevents username enumeration timing attacks)
+				await recordFailedAttempt(username);
 				return res.status(401).json({ error: "Invalid credentials" });
 			}
 
@@ -791,8 +914,24 @@ router.post(
 				user.password_hash,
 			);
 			if (!isValidPassword) {
-				return res.status(401).json({ error: "Invalid credentials" });
+				// Record failed attempt
+				const result = await recordFailedAttempt(username);
+				if (result.locked) {
+					return res.status(429).json({
+						error: "Account temporarily locked due to too many failed login attempts",
+						lockedUntil: LOCKOUT_DURATION,
+						message: `Please try again in ${LOCKOUT_DURATION} minutes`,
+					});
+				}
+				const remainingAttempts = MAX_FAILED_ATTEMPTS - result.attempts;
+				return res.status(401).json({
+					error: "Invalid credentials",
+					remainingAttempts: remainingAttempts > 0 ? remainingAttempts : 0,
+				});
 			}
+
+			// Clear failed attempts on successful password verification
+			await clearFailedAttempts(username);
 
 			// Check if TFA is enabled
 			if (user.tfa_enabled) {
@@ -1213,8 +1352,7 @@ router.put(
 			.notEmpty()
 			.withMessage("Current password is required"),
 		body("newPassword")
-			.isLength({ min: 6 })
-			.withMessage("New password must be at least 6 characters"),
+			.custom(passwordComplexityValidator),
 	],
 	async (req, res) => {
 		try {
