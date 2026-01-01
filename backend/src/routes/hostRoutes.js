@@ -3,6 +3,7 @@ const { getPrismaClient } = require("../config/prisma");
 const { body, validationResult } = require("express-validator");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("node:crypto");
+const bcrypt = require("bcryptjs");
 const _path = require("node:path");
 const _fs = require("node:fs");
 const { authenticateToken, _requireAdmin } = require("../middleware/auth");
@@ -21,6 +22,30 @@ const prisma = getPrismaClient();
 // This stores the last known state from successful toggles
 const integrationStateCache = new Map();
 
+/**
+ * Verify API key against stored hash
+ * Supports both bcrypt hashed keys (new) and plaintext keys (legacy, for migration)
+ * @param {string} providedKey - The API key provided by the client
+ * @param {string} storedKey - The stored key (hash or plaintext)
+ * @returns {Promise<boolean>} Whether the key is valid
+ */
+async function verifyApiKey(providedKey, storedKey) {
+	// Check if stored key is a bcrypt hash (starts with $2a$, $2b$, or $2y$)
+	if (storedKey && storedKey.match(/^\$2[aby]\$/)) {
+		// Hashed key - use bcrypt compare
+		return bcrypt.compare(providedKey, storedKey);
+	}
+	// Legacy plaintext key - use timing-safe comparison
+	// This handles existing hosts with plaintext keys
+	if (storedKey && storedKey.length === providedKey.length) {
+		return crypto.timingSafeEqual(
+			Buffer.from(storedKey),
+			Buffer.from(providedKey)
+		);
+	}
+	return storedKey === providedKey;
+}
+
 // Middleware to validate API credentials
 const validateApiCredentials = async (req, res, next) => {
 	try {
@@ -31,14 +56,18 @@ const validateApiCredentials = async (req, res, next) => {
 			return res.status(401).json({ error: "API ID and Key required" });
 		}
 
-		const host = await prisma.hosts.findFirst({
-			where: {
-				api_id: apiId,
-				api_key: apiKey,
-			},
+		// Find host by API ID only (we'll verify the key separately)
+		const host = await prisma.hosts.findUnique({
+			where: { api_id: apiId },
 		});
 
 		if (!host) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
+		// Verify the API key
+		const isValidKey = await verifyApiKey(apiKey, host.api_key);
+		if (!isValidKey) {
 			return res.status(401).json({ error: "Invalid API credentials" });
 		}
 
@@ -66,7 +95,13 @@ router.get("/agent/download", async (req, res) => {
 			where: { api_id: apiId },
 		});
 
-		if (!host || host.api_key !== apiKey) {
+		if (!host) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
+		// Verify API key (supports both hashed and legacy plaintext keys)
+		const isValidKey = await verifyApiKey(apiKey, host.api_key);
+		if (!isValidKey) {
 			return res.status(401).json({ error: "Invalid API credentials" });
 		}
 
@@ -337,11 +372,13 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 	}
 });
 
-// Generate API credentials
-const generateApiCredentials = () => {
+// Generate API credentials with hashed key for secure storage
+const generateApiCredentials = async () => {
 	const apiId = `patchmon_${crypto.randomBytes(8).toString("hex")}`;
 	const apiKey = crypto.randomBytes(32).toString("hex");
-	return { apiId, apiKey };
+	// Hash the API key for secure storage (bcrypt with cost factor 10)
+	const apiKeyHash = await bcrypt.hash(apiKey, 10);
+	return { apiId, apiKey, apiKeyHash };
 };
 
 // Admin endpoint to create a new host manually (replaces auto-registration)
@@ -376,7 +413,8 @@ router.post(
 			const { friendly_name, hostGroupIds, docker_enabled } = req.body;
 
 			// Generate unique API credentials for this host
-			const { apiId, apiKey } = generateApiCredentials();
+			// apiKey is plaintext (shown to admin once), apiKeyHash is stored in DB
+			const { apiId, apiKey, apiKeyHash } = await generateApiCredentials();
 
 			// If hostGroupIds is provided, verify all groups exist
 			if (hostGroupIds && hostGroupIds.length > 0) {
@@ -392,6 +430,7 @@ router.post(
 			}
 
 			// Create new host with API credentials - system info will be populated when agent connects
+			// Store the hashed API key for security (plaintext is shown to admin only once)
 			const host = await prisma.hosts.create({
 				data: {
 					id: uuidv4(),
@@ -402,7 +441,7 @@ router.post(
 					ip: null, // Will be updated when agent connects
 					architecture: null, // Will be updated when agent connects
 					api_id: apiId,
-					api_key: apiKey,
+					api_key: apiKeyHash, // Store hash, not plaintext
 					status: "pending", // Will change to 'active' when agent connects
 					docker_enabled: docker_enabled ?? false, // Set integration state if provided
 					updated_at: new Date(),
@@ -439,7 +478,7 @@ router.post(
 				hostId: host.id,
 				friendlyName: host.friendly_name,
 				apiId: host.api_id,
-				apiKey: host.api_key,
+				apiKey: apiKey, // Return plaintext key (shown only once, not stored)
 				hostGroups:
 					host.host_group_memberships?.map(
 						(membership) => membership.host_groups,
@@ -1036,14 +1075,15 @@ router.post(
 			}
 
 			// Generate new API credentials
-			const { apiId, apiKey } = generateApiCredentials();
+			// apiKey is plaintext (shown to admin once), apiKeyHash is stored in DB
+			const { apiId, apiKey, apiKeyHash } = await generateApiCredentials();
 
-			// Update host with new credentials
+			// Update host with new credentials (store hash, not plaintext)
 			const updatedHost = await prisma.hosts.update({
 				where: { id: hostId },
 				data: {
 					api_id: apiId,
-					api_key: apiKey,
+					api_key: apiKeyHash, // Store hash, not plaintext
 					updated_at: new Date(),
 				},
 			});
@@ -1052,7 +1092,7 @@ router.post(
 				message: "API credentials regenerated successfully",
 				hostname: updatedHost.hostname,
 				apiId: updatedHost.api_id,
-				apiKey: updatedHost.api_key,
+				apiKey: apiKey, // Return plaintext key (shown only once, not stored)
 				warning:
 					"Previous credentials are now invalid. Update your agent configuration.",
 			});
@@ -1723,7 +1763,13 @@ router.get("/install", async (req, res) => {
 			where: { api_id: apiId },
 		});
 
-		if (!host || host.api_key !== apiKey) {
+		if (!host) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
+		// Verify API key (supports both hashed and legacy plaintext keys)
+		const isValidKey = await verifyApiKey(apiKey, host.api_key);
+		if (!isValidKey) {
 			return res.status(401).json({ error: "Invalid API credentials" });
 		}
 

@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { Route, Routes } from "react-router-dom";
+import ErrorBoundary from "./components/ErrorBoundary";
 import FirstTimeAdminSetup from "./components/FirstTimeAdminSetup";
 import Layout from "./components/Layout";
 import LogoProvider from "./components/LogoProvider";
@@ -450,19 +451,21 @@ function AppRoutes() {
 
 function App() {
 	return (
-		<AuthProvider>
-			<ThemeProvider>
-				<SettingsProvider>
-					<ColorThemeProvider>
-						<UpdateNotificationProvider>
-							<LogoProvider>
-								<AppRoutes />
-							</LogoProvider>
-						</UpdateNotificationProvider>
-					</ColorThemeProvider>
-				</SettingsProvider>
-			</ThemeProvider>
-		</AuthProvider>
+		<ErrorBoundary>
+			<AuthProvider>
+				<ThemeProvider>
+					<SettingsProvider>
+						<ColorThemeProvider>
+							<UpdateNotificationProvider>
+								<LogoProvider>
+									<AppRoutes />
+								</LogoProvider>
+							</UpdateNotificationProvider>
+						</ColorThemeProvider>
+					</SettingsProvider>
+				</ThemeProvider>
+			</AuthProvider>
+		</ErrorBoundary>
 	);
 }
 

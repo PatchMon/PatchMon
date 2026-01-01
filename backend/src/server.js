@@ -641,6 +641,27 @@ process.on("SIGTERM", async () => {
 	process.exit(0);
 });
 
+// Handle unhandled promise rejections
+process.on("unhandledRejection", (reason, promise) => {
+	console.error("❌ Unhandled Rejection at:", promise);
+	console.error("❌ Reason:", reason);
+	if (process.env.ENABLE_LOGGING === "true") {
+		logger.error("Unhandled Rejection:", { reason, promise: String(promise) });
+	}
+	// Don't exit the process - just log the error
+	// In production, you might want to track these for debugging
+});
+
+// Handle uncaught exceptions
+process.on("uncaughtException", (error) => {
+	console.error("❌ Uncaught Exception:", error);
+	if (process.env.ENABLE_LOGGING === "true") {
+		logger.error("Uncaught Exception:", error);
+	}
+	// For uncaught exceptions, it's safer to exit and let process manager restart
+	process.exit(1);
+});
+
 // Initialize dashboard preferences for all users
 async function initializeDashboardPreferences() {
 	try {

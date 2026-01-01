@@ -302,9 +302,15 @@ router.post(
 			}
 
 			// Check if it's a backup code
-			const backupCodes = user.tfa_backup_codes
-				? JSON.parse(user.tfa_backup_codes)
-				: [];
+			let backupCodes = [];
+			if (user.tfa_backup_codes) {
+				try {
+					backupCodes = JSON.parse(user.tfa_backup_codes);
+				} catch (parseError) {
+					console.error("Failed to parse TFA backup codes:", parseError.message);
+					backupCodes = [];
+				}
+			}
 			const isBackupCode = backupCodes.includes(token);
 
 			let verified = false;
