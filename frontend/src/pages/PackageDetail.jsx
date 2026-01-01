@@ -5,6 +5,7 @@ import {
 	Calendar,
 	ChevronRight,
 	Download,
+	Info,
 	Package,
 	RefreshCw,
 	RotateCcw,
@@ -254,6 +255,22 @@ const PackageDetail = () => {
 						</div>
 					</div>
 				</div>
+			</div>
+
+			{/* Description */}
+			<div className="card p-4">
+				<h3 className="text-sm font-medium text-secondary-500 dark:text-secondary-400 mb-2 flex items-center gap-2">
+					Description
+					<div className="relative group">
+						<Info className="h-4 w-4 cursor-help text-secondary-400" />
+						<div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block w-max max-w-xs px-2 py-1 bg-gray-900 text-white text-xs rounded shadow-lg z-[100]">
+							the description was pulled directly from the host package manager
+						</div>
+					</div>
+				</h3>
+				<p className="text-secondary-900 dark:text-white whitespace-pre-wrap">
+					{pkg.description || "No description available."}
+				</p>
 			</div>
 
 			{/* Hosts List */}
