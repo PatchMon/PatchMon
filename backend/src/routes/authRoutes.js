@@ -745,6 +745,13 @@ router.post(
 	],
 	async (req, res) => {
 		try {
+			// Check if local auth is disabled via OIDC
+			if (process.env.OIDC_DISABLE_LOCAL_AUTH === "true") {
+				return res.status(403).json({
+					error: "Local authentication is disabled. Please use SSO.",
+				});
+			}
+
 			const errors = validationResult(req);
 			if (!errors.isEmpty()) {
 				return res.status(400).json({ errors: errors.array() });

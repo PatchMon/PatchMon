@@ -75,6 +75,8 @@ const apiHostsRoutes = require("./routes/apiHostsRoutes");
 const releaseNotesRoutes = require("./routes/releaseNotesRoutes");
 const releaseNotesAcceptanceRoutes = require("./routes/releaseNotesAcceptanceRoutes");
 const buyMeACoffeeRoutes = require("./routes/buyMeACoffeeRoutes");
+const oidcRoutes = require("./routes/oidcRoutes");
+const { initializeOIDC } = require("./auth/oidc");
 const { initSettings } = require("./services/settingsService");
 const { queueManager } = require("./services/automation");
 const { authenticateToken, requireAdmin } = require("./middleware/auth");
@@ -460,6 +462,7 @@ const agentLimiter = rateLimit({
 });
 
 app.use(`/api/${apiVersion}/auth`, authLimiter, authRoutes);
+app.use(`/api/${apiVersion}/auth/oidc`, authLimiter, oidcRoutes);
 app.use(`/api/${apiVersion}/hosts`, agentLimiter, hostRoutes);
 app.use(`/api/${apiVersion}/host-groups`, hostGroupRoutes);
 app.use(`/api/${apiVersion}/packages`, packageRoutes);
@@ -890,6 +893,18 @@ async function startServer() {
 
 		// Check and create default role permissions on startup
 		await checkAndCreateRolePermissions();
+
+		// Initialize OIDC if enabled
+		if (process.env.OIDC_ENABLED === "true") {
+			const oidcInitialized = await initializeOIDC();
+			if (oidcInitialized) {
+				console.log("OIDC authentication enabled and initialized");
+			} else {
+				console.warn(
+					"OIDC is enabled but failed to initialize - check configuration",
+				);
+			}
+		}
 
 		// Initialize dashboard preferences for all users
 		await initializeDashboardPreferences();

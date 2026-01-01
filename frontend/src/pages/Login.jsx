@@ -53,6 +53,11 @@ const Login = () => {
 		useState(true);
 	const [latestRelease, setLatestRelease] = useState(null);
 	const [githubStars, setGithubStars] = useState(null);
+	const [oidcConfig, setOidcConfig] = useState({
+		enabled: false,
+		buttonText: "Login with SSO",
+		disableLocalAuth: false,
+	});
 	const canvasRef = useRef(null);
 	const { themeConfig } = useColorTheme();
 
@@ -174,6 +179,68 @@ const Login = () => {
 		};
 		checkLoginSettings();
 	}, []);
+
+	// Fetch OIDC configuration
+	useEffect(() => {
+		const fetchOidcConfig = async () => {
+			try {
+				const response = await fetch("/api/v1/auth/oidc/config");
+				if (response.ok) {
+					const config = await response.json();
+					setOidcConfig(config);
+				}
+			} catch (error) {
+				console.error("Failed to fetch OIDC config:", error);
+			}
+		};
+		fetchOidcConfig();
+	}, []);
+
+	// Handle OIDC callback tokens from URL
+	useEffect(() => {
+		const urlParams = new URLSearchParams(window.location.search);
+		const oidcToken = urlParams.get("oidc_token");
+		const oidcRefresh = urlParams.get("oidc_refresh");
+		const oidcError = urlParams.get("error");
+
+		if (oidcError) {
+			setError(decodeURIComponent(oidcError));
+			// Clean up URL
+			window.history.replaceState({}, document.title, "/login");
+		} else if (oidcToken && oidcRefresh) {
+			// Store tokens and redirect to dashboard
+			localStorage.setItem("token", oidcToken);
+			localStorage.setItem("refresh_token", oidcRefresh);
+
+			// Fetch user info and update auth state
+			const fetchUserAndRedirect = async () => {
+				try {
+					const response = await fetch("/api/v1/auth/profile", {
+						headers: {
+							Authorization: `Bearer ${oidcToken}`,
+						},
+					});
+					if (response.ok) {
+						const data = await response.json();
+						setAuthState(oidcToken, data.user);
+						navigate("/");
+					} else {
+						setError("Failed to fetch user profile after OIDC login");
+						localStorage.removeItem("token");
+						localStorage.removeItem("refresh_token");
+					}
+				} catch (err) {
+					console.error("Error fetching user after OIDC login:", err);
+					setError("Failed to complete OIDC login");
+					localStorage.removeItem("token");
+					localStorage.removeItem("refresh_token");
+				}
+				// Clean up URL
+				window.history.replaceState({}, document.title, "/login");
+			};
+			fetchUserAndRedirect();
+		}
+	}, [navigate, setAuthState]);
 
 	// Fetch latest release and stars from GitHub
 	useEffect(() => {
@@ -689,6 +756,8 @@ const Login = () => {
 							className="mt-8 space-y-6"
 							onSubmit={isSignupMode ? handleSignupSubmit : handleSubmit}
 						>
+							{/* Only show form fields if local auth is not disabled */}
+							{!oidcConfig.disableLocalAuth && (
 							<div className="space-y-4">
 								<div>
 									<label
@@ -831,6 +900,7 @@ const Login = () => {
 									</div>
 								</div>
 							</div>
+							)}
 
 							{error && (
 								<div className="bg-danger-50 border border-danger-200 rounded-md p-3">
@@ -843,26 +913,57 @@ const Login = () => {
 								</div>
 							)}
 
-							<div>
-								<button
-									type="submit"
-									disabled={isLoading}
-									className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
-								>
-									{isLoading ? (
-										<div className="flex items-center">
-											<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-											{isSignupMode ? "Creating account..." : "Signing in..."}
-										</div>
-									) : isSignupMode ? (
-										"Create Account"
-									) : (
-										"Sign in"
-									)}
-								</button>
-							</div>
+							{/* Only show local auth form if not disabled by OIDC config */}
+							{!oidcConfig.disableLocalAuth && (
+								<div>
+									<button
+										type="submit"
+										disabled={isLoading}
+										className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+									>
+										{isLoading ? (
+											<div className="flex items-center">
+												<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+												{isSignupMode ? "Creating account..." : "Signing in..."}
+											</div>
+										) : isSignupMode ? (
+											"Create Account"
+										) : (
+											"Sign in"
+										)}
+									</button>
+								</div>
+							)}
 
-							{signupEnabled && (
+							{/* SSO Login Button */}
+							{oidcConfig.enabled && (
+								<div className={oidcConfig.disableLocalAuth ? "" : "mt-4"}>
+									{!oidcConfig.disableLocalAuth && (
+										<div className="relative">
+											<div className="absolute inset-0 flex items-center">
+												<div className="w-full border-t border-secondary-300 dark:border-secondary-600"></div>
+											</div>
+											<div className="relative flex justify-center text-sm">
+												<span className="px-2 bg-white dark:bg-secondary-900 text-secondary-500">
+													or
+												</span>
+											</div>
+										</div>
+									)}
+
+									<button
+										onClick={() =>
+											(window.location.href = "/api/v1/auth/oidc/login")
+										}
+										className={`${oidcConfig.disableLocalAuth ? "" : "mt-4"} w-full flex justify-center py-2 px-4 border border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-800 hover:bg-secondary-50 dark:hover:bg-secondary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500`}
+										type="button"
+									>
+										{oidcConfig.buttonText || "Login with SSO"}
+									</button>
+								</div>
+							)}
+
+							{signupEnabled && !oidcConfig.disableLocalAuth && (
 								<div className="text-center">
 									<p className="text-sm text-secondary-700 dark:text-secondary-300">
 										{isSignupMode

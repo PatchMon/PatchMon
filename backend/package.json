@@ -29,6 +29,7 @@
 		"helmet": "^8.0.0",
 		"ioredis": "^5.8.1",
 		"jsonwebtoken": "^9.0.2",
+		"openid-client": "^5.6.0",
 		"moment": "^2.30.1",
 		"qrcode": "^1.5.4",
 		"speakeasy": "^2.0.0",
