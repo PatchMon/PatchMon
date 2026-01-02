@@ -1444,6 +1444,28 @@ router.post(
 	},
 );
 
+// Get a short-lived WebSocket token for authenticated users
+// This is needed because WebSocket connections can't use httpOnly cookies
+router.get("/ws-token", authenticateToken, async (req, res) => {
+	try {
+		// Generate a short-lived token specifically for WebSocket connections
+		const wsToken = jwt.sign(
+			{
+				userId: req.user.id,
+				sessionId: req.session_id,
+				purpose: "websocket", // Mark this token as WebSocket-only
+			},
+			process.env.JWT_SECRET,
+			{ expiresIn: "5m" } // Very short-lived - only for establishing WS connection
+		);
+
+		res.json({ token: wsToken, expiresIn: 300 }); // 300 seconds = 5 minutes
+	} catch (error) {
+		console.error("WebSocket token generation error:", error);
+		res.status(500).json({ error: "Failed to generate WebSocket token" });
+	}
+});
+
 // Get current user profile
 router.get("/profile", authenticateToken, async (req, res) => {
 	try {

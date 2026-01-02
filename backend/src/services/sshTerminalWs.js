@@ -49,12 +49,25 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 			return true;
 		}
 
-		// Validate session
-		const validation = await validate_session(decoded.sessionId, token);
-		if (!validation.valid) {
-			console.log(`[ssh-terminal] Session validation failed for host ${hostId}`);
-			socket.destroy();
-			return true;
+		// Check if this is a WebSocket-purpose token (from /api/v1/auth/ws-token)
+		// These tokens have a shorter lifetime and are specifically for WS connections
+		let validation;
+		if (decoded.purpose === "websocket") {
+			// For WS tokens, validate the session using the sessionId from the token
+			validation = await validate_session(decoded.sessionId);
+			if (!validation.valid) {
+				console.log(`[ssh-terminal] WS token session validation failed for host ${hostId}`);
+				socket.destroy();
+				return true;
+			}
+		} else {
+			// For regular tokens, validate with the token itself
+			validation = await validate_session(decoded.sessionId, token);
+			if (!validation.valid) {
+				console.log(`[ssh-terminal] Session validation failed for host ${hostId}`);
+				socket.destroy();
+				return true;
+			}
 		}
 
 		// Update session activity

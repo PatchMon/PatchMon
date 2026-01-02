@@ -3,7 +3,7 @@ import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import "xterm/css/xterm.css";
 import { X, Loader2, TerminalSquare, Download, Copy, ChevronDown } from "lucide-react";
-import { useAuth } from "../contexts/AuthContext";
+// Note: Auth is handled via httpOnly cookies - no need for useAuth token
 import { useSidebar } from "../contexts/SidebarContext";
 import { useQuery } from "@tanstack/react-query";
 import { settingsAPI } from "../utils/api";
@@ -18,7 +18,6 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	const reconnectTimeoutRef = useRef(null);
 	const idleTimeoutRef = useRef(null);
 	const idleWarningTimeoutRef = useRef(null);
-	const { token } = useAuth();
 
 	const [isConnecting, setIsConnecting] = useState(false);
 	const [isConnected, setIsConnected] = useState(false);
@@ -170,22 +169,8 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 		};
 	}, [isOpen, isConnected]);
 
-	// Helper function to decode JWT and check expiration
-	const isTokenValid = (tokenString) => {
-		if (!tokenString) return false;
-		try {
-			const payload = JSON.parse(atob(tokenString.split('.')[1]));
-			const exp = payload.exp;
-			if (!exp) return true; // No expiration claim, assume valid
-			return Date.now() < exp * 1000; // Convert seconds to milliseconds
-		} catch (err) {
-			console.error("[SSH Terminal] Error decoding token:", err);
-			return false;
-		}
-	};
-
 	// Connect to SSH via WebSocket
-	const connectSsh = () => {
+	const connectSsh = async () => {
 		if (!host) return;
 
 		// Close existing WebSocket connection if any
@@ -193,27 +178,6 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 			console.log("[SSH Terminal] Closing existing WebSocket connection");
 			wsRef.current.close();
 			wsRef.current = null;
-		}
-
-		// Get fresh token from localStorage (may be more up-to-date than context)
-		const freshToken = localStorage.getItem("token") || token;
-		if (!freshToken) {
-			setError("Authentication required. Please log in again.");
-			if (terminalInstanceRef.current) {
-				terminalInstanceRef.current.writeln("\r\n\x1b[31m✗ Error: Authentication required\x1b[0m");
-				terminalInstanceRef.current.writeln("\x1b[33mPlease log in again and try connecting.\x1b[0m");
-			}
-			return;
-		}
-
-		// Check if token is expired
-		if (!isTokenValid(freshToken)) {
-			setError("Your session has expired. Please refresh the page or log in again.");
-			if (terminalInstanceRef.current) {
-				terminalInstanceRef.current.writeln("\r\n\x1b[31m✗ Error: Session expired\x1b[0m");
-				terminalInstanceRef.current.writeln("\x1b[33mPlease refresh the page or log in again.\x1b[0m");
-			}
-			return;
 		}
 
 		// Validate credentials based on auth method
@@ -229,11 +193,34 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 		setIsConnecting(true);
 		setError(null);
 
+		// Fetch a short-lived WebSocket token from the server
+		// This works with both regular auth and OIDC (httpOnly cookies)
+		let wsToken;
+		try {
+			const response = await fetch("/api/v1/auth/ws-token", {
+				credentials: "include", // Include httpOnly cookies for auth
+			});
+			if (!response.ok) {
+				throw new Error("Failed to get authentication token");
+			}
+			const data = await response.json();
+			wsToken = data.token;
+		} catch (err) {
+			console.error("[SSH Terminal] Failed to get WebSocket token:", err);
+			setError("Authentication required. Please log in again.");
+			if (terminalInstanceRef.current) {
+				terminalInstanceRef.current.writeln("\r\n\x1b[31m✗ Error: Authentication required\x1b[0m");
+				terminalInstanceRef.current.writeln("\x1b[33mPlease log in again and try connecting.\x1b[0m");
+			}
+			setIsConnecting(false);
+			return;
+		}
+
 		// Determine WebSocket URL
 		const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 		const hostname = window.location.hostname;
 		const port = window.location.port ? `:${window.location.port}` : "";
-		const wsUrl = `${protocol}//${hostname}${port}/api/v1/ssh-terminal/${host.id}?token=${encodeURIComponent(freshToken)}`;
+		const wsUrl = `${protocol}//${hostname}${port}/api/v1/ssh-terminal/${host.id}?token=${encodeURIComponent(wsToken)}`;
 
 		try {
 			const ws = new WebSocket(wsUrl);
