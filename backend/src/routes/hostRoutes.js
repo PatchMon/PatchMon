@@ -1893,7 +1893,8 @@ router.get("/install", async (req, res) => {
 
 		// Generate a secure bootstrap token instead of embedding the API key directly
 		// The agent will exchange this token for actual credentials via a secure API call
-		const bootstrapToken = await generateBootstrapToken(host.api_id, host.api_key);
+		// IMPORTANT: Use the plaintext apiKey from the request headers, NOT host.api_key (which is the hash)
+		const bootstrapToken = await generateBootstrapToken(host.api_id, apiKey);
 
 		// Inject bootstrap token and server URL into the script
 		// The actual API credentials are NOT embedded - they will be fetched securely
