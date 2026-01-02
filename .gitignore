@@ -156,3 +156,6 @@ install-server.*
 notify-clients-upgrade.sh
 debug-agent.sh
 docker/compose_dev_*
+
+# Conductor agent prompts (keep local, not public)
+docs/conductor-prompts/
