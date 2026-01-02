@@ -54,7 +54,9 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 		let validation;
 		if (decoded.purpose === "websocket") {
 			// For WS tokens, validate the session using the sessionId from the token
-			validation = await validate_session(decoded.sessionId);
+			// Pass empty string for access_token since WS tokens are separate from session tokens
+			// The JWT signature was already verified above, we just need to check session validity
+			validation = await validate_session(decoded.sessionId, "");
 			if (!validation.valid) {
 				console.log(`[ssh-terminal] WS token session validation failed for host ${hostId}`);
 				socket.destroy();
