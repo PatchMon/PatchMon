@@ -746,24 +746,27 @@ async function initializeDashboardPreferences() {
 				const currentCardCount = user.dashboard_preferences.length;
 
 				if (currentCardCount !== expectedCardCount) {
-					// Delete existing preferences
-					await prisma.dashboard_preferences.deleteMany({
-						where: { user_id: user.id },
-					});
+					// Use transaction to prevent race condition
+					await prisma.$transaction(async (tx) => {
+						// Delete existing preferences
+						await tx.dashboard_preferences.deleteMany({
+							where: { user_id: user.id },
+						});
 
-					// Create new preferences based on permissions
-					const preferencesData = expectedPreferences.map((pref) => ({
-						id: require("uuid").v4(),
-						user_id: user.id,
-						card_id: pref.cardId,
-						enabled: pref.enabled,
-						order: pref.order,
-						created_at: new Date(),
-						updated_at: new Date(),
-					}));
+						// Create new preferences based on permissions
+						const preferencesData = expectedPreferences.map((pref) => ({
+							id: require("uuid").v4(),
+							user_id: user.id,
+							card_id: pref.cardId,
+							enabled: pref.enabled,
+							order: pref.order,
+							created_at: new Date(),
+							updated_at: new Date(),
+						}));
 
-					await prisma.dashboard_preferences.createMany({
-						data: preferencesData,
+						await tx.dashboard_preferences.createMany({
+							data: preferencesData,
+						});
 					});
 
 					updatedCount++;

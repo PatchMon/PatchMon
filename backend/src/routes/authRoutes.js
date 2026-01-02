@@ -825,10 +825,17 @@ router.post(
 				data: { password_hash: passwordHash },
 			});
 
-			// Log the password reset action (you might want to add an audit log table)
-			console.log(
-				`Password reset for user ${user.username} (${user.email}) by admin ${req.user.username}`,
-			);
+			// Log the password reset action (audit log)
+			await logAuditEvent({
+				event: AUDIT_EVENTS.PASSWORD_RESET,
+				userId: user.id,
+				username: user.username,
+				ipAddress: req.ip,
+				userAgent: req.get("user-agent"),
+				requestId: req.id,
+				success: true,
+				details: { resetByAdmin: req.user.username },
+			});
 
 			res.json({
 				message: "Password reset successfully",

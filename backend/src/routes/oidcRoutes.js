@@ -26,6 +26,25 @@ const { AUDIT_EVENTS, logAuditEvent } = require("../utils/auditLogger");
 
 const prisma = getPrismaClient();
 
+/**
+ * Middleware to enforce HTTPS for OIDC routes in production
+ */
+function requireHTTPS(req, res, next) {
+	const isProduction = process.env.NODE_ENV === "production";
+	const isSecure = req.secure || req.headers["x-forwarded-proto"] === "https";
+
+	if (isProduction && !isSecure) {
+		console.error("OIDC request rejected: HTTPS required in production");
+		return res.status(403).json({
+			error: "HTTPS required for authentication",
+		});
+	}
+	next();
+}
+
+// Apply HTTPS enforcement to all OIDC routes
+router.use(requireHTTPS);
+
 // Redis key prefix for OIDC sessions
 const OIDC_SESSION_PREFIX = "oidc:session:";
 const OIDC_SESSION_TTL = 600; // 10 minutes in seconds

@@ -7,6 +7,23 @@ const { get_current_time, parse_date } = require("../utils/timezone");
 const prisma = getPrismaClient();
 const router = express.Router();
 
+/**
+ * Validate and sanitize pagination parameters
+ * @param {string|number} page - Page number
+ * @param {string|number} limit - Items per page
+ * @returns {{page: number, limit: number, skip: number, take: number}}
+ */
+function validatePagination(page, limit) {
+	const parsedPage = Math.max(1, parseInt(page, 10) || 1);
+	const parsedLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+	return {
+		page: parsedPage,
+		limit: parsedLimit,
+		skip: (parsedPage - 1) * parsedLimit,
+		take: parsedLimit,
+	};
+}
+
 // Helper function to convert BigInt fields to strings for JSON serialization
 const convertBigIntToString = (obj) => {
 	if (obj === null || obj === undefined) return obj;
@@ -86,6 +103,7 @@ router.get("/dashboard", authenticateToken, async (_req, res) => {
 router.get("/containers", authenticateToken, async (req, res) => {
 	try {
 		const { status, hostId, imageId, search, page = 1, limit = 50 } = req.query;
+		const pagination = validatePagination(page, limit);
 
 		const where = {};
 		if (status) where.status = status;
@@ -98,8 +116,7 @@ router.get("/containers", authenticateToken, async (req, res) => {
 			];
 		}
 
-		const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
-		const take = parseInt(limit, 10);
+		const { skip, take } = pagination;
 
 		const [containers, total] = await Promise.all([
 			prisma.docker_containers.findMany({
@@ -209,6 +226,7 @@ router.get("/containers/:id", authenticateToken, async (req, res) => {
 router.get("/images", authenticateToken, async (req, res) => {
 	try {
 		const { source, search, page = 1, limit = 50 } = req.query;
+		const pagination = validatePagination(page, limit);
 
 		const where = {};
 		if (source) where.source = source;
@@ -219,8 +237,7 @@ router.get("/images", authenticateToken, async (req, res) => {
 			];
 		}
 
-		const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
-		const take = parseInt(limit, 10);
+		const { skip, take } = pagination;
 
 		const [images, total] = await Promise.all([
 			prisma.docker_images.findMany({
@@ -323,6 +340,7 @@ router.get("/images/:id", authenticateToken, async (req, res) => {
 router.get("/hosts", authenticateToken, async (req, res) => {
 	try {
 		const { page = 1, limit = 50 } = req.query;
+		const pagination = validatePagination(page, limit);
 
 		// Get hosts that have Docker containers
 		const hostsWithContainers = await prisma.docker_containers.groupBy({
@@ -332,8 +350,7 @@ router.get("/hosts", authenticateToken, async (req, res) => {
 
 		const hostIds = hostsWithContainers.map((h) => h.host_id);
 
-		const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
-		const take = parseInt(limit, 10);
+		const { skip, take } = pagination;
 
 		const hosts = await prisma.hosts.findMany({
 			where: { id: { in: hostIds } },
@@ -453,14 +470,14 @@ router.get("/hosts/:id", authenticateToken, async (req, res) => {
 router.get("/updates", authenticateToken, async (req, res) => {
 	try {
 		const { page = 1, limit = 50, securityOnly = false } = req.query;
+		const pagination = validatePagination(page, limit);
 
 		const where = {};
 		if (securityOnly === "true") {
 			where.is_security_update = true;
 		}
 
-		const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
-		const take = parseInt(limit, 10);
+		const { skip, take } = pagination;
 
 		const [updates, total] = await Promise.all([
 			prisma.docker_image_updates.findMany({
@@ -1063,6 +1080,7 @@ router.delete("/images/:id", authenticateToken, async (req, res) => {
 router.get("/volumes", authenticateToken, async (req, res) => {
 	try {
 		const { driver, search, page = 1, limit = 50 } = req.query;
+		const pagination = validatePagination(page, limit);
 
 		const where = {};
 		if (driver) where.driver = driver;
@@ -1070,8 +1088,7 @@ router.get("/volumes", authenticateToken, async (req, res) => {
 			where.OR = [{ name: { contains: search, mode: "insensitive" } }];
 		}
 
-		const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
-		const take = parseInt(limit, 10);
+		const { skip, take } = pagination;
 
 		const [volumes, total] = await Promise.all([
 			prisma.docker_volumes.findMany({
@@ -1146,6 +1163,7 @@ router.get("/volumes/:id", authenticateToken, async (req, res) => {
 router.get("/networks", authenticateToken, async (req, res) => {
 	try {
 		const { driver, search, page = 1, limit = 50 } = req.query;
+		const pagination = validatePagination(page, limit);
 
 		const where = {};
 		if (driver) where.driver = driver;
@@ -1153,8 +1171,7 @@ router.get("/networks", authenticateToken, async (req, res) => {
 			where.OR = [{ name: { contains: search, mode: "insensitive" } }];
 		}
 
-		const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
-		const take = parseInt(limit, 10);
+		const { skip, take } = pagination;
 
 		const [networks, total] = await Promise.all([
 			prisma.docker_networks.findMany({
