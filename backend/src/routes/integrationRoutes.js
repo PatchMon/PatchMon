@@ -1,5 +1,5 @@
 const express = require("express");
-const bcrypt = require("bcrypt");
+const bcrypt = require("bcryptjs");
 const crypto = require("node:crypto");
 const { getPrismaClient } = require("../config/prisma");
 const { v4: uuidv4 } = require("uuid");
