@@ -281,7 +281,8 @@ async function validate_session(session_id, access_token) {
 		}
 
 		// Validate access token hash (optional security check)
-		if (session.access_token_hash) {
+		// Skip hash validation if no token provided (used by WS token validation and refresh_access_token)
+		if (access_token && session.access_token_hash) {
 			const provided_hash = hash_token(access_token);
 			if (session.access_token_hash !== provided_hash) {
 				return { valid: false, reason: "Token mismatch" };
