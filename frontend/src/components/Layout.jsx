@@ -20,6 +20,7 @@ import {
 	Route,
 	Server,
 	Settings,
+	Shield,
 	Star,
 	UserCircle,
 	X,
@@ -153,6 +154,13 @@ const Layout = ({ children }) => {
 				icon: RefreshCw,
 			});
 
+			// Add Compliance item (available to all users with inventory access)
+			inventoryItems.push({
+				name: "Compliance",
+				href: "/compliance",
+				icon: Shield,
+			});
+
 			if (canViewReports()) {
 				inventoryItems.push(
 					{
@@ -243,6 +251,7 @@ const Layout = ({ children }) => {
 		if (path === "/docker") return "Docker";
 		if (path === "/pro-action") return "Pro-Action";
 		if (path === "/automation") return "Automation";
+		if (path === "/compliance") return "Compliance";
 		if (path === "/users") return "Users";
 		if (path === "/permissions") return "Permissions";
 		if (path === "/settings") return "Settings";
@@ -1204,13 +1213,14 @@ const Layout = ({ children }) => {
 					<div className="h-6 w-px bg-secondary-200 dark:bg-secondary-600 lg:hidden" />
 
 					<div className="flex flex-1 gap-x-2 sm:gap-x-4 self-stretch lg:gap-x-6 min-w-0">
-						{/* Page title - hidden on dashboard, hosts, repositories, packages, automation, docker, settings, and host details to give more space to search */}
+						{/* Page title - hidden on dashboard, hosts, repositories, packages, automation, compliance, docker, settings, and host details to give more space to search */}
 						{![
 							"/",
 							"/hosts",
 							"/repositories",
 							"/packages",
 							"/automation",
+							"/compliance",
 							"/docker",
 						].includes(location.pathname) &&
 							!location.pathname.startsWith("/hosts/") &&
@@ -1226,7 +1236,7 @@ const Layout = ({ children }) => {
 
 						{/* Global Search Bar */}
 						<div
-							className={`flex items-center min-w-0 ${["/", "/hosts", "/repositories", "/packages", "/automation", "/docker"].includes(location.pathname) || location.pathname.startsWith("/hosts/") || location.pathname.startsWith("/docker/") || location.pathname.startsWith("/packages/") || location.pathname.startsWith("/settings/") ? "flex-1 max-w-none" : "flex-1 md:flex-none md:max-w-sm"}`}
+							className={`flex items-center min-w-0 ${["/", "/hosts", "/repositories", "/packages", "/automation", "/compliance", "/docker"].includes(location.pathname) || location.pathname.startsWith("/hosts/") || location.pathname.startsWith("/docker/") || location.pathname.startsWith("/packages/") || location.pathname.startsWith("/settings/") ? "flex-1 max-w-none" : "flex-1 md:flex-none md:max-w-sm"}`}
 						>
 							<GlobalSearch />
 						</div>

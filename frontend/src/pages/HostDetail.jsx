@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import ComplianceTab from "../components/compliance/ComplianceTab";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import SshTerminal from "../components/SshTerminal";
@@ -1626,6 +1627,18 @@ const HostDetail = () => {
 						</button>
 						<button
 							type="button"
+							onClick={() => handleTabChange("compliance")}
+							className={`px-4 py-2 text-sm font-medium ${
+								activeTab === "compliance"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+									: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
+							}`}
+						>
+							<Shield className="h-4 w-4 inline mr-1" />
+							Compliance
+						</button>
+						<button
+							type="button"
 							onClick={() => handleTabChange("terminal")}
 							className={`px-4 py-2 text-sm font-medium ${
 								activeTab === "terminal"
@@ -2718,6 +2731,11 @@ const HostDetail = () => {
 									</div>
 								)}
 							</div>
+						)}
+
+						{/* Compliance */}
+						{activeTab === "compliance" && (
+							<ComplianceTab hostId={hostId} isConnected={wsStatus?.connected} />
 						)}
 					</div>
 				</div>

@@ -25,6 +25,7 @@ const Automation = lazy(() => import("./pages/Automation"));
 const Repositories = lazy(() => import("./pages/Repositories"));
 const RepositoryDetail = lazy(() => import("./pages/RepositoryDetail"));
 const Docker = lazy(() => import("./pages/Docker"));
+const Compliance = lazy(() => import("./pages/Compliance"));
 const DockerContainerDetail = lazy(
 	() => import("./pages/docker/ContainerDetail"),
 );
@@ -154,6 +155,16 @@ function AppRoutes() {
 						<ProtectedRoute requirePermission="can_view_hosts">
 							<Layout>
 								<Automation />
+							</Layout>
+						</ProtectedRoute>
+					}
+				/>
+				<Route
+					path="/compliance"
+					element={
+						<ProtectedRoute requirePermission="can_view_hosts">
+							<Layout>
+								<Compliance />
 							</Layout>
 						</ProtectedRoute>
 					}
