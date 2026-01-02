@@ -2336,6 +2336,86 @@ router.patch(
 	},
 );
 
+// Update host IP and hostname (admin only)
+router.patch(
+	"/:hostId/connection",
+	authenticateToken,
+	requireManageHosts,
+	[
+		body("ip")
+			.optional()
+			.isIP()
+			.withMessage("IP must be a valid IP address"),
+		body("hostname")
+			.optional()
+			.isLength({ max: 255 })
+			.withMessage("Hostname must be less than 255 characters"),
+	],
+	async (req, res) => {
+		try {
+			const errors = validationResult(req);
+			if (!errors.isEmpty()) {
+				return res.status(400).json({ errors: errors.array() });
+			}
+
+			const { hostId } = req.params;
+			const { ip, hostname } = req.body;
+
+			// Check if host exists
+			const host = await prisma.hosts.findUnique({
+				where: { id: hostId },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			// Build update data
+			const updateData = {};
+			if (ip !== undefined) updateData.ip = ip;
+			if (hostname !== undefined) updateData.hostname = hostname;
+			updateData.updated_at = new Date();
+
+			// Update the host
+			const updatedHost = await prisma.hosts.update({
+				where: { id: hostId },
+				data: updateData,
+				select: {
+					id: true,
+					friendly_name: true,
+					hostname: true,
+					ip: true,
+					os_type: true,
+					os_version: true,
+					architecture: true,
+					last_update: true,
+					status: true,
+					updated_at: true,
+					host_group_memberships: {
+						include: {
+							host_groups: {
+								select: {
+									id: true,
+									name: true,
+									color: true,
+								},
+							},
+						},
+					},
+				},
+			});
+
+			res.json({
+				message: "Host connection information updated successfully",
+				host: updatedHost,
+			});
+		} catch (error) {
+			console.error("Update host connection error:", error);
+			res.status(500).json({ error: "Failed to update host connection information" });
+		}
+	},
+);
+
 // Update host notes (admin only)
 router.patch(
 	"/:hostId/notes",

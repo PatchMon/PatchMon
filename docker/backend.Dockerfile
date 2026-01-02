@@ -6,7 +6,8 @@ ENV NODE_ENV=development \
     ENABLE_LOGGING=true \
     LOG_LEVEL=info \
     PM_LOG_TO_CONSOLE=true \
-    PORT=3001
+    PORT=3001 \
+    NODE_PATH=/app/node_modules:/app/backend/node_modules
 
 RUN apk add --no-cache openssl tini curl libc6-compat
 
@@ -17,6 +18,9 @@ COPY --chown=node:node backend/ ./backend/
 COPY --chown=node:node agents ./agents_backup
 COPY --chown=node:node agents ./agents
 COPY --chmod=755 docker/backend.docker-entrypoint.sh ./entrypoint.sh
+
+# Ensure /app directory is owned by node user and writable before switching users
+RUN chown -R node:node /app && chmod -R u+w /app
 
 USER node
 

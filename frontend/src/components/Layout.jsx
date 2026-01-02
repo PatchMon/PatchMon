@@ -31,6 +31,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useColorTheme } from "../contexts/ColorThemeContext";
 import { useUpdateNotification } from "../contexts/UpdateNotificationContext";
+import SidebarContext from "../contexts/SidebarContext";
 import { dashboardAPI, versionAPI } from "../utils/api";
 import DiscordIcon from "./DiscordIcon";
 import GlobalSearch from "./GlobalSearch";
@@ -514,7 +515,13 @@ const Layout = ({ children }) => {
 	}, [themeConfig]);
 
 	return (
-		<div className="min-h-screen bg-secondary-50 dark:bg-black relative overflow-hidden">
+		<SidebarContext.Provider
+			value={{
+				setSidebarCollapsed,
+				sidebarCollapsed,
+			}}
+		>
+			<div className="min-h-screen bg-secondary-50 dark:bg-black relative overflow-hidden">
 			{/* Full-screen Trianglify Background (Dark Mode Only) */}
 			<canvas
 				ref={bgCanvasRef}
@@ -1557,6 +1564,7 @@ const Layout = ({ children }) => {
 				onAccept={() => setShowReleaseNotes(false)}
 			/>
 		</div>
+		</SidebarContext.Provider>
 	);
 };
 

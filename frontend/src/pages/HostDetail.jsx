@@ -33,6 +33,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
+import SshTerminal from "../components/SshTerminal";
 import {
 	adminHostsAPI,
 	dashboardAPI,
@@ -252,6 +253,16 @@ const HostDetail = () => {
 		mutationFn: (friendlyName) =>
 			adminHostsAPI
 				.updateFriendlyName(hostId, friendlyName)
+				.then((res) => res.data),
+		onSuccess: () => {
+			queryClient.invalidateQueries(["host", hostId]);
+		},
+	});
+
+	const updateConnectionMutation = useMutation({
+		mutationFn: (connectionInfo) =>
+			adminHostsAPI
+				.updateConnection(hostId, connectionInfo)
 				.then((res) => res.data),
 		onSuccess: () => {
 			queryClient.invalidateQueries(["host", hostId]);
@@ -1609,6 +1620,18 @@ const HostDetail = () => {
 						>
 							Integrations
 						</button>
+						<button
+							type="button"
+							onClick={() => handleTabChange("terminal")}
+							className={`px-4 py-2 text-sm font-medium ${
+								activeTab === "terminal"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+									: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
+							}`}
+						>
+							<Terminal className="h-4 w-4 inline mr-1" />
+							Terminal
+						</button>
 					</div>
 
 					<div className="p-4">
@@ -1639,16 +1662,48 @@ const HostDetail = () => {
 										/>
 									</div>
 
-									{host.hostname && (
-										<div>
-											<p className="text-xs text-secondary-500 dark:text-secondary-300 mb-1.5">
-												System Hostname
-											</p>
-											<p className="font-medium text-secondary-900 dark:text-white font-mono text-sm">
-												{host.hostname}
-											</p>
-										</div>
-									)}
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-secondary-300 mb-1.5">
+											IP Address
+										</p>
+										<InlineEdit
+											value={host.ip || ""}
+											onSave={(newIp) => {
+												if (!newIp.trim()) {
+													updateConnectionMutation.mutate({ ip: null });
+												} else {
+													updateConnectionMutation.mutate({ ip: newIp.trim() });
+												}
+											}}
+											placeholder="No IP set (click to add)"
+											validate={(value) => {
+												if (value.trim() && !/^(\d{1,3}\.){3}\d{1,3}$/.test(value.trim())) {
+													return "Invalid IP address format";
+												}
+												return null;
+											}}
+											className="w-full text-sm font-mono"
+										/>
+									</div>
+
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-secondary-300 mb-1.5">
+											Hostname
+										</p>
+										<InlineEdit
+											value={host.hostname || ""}
+											onSave={(newHostname) => {
+												if (!newHostname.trim()) {
+													updateConnectionMutation.mutate({ hostname: null });
+												} else {
+													updateConnectionMutation.mutate({ hostname: newHostname.trim() });
+												}
+											}}
+											placeholder="No hostname set (click to add)"
+											maxLength={255}
+											className="w-full text-sm font-mono"
+										/>
+									</div>
 
 									{host.machine_id && (
 										<div>
@@ -1776,6 +1831,7 @@ const HostDetail = () => {
 											</p>
 										)}
 									</div>
+
 								</div>
 							</div>
 						)}
@@ -2473,6 +2529,18 @@ const HostDetail = () => {
 							</div>
 						)}
 
+						{/* Terminal - Always mounted and open to preserve connection, hidden when not active */}
+						{host && (
+							<div className={activeTab === "terminal" ? "" : "hidden"}>
+								<SshTerminal
+									host={host}
+									isOpen={true}
+									onClose={() => handleTabChange("host")}
+									embedded={true}
+								/>
+							</div>
+						)}
+
 						{/* Notes */}
 						{activeTab === "notes" && (
 							<div className="space-y-4">
@@ -2670,6 +2738,7 @@ const HostDetail = () => {
 					isLoading={deleteHostMutation.isPending}
 				/>
 			)}
+
 		</div>
 	);
 };

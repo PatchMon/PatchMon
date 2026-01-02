@@ -5,6 +5,12 @@ import { defineConfig } from "vite";
 // https://vitejs.dev/config/
 export default defineConfig({
 	plugins: [react()],
+	optimizeDeps: {
+		include: ["xterm", "xterm-addon-fit"],
+		esbuildOptions: {
+			target: "es2020",
+		},
+	},
 	server: {
 		port: 3000,
 		host: "0.0.0.0", // Listen on all interfaces
@@ -15,6 +21,7 @@ export default defineConfig({
 				target: `http://${process.env.BACKEND_HOST || "localhost"}:${process.env.BACKEND_PORT || "3001"}`,
 				changeOrigin: true,
 				secure: false,
+				ws: true, // Enable WebSocket proxy
 				// Configure HTTP agent to support more concurrent connections
 				// Fixes 1000ms timeout issue when using HTTP (not HTTPS) with multiple hosts
 				agent: new HttpAgent({
