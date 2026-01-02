@@ -3,4 +3,3 @@
 -- Fixes GitHub issue #352
 
 ALTER TABLE "hosts" ADD COLUMN "docker_enabled" BOOLEAN NOT NULL DEFAULT false;
-
