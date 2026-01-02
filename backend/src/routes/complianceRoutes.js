@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const rateLimit = require("express-rate-limit");
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateToken } = require("../middleware/auth");
 const { v4: uuidv4, validate: uuidValidate } = require("uuid");
@@ -7,6 +8,16 @@ const bcrypt = require("bcryptjs");
 const crypto = require("node:crypto");
 
 const prisma = getPrismaClient();
+
+// Rate limiter for scan submissions (per agent)
+const scanSubmitLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 10, // 10 scans per minute per agent
+  keyGenerator: (req) => req.headers["x-api-id"] || req.ip,
+  message: { error: "Too many scan submissions, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // ==========================================
 // Input Validation Helpers
@@ -52,8 +63,9 @@ async function verifyApiKey(providedKey, storedKey) {
  * POST /api/v1/compliance/scans
  * Submit scan results from agent
  * Auth: X-API-ID and X-API-KEY headers
+ * Rate limited: 10 submissions per minute per agent
  */
-router.post("/scans", async (req, res) => {
+router.post("/scans", scanSubmitLimiter, async (req, res) => {
   try {
     const apiId = req.headers["x-api-id"];
     const apiKey = req.headers["x-api-key"];
