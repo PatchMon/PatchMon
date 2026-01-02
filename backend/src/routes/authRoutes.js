@@ -32,6 +32,50 @@ const MAX_FAILED_ATTEMPTS = parseInt(process.env.MAX_LOGIN_ATTEMPTS, 10) || 5;
 const LOCKOUT_DURATION = parseInt(process.env.LOCKOUT_DURATION_MINUTES, 10) || 15; // minutes
 const FAILED_ATTEMPT_TTL = 60 * 15; // 15 minutes in seconds
 
+// TFA rate limiting configuration (separate from login)
+const TFA_LOCKOUT_PREFIX = "tfa:lockout:";
+const TFA_FAILED_PREFIX = "tfa:failed:";
+const MAX_TFA_ATTEMPTS = parseInt(process.env.MAX_TFA_ATTEMPTS, 10) || 5;
+const TFA_LOCKOUT_DURATION = parseInt(process.env.TFA_LOCKOUT_DURATION_MINUTES, 10) || 30; // minutes
+
+/**
+ * Set authentication cookies (httpOnly for XSS protection)
+ * @param {Response} res - Express response object
+ * @param {string} accessToken - JWT access token
+ * @param {string} refreshToken - JWT refresh token
+ * @param {boolean} rememberMe - Whether to use extended expiration
+ */
+function setAuthCookies(res, accessToken, refreshToken, rememberMe = false) {
+	const isProduction = process.env.NODE_ENV === "production";
+	const cookieOptions = {
+		httpOnly: true,
+		secure: isProduction,
+		sameSite: "strict",
+		path: "/",
+	};
+
+	// Access token cookie (1 hour, or use JWT expiration)
+	res.cookie("token", accessToken, {
+		...cookieOptions,
+		maxAge: 60 * 60 * 1000, // 1 hour
+	});
+
+	// Refresh token cookie (7 days, or 30 days if remember me)
+	res.cookie("refresh_token", refreshToken, {
+		...cookieOptions,
+		maxAge: rememberMe ? 30 * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000,
+	});
+}
+
+/**
+ * Clear authentication cookies
+ * @param {Response} res - Express response object
+ */
+function clearAuthCookies(res) {
+	res.clearCookie("token", { path: "/" });
+	res.clearCookie("refresh_token", { path: "/" });
+}
+
 /**
  * Check if an account is locked
  * @param {string} identifier - Username or email
@@ -79,6 +123,55 @@ async function recordFailedAttempt(identifier) {
  */
 async function clearFailedAttempts(identifier) {
 	const key = `${FAILED_ATTEMPTS_PREFIX}${identifier.toLowerCase()}`;
+	await redis.del(key);
+}
+
+/**
+ * Check if TFA is locked for a user
+ * @param {string} userId - User ID
+ * @returns {Promise<{locked: boolean, remainingTime: number}>}
+ */
+async function isTFALocked(userId) {
+	const key = `${TFA_LOCKOUT_PREFIX}${userId}`;
+	const lockoutTime = await redis.get(key);
+	if (lockoutTime) {
+		const ttl = await redis.ttl(key);
+		return { locked: true, remainingTime: ttl };
+	}
+	return { locked: false, remainingTime: 0 };
+}
+
+/**
+ * Record a failed TFA attempt
+ * @param {string} userId - User ID
+ * @returns {Promise<{attempts: number, locked: boolean}>}
+ */
+async function recordFailedTFAAttempt(userId) {
+	const key = `${TFA_FAILED_PREFIX}${userId}`;
+	const attempts = await redis.incr(key);
+
+	// Set TTL on first attempt
+	if (attempts === 1) {
+		await redis.expire(key, TFA_LOCKOUT_DURATION * 60);
+	}
+
+	// Lock TFA if max attempts exceeded
+	if (attempts >= MAX_TFA_ATTEMPTS) {
+		const lockKey = `${TFA_LOCKOUT_PREFIX}${userId}`;
+		await redis.setex(lockKey, TFA_LOCKOUT_DURATION * 60, Date.now().toString());
+		await redis.del(key);
+		return { attempts, locked: true };
+	}
+
+	return { attempts, locked: false };
+}
+
+/**
+ * Clear failed TFA attempts on successful verification
+ * @param {string} userId - User ID
+ */
+async function clearFailedTFAAttempts(userId) {
+	const key = `${TFA_FAILED_PREFIX}${userId}`;
 	await redis.del(key);
 }
 
@@ -297,6 +390,9 @@ router.post(
 			const ip_address = req.ip || req.connection.remoteAddress;
 			const user_agent = req.get("user-agent");
 			const session = await create_session(user.id, ip_address, user_agent);
+
+			// Set httpOnly cookies for XSS protection
+			setAuthCookies(res, session.access_token, session.refresh_token, false);
 
 			res.status(201).json({
 				message: "Admin user created successfully",
@@ -1049,6 +1145,9 @@ router.post(
 				acceptedVersions = [];
 			}
 
+			// Set httpOnly cookies for XSS protection
+			setAuthCookies(res, session.access_token, session.refresh_token, false);
+
 			res.json({
 				message: "Login successful",
 				token: session.access_token,
@@ -1128,6 +1227,28 @@ router.post(
 					.json({ error: "Invalid credentials or TFA not enabled" });
 			}
 
+			// Check if TFA is locked for this user
+			const tfaLockStatus = await isTFALocked(user.id);
+			if (tfaLockStatus.locked) {
+				const remainingMinutes = Math.ceil(tfaLockStatus.remainingTime / 60);
+				await logAuditEvent({
+					event: AUDIT_EVENTS.TFA_VERIFICATION_LOCKED,
+					userId: user.id,
+					username: user.username,
+					ipAddress: req.ip,
+					userAgent: req.get("user-agent"),
+					requestId: req.id,
+					success: false,
+					details: { remainingMinutes },
+				});
+				return res.status(429).json({
+					error: "Too many failed TFA attempts",
+					message: `TFA verification is locked. Try again in ${remainingMinutes} minute(s).`,
+					locked: true,
+					remainingTime: tfaLockStatus.remainingTime,
+				});
+			}
+
 			// Verify TFA token using the TFA routes logic
 			const speakeasy = require("speakeasy");
 
@@ -1166,8 +1287,37 @@ router.post(
 			}
 
 			if (!verified) {
-				return res.status(401).json({ error: "Invalid verification code" });
+				// Record failed TFA attempt
+				const result = await recordFailedTFAAttempt(user.id);
+				const remainingAttempts = MAX_TFA_ATTEMPTS - result.attempts;
+
+				await logAuditEvent({
+					event: AUDIT_EVENTS.TFA_FAILED,
+					userId: user.id,
+					username: user.username,
+					ipAddress: req.ip,
+					userAgent: req.get("user-agent"),
+					requestId: req.id,
+					success: false,
+					details: { remainingAttempts, locked: result.locked },
+				});
+
+				if (result.locked) {
+					return res.status(429).json({
+						error: "Too many failed TFA attempts",
+						message: `TFA verification is locked for ${TFA_LOCKOUT_DURATION} minutes.`,
+						locked: true,
+					});
+				}
+
+				return res.status(401).json({
+					error: "Invalid verification code",
+					remainingAttempts: remainingAttempts > 0 ? remainingAttempts : 0,
+				});
 			}
+
+			// Clear failed TFA attempts on success
+			await clearFailedTFAAttempts(user.id);
 
 			// Update last login and fetch complete user data
 			const updatedUser = await prisma.users.update({
@@ -1217,6 +1367,9 @@ router.post(
 				);
 				acceptedVersions = [];
 			}
+
+			// Set httpOnly cookies for XSS protection
+			setAuthCookies(res, session.access_token, session.refresh_token, remember_me);
 
 			res.json({
 				message: "Login successful",
@@ -1456,6 +1609,9 @@ router.post("/logout", authenticateToken, async (req, res) => {
 			await revoke_session(req.session_id);
 		}
 
+		// Clear authentication cookies
+		clearAuthCookies(res);
+
 		res.json({
 			message: "Logout successful",
 		});
@@ -1470,6 +1626,9 @@ router.post("/logout-all", authenticateToken, async (req, res) => {
 	try {
 		await revoke_all_user_sessions(req.user.id);
 
+		// Clear authentication cookies
+		clearAuthCookies(res);
+
 		res.json({
 			message: "All sessions logged out successfully",
 		});
@@ -1482,21 +1641,33 @@ router.post("/logout-all", authenticateToken, async (req, res) => {
 // Refresh access token using refresh token
 router.post(
 	"/refresh-token",
-	[body("refresh_token").notEmpty().withMessage("Refresh token is required")],
+	[body("refresh_token").optional().isString()],
 	async (req, res) => {
 		try {
-			const errors = validationResult(req);
-			if (!errors.isEmpty()) {
-				return res.status(400).json({ errors: errors.array() });
-			}
+			// Check for refresh token in cookies first, then body
+			const refresh_token = req.cookies?.refresh_token || req.body.refresh_token;
 
-			const { refresh_token } = req.body;
+			if (!refresh_token) {
+				return res.status(400).json({ error: "Refresh token is required" });
+			}
 
 			const result = await refresh_access_token(refresh_token);
 
 			if (!result.success) {
+				// Clear invalid cookies
+				clearAuthCookies(res);
 				return res.status(401).json({ error: result.error });
 			}
+
+			// Set new access token cookie
+			const isProduction = process.env.NODE_ENV === "production";
+			res.cookie("token", result.access_token, {
+				httpOnly: true,
+				secure: isProduction,
+				sameSite: "strict",
+				path: "/",
+				maxAge: 60 * 60 * 1000, // 1 hour
+			});
 
 			res.json({
 				message: "Token refreshed successfully",

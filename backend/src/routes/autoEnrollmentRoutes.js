@@ -744,6 +744,7 @@ router.post(
 			// Generate host API credentials
 			const api_id = `patchmon_${crypto.randomBytes(8).toString("hex")}`;
 			const api_key = crypto.randomBytes(32).toString("hex");
+			const api_key_hash = await bcrypt.hash(api_key, 10);
 
 			// Create host (no duplicate check - using config.yml checking instead)
 			const host = await prisma.hosts.create({
@@ -754,7 +755,7 @@ router.post(
 					os_type: "unknown",
 					os_version: "unknown",
 					api_id: api_id,
-					api_key: api_key,
+					api_key: api_key_hash,
 					status: "pending",
 					notes: `Auto-enrolled via ${req.auto_enrollment_token.token_name} on ${new Date().toISOString()}`,
 					updated_at: new Date(),
@@ -865,6 +866,7 @@ router.post(
 					// Generate credentials (no duplicate check - using config.yml checking instead)
 					const api_id = `patchmon_${crypto.randomBytes(8).toString("hex")}`;
 					const api_key = crypto.randomBytes(32).toString("hex");
+					const api_key_hash = await bcrypt.hash(api_key, 10);
 
 					// Create host
 					const host = await prisma.hosts.create({
@@ -875,7 +877,7 @@ router.post(
 							os_type: "unknown",
 							os_version: "unknown",
 							api_id: api_id,
-							api_key: api_key,
+							api_key: api_key_hash,
 							status: "pending",
 							notes: `Auto-enrolled via ${req.auto_enrollment_token.token_name} on ${new Date().toISOString()}`,
 							updated_at: new Date(),

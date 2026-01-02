@@ -33,11 +33,16 @@ export const AuthProvider = ({ children }) => {
 	const fetchPermissions = useCallback(async (authToken) => {
 		try {
 			setPermissionsLoading(true);
-			const response = await fetch("/api/v1/permissions/user-permissions", {
-				headers: {
+			const fetchOptions = {
+				credentials: "include", // Include cookies for httpOnly token
+			};
+			// Add Authorization header if token provided (backward compatibility)
+			if (authToken) {
+				fetchOptions.headers = {
 					Authorization: `Bearer ${authToken}`,
-				},
-			});
+				};
+			}
+			const response = await fetch("/api/v1/permissions/user-permissions", fetchOptions);
 
 			if (response.ok) {
 				const data = await response.json();
@@ -56,42 +61,63 @@ export const AuthProvider = ({ children }) => {
 	}, []);
 
 	const refreshPermissions = useCallback(async () => {
-		if (token) {
-			const updatedPermissions = await fetchPermissions(token);
-			return updatedPermissions;
-		}
-		return null;
+		// Use token from state or rely on cookies
+		const updatedPermissions = await fetchPermissions(token);
+		return updatedPermissions;
 	}, [token, fetchPermissions]);
 
-	// Initialize auth state from localStorage
+	// Initialize auth state - validate session via API (cookies) or localStorage
 	useEffect(() => {
-		const storedToken = localStorage.getItem("token");
-		const storedUser = localStorage.getItem("user");
-
-		if (storedToken && storedUser) {
+		const validateSession = async () => {
 			try {
-				setToken(storedToken);
-				const parsedUser = JSON.parse(storedUser);
-				setUser({
-					...parsedUser,
-					accepted_release_notes_versions:
-						parsedUser.accepted_release_notes_versions || [],
+				// First, try to validate via API using httpOnly cookies
+				const response = await fetch("/api/v1/auth/profile", {
+					credentials: "include",
 				});
-				// Fetch permissions from backend
-				fetchPermissions(storedToken);
-				// User is authenticated, skip setup check
-				setAuthPhase(AUTH_PHASES.READY);
+
+				if (response.ok) {
+					const data = await response.json();
+					setUser(data.user);
+					// Fetch permissions
+					await fetchPermissions();
+					setAuthPhase(AUTH_PHASES.READY);
+					return;
+				}
 			} catch (error) {
-				console.error("Error parsing stored user data:", error);
-				localStorage.removeItem("token");
-				localStorage.removeItem("user");
-				// Move to setup check phase
+				console.log("Cookie-based auth not available, checking localStorage");
+			}
+
+			// Fall back to localStorage for backward compatibility
+			const storedToken = localStorage.getItem("token");
+			const storedUser = localStorage.getItem("user");
+
+			if (storedToken && storedUser) {
+				try {
+					setToken(storedToken);
+					const parsedUser = JSON.parse(storedUser);
+					setUser({
+						...parsedUser,
+						accepted_release_notes_versions:
+							parsedUser.accepted_release_notes_versions || [],
+					});
+					// Fetch permissions from backend
+					fetchPermissions(storedToken);
+					// User is authenticated, skip setup check
+					setAuthPhase(AUTH_PHASES.READY);
+				} catch (error) {
+					console.error("Error parsing stored user data:", error);
+					localStorage.removeItem("token");
+					localStorage.removeItem("user");
+					// Move to setup check phase
+					setAuthPhase(AUTH_PHASES.CHECKING_SETUP);
+				}
+			} else {
+				// No stored auth, check if setup is needed
 				setAuthPhase(AUTH_PHASES.CHECKING_SETUP);
 			}
-		} else {
-			// No stored auth, check if setup is needed
-			setAuthPhase(AUTH_PHASES.CHECKING_SETUP);
-		}
+		};
+
+		validateSession();
 	}, [fetchPermissions]);
 
 	const login = async (username, password) => {
@@ -120,6 +146,7 @@ export const AuthProvider = ({ children }) => {
 					"Content-Type": "application/json",
 					"X-Device-ID": deviceId,
 				},
+				credentials: "include", // Include cookies for httpOnly token
 				body: JSON.stringify({ username, password }),
 			});
 
@@ -132,21 +159,22 @@ export const AuthProvider = ({ children }) => {
 				}
 
 				// Regular successful login
+				// Note: httpOnly cookies are set by the server for secure auth
+				// localStorage is used for backward compatibility and UI state only
 				setToken(data.token);
 				setUser({
 					...data.user,
 					accepted_release_notes_versions:
 						data.user.accepted_release_notes_versions || [],
 				});
+				// Store user info for session recovery (token stored in httpOnly cookie by server)
+				localStorage.setItem("user", JSON.stringify({
+					...data.user,
+					accepted_release_notes_versions:
+						data.user.accepted_release_notes_versions || [],
+				}));
+				// Keep token in localStorage for backward compatibility with API clients
 				localStorage.setItem("token", data.token);
-				localStorage.setItem(
-					"user",
-					JSON.stringify({
-						...data.user,
-						accepted_release_notes_versions:
-							data.user.accepted_release_notes_versions || [],
-					}),
-				);
 
 				// Fetch user permissions after successful login
 				const userPermissions = await fetchPermissions(data.token);
@@ -209,15 +237,15 @@ export const AuthProvider = ({ children }) => {
 
 	const logout = async () => {
 		try {
-			if (token) {
-				await fetch("/api/v1/auth/logout", {
-					method: "POST",
-					headers: {
-						Authorization: `Bearer ${token}`,
-						"Content-Type": "application/json",
-					},
-				});
-			}
+			// Logout via API - server will clear httpOnly cookies
+			await fetch("/api/v1/auth/logout", {
+				method: "POST",
+				credentials: "include", // Include cookies for auth
+				headers: {
+					...(token ? { Authorization: `Bearer ${token}` } : {}),
+					"Content-Type": "application/json",
+				},
+			});
 		} catch (error) {
 			console.error("Logout error:", error);
 		} finally {
@@ -489,8 +517,7 @@ export const AuthProvider = ({ children }) => {
 			setAuthPhase(AUTH_PHASES.READY);
 		});
 
-		// Store in localStorage after state is updated
-		localStorage.setItem("token", authToken);
+		// Store user in localStorage (for session recovery)
 		localStorage.setItem(
 			"user",
 			JSON.stringify({
@@ -500,16 +527,26 @@ export const AuthProvider = ({ children }) => {
 			}),
 		);
 
-		// Fetch permissions immediately for the new authenticated user
+		// Only store token if provided (OIDC uses httpOnly cookies, no token in JS)
+		if (authToken) {
+			localStorage.setItem("token", authToken);
+		} else {
+			// Remove stale token for cookie-based auth (OIDC)
+			localStorage.removeItem("token");
+		}
+
+		// Fetch permissions - works with cookies if token is null
 		fetchPermissions(authToken);
 	};
 
 	// Computed loading state based on phase and permissions state
 	const isLoading = !isAuthPhase.ready(authPhase) || permissionsLoading;
 
-	// Function to check authentication status (maintains API compatibility)
+	// Function to check authentication status
+	// With httpOnly cookie auth, we check for user presence (server validates via cookies)
 	const isAuthenticated = () => {
-		return !!(user && token && isAuthPhase.ready(authPhase));
+		// User presence indicates valid session (token is in httpOnly cookie)
+		return !!(user && isAuthPhase.ready(authPhase));
 	};
 
 	const value = {

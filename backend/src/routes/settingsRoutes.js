@@ -336,9 +336,32 @@ router.get("/update-interval", async (req, res) => {
 	}
 });
 
-// Get auto-update policy for agents (public endpoint)
-router.get("/auto-update", async (_req, res) => {
+// Get auto-update policy for agents (requires API authentication)
+router.get("/auto-update", async (req, res) => {
 	try {
+		// Verify API credentials
+		const apiId = req.headers["x-api-id"];
+		const apiKey = req.headers["x-api-key"];
+
+		if (!apiId || !apiKey) {
+			return res.status(401).json({ error: "API credentials required" });
+		}
+
+		// Validate API credentials
+		const host = await prisma.hosts.findUnique({
+			where: { api_id: apiId },
+		});
+
+		if (!host) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
+		// Verify API key using bcrypt (or timing-safe comparison for legacy keys)
+		const isValidKey = await verifyApiKey(apiKey, host.api_key);
+		if (!isValidKey) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
 		const settings = await getSettings();
 		res.json({
 			autoUpdate: settings.auto_update || false,

@@ -11,8 +11,14 @@ const prisma = getPrismaClient();
 // Middleware to verify JWT token with session validation
 const authenticateToken = async (req, res, next) => {
 	try {
-		const authHeader = req.headers.authorization;
-		const token = authHeader?.split(" ")[1]; // Bearer TOKEN
+		// Check for token in cookies first (preferred for XSS protection)
+		// Then fall back to Authorization header for API clients
+		let token = req.cookies?.token;
+
+		if (!token) {
+			const authHeader = req.headers.authorization;
+			token = authHeader?.split(" ")[1]; // Bearer TOKEN
+		}
 
 		if (!token) {
 			return res.status(401).json({ error: "Access token required" });
