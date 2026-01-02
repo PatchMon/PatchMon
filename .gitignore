@@ -121,6 +121,11 @@ frontend/.vite/
 
 # Agent specific
 agents/*.log
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
 
 # SSL certificates
 *.pem
