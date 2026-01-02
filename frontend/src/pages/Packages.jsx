@@ -63,12 +63,16 @@ const Packages = () => {
 
 		const saved = localStorage.getItem("packages-column-config");
 		if (saved) {
-			const savedConfig = JSON.parse(saved);
-			// Merge with defaults to handle new columns
-			return defaultConfig.map((defaultCol) => {
-				const savedCol = savedConfig.find((col) => col.id === defaultCol.id);
-				return savedCol ? { ...defaultCol, ...savedCol } : defaultCol;
-			});
+			try {
+				const savedConfig = JSON.parse(saved);
+				// Merge with defaults to handle new columns
+				return defaultConfig.map((defaultCol) => {
+					const savedCol = savedConfig.find((col) => col.id === defaultCol.id);
+					return savedCol ? { ...defaultCol, ...savedCol } : defaultCol;
+				});
+			} catch (e) {
+				localStorage.removeItem("packages-column-config");
+			}
 		}
 		return defaultConfig;
 	});

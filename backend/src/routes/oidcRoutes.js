@@ -120,7 +120,8 @@ router.get("/callback", async (req, res) => {
 
 		// Check for errors from the IdP
 		if (error) {
-			console.error(`OIDC error from IdP: ${error}`);
+			// Log error details for debugging (error_description provides context)
+			console.error(`OIDC error from IdP: ${error}${error_description ? ` - ${error_description}` : ""}`);
 			// Don't expose detailed error messages to users
 			return res.redirect("/login?error=Authentication+failed");
 		}
@@ -128,6 +129,12 @@ router.get("/callback", async (req, res) => {
 		// Validate state parameter
 		if (!state) {
 			console.error("OIDC callback missing state parameter");
+			return res.redirect("/login?error=Invalid+authentication+response");
+		}
+
+		// Validate code parameter
+		if (!code) {
+			console.error("OIDC callback missing code parameter");
 			return res.redirect("/login?error=Invalid+authentication+response");
 		}
 

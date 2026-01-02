@@ -250,7 +250,11 @@ const Login = () => {
 
 				// Load cached data immediately
 				if (cachedRelease) {
-					setLatestRelease(JSON.parse(cachedRelease));
+					try {
+						setLatestRelease(JSON.parse(cachedRelease));
+					} catch (e) {
+						localStorage.removeItem("githubLatestRelease");
+					}
 				}
 				if (cachedStars) {
 					setGithubStars(parseInt(cachedStars, 10));
@@ -458,8 +462,8 @@ const Login = () => {
 					err.response?.data?.error || err.message || "TFA verification failed";
 				setError(errorMessage);
 			}
-			// Clear the token input for security
-			setTfaData({ token: "" });
+			// Clear the token input for security (preserve remember_me preference)
+			setTfaData((prev) => ({ ...prev, token: "" }));
 		} finally {
 			setIsLoading(false);
 		}

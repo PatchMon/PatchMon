@@ -108,8 +108,8 @@ async function logAuditEvent({
 		console.log(logMessage, { audit: auditEntry });
 	}
 
-	// Optionally store in database (uncomment when audit_logs table is added)
-	// await storeAuditLog(auditEntry);
+	// Store in database
+	await storeAuditLog(auditEntry);
 
 	return auditEntry;
 }
@@ -172,26 +172,24 @@ function auditMiddleware(req, res, next) {
 }
 
 /**
- * Store audit log in database (for future use)
- * Requires audit_logs table in schema
+ * Store audit log in database
  */
 async function storeAuditLog(auditEntry) {
 	try {
 		const prisma = getPrismaClient();
-		// Uncomment when audit_logs table is added to schema:
-		// await prisma.audit_logs.create({
-		//   data: {
-		//     event: auditEntry.event,
-		//     user_id: auditEntry.userId,
-		//     target_user_id: auditEntry.targetUserId,
-		//     ip_address: auditEntry.ipAddress,
-		//     user_agent: auditEntry.userAgent,
-		//     request_id: auditEntry.requestId,
-		//     details: JSON.stringify(auditEntry.details),
-		//     success: auditEntry.success,
-		//     created_at: new Date(auditEntry.timestamp),
-		//   },
-		// });
+		await prisma.audit_logs.create({
+			data: {
+				event: auditEntry.event,
+				user_id: auditEntry.userId,
+				target_user_id: auditEntry.targetUserId,
+				ip_address: auditEntry.ipAddress,
+				user_agent: auditEntry.userAgent,
+				request_id: auditEntry.requestId,
+				details: JSON.stringify(auditEntry.details),
+				success: auditEntry.success,
+				created_at: new Date(auditEntry.timestamp),
+			},
+		});
 	} catch (error) {
 		console.error("Failed to store audit log:", error.message);
 	}

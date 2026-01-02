@@ -402,7 +402,6 @@ router.post(
 
 			const fs = require("node:fs").promises;
 			const path = require("node:path");
-			const _crypto = require("node:crypto");
 
 			// Create assets directory if it doesn't exist
 			// In development: save to public/assets (served by Vite)

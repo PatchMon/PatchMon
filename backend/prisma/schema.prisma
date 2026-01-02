@@ -453,3 +453,22 @@ model release_notes_acceptances {
   @@index([user_id])
   @@index([version])
 }
+
+model audit_logs {
+  id             String   @id @default(uuid())
+  event          String
+  user_id        String?
+  target_user_id String?
+  ip_address     String?
+  user_agent     String?
+  request_id     String?
+  details        String?  // JSON stringified details
+  success        Boolean  @default(true)
+  created_at     DateTime @default(now())
+
+  @@index([event])
+  @@index([user_id])
+  @@index([target_user_id])
+  @@index([created_at])
+  @@index([success])
+}

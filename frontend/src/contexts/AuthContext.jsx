@@ -9,6 +9,11 @@ import { flushSync } from "react-dom";
 import { AUTH_PHASES, isAuthPhase } from "../constants/authPhases";
 import { isCorsError } from "../utils/api";
 
+// Development-only logging to prevent error details exposure in production
+const isDev = import.meta.env.DEV;
+const devLog = (...args) => isDev && console.log(...args);
+const devError = (...args) => isDev && console.error(...args);
+
 const AuthContext = createContext();
 
 export const useAuth = () => {
@@ -84,7 +89,7 @@ export const AuthProvider = ({ children }) => {
 					return;
 				}
 			} catch (error) {
-				console.log("Cookie-based auth not available, checking localStorage");
+				devLog("Cookie-based auth not available, checking localStorage");
 			}
 
 			// Fall back to localStorage for backward compatibility
@@ -188,7 +193,7 @@ export const AuthProvider = ({ children }) => {
 				return { success: true };
 			} else {
 				// Handle HTTP error responses (like 500 CORS errors)
-				console.log("HTTP error response:", response.status, data);
+				devLog("HTTP error response:", response.status, data);
 
 				// Check if this is a CORS error based on the response data
 				if (
@@ -206,9 +211,9 @@ export const AuthProvider = ({ children }) => {
 				return { success: false, error: data.error || "Login failed" };
 			}
 		} catch (error) {
-			console.log("Login error:", error);
-			console.log("Error response:", error.response);
-			console.log("Error message:", error.message);
+			devLog("Login error:", error);
+			devLog("Error response:", error.response);
+			devLog("Error message:", error.message);
 
 			// Check for CORS/network errors first
 			if (isCorsError(error)) {
@@ -298,7 +303,7 @@ export const AuthProvider = ({ children }) => {
 				return { success: true, user: data.user };
 			} else {
 				// Handle HTTP error responses (like 500 CORS errors)
-				console.log("HTTP error response:", response.status, data);
+				devLog("HTTP error response:", response.status, data);
 
 				// Check if this is a CORS error based on the response data
 				if (
@@ -358,7 +363,7 @@ export const AuthProvider = ({ children }) => {
 				return { success: true };
 			} else {
 				// Handle HTTP error responses (like 500 CORS errors)
-				console.log("HTTP error response:", response.status, data);
+				devLog("HTTP error response:", response.status, data);
 
 				// Check if this is a CORS error based on the response data
 				if (

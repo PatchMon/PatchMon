@@ -3,7 +3,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { getPrismaClient } = require("../config/prisma");
 const { body, validationResult } = require("express-validator");
-const { authenticateToken, _requireAdmin } = require("../middleware/auth");
+const { authenticateToken } = require("../middleware/auth");
 const {
 	requireViewUsers,
 	requireManageUsers,
@@ -823,7 +823,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Password reset error:", error);
+			console.error("Password reset error:", error.message);
 			res.status(500).json({ error: "Failed to reset password" });
 		}
 	},
@@ -935,9 +935,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Signup error:", error);
-			console.error("Signup error message:", error.message);
-			console.error("Signup error stack:", error.stack);
+			console.error("Signup error:", error.message);
 			res.status(500).json({ error: "Failed to create account" });
 		}
 	},
@@ -1173,7 +1171,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Login error:", error);
+			console.error("Login error:", error.message);
 			res.status(500).json({ error: "Login failed" });
 		}
 	},
@@ -1385,7 +1383,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("TFA verification error:", error);
+			console.error("TFA verification error:", error.message);
 			res.status(500).json({ error: "TFA verification failed" });
 		}
 	},
@@ -1595,7 +1593,7 @@ router.put(
 				message: "Password changed successfully",
 			});
 		} catch (error) {
-			console.error("Change password error:", error);
+			console.error("Change password error:", error.message);
 			res.status(500).json({ error: "Failed to change password" });
 		}
 	},
@@ -1681,7 +1679,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Refresh token error:", error);
+			console.error("Refresh token error:", error.message);
 			res.status(500).json({ error: "Token refresh failed" });
 		}
 	},

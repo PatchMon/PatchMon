@@ -4,9 +4,7 @@ const { body, validationResult } = require("express-validator");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("node:crypto");
 const bcrypt = require("bcryptjs");
-const _path = require("node:path");
-const _fs = require("node:fs");
-const { authenticateToken, _requireAdmin } = require("../middleware/auth");
+const { authenticateToken } = require("../middleware/auth");
 const {
 	requireManageHosts,
 	requireManageSettings,
@@ -30,20 +28,26 @@ const integrationStateCache = new Map();
  * @returns {Promise<boolean>} Whether the key is valid
  */
 async function verifyApiKey(providedKey, storedKey) {
+	if (!providedKey || !storedKey) return false;
+
 	// Check if stored key is a bcrypt hash (starts with $2a$, $2b$, or $2y$)
-	if (storedKey && storedKey.match(/^\$2[aby]\$/)) {
+	if (storedKey.match(/^\$2[aby]\$/)) {
 		// Hashed key - use bcrypt compare
 		return bcrypt.compare(providedKey, storedKey);
 	}
+
 	// Legacy plaintext key - use timing-safe comparison
 	// This handles existing hosts with plaintext keys
-	if (storedKey && storedKey.length === providedKey.length) {
-		return crypto.timingSafeEqual(
-			Buffer.from(storedKey),
-			Buffer.from(providedKey)
-		);
+	// Length mismatch means keys don't match - return false immediately
+	// (no timing oracle since bcrypt path is the expected case)
+	if (storedKey.length !== providedKey.length) {
+		return false;
 	}
-	return storedKey === providedKey;
+
+	return crypto.timingSafeEqual(
+		Buffer.from(storedKey),
+		Buffer.from(providedKey)
+	);
 }
 
 // Middleware to validate API credentials
@@ -715,7 +719,6 @@ router.post(
 					// Process packages in batches using createMany/updateMany
 					const packagesToCreate = [];
 					const packagesToUpdate = [];
-					const _hostPackagesToUpsert = [];
 
 					// First pass: identify what needs to be created/updated
 					const existingPackages = await tx.packages.findMany({
