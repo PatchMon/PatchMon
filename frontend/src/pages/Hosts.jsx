@@ -1202,7 +1202,10 @@ const Hosts = () => {
 	const handleHostCreated = (newHost) => {
 		queryClient.invalidateQueries(["hosts"]);
 		// Navigate to host detail page to show credentials and setup instructions
-		navigate(`/hosts/${newHost.hostId}`);
+		// Pass the plaintext apiKey through navigation state (only available once from creation)
+		navigate(`/hosts/${newHost.hostId}`, {
+			state: { apiKey: newHost.apiKey, apiId: newHost.apiId },
+		});
 	};
 
 	// Stats card click handlers

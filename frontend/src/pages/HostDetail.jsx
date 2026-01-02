@@ -30,7 +30,7 @@ import {
 	X,
 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import SshTerminal from "../components/SshTerminal";
@@ -48,8 +48,12 @@ import { OSIcon } from "../utils/osIcons.jsx";
 const HostDetail = () => {
 	const { hostId } = useParams();
 	const navigate = useNavigate();
+	const location = useLocation();
 	const queryClient = useQueryClient();
 	const [showCredentialsModal, setShowCredentialsModal] = useState(false);
+
+	// Get plaintext API key from navigation state (only available immediately after host creation)
+	const plaintextApiKey = location.state?.apiKey;
 	const [showDeleteModal, setShowDeleteModal] = useState(false);
 	const [activeTab, setActiveTab] = useState("host");
 	const [historyPage, setHistoryPage] = useState(0);
@@ -2725,6 +2729,7 @@ const HostDetail = () => {
 					host={host}
 					isOpen={showCredentialsModal}
 					onClose={() => setShowCredentialsModal(false)}
+					plaintextApiKey={plaintextApiKey}
 				/>
 			)}
 
@@ -2744,12 +2749,37 @@ const HostDetail = () => {
 };
 
 // Credentials Modal Component
-const CredentialsModal = ({ host, isOpen, onClose }) => {
+const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 	const [showApiKey, setShowApiKey] = useState(false);
 	const [activeTab, setActiveTab] = useState("quick-install");
 	const [forceInstall, setForceInstall] = useState(false);
+	const [regeneratedCredentials, setRegeneratedCredentials] = useState(null);
+	const [isRegenerating, setIsRegenerating] = useState(false);
 	const apiIdInputId = useId();
 	const apiKeyInputId = useId();
+	const queryClient = useQueryClient();
+
+	// Use plaintext API key if available (from host creation or regeneration), otherwise the stored key is a hash
+	// Priority: regenerated > navigation state > stored (which is a hash)
+	const effectiveApiKey = regeneratedCredentials?.apiKey || plaintextApiKey || host.api_key;
+	const effectiveApiId = regeneratedCredentials?.apiId || host.api_id;
+	const isApiKeyHash = !regeneratedCredentials && !plaintextApiKey && host.api_key?.startsWith("$2");
+
+	const handleRegenerateCredentials = async () => {
+		setIsRegenerating(true);
+		try {
+			const response = await adminHostsAPI.regenerateCredentials(host.id);
+			setRegeneratedCredentials({
+				apiId: response.data.apiId,
+				apiKey: response.data.apiKey,
+			});
+			queryClient.invalidateQueries(["host", host.id]);
+		} catch (error) {
+			console.error("Failed to regenerate credentials:", error);
+		} finally {
+			setIsRegenerating(false);
+		}
+	};
 
 	const { data: serverUrlData } = useQuery({
 		queryKey: ["serverUrl"],
@@ -2923,21 +2953,50 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 								</p>
 							</div>
 
+							{isApiKeyHash && (
+								<div className="mb-3 p-3 bg-warning-50 dark:bg-warning-900/20 border border-warning-200 dark:border-warning-700 rounded-lg">
+									<div className="flex items-start justify-between gap-2">
+										<div className="flex items-start gap-2">
+											<AlertTriangle className="h-4 w-4 text-warning-600 dark:text-warning-400 flex-shrink-0 mt-0.5" />
+											<div>
+												<p className="text-xs md:text-sm font-medium text-warning-800 dark:text-warning-200">
+													API Key Not Available
+												</p>
+												<p className="text-xs text-warning-700 dark:text-warning-300 mt-1">
+													The plaintext API key is only shown once when the host is created.
+												</p>
+											</div>
+										</div>
+										<button
+											type="button"
+											onClick={handleRegenerateCredentials}
+											disabled={isRegenerating}
+											className="btn-outline flex items-center gap-1 text-xs whitespace-nowrap"
+										>
+											<RotateCcw className={`h-3 w-3 ${isRegenerating ? "animate-spin" : ""}`} />
+											{isRegenerating ? "Regenerating..." : "Regenerate"}
+										</button>
+									</div>
+								</div>
+							)}
+
 							<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 								<input
 									type="text"
-									value={`curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${host.api_id}" -H "X-API-KEY: ${host.api_key}" | sh`}
+									value={isApiKeyHash ? "API key not available - click Regenerate above" : `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | sh`}
 									readOnly
-									className="flex-1 px-3 py-2 border border-primary-300 dark:border-primary-600 rounded-md bg-white dark:bg-secondary-800 text-xs md:text-sm font-mono text-secondary-900 dark:text-white break-all"
+									disabled={isApiKeyHash}
+									className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-primary-300 dark:border-primary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
 								/>
 								<button
 									type="button"
 									onClick={() =>
 										copyToClipboard(
-											`curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${host.api_id}" -H "X-API-KEY: ${host.api_key}" | sh`,
+											`curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | sh`,
 										)
 									}
-									className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap"
+									disabled={isApiKeyHash}
+									className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
 								>
 									<Copy className="h-4 w-4" />
 									Copy
@@ -2965,13 +3024,13 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 										<input
 											id={apiIdInputId}
 											type="text"
-											value={host.api_id}
+											value={effectiveApiId}
 											readOnly
 											className="flex-1 px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-800 text-xs md:text-sm font-mono text-secondary-900 dark:text-white break-all"
 										/>
 										<button
 											type="button"
-											onClick={() => copyToClipboard(host.api_id)}
+											onClick={() => copyToClipboard(effectiveApiId)}
 											className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap"
 										>
 											<Copy className="h-4 w-4" />
@@ -2987,18 +3046,27 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 									>
 										API Key
 									</label>
+									{isApiKeyHash && (
+										<div className="mb-2 p-2 bg-warning-50 dark:bg-warning-900/20 border border-warning-200 dark:border-warning-700 rounded-lg">
+											<p className="text-xs text-warning-700 dark:text-warning-300">
+												The stored key is a hash. Regenerate credentials to get a new plaintext key.
+											</p>
+										</div>
+									)}
 									<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 										<input
 											id={apiKeyInputId}
 											type={showApiKey ? "text" : "password"}
-											value={host.api_key}
+											value={isApiKeyHash ? "(hashed - not usable)" : effectiveApiKey}
 											readOnly
-											className="flex-1 px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-800 text-xs md:text-sm font-mono text-secondary-900 dark:text-white break-all"
+											disabled={isApiKeyHash}
+											className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-secondary-300 dark:border-secondary-600 bg-secondary-50 dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
 										/>
 										<button
 											type="button"
 											onClick={() => setShowApiKey(!showApiKey)}
-											className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap"
+											disabled={isApiKeyHash}
+											className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
 										>
 											{showApiKey ? (
 												<EyeOff className="h-4 w-4" />
@@ -3008,8 +3076,9 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 										</button>
 										<button
 											type="button"
-											onClick={() => copyToClipboard(host.api_key)}
-											className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap"
+											onClick={() => copyToClipboard(effectiveApiKey)}
+											disabled={isApiKeyHash}
+											className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
 										>
 											<Copy className="h-4 w-4" />
 											Copy
