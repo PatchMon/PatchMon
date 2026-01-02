@@ -2,6 +2,9 @@
 ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "oidc_sub" TEXT;
 ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "oidc_provider" TEXT;
 
+-- Make password_hash nullable for OIDC-only users
+ALTER TABLE "users" ALTER COLUMN "password_hash" DROP NOT NULL;
+
 -- Create unique index on oidc_sub
 CREATE UNIQUE INDEX IF NOT EXISTS "users_oidc_sub_key" ON "users"("oidc_sub");
 
