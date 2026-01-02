@@ -240,6 +240,9 @@ const Login = () => {
 			return;
 		}
 
+		const abortController = new AbortController();
+		let isMounted = true;
+
 		const fetchGitHubData = async () => {
 			try {
 				// Try to get cached data first
@@ -249,14 +252,14 @@ const Login = () => {
 				const now = Date.now();
 
 				// Load cached data immediately
-				if (cachedRelease) {
+				if (cachedRelease && isMounted) {
 					try {
 						setLatestRelease(JSON.parse(cachedRelease));
 					} catch (e) {
 						localStorage.removeItem("githubLatestRelease");
 					}
 				}
-				if (cachedStars) {
+				if (cachedStars && isMounted) {
 					setGithubStars(parseInt(cachedStars, 10));
 				}
 
@@ -272,10 +275,11 @@ const Login = () => {
 						headers: {
 							Accept: "application/vnd.github.v3+json",
 						},
+						signal: abortController.signal,
 					},
 				);
 
-				if (repoResponse.ok) {
+				if (repoResponse.ok && isMounted) {
 					const repoData = await repoResponse.json();
 					setGithubStars(repoData.stargazers_count);
 					localStorage.setItem(
@@ -291,10 +295,11 @@ const Login = () => {
 						headers: {
 							Accept: "application/vnd.github.v3+json",
 						},
+						signal: abortController.signal,
 					},
 				);
 
-				if (releaseResponse.ok) {
+				if (releaseResponse.ok && isMounted) {
 					const data = await releaseResponse.json();
 					const releaseInfo = {
 						version: data.tag_name,
@@ -319,10 +324,13 @@ const Login = () => {
 
 				localStorage.setItem("githubReleaseCacheTime", now.toString());
 			} catch (error) {
+				// Ignore abort errors
+				if (error.name === "AbortError") return;
+
 				console.error("Failed to fetch GitHub data:", error);
 				// Set fallback data if nothing cached
 				const cachedRelease = localStorage.getItem("githubLatestRelease");
-				if (!cachedRelease) {
+				if (!cachedRelease && isMounted) {
 					setLatestRelease({
 						version: "v1.3.0",
 						name: "Latest Release",
@@ -334,6 +342,11 @@ const Login = () => {
 		};
 
 		fetchGitHubData();
+
+		return () => {
+			isMounted = false;
+			abortController.abort();
+		};
 	}, [showGithubVersionOnLogin]); // Run once on mount
 
 	const handleSubmit = async (e) => {

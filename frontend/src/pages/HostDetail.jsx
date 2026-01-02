@@ -29,7 +29,7 @@ import {
 	Wifi,
 	X,
 } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
@@ -58,6 +58,34 @@ const HostDetail = () => {
 	const [updateMessage, setUpdateMessage] = useState({ text: "", jobId: "" });
 	const [reportMessage, setReportMessage] = useState({ text: "", jobId: "" });
 	const [showAllReports, setShowAllReports] = useState(false);
+
+	// Ref to track component mount state for setTimeout cleanup
+	const isMountedRef = useRef(true);
+	const timeoutRefs = useRef([]);
+
+	// Cleanup timeouts on unmount
+	useEffect(() => {
+		isMountedRef.current = true;
+		return () => {
+			isMountedRef.current = false;
+			// Clear all pending timeouts
+			timeoutRefs.current.forEach((timeoutId) => clearTimeout(timeoutId));
+			timeoutRefs.current = [];
+		};
+	}, []);
+
+	// Helper function to safely set timeout with cleanup tracking
+	const safeSetTimeout = (callback, delay) => {
+		const timeoutId = setTimeout(() => {
+			if (isMountedRef.current) {
+				callback();
+			}
+			// Remove from tracking array
+			timeoutRefs.current = timeoutRefs.current.filter((id) => id !== timeoutId);
+		}, delay);
+		timeoutRefs.current.push(timeoutId);
+		return timeoutId;
+	};
 
 	const {
 		data: host,
@@ -183,7 +211,7 @@ const HostDetail = () => {
 					jobId: data.jobId,
 				});
 				// Clear message after 5 seconds
-				setTimeout(() => setUpdateMessage({ text: "", jobId: "" }), 5000);
+				safeSetTimeout(() => setUpdateMessage({ text: "", jobId: "" }), 5000);
 			}
 		},
 		onError: (error) => {
@@ -191,7 +219,7 @@ const HostDetail = () => {
 				text: error.response?.data?.error || "Failed to queue update",
 				jobId: "",
 			});
-			setTimeout(() => setUpdateMessage({ text: "", jobId: "" }), 5000);
+			safeSetTimeout(() => setUpdateMessage({ text: "", jobId: "" }), 5000);
 		},
 	});
 
@@ -208,7 +236,7 @@ const HostDetail = () => {
 					jobId: data.jobId,
 				});
 				// Clear message after 5 seconds
-				setTimeout(() => setReportMessage({ text: "", jobId: "" }), 5000);
+				safeSetTimeout(() => setReportMessage({ text: "", jobId: "" }), 5000);
 			}
 		},
 		onError: (error) => {
@@ -216,7 +244,7 @@ const HostDetail = () => {
 				text: error.response?.data?.error || "Failed to fetch report",
 				jobId: "",
 			});
-			setTimeout(() => setReportMessage({ text: "", jobId: "" }), 5000);
+			safeSetTimeout(() => setReportMessage({ text: "", jobId: "" }), 5000);
 		},
 	});
 
@@ -248,7 +276,7 @@ const HostDetail = () => {
 			queryClient.invalidateQueries(["hosts"]);
 			setNotesMessage({ text: "Notes saved successfully!", type: "success" });
 			// Clear message after 3 seconds
-			setTimeout(() => setNotesMessage({ text: "", type: "" }), 3000);
+			safeSetTimeout(() => setNotesMessage({ text: "", type: "" }), 3000);
 		},
 		onError: (error) => {
 			setNotesMessage({
@@ -256,7 +284,7 @@ const HostDetail = () => {
 				type: "error",
 			});
 			// Clear message after 5 seconds for errors
-			setTimeout(() => setNotesMessage({ text: "", type: "" }), 5000);
+			safeSetTimeout(() => setNotesMessage({ text: "", type: "" }), 5000);
 		},
 	});
 

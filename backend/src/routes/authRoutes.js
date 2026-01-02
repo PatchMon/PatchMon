@@ -347,58 +347,72 @@ router.post(
 
 			const { firstName, lastName, username, email, password } = req.body;
 
-			// Check if any admin users already exist
-			const adminCount = await prisma.users.count({
-				where: { role: "admin" },
-			});
-
-			if (adminCount > 0) {
-				return res.status(400).json({
-					error:
-						"Admin users already exist. This endpoint is only for first-time setup.",
-				});
-			}
-
-			// Check if username or email already exists
-			const existingUser = await prisma.users.findFirst({
-				where: {
-					OR: [{ username: username.trim() }, { email: email.trim() }],
-				},
-			});
-
-			if (existingUser) {
-				return res.status(400).json({
-					error: "Username or email already exists",
-				});
-			}
-
-			// Hash password
+			// Hash password before transaction (CPU-intensive, don't hold transaction lock)
 			const passwordHash = await bcrypt.hash(password, 12);
 
-			// Create admin user
-			const user = await prisma.users.create({
-				data: {
-					id: uuidv4(),
-					username: username.trim(),
-					email: email.trim(),
-					password_hash: passwordHash,
-					first_name: firstName.trim(),
-					last_name: lastName.trim(),
-					role: "admin",
-					is_active: true,
-					created_at: new Date(),
-					updated_at: new Date(),
-				},
-				select: {
-					id: true,
-					username: true,
-					email: true,
-					first_name: true,
-					last_name: true,
-					role: true,
-					created_at: true,
-				},
+			// Use transaction to prevent race condition where two requests
+			// could both pass the admin check and create duplicate admins
+			const user = await prisma.$transaction(async (tx) => {
+				// Check if any admin users already exist
+				const adminCount = await tx.users.count({
+					where: { role: "admin" },
+				});
+
+				if (adminCount > 0) {
+					throw new Error("ADMIN_EXISTS");
+				}
+
+				// Check if username or email already exists
+				const existingUser = await tx.users.findFirst({
+					where: {
+						OR: [{ username: username.trim() }, { email: email.trim() }],
+					},
+				});
+
+				if (existingUser) {
+					throw new Error("USER_EXISTS");
+				}
+
+				// Create admin user within transaction
+				const newUser = await tx.users.create({
+					data: {
+						id: uuidv4(),
+						username: username.trim(),
+						email: email.trim(),
+						password_hash: passwordHash,
+						first_name: firstName.trim(),
+						last_name: lastName.trim(),
+						role: "admin",
+						is_active: true,
+						created_at: new Date(),
+						updated_at: new Date(),
+					},
+					select: {
+						id: true,
+						username: true,
+						email: true,
+						first_name: true,
+						last_name: true,
+						role: true,
+						created_at: true,
+					},
+				});
+
+				return newUser;
+			}).catch((error) => {
+				if (error.message === "ADMIN_EXISTS") {
+					return { error: "Admin users already exist. This endpoint is only for first-time setup." };
+				}
+				if (error.message === "USER_EXISTS") {
+					return { error: "Username or email already exists" };
+				}
+				throw error;
 			});
+
+			// Check if transaction returned an error
+			if (user.error) {
+				return res.status(400).json({ error: user.error });
+			}
 
 			// Create default dashboard preferences for the new admin user
 			await createDefaultDashboardPreferences(user.id, "admin");

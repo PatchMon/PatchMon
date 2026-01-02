@@ -129,20 +129,22 @@ const Dashboard = () => {
 
 	// Chart click handlers
 	const handleOSChartClick = (_, elements) => {
-		if (elements.length > 0) {
+		if (elements.length > 0 && stats?.charts?.osDistribution) {
 			const elementIndex = elements[0].index;
-			const osName =
-				stats.charts.osDistribution[elementIndex].name.toLowerCase();
-			navigate(`/hosts?osFilter=${osName}&showFilters=true`, { replace: true });
+			const osItem = stats.charts.osDistribution[elementIndex];
+			if (osItem?.name) {
+				navigate(`/hosts?osFilter=${osItem.name.toLowerCase()}&showFilters=true`, { replace: true });
+			}
 		}
 	};
 
 	const handleUpdateStatusChartClick = (_, elements) => {
-		if (elements.length > 0) {
+		if (elements.length > 0 && stats?.charts?.updateStatusDistribution) {
 			const elementIndex = elements[0].index;
-			const statusName =
-				stats.charts.updateStatusDistribution[elementIndex].name;
+			const statusItem = stats.charts.updateStatusDistribution[elementIndex];
+			if (!statusItem?.name) return;
 
+			const statusName = statusItem.name;
 			// Map status names to filter parameters
 			let filter = "";
 			if (statusName.toLowerCase().includes("needs updates")) {
@@ -160,11 +162,12 @@ const Dashboard = () => {
 	};
 
 	const handlePackagePriorityChartClick = (_, elements) => {
-		if (elements.length > 0) {
+		if (elements.length > 0 && stats?.charts?.packageUpdateDistribution) {
 			const elementIndex = elements[0].index;
-			const priorityName =
-				stats.charts.packageUpdateDistribution[elementIndex].name;
+			const priorityItem = stats.charts.packageUpdateDistribution[elementIndex];
+			if (!priorityItem?.name) return;
 
+			const priorityName = priorityItem.name;
 			// Map priority names to filter parameters
 			if (priorityName.toLowerCase().includes("security")) {
 				navigate("/packages?filter=security", { replace: true });

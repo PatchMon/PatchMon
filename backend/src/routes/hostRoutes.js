@@ -573,9 +573,16 @@ router.post("/register", async (_req, res) => {
 	});
 });
 
+// Request size limit middleware for /update endpoint
+// Smaller limit than global to prevent DoS while still allowing large package lists
+const updateBodyLimit = express.json({
+	limit: process.env.AGENT_UPDATE_BODY_LIMIT || "2mb",
+});
+
 // Update host information and packages (now uses API credentials)
 router.post(
 	"/update",
+	updateBodyLimit,
 	validateApiCredentials,
 	[
 		body("packages").isArray().withMessage("Packages must be an array"),
@@ -1861,7 +1868,9 @@ router.get("/install", async (req, res) => {
 				curlFlags = "-sk";
 				skipSSLVerify = "true";
 			}
-		} catch (_) {}
+		} catch (sslSettingsError) {
+			console.warn("Could not fetch SSL settings:", sslSettingsError.message);
+		}
 
 		// Check for --force parameter
 		const forceInstall = req.query.force === "true" || req.query.force === "1";

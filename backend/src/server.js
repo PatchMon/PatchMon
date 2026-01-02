@@ -553,9 +553,11 @@ app.use(`/bullboard`, (_req, res, next) => {
 
 	// Add headers to help with WebSocket connections
 	res.setHeader("X-Frame-Options", "SAMEORIGIN");
+	// Tightened CSP: removed blob:, restricted connect-src to same origin only
+	// Note: 'unsafe-inline' and 'unsafe-eval' are required for Bull Board's React app
 	res.setHeader(
 		"Content-Security-Policy",
-		"default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' ws: wss:;",
+		"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; object-src 'none';",
 	);
 
 	next();

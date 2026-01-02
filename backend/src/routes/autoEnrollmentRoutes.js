@@ -674,7 +674,9 @@ router.get("/script", async (req, res) => {
 			if (settings && settings.ignore_ssl_self_signed === true) {
 				curl_flags = "-sk";
 			}
-		} catch (_) {}
+		} catch (curlFlagsError) {
+			console.warn("Could not fetch SSL settings for curl flags:", curlFlagsError.message);
+		}
 
 		// Check for --force parameter
 		const force_install = req.query.force === "true" || req.query.force === "1";
