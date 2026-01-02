@@ -30,8 +30,6 @@ const Settings = () => {
 	const updateIntervalId = useId();
 	const githubRepoUrlId = useId();
 	const sshKeyPathId = useId();
-	const _scriptFileId = useId();
-	const _scriptContentId = useId();
 	const [formData, setFormData] = useState({
 		serverProtocol: "http",
 		serverHost: "localhost",
@@ -116,13 +114,6 @@ const Settings = () => {
 	];
 
 	// Agent management state
-	const [_agentInfo, _setAgentInfo] = useState({
-		version: null,
-		lastModified: null,
-		size: null,
-		loading: true,
-		error: null,
-	});
 	const [showUploadModal, setShowUploadModal] = useState(false);
 
 	// Logo management state

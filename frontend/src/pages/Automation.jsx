@@ -61,42 +61,6 @@ const Automation = () => {
 		refetchInterval: 30000,
 	});
 
-	const _getStatusIcon = (status) => {
-		switch (status) {
-			case "completed":
-				return <CheckCircle className="h-4 w-4 text-green-500" />;
-			case "failed":
-				return <XCircle className="h-4 w-4 text-red-500" />;
-			case "active":
-				return <Activity className="h-4 w-4 text-blue-500 animate-pulse" />;
-			default:
-				return <Clock className="h-4 w-4 text-gray-500" />;
-		}
-	};
-
-	const _getStatusColor = (status) => {
-		switch (status) {
-			case "completed":
-				return "bg-green-100 text-green-800";
-			case "failed":
-				return "bg-red-100 text-red-800";
-			case "active":
-				return "bg-blue-100 text-blue-800";
-			default:
-				return "bg-gray-100 text-gray-800";
-		}
-	};
-
-	const _formatDate = (dateString) => {
-		if (!dateString) return "N/A";
-		return new Date(dateString).toLocaleString();
-	};
-
-	const _formatDuration = (ms) => {
-		if (!ms) return "N/A";
-		return `${ms}ms`;
-	};
-
 	const getStatusBadge = (status) => {
 		switch (status) {
 			case "Success":

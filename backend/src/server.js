@@ -400,8 +400,16 @@ if (!allowedOrigins.includes(bullBoardOrigin)) {
 app.use(
 	cors({
 		origin: (origin, callback) => {
-			// Allow non-browser/SSR tools with no origin
-			if (!origin) return callback(null, true);
+			// Handle requests without origin header
+			if (!origin) {
+				// In development, allow all requests without origin (curl, SSR tools, etc.)
+				if (process.env.NODE_ENV === "development") {
+					return callback(null, true);
+				}
+				// In production, allow server-to-server requests (agent updates, etc.)
+				// but browser requests should always have origin
+				return callback(null, true);
+			}
 			if (allowedOrigins.includes(origin)) return callback(null, true);
 
 			// Allow Bull Board requests from the same origin as CORS_ORIGIN

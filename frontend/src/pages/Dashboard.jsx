@@ -115,16 +115,8 @@ const Dashboard = () => {
 		navigate(`/hosts?${newSearchParams.toString()}`);
 	};
 
-	const _handleOSDistributionClick = () => {
-		navigate("/hosts?showFilters=true", { replace: true });
-	};
-
 	const handleUpdateStatusClick = () => {
 		navigate("/hosts?filter=needsUpdates", { replace: true });
-	};
-
-	const _handlePackagePriorityClick = () => {
-		navigate("/packages?filter=security");
 	};
 
 	// Chart click handlers

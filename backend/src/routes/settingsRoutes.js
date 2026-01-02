@@ -30,8 +30,6 @@ async function verifyApiKey(providedKey, storedKey) {
 	return false;
 }
 
-// WebSocket broadcaster for agent policy updates (no longer used - queue-based delivery preferred)
-// const { broadcastSettingsUpdate } = require("../services/agentWs");
 const { queueManager, QUEUE_NAMES } = require("../services/automation");
 
 // Helpers

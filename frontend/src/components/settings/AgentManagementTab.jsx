@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
 	AlertCircle,
 	CheckCircle,
@@ -12,7 +12,6 @@ import { useEffect, useState } from "react";
 import api from "../../utils/api";
 
 const AgentManagementTab = () => {
-	const _queryClient = useQueryClient();
 	const [toast, setToast] = useState(null);
 
 	// Auto-hide toast after 5 seconds

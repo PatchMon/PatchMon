@@ -63,11 +63,8 @@ const AddHostModal = ({ isOpen, onClose, onSuccess }) => {
 		setIsSubmitting(true);
 		setError("");
 
-		console.log("Creating host:", formData.friendly_name);
-
 		try {
 			const response = await adminHostsAPI.create(formData);
-			console.log("Host created successfully:", formData.friendly_name);
 			onSuccess(response.data);
 			setFormData({
 				friendly_name: "",
@@ -77,9 +74,6 @@ const AddHostModal = ({ isOpen, onClose, onSuccess }) => {
 			setIntegrationsExpanded(false);
 			onClose();
 		} catch (err) {
-			console.error("Full error object:", err);
-			console.error("Error response:", err.response);
-
 			let errorMessage = "Failed to create host";
 
 			if (err.response?.data?.errors) {
@@ -559,8 +553,6 @@ const Hosts = () => {
 		mutationFn: ({ hostIds, groupIds }) =>
 			adminHostsAPI.bulkUpdateGroups(hostIds, groupIds),
 		onSuccess: (data) => {
-			console.log("bulkUpdateGroupMutation success:", data);
-
 			// Update the cache with the new host data
 			if (data?.hosts) {
 				queryClient.setQueryData(["hosts"], (oldData) => {
@@ -592,88 +584,19 @@ const Hosts = () => {
 		},
 	});
 
-	const _updateHostGroupMutation = useMutation({
-		mutationFn: ({ hostId, hostGroupId }) => {
-			console.log("updateHostGroupMutation called with:", {
-				hostId,
-				hostGroupId,
-			});
-			return adminHostsAPI.updateGroup(hostId, hostGroupId).then((res) => {
-				console.log("updateGroup API response:", res);
-				return res.data;
-			});
-		},
-		onSuccess: (data) => {
-			// Update the cache with the new host data
-			queryClient.setQueryData(["hosts"], (oldData) => {
-				console.log("Old cache data before update:", oldData);
-				if (!oldData) return oldData;
-				const updatedData = oldData.map((host) => {
-					if (host.id === data.host.id) {
-						console.log(
-							"Updating host in cache:",
-							host.id,
-							"with new data:",
-							data.host,
-						);
-						// Host already has host_group_memberships from backend
-						const updatedHost = {
-							...data.host,
-						};
-						console.log("Updated host in cache:", updatedHost);
-						return updatedHost;
-					}
-					return host;
-				});
-				console.log("New cache data after update:", updatedData);
-				return updatedData;
-			});
-
-			// Also invalidate to ensure consistency
-			queryClient.invalidateQueries(["hosts"]);
-		},
-		onError: (error) => {
-			console.error("updateHostGroupMutation error:", error);
-		},
-	});
-
 	const updateHostGroupsMutation = useMutation({
-		mutationFn: ({ hostId, groupIds }) => {
-			console.log("updateHostGroupsMutation called with:", {
-				hostId,
-				groupIds,
-			});
-			return adminHostsAPI.updateGroups(hostId, groupIds).then((res) => {
-				console.log("updateGroups API response:", res);
-				return res.data;
-			});
-		},
+		mutationFn: ({ hostId, groupIds }) =>
+			adminHostsAPI.updateGroups(hostId, groupIds).then((res) => res.data),
 		onSuccess: (data) => {
 			// Update the cache with the new host data
 			queryClient.setQueryData(["hosts"], (oldData) => {
-				console.log("Old cache data before update:", oldData);
 				if (!oldData) return oldData;
-				const updatedData = oldData.map((host) => {
-					if (host.id === data.host.id) {
-						console.log(
-							"Updating host in cache:",
-							host.id,
-							"with new data:",
-							data.host,
-						);
-						return data.host;
-					}
-					return host;
-				});
-				console.log("New cache data after update:", updatedData);
-				return updatedData;
+				return oldData.map((host) =>
+					host.id === data.host.id ? data.host : host,
+				);
 			});
-
 			// Also invalidate to ensure consistency
 			queryClient.invalidateQueries(["hosts"]);
-		},
-		onError: (error) => {
-			console.error("updateHostGroupsMutation error:", error);
 		},
 	});
 
@@ -689,14 +612,10 @@ const Hosts = () => {
 
 	const bulkDeleteMutation = useMutation({
 		mutationFn: (hostIds) => adminHostsAPI.deleteBulk(hostIds),
-		onSuccess: (data) => {
-			console.log("Bulk delete success:", data);
+		onSuccess: () => {
 			queryClient.invalidateQueries(["hosts"]);
 			setSelectedHosts([]);
 			setShowBulkDeleteModal(false);
-		},
-		onError: (error) => {
-			console.error("Bulk delete error:", error);
 		},
 	});
 
@@ -1298,17 +1217,6 @@ const Hosts = () => {
 		setShowFilters(false);
 		// Clear URL parameters to ensure no filters are applied
 		navigate("/hosts", { replace: true });
-	};
-
-	const _handleUpToDateClick = () => {
-		// Filter to show only up-to-date hosts
-		setStatusFilter("active");
-		setShowFilters(true);
-		// Clear conflicting filters and set upToDate filter
-		const newSearchParams = new URLSearchParams(window.location.search);
-		newSearchParams.set("filter", "upToDate");
-		newSearchParams.delete("reboot"); // Clear reboot filter when switching to upToDate
-		navigate(`/hosts?${newSearchParams.toString()}`, { replace: true });
 	};
 
 	const handleNeedsUpdatesClick = () => {

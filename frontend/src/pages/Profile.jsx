@@ -80,10 +80,8 @@ const Profile = () => {
 		setIsLoading(true);
 		setMessage({ type: "", text: "" });
 
-		console.log("Submitting profile data:", profileData);
 		try {
 			const result = await updateProfile(profileData);
-			console.log("Profile update result:", result);
 			if (result.success) {
 				setMessage({ type: "success", text: "Profile updated successfully!" });
 			} else {
@@ -1191,8 +1189,6 @@ const TfaTab = () => {
 
 // Sessions Tab Component
 const SessionsTab = () => {
-	const _queryClient = useQueryClient();
-	const [_isLoading, _setIsLoading] = useState(false);
 	const [message, setMessage] = useState({ type: "", text: "" });
 
 	// Fetch user sessions

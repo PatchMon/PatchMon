@@ -45,7 +45,6 @@ const Layout = ({ children }) => {
 		const saved = localStorage.getItem("sidebarCollapsed");
 		return saved ? JSON.parse(saved) : false;
 	});
-	const [_userMenuOpen, setUserMenuOpen] = useState(false);
 	const [githubStars, setGithubStars] = useState(null);
 	const [mobileLinksOpen, setMobileLinksOpen] = useState(false);
 	const [showReleaseNotes, setShowReleaseNotes] = useState(false);
@@ -66,7 +65,6 @@ const Layout = ({ children }) => {
 	} = useAuth();
 	const { updateAvailable } = useUpdateNotification();
 	const { themeConfig } = useColorTheme();
-	const userMenuRef = useRef(null);
 	const bgCanvasRef = useRef(null);
 
 	// Fetch dashboard stats for the "Last updated" info
@@ -259,7 +257,6 @@ const Layout = ({ children }) => {
 
 	const handleLogout = async () => {
 		await logout();
-		setUserMenuOpen(false);
 	};
 
 	const handleAddHost = () => {
@@ -455,20 +452,6 @@ const Layout = ({ children }) => {
 	useEffect(() => {
 		localStorage.setItem("sidebarCollapsed", JSON.stringify(sidebarCollapsed));
 	}, [sidebarCollapsed]);
-
-	// Close user menu when clicking outside
-	useEffect(() => {
-		const handleClickOutside = (event) => {
-			if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
-				setUserMenuOpen(false);
-			}
-		};
-
-		document.addEventListener("mousedown", handleClickOutside);
-		return () => {
-			document.removeEventListener("mousedown", handleClickOutside);
-		};
-	}, []);
 
 	// Fetch GitHub stars on component mount
 	useEffect(() => {
