@@ -374,10 +374,8 @@ const Packages = () => {
 								{pkg.name}
 							</div>
 							{pkg.description && (
-								<div className="mt-2 text-sm text-secondary-600 dark:text-secondary-400 bg-secondary-50 dark:bg-secondary-800/50 rounded-md p-2 border border-secondary-200 dark:border-secondary-700/50">
-									<div className="line-clamp-2 whitespace-normal">
-										{pkg.description}
-									</div>
+								<div className="text-sm text-secondary-600 dark:text-secondary-400">
+									{pkg.description}
 								</div>
 							)}
 							{pkg.category && (
