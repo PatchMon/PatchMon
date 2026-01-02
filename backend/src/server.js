@@ -318,6 +318,19 @@ const limiter = rateLimit({
 });
 
 // Middleware
+
+// Request ID middleware for log tracing
+app.use((req, res, next) => {
+	// Use existing request ID from header or generate new one
+	req.id = req.headers["x-request-id"] || `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+	res.setHeader("X-Request-ID", req.id);
+	next();
+});
+
+// Security audit logging middleware
+const { auditMiddleware } = require("./utils/auditLogger");
+app.use(auditMiddleware);
+
 // Helmet with stricter defaults (CSP/HSTS only in production)
 app.use(
 	helmet({

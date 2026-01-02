@@ -22,6 +22,7 @@ const {
 	createDefaultDashboardPreferences,
 } = require("./dashboardPreferencesRoutes");
 const { redis } = require("../services/automation/shared/redis");
+const { AUDIT_EVENTS, logAuditEvent } = require("../utils/auditLogger");
 
 const prisma = getPrismaClient();
 
@@ -284,11 +285,32 @@ router.get("/callback", async (req, res) => {
 			maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
 		});
 
+		// Audit log successful OIDC login
+		await logAuditEvent({
+			event: AUDIT_EVENTS.OIDC_LOGIN_SUCCESS,
+			userId: user.id,
+			username: user.username,
+			ipAddress: ip_address,
+			userAgent: user_agent,
+			requestId: req.id,
+			success: true,
+			details: { email: user.email, role: user.role },
+		});
+
 		// Redirect to frontend with success indicator (no tokens in URL)
 		const frontendUrl = process.env.CORS_ORIGIN || "http://localhost:3000";
 		res.redirect(`${frontendUrl}/login?oidc=success`);
 	} catch (error) {
 		console.error("OIDC callback error:", error);
+		// Audit log failed OIDC login
+		await logAuditEvent({
+			event: AUDIT_EVENTS.OIDC_LOGIN_FAILED,
+			ipAddress: req.ip,
+			userAgent: req.get("user-agent"),
+			requestId: req.id,
+			success: false,
+			details: { error: error.message },
+		});
 		res.redirect("/login?error=Authentication+failed");
 	}
 });

@@ -20,6 +20,7 @@ const {
 	generate_device_fingerprint,
 } = require("../utils/session_manager");
 const { redis } = require("../services/automation/shared/redis");
+const { AUDIT_EVENTS, logAuditEvent } = require("../utils/auditLogger");
 
 const router = express.Router();
 const prisma = getPrismaClient();
@@ -873,6 +874,15 @@ router.post(
 			const lockStatus = await isAccountLocked(username);
 			if (lockStatus.locked) {
 				const remainingMinutes = Math.ceil(lockStatus.remainingTime / 60);
+				await logAuditEvent({
+					event: AUDIT_EVENTS.LOGIN_LOCKED,
+					username,
+					ipAddress: req.ip,
+					userAgent: req.get("user-agent"),
+					requestId: req.id,
+					success: false,
+					details: { remainingMinutes },
+				});
 				return res.status(429).json({
 					error: "Account temporarily locked due to too many failed login attempts",
 					lockedUntil: remainingMinutes,
@@ -905,6 +915,15 @@ router.post(
 			if (!user) {
 				// Record failed attempt even if user doesn't exist (prevents username enumeration timing attacks)
 				await recordFailedAttempt(username);
+				await logAuditEvent({
+					event: AUDIT_EVENTS.LOGIN_FAILED,
+					username,
+					ipAddress: req.ip,
+					userAgent: req.get("user-agent"),
+					requestId: req.id,
+					success: false,
+					details: { reason: "user_not_found" },
+				});
 				return res.status(401).json({ error: "Invalid credentials" });
 			}
 
@@ -916,6 +935,16 @@ router.post(
 			if (!isValidPassword) {
 				// Record failed attempt
 				const result = await recordFailedAttempt(username);
+				await logAuditEvent({
+					event: result.locked ? AUDIT_EVENTS.LOGIN_LOCKED : AUDIT_EVENTS.LOGIN_FAILED,
+					userId: user.id,
+					username: user.username,
+					ipAddress: req.ip,
+					userAgent: req.get("user-agent"),
+					requestId: req.id,
+					success: false,
+					details: { reason: "invalid_password", attempts: result.attempts },
+				});
 				if (result.locked) {
 					return res.status(429).json({
 						error: "Account temporarily locked due to too many failed login attempts",
@@ -989,6 +1018,18 @@ router.post(
 				false,
 				req,
 			);
+
+			// Audit log successful login
+			await logAuditEvent({
+				event: AUDIT_EVENTS.LOGIN_SUCCESS,
+				userId: user.id,
+				username: user.username,
+				ipAddress: ip_address,
+				userAgent: user_agent,
+				requestId: req.id,
+				success: true,
+				details: { role: user.role },
+			});
 
 			// Get accepted release notes versions
 			let acceptedVersions = [];
@@ -1384,6 +1425,17 @@ router.put(
 			await prisma.users.update({
 				where: { id: req.user.id },
 				data: { password_hash: newPasswordHash },
+			});
+
+			// Audit log password change
+			await logAuditEvent({
+				event: AUDIT_EVENTS.PASSWORD_CHANGED,
+				userId: req.user.id,
+				username: req.user.username,
+				ipAddress: req.ip,
+				userAgent: req.get("user-agent"),
+				requestId: req.id,
+				success: true,
 			});
 
 			res.json({
