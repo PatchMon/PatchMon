@@ -48,6 +48,45 @@ router.use(requireHTTPS);
 
 // Redis key prefix for OIDC sessions
 const OIDC_SESSION_PREFIX = "oidc:session:";
+
+/**
+ * Map OIDC groups to PatchMon role
+ * Checks user's groups against configured admin/user group names
+ * @param {string[]} groups - Array of group names from IdP
+ * @returns {string} - PatchMon role (admin, user, or default)
+ */
+function mapGroupsToRole(groups) {
+	if (!groups || !Array.isArray(groups) || groups.length === 0) {
+		return process.env.OIDC_DEFAULT_ROLE || "user";
+	}
+
+	// Get configured group names (case-insensitive matching)
+	const adminGroup = process.env.OIDC_ADMIN_GROUP?.toLowerCase();
+	const userGroup = process.env.OIDC_USER_GROUP?.toLowerCase();
+
+	const lowerGroups = groups.map((g) => g.toLowerCase());
+
+	// Check for admin group first (highest privilege)
+	if (adminGroup && lowerGroups.includes(adminGroup)) {
+		return "admin";
+	}
+
+	// Check for user group
+	if (userGroup && lowerGroups.includes(userGroup)) {
+		return "user";
+	}
+
+	// Fall back to default role
+	return process.env.OIDC_DEFAULT_ROLE || "user";
+}
+
+/**
+ * Check if role sync is enabled
+ * When enabled, user's role is updated on every login based on group membership
+ */
+function isRoleSyncEnabled() {
+	return process.env.OIDC_SYNC_ROLES === "true";
+}
 const OIDC_SESSION_TTL = parseInt(process.env.OIDC_SESSION_TTL, 10) || 600; // 10 minutes in seconds (configurable)
 
 /**
@@ -187,7 +226,8 @@ router.get("/callback", async (req, res) => {
 
 		// Create new user if auto-creation is enabled
 		if (!user && process.env.OIDC_AUTO_CREATE_USERS === "true") {
-			const defaultRole = process.env.OIDC_DEFAULT_ROLE || "user";
+			// Map groups to role (or use default if no group mapping configured)
+			const userRole = mapGroupsToRole(userInfo.groups);
 
 			// Generate a unique username from email (sanitize special characters)
 			let baseUsername = userInfo.email
@@ -212,7 +252,7 @@ router.get("/callback", async (req, res) => {
 					last_name: null,
 					oidc_sub: userInfo.sub,
 					oidc_provider: new URL(process.env.OIDC_ISSUER_URL).hostname,
-					role: defaultRole,
+					role: userRole,
 					password_hash: null, // No password for OIDC-only users
 					is_active: true,
 					created_at: new Date(),
@@ -220,10 +260,10 @@ router.get("/callback", async (req, res) => {
 				},
 			});
 
-			console.log(`Created new OIDC user: ${user.email}`);
+			console.log(`Created new OIDC user: ${user.email} with role: ${userRole}`);
 
 			// Create default dashboard preferences for the new user
-			await createDefaultDashboardPreferences(user.id, defaultRole);
+			await createDefaultDashboardPreferences(user.id, userRole);
 		}
 
 		// Link OIDC to existing user if they matched by email but don't have OIDC linked
@@ -271,13 +311,24 @@ router.get("/callback", async (req, res) => {
 			return res.redirect("/login?error=Account+disabled");
 		}
 
-		// Update last login
+		// Update last login and optionally sync role from groups
+		const updateData = {
+			last_login: new Date(),
+			updated_at: new Date(),
+		};
+
+		// Sync role from groups on every login if enabled
+		if (isRoleSyncEnabled()) {
+			const newRole = mapGroupsToRole(userInfo.groups);
+			if (newRole !== user.role) {
+				updateData.role = newRole;
+				console.log(`OIDC role sync: ${user.email} role changed from ${user.role} to ${newRole}`);
+			}
+		}
+
 		await prisma.users.update({
 			where: { id: user.id },
-			data: {
-				last_login: new Date(),
-				updated_at: new Date(),
-			},
+			data: updateData,
 		});
 
 		// Create session using existing session manager
