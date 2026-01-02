@@ -236,7 +236,7 @@ For development with live reload and source code mounting:
 1. Clone the repository:
    ```bash
    git clone https://github.com/PatchMon/PatchMon.git
-   cd patchmon.net
+   cd PatchMon
    ```
 
 2. Start development environment:
@@ -312,7 +312,7 @@ The development setup exposes additional ports for debugging:
 1. **Initial Setup**: Clone repository and start development environment
    ```bash
    git clone https://github.com/PatchMon/PatchMon.git
-   cd patchmon.net
+   cd PatchMon
    docker compose -f docker/docker-compose.dev.yml up -d --build
    ```
 
