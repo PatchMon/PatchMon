@@ -1,5 +1,7 @@
 const express = require("express");
 const { body, validationResult } = require("express-validator");
+const crypto = require("node:crypto");
+const bcrypt = require("bcryptjs");
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateToken } = require("../middleware/auth");
 const { requireManageSettings } = require("../middleware/permissions");
@@ -7,6 +9,26 @@ const { getSettings, updateSettings } = require("../services/settingsService");
 
 const router = express.Router();
 const prisma = getPrismaClient();
+
+/**
+ * Verify API key against stored hash
+ * Supports both bcrypt hashed keys (new) and plaintext keys (legacy)
+ */
+async function verifyApiKey(providedKey, storedKey) {
+	if (!providedKey || !storedKey) return false;
+	// Check if stored key is a bcrypt hash (starts with $2a$, $2b$, or $2y$)
+	if (storedKey.match(/^\$2[aby]\$/)) {
+		return bcrypt.compare(providedKey, storedKey);
+	}
+	// Legacy plaintext key - use timing-safe comparison
+	if (storedKey.length === providedKey.length) {
+		return crypto.timingSafeEqual(
+			Buffer.from(storedKey),
+			Buffer.from(providedKey)
+		);
+	}
+	return false;
+}
 
 // WebSocket broadcaster for agent policy updates (no longer used - queue-based delivery preferred)
 // const { broadcastSettingsUpdate } = require("../services/agentWs");
@@ -292,7 +314,13 @@ router.get("/update-interval", async (req, res) => {
 			where: { api_id: apiId },
 		});
 
-		if (!host || host.api_key !== apiKey) {
+		if (!host) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
+		// Verify API key using bcrypt (or timing-safe comparison for legacy keys)
+		const isValidKey = await verifyApiKey(apiKey, host.api_key);
+		if (!isValidKey) {
 			return res.status(401).json({ error: "Invalid API credentials" });
 		}
 

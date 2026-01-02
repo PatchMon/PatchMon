@@ -2028,14 +2028,17 @@ router.get("/agent/timestamp", async (req, res) => {
 		}
 
 		// Verify API credentials
-		const host = await prisma.hosts.findFirst({
-			where: {
-				api_id: apiId,
-				api_key: apiKey,
-			},
+		const host = await prisma.hosts.findUnique({
+			where: { api_id: apiId },
 		});
 
 		if (!host) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
+		// Verify API key using bcrypt (or timing-safe comparison for legacy keys)
+		const isValidKey = await verifyApiKey(apiKey, host.api_key);
+		if (!isValidKey) {
 			return res.status(401).json({ error: "Invalid API credentials" });
 		}
 
@@ -2088,14 +2091,17 @@ router.get("/settings", async (req, res) => {
 		}
 
 		// Verify API credentials
-		const host = await prisma.hosts.findFirst({
-			where: {
-				api_id: apiId,
-				api_key: apiKey,
-			},
+		const host = await prisma.hosts.findUnique({
+			where: { api_id: apiId },
 		});
 
 		if (!host) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
+		// Verify API key using bcrypt (or timing-safe comparison for legacy keys)
+		const isValidKey = await verifyApiKey(apiKey, host.api_key);
+		if (!isValidKey) {
 			return res.status(401).json({ error: "Invalid API credentials" });
 		}
 
