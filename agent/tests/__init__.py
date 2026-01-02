@@ -1,3 +1,0 @@
-"""
-PatchMon Agent Tests.
-"""

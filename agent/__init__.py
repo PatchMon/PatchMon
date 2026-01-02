@@ -1,3 +1,0 @@
-"""
-PatchMon Agent Package.
-"""
