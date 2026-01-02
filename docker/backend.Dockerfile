@@ -73,6 +73,7 @@ RUN apk add --no-cache openssl tini curl libc6-compat
 
 WORKDIR /app
 
+COPY --from=builder --chown=node:node /app/package*.json ./
 COPY --from=builder --chown=node:node /app/backend ./backend
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node agents ./agents_backup
