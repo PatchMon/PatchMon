@@ -254,6 +254,8 @@ model users {
   user_sessions          user_sessions[]
   auto_enrollment_tokens auto_enrollment_tokens[]
   release_notes_acceptances release_notes_acceptances[]
+
+  @@index([role])
 }
 
 model user_sessions {

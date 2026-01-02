@@ -73,24 +73,32 @@ export const AuthProvider = ({ children }) => {
 
 	// Initialize auth state - validate session via API (cookies) or localStorage
 	useEffect(() => {
+		const abortController = new AbortController();
+
 		const validateSession = async () => {
 			try {
 				// First, try to validate via API using httpOnly cookies
 				const response = await fetch("/api/v1/auth/profile", {
 					credentials: "include",
+					signal: abortController.signal,
 				});
 
 				if (response.ok) {
 					const data = await response.json();
-					setUser(data.user);
-					// Fetch permissions
-					await fetchPermissions();
-					setAuthPhase(AUTH_PHASES.READY);
+					if (!abortController.signal.aborted) {
+						setUser(data.user);
+						// Fetch permissions
+						await fetchPermissions();
+						setAuthPhase(AUTH_PHASES.READY);
+					}
 					return;
 				}
 			} catch (error) {
+				if (error.name === "AbortError") return;
 				devLog("Cookie-based auth failed:", error.message);
 			}
+
+			if (abortController.signal.aborted) return;
 
 			// Clean up any stale token from localStorage (security measure)
 			localStorage.removeItem("token");
@@ -100,6 +108,8 @@ export const AuthProvider = ({ children }) => {
 		};
 
 		validateSession();
+
+		return () => abortController.abort();
 	}, [fetchPermissions]);
 
 	const login = async (username, password) => {

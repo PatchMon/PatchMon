@@ -15,6 +15,7 @@ const {
 	getAuthorizationUrl,
 	handleCallback,
 	getOIDCConfig,
+	getLogoutUrl,
 } = require("../auth/oidc");
 const { getPrismaClient } = require("../config/prisma");
 const { create_session } = require("../utils/session_manager");
@@ -47,7 +48,7 @@ router.use(requireHTTPS);
 
 // Redis key prefix for OIDC sessions
 const OIDC_SESSION_PREFIX = "oidc:session:";
-const OIDC_SESSION_TTL = 600; // 10 minutes in seconds
+const OIDC_SESSION_TTL = parseInt(process.env.OIDC_SESSION_TTL, 10) || 600; // 10 minutes in seconds (configurable)
 
 /**
  * Store OIDC session data in Redis
@@ -338,6 +339,38 @@ router.get("/callback", async (req, res) => {
 			details: { error: error.message },
 		});
 		res.redirect("/login?error=Authentication+failed");
+	}
+});
+
+/**
+ * GET /api/v1/auth/oidc/logout
+ * Handles OIDC RP-initiated logout
+ */
+router.get("/logout", async (req, res) => {
+	try {
+		if (!isOIDCEnabled()) {
+			return res.redirect("/login");
+		}
+
+		// Get the OIDC logout URL
+		const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+		const logoutUrl = getLogoutUrl(`${frontendUrl}/login`);
+
+		// Clear session cookies
+		res.clearCookie("token", { path: "/" });
+		res.clearCookie("refresh_token", { path: "/" });
+		res.clearCookie("oidc_state", { path: "/" });
+
+		if (logoutUrl) {
+			// Redirect to IdP for single logout
+			res.redirect(logoutUrl);
+		} else {
+			// No OIDC logout endpoint available, just redirect to login
+			res.redirect("/login");
+		}
+	} catch (error) {
+		console.error("OIDC logout error:", error.message);
+		res.redirect("/login");
 	}
 });
 

@@ -179,6 +179,29 @@ function getOIDCConfig() {
 	};
 }
 
+/**
+ * Get the OIDC logout URL if available
+ * @param {string} postLogoutRedirectUri - Where to redirect after logout
+ * @returns {string|null} The logout URL or null if not available
+ */
+function getLogoutUrl(postLogoutRedirectUri) {
+	if (!oidcIssuer || !isOIDCEnabled()) {
+		return null;
+	}
+
+	const endSessionEndpoint = oidcIssuer.metadata.end_session_endpoint;
+	if (!endSessionEndpoint) {
+		return null;
+	}
+
+	const params = new URLSearchParams({
+		client_id: process.env.OIDC_CLIENT_ID,
+		post_logout_redirect_uri: postLogoutRedirectUri || process.env.OIDC_POST_LOGOUT_URI || process.env.FRONTEND_URL || "http://localhost:5173",
+	});
+
+	return `${endSessionEndpoint}?${params.toString()}`;
+}
+
 module.exports = {
 	initializeOIDC,
 	isOIDCEnabled,
@@ -186,4 +209,5 @@ module.exports = {
 	getAuthorizationUrl,
 	handleCallback,
 	getOIDCConfig,
+	getLogoutUrl,
 };
