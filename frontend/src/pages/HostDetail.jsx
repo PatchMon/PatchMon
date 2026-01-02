@@ -2799,14 +2799,11 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 		return settings?.ignore_ssl_self_signed ? "-sk" : "-s";
 	};
 
-	// Helper function to build installation URL with optional force flag
-	const getInstallUrl = () => {
-		const baseUrl = `${serverUrl}/api/v1/hosts/install`;
-		if (forceInstall) {
-			return `${baseUrl}?force=true`;
-		}
-		return baseUrl;
-	};
+	// Helper function to get the install URL
+	const getInstallUrl = () => `${serverUrl}/api/v1/hosts/install`;
+
+	// Helper function to build the shell command suffix (sudo sh with optional --force)
+	const getShellCommand = () => forceInstall ? "sudo sh -s -- --force" : "sudo sh";
 
 	const copyToClipboard = async (text) => {
 		try {
@@ -2983,7 +2980,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 							<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 								<input
 									type="text"
-									value={isApiKeyHash ? "API key not available - click Regenerate above" : `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | sh`}
+									value={isApiKeyHash ? "API key not available - click Regenerate above" : `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`}
 									readOnly
 									disabled={isApiKeyHash}
 									className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-primary-300 dark:border-primary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
@@ -2992,7 +2989,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 									type="button"
 									onClick={() =>
 										copyToClipboard(
-											`curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | sh`,
+											`curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`,
 										)
 									}
 									disabled={isApiKeyHash}
