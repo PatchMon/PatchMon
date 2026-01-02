@@ -398,12 +398,17 @@ export const AuthProvider = ({ children }) => {
 
 	const acceptReleaseNotes = async (version) => {
 		try {
+			const headers = {
+				"Content-Type": "application/json",
+			};
+			// Only add Authorization header if token exists (not OIDC)
+			if (token) {
+				headers.Authorization = `Bearer ${token}`;
+			}
 			const response = await fetch("/api/v1/release-notes-acceptance/accept", {
 				method: "POST",
-				headers: {
-					Authorization: `Bearer ${token}`,
-					"Content-Type": "application/json",
-				},
+				headers,
+				credentials: "include", // Include cookies for OIDC users
 				body: JSON.stringify({ version }),
 			});
 
