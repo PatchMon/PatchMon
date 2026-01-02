@@ -49,6 +49,22 @@ PatchMon provides centralized patch management across diverse server environment
 - Rate limiting for general, auth, and agent endpoints
 - Outbound‑only agent model reduces attack surface
 
+### Security Compliance
+- **OpenSCAP** - CIS Benchmarks for Linux hosts (Ubuntu, Debian, RHEL, CentOS, Rocky)
+- **Docker Bench for Security** - CIS Docker Benchmark for container security
+- Automated scheduled scans (configurable interval)
+- On-demand scan triggering from dashboard
+- Compliance score tracking over time
+- Detailed rule-level results with remediation guidance
+- Dashboard with fleet-wide compliance overview
+
+See [Security Compliance Installation Guide](docs/security-compliance/INSTALLATION.md) for setup instructions.
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `COMPLIANCE_SCAN_INTERVAL` | `86400` | Seconds between scheduled scans |
+| `COMPLIANCE_ENABLED` | `true` | Enable/disable compliance feature |
+
 ### Deployment & Operations
 - Docker installation & One‑line self‑host installer (Ubuntu/Debian)
 - systemd service for backend lifecycle
