@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { complianceAPI } from "../../utils/complianceApi";
 import ComplianceScore from "./ComplianceScore";
+import ComplianceTrend from "./ComplianceTrend";
 
 const ComplianceTab = ({ hostId, isConnected }) => {
 	const [expandedRules, setExpandedRules] = useState({});
@@ -140,6 +141,9 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 					</p>
 				</div>
 			)}
+
+			{/* Compliance Trend Chart */}
+			<ComplianceTrend hostId={hostId} />
 
 			{/* Results Filter */}
 			{latestScan?.results && (

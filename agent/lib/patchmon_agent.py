@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Optional
 
 from lib.compliance.openscap import OpenSCAPScanner, get_system_info
+from lib.compliance.docker_bench import DockerBenchScanner
 
 logger = logging.getLogger(__name__)
 
@@ -101,9 +102,8 @@ class PatchMonAgent:
             if profile_type in ["openscap", "all"]:
                 await self.run_openscap_compliance(profile_name)
 
-            # Docker Bench would be handled here when implemented
-            # if profile_type in ["docker-bench", "all"]:
-            #     await self.run_docker_bench_compliance()
+            if profile_type in ["docker-bench", "all"]:
+                await self.run_docker_bench_compliance()
 
         elif msg_type == "ping":
             if self.ws and not self.ws.closed:
@@ -133,6 +133,28 @@ class PatchMonAgent:
 
         except Exception as e:
             logger.error(f"Error running OpenSCAP scan: {e}")
+
+    async def run_docker_bench_compliance(self):
+        """Run Docker Bench scan and submit results."""
+        try:
+            scanner = DockerBenchScanner()
+
+            if not scanner.is_available():
+                logger.warning("Docker not available, skipping Docker Bench scan")
+                return
+
+            logger.info("Starting Docker Bench for Security scan...")
+            result = scanner.run_scan()
+
+            if result["status"] == "completed":
+                # Submit results to server
+                await self.submit_compliance_results(result)
+                logger.info(f"Docker Bench scan completed: {len(result['results'])} checks")
+            else:
+                logger.error(f"Docker Bench scan failed: {result.get('error')}")
+
+        except Exception as e:
+            logger.error(f"Error running Docker Bench scan: {e}")
 
     async def submit_compliance_results(self, result: dict):
         """Submit compliance scan results to the server."""
@@ -172,11 +194,11 @@ class PatchMonAgent:
                     logger.info("Running scheduled OpenSCAP scan...")
                     await self.run_openscap_compliance()
 
-                # Docker Bench would be scheduled here when implemented
-                # docker_scanner = DockerBenchScanner()
-                # if docker_scanner.is_available():
-                #     logger.info("Running scheduled Docker Bench scan...")
-                #     await self.run_docker_bench_compliance()
+                # Run Docker Bench if Docker is available
+                docker_scanner = DockerBenchScanner()
+                if docker_scanner.is_available():
+                    logger.info("Running scheduled Docker Bench scan...")
+                    await self.run_docker_bench_compliance()
 
             except asyncio.CancelledError:
                 break
@@ -232,6 +254,10 @@ async def main():
         logger.info(f"OS: {info['os_info']['name']} {info['os_info']['version']}")
     if info['available_profiles']:
         logger.info(f"Available profiles: {[p['name'] for p in info['available_profiles']]}")
+
+    # Log Docker Bench availability
+    docker_scanner = DockerBenchScanner()
+    logger.info(f"Docker Bench available: {docker_scanner.is_available()}")
 
     agent = PatchMonAgent(PATCHMON_SERVER, API_ID, API_KEY)
     await agent.start()

@@ -406,21 +406,17 @@ router.post("/trigger/:hostId", async (req, res) => {
       return res.status(404).json({ error: "Host not found" });
     }
 
-    // Import agentWs to send WebSocket message
+    // Use agentWs service to send compliance scan trigger
     const agentWs = require("../services/agentWs");
 
     if (!agentWs.isConnected(host.api_id)) {
       return res.status(400).json({ error: "Host is not connected" });
     }
 
-    // Send compliance scan trigger via WebSocket
-    const ws = agentWs.getConnectionByApiId(host.api_id);
-    if (ws && ws.readyState === 1) { // WebSocket.OPEN
-      ws.send(JSON.stringify({
-        type: "compliance_scan",
-        profile_type,
-      }));
+    // Use the dedicated pushComplianceScan function
+    const success = agentWs.pushComplianceScan(host.api_id, profile_type);
 
+    if (success) {
       res.json({
         message: "Compliance scan triggered",
         host_id: hostId,
