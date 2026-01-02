@@ -2,11 +2,37 @@ const express = require("express");
 const { getPrismaClient } = require("../config/prisma");
 const speakeasy = require("speakeasy");
 const QRCode = require("qrcode");
+const bcrypt = require("bcryptjs");
 const { authenticateToken } = require("../middleware/auth");
 const { body, validationResult } = require("express-validator");
 
 const router = express.Router();
 const prisma = getPrismaClient();
+
+/**
+ * Hash backup codes for secure storage
+ * @param {string[]} codes - Plain text backup codes
+ * @returns {Promise<string[]>} - Hashed backup codes
+ */
+async function hashBackupCodes(codes) {
+	return Promise.all(codes.map((code) => bcrypt.hash(code, 10)));
+}
+
+/**
+ * Verify a backup code against stored hashes
+ * @param {string} code - Plain text code to verify
+ * @param {string[]} hashedCodes - Array of hashed codes
+ * @returns {Promise<{valid: boolean, index: number}>} - Whether valid and which index matched
+ */
+async function verifyBackupCode(code, hashedCodes) {
+	for (let i = 0; i < hashedCodes.length; i++) {
+		const match = await bcrypt.compare(code, hashedCodes[i]);
+		if (match) {
+			return { valid: true, index: i };
+		}
+	}
+	return { valid: false, index: -1 };
+}
 
 // Generate TFA secret and QR code
 router.get("/setup", authenticateToken, async (req, res) => {
@@ -121,15 +147,19 @@ router.post(
 				Math.random().toString(36).substring(2, 8).toUpperCase(),
 			);
 
-			// Enable TFA and store backup codes
+			// Hash backup codes for secure storage
+			const hashedBackupCodes = await hashBackupCodes(backupCodes);
+
+			// Enable TFA and store hashed backup codes
 			await prisma.users.update({
 				where: { id: userId },
 				data: {
 					tfa_enabled: true,
-					tfa_backup_codes: JSON.stringify(backupCodes),
+					tfa_backup_codes: JSON.stringify(hashedBackupCodes),
 				},
 			});
 
+			// Return plain text codes to user (only time they'll see them)
 			res.json({
 				message: "Two-factor authentication has been enabled successfully",
 				backupCodes: backupCodes,
@@ -245,14 +275,18 @@ router.post("/regenerate-backup-codes", authenticateToken, async (req, res) => {
 			Math.random().toString(36).substring(2, 8).toUpperCase(),
 		);
 
-		// Update backup codes
+		// Hash backup codes for secure storage
+		const hashedBackupCodes = await hashBackupCodes(backupCodes);
+
+		// Update with hashed backup codes
 		await prisma.users.update({
 			where: { id: userId },
 			data: {
-				tfa_backup_codes: JSON.stringify(backupCodes),
+				tfa_backup_codes: JSON.stringify(hashedBackupCodes),
 			},
 		});
 
+		// Return plain text codes to user (only time they'll see them)
 		res.json({
 			message: "Backup codes have been regenerated successfully",
 			backupCodes: backupCodes,
@@ -301,38 +335,43 @@ router.post(
 				});
 			}
 
-			// Check if it's a backup code
-			let backupCodes = [];
+			// Parse stored hashed backup codes
+			let hashedBackupCodes = [];
 			if (user.tfa_backup_codes) {
 				try {
-					backupCodes = JSON.parse(user.tfa_backup_codes);
+					hashedBackupCodes = JSON.parse(user.tfa_backup_codes);
 				} catch (parseError) {
 					console.error("Failed to parse TFA backup codes:", parseError.message);
-					backupCodes = [];
+					hashedBackupCodes = [];
 				}
 			}
-			const isBackupCode = backupCodes.includes(token);
 
 			let verified = false;
+			let usedBackupCode = false;
 
-			if (isBackupCode) {
-				// Remove the used backup code
-				const updatedBackupCodes = backupCodes.filter((code) => code !== token);
-				await prisma.users.update({
-					where: { id: user.id },
-					data: {
-						tfa_backup_codes: JSON.stringify(updatedBackupCodes),
-					},
-				});
-				verified = true;
-			} else {
-				// Verify TOTP token
-				verified = speakeasy.totp.verify({
-					secret: user.tfa_secret,
-					encoding: "base32",
-					token: token,
-					window: 2,
-				});
+			// First try to verify as a TOTP token
+			verified = speakeasy.totp.verify({
+				secret: user.tfa_secret,
+				encoding: "base32",
+				token: token,
+				window: 2,
+			});
+
+			// If TOTP fails, try backup codes
+			if (!verified && hashedBackupCodes.length > 0) {
+				const backupResult = await verifyBackupCode(token.toUpperCase(), hashedBackupCodes);
+				if (backupResult.valid) {
+					// Remove the used backup code
+					hashedBackupCodes.splice(backupResult.index, 1);
+					await prisma.users.update({
+						where: { id: user.id },
+						data: {
+							tfa_backup_codes: JSON.stringify(hashedBackupCodes),
+						},
+					});
+					verified = true;
+					usedBackupCode = true;
+				}
 			}
 
 			if (!verified) {

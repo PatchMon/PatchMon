@@ -1,5 +1,20 @@
 require("dotenv").config();
 
+// Global error handlers for unhandled rejections and exceptions
+process.on("unhandledRejection", (reason, promise) => {
+	console.error("Unhandled Rejection at:", promise);
+	console.error("Reason:", reason instanceof Error ? reason.message : reason);
+	// Don't exit - let the application continue but log the error
+});
+
+process.on("uncaughtException", (error) => {
+	console.error("Uncaught Exception:", error.message);
+	console.error("Stack:", error.stack);
+	// For uncaught exceptions, we should exit after logging
+	// Give time for logs to flush
+	setTimeout(() => process.exit(1), 1000);
+});
+
 // Validate required environment variables on startup
 function validateEnvironmentVariables() {
 	const requiredVars = {

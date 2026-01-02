@@ -25,6 +25,22 @@ const { AUDIT_EVENTS, logAuditEvent } = require("../utils/auditLogger");
 const router = express.Router();
 const prisma = getPrismaClient();
 
+/**
+ * Verify a backup code against stored hashes
+ * @param {string} code - Plain text code to verify
+ * @param {string[]} hashedCodes - Array of hashed codes
+ * @returns {Promise<{valid: boolean, index: number}>} - Whether valid and which index matched
+ */
+async function verifyBackupCode(code, hashedCodes) {
+	for (let i = 0; i < hashedCodes.length; i++) {
+		const match = await bcrypt.compare(code, hashedCodes[i]);
+		if (match) {
+			return { valid: true, index: i };
+		}
+	}
+	return { valid: false, index: -1 };
+}
+
 // Account lockout configuration
 const LOCKOUT_PREFIX = "login:lockout:";
 const FAILED_ATTEMPTS_PREFIX = "login:failed:";
@@ -1250,38 +1266,43 @@ router.post(
 			// Verify TFA token using the TFA routes logic
 			const speakeasy = require("speakeasy");
 
-			// Check if it's a backup code
-			let backupCodes = [];
+			// Parse stored hashed backup codes
+			let hashedBackupCodes = [];
 			if (user.tfa_backup_codes) {
 				try {
-					backupCodes = JSON.parse(user.tfa_backup_codes);
+					hashedBackupCodes = JSON.parse(user.tfa_backup_codes);
 				} catch (parseError) {
 					console.error("Failed to parse TFA backup codes:", parseError.message);
-					backupCodes = [];
+					hashedBackupCodes = [];
 				}
 			}
-			const isBackupCode = backupCodes.includes(token);
 
 			let verified = false;
+			let usedBackupCode = false;
 
-			if (isBackupCode) {
-				// Remove the used backup code
-				const updatedBackupCodes = backupCodes.filter((code) => code !== token);
-				await prisma.users.update({
-					where: { id: user.id },
-					data: {
-						tfa_backup_codes: JSON.stringify(updatedBackupCodes),
-					},
-				});
-				verified = true;
-			} else {
-				// Verify TOTP token
-				verified = speakeasy.totp.verify({
-					secret: user.tfa_secret,
-					encoding: "base32",
-					token: token,
-					window: 2,
-				});
+			// First try to verify as a TOTP token
+			verified = speakeasy.totp.verify({
+				secret: user.tfa_secret,
+				encoding: "base32",
+				token: token,
+				window: 2,
+			});
+
+			// If TOTP fails, try backup codes
+			if (!verified && hashedBackupCodes.length > 0) {
+				const backupResult = await verifyBackupCode(token.toUpperCase(), hashedBackupCodes);
+				if (backupResult.valid) {
+					// Remove the used backup code
+					hashedBackupCodes.splice(backupResult.index, 1);
+					await prisma.users.update({
+						where: { id: user.id },
+						data: {
+							tfa_backup_codes: JSON.stringify(hashedBackupCodes),
+						},
+					});
+					verified = true;
+					usedBackupCode = true;
+				}
 			}
 
 			if (!verified) {
