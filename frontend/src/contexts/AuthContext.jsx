@@ -89,37 +89,14 @@ export const AuthProvider = ({ children }) => {
 					return;
 				}
 			} catch (error) {
-				devLog("Cookie-based auth not available, checking localStorage");
+				devLog("Cookie-based auth failed:", error.message);
 			}
 
-			// Fall back to localStorage for backward compatibility
-			const storedToken = localStorage.getItem("token");
-			const storedUser = localStorage.getItem("user");
+			// Clean up any stale token from localStorage (security measure)
+			localStorage.removeItem("token");
 
-			if (storedToken && storedUser) {
-				try {
-					setToken(storedToken);
-					const parsedUser = JSON.parse(storedUser);
-					setUser({
-						...parsedUser,
-						accepted_release_notes_versions:
-							parsedUser.accepted_release_notes_versions || [],
-					});
-					// Fetch permissions from backend
-					fetchPermissions(storedToken);
-					// User is authenticated, skip setup check
-					setAuthPhase(AUTH_PHASES.READY);
-				} catch (error) {
-					console.error("Error parsing stored user data:", error);
-					localStorage.removeItem("token");
-					localStorage.removeItem("user");
-					// Move to setup check phase
-					setAuthPhase(AUTH_PHASES.CHECKING_SETUP);
-				}
-			} else {
-				// No stored auth, check if setup is needed
-				setAuthPhase(AUTH_PHASES.CHECKING_SETUP);
-			}
+			// No valid session, check if setup is needed
+			setAuthPhase(AUTH_PHASES.CHECKING_SETUP);
 		};
 
 		validateSession();
@@ -173,13 +150,13 @@ export const AuthProvider = ({ children }) => {
 						data.user.accepted_release_notes_versions || [],
 				});
 				// Store user info for session recovery (token stored in httpOnly cookie by server)
+				// Note: Token is NOT stored in localStorage to prevent XSS attacks
+				// The httpOnly cookie set by the server is used for authentication
 				localStorage.setItem("user", JSON.stringify({
 					...data.user,
 					accepted_release_notes_versions:
 						data.user.accepted_release_notes_versions || [],
 				}));
-				// Keep token in localStorage for backward compatibility with API clients
-				localStorage.setItem("token", data.token);
 
 				// Fetch user permissions after successful login
 				const userPermissions = await fetchPermissions(data.token);
@@ -532,13 +509,10 @@ export const AuthProvider = ({ children }) => {
 			}),
 		);
 
-		// Only store token if provided (OIDC uses httpOnly cookies, no token in JS)
-		if (authToken) {
-			localStorage.setItem("token", authToken);
-		} else {
-			// Remove stale token for cookie-based auth (OIDC)
-			localStorage.removeItem("token");
-		}
+		// Token is NOT stored in localStorage to prevent XSS attacks
+		// All auth now uses httpOnly cookies set by the server
+		// Remove any stale token from localStorage
+		localStorage.removeItem("token");
 
 		// Fetch permissions - works with cookies if token is null
 		fetchPermissions(authToken);

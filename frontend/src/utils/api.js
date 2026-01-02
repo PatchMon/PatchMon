@@ -3,22 +3,21 @@ import axios from "axios";
 const API_BASE_URL = import.meta.env.VITE_API_URL || "/api/v1";
 
 // Create axios instance with default config
+// Uses httpOnly cookies for authentication (credentials: include)
 const api = axios.create({
 	baseURL: API_BASE_URL,
 	timeout: 10000, // 10 seconds
 	headers: {
 		"Content-Type": "application/json",
 	},
+	withCredentials: true, // Send cookies with requests for httpOnly token auth
 });
 
 // Request interceptor
 api.interceptors.request.use(
 	(config) => {
-		// Add auth token if available
-		const token = localStorage.getItem("token");
-		if (token) {
-			config.headers.Authorization = `Bearer ${token}`;
-		}
+		// Authentication is handled via httpOnly cookies (withCredentials: true)
+		// No need to add Authorization header - server reads from cookies
 
 		// Add device ID for TFA remember-me functionality
 		// This uniquely identifies the browser profile (normal vs incognito)
@@ -60,8 +59,8 @@ api.interceptors.response.use(
 			const isTfaError = error.config?.url?.includes("/verify-tfa");
 
 			if (currentPath !== "/login" && !isTfaError) {
-				// Handle unauthorized
-				localStorage.removeItem("token");
+				// Handle unauthorized - clear user state and redirect
+				// Note: Token is in httpOnly cookie (server clears on logout)
 				localStorage.removeItem("user");
 				window.location.href = "/login";
 			}

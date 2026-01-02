@@ -78,61 +78,38 @@ const HostDetail = () => {
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
 
-	// WebSocket connection status using Server-Sent Events (SSE) for real-time push updates
+	// WebSocket connection status using polling (secure - uses httpOnly cookies)
 	const [wsStatus, setWsStatus] = useState(null);
 
 	useEffect(() => {
 		if (!host?.api_id) return;
 
-		const token = localStorage.getItem("token");
-		if (!token) return;
-
-		let eventSource = null;
-		let reconnectTimeout = null;
 		let isMounted = true;
 
-		const connect = () => {
-			if (!isMounted) return;
-
+		// Fetch initial status
+		const fetchStatus = async () => {
 			try {
-				// Create EventSource for SSE connection
-				eventSource = new EventSource(
-					`/api/v1/ws/status/${host.api_id}/stream?token=${encodeURIComponent(token)}`,
-				);
-
-				eventSource.onmessage = (event) => {
-					try {
-						const data = JSON.parse(event.data);
-						setWsStatus(data);
-					} catch (_err) {
-						// Silently handle parse errors
-					}
-				};
-
-				eventSource.onerror = (_error) => {
-					console.log(`[SSE] Connection error for ${host.api_id}, retrying...`);
-					eventSource?.close();
-
-					// Automatic reconnection after 5 seconds
-					if (isMounted) {
-						reconnectTimeout = setTimeout(connect, 5000);
-					}
-				};
+				const response = await fetch(`/api/v1/ws/status/${host.api_id}`, {
+					credentials: "include",
+				});
+				if (response.ok && isMounted) {
+					const result = await response.json();
+					setWsStatus(result.data);
+				}
 			} catch (_err) {
-				// Silently handle connection errors
+				// Silently handle errors
 			}
 		};
 
-		// Initial connection
-		connect();
+		fetchStatus();
+
+		// Poll every 5 seconds for status updates
+		const pollInterval = setInterval(fetchStatus, 5000);
 
 		// Cleanup on unmount or when api_id changes
 		return () => {
 			isMounted = false;
-			if (reconnectTimeout) clearTimeout(reconnectTimeout);
-			if (eventSource) {
-				eventSource.close();
-			}
+			clearInterval(pollInterval);
 		};
 	}, [host?.api_id]);
 

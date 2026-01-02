@@ -1204,9 +1204,7 @@ const SessionsTab = () => {
 		queryKey: ["user-sessions"],
 		queryFn: async () => {
 			const response = await fetch("/api/v1/auth/sessions", {
-				headers: {
-					Authorization: `Bearer ${localStorage.getItem("token")}`,
-				},
+				credentials: "include",
 			});
 			if (!response.ok) throw new Error("Failed to fetch sessions");
 			return response.json();
@@ -1218,9 +1216,7 @@ const SessionsTab = () => {
 		mutationFn: async (sessionId) => {
 			const response = await fetch(`/api/v1/auth/sessions/${sessionId}`, {
 				method: "DELETE",
-				headers: {
-					Authorization: `Bearer ${localStorage.getItem("token")}`,
-				},
+				credentials: "include",
 			});
 			if (!response.ok) throw new Error("Failed to revoke session");
 			return response.json();
@@ -1239,9 +1235,7 @@ const SessionsTab = () => {
 		mutationFn: async () => {
 			const response = await fetch("/api/v1/auth/sessions", {
 				method: "DELETE",
-				headers: {
-					Authorization: `Bearer ${localStorage.getItem("token")}`,
-				},
+				credentials: "include",
 			});
 			if (!response.ok) throw new Error("Failed to revoke sessions");
 			return response.json();

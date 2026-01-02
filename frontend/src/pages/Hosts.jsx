@@ -495,10 +495,6 @@ const Hosts = () => {
 	useEffect(() => {
 		if (!hosts || hosts.length === 0) return;
 
-		const token = localStorage.getItem("token");
-		if (!token) return;
-
-		// Fetch initial WebSocket status for all hosts
 		// Fetch initial WebSocket status for all hosts
 		const fetchInitialStatus = async () => {
 			const apiIds = hosts
@@ -511,9 +507,7 @@ const Hosts = () => {
 				const response = await fetch(
 					`/api/v1/ws/status?apiIds=${apiIds.join(",")}`,
 					{
-						headers: {
-							Authorization: `Bearer ${token}`,
-						},
+						credentials: "include",
 					},
 				);
 				if (response.ok) {
@@ -532,9 +526,6 @@ const Hosts = () => {
 	useEffect(() => {
 		if (!hosts || hosts.length === 0) return;
 
-		const token = localStorage.getItem("token");
-		if (!token) return;
-
 		// Use polling instead of SSE to avoid connection pool issues
 		// Poll every 10 seconds instead of 19 persistent connections
 		const pollInterval = setInterval(() => {
@@ -545,9 +536,7 @@ const Hosts = () => {
 			if (apiIds.length === 0) return;
 
 			fetch(`/api/v1/ws/status?apiIds=${apiIds.join(",")}`, {
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
+				credentials: "include",
 			})
 				.then((response) => response.json())
 				.then((result) => {

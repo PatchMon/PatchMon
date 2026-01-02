@@ -103,9 +103,7 @@ const Layout = ({ children }) => {
 
 		// Check if release notes exist for this version
 		fetch(`/api/v1/release-notes/${currentVersion}`, {
-			headers: {
-				Authorization: `Bearer ${localStorage.getItem("token")}`,
-			},
+			credentials: "include",
 		})
 			.then((res) => res.json())
 			.then((data) => {

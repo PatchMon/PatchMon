@@ -13,8 +13,10 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import api from "../utils/api";
+import { useAuth } from "../contexts/AuthContext";
 
 const Automation = () => {
+	const { token } = useAuth();
 	const [activeTab, setActiveTab] = useState("overview");
 	const [sortField, setSortField] = useState("nextRunTimestamp");
 	const [sortDirection, setSortDirection] = useState("asc");
@@ -271,7 +273,9 @@ const Automation = () => {
 	};
 
 	const openBullBoard = () => {
-		const token = localStorage.getItem("token");
+		// Token is from useAuth context (session state, not localStorage)
+		// This is passed to Bull Board for initial authentication
+		// After that, Bull Board uses its own httpOnly cookie
 		if (!token) {
 			alert("Please log in to access the Queue Monitor");
 			return;
@@ -281,32 +285,7 @@ const Automation = () => {
 		// This avoids CORS issues as everything goes through the same origin
 		const url = `/bullboard?token=${encodeURIComponent(token)}`;
 		// Open in a new tab instead of a new window
-		const bullBoardWindow = window.open(url, "_blank");
-
-		// Add a message listener to handle authentication failures
-		if (bullBoardWindow) {
-			// Listen for authentication failures and refresh with token
-			const checkAuth = () => {
-				try {
-					// Check if the Bull Board window is still open
-					if (bullBoardWindow.closed) return;
-
-					// Inject a script to handle authentication failures
-					bullBoardWindow.postMessage(
-						{
-							type: "BULL_BOARD_TOKEN",
-							token: token,
-						},
-						window.location.origin,
-					);
-				} catch (e) {
-					console.log("Could not communicate with Bull Board window:", e);
-				}
-			};
-
-			// Send token after a short delay to ensure Bull Board is loaded
-			setTimeout(checkAuth, 1000);
-		}
+		window.open(url, "_blank");
 	};
 
 	const triggerManualJob = async (jobType, data = {}) => {
