@@ -290,6 +290,7 @@ const { init: initAgentWs } = require("./services/agentWs");
 const agentVersionService = require("./services/agentVersionService");
 
 // Trust proxy (needed when behind reverse proxy) and remove X-Powered-By
+// SECURITY: Only trust proxy when explicitly configured to prevent IP spoofing
 if (process.env.TRUST_PROXY) {
 	const trustProxyValue = process.env.TRUST_PROXY;
 
@@ -312,7 +313,14 @@ if (process.env.TRUST_PROXY) {
 		);
 	}
 } else {
-	app.set("trust proxy", 1);
+	// SECURITY: Don't trust proxy by default to prevent IP spoofing via X-Forwarded-For
+	// Set TRUST_PROXY environment variable if running behind a reverse proxy
+	app.set("trust proxy", false);
+	if (process.env.NODE_ENV === "production") {
+		console.warn(
+			"⚠️  TRUST_PROXY not configured. If behind a reverse proxy, set TRUST_PROXY=1 or appropriate value.",
+		);
+	}
 }
 app.disable("x-powered-by");
 

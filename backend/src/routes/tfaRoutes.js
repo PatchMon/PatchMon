@@ -189,7 +189,7 @@ router.post(
 				return res.status(400).json({ errors: errors.array() });
 			}
 
-			const { password: _password } = req.body;
+			const { password } = req.body;
 			const userId = req.user.id;
 
 			// Verify password
@@ -204,8 +204,19 @@ router.post(
 				});
 			}
 
-			// FIXME: In a real implementation, you would verify the password hash here
-			// For now, we'll skip password verification for simplicity
+			// Verify password before allowing TFA disable
+			if (!user.password_hash) {
+				return res.status(400).json({
+					error: "Cannot disable TFA for accounts without a password (e.g., OIDC-only accounts)",
+				});
+			}
+
+			const isValidPassword = await bcrypt.compare(password, user.password_hash);
+			if (!isValidPassword) {
+				return res.status(401).json({
+					error: "Invalid password",
+				});
+			}
 
 			// Disable TFA
 			await prisma.users.update({

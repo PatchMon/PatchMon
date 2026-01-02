@@ -302,18 +302,19 @@ function get_location_from_ip(ip) {
 }
 
 // Check if any admin users exist (for first-time setup)
+// Note: Only returns boolean, not count (to prevent information disclosure)
 router.get("/check-admin-users", async (_req, res) => {
 	try {
 		const adminCount = await prisma.users.count({
 			where: { role: "admin" },
 		});
 
+		// Only return boolean - don't expose exact count for security
 		res.json({
 			hasAdminUsers: adminCount > 0,
-			adminCount: adminCount,
 		});
 	} catch (error) {
-		console.error("Error checking admin users:", error);
+		console.error("Error checking admin users:", error.message);
 		res.status(500).json({
 			error: "Failed to check admin users",
 			hasAdminUsers: true, // Assume admin exists for security

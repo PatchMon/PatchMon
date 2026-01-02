@@ -45,7 +45,8 @@ const authenticateApiToken = (integrationType) => {
 			});
 
 			if (!token) {
-				console.log(`API key not found: ${apiKey}`);
+				// Don't log the actual API key for security
+				console.log("API key authentication failed: key not found");
 				return res.status(401).json({ error: "Invalid API key" });
 			}
 
