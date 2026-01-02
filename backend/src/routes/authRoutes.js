@@ -1447,8 +1447,21 @@ router.post(
 // Get current user profile
 router.get("/profile", authenticateToken, async (req, res) => {
 	try {
+		// Fetch accepted release notes versions for this user
+		let acceptedVersions = [];
+		if (prisma.release_notes_acceptances) {
+			const acceptances = await prisma.release_notes_acceptances.findMany({
+				where: { user_id: req.user.id },
+				select: { version: true },
+			});
+			acceptedVersions = acceptances.map((a) => a.version);
+		}
+
 		res.json({
-			user: req.user,
+			user: {
+				...req.user,
+				accepted_release_notes_versions: acceptedVersions,
+			},
 		});
 	} catch (error) {
 		console.error("Get profile error:", error);
