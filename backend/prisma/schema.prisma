@@ -498,20 +498,22 @@ model compliance_profiles {
 }
 
 model compliance_scans {
-  id           String    @id @default(uuid())
-  host_id      String
-  profile_id   String
-  started_at   DateTime
-  completed_at DateTime?
-  status       String // "running", "completed", "failed"
-  total_rules  Int       @default(0)
-  passed       Int       @default(0)
-  failed       Int       @default(0)
-  warnings     Int       @default(0)
-  skipped      Int       @default(0)
-  score        Float? // Percentage 0-100
-  raw_output   String?   @db.Text
-  created_at   DateTime  @default(now())
+  id            String    @id @default(uuid())
+  host_id       String
+  profile_id    String
+  started_at    DateTime
+  completed_at  DateTime?
+  status        String // "running", "completed", "failed"
+  total_rules   Int       @default(0)
+  passed        Int       @default(0)
+  failed        Int       @default(0)
+  warnings      Int       @default(0)
+  skipped       Int       @default(0)
+  score         Float? // Percentage 0-100
+  error_message String?   @db.Text // Error details when status is "failed"
+  raw_output    String?   @db.Text
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
 
   hosts               hosts                @relation(fields: [host_id], references: [id], onDelete: Cascade)
   compliance_profiles compliance_profiles  @relation(fields: [profile_id], references: [id], onDelete: Cascade)
@@ -521,6 +523,7 @@ model compliance_scans {
   @@index([profile_id])
   @@index([status])
   @@index([started_at])
+  @@index([completed_at])
   @@index([host_id, started_at])
   @@index([host_id, profile_id])
 }
@@ -559,6 +562,7 @@ model compliance_results {
   compliance_scans compliance_scans @relation(fields: [scan_id], references: [id], onDelete: Cascade)
   compliance_rules compliance_rules @relation(fields: [rule_id], references: [id], onDelete: Cascade)
 
+  @@unique([scan_id, rule_id]) // Prevent duplicate results for same rule in a scan
   @@index([scan_id])
   @@index([rule_id])
   @@index([status])

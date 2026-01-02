@@ -2,11 +2,29 @@ const express = require("express");
 const router = express.Router();
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateToken } = require("../middleware/auth");
-const { v4: uuidv4 } = require("uuid");
+const { v4: uuidv4, validate: uuidValidate } = require("uuid");
 const bcrypt = require("bcryptjs");
 const crypto = require("node:crypto");
 
 const prisma = getPrismaClient();
+
+// ==========================================
+// Input Validation Helpers
+// ==========================================
+
+const VALID_RESULT_STATUSES = ["pass", "fail", "warn", "skip", "notapplicable", "error"];
+const VALID_SEVERITIES = ["low", "medium", "high", "critical"];
+const VALID_PROFILE_TYPES = ["openscap", "docker-bench", "all"];
+
+function isValidUUID(id) {
+  return id && uuidValidate(id);
+}
+
+function sanitizeInt(value, defaultVal, min = 1, max = 1000) {
+  const parsed = parseInt(value, 10);
+  if (isNaN(parsed)) return defaultVal;
+  return Math.min(Math.max(parsed, min), max);
+}
 
 /**
  * Verify API key against stored hash or plaintext (legacy support)
@@ -289,13 +307,21 @@ router.get("/dashboard", async (req, res) => {
 router.get("/scans/:hostId", async (req, res) => {
   try {
     const { hostId } = req.params;
-    const { limit = 20, offset = 0 } = req.query;
+
+    // Validate hostId
+    if (!isValidUUID(hostId)) {
+      return res.status(400).json({ error: "Invalid host ID format" });
+    }
+
+    // Sanitize pagination params
+    const limit = sanitizeInt(req.query.limit, 20, 1, 100);
+    const offset = sanitizeInt(req.query.offset, 0, 0, 10000);
 
     const scans = await prisma.compliance_scans.findMany({
       where: { host_id: hostId },
       orderBy: { completed_at: "desc" },
-      take: parseInt(limit),
-      skip: parseInt(offset),
+      take: limit,
+      skip: offset,
       include: {
         compliance_profiles: { select: { name: true, type: true } },
         _count: { select: { compliance_results: true } },
@@ -310,8 +336,8 @@ router.get("/scans/:hostId", async (req, res) => {
       scans,
       pagination: {
         total,
-        limit: parseInt(limit),
-        offset: parseInt(offset),
+        limit,
+        offset,
       },
     });
   } catch (error) {
@@ -327,6 +353,11 @@ router.get("/scans/:hostId", async (req, res) => {
 router.get("/scans/:hostId/latest", async (req, res) => {
   try {
     const { hostId } = req.params;
+
+    // Validate hostId
+    if (!isValidUUID(hostId)) {
+      return res.status(400).json({ error: "Invalid host ID format" });
+    }
 
     const scan = await prisma.compliance_scans.findFirst({
       where: { host_id: hostId, status: "completed" },
@@ -364,6 +395,21 @@ router.get("/results/:scanId", async (req, res) => {
     const { scanId } = req.params;
     const { status, severity } = req.query;
 
+    // Validate scanId
+    if (!isValidUUID(scanId)) {
+      return res.status(400).json({ error: "Invalid scan ID format" });
+    }
+
+    // Validate status filter if provided
+    if (status && !VALID_RESULT_STATUSES.includes(status)) {
+      return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_RESULT_STATUSES.join(", ")}` });
+    }
+
+    // Validate severity filter if provided
+    if (severity && !VALID_SEVERITIES.includes(severity)) {
+      return res.status(400).json({ error: `Invalid severity. Must be one of: ${VALID_SEVERITIES.join(", ")}` });
+    }
+
     const where = { scan_id: scanId };
     if (status) where.status = status;
 
@@ -396,7 +442,17 @@ router.get("/results/:scanId", async (req, res) => {
 router.post("/trigger/:hostId", async (req, res) => {
   try {
     const { hostId } = req.params;
-    const { profile_type = "all" } = req.body; // "openscap", "docker-bench", or "all"
+    const { profile_type = "all" } = req.body;
+
+    // Validate hostId
+    if (!isValidUUID(hostId)) {
+      return res.status(400).json({ error: "Invalid host ID format" });
+    }
+
+    // Validate profile_type
+    if (!VALID_PROFILE_TYPES.includes(profile_type)) {
+      return res.status(400).json({ error: `Invalid profile_type. Must be one of: ${VALID_PROFILE_TYPES.join(", ")}` });
+    }
 
     const host = await prisma.hosts.findUnique({
       where: { id: hostId },
@@ -438,10 +494,17 @@ router.post("/trigger/:hostId", async (req, res) => {
 router.get("/trends/:hostId", async (req, res) => {
   try {
     const { hostId } = req.params;
-    const { days = 30 } = req.query;
+
+    // Validate hostId
+    if (!isValidUUID(hostId)) {
+      return res.status(400).json({ error: "Invalid host ID format" });
+    }
+
+    // Sanitize days param (1-365)
+    const days = sanitizeInt(req.query.days, 30, 1, 365);
 
     const since = new Date();
-    since.setDate(since.getDate() - parseInt(days));
+    since.setDate(since.getDate() - days);
 
     const scans = await prisma.compliance_scans.findMany({
       where: {

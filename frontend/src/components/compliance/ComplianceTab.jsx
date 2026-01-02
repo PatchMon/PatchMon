@@ -18,6 +18,7 @@ import ComplianceTrend from "./ComplianceTrend";
 const ComplianceTab = ({ hostId, isConnected }) => {
 	const [expandedRules, setExpandedRules] = useState({});
 	const [statusFilter, setStatusFilter] = useState("all");
+	const [scanMessage, setScanMessage] = useState(null);
 	const queryClient = useQueryClient();
 
 	const { data: latestScan, isLoading } = useQuery({
@@ -37,6 +38,13 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 		onSuccess: () => {
 			queryClient.invalidateQueries(["compliance-latest", hostId]);
 			queryClient.invalidateQueries(["compliance-history", hostId]);
+			setScanMessage({ type: "success", text: "Compliance scan triggered successfully" });
+			setTimeout(() => setScanMessage(null), 5000);
+		},
+		onError: (error) => {
+			const errorMsg = error.response?.data?.error || error.message || "Failed to trigger scan";
+			setScanMessage({ type: "error", text: errorMsg });
+			setTimeout(() => setScanMessage(null), 5000);
 		},
 	});
 
@@ -93,6 +101,17 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 					Run Scan
 				</button>
 			</div>
+
+			{/* Scan Message */}
+			{scanMessage && (
+				<div className={`p-3 rounded-lg ${
+					scanMessage.type === "success"
+						? "bg-green-900/50 border border-green-700 text-green-200"
+						: "bg-red-900/50 border border-red-700 text-red-200"
+				}`}>
+					{scanMessage.text}
+				</div>
+			)}
 
 			{/* Latest Scan Summary */}
 			{latestScan ? (
