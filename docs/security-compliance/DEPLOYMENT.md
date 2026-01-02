@@ -2,7 +2,7 @@
 
 ## Overview
 
-The compliance scanning feature uses a **Python-based agent** that runs alongside the existing PatchMon Go agent. This agent handles CIS benchmark scanning using OpenSCAP and Docker Bench for Security.
+The compliance scanning feature is **integrated into the PatchMon Go agent**. When you install or update the PatchMon agent from the PatchMonEnhanced-agent repository, compliance scanning is automatically included.
 
 ## Architecture
 
@@ -11,184 +11,137 @@ The compliance scanning feature uses a **Python-based agent** that runs alongsid
 │                       Host System                            │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│  ┌─────────────────────┐    ┌─────────────────────────────┐ │
-│  │   PatchMon Go Agent │    │  Compliance Python Agent    │ │
-│  │   (existing)        │    │  (new)                      │ │
-│  │                     │    │                             │ │
-│  │  - Host info        │    │  - OpenSCAP scanning        │ │
-│  │  - Package updates  │    │  - Docker Bench scanning    │ │
-│  │  - System metrics   │    │  - Scheduled scans          │ │
-│  │                     │    │  - On-demand via WebSocket  │ │
-│  └──────────┬──────────┘    └──────────────┬──────────────┘ │
-│             │                              │                 │
-│             │         WebSocket            │                 │
-│             └──────────────┬───────────────┘                 │
-│                            │                                 │
-└────────────────────────────┼─────────────────────────────────┘
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │  PatchMon       │
-                    │  Server         │
-                    └─────────────────┘
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │              PatchMon Enhanced Agent                     │ │
+│  │              (single Go binary)                          │ │
+│  │                                                          │ │
+│  │  Core Features:           Compliance Integration:        │ │
+│  │  - Host info              - OpenSCAP CIS scanning        │ │
+│  │  - Package updates        - Docker Bench scanning        │ │
+│  │  - System metrics         - Automatic profile detection  │ │
+│  │  - Docker integration     - Score calculation            │ │
+│  │                                                          │ │
+│  └──────────────────────────┬───────────────────────────────┘ │
+│                             │                                 │
+│                             │ HTTPS API                       │
+│                             │                                 │
+└─────────────────────────────┼─────────────────────────────────┘
+                              │
+                              ▼
+                     ┌─────────────────┐
+                     │  PatchMon       │
+                     │  Enhanced       │
+                     │  Server         │
+                     └─────────────────┘
 ```
 
 ## Prerequisites
 
 ### Required on Host
 
-1. **Python 3.8+**
-   ```bash
-   python3 --version
-   ```
-
-2. **OpenSCAP** (for host compliance scanning)
+1. **OpenSCAP** (for host compliance scanning)
    ```bash
    # Ubuntu/Debian
    sudo apt-get install -y openscap-scanner scap-security-guide
 
-   # RHEL/CentOS/Rocky
+   # RHEL/CentOS/Rocky/Alma
    sudo dnf install -y openscap-scanner scap-security-guide
    ```
 
-3. **Docker** (for Docker Bench scanning - optional)
+2. **Docker** (for Docker Bench scanning - optional)
    ```bash
    docker --version
    ```
 
-4. **Python Dependencies**
-   ```bash
-   pip3 install aiohttp
-   ```
-
 ## Installation
 
-### 1. Copy Agent Files
+### Option 1: Download Pre-built Binary
 
-Copy the compliance agent to the host:
-
-```bash
-# From your PatchMon-Enhanced repo
-scp -r agent/ user@host:/opt/patchmon-compliance/
-```
-
-Or clone directly:
+Download the latest release from:
+https://github.com/MacJediWizard/PatchMonEnhanced-agent/releases
 
 ```bash
-cd /opt
-git clone https://github.com/MacJediWizard/PatchMon-Enhanced.git
-ln -s /opt/PatchMon-Enhanced/agent /opt/patchmon-compliance
+# Download for your architecture
+curl -L https://github.com/MacJediWizard/PatchMonEnhanced-agent/releases/latest/download/patchmon-agent-linux-amd64 -o patchmon-agent
+chmod +x patchmon-agent
+sudo mv patchmon-agent /usr/local/bin/
 ```
 
-### 2. Configure Credentials
+### Option 2: Build from Source
 
-Create credentials file:
+Requires Go 1.21+:
 
 ```bash
-sudo mkdir -p /etc/patchmon
-sudo nano /etc/patchmon/credentials
+git clone https://github.com/MacJediWizard/PatchMonEnhanced-agent.git
+cd PatchMonEnhanced-agent
+make deps
+make build
+sudo make install
 ```
 
-Add credentials (same as Go agent):
-
-```
-PATCHMON_SERVER=https://your-patchmon-server.com
-API_ID=your-host-api-id
-API_KEY=your-host-api-key
-```
-
-Set permissions:
+### Configure Credentials
 
 ```bash
-sudo chmod 600 /etc/patchmon/credentials
+sudo patchmon-agent config set-api \
+  --api-id your-host-api-id \
+  --api-key your-host-api-key \
+  --server https://your-patchmon-server.com
 ```
 
-### 3. Create Systemd Service
-
-Create `/etc/systemd/system/patchmon-compliance.service`:
-
-```ini
-[Unit]
-Description=PatchMon Compliance Scanner
-After=network.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/patchmon-compliance
-ExecStart=/usr/bin/python3 -m lib.patchmon_agent
-Restart=always
-RestartSec=30
-Environment="PYTHONPATH=/opt/patchmon-compliance"
-
-# Optional: Override default settings
-# Environment="COMPLIANCE_SCAN_INTERVAL=86400"
-# Environment="COMPLIANCE_ENABLED=true"
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### 4. Enable and Start Service
+### Test Connection
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable patchmon-compliance
-sudo systemctl start patchmon-compliance
+sudo patchmon-agent ping
 ```
 
-### 5. Verify Installation
-
-Check service status:
+### Run Initial Report (includes compliance scan)
 
 ```bash
-sudo systemctl status patchmon-compliance
+sudo patchmon-agent report
 ```
 
-Check logs:
+## Enabling Compliance Integration
 
-```bash
-sudo journalctl -u patchmon-compliance -f
+Compliance scanning is enabled by default. To configure it, edit `/etc/patchmon/config.yml`:
+
+```yaml
+integrations:
+  docker: true
+  compliance: true  # Enable compliance scanning
 ```
 
-Expected startup logs:
+## Supported Compliance Profiles
 
-```
-Starting PatchMon agent, connecting to https://your-server.com
-OpenSCAP available: True
-OS: ubuntu 22
-Available profiles: ['level1_server', 'level2_server']
-Docker Bench available: True
-Connected to PatchMon server
-```
+### OpenSCAP CIS Benchmarks
 
-## Configuration
+The agent automatically detects your OS and selects the appropriate CIS profile:
 
-### Environment Variables
+| OS | Level 1 Server | Level 2 Server |
+|----|----------------|----------------|
+| Ubuntu | ✓ | ✓ |
+| Debian | ✓ | ✓ |
+| RHEL | ✓ | ✓ |
+| Rocky Linux | ✓ | ✓ |
+| Alma Linux | ✓ | ✓ |
+| Fedora | ✓ | - |
+| SLES/openSUSE | ✓ | - |
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PATCHMON_SERVER` | `https://patchmon.example.com` | Server URL |
-| `API_ID` | (required) | Host API ID |
-| `API_KEY` | (required) | Host API Key |
-| `COMPLIANCE_SCAN_INTERVAL` | `86400` | Seconds between scheduled scans (default 24h) |
-| `COMPLIANCE_ENABLED` | `true` | Enable/disable compliance scanning |
+### Docker Bench for Security
 
-### Credentials File
-
-The agent reads credentials from `/etc/patchmon/credentials` first, then environment variables override.
+If Docker is installed, the agent runs Docker Bench for Security to check:
+- Host Configuration
+- Docker Daemon Configuration
+- Docker Daemon Configuration Files
+- Container Images and Build Files
+- Container Runtime
+- Docker Security Operations
+- Docker Swarm Configuration
 
 ## Usage
 
-### Scheduled Scans
+### Automatic Scans
 
-By default, the agent runs compliance scans every 24 hours. Configure via:
-
-```bash
-# In systemd service file
-Environment="COMPLIANCE_SCAN_INTERVAL=43200"  # 12 hours
-```
+Compliance scans run automatically with each agent report (typically hourly via cron).
 
 ### On-Demand Scans
 
@@ -206,30 +159,18 @@ curl -X POST https://your-server.com/api/v1/compliance/trigger/{host-id} \
   -d '{"profile_type": "all"}'
 ```
 
-### Manual Test Run
-
-```bash
-cd /opt/patchmon-compliance
-python3 -m lib.patchmon_agent
-```
-
 ## Troubleshooting
 
-### Agent Not Connecting
+### Compliance Not Running
 
-1. Check credentials:
+1. Check if compliance integration is enabled:
    ```bash
-   cat /etc/patchmon/credentials
+   cat /etc/patchmon/config.yml | grep compliance
    ```
 
-2. Test server connectivity:
+2. Run agent manually to see compliance output:
    ```bash
-   curl https://your-server.com/api/v1/health
-   ```
-
-3. Check WebSocket connection:
-   ```bash
-   sudo journalctl -u patchmon-compliance | grep -i websocket
+   sudo patchmon-agent report
    ```
 
 ### OpenSCAP Not Available
@@ -267,34 +208,39 @@ python3 -m lib.patchmon_agent
 
 ### Scans Not Appearing in Dashboard
 
-1. Check scan submission:
+1. Check agent logs:
    ```bash
-   sudo journalctl -u patchmon-compliance | grep -i "scan results submitted"
+   sudo journalctl -u patchmon-agent | grep -i compliance
    ```
 
-2. Verify API endpoint:
+2. Verify the agent report includes compliance data:
    ```bash
-   curl -X POST https://your-server.com/api/v1/compliance/scans \
-     -H "X-API-ID: your-api-id" \
-     -H "X-API-KEY: your-api-key" \
-     -H "Content-Type: application/json" \
-     -d '{"profile_name": "test", "profile_type": "test", "results": []}'
+   sudo patchmon-agent report --json | grep -A5 compliance
    ```
 
 ## Updating
 
 ```bash
-cd /opt/PatchMon-Enhanced
-git pull
-sudo systemctl restart patchmon-compliance
+# Download latest binary
+curl -L https://github.com/MacJediWizard/PatchMonEnhanced-agent/releases/latest/download/patchmon-agent-linux-amd64 -o patchmon-agent
+chmod +x patchmon-agent
+sudo mv patchmon-agent /usr/local/bin/
+
+# Or use the built-in update
+sudo patchmon-agent update-agent
 ```
 
 ## Uninstalling
 
 ```bash
-sudo systemctl stop patchmon-compliance
-sudo systemctl disable patchmon-compliance
-sudo rm /etc/systemd/system/patchmon-compliance.service
-sudo systemctl daemon-reload
-rm -rf /opt/patchmon-compliance
+sudo patchmon-agent uninstall --remove-all
+```
+
+Or manually:
+
+```bash
+sudo systemctl stop patchmon-agent
+sudo systemctl disable patchmon-agent
+sudo rm /usr/local/bin/patchmon-agent
+sudo rm -rf /etc/patchmon
 ```
