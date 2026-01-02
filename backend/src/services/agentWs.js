@@ -324,6 +324,19 @@ function getConnectionByApiId(apiId) {
 	return apiIdToSocket.get(apiId);
 }
 
+function pushComplianceScan(apiId, profileType = "all") {
+	const ws = apiIdToSocket.get(apiId);
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		safeSend(ws, JSON.stringify({
+			type: "compliance_scan",
+			profile_type: profileType,
+		}));
+		console.log(`[agent-ws] Triggered compliance scan for ${apiId}: ${profileType}`);
+		return true;
+	}
+	return false;
+}
+
 function pushUpdateNotification(apiId, updateInfo) {
 	const ws = apiIdToSocket.get(apiId);
 	if (ws && ws.readyState === WebSocket.OPEN) {
@@ -511,6 +524,7 @@ module.exports = {
 	pushIntegrationToggle,
 	pushUpdateNotification,
 	pushUpdateNotificationToAll,
+	pushComplianceScan,
 	// Expose read-only view of connected agents
 	getConnectedApiIds: () => Array.from(apiIdToSocket.keys()),
 	getConnectionByApiId,

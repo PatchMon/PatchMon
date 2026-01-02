@@ -94,6 +94,7 @@ const releaseNotesRoutes = require("./routes/releaseNotesRoutes");
 const releaseNotesAcceptanceRoutes = require("./routes/releaseNotesAcceptanceRoutes");
 const buyMeACoffeeRoutes = require("./routes/buyMeACoffeeRoutes");
 const oidcRoutes = require("./routes/oidcRoutes");
+const complianceRoutes = require("./routes/complianceRoutes");
 const { initializeOIDC } = require("./auth/oidc");
 const { initSettings } = require("./services/settingsService");
 const { queueManager } = require("./services/automation");
@@ -556,6 +557,7 @@ app.use(
 	releaseNotesAcceptanceRoutes,
 );
 app.use(`/api/${apiVersion}/buy-me-a-coffee`, buyMeACoffeeRoutes);
+app.use(`/api/${apiVersion}/compliance`, complianceRoutes);
 
 // Bull Board - will be populated after queue manager initializes
 let bullBoardRouter = null;
