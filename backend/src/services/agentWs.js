@@ -3,8 +3,35 @@
 
 const WebSocket = require("ws");
 const url = require("node:url");
+const bcrypt = require("bcryptjs");
+const crypto = require("node:crypto");
 const { get_current_time } = require("../utils/timezone");
 const { handleSshTerminalUpgrade } = require("./sshTerminalWs");
+
+/**
+ * Verify API key against stored hash or plaintext (legacy support)
+ * @param {string} providedKey - The key provided by the agent
+ * @param {string} storedKey - The key stored in the database (may be hashed or plaintext)
+ * @returns {Promise<boolean>} True if the key matches
+ */
+async function verifyApiKey(providedKey, storedKey) {
+	if (!providedKey || !storedKey) return false;
+
+	// Check if stored key is a bcrypt hash
+	if (storedKey.match(/^\$2[aby]\$/)) {
+		return bcrypt.compare(providedKey, storedKey);
+	}
+
+	// Legacy: plaintext comparison with timing-safe check
+	try {
+		const providedBuffer = Buffer.from(providedKey, "utf8");
+		const storedBuffer = Buffer.from(storedKey, "utf8");
+		if (providedBuffer.length !== storedBuffer.length) return false;
+		return crypto.timingSafeEqual(providedBuffer, storedBuffer);
+	} catch {
+		return false;
+	}
+}
 
 // Connection registry by api_id
 const apiIdToSocket = new Map();
@@ -107,7 +134,15 @@ function init(server, prismaClient) {
 
 			// Validate credentials
 			const host = await prisma.hosts.findUnique({ where: { api_id: apiId } });
-			if (!host || host.api_key !== apiKey) {
+			if (!host) {
+				socket.destroy();
+				return;
+			}
+
+			// Verify API key (supports bcrypt hashed and legacy plaintext keys)
+			const isValidKey = await verifyApiKey(apiKey, host.api_key);
+			if (!isValidKey) {
+				console.log(`[agent-ws] invalid API key for api_id=${apiId}`);
 				socket.destroy();
 				return;
 			}
