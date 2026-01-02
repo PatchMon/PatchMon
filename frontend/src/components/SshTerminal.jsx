@@ -586,7 +586,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	// Embedded mode - render inline without modal overlay
 	if (embedded) {
 		return (
-			<div className="bg-secondary-900 rounded-lg w-full flex flex-col" style={{ minHeight: isConnected || isConnecting ? "600px" : "auto", maxHeight: "calc(100vh - 200px)" }}>
+			<div className="bg-secondary-900 rounded-lg w-full flex flex-col" style={{ minHeight: isConnected || isConnecting ? "750px" : "auto", maxHeight: "calc(100vh - 150px)" }}>
 				{/* Compact Header */}
 				<div className="flex items-center justify-between px-4 py-2 border-b border-secondary-700 flex-shrink-0">
 					<div className="flex items-center gap-2">
@@ -906,7 +906,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 
 				{/* Terminal Container - Shown when connecting or connected */}
 				{(isConnected || isConnecting) && (
-					<div className="flex-1 p-4 overflow-hidden min-h-[300px] flex flex-col">
+					<div className="flex-1 p-4 overflow-hidden min-h-[500px] flex flex-col">
 						<div
 							ref={terminalRef}
 							className="w-full h-full bg-black rounded"
@@ -930,7 +930,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	// Modal mode - full screen overlay
 	return (
 		<div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
-			<div className="bg-secondary-900 rounded-lg w-full h-full max-w-7xl max-h-[90vh] flex flex-col m-4">
+			<div className="bg-secondary-900 rounded-lg w-full h-full max-w-[95vw] max-h-[95vh] flex flex-col m-2">
 				{/* Header */}
 				<div className="flex items-center justify-between p-4 border-b border-secondary-700">
 					<div className="flex items-center gap-3">
@@ -1057,7 +1057,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 				{/* Terminal Container - Always visible, but takes full height when connected */}
 				<div
 					className={`p-4 overflow-hidden transition-all duration-300 ${
-						isConnected || isConnecting ? "flex-1" : "h-96"
+						isConnected || isConnecting ? "flex-1 min-h-[600px]" : "h-96"
 					}`}
 				>
 					<div
