@@ -264,7 +264,7 @@ const PackageDetail = () => {
 					<div className="relative group">
 						<Info className="dark:text-white" />
 						<div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block w-max max-w-xs px-2 py-1 bg-gray-900 text-white text-xs rounded shadow-lg z-[100]">
-							the description was pulled directly from the host package manager
+							The description was pulled directly from the host package manager.
 						</div>
 					</div>
 				</h4>
