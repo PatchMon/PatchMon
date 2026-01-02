@@ -12,9 +12,54 @@ const {
 const { queueManager, QUEUE_NAMES } = require("../services/automation");
 const { pushIntegrationToggle, isConnected } = require("../services/agentWs");
 const { compareVersions } = require("../services/automation/shared/utils");
+const { redis } = require("../services/automation/shared/redis");
 
 const router = express.Router();
 const prisma = getPrismaClient();
+
+// Bootstrap token configuration
+const BOOTSTRAP_TOKEN_PREFIX = "bootstrap:";
+const BOOTSTRAP_TOKEN_TTL = 300; // 5 minutes in seconds
+
+/**
+ * Generate a secure bootstrap token for agent installation
+ * @param {string} apiId - The host's API ID
+ * @param {string} apiKey - The host's API key (will be stored encrypted)
+ * @returns {Promise<string>} The bootstrap token
+ */
+async function generateBootstrapToken(apiId, apiKey) {
+	const token = crypto.randomBytes(32).toString("hex");
+	const key = `${BOOTSTRAP_TOKEN_PREFIX}${token}`;
+
+	// Store the credentials encrypted in Redis with short TTL
+	const data = JSON.stringify({ apiId, apiKey, createdAt: Date.now() });
+	await redis.setex(key, BOOTSTRAP_TOKEN_TTL, data);
+
+	return token;
+}
+
+/**
+ * Retrieve and delete bootstrap token data (one-time use)
+ * @param {string} token - The bootstrap token
+ * @returns {Promise<{apiId: string, apiKey: string}|null>} The credentials or null
+ */
+async function consumeBootstrapToken(token) {
+	const key = `${BOOTSTRAP_TOKEN_PREFIX}${token}`;
+	const data = await redis.get(key);
+
+	if (!data) {
+		return null;
+	}
+
+	// Delete immediately (one-time use)
+	await redis.del(key);
+
+	try {
+		return JSON.parse(data);
+	} catch (e) {
+		return null;
+	}
+}
 
 // In-memory cache for integration states (api_id -> { integration_name -> enabled })
 // This stores the last known state from successful toggles
@@ -1824,19 +1869,43 @@ router.get("/install", async (req, res) => {
 		// Get architecture parameter (only set if explicitly provided, otherwise let script auto-detect)
 		const architecture = req.query.arch;
 
-		// Inject the API credentials, server URL, curl flags, SSL verify flag, force flag, and architecture into the script
-		// Only set ARCHITECTURE if explicitly provided, otherwise let the script auto-detect
+		// Generate a secure bootstrap token instead of embedding the API key directly
+		// The agent will exchange this token for actual credentials via a secure API call
+		const bootstrapToken = await generateBootstrapToken(host.api_id, host.api_key);
+
+		// Inject bootstrap token and server URL into the script
+		// The actual API credentials are NOT embedded - they will be fetched securely
 		const archExport = architecture
 			? `export ARCHITECTURE="${architecture}"\n`
 			: "";
 		const envVars = `#!/bin/sh
 export PATCHMON_URL="${serverUrl}"
-export API_ID="${host.api_id}"
-export API_KEY="${host.api_key}"
+export BOOTSTRAP_TOKEN="${bootstrapToken}"
 export CURL_FLAGS="${curlFlags}"
 export SKIP_SSL_VERIFY="${skipSSLVerify}"
 export FORCE_INSTALL="${forceInstall ? "true" : "false"}"
 ${archExport}
+# Fetch actual credentials using bootstrap token (one-time use, expires in 5 minutes)
+fetch_credentials() {
+    CREDS=$(curl \${CURL_FLAGS} -X POST "\${PATCHMON_URL}/api/v1/hosts/bootstrap/exchange" \\
+        -H "Content-Type: application/json" \\
+        -d "{\\"token\\": \\"\${BOOTSTRAP_TOKEN}\\"}" 2>/dev/null)
+
+    if [ -z "\$CREDS" ] || echo "\$CREDS" | grep -q '"error"'; then
+        echo "ERROR: Failed to fetch credentials. Bootstrap token may have expired."
+        echo "Please request a new installation script."
+        exit 1
+    fi
+
+    export API_ID=$(echo "\$CREDS" | grep -o '"apiId":"[^"]*"' | cut -d'"' -f4)
+    export API_KEY=$(echo "\$CREDS" | grep -o '"apiKey":"[^"]*"' | cut -d'"' -f4)
+
+    if [ -z "\$API_ID" ] || [ -z "\$API_KEY" ]; then
+        echo "ERROR: Invalid credentials received from server."
+        exit 1
+    fi
+}
+fetch_credentials
 `;
 
 		// Remove the shebang from the original script and prepend our env vars
@@ -1857,9 +1926,61 @@ ${archExport}
 
 // Note: /check-machine-id endpoint removed - using config.yml checking method instead
 
-// Serve the removal script (public endpoint - no authentication required)
-router.get("/remove", async (_req, res) => {
+// Exchange bootstrap token for actual API credentials (one-time use)
+router.post("/bootstrap/exchange", async (req, res) => {
 	try {
+		const { token } = req.body;
+
+		if (!token) {
+			return res.status(400).json({ error: "Bootstrap token required" });
+		}
+
+		// Consume the bootstrap token (one-time use)
+		const credentials = await consumeBootstrapToken(token);
+
+		if (!credentials) {
+			return res.status(401).json({
+				error: "Invalid or expired bootstrap token",
+			});
+		}
+
+		// Return the actual credentials
+		res.json({
+			apiId: credentials.apiId,
+			apiKey: credentials.apiKey,
+		});
+	} catch (error) {
+		console.error("Bootstrap token exchange error:", error.message);
+		res.status(500).json({ error: "Failed to exchange bootstrap token" });
+	}
+});
+
+// Serve the removal script (requires API authentication)
+router.get("/remove", async (req, res) => {
+	try {
+		// Verify API credentials
+		const apiId = req.headers["x-api-id"];
+		const apiKey = req.headers["x-api-key"];
+
+		if (!apiId || !apiKey) {
+			return res.status(401).json({ error: "API credentials required" });
+		}
+
+		// Validate API credentials
+		const host = await prisma.hosts.findUnique({
+			where: { api_id: apiId },
+		});
+
+		if (!host) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
+		// Verify API key
+		const isValidKey = await verifyApiKey(apiKey, host.api_key);
+		if (!isValidKey) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
 		const fs = require("node:fs");
 		const path = require("node:path");
 
@@ -1885,7 +2006,9 @@ router.get("/remove", async (_req, res) => {
 			if (settings && settings.ignore_ssl_self_signed === true) {
 				curlFlags = "-sk";
 			}
-		} catch (_) {}
+		} catch (settingsError) {
+			console.warn("Could not fetch settings:", settingsError.message);
+		}
 
 		// Prepend environment for CURL_FLAGS so script can use it if needed
 		const envPrefix = `#!/bin/sh\nexport CURL_FLAGS="${curlFlags}"\n\n`;
@@ -1900,7 +2023,7 @@ router.get("/remove", async (_req, res) => {
 		);
 		res.send(script);
 	} catch (error) {
-		console.error("Removal script error:", error);
+		console.error("Removal script error:", error.message);
 		res.status(500).json({ error: "Failed to serve removal script" });
 	}
 });
