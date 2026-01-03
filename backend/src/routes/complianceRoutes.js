@@ -69,107 +69,163 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
       return res.status(401).json({ error: "Invalid API credentials" });
     }
 
-    const { profile_name, profile_type, results, started_at, completed_at, raw_output } = req.body;
+    // Handle both nested payload (from agent) and flat payload (legacy)
+    // Agent sends: { scans: [...], os_info: {...}, hostname: "...", ... }
+    // Legacy/flat: { profile_name: "...", results: [...], ... }
+    let scansToProcess = [];
 
-    // Find or create profile
-    let profile = await prisma.compliance_profiles.findFirst({
-      where: { name: profile_name },
-    });
-
-    if (!profile) {
-      profile = await prisma.compliance_profiles.create({
-        data: {
-          id: uuidv4(),
-          name: profile_name,
-          type: profile_type || "openscap",
-        },
-      });
+    if (req.body.scans && Array.isArray(req.body.scans)) {
+      // New nested format from agent
+      scansToProcess = req.body.scans;
+      console.log(`[Compliance] Received ${scansToProcess.length} scans from agent payload`);
+    } else if (req.body.profile_name) {
+      // Legacy flat format - wrap in array
+      scansToProcess = [{
+        profile_name: req.body.profile_name,
+        profile_type: req.body.profile_type,
+        results: req.body.results,
+        started_at: req.body.started_at,
+        completed_at: req.body.completed_at,
+        status: req.body.status,
+        score: req.body.score,
+        total_rules: req.body.total_rules,
+        passed: req.body.passed,
+        failed: req.body.failed,
+        warnings: req.body.warnings,
+        skipped: req.body.skipped,
+        not_applicable: req.body.not_applicable,
+        error: req.body.error,
+      }];
+    } else {
+      return res.status(400).json({ error: "Invalid payload: expected 'scans' array or 'profile_name'" });
     }
 
-    // Calculate stats
-    const stats = {
-      total_rules: results?.length || 0,
-      passed: results?.filter((r) => r.status === "pass").length || 0,
-      failed: results?.filter((r) => r.status === "fail").length || 0,
-      warnings: results?.filter((r) => r.status === "warn").length || 0,
-      skipped: results?.filter((r) => r.status === "skip").length || 0,
-      not_applicable: results?.filter((r) => r.status === "notapplicable").length || 0,
-    };
+    const processedScans = [];
 
-    // Calculate score (exclude not_applicable and skipped from denominator)
-    const applicableRules = stats.total_rules - stats.not_applicable - stats.skipped;
-    const score = applicableRules > 0
-      ? ((stats.passed / applicableRules) * 100).toFixed(2)
-      : null;
+    for (const scanData of scansToProcess) {
+      const {
+        profile_name,
+        profile_type,
+        results,
+        started_at,
+        completed_at,
+        status: scanStatus,
+        error: scanError
+      } = scanData;
 
-    // Create scan record
-    const scan = await prisma.compliance_scans.create({
-      data: {
-        id: uuidv4(),
-        host_id: host.id,
-        profile_id: profile.id,
-        started_at: started_at ? new Date(started_at) : new Date(),
-        completed_at: completed_at ? new Date(completed_at) : new Date(),
-        status: "completed",
-        total_rules: stats.total_rules,
-        passed: stats.passed,
-        failed: stats.failed,
-        warnings: stats.warnings,
-        skipped: stats.skipped,
-        score: score ? parseFloat(score) : null,
-        raw_output: raw_output ? JSON.stringify(raw_output) : null,
-      },
-    });
+      if (!profile_name) {
+        console.warn("[Compliance] Skipping scan with no profile_name");
+        continue;
+      }
 
-    // Create rule and result records
-    if (results && Array.isArray(results)) {
-      for (const result of results) {
-        // Upsert rule
-        let rule = await prisma.compliance_rules.findFirst({
-          where: {
-            profile_id: profile.id,
-            rule_ref: result.rule_ref || result.id,
+      // Find or create profile
+      let profile = await prisma.compliance_profiles.findFirst({
+        where: { name: profile_name },
+      });
+
+      if (!profile) {
+        profile = await prisma.compliance_profiles.create({
+          data: {
+            id: uuidv4(),
+            name: profile_name,
+            type: profile_type || "openscap",
           },
         });
+      }
 
-        if (!rule) {
-          rule = await prisma.compliance_rules.create({
+      // Use stats from agent if provided, otherwise calculate
+      const stats = {
+        total_rules: scanData.total_rules ?? results?.length ?? 0,
+        passed: scanData.passed ?? results?.filter((r) => r.status === "pass").length ?? 0,
+        failed: scanData.failed ?? results?.filter((r) => r.status === "fail").length ?? 0,
+        warnings: scanData.warnings ?? results?.filter((r) => r.status === "warn").length ?? 0,
+        skipped: scanData.skipped ?? results?.filter((r) => r.status === "skip").length ?? 0,
+        not_applicable: scanData.not_applicable ?? results?.filter((r) => r.status === "notapplicable").length ?? 0,
+      };
+
+      // Use score from agent if provided, otherwise calculate
+      let score = scanData.score;
+      if (score === undefined || score === null) {
+        const applicableRules = stats.total_rules - stats.not_applicable - stats.skipped;
+        score = applicableRules > 0
+          ? ((stats.passed / applicableRules) * 100).toFixed(2)
+          : null;
+      }
+
+      // Create scan record
+      const scan = await prisma.compliance_scans.create({
+        data: {
+          id: uuidv4(),
+          host_id: host.id,
+          profile_id: profile.id,
+          started_at: started_at ? new Date(started_at) : new Date(),
+          completed_at: completed_at ? new Date(completed_at) : new Date(),
+          status: scanStatus === "failed" ? "failed" : "completed",
+          total_rules: stats.total_rules,
+          passed: stats.passed,
+          failed: stats.failed,
+          warnings: stats.warnings,
+          skipped: stats.skipped,
+          score: score ? parseFloat(score) : null,
+          error_message: scanError || null,
+          raw_output: results ? JSON.stringify(results) : null,
+        },
+      });
+
+      // Create rule and result records
+      if (results && Array.isArray(results)) {
+        for (const result of results) {
+          // Get rule_ref from various possible field names
+          const ruleRef = result.rule_ref || result.rule_id || result.id;
+          if (!ruleRef) continue;
+
+          // Upsert rule
+          let rule = await prisma.compliance_rules.findFirst({
+            where: {
+              profile_id: profile.id,
+              rule_ref: ruleRef,
+            },
+          });
+
+          if (!rule) {
+            rule = await prisma.compliance_rules.create({
+              data: {
+                id: uuidv4(),
+                profile_id: profile.id,
+                rule_ref: ruleRef,
+                title: result.title || ruleRef || "Unknown",
+                description: result.description || null,
+                severity: result.severity || null,
+                section: result.section || null,
+                remediation: result.remediation || null,
+              },
+            });
+          }
+
+          // Create result
+          await prisma.compliance_results.create({
             data: {
               id: uuidv4(),
-              profile_id: profile.id,
-              rule_ref: result.rule_ref || result.id,
-              title: result.title || result.rule_ref || "Unknown",
-              description: result.description || null,
-              severity: result.severity || null,
-              section: result.section || null,
+              scan_id: scan.id,
+              rule_id: rule.id,
+              status: result.status,
+              finding: result.finding || result.message || null,
+              actual: result.actual || null,
+              expected: result.expected || null,
               remediation: result.remediation || null,
             },
           });
         }
-
-        // Create result
-        await prisma.compliance_results.create({
-          data: {
-            id: uuidv4(),
-            scan_id: scan.id,
-            rule_id: rule.id,
-            status: result.status,
-            finding: result.finding || result.message || null,
-            actual: result.actual || null,
-            expected: result.expected || null,
-            remediation: result.remediation || null,
-          },
-        });
       }
-    }
 
-    console.log(`[Compliance] Scan completed for host ${host.friendly_name || host.hostname}: ${stats.passed}/${stats.total_rules} passed (${score}%)`);
+      console.log(`[Compliance] Scan saved for host ${host.friendly_name || host.hostname} (${profile_name}): ${stats.passed}/${stats.total_rules} passed (${score}%)`);
+      processedScans.push({ scan_id: scan.id, profile_name, score: scan.score, stats });
+    }
 
     res.json({
       message: "Scan results saved successfully",
-      scan_id: scan.id,
-      score: scan.score,
-      stats,
+      scans_received: processedScans.length,
+      scans: processedScans,
     });
   } catch (error) {
     console.error("[Compliance] Error saving scan results:", error);

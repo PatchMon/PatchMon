@@ -295,11 +295,11 @@ router.get(
 					) {
 						console.log("GitHub API rate limited, providing fallback data");
 						latestRelease = {
-							tagName: "v1.2.8",
-							version: "1.2.8",
-							publishedAt: "2025-10-02T17:12:53Z",
+							tagName: "v1.4.0",
+							version: "1.4.0",
+							publishedAt: "2026-01-03T00:00:00Z",
 							htmlUrl:
-								"https://github.com/PatchMon/PatchMon/releases/tag/v1.2.8",
+								"https://github.com/PatchMon/PatchMon/releases/tag/v1.4.0",
 						};
 						latestCommit = {
 							sha: "cc89df161b8ea5d48ff95b0eb405fe69042052cd",
