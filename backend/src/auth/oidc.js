@@ -135,6 +135,9 @@ async function handleCallback(code, codeVerifier, expectedNonce) {
 	// Get the claims from the ID token
 	const claims = tokenSet.claims();
 
+	// Debug: Log all claims received from IdP
+	console.log("OIDC claims received from IdP:", JSON.stringify(claims, null, 2));
+
 	// Validate required claims
 	if (!claims.sub) {
 		throw new Error('ID token missing required "sub" claim');
