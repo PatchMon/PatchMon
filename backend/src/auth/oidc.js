@@ -90,7 +90,7 @@ function getAuthorizationUrl() {
 	// Generate nonce for replay attack protection
 	const nonce = generators.nonce();
 
-	const scopes = process.env.OIDC_SCOPES || "openid email profile";
+	const scopes = process.env.OIDC_SCOPES || "openid email profile groups";
 
 	const url = oidcClient.authorizationUrl({
 		scope: scopes,
