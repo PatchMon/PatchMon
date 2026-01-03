@@ -189,9 +189,17 @@ const Profile = () => {
 			<div className="bg-white dark:bg-secondary-800 shadow rounded-lg p-4 md:p-6">
 				<div className="flex items-center space-x-3 md:space-x-4">
 					<div className="flex-shrink-0">
-						<div className="h-12 w-12 md:h-16 md:w-16 rounded-full bg-primary-100 dark:bg-primary-900 flex items-center justify-center">
-							<User className="h-6 w-6 md:h-8 md:w-8 text-primary-600 dark:text-primary-400" />
-						</div>
+						{user?.avatar_url ? (
+							<img
+								src={user.avatar_url}
+								alt={user.username}
+								className="h-12 w-12 md:h-16 md:w-16 rounded-full object-cover"
+							/>
+						) : (
+							<div className="h-12 w-12 md:h-16 md:w-16 rounded-full bg-primary-100 dark:bg-primary-900 flex items-center justify-center">
+								<User className="h-6 w-6 md:h-8 md:w-8 text-primary-600 dark:text-primary-400" />
+							</div>
+						)}
 					</div>
 					<div className="flex-1 min-w-0">
 						<h3 className="text-base md:text-lg font-medium text-secondary-900 dark:text-white truncate">

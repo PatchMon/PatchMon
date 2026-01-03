@@ -749,7 +749,15 @@ const Layout = ({ children }) => {
 									}`}
 									onClick={() => setSidebarOpen(false)}
 								>
-									<UserCircle className="mr-3 h-5 w-5" />
+									{user?.avatar_url ? (
+										<img
+											src={user.avatar_url}
+											alt={user.username}
+											className="mr-3 h-5 w-5 rounded-full object-cover"
+										/>
+									) : (
+										<UserCircle className="mr-3 h-5 w-5" />
+									)}
 									<span className="flex items-center gap-2">
 										{user?.first_name || user?.username}
 										{user?.role === "admin" && (
@@ -1069,13 +1077,21 @@ const Layout = ({ children }) => {
 										}`}
 									>
 										<div className="flex items-center gap-x-3">
-											<UserCircle
-												className={`h-5 w-5 shrink-0 ${
-													isActive("/settings/profile")
-														? "text-primary-700 dark:text-white"
-														: "text-secondary-500 dark:text-secondary-400"
-												}`}
-											/>
+											{user?.avatar_url ? (
+												<img
+													src={user.avatar_url}
+													alt={user.username}
+													className="h-5 w-5 shrink-0 rounded-full object-cover"
+												/>
+											) : (
+												<UserCircle
+													className={`h-5 w-5 shrink-0 ${
+														isActive("/settings/profile")
+															? "text-primary-700 dark:text-white"
+															: "text-secondary-500 dark:text-secondary-400"
+													}`}
+												/>
+											)}
 											<div className="flex flex-col min-w-0">
 												<span
 													className={`text-sm leading-6 font-semibold truncate ${
@@ -1148,7 +1164,15 @@ const Layout = ({ children }) => {
 									}`}
 									title={`My Profile (${user?.username})`}
 								>
-									<UserCircle className="h-5 w-5" />
+									{user?.avatar_url ? (
+										<img
+											src={user.avatar_url}
+											alt={user.username}
+											className="h-5 w-5 rounded-full object-cover"
+										/>
+									) : (
+										<UserCircle className="h-5 w-5" />
+									)}
 								</Link>
 								<button
 									type="button"

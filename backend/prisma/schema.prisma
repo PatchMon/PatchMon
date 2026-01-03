@@ -264,6 +264,7 @@ model users {
   color_theme               String?                     @default("cyber_blue")
   oidc_sub                  String?                     @unique
   oidc_provider             String?
+  avatar_url                String?
   dashboard_preferences     dashboard_preferences[]
   user_sessions             user_sessions[]
   auto_enrollment_tokens    auto_enrollment_tokens[]

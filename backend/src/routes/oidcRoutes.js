@@ -252,6 +252,7 @@ router.get("/callback", async (req, res) => {
 					last_name: null,
 					oidc_sub: userInfo.sub,
 					oidc_provider: new URL(process.env.OIDC_ISSUER_URL).hostname,
+					avatar_url: userInfo.picture || null,
 					role: userRole,
 					password_hash: null, // No password for OIDC-only users
 					is_active: true,
@@ -287,6 +288,7 @@ router.get("/callback", async (req, res) => {
 					data: {
 						oidc_sub: userInfo.sub,
 						oidc_provider: new URL(process.env.OIDC_ISSUER_URL).hostname,
+						avatar_url: userInfo.picture || null,
 						updated_at: new Date(),
 					},
 				});
@@ -311,11 +313,17 @@ router.get("/callback", async (req, res) => {
 			return res.redirect("/login?error=Account+disabled");
 		}
 
-		// Update last login and optionally sync role from groups
+		// Update last login, avatar, and optionally sync role from groups
 		const updateData = {
 			last_login: new Date(),
 			updated_at: new Date(),
 		};
+
+		// Sync avatar from IdP on every login
+		if (userInfo.picture && userInfo.picture !== user.avatar_url) {
+			updateData.avatar_url = userInfo.picture;
+			console.log(`OIDC avatar sync: ${user.email} avatar updated`);
+		}
 
 		// Sync role from groups on every login if enabled
 		if (isRoleSyncEnabled()) {

@@ -163,6 +163,7 @@ async function handleCallback(code, codeVerifier, expectedNonce) {
 			claims.email.split("@")[0],
 		emailVerified: claims.email_verified || false,
 		groups: claims.groups || [],
+		picture: claims.picture || null,
 		raw: claims,
 	};
 }

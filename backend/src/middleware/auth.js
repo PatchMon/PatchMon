@@ -111,6 +111,7 @@ const optionalAuth = async (req, _res, next) => {
 					last_login: true,
 					created_at: true,
 					updated_at: true,
+					avatar_url: true,
 				},
 			});
 
