@@ -3,7 +3,7 @@ const crypto = require("node:crypto");
 const { queueManager, QUEUE_NAMES } = require("../services/automation");
 const { getConnectedApiIds } = require("../services/agentWs");
 const { authenticateToken, requireAdmin } = require("../middleware/auth");
-const redis = require("../config/redis");
+const { redis } = require("../services/automation/shared/redis");
 
 const router = express.Router();
 
