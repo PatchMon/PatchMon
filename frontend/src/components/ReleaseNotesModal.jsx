@@ -169,7 +169,7 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 							{currentStep === 2 && (
 								<button
 									type="button"
-									onClick={onAccept}
+									onClick={handleClose}
 									className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-secondary-700 dark:text-secondary-300 bg-secondary-100 dark:bg-secondary-700 border border-secondary-300 dark:border-secondary-600 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500 transition-colors"
 									aria-label="Close"
 								>
