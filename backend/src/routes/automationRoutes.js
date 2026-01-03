@@ -1,9 +1,78 @@
 const express = require("express");
+const crypto = require("node:crypto");
 const { queueManager, QUEUE_NAMES } = require("../services/automation");
 const { getConnectedApiIds } = require("../services/agentWs");
-const { authenticateToken } = require("../middleware/auth");
+const { authenticateToken, requireAdmin } = require("../middleware/auth");
+const redis = require("../config/redis");
 
 const router = express.Router();
+
+// Bull Board Ticket - One-time use ticket for Bull Board authentication
+// SECURITY: Uses Redis-stored tickets instead of tokens in URLs to prevent exposure in logs
+const BULL_BOARD_TICKET_PREFIX = "bullboard:ticket:";
+const BULL_BOARD_TICKET_TTL = 30; // 30 seconds - very short-lived
+
+router.post("/bullboard-ticket", authenticateToken, requireAdmin, async (req, res) => {
+	try {
+		// Generate a random ticket
+		const ticket = crypto.randomBytes(32).toString("hex");
+		const key = `${BULL_BOARD_TICKET_PREFIX}${ticket}`;
+
+		// Store ticket data in Redis with short TTL
+		const ticketData = JSON.stringify({
+			userId: req.user.id,
+			sessionId: req.session_id,
+			role: req.user.role,
+			createdAt: Date.now(),
+		});
+
+		await redis.setex(key, BULL_BOARD_TICKET_TTL, ticketData);
+
+		res.json({
+			ticket: ticket,
+			expiresIn: BULL_BOARD_TICKET_TTL,
+		});
+	} catch (error) {
+		console.error("Bull Board ticket generation error:", error);
+		res.status(500).json({ error: "Failed to generate Bull Board ticket" });
+	}
+});
+
+// Validate and consume Bull Board ticket (exported for use in server.js)
+async function consumeBullBoardTicket(ticket) {
+	const key = `${BULL_BOARD_TICKET_PREFIX}${ticket}`;
+	const data = await redis.get(key);
+
+	if (!data) {
+		return { valid: false, reason: "Invalid or expired ticket" };
+	}
+
+	// Immediately delete the ticket (one-time use)
+	await redis.del(key);
+
+	try {
+		const ticketData = JSON.parse(data);
+
+		// Verify the ticket hasn't been tampered with
+		if (!ticketData.userId || !ticketData.role) {
+			return { valid: false, reason: "Malformed ticket data" };
+		}
+
+		// Check if admin role
+		if (ticketData.role !== "admin") {
+			return { valid: false, reason: "Admin access required" };
+		}
+
+		return {
+			valid: true,
+			userId: ticketData.userId,
+			sessionId: ticketData.sessionId,
+			role: ticketData.role,
+		};
+	} catch (error) {
+		return { valid: false, reason: "Failed to parse ticket data" };
+	}
+}
 
 // Get all queue statistics
 router.get("/stats", authenticateToken, async (_req, res) => {
@@ -503,3 +572,4 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 });
 
 module.exports = router;
+module.exports.consumeBullBoardTicket = consumeBullBoardTicket;

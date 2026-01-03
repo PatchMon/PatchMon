@@ -236,20 +236,33 @@ const Automation = () => {
 		return Number.MAX_SAFE_INTEGER; // Unknown schedules go to bottom
 	};
 
-	const openBullBoard = () => {
-		// Token is from useAuth context (session state, not localStorage)
-		// This is passed to Bull Board for initial authentication
-		// After that, Bull Board uses its own httpOnly cookie
+	const openBullBoard = async () => {
+		// SECURITY: Use ticket-based authentication instead of passing token in URL
+		// Tickets are one-time use and short-lived (30 seconds)
 		if (!token) {
 			alert("Please log in to access the Queue Monitor");
 			return;
 		}
 
-		// Use the proxied URL through the frontend (port 3000)
-		// This avoids CORS issues as everything goes through the same origin
-		const url = `/bullboard?token=${encodeURIComponent(token)}`;
-		// Open in a new tab instead of a new window
-		window.open(url, "_blank");
+		try {
+			// Request a one-time ticket from the backend
+			const response = await api.post("/automation/bullboard-ticket");
+			const { ticket } = response.data;
+
+			if (!ticket) {
+				alert("Failed to generate access ticket");
+				return;
+			}
+
+			// Use the proxied URL through the frontend (port 3000)
+			// This avoids CORS issues as everything goes through the same origin
+			const url = `/bullboard?ticket=${encodeURIComponent(ticket)}`;
+			// Open in a new tab instead of a new window
+			window.open(url, "_blank");
+		} catch (error) {
+			console.error("Failed to open Bull Board:", error);
+			alert(error.response?.data?.error || "Failed to access Queue Monitor");
+		}
 	};
 
 	const triggerManualJob = async (jobType, data = {}) => {

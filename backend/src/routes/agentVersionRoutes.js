@@ -33,9 +33,11 @@ router.get(
 			});
 		} catch (error) {
 			console.error("❌ GitHub API test failed:", error.message);
+			// SECURITY: Only expose detailed error info in development
+			const isDev = process.env.NODE_ENV === "development";
 			res.status(500).json({
 				success: false,
-				error: error.message,
+				error: isDev ? error.message : "GitHub API request failed",
 				status: error.response?.status,
 				statusText: error.response?.statusText,
 				rateLimitRemaining: error.response?.headers["x-ratelimit-remaining"],
@@ -167,7 +169,12 @@ router.get(
 			res.json(binaryInfo);
 		} catch (error) {
 			console.error("❌ Failed to get binary info:", error.message);
-			res.status(404).json({ error: error.message });
+			// SECURITY: Use generic error message in production
+			res.status(404).json({
+				error: process.env.NODE_ENV === "development"
+					? error.message
+					: "Binary not found for specified version and architecture",
+			});
 		}
 	},
 );

@@ -580,7 +580,10 @@ app.use(`/bullboard`, (_req, res, next) => {
 	next();
 });
 
-// Simplified Bull Board authentication - just validate token once and set a simple auth cookie
+// Bull Board authentication using one-time tickets
+// SECURITY: Uses tickets instead of tokens in URLs to prevent exposure in server logs
+const { consumeBullBoardTicket } = require("./routes/automationRoutes");
+
 app.use(`/bullboard`, async (req, res, next) => {
 	// Skip authentication for static assets
 	if (req.path.includes("/static/") || req.path.includes("/favicon")) {
@@ -593,39 +596,36 @@ app.use(`/bullboard`, async (req, res, next) => {
 		return next();
 	}
 
-	// No auth cookie - check for token in query
-	const token = req.query.token;
-	if (!token) {
+	// No auth cookie - check for ticket in query (not token!)
+	const ticket = req.query.ticket;
+	if (!ticket) {
 		return res.status(401).json({
 			error:
 				"Authentication required. Please access Bull Board from the Automation page.",
 		});
 	}
 
-	// Validate token and set auth cookie
-	req.headers.authorization = `Bearer ${token}`;
-	return authenticateToken(req, res, (err) => {
-		if (err) {
-			return res.status(401).json({ error: "Invalid authentication token" });
-		}
-		return requireAdmin(req, res, (adminErr) => {
-			if (adminErr) {
-				return res.status(403).json({ error: "Admin access required" });
-			}
+	// Validate and consume the one-time ticket
+	const result = await consumeBullBoardTicket(ticket);
+	if (!result.valid) {
+		return res.status(401).json({ error: result.reason || "Invalid ticket" });
+	}
 
-			// Set a secure auth cookie that will persist for the session
-			res.cookie("bull-board-auth", token, {
-				httpOnly: true,
-				secure: process.env.NODE_ENV === "production",
-				maxAge: 3600000, // 1 hour
-				path: "/bullboard",
-				sameSite: "strict",
-			});
+	// Generate a session identifier for the cookie (not the original ticket)
+	const crypto = require("node:crypto");
+	const sessionId = crypto.randomBytes(16).toString("hex");
 
-			console.log("Bull Board - Authentication successful, cookie set");
-			return next();
-		});
+	// Set a secure auth cookie that will persist for the session
+	res.cookie("bull-board-auth", sessionId, {
+		httpOnly: true,
+		secure: process.env.NODE_ENV === "production",
+		maxAge: 3600000, // 1 hour
+		path: "/bullboard",
+		sameSite: "strict",
 	});
+
+	console.log("Bull Board - Authentication successful via ticket, cookie set");
+	return next();
 });
 
 // Remove all the old complex middleware below and replace with the new Bull Board router setup
@@ -644,11 +644,14 @@ app.use("/bullboard", (err, req, res, _next) => {
 	if (process.env.ENABLE_LOGGING === "true") {
 		logger.error(`Bull Board error on ${req.method} ${req.url}:`, err);
 	}
+	// SECURITY: Don't expose internal error details in production
 	res.status(500).json({
 		error: "Internal server error",
-		message: err.message,
-		path: req.path,
-		url: req.url,
+		...(process.env.NODE_ENV === "development" && {
+			message: err.message,
+			path: req.path,
+			url: req.url,
+		}),
 	});
 });
 

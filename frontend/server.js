@@ -11,9 +11,33 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const BACKEND_URL = process.env.BACKEND_URL || "http://backend:3001";
 
-// Add security headers to prevent search engine indexing
+// Add security headers
 app.use((_req, res, next) => {
+	// Prevent search engine indexing
 	res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet");
+
+	// Content Security Policy - restrict sources for scripts, styles, etc.
+	// SECURITY: Helps prevent XSS and data injection attacks
+	res.setHeader(
+		"Content-Security-Policy",
+		[
+			"default-src 'self'",
+			"script-src 'self'",
+			"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+			"font-src 'self' https://fonts.gstatic.com",
+			"img-src 'self' data: https:",
+			"connect-src 'self' https://api.github.com wss:",
+			"frame-ancestors 'self'",
+			"base-uri 'self'",
+			"form-action 'self'",
+		].join("; "),
+	);
+
+	// Additional security headers
+	res.setHeader("X-Content-Type-Options", "nosniff");
+	res.setHeader("X-Frame-Options", "SAMEORIGIN");
+	res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+
 	next();
 });
 
