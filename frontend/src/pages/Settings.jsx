@@ -169,7 +169,7 @@ const Settings = () => {
 				autoUpdate: settings.auto_update || false,
 				githubRepoUrl:
 					settings.github_repo_url ||
-					"https://github.com/PatchMon/PatchMon.git",
+					"https://github.com/MacJediWizard/PatchMon-Enhanced.git",
 				repositoryType: settings.repository_type || "public",
 				sshKeyPath: settings.ssh_key_path || "",
 				useCustomSshKey: !!settings.ssh_key_path,

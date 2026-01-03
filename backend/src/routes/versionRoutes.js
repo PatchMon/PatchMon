@@ -6,7 +6,7 @@ const { getPrismaClient } = require("../config/prisma");
 const prisma = getPrismaClient();
 
 // Default GitHub repository URL
-const DEFAULT_GITHUB_REPO = "https://github.com/PatchMon/PatchMon.git";
+const DEFAULT_GITHUB_REPO = "https://github.com/MacJediWizard/PatchMon-Enhanced.git";
 
 const router = express.Router();
 
@@ -299,7 +299,7 @@ router.get(
 							version: "1.4.0",
 							publishedAt: "2026-01-03T00:00:00Z",
 							htmlUrl:
-								"https://github.com/PatchMon/PatchMon/releases/tag/v1.4.0",
+								"https://github.com/MacJediWizard/PatchMon-Enhanced/releases/tag/v1.4.0",
 						};
 						latestCommit = {
 							sha: "cc89df161b8ea5d48ff95b0eb405fe69042052cd",
@@ -307,7 +307,7 @@ router.get(
 							author: "9 Technology Group LTD",
 							date: "2025-10-04T18:38:09Z",
 							htmlUrl:
-								"https://github.com/PatchMon/PatchMon/commit/cc89df161b8ea5d48ff95b0eb405fe69042052cd",
+								"https://github.com/MacJediWizard/PatchMon-Enhanced/commit/cc89df161b8ea5d48ff95b0eb405fe69042052cd",
 						};
 						commitDifference = {
 							commitsBehind: 0,

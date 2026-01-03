@@ -1300,7 +1300,7 @@ const Layout = ({ children }) => {
 											<div className="p-2 space-y-1">
 												{/* GitHub */}
 												<a
-													href="https://github.com/PatchMon/PatchMon"
+													href="https://github.com/MacJediWizard/PatchMon-Enhanced"
 													target="_blank"
 													rel="noopener noreferrer"
 													className="flex items-center gap-3 px-3 py-3 bg-gray-50 dark:bg-gray-800 text-secondary-600 dark:text-secondary-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors min-h-[44px]"
@@ -1436,7 +1436,7 @@ const Layout = ({ children }) => {
 							<div className="hidden md:flex items-center gap-1">
 								{/* 1) GitHub */}
 								<a
-									href="https://github.com/PatchMon/PatchMon"
+									href="https://github.com/MacJediWizard/PatchMon-Enhanced"
 									target="_blank"
 									rel="noopener noreferrer"
 									className="flex items-center justify-center gap-1.5 px-3 py-2 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-secondary-300 hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm group relative"
