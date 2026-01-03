@@ -374,7 +374,7 @@ const Packages = () => {
 								{pkg.name}
 							</div>
 							{pkg.description && (
-								<div className="text-sm text-secondary-500 dark:text-secondary-300 max-w-md truncate">
+								<div className="text-sm text-secondary-600 dark:text-secondary-400">
 									{pkg.description}
 								</div>
 							)}
@@ -767,6 +767,15 @@ const Packages = () => {
 													</div>
 												</div>
 											</button>
+
+											{/* Description (only rendered if a description exists) */}
+											{pkg.description && (
+												<div className="text-sm text-secondary-600 dark:text-secondary-400 bg-secondary-50 dark:bg-secondary-800/50 rounded-md p-2 border border-secondary-200 dark:border-secondary-700/50">
+													<div className="line-clamp-2 whitespace-normal">
+														{pkg.description}
+													</div>
+												</div>
+											)}
 
 											{/* Status and Hosts on same line */}
 											<div className="flex items-center justify-between gap-2">
