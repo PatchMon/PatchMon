@@ -161,6 +161,8 @@ async function handleCallback(code, codeVerifier, expectedNonce) {
 			claims.name ||
 			claims.preferred_username ||
 			claims.email.split("@")[0],
+		givenName: claims.given_name || null,
+		familyName: claims.family_name || null,
 		emailVerified: claims.email_verified || false,
 		groups: claims.groups || [],
 		picture: claims.picture || null,

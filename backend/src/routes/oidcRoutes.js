@@ -229,10 +229,10 @@ router.get("/callback", async (req, res) => {
 			// Map groups to role (or use default if no group mapping configured)
 			const userRole = mapGroupsToRole(userInfo.groups);
 
-			// Generate a unique username from email (sanitize special characters)
+			// Generate a unique username from email prefix (keep periods for firstname.lastname format)
 			let baseUsername = userInfo.email
 				.split("@")[0]
-				.replace(/[^a-zA-Z0-9_-]/g, "_")
+				.replace(/[^a-zA-Z0-9._-]/g, "") // Keep letters, numbers, periods, underscores, hyphens
 				.substring(0, 32);
 			let username = baseUsername;
 			let counter = 1;
@@ -248,8 +248,8 @@ router.get("/callback", async (req, res) => {
 					id: uuidv4(),
 					email: userInfo.email,
 					username: username,
-					first_name: userInfo.name || null,
-					last_name: null,
+					first_name: userInfo.givenName || null,
+					last_name: userInfo.familyName || null,
 					oidc_sub: userInfo.sub,
 					oidc_provider: new URL(process.env.OIDC_ISSUER_URL).hostname,
 					avatar_url: userInfo.picture || null,
@@ -313,7 +313,7 @@ router.get("/callback", async (req, res) => {
 			return res.redirect("/login?error=Account+disabled");
 		}
 
-		// Update last login, avatar, and optionally sync role from groups
+		// Update last login, avatar, names, and optionally sync role from groups
 		const updateData = {
 			last_login: new Date(),
 			updated_at: new Date(),
@@ -323,6 +323,16 @@ router.get("/callback", async (req, res) => {
 		if (userInfo.picture && userInfo.picture !== user.avatar_url) {
 			updateData.avatar_url = userInfo.picture;
 			console.log(`OIDC avatar sync: ${user.email} avatar updated`);
+		}
+
+		// Sync first/last name from IdP on every login
+		if (userInfo.givenName && userInfo.givenName !== user.first_name) {
+			updateData.first_name = userInfo.givenName;
+			console.log(`OIDC name sync: ${user.email} first_name updated`);
+		}
+		if (userInfo.familyName && userInfo.familyName !== user.last_name) {
+			updateData.last_name = userInfo.familyName;
+			console.log(`OIDC name sync: ${user.email} last_name updated`);
 		}
 
 		// Sync role from groups on every login if enabled
