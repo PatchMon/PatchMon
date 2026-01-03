@@ -179,7 +179,7 @@ router.get("/agent/download", async (req, res) => {
 				});
 			}
 
-			const binaryName = `patchmon-agent-linux-${architecture}`;
+			const binaryName = `patchmonenhanced-agent-linux-${architecture}`;
 			const binaryPath = path.join(__dirname, "../../../agents", binaryName);
 
 			if (!fs.existsSync(binaryPath)) {
@@ -286,7 +286,7 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 			const { promisify } = require("node:util");
 			const execFileAsync = promisify(execFile);
 
-			const binaryName = `patchmon-agent-linux-${architecture}`;
+			const binaryName = `patchmonenhanced-agent-linux-${architecture}`;
 			const binaryPath = path.join(__dirname, "../../../agents", binaryName);
 
 			if (fs.existsSync(binaryPath)) {

@@ -62,7 +62,7 @@ https://github.com/MacJediWizard/PatchMonEnhanced-agent/releases
 
 ```bash
 # Download for your architecture
-curl -L https://github.com/MacJediWizard/PatchMonEnhanced-agent/releases/latest/download/patchmon-agent-linux-amd64 -o patchmon-agent
+curl -L https://github.com/MacJediWizard/PatchMonEnhanced-agent/releases/latest/download/patchmonenhanced-agent-linux-amd64 -o patchmon-agent
 chmod +x patchmon-agent
 sudo mv patchmon-agent /usr/local/bin/
 ```
@@ -222,7 +222,7 @@ curl -X POST https://your-server.com/api/v1/compliance/trigger/{host-id} \
 
 ```bash
 # Download latest binary
-curl -L https://github.com/MacJediWizard/PatchMonEnhanced-agent/releases/latest/download/patchmon-agent-linux-amd64 -o patchmon-agent
+curl -L https://github.com/MacJediWizard/PatchMonEnhanced-agent/releases/latest/download/patchmonenhanced-agent-linux-amd64 -o patchmon-agent
 chmod +x patchmon-agent
 sudo mv patchmon-agent /usr/local/bin/
 
