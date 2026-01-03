@@ -847,12 +847,10 @@ router.post(
 			// Get accepted release notes versions
 			let acceptedVersions = [];
 			try {
-				if (prisma.release_notes_acceptances) {
-					acceptedVersions = await prisma.release_notes_acceptances.findMany({
-						where: { user_id: user.id },
-						select: { version: true },
-					});
-				}
+				acceptedVersions = await prisma.release_notes_acceptances.findMany({
+					where: { user_id: user.id },
+					select: { version: true },
+				});
 			} catch (error) {
 				// If table doesn't exist yet or Prisma client not regenerated, use empty array
 				console.warn(
@@ -1010,12 +1008,10 @@ router.post(
 			// Get accepted release notes versions
 			let acceptedVersions = [];
 			try {
-				if (prisma.release_notes_acceptances) {
-					acceptedVersions = await prisma.release_notes_acceptances.findMany({
-						where: { user_id: user.id },
-						select: { version: true },
-					});
-				}
+				acceptedVersions = await prisma.release_notes_acceptances.findMany({
+					where: { user_id: user.id },
+					select: { version: true },
+				});
 			} catch (error) {
 				// If table doesn't exist yet or Prisma client not regenerated, use empty array
 				console.warn(
