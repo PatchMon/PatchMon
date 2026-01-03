@@ -331,6 +331,15 @@ router.get("/dashboard", async (req, res) => {
         },
       }));
 
+    // Transform recent_scans to match frontend expectations (host instead of hosts, profile instead of compliance_profiles)
+    const transformedRecentScans = recentScans.map((scan) => ({
+      ...scan,
+      host: scan.hosts,
+      profile: scan.compliance_profiles,
+      hosts: undefined,
+      compliance_profiles: undefined,
+    }));
+
     res.json({
       summary: {
         total_hosts: totalHosts,
@@ -340,7 +349,7 @@ router.get("/dashboard", async (req, res) => {
         critical,
         unscanned,
       },
-      recent_scans: recentScans,
+      recent_scans: transformedRecentScans,
       worst_hosts: worstHosts,
     });
   } catch (error) {

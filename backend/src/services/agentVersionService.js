@@ -273,7 +273,7 @@ class AgentVersionService {
 			);
 
 			for (const arch of this.supportedArchitectures) {
-				const assetName = `patchmon-agent-${arch}`;
+				const assetName = `patchmonenhanced-agent-${arch}`;
 				const asset = release.assets.find((a) => a.name === assetName);
 
 				if (!asset) {
@@ -336,7 +336,7 @@ class AgentVersionService {
 				throw new Error(`Release ${version} not found`);
 			}
 
-			const assetName = `patchmon-agent-${architecture}`;
+			const assetName = `patchmonenhanced-agent-linux-${architecture}`;
 			const asset = release.assets.find((a) => a.name === assetName);
 
 			if (!asset) {
@@ -378,7 +378,7 @@ class AgentVersionService {
 	}
 
 	async getBinaryPath(version, architecture) {
-		const binaryName = `patchmon-agent-${architecture}`;
+		const binaryName = `patchmonenhanced-agent-${architecture}`;
 		const binaryPath = path.join(this.agentsDir, binaryName);
 
 		try {
@@ -398,7 +398,7 @@ class AgentVersionService {
 			res.setHeader("Content-Type", "application/octet-stream");
 			res.setHeader(
 				"Content-Disposition",
-				`attachment; filename="patchmon-agent-${architecture}"`,
+				`attachment; filename="patchmonenhanced-agent-linux-${architecture}"`,
 			);
 			res.setHeader("Content-Length", stats.size);
 
@@ -422,7 +422,7 @@ class AgentVersionService {
 				res.setHeader("Content-Type", "application/octet-stream");
 				res.setHeader(
 					"Content-Disposition",
-					`attachment; filename="patchmon-agent-${architecture}"`,
+					`attachment; filename="patchmonenhanced-agent-linux-${architecture}"`,
 				);
 				res.setHeader("Content-Length", stats.size);
 				res.setHeader("Cache-Control", "public, max-age=3600");
