@@ -225,6 +225,79 @@ If you wish to bind either if their respective container paths to a host path ra
 
 ---
 
+## Docker Swarm Deployment
+
+> [!NOTE]
+> This section covers deploying PatchMon to a Docker Swarm cluster. For standard Docker Compose deployments on a single host, use the production deployment guide above.
+
+### Network Configuration
+
+When deploying to Docker Swarm with a reverse proxy (e.g., Traefik), proper network configuration is critical. The default `docker-compose.yml` uses an internal bridge network that enables service-to-service communication:
+
+```yaml
+networks:
+  patchmon-internal:
+    driver: bridge
+```
+
+All services (database, redis, backend, and frontend) connect to this internal network, allowing them to discover each other by service name.
+
+**Important**: If you're using an external reverse proxy network (like `traefik-net`), ensure that:
+
+1. All PatchMon services remain on the `patchmon-internal` network for internal communication
+2. The frontend service (NGINX) can be configured to also bind to the reverse proxy network if needed
+3. Service names resolve correctly within the same network
+
+### Service Discovery in Swarm
+
+In Docker Swarm, service discovery works through:
+- **Service Name Resolution**: Service names resolve to virtual IPs within the same network
+- **Load Balancing**: Requests to a service name are automatically load-balanced across all replicas
+- **Network Isolation**: Services on different networks cannot communicate directly
+
+### Configuration for Swarm with Traefik
+
+If you're using Traefik as a reverse proxy:
+
+1. Keep the default `patchmon-internal` network for backend services
+2. Configure Traefik in your Swarm deployment with its own network
+3. Ensure the frontend service can reach the backend through the internal network
+
+Example modification for Swarm:
+
+```yaml
+services:
+  frontend:
+    image: ghcr.io/patchmon/patchmon-frontend:latest
+    networks:
+      - patchmon-internal
+    deploy:
+      replicas: 1
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.patchmon.rule=Host(`patchmon.my.domain`)"
+        # ... other Traefik labels
+```
+
+The frontend reaches the backend via the `patchmon-internal` network using the hostname `backend`, while Traefik routes external traffic to the frontend service.
+
+### Troubleshooting Network Issues
+
+**Error: `host not found in upstream "backend"`**
+
+This typically occurs when:
+1. Frontend and backend services are on different networks
+2. Services haven't fully started (check health checks)
+3. Service names haven't propagated through DNS
+
+**Solution**:
+- Verify all services are on the same internal network
+- Check service health status: `docker ps` (production) or `docker service ps` (Swarm)
+- Wait for health checks to pass before accessing the application
+- Confirm network connectivity: `docker exec <container> ping backend`
+
+---
+
 # Development
 
 This section is for developers who want to contribute to PatchMon or run it in development mode.
