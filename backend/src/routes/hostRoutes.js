@@ -706,15 +706,26 @@ router.post(
 							};
 							packagesToCreate.push(newPkg);
 							existingPackageMap.set(packageData.name, newPkg);
-						} else if (
-							packageData.availableVersion &&
-							packageData.availableVersion !== existingPkg.latest_version
-						) {
-							// Package exists but needs version update
-							packagesToUpdate.push({
-								id: existingPkg.id,
-								latest_version: packageData.availableVersion,
-							});
+						} else {
+							// Package exists - check if we need to update version or metadata
+							if (
+								(packageData.availableVersion &&
+									packageData.availableVersion !==
+										existingPkg.latest_version) ||
+								(packageData.description &&
+									packageData.description !== existingPkg.description) ||
+								(packageData.category &&
+									packageData.category !== existingPkg.category)
+							) {
+								packagesToUpdate.push({
+									id: existingPkg.id,
+									latest_version:
+										packageData.availableVersion || existingPkg.latest_version,
+									description:
+										packageData.description || existingPkg.description,
+									category: packageData.category || existingPkg.category,
+								});
+							}
 						}
 					}
 
@@ -732,6 +743,8 @@ router.post(
 							where: { id: update.id },
 							data: {
 								latest_version: update.latest_version,
+								description: update.description,
+								category: update.category,
 								updated_at: new Date(),
 							},
 						});
