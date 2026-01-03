@@ -312,9 +312,9 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 			// Go agent version check
 			// Always check the server's local binary for the requested architecture
 			// The server's agents folder is the source of truth, not GitHub
-			const { exec } = require("node:child_process");
+			const { execFile } = require("node:child_process");
 			const { promisify } = require("node:util");
-			const execAsync = promisify(exec);
+			const execFileAsync = promisify(execFile);
 
 			const binaryName = `patchmon-agent-linux-${architecture}`;
 			const binaryPath = path.join(__dirname, "../../../agents", binaryName);
@@ -323,9 +323,10 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 				// Binary exists in server's agents folder - use its version
 				let serverVersion = null;
 
-				// Try method 1: Execute binary (works for same architecture)
+				// Try method 1: Execute binary directly (works for same architecture)
+				// Using execFile instead of exec to prevent shell injection
 				try {
-					const { stdout } = await execAsync(`${binaryPath} --help`, {
+					const { stdout } = await execFileAsync(binaryPath, ["--help"], {
 						timeout: 10000,
 					});
 
@@ -344,14 +345,15 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 					);
 
 					// Try method 2: Extract version using strings command (works for cross-architecture)
+					// Using execFile with strings command to avoid shell injection
 					try {
-						const { stdout: stringsOutput } = await execAsync(
-							`strings "${binaryPath}" | grep -E "PatchMon Agent v[0-9]+\\.[0-9]+\\.[0-9]+" | head -1`,
-							{
-								timeout: 10000,
-							},
+						const { stdout: stringsOutput } = await execFileAsync(
+							"strings",
+							[binaryPath],
+							{ timeout: 10000, maxBuffer: 10 * 1024 * 1024 },
 						);
 
+						// Filter in Node.js instead of piping through grep
 						const versionMatch = stringsOutput.match(
 							/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
 						);
@@ -376,6 +378,16 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 					// Proper semantic version comparison: only update if server version is NEWER
 					const hasUpdate = compareVersions(serverVersion, agentVersion) > 0;
 
+					// Calculate SHA256 hash of the binary for integrity verification
+					// This allows agents to verify the downloaded binary matches the expected hash
+					let binaryHash = null;
+					try {
+						const binaryContent = fs.readFileSync(binaryPath);
+						binaryHash = crypto.createHash("sha256").update(binaryContent).digest("hex");
+					} catch (hashErr) {
+						console.warn(`Failed to calculate hash for binary ${binaryName}: ${hashErr.message}`);
+					}
+
 					// Return update info, but indicate if auto-update is disabled
 					return res.json({
 						currentVersion: agentVersion,
@@ -390,6 +402,7 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 						minServerVersion: null,
 						architecture: architecture,
 						agentType: "go",
+						hash: binaryHash, // SHA256 hash for integrity verification
 					});
 				}
 

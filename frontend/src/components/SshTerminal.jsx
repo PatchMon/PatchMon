@@ -193,20 +193,27 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 		setIsConnecting(true);
 		setError(null);
 
-		// Fetch a short-lived WebSocket token from the server
-		// This works with both regular auth and OIDC (httpOnly cookies)
-		let wsToken;
+		// SECURITY: Use one-time ticket authentication instead of tokens in URLs
+		// Tickets are single-use, short-lived, and host-specific
+		// This prevents token exposure in server logs and browser history
+		let sshTicket;
 		try {
-			const response = await fetch("/api/v1/auth/ws-token", {
+			const response = await fetch("/api/v1/auth/ssh-ticket", {
+				method: "POST",
 				credentials: "include", // Include httpOnly cookies for auth
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ hostId: host.id }),
 			});
 			if (!response.ok) {
-				throw new Error("Failed to get authentication token");
+				const errorData = await response.json().catch(() => ({}));
+				throw new Error(errorData.error || "Failed to get SSH ticket");
 			}
 			const data = await response.json();
-			wsToken = data.token;
+			sshTicket = data.ticket;
 		} catch (err) {
-			console.error("[SSH Terminal] Failed to get WebSocket token:", err);
+			console.error("[SSH Terminal] Failed to get SSH ticket:", err);
 			setError("Authentication required. Please log in again.");
 			if (terminalInstanceRef.current) {
 				terminalInstanceRef.current.writeln("\r\n\x1b[31m✗ Error: Authentication required\x1b[0m");
@@ -216,11 +223,11 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 			return;
 		}
 
-		// Determine WebSocket URL
+		// Determine WebSocket URL - using ticket instead of token for security
 		const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 		const hostname = window.location.hostname;
 		const port = window.location.port ? `:${window.location.port}` : "";
-		const wsUrl = `${protocol}//${hostname}${port}/api/v1/ssh-terminal/${host.id}?token=${encodeURIComponent(wsToken)}`;
+		const wsUrl = `${protocol}//${hostname}${port}/api/v1/ssh-terminal/${host.id}?ticket=${encodeURIComponent(sshTicket)}`;
 
 		try {
 			const ws = new WebSocket(wsUrl);

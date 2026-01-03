@@ -166,19 +166,15 @@ const authenticateApiToken = (integrationType) => {
 
 			// Check IP restrictions if any
 			if (token.allowed_ip_ranges && token.allowed_ip_ranges.length > 0) {
-				const clientIp = req.ip || req.connection.remoteAddress;
-				const forwardedFor = req.headers["x-forwarded-for"];
-				const realIp = req.headers["x-real-ip"];
-
-				// Get the actual client IP (considering proxies)
-				const actualClientIp = forwardedFor
-					? forwardedFor.split(",")[0].trim()
-					: realIp || clientIp;
+				// SECURITY: Use req.ip which respects the Express trust proxy setting
+				// This prevents IP spoofing via X-Forwarded-For when trust proxy is not configured
+				// Configure TRUST_PROXY environment variable in server.js when behind a reverse proxy
+				const clientIp = req.ip || req.connection?.remoteAddress;
 
 				// Use proper CIDR validation
-				if (!isIPAllowed(actualClientIp, token.allowed_ip_ranges)) {
+				if (!isIPAllowed(clientIp, token.allowed_ip_ranges)) {
 					console.log(
-						`IP validation failed. Client IP: ${actualClientIp}, Allowed ranges: ${token.allowed_ip_ranges.join(", ")}`,
+						`IP validation failed. Client IP: ${clientIp}, Allowed ranges: ${token.allowed_ip_ranges.join(", ")}`,
 					);
 					return res.status(403).json({ error: "IP address not allowed" });
 				}

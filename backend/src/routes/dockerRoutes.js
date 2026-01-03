@@ -10,6 +10,44 @@ const prisma = getPrismaClient();
 const router = express.Router();
 
 /**
+ * Sanitize request body for logging - removes sensitive fields
+ * @param {Object} body - The request body to sanitize
+ * @returns {Object} Sanitized copy of the body
+ */
+function sanitizeBodyForLogging(body) {
+	if (!body || typeof body !== "object") {
+		return body;
+	}
+
+	const sensitiveFields = [
+		"apiKey",
+		"api_key",
+		"apiId",
+		"api_id",
+		"password",
+		"token",
+		"secret",
+		"credential",
+		"privateKey",
+		"private_key",
+		"passphrase",
+	];
+
+	const sanitized = { ...body };
+
+	for (const key of Object.keys(sanitized)) {
+		const lowerKey = key.toLowerCase();
+		if (sensitiveFields.some((field) => lowerKey.includes(field.toLowerCase()))) {
+			sanitized[key] = "[REDACTED]";
+		} else if (typeof sanitized[key] === "object" && sanitized[key] !== null) {
+			sanitized[key] = sanitizeBodyForLogging(sanitized[key]);
+		}
+	}
+
+	return sanitized;
+}
+
+/**
  * Verify API key against stored hash or plaintext (legacy support)
  * @param {string} providedKey - The key provided by the client
  * @param {string} storedKey - The key stored in the database (may be hashed or plaintext)
@@ -782,7 +820,8 @@ router.post("/collect", async (req, res) => {
 	} catch (error) {
 		console.error("Error collecting Docker data:", error);
 		console.error("Error stack:", error.stack);
-		console.error("Request body:", JSON.stringify(req.body, null, 2));
+		// Sanitize request body before logging to prevent credential exposure
+		console.error("Request body (sanitized):", JSON.stringify(sanitizeBodyForLogging(req.body), null, 2));
 		res.status(500).json({
 			error: "Failed to collect Docker data",
 			message: error.message,

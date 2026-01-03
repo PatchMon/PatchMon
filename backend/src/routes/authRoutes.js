@@ -1466,6 +1466,74 @@ router.get("/ws-token", authenticateToken, async (req, res) => {
 	}
 });
 
+// SSH Terminal Ticket - One-time use ticket for SSH terminal WebSocket authentication
+// SECURITY: Uses Redis-stored tickets instead of tokens in URLs to prevent exposure in logs
+const SSH_TICKET_PREFIX = "ssh:ticket:";
+const SSH_TICKET_TTL = 30; // 30 seconds - very short-lived
+
+router.post("/ssh-ticket", authenticateToken, async (req, res) => {
+	try {
+		const { hostId } = req.body;
+
+		if (!hostId) {
+			return res.status(400).json({ error: "Host ID is required" });
+		}
+
+		// Generate a random ticket
+		const crypto = require("node:crypto");
+		const ticket = crypto.randomBytes(32).toString("hex");
+		const key = `${SSH_TICKET_PREFIX}${ticket}`;
+
+		// Store ticket data in Redis with short TTL
+		const ticketData = JSON.stringify({
+			userId: req.user.id,
+			sessionId: req.session_id,
+			hostId: hostId,
+			createdAt: Date.now(),
+		});
+
+		await redis.setex(key, SSH_TICKET_TTL, ticketData);
+
+		res.json({
+			ticket: ticket,
+			expiresIn: SSH_TICKET_TTL,
+		});
+	} catch (error) {
+		console.error("SSH ticket generation error:", error);
+		res.status(500).json({ error: "Failed to generate SSH ticket" });
+	}
+});
+
+// Validate and consume SSH ticket (used by WebSocket handler)
+// Exported for use in sshTerminalWs.js
+async function consumeSshTicket(ticket, expectedHostId) {
+	const key = `${SSH_TICKET_PREFIX}${ticket}`;
+	const data = await redis.get(key);
+
+	if (!data) {
+		return { valid: false, reason: "Invalid or expired ticket" };
+	}
+
+	// Delete ticket immediately (one-time use)
+	await redis.del(key);
+
+	const ticketData = JSON.parse(data);
+
+	// Verify host ID matches
+	if (ticketData.hostId !== expectedHostId) {
+		return { valid: false, reason: "Ticket host mismatch" };
+	}
+
+	return {
+		valid: true,
+		userId: ticketData.userId,
+		sessionId: ticketData.sessionId,
+	};
+}
+
+// Export for use in other modules
+router.consumeSshTicket = consumeSshTicket;
+
 // Get current user profile
 router.get("/profile", authenticateToken, async (req, res) => {
 	try {
