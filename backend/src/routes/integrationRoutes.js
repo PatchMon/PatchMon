@@ -1,36 +1,10 @@
 const express = require("express");
-const bcrypt = require("bcryptjs");
-const crypto = require("node:crypto");
 const { getPrismaClient } = require("../config/prisma");
 const { v4: uuidv4 } = require("uuid");
+const { verifyApiKey } = require("../utils/apiKeyUtils");
 
 const prisma = getPrismaClient();
 const router = express.Router();
-
-/**
- * Verify API key against stored hash or plaintext (legacy support)
- * @param {string} providedKey - The key provided by the client
- * @param {string} storedKey - The key stored in the database (may be hashed or plaintext)
- * @returns {Promise<boolean>} True if the key matches
- */
-async function verifyApiKey(providedKey, storedKey) {
-	if (!providedKey || !storedKey) return false;
-
-	// Check if stored key is a bcrypt hash
-	if (storedKey.match(/^\$2[aby]\$/)) {
-		return bcrypt.compare(providedKey, storedKey);
-	}
-
-	// Legacy: plaintext comparison with timing-safe check
-	try {
-		const providedBuffer = Buffer.from(providedKey, "utf8");
-		const storedBuffer = Buffer.from(storedKey, "utf8");
-		if (providedBuffer.length !== storedBuffer.length) return false;
-		return crypto.timingSafeEqual(providedBuffer, storedBuffer);
-	} catch {
-		return false;
-	}
-}
 
 // POST /api/v1/integrations/docker - Docker data collection endpoint
 router.post("/docker", async (req, res) => {

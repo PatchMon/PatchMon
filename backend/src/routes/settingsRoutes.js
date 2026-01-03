@@ -1,34 +1,13 @@
 const express = require("express");
 const { body, validationResult } = require("express-validator");
-const crypto = require("node:crypto");
-const bcrypt = require("bcryptjs");
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateToken } = require("../middleware/auth");
 const { requireManageSettings } = require("../middleware/permissions");
 const { getSettings, updateSettings } = require("../services/settingsService");
+const { verifyApiKey } = require("../utils/apiKeyUtils");
 
 const router = express.Router();
 const prisma = getPrismaClient();
-
-/**
- * Verify API key against stored hash
- * Supports both bcrypt hashed keys (new) and plaintext keys (legacy)
- */
-async function verifyApiKey(providedKey, storedKey) {
-	if (!providedKey || !storedKey) return false;
-	// Check if stored key is a bcrypt hash (starts with $2a$, $2b$, or $2y$)
-	if (storedKey.match(/^\$2[aby]\$/)) {
-		return bcrypt.compare(providedKey, storedKey);
-	}
-	// Legacy plaintext key - use timing-safe comparison
-	if (storedKey.length === providedKey.length) {
-		return crypto.timingSafeEqual(
-			Buffer.from(storedKey),
-			Buffer.from(providedKey)
-		);
-	}
-	return false;
-}
 
 const { queueManager, QUEUE_NAMES } = require("../services/automation");
 
@@ -398,6 +377,15 @@ router.post(
 				});
 			}
 
+			// Validate file size (max 5MB for logos)
+			const MAX_FILE_SIZE = 5 * 1024 * 1024;
+			const estimatedSize = (fileContent.length * 3) / 4; // Approximate decoded size
+			if (estimatedSize > MAX_FILE_SIZE) {
+				return res.status(400).json({
+					error: "File size exceeds maximum allowed (5MB)",
+				});
+			}
+
 			const fs = require("node:fs").promises;
 			const path = require("node:path");
 
@@ -408,35 +396,10 @@ router.post(
 			const assetsDir = isDevelopment
 				? path.join(__dirname, "../../../frontend/public/assets")
 				: path.join(__dirname, "../../../frontend/dist/assets");
-			await fs.mkdir(assetsDir, { recursive: true });
+			const resolvedAssetsDir = path.resolve(assetsDir);
+			await fs.mkdir(resolvedAssetsDir, { recursive: true });
 
-			// Determine file extension and path
-			let fileExtension;
-			let fileName_final;
-
-			if (logoType === "favicon") {
-				fileExtension = ".svg";
-				fileName_final = fileName || "logo_square.svg";
-			} else {
-				// Determine extension from file content or use default
-				if (fileContent.startsWith("data:image/png")) {
-					fileExtension = ".png";
-				} else if (fileContent.startsWith("data:image/svg")) {
-					fileExtension = ".svg";
-				} else if (
-					fileContent.startsWith("data:image/jpeg") ||
-					fileContent.startsWith("data:image/jpg")
-				) {
-					fileExtension = ".jpg";
-				} else {
-					fileExtension = ".png"; // Default to PNG
-				}
-				fileName_final = fileName || `logo_${logoType}${fileExtension}`;
-			}
-
-			const filePath = path.join(assetsDir, fileName_final);
-
-			// Handle base64 data URLs
+			// Handle base64 data URLs - decode first to validate magic bytes
 			let fileBuffer;
 			if (fileContent.startsWith("data:")) {
 				const base64Data = fileContent.split(",")[1];
@@ -444,6 +407,59 @@ router.post(
 			} else {
 				// Assume it's already base64
 				fileBuffer = Buffer.from(fileContent, "base64");
+			}
+
+			// Magic byte validation for file type
+			const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+			const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
+			const isPng = fileBuffer.slice(0, 4).equals(PNG_MAGIC);
+			const isJpeg = fileBuffer.slice(0, 3).equals(JPEG_MAGIC);
+			const isSvg = fileBuffer.toString("utf8", 0, 100).includes("<svg");
+
+			// Determine file extension based on actual content (magic bytes)
+			let fileExtension;
+			let fileName_final;
+
+			if (logoType === "favicon") {
+				if (!isSvg) {
+					return res.status(400).json({
+						error: "Favicon must be an SVG file",
+					});
+				}
+				fileExtension = ".svg";
+				fileName_final = "logo_square.svg";
+			} else {
+				// Validate and determine extension from magic bytes
+				if (isPng) {
+					fileExtension = ".png";
+				} else if (isJpeg) {
+					fileExtension = ".jpg";
+				} else if (isSvg) {
+					fileExtension = ".svg";
+				} else {
+					return res.status(400).json({
+						error: "Invalid file type. Allowed: PNG, JPEG, SVG",
+					});
+				}
+				fileName_final = `logo_${logoType}${fileExtension}`;
+			}
+
+			// SECURITY: Sanitize filename to prevent path traversal
+			// Only allow alphanumeric, underscore, hyphen, and dot
+			const sanitizedFileName = path.basename(fileName_final).replace(/[^a-zA-Z0-9_.-]/g, "_");
+			if (sanitizedFileName !== fileName_final || sanitizedFileName.includes("..")) {
+				return res.status(400).json({
+					error: "Invalid filename",
+				});
+			}
+
+			const filePath = path.join(resolvedAssetsDir, sanitizedFileName);
+
+			// SECURITY: Verify final path is within assets directory
+			if (!filePath.startsWith(resolvedAssetsDir + path.sep)) {
+				return res.status(400).json({
+					error: "Invalid file path",
+				});
 			}
 
 			// Create backup of existing file
@@ -463,7 +479,7 @@ router.post(
 
 			// Update settings with new logo path
 			const settings = await getSettings();
-			const logoPath = `/assets/${fileName_final}`;
+			const logoPath = `/assets/${sanitizedFileName}`;
 
 			const updateData = {};
 			if (logoType === "dark") {
@@ -481,7 +497,7 @@ router.post(
 
 			res.json({
 				message: `${logoType} logo uploaded successfully`,
-				fileName: fileName_final,
+				fileName: sanitizedFileName,
 				path: logoPath,
 				size: stats.size,
 				sizeFormatted: `${(stats.size / 1024).toFixed(1)} KB`,

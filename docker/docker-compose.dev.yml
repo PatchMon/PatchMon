@@ -1,3 +1,14 @@
+# ============================================================================
+# WARNING: DEVELOPMENT ONLY - DO NOT USE IN PRODUCTION
+# ============================================================================
+# This file contains hardcoded credentials for LOCAL DEVELOPMENT ONLY.
+# These credentials are intentionally insecure and should NEVER be used
+# in any production, staging, or publicly accessible environment.
+#
+# For production deployments, use docker-compose.yml with proper environment
+# variables and secrets management.
+# ============================================================================
+
 name: patchmon-dev
 
 services:
@@ -7,6 +18,7 @@ services:
     environment:
       POSTGRES_DB: patchmon_db
       POSTGRES_USER: patchmon_user
+      # WARNING: Insecure development password - DO NOT use in production
       POSTGRES_PASSWORD: 1NS3CU6E_DEV_D8_PASSW0RD
     ports:
       - "5432:5432"
@@ -21,6 +33,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # WARNING: Insecure development password - DO NOT use in production
     command: redis-server --requirepass 1NS3CU6E_DEV_R3DIS_PASSW0RD
     environment:
       REDIS_PASSWORD: 1NS3CU6E_DEV_R3DIS_PASSW0RD

@@ -3,35 +3,9 @@
 
 const WebSocket = require("ws");
 const url = require("node:url");
-const bcrypt = require("bcryptjs");
-const crypto = require("node:crypto");
 const { get_current_time } = require("../utils/timezone");
 const { handleSshTerminalUpgrade } = require("./sshTerminalWs");
-
-/**
- * Verify API key against stored hash or plaintext (legacy support)
- * @param {string} providedKey - The key provided by the agent
- * @param {string} storedKey - The key stored in the database (may be hashed or plaintext)
- * @returns {Promise<boolean>} True if the key matches
- */
-async function verifyApiKey(providedKey, storedKey) {
-	if (!providedKey || !storedKey) return false;
-
-	// Check if stored key is a bcrypt hash
-	if (storedKey.match(/^\$2[aby]\$/)) {
-		return bcrypt.compare(providedKey, storedKey);
-	}
-
-	// Legacy: plaintext comparison with timing-safe check
-	try {
-		const providedBuffer = Buffer.from(providedKey, "utf8");
-		const storedBuffer = Buffer.from(storedKey, "utf8");
-		if (providedBuffer.length !== storedBuffer.length) return false;
-		return crypto.timingSafeEqual(providedBuffer, storedBuffer);
-	} catch {
-		return false;
-	}
-}
+const { verifyApiKey } = require("../utils/apiKeyUtils");
 
 // Connection registry by api_id
 const apiIdToSocket = new Map();

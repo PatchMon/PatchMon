@@ -406,12 +406,9 @@ app.use(
 		origin: (origin, callback) => {
 			// Handle requests without origin header
 			if (!origin) {
-				// In development, allow all requests without origin (curl, SSR tools, etc.)
-				if (process.env.NODE_ENV === "development") {
-					return callback(null, true);
-				}
-				// In production, allow server-to-server requests (agent updates, etc.)
-				// but browser requests should always have origin
+				// Allow server-to-server requests (agents, curl, etc.)
+				// These are legitimate API calls without a browser origin
+				// Security note: API endpoints still require authentication
 				return callback(null, true);
 			}
 			if (allowedOrigins.includes(origin)) return callback(null, true);
@@ -661,14 +658,15 @@ app.use((err, _req, res, _next) => {
 		logger.error(err.stack);
 	}
 
-	// Special handling for CORS errors - always include the message
+	// SECURITY: Use generic error messages in production to prevent info leakage
+	// CORS errors get a specific 403 status but generic message
 	if (err.message?.includes("Not allowed by CORS")) {
-		return res.status(500).json({
-			error: "Something went wrong!",
-			message: err.message, // Always include CORS error message
+		return res.status(403).json({
+			error: "CORS policy violation",
 		});
 	}
 
+	// Only expose error details in development
 	res.status(500).json({
 		error: "Something went wrong!",
 		message: process.env.NODE_ENV === "development" ? err.message : undefined,

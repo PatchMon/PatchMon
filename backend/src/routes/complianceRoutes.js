@@ -4,8 +4,7 @@ const rateLimit = require("express-rate-limit");
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateToken } = require("../middleware/auth");
 const { v4: uuidv4, validate: uuidValidate } = require("uuid");
-const bcrypt = require("bcryptjs");
-const crypto = require("node:crypto");
+const { verifyApiKey } = require("../utils/apiKeyUtils");
 
 const prisma = getPrismaClient();
 
@@ -35,24 +34,6 @@ function sanitizeInt(value, defaultVal, min = 1, max = 1000) {
   const parsed = parseInt(value, 10);
   if (isNaN(parsed)) return defaultVal;
   return Math.min(Math.max(parsed, min), max);
-}
-
-/**
- * Verify API key against stored hash or plaintext (legacy support)
- */
-async function verifyApiKey(providedKey, storedKey) {
-  if (!providedKey || !storedKey) return false;
-  if (storedKey.match(/^\$2[aby]\$/)) {
-    return bcrypt.compare(providedKey, storedKey);
-  }
-  try {
-    const providedBuffer = Buffer.from(providedKey, "utf8");
-    const storedBuffer = Buffer.from(storedKey, "utf8");
-    if (providedBuffer.length !== storedBuffer.length) return false;
-    return crypto.timingSafeEqual(providedBuffer, storedBuffer);
-  } catch {
-    return false;
-  }
 }
 
 // ==========================================

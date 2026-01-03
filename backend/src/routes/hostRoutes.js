@@ -3,7 +3,6 @@ const { getPrismaClient } = require("../config/prisma");
 const { body, validationResult } = require("express-validator");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("node:crypto");
-const bcrypt = require("bcryptjs");
 const { authenticateToken } = require("../middleware/auth");
 const {
 	requireManageHosts,
@@ -13,6 +12,7 @@ const { queueManager, QUEUE_NAMES } = require("../services/automation");
 const { pushIntegrationToggle, isConnected } = require("../services/agentWs");
 const { compareVersions } = require("../services/automation/shared/utils");
 const { redis } = require("../services/automation/shared/redis");
+const { verifyApiKey } = require("../utils/apiKeyUtils");
 
 const router = express.Router();
 const prisma = getPrismaClient();
@@ -64,36 +64,6 @@ async function consumeBootstrapToken(token) {
 // In-memory cache for integration states (api_id -> { integration_name -> enabled })
 // This stores the last known state from successful toggles
 const integrationStateCache = new Map();
-
-/**
- * Verify API key against stored hash
- * Supports both bcrypt hashed keys (new) and plaintext keys (legacy, for migration)
- * @param {string} providedKey - The API key provided by the client
- * @param {string} storedKey - The stored key (hash or plaintext)
- * @returns {Promise<boolean>} Whether the key is valid
- */
-async function verifyApiKey(providedKey, storedKey) {
-	if (!providedKey || !storedKey) return false;
-
-	// Check if stored key is a bcrypt hash (starts with $2a$, $2b$, or $2y$)
-	if (storedKey.match(/^\$2[aby]\$/)) {
-		// Hashed key - use bcrypt compare
-		return bcrypt.compare(providedKey, storedKey);
-	}
-
-	// Legacy plaintext key - use timing-safe comparison
-	// This handles existing hosts with plaintext keys
-	// Length mismatch means keys don't match - return false immediately
-	// (no timing oracle since bcrypt path is the expected case)
-	if (storedKey.length !== providedKey.length) {
-		return false;
-	}
-
-	return crypto.timingSafeEqual(
-		Buffer.from(storedKey),
-		Buffer.from(providedKey)
-	);
-}
 
 // Middleware to validate API credentials
 const validateApiCredentials = async (req, res, next) => {

@@ -1,6 +1,5 @@
 const { prisma } = require("./shared/prisma");
 const https = require("node:https");
-const http = require("node:http");
 const { v4: uuidv4 } = require("uuid");
 
 /**
