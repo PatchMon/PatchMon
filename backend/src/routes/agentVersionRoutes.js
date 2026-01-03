@@ -13,7 +13,7 @@ router.get(
 		try {
 			const axios = require("axios");
 			const response = await axios.get(
-				"https://api.github.com/repos/PatchMon/PatchMon-agent/releases",
+				"https://api.github.com/repos/MacJediWizard/PatchMonEnhanced-agent/releases",
 				{
 					timeout: 10000,
 					headers: {

@@ -26,7 +26,7 @@ const crypto = require("node:crypto");
 class AgentVersionService {
 	constructor() {
 		this.githubApiUrl =
-			"https://api.github.com/repos/PatchMon/PatchMon-agent/releases";
+			"https://api.github.com/repos/MacJediWizard/PatchMonEnhanced-agent/releases";
 		this.agentsDir = path.resolve(__dirname, "../../../agents");
 		this.supportedArchitectures = [
 			"linux-amd64",
@@ -48,7 +48,7 @@ class AgentVersionService {
 			console.log("🔍 Testing GitHub API connectivity...");
 			try {
 				const testResponse = await axios.get(
-					"https://api.github.com/repos/PatchMon/PatchMon-agent/releases",
+					"https://api.github.com/repos/MacJediWizard/PatchMonEnhanced-agent/releases",
 					{
 						timeout: 5000,
 						headers: {
