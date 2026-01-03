@@ -621,6 +621,7 @@ router.post(
 						role: true,
 						is_active: true,
 						created_at: true,
+						avatar_url: true,
 					},
 				});
 			});
@@ -763,6 +764,7 @@ router.put(
 					last_login: true,
 					created_at: true,
 					updated_at: true,
+					avatar_url: true,
 				},
 			});
 
@@ -860,8 +862,11 @@ router.post(
 					id: true,
 					username: true,
 					email: true,
+					first_name: true,
+					last_name: true,
 					role: true,
 					is_active: true,
+					avatar_url: true,
 				},
 			});
 
@@ -1098,6 +1103,7 @@ router.post(
 					created_at: true,
 					updated_at: true,
 					tfa_enabled: true,
+					avatar_url: true,
 				},
 			});
 
@@ -1434,6 +1440,7 @@ router.post(
 					updated_at: true,
 					theme_preference: true,
 					color_theme: true,
+					avatar_url: true,
 				},
 			});
 
@@ -1713,6 +1720,7 @@ router.put(
 					is_active: true,
 					last_login: true,
 					updated_at: true,
+					avatar_url: true,
 				},
 			});
 
@@ -1730,6 +1738,7 @@ router.put(
 					is_active: true,
 					last_login: true,
 					updated_at: true,
+					avatar_url: true,
 				},
 			});
 
@@ -1886,8 +1895,11 @@ router.post(
 					id: result.user.id,
 					username: result.user.username,
 					email: result.user.email,
+					first_name: result.user.first_name,
+					last_name: result.user.last_name,
 					role: result.user.role,
 					is_active: result.user.is_active,
+					avatar_url: result.user.avatar_url,
 				},
 			});
 		} catch (error) {
