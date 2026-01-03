@@ -9,12 +9,23 @@ const request = require("supertest");
 jest.mock("../../src/config/prisma");
 jest.mock("../../src/middleware/auth");
 jest.mock("../../src/services/agentWs");
-jest.mock("uuid");
+jest.mock("../../src/utils/apiKeyUtils");
+// Only mock uuid v4, preserve validate for route validation
+jest.mock("uuid", () => ({
+  ...jest.requireActual("uuid"),
+  v4: jest.fn(() => "mock-uuid"),
+}));
 
 const { getPrismaClient } = require("../../src/config/prisma");
 const { authenticateToken } = require("../../src/middleware/auth");
 const agentWs = require("../../src/services/agentWs");
+const { verifyApiKey } = require("../../src/utils/apiKeyUtils");
 const { v4: uuidv4 } = require("uuid");
+
+// Mock verifyApiKey to always return true for test API keys
+verifyApiKey.mockImplementation((providedKey, storedKey) => {
+  return Promise.resolve(providedKey === storedKey);
+});
 
 // Setup default mock implementations
 const mockPrisma = {
@@ -46,7 +57,6 @@ const mockPrisma = {
 };
 
 getPrismaClient.mockReturnValue(mockPrisma);
-uuidv4.mockReturnValue("mock-uuid");
 
 // Mock authenticateToken to pass through
 authenticateToken.mockImplementation((req, res, next) => {
@@ -65,6 +75,10 @@ function createTestApp() {
   return app;
 }
 
+// Valid UUID for tests (routes now validate UUID format)
+const VALID_HOST_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+const VALID_SCAN_ID = "f1e2d3c4-b5a6-7890-abcd-ef0987654321";
+
 describe("Compliance Routes", () => {
   let app;
 
@@ -75,7 +89,7 @@ describe("Compliance Routes", () => {
 
   describe("POST /api/v1/compliance/scans", () => {
     const mockHost = {
-      id: "host-123",
+      id: VALID_HOST_ID,
       api_id: "test-api-id",
       api_key: "test-api-key",
       friendly_name: "Test Host",
@@ -83,15 +97,15 @@ describe("Compliance Routes", () => {
     };
 
     const mockProfile = {
-      id: "profile-123",
+      id: "b1c2d3e4-f5a6-7890-abcd-ef1234567891",
       name: "CIS Level 1",
       type: "openscap",
     };
 
     const mockScan = {
-      id: "scan-123",
-      host_id: "host-123",
-      profile_id: "profile-123",
+      id: VALID_SCAN_ID,
+      host_id: VALID_HOST_ID,
+      profile_id: "b1c2d3e4-f5a6-7890-abcd-ef1234567891",
       score: 85.0,
     };
 
@@ -101,8 +115,8 @@ describe("Compliance Routes", () => {
       mockPrisma.compliance_scans.create.mockResolvedValue(mockScan);
       mockPrisma.compliance_rules.findFirst.mockResolvedValue(null);
       mockPrisma.compliance_rules.create.mockResolvedValue({
-        id: "rule-123",
-        profile_id: "profile-123",
+        id: "c1d2e3f4-a5b6-7890-abcd-ef1234567892",
+        profile_id: "b1c2d3e4-f5a6-7890-abcd-ef1234567891",
         rule_ref: "test-rule",
         title: "Test Rule",
       });
@@ -258,15 +272,15 @@ describe("Compliance Routes", () => {
   describe("GET /api/v1/compliance/scans/:hostId", () => {
     it("should return scan history for a host", async () => {
       const mockScans = [
-        { id: "1", completed_at: new Date(), score: 85 },
-        { id: "2", completed_at: new Date(), score: 80 },
+        { id: "d1e2f3a4-b5c6-7890-abcd-ef1234567893", completed_at: new Date(), score: 85 },
+        { id: "e1f2a3b4-c5d6-7890-abcd-ef1234567894", completed_at: new Date(), score: 80 },
       ];
 
       mockPrisma.compliance_scans.findMany.mockResolvedValue(mockScans);
       mockPrisma.compliance_scans.count.mockResolvedValue(2);
 
       const response = await request(app)
-        .get("/api/v1/compliance/scans/host-123")
+        .get(`/api/v1/compliance/scans/${VALID_HOST_ID}`)
         .expect(200);
 
       expect(response.body.scans).toHaveLength(2);
@@ -278,7 +292,7 @@ describe("Compliance Routes", () => {
       mockPrisma.compliance_scans.count.mockResolvedValue(50);
 
       const response = await request(app)
-        .get("/api/v1/compliance/scans/host-123?limit=10&offset=20")
+        .get(`/api/v1/compliance/scans/${VALID_HOST_ID}?limit=10&offset=20`)
         .expect(200);
 
       expect(response.body.pagination.limit).toBe(10);
@@ -290,7 +304,7 @@ describe("Compliance Routes", () => {
   describe("GET /api/v1/compliance/scans/:hostId/latest", () => {
     it("should return the latest scan for a host", async () => {
       const mockScan = {
-        id: "scan-123",
+        id: VALID_SCAN_ID,
         score: 85,
         compliance_profiles: { name: "CIS Level 1" },
         compliance_results: [],
@@ -299,10 +313,10 @@ describe("Compliance Routes", () => {
       mockPrisma.compliance_scans.findFirst.mockResolvedValue(mockScan);
 
       const response = await request(app)
-        .get("/api/v1/compliance/scans/host-123/latest")
+        .get(`/api/v1/compliance/scans/${VALID_HOST_ID}/latest`)
         .expect(200);
 
-      expect(response.body.id).toBe("scan-123");
+      expect(response.body.id).toBe(VALID_SCAN_ID);
       expect(response.body.score).toBe(85);
     });
 
@@ -310,7 +324,7 @@ describe("Compliance Routes", () => {
       mockPrisma.compliance_scans.findFirst.mockResolvedValue(null);
 
       const response = await request(app)
-        .get("/api/v1/compliance/scans/host-123/latest")
+        .get(`/api/v1/compliance/scans/${VALID_HOST_ID}/latest`)
         .expect(404);
 
       expect(response.body.error).toBe("No scans found for this host");
@@ -320,14 +334,14 @@ describe("Compliance Routes", () => {
   describe("GET /api/v1/compliance/results/:scanId", () => {
     it("should return results for a scan", async () => {
       const mockResults = [
-        { id: "1", status: "fail", compliance_rules: { title: "Rule 1", severity: "high" } },
-        { id: "2", status: "pass", compliance_rules: { title: "Rule 2", severity: "low" } },
+        { id: "f1a2b3c4-d5e6-7890-abcd-ef1234567895", status: "fail", compliance_rules: { title: "Rule 1", severity: "high" } },
+        { id: "a1b2c3d4-e5f6-7890-abcd-ef1234567896", status: "pass", compliance_rules: { title: "Rule 2", severity: "low" } },
       ];
 
       mockPrisma.compliance_results.findMany.mockResolvedValue(mockResults);
 
       const response = await request(app)
-        .get("/api/v1/compliance/results/scan-123")
+        .get(`/api/v1/compliance/results/${VALID_SCAN_ID}`)
         .expect(200);
 
       expect(response.body).toHaveLength(2);
@@ -337,12 +351,12 @@ describe("Compliance Routes", () => {
       mockPrisma.compliance_results.findMany.mockResolvedValue([]);
 
       await request(app)
-        .get("/api/v1/compliance/results/scan-123?status=fail")
+        .get(`/api/v1/compliance/results/${VALID_SCAN_ID}?status=fail`)
         .expect(200);
 
       expect(mockPrisma.compliance_results.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { scan_id: "scan-123", status: "fail" },
+          where: { scan_id: VALID_SCAN_ID, status: "fail" },
         })
       );
     });
@@ -350,7 +364,7 @@ describe("Compliance Routes", () => {
 
   describe("POST /api/v1/compliance/trigger/:hostId", () => {
     const mockHost = {
-      id: "host-123",
+      id: VALID_HOST_ID,
       api_id: "test-api-id",
     };
 
@@ -359,30 +373,23 @@ describe("Compliance Routes", () => {
     });
 
     it("should trigger a compliance scan when host is connected", async () => {
-      const mockWs = {
-        readyState: 1, // WebSocket.OPEN
-        send: jest.fn(),
-      };
-
       agentWs.isConnected.mockReturnValue(true);
-      agentWs.getConnectionByApiId.mockReturnValue(mockWs);
+      agentWs.pushComplianceScan.mockReturnValue(true);
 
       const response = await request(app)
-        .post("/api/v1/compliance/trigger/host-123")
+        .post(`/api/v1/compliance/trigger/${VALID_HOST_ID}`)
         .send({ profile_type: "openscap" })
         .expect(200);
 
       expect(response.body.message).toBe("Compliance scan triggered");
-      expect(mockWs.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "compliance_scan", profile_type: "openscap" })
-      );
+      expect(agentWs.pushComplianceScan).toHaveBeenCalledWith("test-api-id", "openscap");
     });
 
     it("should return 404 if host not found", async () => {
       mockPrisma.hosts.findUnique.mockResolvedValue(null);
 
       const response = await request(app)
-        .post("/api/v1/compliance/trigger/invalid-host")
+        .post(`/api/v1/compliance/trigger/${VALID_HOST_ID}`)
         .expect(404);
 
       expect(response.body.error).toBe("Host not found");
@@ -392,7 +399,7 @@ describe("Compliance Routes", () => {
       agentWs.isConnected.mockReturnValue(false);
 
       const response = await request(app)
-        .post("/api/v1/compliance/trigger/host-123")
+        .post(`/api/v1/compliance/trigger/${VALID_HOST_ID}`)
         .expect(400);
 
       expect(response.body.error).toBe("Host is not connected");
@@ -410,7 +417,7 @@ describe("Compliance Routes", () => {
       mockPrisma.compliance_scans.findMany.mockResolvedValue(mockScans);
 
       const response = await request(app)
-        .get("/api/v1/compliance/trends/host-123")
+        .get(`/api/v1/compliance/trends/${VALID_HOST_ID}`)
         .expect(200);
 
       expect(response.body).toHaveLength(3);
@@ -420,13 +427,13 @@ describe("Compliance Routes", () => {
       mockPrisma.compliance_scans.findMany.mockResolvedValue([]);
 
       await request(app)
-        .get("/api/v1/compliance/trends/host-123?days=7")
+        .get(`/api/v1/compliance/trends/${VALID_HOST_ID}?days=7`)
         .expect(200);
 
       expect(mockPrisma.compliance_scans.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            host_id: "host-123",
+            host_id: VALID_HOST_ID,
             completed_at: expect.any(Object),
           }),
         })
