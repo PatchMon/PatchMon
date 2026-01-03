@@ -2825,13 +2825,12 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 							<h4 className="text-xs md:text-sm font-medium text-primary-900 dark:text-primary-200 mb-2">
 								One-Line Installation
 							</h4>
-							<p className="text-xs md:text-sm text-primary-700 dark:text-primary-300 mb-3">
-								Copy and run this command on the target host to securely install
-								and configure the PatchMon agent:
+							<p className="text-xs md:text-sm text-primary-700 dark:text-primary-300 mb-4">
+								Copy and run the appropriate command for your target host's operating system. The server will automatically detect the OS and serve the correct installation script:
 							</p>
 
 							{/* Force Install Toggle */}
-							<div className="mb-3">
+							<div className="mb-4">
 								<label className="flex items-center gap-2 text-xs md:text-sm">
 									<input
 										type="checkbox"
@@ -2849,10 +2848,42 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 								</p>
 							</div>
 
-							<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+							{/* Linux/Unix Installation Command */}
+							<div className="mb-4">
+								<label className="block text-xs md:text-sm font-medium text-primary-900 dark:text-primary-200 mb-2">
+									For Linux/Unix (run with bash or sh):
+								</label>
+								<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+									<input
+										type="text"
+										value={`curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${host.api_id}" -H "X-API-KEY: ${host.api_key}" | sh`}
+										readOnly
+										className="flex-1 px-3 py-2 border border-primary-300 dark:border-primary-600 rounded-md bg-white dark:bg-secondary-800 text-xs md:text-sm font-mono text-secondary-900 dark:text-white break-all"
+									/>
+									<button
+										type="button"
+										onClick={() =>
+											copyToClipboard(
+												`curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${host.api_id}" -H "X-API-KEY: ${host.api_key}" | sh`,
+											)
+										}
+										className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap"
+									>
+										<Copy className="h-4 w-4" />
+										Copy
+									</button>
+								</div>
+							</div>
+
+							{/* Windows Installation Command */}
+							<div>
+								<label className="block text-xs md:text-sm font-medium text-primary-900 dark:text-primary-200 mb-2">
+									For Windows (run PowerShell as Administrator):
+								</label>
+								<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 								<input
 									type="text"
-									value={`curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${host.api_id}" -H "X-API-KEY: ${host.api_key}" | sh`}
+									value={`$script = Invoke-WebRequest -Uri "${getInstallUrl()}" -Headers @{"X-API-ID"="${host.api_id}"; "X-API-KEY"="${host.api_key}"} -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-install.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-install.ps1"`}
 									readOnly
 									className="flex-1 px-3 py-2 border border-primary-300 dark:border-primary-600 rounded-md bg-white dark:bg-secondary-800 text-xs md:text-sm font-mono text-secondary-900 dark:text-white break-all"
 								/>
@@ -2860,7 +2891,7 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 									type="button"
 									onClick={() =>
 										copyToClipboard(
-											`curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${host.api_id}" -H "X-API-KEY: ${host.api_key}" | sh`,
+											`$script = Invoke-WebRequest -Uri "${getInstallUrl()}" -Headers @{"X-API-ID"="${host.api_id}"; "X-API-KEY"="${host.api_key}"} -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-install.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-install.ps1"`,
 										)
 									}
 									className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap"
@@ -2868,6 +2899,10 @@ const CredentialsModal = ({ host, isOpen, onClose }) => {
 									<Copy className="h-4 w-4" />
 									Copy
 								</button>
+							</div>
+							<p className="text-xs text-primary-600 dark:text-primary-400 mt-2">
+								This command downloads the script, saves it to a temporary file, then executes it with execution policy bypassed. Run PowerShell as Administrator.
+							</p>
 							</div>
 						</div>
 					</div>

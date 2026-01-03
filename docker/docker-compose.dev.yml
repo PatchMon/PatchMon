@@ -47,8 +47,9 @@ services:
       DATABASE_URL: postgresql://patchmon_user:1NS3CU6E_DEV_D8_PASSW0RD@database:5432/patchmon_db
       JWT_SECRET: INS3CURE_DEV_7WT_5ECR3T
       SERVER_PROTOCOL: http
-      SERVER_HOST: localhost
+      SERVER_HOST: 192.168.1.195
       SERVER_PORT: 3000
+      CORS_ORIGINS: http://localhost:3000,http://192.168.1.195:3000
       CORS_ORIGIN: http://localhost:3000
       # Database Connection Pool Configuration (Prisma)
       DB_CONNECTION_LIMIT: 30
@@ -114,3 +115,5 @@ services:
             - node_modules/
         - action: rebuild
           path: ../frontend/package.json
+        - action: rebuild
+          path: ../frontend/vite.config.js

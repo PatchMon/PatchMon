@@ -18,10 +18,14 @@ COPY --chown=node:node agents ./agents_backup
 COPY --chown=node:node agents ./agents
 COPY --chmod=755 docker/backend.docker-entrypoint.sh ./entrypoint.sh
 
-USER node
+# Install dependencies as root first, then switch to node user
+RUN npm install --workspace=backend --ignore-scripts && \
+    cd backend && \
+    npx prisma generate && \
+    chmod -R u+w /app/node_modules/@prisma/engines 2>/dev/null || true && \
+    chown -R node:node /app
 
-RUN npm install --workspace=backend --ignore-scripts && cd backend && npx prisma generate && \
-    chmod -R u+w /app/node_modules/@prisma/engines 2>/dev/null || true
+USER node
 
 EXPOSE 3001
 
