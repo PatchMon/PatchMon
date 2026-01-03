@@ -340,8 +340,8 @@ const limiter = rateLimit({
 	},
 	standardHeaders: true,
 	legacyHeaders: false,
-	skipSuccessfulRequests: true, // Don't count successful requests
-	skipFailedRequests: false, // Count failed requests
+	skipSuccessfulRequests: false, // Count all requests for proper rate limiting
+	skipFailedRequests: false, // Also count failed requests
 });
 
 // Middleware
@@ -507,7 +507,7 @@ const authLimiter = rateLimit({
 	},
 	standardHeaders: true,
 	legacyHeaders: false,
-	skipSuccessfulRequests: true,
+	skipSuccessfulRequests: false, // Count all requests for proper rate limiting
 });
 const agentLimiter = rateLimit({
 	windowMs: parseInt(process.env.AGENT_RATE_LIMIT_WINDOW_MS, 10) || 60 * 1000,
@@ -521,7 +521,7 @@ const agentLimiter = rateLimit({
 	},
 	standardHeaders: true,
 	legacyHeaders: false,
-	skipSuccessfulRequests: true,
+	skipSuccessfulRequests: false, // Count all requests for proper rate limiting
 });
 
 app.use(`/api/${apiVersion}/auth`, authLimiter, authRoutes);

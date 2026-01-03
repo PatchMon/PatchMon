@@ -78,6 +78,9 @@ model host_repositories {
   repositories  repositories @relation(fields: [repository_id], references: [id], onDelete: Cascade)
 
   @@unique([host_id, repository_id])
+  @@index([host_id])
+  @@index([repository_id])
+  @@index([is_enabled])
 }
 
 model hosts {
@@ -127,6 +130,9 @@ model hosts {
   @@index([friendly_name])
   @@index([hostname])
   @@index([needs_reboot])
+  @@index([status])
+  @@index([status, api_id])
+  @@index([last_update])
 }
 
 model packages {
@@ -159,6 +165,8 @@ model repositories {
   host_repositories host_repositories[]
 
   @@unique([url, distribution, components])
+  @@index([is_active])
+  @@index([name])
 }
 
 model role_permissions {
@@ -218,6 +226,11 @@ model update_history {
   status          String   @default("success")
   error_message   String?
   hosts           hosts    @relation(fields: [host_id], references: [id], onDelete: Cascade)
+
+  @@index([host_id])
+  @@index([timestamp])
+  @@index([status])
+  @@index([host_id, timestamp])
 }
 
 model system_statistics {

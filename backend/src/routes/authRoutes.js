@@ -462,14 +462,24 @@ const generateToken = (userId) => {
 	});
 };
 
-// Admin endpoint to list all users
+// Admin endpoint to list all users with optional pagination
+// Query params: page (default: 1), pageSize (default: 50, max: 200), all (skip pagination)
 router.get(
 	"/admin/users",
 	authenticateToken,
 	requireViewUsers,
-	async (_req, res) => {
+	async (req, res) => {
 		try {
-			const users = await prisma.users.findMany({
+			// Check if client wants all results (for backward compatibility)
+			const returnAll = req.query.all === "true";
+
+			// Pagination parameters with defaults and limits
+			const page = Math.max(1, parseInt(req.query.page) || 1);
+			const pageSize = returnAll
+				? undefined
+				: Math.min(Math.max(1, parseInt(req.query.pageSize) || 50), 200);
+
+			const queryOptions = {
 				select: {
 					id: true,
 					username: true,
@@ -485,9 +495,31 @@ router.get(
 				orderBy: {
 					created_at: "desc",
 				},
-			});
+			};
 
-			res.json(users);
+			// Add pagination if not requesting all
+			if (!returnAll) {
+				queryOptions.skip = (page - 1) * pageSize;
+				queryOptions.take = pageSize;
+			}
+
+			const [users, totalCount] = await Promise.all([
+				prisma.users.findMany(queryOptions),
+				prisma.users.count(),
+			]);
+
+			// Return paginated response with metadata
+			res.json({
+				data: users,
+				pagination: returnAll
+					? { total: totalCount, page: 1, pageSize: totalCount, totalPages: 1 }
+					: {
+							total: totalCount,
+							page,
+							pageSize,
+							totalPages: Math.ceil(totalCount / pageSize),
+						},
+			});
 		} catch (error) {
 			console.error("List users error:", error);
 			res.status(500).json({ error: "Failed to fetch users" });
@@ -548,47 +580,48 @@ router.post(
 				userRole = settings?.default_user_role || "user";
 			}
 
-			// Check if user already exists
-			const existingUser = await prisma.users.findFirst({
-				where: {
-					OR: [
-						{ username: { equals: username, mode: "insensitive" } },
-						{ email: email.trim().toLowerCase() },
-					],
-				},
-			});
-
-			if (existingUser) {
-				return res
-					.status(409)
-					.json({ error: "Username or email already exists" });
-			}
-
-			// Hash password
+			// Hash password before transaction (CPU intensive, don't hold lock)
 			const passwordHash = await bcrypt.hash(password, 12);
 
-			// Create user
-			const user = await prisma.users.create({
-				data: {
-					id: uuidv4(),
-					username,
-					email: email.trim().toLowerCase(),
-					password_hash: passwordHash,
-					first_name: first_name || null,
-					last_name: last_name || null,
-					role: userRole,
-					updated_at: new Date(),
-				},
-				select: {
-					id: true,
-					username: true,
-					email: true,
-					first_name: true,
-					last_name: true,
-					role: true,
-					is_active: true,
-					created_at: true,
-				},
+			// Use transaction to prevent TOCTOU race conditions
+			const user = await prisma.$transaction(async (tx) => {
+				// Check if user already exists within transaction
+				const existingUser = await tx.users.findFirst({
+					where: {
+						OR: [
+							{ username: { equals: username, mode: "insensitive" } },
+							{ email: email.trim().toLowerCase() },
+						],
+					},
+				});
+
+				if (existingUser) {
+					throw new Error("USERNAME_OR_EMAIL_EXISTS");
+				}
+
+				// Create user
+				return tx.users.create({
+					data: {
+						id: uuidv4(),
+						username,
+						email: email.trim().toLowerCase(),
+						password_hash: passwordHash,
+						first_name: first_name || null,
+						last_name: last_name || null,
+						role: userRole,
+						updated_at: new Date(),
+					},
+					select: {
+						id: true,
+						username: true,
+						email: true,
+						first_name: true,
+						last_name: true,
+						role: true,
+						is_active: true,
+						created_at: true,
+					},
+				});
 			});
 
 			// Create default dashboard preferences for the new user
@@ -599,6 +632,11 @@ router.post(
 				user,
 			});
 		} catch (error) {
+			if (error.message === "USERNAME_OR_EMAIL_EXISTS") {
+				return res
+					.status(409)
+					.json({ error: "Username or email already exists" });
+			}
 			console.error("User creation error:", error);
 			res.status(500).json({ error: "Failed to create user" });
 		}
@@ -916,51 +954,52 @@ router.post(
 
 			const { firstName, lastName, username, email, password } = req.body;
 
-			// Check if user already exists
-			const existingUser = await prisma.users.findFirst({
-				where: {
-					OR: [
-						{ username: { equals: username, mode: "insensitive" } },
-						{ email: email.trim().toLowerCase() },
-					],
-				},
-			});
-
-			if (existingUser) {
-				return res
-					.status(409)
-					.json({ error: "Username or email already exists" });
-			}
-
-			// Hash password
+			// Hash password before transaction (CPU intensive, don't hold lock)
 			const passwordHash = await bcrypt.hash(password, 12);
 
 			// Get default user role from settings or environment variable
 			const defaultRole =
 				settings?.default_user_role || process.env.DEFAULT_USER_ROLE || "user";
 
-			// Create user with default role from settings
-			const user = await prisma.users.create({
-				data: {
-					id: uuidv4(),
-					username,
-					email: email.trim().toLowerCase(),
-					password_hash: passwordHash,
-					first_name: firstName.trim(),
-					last_name: lastName.trim(),
-					role: defaultRole,
-					updated_at: new Date(),
-				},
-				select: {
-					id: true,
-					username: true,
-					email: true,
-					first_name: true,
-					last_name: true,
-					role: true,
-					is_active: true,
-					created_at: true,
-				},
+			// Use transaction to prevent TOCTOU race conditions
+			const user = await prisma.$transaction(async (tx) => {
+				// Check if user already exists within transaction
+				const existingUser = await tx.users.findFirst({
+					where: {
+						OR: [
+							{ username: { equals: username, mode: "insensitive" } },
+							{ email: email.trim().toLowerCase() },
+						],
+					},
+				});
+
+				if (existingUser) {
+					throw new Error("USERNAME_OR_EMAIL_EXISTS");
+				}
+
+				// Create user with default role from settings
+				return tx.users.create({
+					data: {
+						id: uuidv4(),
+						username,
+						email: email.trim().toLowerCase(),
+						password_hash: passwordHash,
+						first_name: firstName.trim(),
+						last_name: lastName.trim(),
+						role: defaultRole,
+						updated_at: new Date(),
+					},
+					select: {
+						id: true,
+						username: true,
+						email: true,
+						first_name: true,
+						last_name: true,
+						role: true,
+						is_active: true,
+						created_at: true,
+					},
+				});
 			});
 
 			// Create default dashboard preferences for the new user
@@ -982,6 +1021,11 @@ router.post(
 				},
 			});
 		} catch (error) {
+			if (error.message === "USERNAME_OR_EMAIL_EXISTS") {
+				return res
+					.status(409)
+					.json({ error: "Username or email already exists" });
+			}
 			console.error("Signup error:", error.message);
 			res.status(500).json({ error: "Failed to create account" });
 		}

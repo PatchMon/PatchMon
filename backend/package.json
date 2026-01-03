@@ -12,6 +12,7 @@
 		"db:migrate": "prisma migrate dev",
 		"db:push": "prisma db push",
 		"db:studio": "prisma studio",
+		"db:migrate-api-keys": "node scripts/migrate-api-keys.js",
 		"test": "jest",
 		"test:watch": "jest --watch",
 		"test:coverage": "jest --coverage",

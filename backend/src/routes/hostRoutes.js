@@ -598,7 +598,9 @@ router.post(
 	updateBodyLimit,
 	validateApiCredentials,
 	[
-		body("packages").isArray().withMessage("Packages must be an array"),
+		body("packages")
+			.isArray({ max: 10000 })
+			.withMessage("Packages must be an array with max 10000 items"),
 		body("packages.*.name")
 			.isLength({ min: 1 })
 			.withMessage("Package name is required"),
@@ -1147,26 +1149,29 @@ router.post(
 		try {
 			const { hostId } = req.params;
 
-			const host = await prisma.hosts.findUnique({
-				where: { id: hostId },
-			});
-
-			if (!host) {
-				return res.status(404).json({ error: "Host not found" });
-			}
-
-			// Generate new API credentials
+			// Generate new API credentials before transaction (CPU intensive, don't hold lock)
 			// apiKey is plaintext (shown to admin once), apiKeyHash is stored in DB
 			const { apiId, apiKey, apiKeyHash } = await generateApiCredentials();
 
-			// Update host with new credentials (store hash, not plaintext)
-			const updatedHost = await prisma.hosts.update({
-				where: { id: hostId },
-				data: {
-					api_id: apiId,
-					api_key: apiKeyHash, // Store hash, not plaintext
-					updated_at: new Date(),
-				},
+			// Use transaction to ensure atomicity of check and update
+			const updatedHost = await prisma.$transaction(async (tx) => {
+				const host = await tx.hosts.findUnique({
+					where: { id: hostId },
+				});
+
+				if (!host) {
+					throw new Error("HOST_NOT_FOUND");
+				}
+
+				// Update host with new credentials (store hash, not plaintext)
+				return tx.hosts.update({
+					where: { id: hostId },
+					data: {
+						api_id: apiId,
+						api_key: apiKeyHash, // Store hash, not plaintext
+						updated_at: new Date(),
+					},
+				});
 			});
 
 			res.json({
@@ -1178,6 +1183,9 @@ router.post(
 					"Previous credentials are now invalid. Update your agent configuration.",
 			});
 		} catch (error) {
+			if (error.message === "HOST_NOT_FOUND") {
+				return res.status(404).json({ error: "Host not found" });
+			}
 			console.error("Credential regeneration error:", error);
 			res.status(500).json({ error: "Failed to regenerate credentials" });
 		}
@@ -1472,14 +1480,24 @@ router.put(
 	},
 );
 
-// Admin endpoint to list all hosts
+// Admin endpoint to list all hosts with optional pagination
+// Query params: page (default: 1), pageSize (default: 100, max: 500), all (skip pagination)
 router.get(
 	"/admin/list",
 	authenticateToken,
 	requireManageHosts,
-	async (_req, res) => {
+	async (req, res) => {
 		try {
-			const hosts = await prisma.hosts.findMany({
+			// Check if client wants all results (for backward compatibility)
+			const returnAll = req.query.all === "true";
+
+			// Pagination parameters with defaults and limits
+			const page = Math.max(1, parseInt(req.query.page) || 1);
+			const pageSize = returnAll
+				? undefined
+				: Math.min(Math.max(1, parseInt(req.query.pageSize) || 100), 500);
+
+			const queryOptions = {
 				select: {
 					id: true,
 					friendly_name: true,
@@ -1508,9 +1526,31 @@ router.get(
 					},
 				},
 				orderBy: { created_at: "desc" },
-			});
+			};
 
-			res.json(hosts);
+			// Add pagination if not requesting all
+			if (!returnAll) {
+				queryOptions.skip = (page - 1) * pageSize;
+				queryOptions.take = pageSize;
+			}
+
+			const [hosts, totalCount] = await Promise.all([
+				prisma.hosts.findMany(queryOptions),
+				prisma.hosts.count(),
+			]);
+
+			// Return paginated response with metadata
+			res.json({
+				data: hosts,
+				pagination: returnAll
+					? { total: totalCount, page: 1, pageSize: totalCount, totalPages: 1 }
+					: {
+							total: totalCount,
+							page,
+							pageSize,
+							totalPages: Math.ceil(totalCount / pageSize),
+						},
+			});
 		} catch (error) {
 			console.error("List hosts error:", error);
 			res.status(500).json({ error: "Failed to fetch hosts" });
