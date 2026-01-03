@@ -491,6 +491,7 @@ router.get(
 					last_login: true,
 					created_at: true,
 					updated_at: true,
+					avatar_url: true,
 				},
 				orderBy: {
 					created_at: "desc",
