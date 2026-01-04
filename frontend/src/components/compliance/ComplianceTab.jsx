@@ -839,11 +839,11 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 						</h3>
 						<button
 							onClick={() => refetchStatus()}
-							disabled={isRefreshingStatus}
-							className={`p-2 hover:bg-secondary-700 rounded-lg transition-colors ${isRefreshingStatus ? "cursor-wait" : ""}`}
-							title={isRefreshingStatus ? "Refreshing..." : "Refresh status"}
+							disabled={isRefreshingStatus || ssgUpgradeMutation.isPending || ssgUpgradeMessage}
+							className={`p-2 hover:bg-secondary-700 rounded-lg transition-colors ${(isRefreshingStatus || ssgUpgradeMutation.isPending || ssgUpgradeMessage) ? "cursor-wait" : ""}`}
+							title={(isRefreshingStatus || ssgUpgradeMutation.isPending || ssgUpgradeMessage) ? "Refreshing..." : "Refresh status"}
 						>
-							<RefreshCw className={`h-4 w-4 ${isRefreshingStatus ? "text-primary-400 animate-spin" : "text-secondary-400"}`} />
+							<RefreshCw className={`h-4 w-4 ${(isRefreshingStatus || ssgUpgradeMutation.isPending || ssgUpgradeMessage) ? "text-primary-400 animate-spin" : "text-secondary-400"}`} />
 						</button>
 					</div>
 
