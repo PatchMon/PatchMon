@@ -138,7 +138,10 @@ router.post(
 			// Check if username or email already exists
 			const existingUser = await prisma.users.findFirst({
 				where: {
-					OR: [{ username: username.trim() }, { email: email.trim() }],
+					OR: [
+						{ username: { equals: username.trim(), mode: "insensitive" } },
+						{ email: email.trim().toLowerCase() },
+					],
 				},
 			});
 
@@ -156,7 +159,7 @@ router.post(
 				data: {
 					id: uuidv4(),
 					username: username.trim(),
-					email: email.trim(),
+					email: email.trim().toLowerCase(),
 					password_hash: passwordHash,
 					first_name: firstName.trim(),
 					last_name: lastName.trim(),
@@ -308,7 +311,10 @@ router.post(
 			// Check if user already exists
 			const existingUser = await prisma.users.findFirst({
 				where: {
-					OR: [{ username }, { email }],
+					OR: [
+						{ username: { equals: username, mode: "insensitive" } },
+						{ email: email.trim().toLowerCase() },
+					],
 				},
 			});
 
@@ -326,7 +332,7 @@ router.post(
 				data: {
 					id: uuidv4(),
 					username,
-					email,
+					email: email.trim().toLowerCase(),
 					password_hash: passwordHash,
 					first_name: first_name || null,
 					last_name: last_name || null,
@@ -408,8 +414,9 @@ router.put(
 				req.body;
 			const updateData = {};
 
-			if (username) updateData.username = username;
-			if (email) updateData.email = email;
+			// Handle all fields consistently - trim and update if provided
+			if (username) updateData.username = username.trim();
+			if (email) updateData.email = email.trim().toLowerCase();
 			if (first_name !== undefined) updateData.first_name = first_name || null;
 			if (last_name !== undefined) updateData.last_name = last_name || null;
 			if (role) updateData.role = role;
@@ -432,8 +439,17 @@ router.put(
 							{ id: { not: userId } },
 							{
 								OR: [
-									...(username ? [{ username }] : []),
-									...(email ? [{ email }] : []),
+									...(username
+										? [
+												{
+													username: {
+														equals: username.trim(),
+														mode: "insensitive",
+													},
+												},
+											]
+										: []),
+									...(email ? [{ email: email.trim().toLowerCase() }] : []),
 								],
 							},
 						],
@@ -668,7 +684,10 @@ router.post(
 			// Check if user already exists
 			const existingUser = await prisma.users.findFirst({
 				where: {
-					OR: [{ username }, { email }],
+					OR: [
+						{ username: { equals: username, mode: "insensitive" } },
+						{ email: email.trim().toLowerCase() },
+					],
 				},
 			});
 
@@ -690,7 +709,7 @@ router.post(
 				data: {
 					id: uuidv4(),
 					username,
-					email,
+					email: email.trim().toLowerCase(),
 					password_hash: passwordHash,
 					first_name: firstName.trim(),
 					last_name: lastName.trim(),
@@ -755,7 +774,10 @@ router.post(
 			// Find user by username or email
 			const user = await prisma.users.findFirst({
 				where: {
-					OR: [{ username }, { email: username }],
+					OR: [
+						{ username: { equals: username, mode: "insensitive" } },
+						{ email: username.toLowerCase() },
+					],
 					is_active: true,
 				},
 				select: {
@@ -919,7 +941,10 @@ router.post(
 			// Find user
 			const user = await prisma.users.findFirst({
 				where: {
-					OR: [{ username }, { email: username }],
+					OR: [
+						{ username: { equals: username, mode: "insensitive" } },
+						{ email: username.toLowerCase() },
+					],
 					is_active: true,
 					tfa_enabled: true,
 				},
@@ -1100,7 +1125,7 @@ router.put(
 
 			// Handle all fields consistently - trim and update if provided
 			if (username) updateData.username = username.trim();
-			if (email) updateData.email = email.trim();
+			if (email) updateData.email = email.trim().toLowerCase();
 			if (first_name !== undefined) {
 				// Allow null or empty string to clear the field, otherwise trim
 				updateData.first_name =
@@ -1124,8 +1149,17 @@ router.put(
 							{ id: { not: req.user.id } },
 							{
 								OR: [
-									...(username ? [{ username }] : []),
-									...(email ? [{ email }] : []),
+									...(username
+										? [
+												{
+													username: {
+														equals: username.trim(),
+														mode: "insensitive",
+													},
+												},
+											]
+										: []),
+									...(email ? [{ email: email.trim().toLowerCase() }] : []),
 								],
 							},
 						],
