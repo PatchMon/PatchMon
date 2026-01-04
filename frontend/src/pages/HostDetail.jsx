@@ -60,6 +60,7 @@ const HostDetail = () => {
 	const plaintextApiKey = location.state?.apiKey;
 	const [showDeleteModal, setShowDeleteModal] = useState(false);
 	const [activeTab, setActiveTab] = useState("host");
+	const [dockerSubTab, setDockerSubTab] = useState("containers");
 	const [historyPage, setHistoryPage] = useState(0);
 	const [historyLimit] = useState(10);
 	const [notes, setNotes] = useState("");
@@ -318,7 +319,41 @@ const HostDetail = () => {
 			adminHostsAPI.getIntegrations(hostId).then((res) => res.data),
 		staleTime: 30 * 1000, // 30 seconds
 		refetchOnWindowFocus: false,
-		enabled: !!hostId && activeTab === "integrations",
+		enabled: !!hostId, // Always fetch to control tab visibility
+	});
+
+	// Poll for compliance setup status when compliance is enabled
+	const {
+		data: complianceSetupStatus,
+		refetch: refetchComplianceStatus,
+	} = useQuery({
+		queryKey: ["compliance-setup-status", hostId],
+		queryFn: () =>
+			adminHostsAPI.getIntegrationSetupStatus(hostId, "compliance").then((res) => res.data),
+		staleTime: 5 * 1000, // 5 seconds
+		refetchInterval: (data) => {
+			// Poll every 3 seconds while status is "installing" or "removing"
+			const status = data?.status?.status;
+			if (status === "installing" || status === "removing") {
+				return 3000;
+			}
+			return false; // Stop polling when done
+		},
+		refetchOnWindowFocus: false,
+		enabled: !!hostId && integrationsData?.data?.integrations?.compliance,
+	});
+
+	// Fetch Docker data for this host
+	const {
+		data: dockerData,
+		isLoading: isLoadingDocker,
+	} = useQuery({
+		queryKey: ["docker", "host", hostId],
+		queryFn: () =>
+			dashboardAPI.getHostDetail(hostId, { include: "docker" }).then((res) => res.data?.docker),
+		staleTime: 30 * 1000,
+		refetchOnWindowFocus: false,
+		enabled: !!hostId && (activeTab === "docker" || integrationsData?.data?.integrations?.docker),
 	});
 
 	// Refetch integrations when WebSocket status changes (e.g., after agent restart)
@@ -361,10 +396,17 @@ const HostDetail = () => {
 			});
 			// Also invalidate to ensure we get fresh data
 			queryClient.invalidateQueries(["host-integrations", hostId]);
+			// If compliance was just enabled, start polling for setup status
+			if (data.data.integration === "compliance" && data.data.enabled) {
+				// Small delay to let the backend start the setup process
+				safeSetTimeout(() => refetchComplianceStatus(), 500);
+			}
 		},
-		onError: () => {
+		onError: (error) => {
 			// On error, refetch to get the actual state
 			refetchIntegrations();
+			// Log error for debugging
+			console.error("Failed to toggle integration:", error.response?.data?.error || error.message);
 		},
 	});
 
@@ -1628,6 +1670,20 @@ const HostDetail = () => {
 						>
 							Integrations
 						</button>
+						{integrationsData?.data?.integrations?.docker && (
+							<button
+								type="button"
+								onClick={() => handleTabChange("docker")}
+								className={`px-4 py-2 text-sm font-medium ${
+									activeTab === "docker"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
+								}`}
+							>
+								<Database className="h-4 w-4 inline mr-1" />
+								Docker
+							</button>
+						)}
 						<button
 							type="button"
 							onClick={() => handleTabChange("compliance")}
@@ -2730,8 +2786,318 @@ const HostDetail = () => {
 											)}
 										</div>
 
+										{/* Compliance Integration */}
+										<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
+											<div className="flex items-start justify-between gap-4">
+												<div className="flex-1">
+													<div className="flex items-center gap-3 mb-2">
+														<Shield className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+														<h4 className="text-sm font-medium text-secondary-900 dark:text-white">
+															Compliance Scanning
+														</h4>
+														{integrationsData?.data?.integrations?.compliance ? (
+															<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+																Enabled
+															</span>
+														) : (
+															<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-400">
+																Disabled
+															</span>
+														)}
+													</div>
+													<p className="text-xs text-secondary-600 dark:text-secondary-300">
+														Run CIS benchmark compliance scans using OpenSCAP.
+														Provides security posture assessment and remediation recommendations.
+													</p>
+													{complianceSetupStatus?.status?.status && (
+														<div className="mt-2">
+															{complianceSetupStatus.status.status === "installing" && (
+																<div className="flex items-center gap-2 text-xs text-primary-600 dark:text-primary-400">
+																	<RefreshCw className="h-3 w-3 animate-spin" />
+																	<span>Installing OpenSCAP packages...</span>
+																</div>
+															)}
+															{complianceSetupStatus.status.status === "removing" && (
+																<div className="flex items-center gap-2 text-xs text-warning-600 dark:text-warning-400">
+																	<RefreshCw className="h-3 w-3 animate-spin" />
+																	<span>Removing OpenSCAP packages...</span>
+																</div>
+															)}
+															{complianceSetupStatus.status.status === "error" && (
+																<div className="flex items-center gap-2 text-xs text-danger-600 dark:text-danger-400">
+																	<AlertCircle className="h-3 w-3" />
+																	<span>{complianceSetupStatus.status.message || "Setup failed"}</span>
+																</div>
+															)}
+														</div>
+													)}
+												</div>
+												<div className="flex-shrink-0">
+													<button
+														type="button"
+														onClick={() =>
+															toggleIntegrationMutation.mutate({
+																integrationName: "compliance",
+																enabled:
+																	!integrationsData?.data?.integrations?.compliance,
+															})
+														}
+														disabled={
+															toggleIntegrationMutation.isPending ||
+															!wsStatus?.connected ||
+															complianceSetupStatus?.status?.status === "installing" ||
+															complianceSetupStatus?.status?.status === "removing"
+														}
+														title={
+															!wsStatus?.connected
+																? "Agent is not connected"
+																: complianceSetupStatus?.status?.status === "installing"
+																	? "Installation in progress..."
+																	: complianceSetupStatus?.status?.status === "removing"
+																		? "Removal in progress..."
+																		: integrationsData?.data?.integrations?.compliance
+																			? "Disable compliance scanning"
+																			: "Enable compliance scanning"
+														}
+														className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+															integrationsData?.data?.integrations?.compliance
+																? "bg-primary-600 dark:bg-primary-500"
+																: "bg-secondary-200 dark:bg-secondary-600"
+														} ${
+															toggleIntegrationMutation.isPending ||
+															!integrationsData?.data?.connected ||
+															complianceSetupStatus?.status?.status === "installing" ||
+															complianceSetupStatus?.status?.status === "removing"
+																? "opacity-50 cursor-not-allowed"
+																: ""
+														}`}
+													>
+														<span
+															className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+																integrationsData?.data?.integrations?.compliance
+																	? "translate-x-5"
+																	: "translate-x-1"
+															}`}
+														/>
+													</button>
+												</div>
+											</div>
+											{!wsStatus?.connected && (
+												<p className="text-xs text-warning-600 dark:text-warning-400 mt-2">
+													Agent must be connected via WebSocket to toggle
+													integrations
+												</p>
+											)}
+										</div>
+
 										{/* Future integrations can be added here with the same pattern */}
 									</div>
+								)}
+							</div>
+						)}
+
+						{/* Docker Tab */}
+						{activeTab === "docker" && (
+							<div className="space-y-4">
+								{/* Docker Sub-tabs */}
+								<div className="flex gap-2 border-b border-secondary-200 dark:border-secondary-600 pb-2">
+									<button
+										type="button"
+										onClick={() => setDockerSubTab("containers")}
+										className={`px-3 py-1.5 text-xs font-medium rounded-t ${
+											dockerSubTab === "containers"
+												? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+												: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+										}`}
+									>
+										All Containers
+									</button>
+									<button
+										type="button"
+										onClick={() => setDockerSubTab("running")}
+										className={`px-3 py-1.5 text-xs font-medium rounded-t ${
+											dockerSubTab === "running"
+												? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+												: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+										}`}
+									>
+										Running
+									</button>
+									<button
+										type="button"
+										onClick={() => setDockerSubTab("images")}
+										className={`px-3 py-1.5 text-xs font-medium rounded-t ${
+											dockerSubTab === "images"
+												? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+												: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+										}`}
+									>
+										Images
+									</button>
+									<button
+										type="button"
+										onClick={() => setDockerSubTab("volumes")}
+										className={`px-3 py-1.5 text-xs font-medium rounded-t ${
+											dockerSubTab === "volumes"
+												? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+												: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+										}`}
+									>
+										Volumes
+									</button>
+								</div>
+
+								{isLoadingDocker ? (
+									<div className="flex items-center justify-center h-32">
+										<RefreshCw className="h-6 w-6 animate-spin text-primary-600" />
+									</div>
+								) : !dockerData ? (
+									<div className="text-center py-8">
+										<Database className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+										<p className="text-gray-500 dark:text-gray-400">
+											No Docker data available
+										</p>
+									</div>
+								) : (
+									<>
+										{/* Containers Sub-tab */}
+										{dockerSubTab === "containers" && (
+											<div className="space-y-3">
+												{dockerData.containers?.length === 0 ? (
+													<p className="text-secondary-500 dark:text-secondary-400 text-center py-4">
+														No containers found
+													</p>
+												) : (
+													dockerData.containers?.map((container) => (
+														<div
+															key={container.id}
+															className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600"
+														>
+															<div className="flex items-center justify-between">
+																<div className="flex items-center gap-2">
+																	<span
+																		className={`w-2 h-2 rounded-full ${
+																			container.state === "running"
+																				? "bg-green-500"
+																				: container.state === "exited"
+																					? "bg-red-500"
+																					: "bg-yellow-500"
+																		}`}
+																	/>
+																	<span className="font-medium text-secondary-900 dark:text-white text-sm">
+																		{container.name}
+																	</span>
+																</div>
+																<span className="text-xs text-secondary-500 dark:text-secondary-400">
+																	{container.state}
+																</span>
+															</div>
+															<div className="mt-1 text-xs text-secondary-600 dark:text-secondary-300">
+																<span className="font-mono">{container.image}</span>
+															</div>
+														</div>
+													))
+												)}
+											</div>
+										)}
+
+										{/* Running Sub-tab */}
+										{dockerSubTab === "running" && (
+											<div className="space-y-3">
+												{dockerData.containers?.filter((c) => c.state === "running").length === 0 ? (
+													<p className="text-secondary-500 dark:text-secondary-400 text-center py-4">
+														No running containers
+													</p>
+												) : (
+													dockerData.containers
+														?.filter((c) => c.state === "running")
+														.map((container) => (
+															<div
+																key={container.id}
+																className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600"
+															>
+																<div className="flex items-center justify-between">
+																	<div className="flex items-center gap-2">
+																		<span className="w-2 h-2 rounded-full bg-green-500" />
+																		<span className="font-medium text-secondary-900 dark:text-white text-sm">
+																			{container.name}
+																		</span>
+																	</div>
+																	<span className="text-xs text-secondary-500 dark:text-secondary-400">
+																		{container.status}
+																	</span>
+																</div>
+																<div className="mt-1 text-xs text-secondary-600 dark:text-secondary-300">
+																	<span className="font-mono">{container.image}</span>
+																</div>
+															</div>
+														))
+												)}
+											</div>
+										)}
+
+										{/* Images Sub-tab */}
+										{dockerSubTab === "images" && (
+											<div className="space-y-3">
+												{dockerData.images?.length === 0 ? (
+													<p className="text-secondary-500 dark:text-secondary-400 text-center py-4">
+														No images found
+													</p>
+												) : (
+													dockerData.images?.map((image) => (
+														<div
+															key={image.id}
+															className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600"
+														>
+															<div className="flex items-center justify-between">
+																<span className="font-medium text-secondary-900 dark:text-white text-sm font-mono">
+																	{image.repository}:{image.tag}
+																</span>
+																<span className="text-xs text-secondary-500 dark:text-secondary-400">
+																	{image.size}
+																</span>
+															</div>
+															<div className="mt-1 text-xs text-secondary-600 dark:text-secondary-300">
+																ID: {image.id?.slice(0, 12)}
+															</div>
+														</div>
+													))
+												)}
+											</div>
+										)}
+
+										{/* Volumes Sub-tab */}
+										{dockerSubTab === "volumes" && (
+											<div className="space-y-3">
+												{dockerData.volumes?.length === 0 ? (
+													<p className="text-secondary-500 dark:text-secondary-400 text-center py-4">
+														No volumes found
+													</p>
+												) : (
+													dockerData.volumes?.map((volume) => (
+														<div
+															key={volume.name}
+															className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600"
+														>
+															<div className="flex items-center justify-between">
+																<span className="font-medium text-secondary-900 dark:text-white text-sm font-mono">
+																	{volume.name}
+																</span>
+																<span className="text-xs text-secondary-500 dark:text-secondary-400">
+																	{volume.driver}
+																</span>
+															</div>
+															{volume.mountpoint && (
+																<div className="mt-1 text-xs text-secondary-600 dark:text-secondary-300 font-mono truncate">
+																	{volume.mountpoint}
+																</div>
+															)}
+														</div>
+													))
+												)}
+											</div>
+										)}
+									</>
 								)}
 							</div>
 						)}
