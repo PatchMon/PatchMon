@@ -1053,13 +1053,146 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 														Why This Failed
 													</p>
 													<div className="text-red-200/90 text-sm space-y-2">
-														{result.finding ? (
-															<p>{result.finding}</p>
-														) : result.actual ? (
-															<p>The system has <code className="bg-red-800/50 px-1 rounded">{result.actual}</code> but the benchmark requires <code className="bg-green-800/50 px-1 rounded">{result.expected || "a different value"}</code>.</p>
-														) : (
-															<p>The system configuration does not meet the security requirements defined by this rule. The expected security setting was not found or is incorrectly configured.</p>
-														)}
+														{(() => {
+															const title = result.compliance_rules?.title || result.rule?.title || "";
+															const description = result.compliance_rules?.description || result.rule?.description || "";
+															const remediation = result.compliance_rules?.remediation || result.rule?.remediation || result.remediation || "";
+
+															// If we have a specific finding, show it
+															if (result.finding) {
+																return <p>{result.finding}</p>;
+															}
+
+															// If we have actual vs expected, show detailed comparison
+															if (result.actual) {
+																return (
+																	<>
+																		<p>The check found a non-compliant value:</p>
+																		<div className="mt-2 grid grid-cols-1 gap-2">
+																			<div className="bg-red-800/30 rounded p-2">
+																				<span className="text-red-300 text-xs font-medium">Current setting:</span>
+																				<code className="block mt-1 text-red-200 break-all">{result.actual}</code>
+																			</div>
+																			{result.expected && (
+																				<div className="bg-green-800/30 rounded p-2">
+																					<span className="text-green-300 text-xs font-medium">Required setting:</span>
+																					<code className="block mt-1 text-green-200 break-all">{result.expected}</code>
+																				</div>
+																			)}
+																		</div>
+																	</>
+																);
+															}
+
+															// Generate context-specific explanation from title/description
+															const titleLower = title.toLowerCase();
+															const descLower = description.toLowerCase();
+															const remLower = remediation.toLowerCase();
+
+															// Parse title for "Ensure X is Y" patterns
+															const ensureMatch = title.match(/^Ensure\s+(.+?)\s+(?:is|are)\s+(.+)$/i);
+															if (ensureMatch) {
+																const [, subject, expectedState] = ensureMatch;
+																return (
+																	<>
+																		<p>This check verifies that <strong>{subject}</strong> is <strong>{expectedState}</strong>.</p>
+																		<p className="mt-1 text-red-300/80">The system does not meet this requirement. The current configuration differs from the expected secure state.</p>
+																	</>
+																);
+															}
+
+															// Handle common patterns in titles
+															if (titleLower.includes("disable") || titleLower.includes("disabled")) {
+																const service = title.replace(/^(Ensure\s+)?/i, "").replace(/\s+(is\s+)?disabled.*$/i, "");
+																return (
+																	<>
+																		<p><strong>{service}</strong> should be disabled but is currently enabled or present on the system.</p>
+																		<p className="mt-1 text-red-300/80">This service/feature poses a security risk when enabled.</p>
+																	</>
+																);
+															}
+
+															if (titleLower.includes("enable") || titleLower.includes("enabled") || titleLower.includes("configured")) {
+																const feature = title.replace(/^(Ensure\s+)?/i, "").replace(/\s+(is\s+)?(enabled|configured).*$/i, "");
+																return (
+																	<>
+																		<p><strong>{feature}</strong> should be enabled/configured but is not properly set up.</p>
+																		<p className="mt-1 text-red-300/80">This security feature is required but missing or misconfigured.</p>
+																	</>
+																);
+															}
+
+															if (titleLower.includes("permission") || titleLower.includes("ownership") || remLower.includes("chmod") || remLower.includes("chown")) {
+																return (
+																	<>
+																		<p>File or directory permissions do not meet security requirements.</p>
+																		<p className="mt-1 text-red-300/80">The current permissions are too permissive, allowing unauthorized users potential access to sensitive files.</p>
+																	</>
+																);
+															}
+
+															if (titleLower.includes("audit") || descLower.includes("audit")) {
+																return (
+																	<>
+																		<p>Required audit rules are not configured.</p>
+																		<p className="mt-1 text-red-300/80">The system is not logging security-relevant events that could help detect intrusions or policy violations.</p>
+																	</>
+																);
+															}
+
+															if (titleLower.includes("password") || descLower.includes("password")) {
+																return (
+																	<>
+																		<p>Password policy does not meet security requirements.</p>
+																		<p className="mt-1 text-red-300/80">Current password settings may allow weak passwords or lack proper aging/complexity requirements.</p>
+																	</>
+																);
+															}
+
+															if (titleLower.includes("ssh") || remLower.includes("/etc/ssh")) {
+																return (
+																	<>
+																		<p>SSH daemon configuration does not meet security requirements.</p>
+																		<p className="mt-1 text-red-300/80">The current SSH settings may expose the system to unauthorized access or attacks.</p>
+																	</>
+																);
+															}
+
+															if (titleLower.includes("firewall") || titleLower.includes("iptables") || titleLower.includes("nftables")) {
+																return (
+																	<>
+																		<p>Firewall is not properly configured.</p>
+																		<p className="mt-1 text-red-300/80">Network traffic filtering is not set up according to security best practices.</p>
+																	</>
+																);
+															}
+
+															if (remLower.includes("sysctl") || remLower.includes("/proc/sys")) {
+																return (
+																	<>
+																		<p>Kernel parameter is not set to the secure value.</p>
+																		<p className="mt-1 text-red-300/80">A system kernel setting that affects security is not configured as required by the benchmark.</p>
+																	</>
+																);
+															}
+
+															// Default: Use description if available, otherwise construct from title
+															if (description && description.length > 20) {
+																return (
+																	<>
+																		<p>This security check failed verification.</p>
+																		<p className="mt-1 text-red-300/80">{description.substring(0, 200)}{description.length > 200 ? "..." : ""}</p>
+																	</>
+																);
+															}
+
+															return (
+																<>
+																	<p>The system configuration does not meet the requirements for: <strong>{title || "this security check"}</strong></p>
+																	<p className="mt-1 text-red-300/80">Review the remediation steps below to understand what needs to be changed.</p>
+																</>
+															);
+														})()}
 													</div>
 												</div>
 											)}
