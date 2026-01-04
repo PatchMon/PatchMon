@@ -2832,7 +2832,9 @@ const HostDetail = () => {
 																	</p>
 																	{complianceSetupStatus.status.components && (
 																		<div className="flex flex-wrap gap-2 mt-2">
-																			{Object.entries(complianceSetupStatus.status.components).map(([name, status]) => (
+																			{Object.entries(complianceSetupStatus.status.components)
+																				.filter(([, status]) => status !== "unavailable")
+																				.map(([name, status]) => (
 																				<span
 																					key={name}
 																					className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
@@ -2881,7 +2883,9 @@ const HostDetail = () => {
 																	</span>
 																	{complianceSetupStatus.status.components && (
 																		<div className="flex gap-1 ml-2">
-																			{Object.entries(complianceSetupStatus.status.components).map(([name, status]) => (
+																			{Object.entries(complianceSetupStatus.status.components)
+																				.filter(([, status]) => status !== "unavailable")
+																				.map(([name, status]) => (
 																				<span
 																					key={name}
 																					className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
@@ -2909,7 +2913,9 @@ const HostDetail = () => {
 																	</p>
 																	{complianceSetupStatus.status.components && (
 																		<div className="flex flex-wrap gap-2">
-																			{Object.entries(complianceSetupStatus.status.components).map(([name, status]) => (
+																			{Object.entries(complianceSetupStatus.status.components)
+																				.filter(([, status]) => status !== "unavailable")
+																				.map(([name, status]) => (
 																				<span
 																					key={name}
 																					className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
