@@ -64,8 +64,11 @@ router.get("/status/:apiId/stream", async (req, res) => {
 		const { apiId } = req.params;
 
 		// Manual authentication for SSE (EventSource doesn't support custom headers)
+		// Check cookies first (httpOnly cookie from browser), then query param, then Authorization header
 		const token =
-			req.query.token || req.headers.authorization?.replace("Bearer ", "");
+			req.cookies?.token ||
+			req.query.token ||
+			req.headers.authorization?.replace("Bearer ", "");
 		if (!token) {
 			return res.status(401).json({ error: "Authentication required" });
 		}
@@ -167,8 +170,11 @@ router.get("/compliance-progress/:apiId/stream", async (req, res) => {
 		const { apiId } = req.params;
 
 		// Manual authentication for SSE (EventSource doesn't support custom headers)
+		// Check cookies first (httpOnly cookie from browser), then query param, then Authorization header
 		const token =
-			req.query.token || req.headers.authorization?.replace("Bearer ", "");
+			req.cookies?.token ||
+			req.query.token ||
+			req.headers.authorization?.replace("Bearer ", "");
 		if (!token) {
 			return res.status(401).json({ error: "Authentication required" });
 		}

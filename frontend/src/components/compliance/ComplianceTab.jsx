@@ -271,16 +271,11 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 			return;
 		}
 
-		// Get auth token for SSE
-		const token = localStorage.getItem("token");
-		if (!token) {
-			console.warn("No auth token for compliance progress SSE");
-			return;
-		}
-
+		// Connect to SSE - authentication is handled via httpOnly cookies automatically
 		console.log("[Compliance SSE] Connecting for api_id:", apiId);
 		const eventSource = new EventSource(
-			`/api/v1/ws/compliance-progress/${apiId}/stream?token=${encodeURIComponent(token)}`
+			`/api/v1/ws/compliance-progress/${apiId}/stream`,
+			{ withCredentials: true }
 		);
 
 		eventSource.onmessage = (event) => {
