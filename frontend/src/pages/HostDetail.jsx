@@ -335,6 +335,24 @@ const HostDetail = () => {
 		refetchIntegrations,
 	]);
 
+	// Fetch Docker data for this host (enabled on docker tab or always for mobile view)
+	const {
+		data: dockerData,
+		isLoading: isLoadingDocker,
+	} = useQuery({
+		queryKey: ["docker", "host", hostId],
+		queryFn: async () => {
+			const response = await import("../utils/api").then((m) =>
+				m.default.get(`/docker/hosts/${hostId}`),
+			);
+			return response.data;
+		},
+		staleTime: 30 * 1000,
+		refetchOnWindowFocus: false,
+		// Enable on docker tab or if integrations show docker enabled (for mobile cards)
+		enabled: !!hostId && (activeTab === "docker" || integrationsData?.data?.integrations?.docker),
+	});
+
 	// Toggle integration mutation
 	const toggleIntegrationMutation = useMutation({
 		mutationFn: ({ integrationName, enabled }) =>
@@ -1540,6 +1558,160 @@ const HostDetail = () => {
 										</p>
 									)}
 								</div>
+
+								{/* Compliance Integration - Mobile */}
+								<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
+									<div className="flex items-start justify-between gap-4">
+										<div className="flex-1">
+											<div className="flex items-center gap-3 mb-2">
+												<Shield className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+												<h4 className="text-sm font-medium text-secondary-900 dark:text-white">
+													Compliance
+												</h4>
+												{integrationsData?.data?.integrations?.compliance ? (
+													<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+														Enabled
+													</span>
+												) : (
+													<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-400">
+														Disabled
+													</span>
+												)}
+											</div>
+											<p className="text-xs text-secondary-600 dark:text-secondary-300">
+												Security compliance scanning with OpenSCAP and Docker
+												Bench.
+											</p>
+										</div>
+										<div className="flex-shrink-0">
+											<button
+												type="button"
+												onClick={() =>
+													toggleIntegrationMutation.mutate({
+														integrationName: "compliance",
+														enabled:
+															!integrationsData?.data?.integrations?.compliance,
+													})
+												}
+												disabled={
+													toggleIntegrationMutation.isPending ||
+													!wsStatus?.connected
+												}
+												className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+													integrationsData?.data?.integrations?.compliance
+														? "bg-primary-600 dark:bg-primary-500"
+														: "bg-secondary-200 dark:bg-secondary-600"
+												} ${
+													toggleIntegrationMutation.isPending ||
+													!integrationsData?.data?.connected
+														? "opacity-50 cursor-not-allowed"
+														: ""
+												}`}
+											>
+												<span
+													className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+														integrationsData?.data?.integrations?.compliance
+															? "translate-x-5"
+															: "translate-x-1"
+													}`}
+												/>
+											</button>
+										</div>
+									</div>
+									{!wsStatus?.connected && (
+										<p className="text-xs text-warning-600 dark:text-warning-400 mt-2">
+											Agent must be connected via WebSocket to toggle
+											integrations
+										</p>
+									)}
+								</div>
+							</div>
+						)}
+					</div>
+
+					{/* Docker Card - Mobile */}
+					<div className="card p-4">
+						<h3 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4 flex items-center gap-2">
+							<Database className="h-5 w-5 text-primary-600" />
+							Docker
+						</h3>
+						{isLoadingDocker ? (
+							<div className="flex items-center justify-center h-32">
+								<RefreshCw className="h-6 w-6 animate-spin text-primary-600" />
+							</div>
+						) : !dockerData?.containers?.length &&
+						  !dockerData?.images?.length ? (
+							<div className="text-center py-6">
+								<Database className="h-10 w-10 text-secondary-400 mx-auto mb-3" />
+								<p className="text-sm text-secondary-600 dark:text-secondary-400">
+									{integrationsData?.data?.integrations?.docker
+										? "No Docker containers or images found."
+										: "Enable Docker integration to monitor containers."}
+								</p>
+							</div>
+						) : (
+							<div className="space-y-4">
+								{/* Stats */}
+								<div className="grid grid-cols-2 gap-3">
+									<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-3">
+										<p className="text-xs text-secondary-600 dark:text-secondary-400">
+											Containers
+										</p>
+										<p className="text-lg font-bold text-secondary-900 dark:text-white">
+											{dockerData?.containers?.length || 0}
+										</p>
+									</div>
+									<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-3">
+										<p className="text-xs text-secondary-600 dark:text-secondary-400">
+											Running
+										</p>
+										<p className="text-lg font-bold text-green-600">
+											{dockerData?.containers?.filter(
+												(c) => c.status === "running",
+											).length || 0}
+										</p>
+									</div>
+								</div>
+
+								{/* Container List Preview */}
+								{dockerData?.containers?.slice(0, 3).map((container) => (
+									<Link
+										key={container.id}
+										to={`/docker/containers/${container.id}`}
+										className="flex items-center justify-between p-3 bg-secondary-50 dark:bg-secondary-700 rounded-lg"
+									>
+										<div className="flex items-center gap-2">
+											<Database
+												className={`h-4 w-4 ${
+													container.status === "running"
+														? "text-green-600"
+														: "text-secondary-400"
+												}`}
+											/>
+											<span className="text-sm text-secondary-900 dark:text-white">
+												{container.name}
+											</span>
+										</div>
+										<span
+											className={`text-xs px-2 py-0.5 rounded ${
+												container.status === "running"
+													? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+													: "bg-secondary-200 text-secondary-600 dark:bg-secondary-600 dark:text-secondary-300"
+											}`}
+										>
+											{container.status}
+										</span>
+									</Link>
+								))}
+
+								{dockerData?.containers?.length > 3 && (
+									<Link
+										to={`/docker/hosts/${hostId}`}
+										className="block text-center text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400"
+									>
+										View all {dockerData.containers.length} containers
+									</Link>
+								)}
 							</div>
 						)}
 					</div>
@@ -1636,6 +1808,18 @@ const HostDetail = () => {
 						>
 							<Shield className="h-4 w-4 inline mr-1" />
 							Compliance
+						</button>
+						<button
+							type="button"
+							onClick={() => handleTabChange("docker")}
+							className={`px-4 py-2 text-sm font-medium ${
+								activeTab === "docker"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+									: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
+							}`}
+						>
+							<Database className="h-4 w-4 inline mr-1" />
+							Docker
 						</button>
 						<button
 							type="button"
@@ -2727,7 +2911,84 @@ const HostDetail = () => {
 											)}
 										</div>
 
-										{/* Future integrations can be added here with the same pattern */}
+										{/* Compliance Integration */}
+										<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
+											<div className="flex items-start justify-between gap-4">
+												<div className="flex-1">
+													<div className="flex items-center gap-3 mb-2">
+														<Shield className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+														<h4 className="text-sm font-medium text-secondary-900 dark:text-white">
+															Compliance
+														</h4>
+														{integrationsData?.data?.integrations?.compliance ? (
+															<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+																Enabled
+															</span>
+														) : (
+															<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-400">
+																Disabled
+															</span>
+														)}
+													</div>
+													<p className="text-xs text-secondary-600 dark:text-secondary-300">
+														Security compliance scanning with OpenSCAP and Docker
+														Bench. Assesses hosts against CIS benchmarks.
+													</p>
+												</div>
+												<div className="flex-shrink-0">
+													<button
+														type="button"
+														onClick={() =>
+															toggleIntegrationMutation.mutate({
+																integrationName: "compliance",
+																enabled:
+																	!integrationsData?.data?.integrations?.compliance,
+															})
+														}
+														disabled={
+															toggleIntegrationMutation.isPending ||
+															!wsStatus?.connected
+														}
+														title={
+															!wsStatus?.connected
+																? "Agent is not connected"
+																: integrationsData?.data?.integrations?.compliance
+																	? "Disable Compliance scanning"
+																	: "Enable Compliance scanning"
+														}
+														className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+															integrationsData?.data?.integrations?.compliance
+																? "bg-primary-600 dark:bg-primary-500"
+																: "bg-secondary-200 dark:bg-secondary-600"
+														} ${
+															toggleIntegrationMutation.isPending ||
+															!integrationsData?.data?.connected
+																? "opacity-50 cursor-not-allowed"
+																: ""
+														}`}
+													>
+														<span
+															className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+																integrationsData?.data?.integrations?.compliance
+																	? "translate-x-5"
+																	: "translate-x-1"
+															}`}
+														/>
+													</button>
+												</div>
+											</div>
+											{!wsStatus?.connected && (
+												<p className="text-xs text-warning-600 dark:text-warning-400 mt-2">
+													Agent must be connected via WebSocket to toggle
+													integrations
+												</p>
+											)}
+											{toggleIntegrationMutation.isPending && (
+												<p className="text-xs text-secondary-600 dark:text-secondary-400 mt-2">
+													Updating integration...
+												</p>
+											)}
+										</div>
 									</div>
 								)}
 							</div>
@@ -2736,6 +2997,203 @@ const HostDetail = () => {
 						{/* Compliance */}
 						{activeTab === "compliance" && (
 							<ComplianceTab hostId={hostId} isConnected={wsStatus?.connected} />
+						)}
+
+						{/* Docker */}
+						{activeTab === "docker" && (
+							<div className="space-y-6">
+								{isLoadingDocker ? (
+									<div className="flex items-center justify-center h-32">
+										<RefreshCw className="h-6 w-6 animate-spin text-primary-600" />
+									</div>
+								) : !dockerData?.containers?.length &&
+								  !dockerData?.images?.length ? (
+									<div className="text-center py-8">
+										<Database className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
+										<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-2">
+											No Docker Data
+										</h3>
+										<p className="text-sm text-secondary-600 dark:text-secondary-400">
+											{integrationsData?.data?.integrations?.docker
+												? "Docker integration is enabled but no containers or images were found."
+												: "Enable Docker integration in the Integrations tab to monitor containers."}
+										</p>
+										{!integrationsData?.data?.integrations?.docker && (
+											<button
+												type="button"
+												onClick={() => handleTabChange("integrations")}
+												className="mt-4 btn-primary"
+											>
+												Go to Integrations
+											</button>
+										)}
+									</div>
+								) : (
+									<>
+										{/* Docker Stats */}
+										<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+											<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4">
+												<div className="flex items-center gap-2 mb-1">
+													<Database className="h-4 w-4 text-blue-600" />
+													<span className="text-xs text-secondary-600 dark:text-secondary-400">
+														Containers
+													</span>
+												</div>
+												<p className="text-xl font-bold text-secondary-900 dark:text-white">
+													{dockerData?.containers?.length || 0}
+												</p>
+											</div>
+											<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4">
+												<div className="flex items-center gap-2 mb-1">
+													<Activity className="h-4 w-4 text-green-600" />
+													<span className="text-xs text-secondary-600 dark:text-secondary-400">
+														Running
+													</span>
+												</div>
+												<p className="text-xl font-bold text-secondary-900 dark:text-white">
+													{dockerData?.containers?.filter(
+														(c) => c.status === "running",
+													).length || 0}
+												</p>
+											</div>
+											<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4">
+												<div className="flex items-center gap-2 mb-1">
+													<Package className="h-4 w-4 text-purple-600" />
+													<span className="text-xs text-secondary-600 dark:text-secondary-400">
+														Images
+													</span>
+												</div>
+												<p className="text-xl font-bold text-secondary-900 dark:text-white">
+													{dockerData?.images?.length || 0}
+												</p>
+											</div>
+											<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4">
+												<div className="flex items-center gap-2 mb-1">
+													<HardDrive className="h-4 w-4 text-orange-600" />
+													<span className="text-xs text-secondary-600 dark:text-secondary-400">
+														Volumes
+													</span>
+												</div>
+												<p className="text-xl font-bold text-secondary-900 dark:text-white">
+													{dockerData?.stats?.volumes || 0}
+												</p>
+											</div>
+										</div>
+
+										{/* Containers List */}
+										{dockerData?.containers?.length > 0 && (
+											<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg">
+												<div className="px-4 py-3 border-b border-secondary-200 dark:border-secondary-600">
+													<h3 className="text-sm font-semibold text-secondary-900 dark:text-white">
+														Containers
+													</h3>
+												</div>
+												<div className="divide-y divide-secondary-200 dark:divide-secondary-600">
+													{dockerData.containers.map((container) => (
+														<Link
+															key={container.id}
+															to={`/docker/containers/${container.id}`}
+															className="flex items-center justify-between p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
+														>
+															<div className="flex items-center gap-3">
+																<Database
+																	className={`h-5 w-5 ${
+																		container.status === "running"
+																			? "text-green-600"
+																			: "text-secondary-400"
+																	}`}
+																/>
+																<div>
+																	<p className="text-sm font-medium text-secondary-900 dark:text-white">
+																		{container.name}
+																	</p>
+																	<p className="text-xs text-secondary-500 dark:text-secondary-400">
+																		{container.image_name}:{container.image_tag}
+																	</p>
+																</div>
+															</div>
+															<span
+																className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+																	container.status === "running"
+																		? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+																		: container.status === "exited"
+																			? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+																			: "bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
+																}`}
+															>
+																{container.status}
+															</span>
+														</Link>
+													))}
+												</div>
+											</div>
+										)}
+
+										{/* Images List */}
+										{dockerData?.images?.length > 0 && (
+											<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg">
+												<div className="px-4 py-3 border-b border-secondary-200 dark:border-secondary-600">
+													<h3 className="text-sm font-semibold text-secondary-900 dark:text-white">
+														Images
+													</h3>
+												</div>
+												<div className="divide-y divide-secondary-200 dark:divide-secondary-600">
+													{dockerData.images.slice(0, 10).map((image) => (
+														<Link
+															key={image.id}
+															to={`/docker/images/${image.id}`}
+															className="flex items-center justify-between p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
+														>
+															<div className="flex items-center gap-3">
+																<Package className="h-5 w-5 text-purple-600" />
+																<div>
+																	<p className="text-sm font-medium text-secondary-900 dark:text-white">
+																		{image.repository}
+																	</p>
+																	<p className="text-xs text-secondary-500 dark:text-secondary-400">
+																		{image.tag}
+																	</p>
+																</div>
+															</div>
+															{image.size_bytes && (
+																<span className="text-xs text-secondary-500 dark:text-secondary-400">
+																	{(
+																		Number(image.size_bytes) /
+																		1024 /
+																		1024
+																	).toFixed(1)}{" "}
+																	MB
+																</span>
+															)}
+														</Link>
+													))}
+													{dockerData.images.length > 10 && (
+														<div className="p-4 text-center">
+															<Link
+																to={`/docker/hosts/${hostId}`}
+																className="text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400"
+															>
+																View all {dockerData.images.length} images
+															</Link>
+														</div>
+													)}
+												</div>
+											</div>
+										)}
+
+										{/* View Full Docker Details Link */}
+										<div className="text-center">
+											<Link
+												to={`/docker/hosts/${hostId}`}
+												className="inline-flex items-center gap-2 text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400"
+											>
+												View Full Docker Details
+												<ArrowLeft className="h-4 w-4 rotate-180" />
+											</Link>
+										</div>
+									</>
+								)}
+							</div>
 						)}
 					</div>
 				</div>

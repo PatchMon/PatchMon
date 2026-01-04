@@ -1030,7 +1030,7 @@ router.get("/integrations", validateApiCredentials, async (req, res) => {
 		// Return integration states from database (source of truth)
 		const integrations = {
 			docker: host.docker_enabled ?? false,
-			// Future integrations can be added here
+			compliance: host.compliance_enabled ?? false,
 		};
 
 		res.json({
@@ -1087,7 +1087,7 @@ router.post("/ping", validateApiCredentials, async (req, res) => {
 		// This allows agent to sync config.yml with database state during setup
 		response.integrations = {
 			docker: req.hostRecord.docker_enabled ?? false,
-			// Future integrations can be added here
+			compliance: req.hostRecord.compliance_enabled ?? false,
 		};
 
 		// Check if this is a crontab update trigger
@@ -2558,7 +2558,7 @@ router.get(
 			const cachedState = integrationStateCache.get(host.api_id) || {};
 			const integrations = {
 				docker: host.docker_enabled ?? cachedState.docker ?? false,
-				// Future integrations can be added here
+				compliance: host.compliance_enabled ?? cachedState.compliance ?? false,
 			};
 
 			res.json({
@@ -2648,6 +2648,11 @@ router.post(
 				await prisma.hosts.update({
 					where: { id: hostId },
 					data: { docker_enabled: enabled },
+				});
+			} else if (integrationName === "compliance") {
+				await prisma.hosts.update({
+					where: { id: hostId },
+					data: { compliance_enabled: enabled },
 				});
 			}
 
