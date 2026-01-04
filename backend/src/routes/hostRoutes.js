@@ -625,7 +625,14 @@ router.post(
 			if (req.body.diskDetails) updateData.disk_details = req.body.diskDetails;
 
 			// Network Information
-			if (req.body.gatewayIp) updateData.gateway_ip = req.body.gatewayIp;
+			if (req.body.gatewayIp) {
+				updateData.gateway_ip = req.body.gatewayIp;
+			} else if (Object.hasOwn(req.body, "gatewayIp")) {
+				// Log warning if gateway field was sent but empty (isolated network)
+				console.warn(
+					`Host ${host.hostname} reported with no default gateway configured`,
+				);
+			}
 			if (req.body.dnsServers) updateData.dns_servers = req.body.dnsServers;
 			if (req.body.networkInterfaces)
 				updateData.network_interfaces = req.body.networkInterfaces;
