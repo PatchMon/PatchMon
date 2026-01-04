@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { complianceAPI } from "../../utils/complianceApi";
 import ComplianceScore from "./ComplianceScore";
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 // Lazy load ComplianceTrend to avoid recharts bundling issues
 const ComplianceTrend = lazy(() => import("./ComplianceTrend"));
@@ -576,6 +577,109 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 					</button>
 				</div>
 			)}
+
+			{/* Charts Section */}
+			{latestScan && (() => {
+				const results = latestScan.compliance_results || latestScan.results || [];
+				const failedResults = results.filter(r => r.status === "fail");
+
+				// Results breakdown data
+				const resultsData = [
+					{ name: "Passed", value: results.filter(r => r.status === "pass").length, color: "#22c55e" },
+					{ name: "Failed", value: results.filter(r => r.status === "fail").length, color: "#ef4444" },
+					{ name: "Warnings", value: results.filter(r => r.status === "warn").length, color: "#eab308" },
+					{ name: "N/A", value: results.filter(r => r.status === "skip" || r.status === "notapplicable").length, color: "#6b7280" },
+				].filter(d => d.value > 0);
+
+				// Severity breakdown for failed rules
+				const getSeverity = (r) => r.compliance_rules?.severity || r.rule?.severity || r.severity || "unknown";
+				const severityData = [
+					{ name: "Critical", value: failedResults.filter(r => getSeverity(r) === "critical").length, color: "#dc2626" },
+					{ name: "High", value: failedResults.filter(r => getSeverity(r) === "high").length, color: "#f97316" },
+					{ name: "Medium", value: failedResults.filter(r => getSeverity(r) === "medium").length, color: "#eab308" },
+					{ name: "Low", value: failedResults.filter(r => getSeverity(r) === "low").length, color: "#3b82f6" },
+					{ name: "Unknown", value: failedResults.filter(r => getSeverity(r) === "unknown").length, color: "#6b7280" },
+				].filter(d => d.value > 0);
+
+				return (
+					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+						{/* Results Breakdown Pie Chart */}
+						<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
+							<h3 className="text-white font-medium mb-4 flex items-center gap-2">
+								<BarChart3 className="h-4 w-4 text-primary-400" />
+								Results Breakdown
+							</h3>
+							<div className="h-48">
+								<ResponsiveContainer width="100%" height="100%">
+									<PieChart>
+										<Pie
+											data={resultsData}
+											cx="50%"
+											cy="50%"
+											innerRadius={40}
+											outerRadius={70}
+											dataKey="value"
+											label={({ name, value }) => `${name}: ${value}`}
+											labelLine={false}
+										>
+											{resultsData.map((entry, index) => (
+												<Cell key={`cell-${index}`} fill={entry.color} />
+											))}
+										</Pie>
+										<Tooltip
+											contentStyle={{
+												backgroundColor: "#1f2937",
+												border: "1px solid #374151",
+												borderRadius: "0.5rem",
+											}}
+											labelStyle={{ color: "#9ca3af" }}
+										/>
+									</PieChart>
+								</ResponsiveContainer>
+							</div>
+							<div className="flex flex-wrap justify-center gap-4 mt-2">
+								{resultsData.map((entry) => (
+									<div key={entry.name} className="flex items-center gap-2 text-sm">
+										<div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color }} />
+										<span className="text-secondary-400">{entry.name}</span>
+									</div>
+								))}
+							</div>
+						</div>
+
+						{/* Failed Rules by Severity */}
+						{failedResults.length > 0 && (
+							<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
+								<h3 className="text-white font-medium mb-4 flex items-center gap-2">
+									<AlertTriangle className="h-4 w-4 text-red-400" />
+									Failed Rules by Severity
+								</h3>
+								<div className="h-48">
+									<ResponsiveContainer width="100%" height="100%">
+										<BarChart data={severityData} layout="vertical">
+											<XAxis type="number" stroke="#6b7280" fontSize={12} />
+											<YAxis type="category" dataKey="name" stroke="#6b7280" fontSize={12} width={70} />
+											<Tooltip
+												contentStyle={{
+													backgroundColor: "#1f2937",
+													border: "1px solid #374151",
+													borderRadius: "0.5rem",
+												}}
+												labelStyle={{ color: "#9ca3af" }}
+											/>
+											<Bar dataKey="value" radius={[0, 4, 4, 0]}>
+												{severityData.map((entry, index) => (
+													<Cell key={`cell-${index}`} fill={entry.color} />
+												))}
+											</Bar>
+										</BarChart>
+									</ResponsiveContainer>
+								</div>
+							</div>
+						)}
+					</div>
+				);
+			})()}
 
 			{/* Compliance Trend Chart */}
 			<Suspense fallback={<div className="h-48 bg-secondary-800 rounded-lg border border-secondary-700 animate-pulse" />}>
