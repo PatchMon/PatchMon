@@ -9,6 +9,7 @@ import {
 	CheckCircle2,
 	Clock,
 	Clock3,
+	Container,
 	Copy,
 	Cpu,
 	Database,
@@ -583,6 +584,25 @@ const HostDetail = () => {
 								>
 									<RotateCcw className="h-3 w-3" />
 									Reboot Required
+								</span>
+							)}
+							{/* Integration Badges */}
+							{integrationsData?.data?.integrations?.compliance && (
+								<span
+									className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200"
+									title="Compliance scanning enabled"
+								>
+									<Shield className="h-3 w-3" />
+									Compliance
+								</span>
+							)}
+							{integrationsData?.data?.integrations?.docker && (
+								<span
+									className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+									title="Docker monitoring enabled"
+								>
+									<Container className="h-3 w-3" />
+									Docker
 								</span>
 							)}
 						</div>
