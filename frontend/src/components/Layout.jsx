@@ -810,7 +810,7 @@ const Layout = ({ children }) => {
 				</button>
 
 				<div
-					className={`flex flex-col h-full max-h-screen border-r border-secondary-200 dark:border-white/10 bg-white ${
+					className={`flex flex-col h-full border-r border-secondary-200 dark:border-white/10 bg-white ${
 						sidebarCollapsed ? "px-2 shadow-lg" : "px-6"
 					}`}
 					style={{
