@@ -1153,16 +1153,18 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 					</h4>
 					<div className="text-sm text-blue-200/80 space-y-2">
 						<p>
-							<strong>Important:</strong> CIS Benchmarks and DISA STIGs for Ubuntu 24.04 (Noble Numbat)
-							are not yet publicly available. The SCAP Security Guide content is in draft/beta state.
+							<strong>CIS/STIG content for Ubuntu 24.04</strong> is available in SCAP Security Guide v0.1.76+.
+							If you see "content mismatch" warnings, your ssg-base package needs updating.
 						</p>
-						<p>
-							Scans may show "not applicable" results. For production compliance needs, consider:
-						</p>
+						<p>Options for Ubuntu 24.04 compliance:</p>
 						<ul className="list-disc list-inside ml-2 space-y-1">
-							<li><strong>Canonical's Ubuntu Security Guide (USG)</strong> - Available with Ubuntu Pro subscription</li>
-							<li><strong>OVAL Vulnerability Scanning</strong> - Free CVE content available from Canonical</li>
+							<li><strong>Update ssg-base package</strong> to v0.1.76 or higher</li>
+							<li><strong>Canonical's Ubuntu Security Guide (USG)</strong> - Official CIS hardening with Ubuntu Pro</li>
+							<li><strong>OVAL Vulnerability Scanning</strong> - Free CVE content from Canonical</li>
 						</ul>
+						<p className="mt-2 text-xs text-blue-300/70">
+							Note: USG provides <code className="bg-blue-800/50 px-1 rounded">usg audit</code> and <code className="bg-blue-800/50 px-1 rounded">usg fix</code> commands for CIS Level 1/2 hardening.
+						</p>
 					</div>
 				</div>
 			</div>
