@@ -65,28 +65,6 @@ export default defineConfig({
 		outDir: "dist",
 		sourcemap: process.env.NODE_ENV !== "production",
 		target: "es2018",
-		rollupOptions: {
-			output: {
-				manualChunks(id) {
-					if (id.includes("node_modules")) {
-						// Only split large, standalone libraries that don't have React dependencies
-						// chart.js is safe - pure JS library
-						if (id.includes("/chart.js/") && !id.includes("react-chartjs")) {
-							return "chart-vendor";
-						}
-						// Icon libraries - pure components, no circular deps
-						if (id.includes("/lucide-react/")) {
-							return "icons-vendor";
-						}
-						// DnD libraries
-						if (id.includes("/@dnd-kit/")) {
-							return "dnd-vendor";
-						}
-						// Let React, react-router, tanstack, and other interconnected
-						// libraries bundle together to avoid initialization order issues
-					}
-				},
-			},
-		},
+		// No manual chunks - let Vite handle bundling to avoid initialization order issues
 	},
 });
