@@ -336,6 +336,38 @@ const HostDetail = () => {
 		refetchIntegrations,
 	]);
 
+	// Poll for compliance setup status when compliance is enabled
+	const {
+		data: complianceSetupStatus,
+		refetch: refetchComplianceStatus,
+	} = useQuery({
+		queryKey: ["compliance-setup-status", hostId],
+		queryFn: () =>
+			adminHostsAPI.getIntegrationSetupStatus(hostId, "compliance").then((res) => res.data),
+		staleTime: 5 * 1000, // 5 seconds
+		refetchInterval: (data) => {
+			// Poll every 3 seconds while status is "installing" or "removing"
+			const status = data?.status?.status;
+			if (status === "installing" || status === "removing") {
+				return 3000;
+			}
+			return false; // Stop polling when done
+		},
+		refetchOnWindowFocus: false,
+		enabled: !!hostId && integrationsData?.data?.integrations?.compliance,
+	});
+
+	// Refetch compliance status when toggle mutation succeeds
+	useEffect(() => {
+		if (toggleIntegrationMutation.isSuccess) {
+			// Small delay to allow agent to start processing
+			const timeoutId = safeSetTimeout(() => {
+				refetchComplianceStatus();
+			}, 1000);
+			return () => clearTimeout(timeoutId);
+		}
+	}, [toggleIntegrationMutation.isSuccess, refetchComplianceStatus, safeSetTimeout]);
+
 	// Fetch Docker data for this host (enabled on docker tab or always for mobile view)
 	const {
 		data: dockerData,
@@ -2995,6 +3027,83 @@ const HostDetail = () => {
 												<p className="text-xs text-secondary-600 dark:text-secondary-400 mt-2">
 													Updating integration...
 												</p>
+											)}
+											{/* Compliance Setup Status */}
+											{complianceSetupStatus?.status && (
+												<div className="mt-3 p-3 rounded-lg bg-secondary-50 dark:bg-secondary-800/50 border border-secondary-200 dark:border-secondary-700">
+													<div className="flex items-center gap-2">
+														{complianceSetupStatus.status.status === "installing" && (
+															<>
+																<RefreshCw className="h-4 w-4 animate-spin text-primary-500" />
+																<span className="text-sm font-medium text-primary-600 dark:text-primary-400">
+																	Installing compliance tools...
+																</span>
+															</>
+														)}
+														{complianceSetupStatus.status.status === "removing" && (
+															<>
+																<RefreshCw className="h-4 w-4 animate-spin text-warning-500" />
+																<span className="text-sm font-medium text-warning-600 dark:text-warning-400">
+																	Removing compliance tools...
+																</span>
+															</>
+														)}
+														{complianceSetupStatus.status.status === "ready" && (
+															<>
+																<CheckCircle className="h-4 w-4 text-success-500" />
+																<span className="text-sm font-medium text-success-600 dark:text-success-400">
+																	Compliance tools ready
+																</span>
+															</>
+														)}
+														{complianceSetupStatus.status.status === "partial" && (
+															<>
+																<AlertTriangle className="h-4 w-4 text-warning-500" />
+																<span className="text-sm font-medium text-warning-600 dark:text-warning-400">
+																	Some tools failed to install
+																</span>
+															</>
+														)}
+														{complianceSetupStatus.status.status === "disabled" && (
+															<>
+																<X className="h-4 w-4 text-secondary-500" />
+																<span className="text-sm font-medium text-secondary-600 dark:text-secondary-400">
+																	Compliance disabled
+																</span>
+															</>
+														)}
+													</div>
+													{complianceSetupStatus.status.message && (
+														<p className="text-xs text-secondary-600 dark:text-secondary-400 mt-1">
+															{complianceSetupStatus.status.message}
+														</p>
+													)}
+													{/* Component Status */}
+													{complianceSetupStatus.status.components &&
+														Object.keys(complianceSetupStatus.status.components).length > 0 && (
+														<div className="mt-2 flex flex-wrap gap-2">
+															{Object.entries(complianceSetupStatus.status.components).map(([name, status]) => (
+																<span
+																	key={name}
+																	className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
+																		status === "ready"
+																			? "bg-success-100 text-success-700 dark:bg-success-900/50 dark:text-success-300"
+																			: status === "failed"
+																			? "bg-danger-100 text-danger-700 dark:bg-danger-900/50 dark:text-danger-300"
+																			: status === "unavailable"
+																			? "bg-secondary-100 text-secondary-600 dark:bg-secondary-800 dark:text-secondary-400"
+																			: "bg-warning-100 text-warning-700 dark:bg-warning-900/50 dark:text-warning-300"
+																	}`}
+																>
+																	{status === "ready" && <CheckCircle className="h-3 w-3" />}
+																	{status === "failed" && <X className="h-3 w-3" />}
+																	{status === "unavailable" && <AlertCircle className="h-3 w-3" />}
+																	{name}
+																</span>
+															))}
+														</div>
+													)}
+												</div>
 											)}
 										</div>
 									</div>

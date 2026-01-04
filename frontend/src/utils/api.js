@@ -137,6 +137,8 @@ export const adminHostsAPI = {
 		api.post(`/hosts/${hostId}/integrations/${integrationName}/toggle`, {
 			enabled,
 		}),
+	getIntegrationSetupStatus: (hostId, integrationName) =>
+		api.get(`/hosts/${hostId}/integrations/${integrationName}/status`),
 };
 
 // Host Groups API
