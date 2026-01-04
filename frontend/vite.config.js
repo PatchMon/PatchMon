@@ -73,7 +73,7 @@ export default defineConfig({
 					// Large utility libraries
 					"utils-vendor": ["axios", "@tanstack/react-query", "date-fns"],
 					// Chart libraries
-					"chart-vendor": ["chart.js", "react-chartjs-2"],
+					"chart-vendor": ["chart.js", "react-chartjs-2", "recharts"],
 					// Icon libraries
 					"icons-vendor": ["lucide-react", "react-icons"],
 					// DnD libraries
