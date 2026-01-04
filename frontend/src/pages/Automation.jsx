@@ -16,7 +16,7 @@ import api from "../utils/api";
 import { useAuth } from "../contexts/AuthContext";
 
 const Automation = () => {
-	const { token } = useAuth();
+	const { user } = useAuth();
 	const [activeTab, setActiveTab] = useState("overview");
 	const [sortField, setSortField] = useState("nextRunTimestamp");
 	const [sortDirection, setSortDirection] = useState("asc");
@@ -239,7 +239,7 @@ const Automation = () => {
 	const openBullBoard = async () => {
 		// SECURITY: Use ticket-based authentication instead of passing token in URL
 		// Tickets are one-time use and short-lived (30 seconds)
-		if (!token) {
+		if (!user) {
 			alert("Please log in to access the Queue Monitor");
 			return;
 		}
