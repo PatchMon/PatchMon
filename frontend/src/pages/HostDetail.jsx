@@ -31,8 +31,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-// TEMPORARILY DISABLED - debugging bundler issue
-// import ComplianceTab from "../components/compliance/ComplianceTab";
+import ComplianceTab from "../components/compliance/ComplianceTab";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import SshTerminal from "../components/SshTerminal";
@@ -3114,9 +3113,9 @@ const HostDetail = () => {
 							</div>
 						)}
 
-						{/* Compliance - temporarily disabled for debugging */}
+						{/* Compliance */}
 						{activeTab === "compliance" && (
-							<div className="p-4 text-secondary-400">Compliance tab temporarily disabled for debugging</div>
+							<ComplianceTab hostId={hostId} isConnected={wsStatus?.connected} />
 						)}
 
 						{/* Docker */}
