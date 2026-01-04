@@ -29,7 +29,7 @@ const Users = () => {
 		error,
 	} = useQuery({
 		queryKey: ["users"],
-		queryFn: () => adminUsersAPI.list().then((res) => res.data.data),
+		queryFn: () => adminUsersAPI.list().then((res) => res.data),
 	});
 
 	// Fetch available roles
