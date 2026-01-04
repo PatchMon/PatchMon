@@ -2597,7 +2597,7 @@ router.post(
 			const { enabled } = req.body;
 
 			// Validate integration name
-			const validIntegrations = ["docker"]; // Add more as they're implemented
+			const validIntegrations = ["docker", "compliance"];
 			if (!validIntegrations.includes(integrationName)) {
 				return res.status(400).json({
 					error: "Invalid integration name",
