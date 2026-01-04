@@ -95,10 +95,12 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 			sessionStorage.removeItem(scanStateKey);
 		}
 	};
-	const setScanMessage = (msg) => {
+	const setScanMessage = (msg, profile = null) => {
 		setScanMessageState(msg);
 		if (msg && msg.startTime) {
-			sessionStorage.setItem(scanStateKey, JSON.stringify(msg));
+			const toSave = { ...msg };
+			if (profile) toSave.profileName = profile;
+			sessionStorage.setItem(scanStateKey, JSON.stringify(toSave));
 		} else if (!msg) {
 			sessionStorage.removeItem(scanStateKey);
 		}
@@ -265,11 +267,16 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 			const remediationText = variables.enableRemediation
 				? " Remediation is enabled - failed rules will be automatically fixed."
 				: "";
+			// Get profile name for display
+			const profileName = availableProfiles.find(p =>
+				(p.xccdf_id || p.id) === variables.profileId
+			)?.name || variables.profileId;
 			setScanMessage({
 				type: "info",
 				text: `Compliance scan started. This may take several minutes...${remediationText}`,
 				startTime: Date.now(),
-			});
+				profileName: profileName,
+			}, profileName);
 		},
 		onError: (error) => {
 			const errorMsg = error.response?.data?.error || error.message || "Failed to trigger scan";
@@ -357,7 +364,9 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 							<div>
 								<p className="font-medium">Compliance Scan In Progress</p>
 								<p className="text-sm text-primary-300/80">
-									{scanMessage?.text || "Scan is running, please wait..."}
+									{scanMessage?.profileName
+										? `Running ${scanMessage.profileName}...`
+										: "Scan is running, please wait..."}
 								</p>
 							</div>
 						</div>
