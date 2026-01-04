@@ -67,21 +67,35 @@ export default defineConfig({
 		target: "es2018",
 		rollupOptions: {
 			output: {
-				manualChunks: {
-					// React core
-					"react-vendor": ["react", "react-dom", "react-router-dom"],
-					// Large utility libraries
-					"utils-vendor": ["axios", "@tanstack/react-query", "date-fns"],
-					// Chart libraries
-					"chart-vendor": ["chart.js", "react-chartjs-2"],
-					// Icon libraries
-					"icons-vendor": ["lucide-react", "react-icons"],
-					// DnD libraries
-					"dnd-vendor": [
-						"@dnd-kit/core",
-						"@dnd-kit/sortable",
-						"@dnd-kit/utilities",
-					],
+				manualChunks(id) {
+					if (id.includes("node_modules")) {
+						// React core must be bundled together
+						if (id.includes("/react/") || id.includes("/react-dom/") || id.includes("/scheduler/")) {
+							return "react-core";
+						}
+						// React Router and its dependencies
+						if (id.includes("/react-router") || id.includes("/@remix-run/")) {
+							return "router-vendor";
+						}
+						// Query library
+						if (id.includes("/@tanstack/")) {
+							return "query-vendor";
+						}
+						// Chart libraries including recharts and its d3 dependencies
+						if (id.includes("/chart.js/") || id.includes("/react-chartjs-2/") ||
+						    id.includes("/recharts/") || id.includes("/d3-") ||
+						    id.includes("/react-smooth/") || id.includes("/victory-")) {
+							return "chart-vendor";
+						}
+						// Icon libraries
+						if (id.includes("/lucide-react/") || id.includes("/react-icons/")) {
+							return "icons-vendor";
+						}
+						// DnD libraries
+						if (id.includes("/@dnd-kit/")) {
+							return "dnd-vendor";
+						}
+					}
 				},
 			},
 		},
