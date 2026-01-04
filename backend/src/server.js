@@ -386,7 +386,7 @@ app.use(
 		credentials: true,
 		// Additional CORS options for better cookie handling
 		optionsSuccessStatus: 200,
-		methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+		methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 		allowedHeaders: [
 			"Content-Type",
 			"Authorization",

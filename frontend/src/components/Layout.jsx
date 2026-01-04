@@ -25,13 +25,13 @@ import {
 	X,
 	Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FaLinkedin, FaYoutube } from "react-icons/fa";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useColorTheme } from "../contexts/ColorThemeContext";
 import { useUpdateNotification } from "../contexts/UpdateNotificationContext";
-import { dashboardAPI, versionAPI } from "../utils/api";
+import { dashboardAPI, settingsAPI, versionAPI } from "../utils/api";
 import DiscordIcon from "./DiscordIcon";
 import GlobalSearch from "./GlobalSearch";
 import Logo from "./Logo";
@@ -94,6 +94,12 @@ const Layout = ({ children }) => {
 		queryFn: () => dashboardAPI.getStats().then((res) => res.data),
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
+	});
+
+	// Fetch settings for favicon
+	const { data: settings } = useQuery({
+		queryKey: ["settings"],
+		queryFn: () => settingsAPI.get().then((res) => res.data),
 	});
 
 	// Fetch version info
@@ -403,24 +409,51 @@ const Layout = ({ children }) => {
 		};
 	}, [themeConfig]);
 
-	// Fetch social media stats from cache
-	const fetchSocialMediaStats = useCallback(async () => {
-		try {
-			const response = await fetch("/api/v1/social-media-stats");
-			if (response.ok) {
-				const data = await response.json();
-				setSocialMediaStats({
-					github_stars: data.github_stars,
-					discord_members: data.discord_members,
-					buymeacoffee_supporters: data.buymeacoffee_supporters,
-					youtube_subscribers: data.youtube_subscribers,
-					linkedin_followers: data.linkedin_followers,
-				});
+	// Fetch social media stats from cache - only once on mount
+	// Using useRef to track if we've already fetched to prevent re-fetching on settings updates
+	const hasFetchedSocialMedia = useRef(false);
+
+	useEffect(() => {
+		// Only fetch once on component mount, not when settings change
+		if (hasFetchedSocialMedia.current) return;
+
+		const fetchSocialMediaStats = async () => {
+			try {
+				const response = await fetch("/api/v1/social-media-stats");
+				if (response.ok) {
+					const data = await response.json();
+					// Only update stats that are not null - preserve existing values if fetch failed
+					setSocialMediaStats((prev) => ({
+						github_stars:
+							data.github_stars !== null
+								? data.github_stars
+								: prev.github_stars,
+						discord_members:
+							data.discord_members !== null
+								? data.discord_members
+								: prev.discord_members,
+						buymeacoffee_supporters:
+							data.buymeacoffee_supporters !== null
+								? data.buymeacoffee_supporters
+								: prev.buymeacoffee_supporters,
+						youtube_subscribers:
+							data.youtube_subscribers !== null
+								? data.youtube_subscribers
+								: prev.youtube_subscribers,
+						linkedin_followers:
+							data.linkedin_followers !== null
+								? data.linkedin_followers
+								: prev.linkedin_followers,
+					}));
+				}
+			} catch (error) {
+				console.error("Failed to fetch social media stats:", error);
 			}
-		} catch (error) {
-			console.error("Failed to fetch social media stats:", error);
-		}
-	}, []);
+		};
+
+		fetchSocialMediaStats();
+		hasFetchedSocialMedia.current = true;
+	}, []); // Empty dependency array - only run once on mount
 
 	// Short format for navigation area
 	const formatRelativeTimeShort = (date) => {
@@ -462,11 +495,6 @@ const Layout = ({ children }) => {
 			document.removeEventListener("mousedown", handleClickOutside);
 		};
 	}, []);
-
-	// Fetch social media stats on component mount
-	useEffect(() => {
-		fetchSocialMediaStats();
-	}, [fetchSocialMediaStats]);
 
 	// Set CSS custom properties for glassmorphism and theme colors in dark mode
 	useEffect(() => {
@@ -815,9 +843,28 @@ const Layout = ({ children }) => {
 						{sidebarCollapsed ? (
 							<Link to="/" className="flex items-center">
 								<img
-									src="/assets/favicon.svg"
+									src={
+										settings?.favicon
+											? `${(() => {
+													const parts = settings.favicon.split("/");
+													const filename = parts.pop();
+													const directory = parts.join("/");
+													const encodedPath = directory
+														? `${directory}/${encodeURIComponent(filename)}`
+														: encodeURIComponent(filename);
+													return `${encodedPath}?v=${
+														settings?.updated_at
+															? new Date(settings.updated_at).getTime()
+															: Date.now()
+													}`;
+												})()}`
+											: "/assets/favicon.svg"
+									}
 									alt="PatchMon"
 									className="h-12 w-12 object-contain"
+									onError={(e) => {
+										e.target.src = "/assets/favicon.svg";
+									}}
 								/>
 							</Link>
 						) : (
@@ -904,6 +951,20 @@ const Layout = ({ children }) => {
 																						{stats.cards.totalHosts}
 																					</span>
 																				)}
+																			{/* {subItem.name === "Packages" &&
+																				stats?.cards?.totalOutdatedPackages !==
+																					undefined && (
+																					<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
+																						{stats.cards.totalOutdatedPackages}
+																					</span>
+																				)} */}
+																			{/* {subItem.name === "Repos" &&
+																				stats?.cards?.totalRepos !==
+																					undefined && (
+																					<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
+																						{stats.cards.totalRepos}
+																					</span>
+																				)} */}
 																		</span>
 																	)}
 																	{!sidebarCollapsed && (
@@ -962,6 +1023,20 @@ const Layout = ({ children }) => {
 																					{stats.cards.totalHosts}
 																				</span>
 																			)}
+																		{/* {subItem.name === "Packages" &&
+																			stats?.cards?.totalOutdatedPackages !==
+																				undefined && (
+																				<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
+																					{stats.cards.totalOutdatedPackages}
+																				</span>
+																			)} */}
+																		{/* {subItem.name === "Repos" &&
+																			stats?.cards?.totalRepos !==
+																				undefined && (
+																				<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
+																					{stats.cards.totalRepos}
+																				</span>
+																			)} */}
 																		{subItem.comingSoon && (
 																			<span className="text-xs bg-secondary-100 text-secondary-600 px-1.5 py-0.5 rounded">
 																				Soon
@@ -1048,70 +1123,50 @@ const Layout = ({ children }) => {
 						)}
 
 						{/* External Links Section - Roadmap, Documentation, Email, Website */}
-						<div className="border-t border-secondary-200 dark:border-secondary-600 pt-4 mt-4">
-							<div
-								className={`flex ${sidebarCollapsed ? "flex-col items-center gap-2" : "flex-wrap gap-2 -mx-2 px-2"}`}
-							>
-								{/* Roadmap */}
-								<a
-									href="https://github.com/orgs/PatchMon/projects/2/views/1"
-									target="_blank"
-									rel="noopener noreferrer"
-									className={`flex items-center justify-center ${sidebarCollapsed ? "w-10 h-10" : "flex-1 min-w-[calc(50%-0.25rem)] max-w-[calc(50%-0.25rem)] h-10"} bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors`}
-									title={sidebarCollapsed ? "Roadmap" : ""}
-								>
-									<Route className="h-5 w-5" />
-									{!sidebarCollapsed && (
-										<span className="ml-2 text-sm font-medium truncate">
-											Roadmap
-										</span>
-									)}
-								</a>
-								{/* Documentation */}
-								<a
-									href="https://docs.patchmon.net"
-									target="_blank"
-									rel="noopener noreferrer"
-									className={`flex items-center justify-center ${sidebarCollapsed ? "w-10 h-10" : "flex-1 min-w-[calc(50%-0.25rem)] max-w-[calc(50%-0.25rem)] h-10"} bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors`}
-									title={sidebarCollapsed ? "Documentation" : ""}
-								>
-									<BookOpen className="h-5 w-5" />
-									{!sidebarCollapsed && (
-										<span className="ml-2 text-sm font-medium truncate">
-											Docs
-										</span>
-									)}
-								</a>
-								{/* Email */}
-								<a
-									href="mailto:support@patchmon.net"
-									className={`flex items-center justify-center ${sidebarCollapsed ? "w-10 h-10" : "flex-1 min-w-[calc(50%-0.25rem)] max-w-[calc(50%-0.25rem)] h-10"} bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors`}
-									title={sidebarCollapsed ? "Email Support" : ""}
-								>
-									<Mail className="h-5 w-5" />
-									{!sidebarCollapsed && (
-										<span className="ml-2 text-sm font-medium truncate">
-											Email
-										</span>
-									)}
-								</a>
-								{/* Website */}
-								<a
-									href="https://patchmon.net"
-									target="_blank"
-									rel="noopener noreferrer"
-									className={`flex items-center justify-center ${sidebarCollapsed ? "w-10 h-10" : "flex-1 min-w-[calc(50%-0.25rem)] max-w-[calc(50%-0.25rem)] h-10"} bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors`}
-									title={sidebarCollapsed ? "Website" : ""}
-								>
-									<Globe className="h-5 w-5" />
-									{!sidebarCollapsed && (
-										<span className="ml-2 text-sm font-medium truncate">
-											Website
-										</span>
-									)}
-								</a>
+						{!sidebarCollapsed && (
+							<div className="border-t border-secondary-200 dark:border-secondary-600 pt-4 mt-4">
+								<div className="flex items-center justify-center gap-2">
+									{/* Roadmap */}
+									<a
+										href="https://github.com/orgs/PatchMon/projects/2/views/1"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+										title="Roadmap"
+									>
+										<Route className="h-5 w-5" />
+									</a>
+									{/* Documentation */}
+									<a
+										href="https://docs.patchmon.net"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+										title="Documentation"
+									>
+										<BookOpen className="h-5 w-5" />
+									</a>
+									{/* Email */}
+									<a
+										href="mailto:support@patchmon.net"
+										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+										title="Email Support"
+									>
+										<Mail className="h-5 w-5" />
+									</a>
+									{/* Website */}
+									<a
+										href="https://patchmon.net"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+										title="Website"
+									>
+										<Globe className="h-5 w-5" />
+									</a>
+								</div>
 							</div>
-						</div>
+						)}
 					</nav>
 
 					{/* Profile Section - Bottom of Sidebar */}
@@ -1455,7 +1510,7 @@ const Layout = ({ children }) => {
 									href="https://github.com/PatchMon/PatchMon"
 									target="_blank"
 									rel="noopener noreferrer"
-									className="flex items-center justify-center gap-1.5 px-3 py-2 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-secondary-300 hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm group relative"
+									className="flex items-center justify-center gap-1.5 w-auto px-2.5 h-10 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-secondary-300 hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm group relative"
 									style={{
 										backgroundColor: "var(--button-bg, rgb(249, 250, 251))",
 										backdropFilter: "var(--button-blur, none)",

@@ -74,8 +74,11 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: your-redis-password-here
       REDIS_DB: 0
+      # Assets directory for custom branding (logos, favicons)
+      ASSETS_DIR: /app/assets
     volumes:
       - agent_files:/app/agents
+      - branding_assets:/app/assets
     depends_on:
       database:
         condition: service_healthy
@@ -87,6 +90,8 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+    volumes:
+      - branding_assets:/usr/share/nginx/html/assets
     depends_on:
       backend:
         condition: service_healthy
@@ -95,3 +100,4 @@ volumes:
   postgres_data:
   redis_data:
   agent_files:
+  branding_assets:

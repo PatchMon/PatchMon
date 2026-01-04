@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import {
 	AlertCircle,
 	ArrowLeft,
@@ -12,7 +13,6 @@ import {
 	Star,
 	User,
 } from "lucide-react";
-
 import { useEffect, useId, useRef, useState } from "react";
 import { FaLinkedin, FaYoutube } from "react-icons/fa";
 
@@ -20,9 +20,18 @@ import { useNavigate } from "react-router-dom";
 import DiscordIcon from "../components/DiscordIcon";
 import { useAuth } from "../contexts/AuthContext";
 import { useColorTheme } from "../contexts/ColorThemeContext";
-import { authAPI, isCorsError } from "../utils/api";
+import { authAPI, isCorsError, settingsAPI } from "../utils/api";
 
 const Login = () => {
+	// Helper function to format numbers in k format (e.g., 1704 -> 1.8k)
+	const formatNumber = (num) => {
+		if (num >= 1000) {
+			const rounded = Math.ceil((num / 1000) * 10) / 10; // Round up to 1 decimal place
+			return `${rounded.toFixed(1)}K`;
+		}
+		return num.toString();
+	};
+
 	const usernameId = useId();
 	const firstNameId = useId();
 	const lastNameId = useId();
@@ -63,6 +72,12 @@ const Login = () => {
 	const { themeConfig } = useColorTheme();
 
 	const navigate = useNavigate();
+
+	// Fetch settings for favicon
+	const { data: settings } = useQuery({
+		queryKey: ["settings"],
+		queryFn: () => settingsAPI.get().then((res) => res.data),
+	});
 
 	// Generate clean radial gradient background with subtle triangular accents
 	useEffect(() => {
@@ -204,13 +219,29 @@ const Login = () => {
 				const statsResponse = await fetch("/api/v1/social-media-stats");
 				if (statsResponse.ok) {
 					const statsData = await statsResponse.json();
-					setSocialMediaStats({
-						github_stars: statsData.github_stars,
-						discord_members: statsData.discord_members,
-						buymeacoffee_supporters: statsData.buymeacoffee_supporters,
-						youtube_subscribers: statsData.youtube_subscribers,
-						linkedin_followers: statsData.linkedin_followers,
-					});
+					// Only update stats that are not null - preserve existing values if fetch failed
+					setSocialMediaStats((prev) => ({
+						github_stars:
+							statsData.github_stars !== null
+								? statsData.github_stars
+								: prev.github_stars,
+						discord_members:
+							statsData.discord_members !== null
+								? statsData.discord_members
+								: prev.discord_members,
+						buymeacoffee_supporters:
+							statsData.buymeacoffee_supporters !== null
+								? statsData.buymeacoffee_supporters
+								: prev.buymeacoffee_supporters,
+						youtube_subscribers:
+							statsData.youtube_subscribers !== null
+								? statsData.youtube_subscribers
+								: prev.youtube_subscribers,
+						linkedin_followers:
+							statsData.linkedin_followers !== null
+								? statsData.linkedin_followers
+								: prev.linkedin_followers,
+					}));
 				}
 
 				// Use cache if less than 1 hour old
@@ -572,9 +603,57 @@ const Login = () => {
 											<div className="flex items-center gap-1">
 												<Star className="h-3.5 w-3.5 fill-current text-yellow-400" />
 												<span className="text-sm font-medium text-white">
-													{socialMediaStats.github_stars}
+													{formatNumber(socialMediaStats.github_stars)}
 												</span>
 											</div>
+										)}
+									</a>
+
+									{/* Discord */}
+									<a
+										href="https://patchmon.net/discord"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center gap-1.5 px-3 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
+										title="Discord Community"
+									>
+										<DiscordIcon className="h-5 w-5 text-white" />
+										{socialMediaStats.discord_members !== null && (
+											<span className="text-sm font-medium text-white">
+												{socialMediaStats.discord_members}
+											</span>
+										)}
+									</a>
+
+									{/* LinkedIn */}
+									<a
+										href="https://linkedin.com/company/patchmon"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center gap-1.5 px-3 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
+										title="LinkedIn Company Page"
+									>
+										<FaLinkedin className="h-5 w-5 text-[#0077B5]" />
+										{socialMediaStats.linkedin_followers !== null && (
+											<span className="text-sm font-medium text-white">
+												{socialMediaStats.linkedin_followers}
+											</span>
+										)}
+									</a>
+
+									{/* YouTube */}
+									<a
+										href="https://youtube.com/@patchmonTV"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center gap-1.5 px-3 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
+										title="YouTube Channel"
+									>
+										<FaYoutube className="h-5 w-5 text-[#FF0000]" />
+										{socialMediaStats.youtube_subscribers !== null && (
+											<span className="text-sm font-medium text-white">
+												{socialMediaStats.youtube_subscribers}
+											</span>
 										)}
 									</a>
 
@@ -589,7 +668,7 @@ const Login = () => {
 										<Route className="h-5 w-5 text-white" />
 									</a>
 
-									{/* Docs */}
+									{/* Documentation */}
 									<a
 										href="https://docs.patchmon.net"
 										target="_blank"
@@ -598,48 +677,6 @@ const Login = () => {
 										title="Documentation"
 									>
 										<BookOpen className="h-5 w-5 text-white" />
-									</a>
-
-									{/* Discord */}
-									<a
-										href="https://patchmon.net/discord"
-										target="_blank"
-										rel="noopener noreferrer"
-										className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
-										title="Discord Community"
-									>
-										<DiscordIcon className="h-5 w-5 text-white" />
-									</a>
-
-									{/* Email */}
-									<a
-										href="mailto:support@patchmon.net"
-										className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
-										title="Email Support"
-									>
-										<Mail className="h-5 w-5 text-white" />
-									</a>
-
-									{/* YouTube */}
-									<a
-										href="https://youtube.com/@patchmonTV"
-										target="_blank"
-										rel="noopener noreferrer"
-										className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
-										title="YouTube Channel"
-									>
-										<FaYoutube className="h-5 w-5 text-[#FF0000]" />
-									</a>
-
-									{/* Reddit */}
-									<a
-										href="https://linkedin.com/company/patchmon"
-										target="_blank"
-										rel="noopener noreferrer"
-										className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
-										title="LinkedIn Company Page"
-									>
-										<FaLinkedin className="h-5 w-5 text-[#0077B5]" />
 									</a>
 
 									{/* Website */}
@@ -667,9 +704,28 @@ const Login = () => {
 					<div>
 						<div className="mx-auto h-16 w-16 flex items-center justify-center">
 							<img
-								src="/assets/favicon.svg"
+								src={
+									settings?.favicon
+										? `${(() => {
+												const parts = settings.favicon.split("/");
+												const filename = parts.pop();
+												const directory = parts.join("/");
+												const encodedPath = directory
+													? `${directory}/${encodeURIComponent(filename)}`
+													: encodeURIComponent(filename);
+												return `${encodedPath}?v=${
+													settings?.updated_at
+														? new Date(settings.updated_at).getTime()
+														: Date.now()
+												}`;
+											})()}`
+										: "/assets/favicon.svg"
+								}
 								alt="PatchMon Logo"
 								className="h-16 w-16"
+								onError={(e) => {
+									e.target.src = "/assets/favicon.svg";
+								}}
 							/>
 						</div>
 						<h2 className="mt-6 text-center text-3xl font-extrabold text-secondary-900 dark:text-secondary-100">
@@ -880,9 +936,20 @@ const Login = () => {
 							<div className="text-center">
 								<div className="mx-auto h-16 w-16 flex items-center justify-center">
 									<img
-										src="/assets/favicon.svg"
+										src={
+											settings?.favicon
+												? `${settings.favicon}?v=${
+														settings?.updated_at
+															? new Date(settings.updated_at).getTime()
+															: Date.now()
+													}`
+												: "/assets/favicon.svg"
+										}
 										alt="PatchMon Logo"
 										className="h-16 w-16"
+										onError={(e) => {
+											e.target.src = "/assets/favicon.svg";
+										}}
 									/>
 								</div>
 								<h3 className="mt-4 text-lg font-medium text-secondary-900 dark:text-secondary-100">

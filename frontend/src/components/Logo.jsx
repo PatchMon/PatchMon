@@ -14,16 +14,32 @@ const Logo = ({
 		queryFn: () => settingsAPI.get().then((res) => res.data),
 	});
 
+	// Helper function to encode logo path for URLs (handles spaces and special characters)
+	const encodeLogoPath = (path) => {
+		if (!path) return path;
+		// Split path into directory and filename
+		const parts = path.split("/");
+		const filename = parts.pop();
+		const directory = parts.join("/");
+		// Encode only the filename part, keep directory structure
+		return directory
+			? `${directory}/${encodeURIComponent(filename)}`
+			: encodeURIComponent(filename);
+	};
+
 	// Determine which logo to use based on theme
 	const logoSrc = isDark
 		? settings?.logo_dark || "/assets/logo_dark.png"
 		: settings?.logo_light || "/assets/logo_light.png";
 
+	// Encode the path to handle spaces and special characters
+	const encodedLogoSrc = encodeLogoPath(logoSrc);
+
 	// Add cache-busting parameter using updated_at timestamp
 	const cacheBuster = settings?.updated_at
 		? new Date(settings.updated_at).getTime()
 		: Date.now();
-	const logoSrcWithCache = `${logoSrc}?v=${cacheBuster}`;
+	const logoSrcWithCache = `${encodedLogoSrc}?v=${cacheBuster}`;
 
 	return (
 		<img
