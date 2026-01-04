@@ -19,9 +19,13 @@ export const complianceAPI = {
 	getScanResults: (scanId, params = {}) =>
 		api.get(`/compliance/results/${scanId}`, { params }),
 
-	// Trigger a compliance scan
-	triggerScan: (hostId, profileType = "all") =>
-		api.post(`/compliance/trigger/${hostId}`, { profile_type: profileType }),
+	// Trigger a compliance scan with options
+	triggerScan: (hostId, options = {}) =>
+		api.post(`/compliance/trigger/${hostId}`, {
+			profile_type: options.profileType || options.profile_type || "all",
+			enable_remediation: options.enableRemediation || false,
+			fetch_remote_resources: options.fetchRemoteResources || false,
+		}),
 
 	// Get compliance score trends
 	getTrends: (hostId, days = 30) =>

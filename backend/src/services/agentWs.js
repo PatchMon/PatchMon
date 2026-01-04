@@ -298,14 +298,18 @@ function getConnectionByApiId(apiId) {
 	return apiIdToSocket.get(apiId);
 }
 
-function pushComplianceScan(apiId, profileType = "all") {
+function pushComplianceScan(apiId, profileType = "all", options = {}) {
 	const ws = apiIdToSocket.get(apiId);
 	if (ws && ws.readyState === WebSocket.OPEN) {
-		safeSend(ws, JSON.stringify({
+		const payload = {
 			type: "compliance_scan",
 			profile_type: profileType,
-		}));
-		console.log(`[agent-ws] Triggered compliance scan for ${apiId}: ${profileType}`);
+			enable_remediation: options.enableRemediation || false,
+			fetch_remote_resources: options.fetchRemoteResources || false,
+		};
+		safeSend(ws, JSON.stringify(payload));
+		const remediationStatus = options.enableRemediation ? " (with remediation)" : "";
+		console.log(`[agent-ws] Triggered compliance scan for ${apiId}: ${profileType}${remediationStatus}`);
 		return true;
 	}
 	return false;

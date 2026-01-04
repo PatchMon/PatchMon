@@ -18,6 +18,9 @@ import {
 	Info,
 	Package,
 	Server,
+	Wrench,
+	ToggleLeft,
+	ToggleRight,
 } from "lucide-react";
 import { complianceAPI } from "../../utils/complianceApi";
 import ComplianceScore from "./ComplianceScore";
@@ -47,6 +50,7 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 	const [scanMessage, setScanMessage] = useState(null);
 	const [selectedProfile, setSelectedProfile] = useState("openscap");
 	const [scanInProgress, setScanInProgress] = useState(false);
+	const [enableRemediation, setEnableRemediation] = useState(false);
 	const queryClient = useQueryClient();
 
 	const { data: latestScan, isLoading, refetch: refetchLatest } = useQuery({
@@ -96,12 +100,15 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 	}, [scanInProgress, scanMessage?.startTime, refetchLatest, refetchHistory]);
 
 	const triggerScan = useMutation({
-		mutationFn: (profileType) => complianceAPI.triggerScan(hostId, profileType),
-		onSuccess: () => {
+		mutationFn: (options) => complianceAPI.triggerScan(hostId, options),
+		onSuccess: (_, variables) => {
 			setScanInProgress(true);
+			const remediationText = variables.enableRemediation
+				? " Remediation is enabled - failed rules will be automatically fixed."
+				: "";
 			setScanMessage({
 				type: "info",
-				text: "Compliance scan started. This may take several minutes...",
+				text: `Compliance scan started. This may take several minutes...${remediationText}`,
 				startTime: Date.now(),
 			});
 		},
@@ -428,6 +435,56 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 						})()}
 					</div>
 
+					{/* Scan Options */}
+					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
+						<h3 className="text-lg font-medium text-white mb-4 flex items-center gap-2">
+							<Wrench className="h-5 w-5 text-primary-400" />
+							Scan Options
+						</h3>
+
+						{/* Remediation Toggle */}
+						<div className="space-y-4">
+							<div className="flex items-center justify-between p-4 bg-secondary-700/30 rounded-lg border border-secondary-600">
+								<div className="flex items-center gap-3">
+									<div className={`p-2 rounded-lg ${enableRemediation ? "bg-orange-600/20" : "bg-secondary-600/50"}`}>
+										<Wrench className={`h-5 w-5 ${enableRemediation ? "text-orange-400" : "text-secondary-400"}`} />
+									</div>
+									<div>
+										<p className="text-white font-medium">Auto-Remediation</p>
+										<p className="text-sm text-secondary-400">
+											Automatically fix failed rules during scan
+										</p>
+									</div>
+								</div>
+								<button
+									onClick={() => setEnableRemediation(!enableRemediation)}
+									className="focus:outline-none"
+								>
+									{enableRemediation ? (
+										<ToggleRight className="h-8 w-8 text-orange-400" />
+									) : (
+										<ToggleLeft className="h-8 w-8 text-secondary-500" />
+									)}
+								</button>
+							</div>
+
+							{enableRemediation && (
+								<div className="p-3 bg-orange-900/20 border border-orange-800/50 rounded-lg">
+									<div className="flex items-start gap-2">
+										<AlertTriangle className="h-4 w-4 text-orange-400 mt-0.5 flex-shrink-0" />
+										<div className="text-sm text-orange-200">
+											<p className="font-medium">Remediation Warning</p>
+											<p className="text-orange-300/80 mt-1">
+												This will automatically modify system configuration to fix failed compliance rules.
+												Review the profile requirements before enabling. Changes may affect system behavior.
+											</p>
+										</div>
+									</div>
+								</div>
+							)}
+						</div>
+					</div>
+
 					{/* Run Scan Button */}
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
 						<div className="flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -435,19 +492,33 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 								<h3 className="text-lg font-medium text-white">Ready to Scan</h3>
 								<p className="text-sm text-secondary-400">
 									Selected: {availableProfiles.find(p => (p.xccdf_id || p.id) === selectedProfile)?.name || selectedProfile}
+									{enableRemediation && (
+										<span className="ml-2 px-2 py-0.5 bg-orange-900/30 text-orange-400 rounded text-xs">
+											+ Remediation
+										</span>
+									)}
 								</p>
 							</div>
 							<button
-								onClick={() => triggerScan.mutate(selectedProfile)}
+								onClick={() => triggerScan.mutate({
+									profileType: selectedProfile,
+									enableRemediation: enableRemediation,
+								})}
 								disabled={!isConnected || triggerScan.isPending}
-								className="flex items-center gap-2 px-6 py-3 bg-primary-600 hover:bg-primary-700 disabled:bg-secondary-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors font-medium"
+								className={`flex items-center gap-2 px-6 py-3 ${
+									enableRemediation
+										? "bg-orange-600 hover:bg-orange-700"
+										: "bg-primary-600 hover:bg-primary-700"
+								} disabled:bg-secondary-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors font-medium`}
 							>
 								{triggerScan.isPending ? (
 									<RefreshCw className="h-5 w-5 animate-spin" />
+								) : enableRemediation ? (
+									<Wrench className="h-5 w-5" />
 								) : (
 									<Play className="h-5 w-5" />
 								)}
-								Start Scan
+								{enableRemediation ? "Scan & Remediate" : "Start Scan"}
 							</button>
 						</div>
 					</div>

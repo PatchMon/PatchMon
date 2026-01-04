@@ -500,7 +500,11 @@ router.get("/results/:scanId", async (req, res) => {
 router.post("/trigger/:hostId", async (req, res) => {
   try {
     const { hostId } = req.params;
-    const { profile_type = "all" } = req.body;
+    const {
+      profile_type = "all",
+      enable_remediation = false,
+      fetch_remote_resources = false,
+    } = req.body;
 
     // Validate hostId
     if (!isValidUUID(hostId)) {
@@ -527,14 +531,23 @@ router.post("/trigger/:hostId", async (req, res) => {
       return res.status(400).json({ error: "Host is not connected" });
     }
 
-    // Use the dedicated pushComplianceScan function
-    const success = agentWs.pushComplianceScan(host.api_id, profile_type);
+    // Build scan options
+    const scanOptions = {
+      enableRemediation: Boolean(enable_remediation),
+      fetchRemoteResources: Boolean(fetch_remote_resources),
+    };
+
+    // Use the dedicated pushComplianceScan function with options
+    const success = agentWs.pushComplianceScan(host.api_id, profile_type, scanOptions);
 
     if (success) {
       res.json({
-        message: "Compliance scan triggered",
+        message: enable_remediation
+          ? "Compliance scan with remediation triggered"
+          : "Compliance scan triggered",
         host_id: hostId,
         profile_type,
+        enable_remediation,
       });
     } else {
       res.status(400).json({ error: "Failed to send scan trigger" });
