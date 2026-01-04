@@ -3306,7 +3306,7 @@ const HostDetail = () => {
 
 						{/* Compliance */}
 						{activeTab === "compliance" && (
-							<ComplianceTab hostId={hostId} isConnected={wsStatus?.connected} />
+							<ComplianceTab hostId={hostId} apiId={host?.api_id} isConnected={wsStatus?.connected} />
 						)}
 					</div>
 				</div>

@@ -18,6 +18,10 @@ const connectionMetadata = new Map();
 // Map<api_id, Set<callback>>
 const connectionChangeSubscribers = new Map();
 
+// Subscribers for compliance scan progress (for SSE)
+// Map<api_id, Set<callback>>
+const complianceProgressSubscribers = new Map();
+
 let wss;
 let prisma;
 
@@ -146,6 +150,9 @@ function init(server, prismaClient) {
 						if (message.type === "docker_status") {
 							// Handle Docker container status events
 							await handleDockerStatusEvent(apiId, message);
+						} else if (message.type === "compliance_scan_progress") {
+							// Handle compliance scan progress events
+							handleComplianceProgressEvent(apiId, message);
 						}
 						// Add more message types here as needed
 					} catch (err) {
@@ -459,6 +466,55 @@ function subscribeToConnectionChanges(apiId, callback) {
 	};
 }
 
+// Handle compliance scan progress events from agent
+function handleComplianceProgressEvent(apiId, message) {
+	const { phase, profile_name, message: progressMessage, progress, error, timestamp } = message;
+
+	console.log(
+		`[Compliance Progress] ${apiId}: ${phase} - ${progressMessage} (${progress}%)`,
+	);
+
+	// Notify all subscribers for this api_id
+	const subscribers = complianceProgressSubscribers.get(apiId);
+	if (subscribers) {
+		const progressData = {
+			phase,
+			profile_name,
+			message: progressMessage,
+			progress,
+			error,
+			timestamp: timestamp || new Date().toISOString(),
+		};
+
+		for (const callback of subscribers) {
+			try {
+				callback(progressData);
+			} catch (err) {
+				console.error(`[Compliance Progress] error notifying subscriber:`, err);
+			}
+		}
+	}
+}
+
+// Subscribe to compliance progress updates for a specific api_id
+function subscribeToComplianceProgress(apiId, callback) {
+	if (!complianceProgressSubscribers.has(apiId)) {
+		complianceProgressSubscribers.set(apiId, new Set());
+	}
+	complianceProgressSubscribers.get(apiId).add(callback);
+
+	// Return unsubscribe function
+	return () => {
+		const subscribers = complianceProgressSubscribers.get(apiId);
+		if (subscribers) {
+			subscribers.delete(callback);
+			if (subscribers.size === 0) {
+				complianceProgressSubscribers.delete(apiId);
+			}
+		}
+	};
+}
+
 // Handle Docker container status events from agent
 async function handleDockerStatusEvent(apiId, message) {
 	try {
@@ -559,4 +615,6 @@ module.exports = {
 	},
 	// Subscribe to connection status changes (for SSE)
 	subscribeToConnectionChanges,
+	// Subscribe to compliance progress updates (for SSE)
+	subscribeToComplianceProgress,
 };

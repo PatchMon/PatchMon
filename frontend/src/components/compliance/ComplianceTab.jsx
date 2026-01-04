@@ -45,13 +45,14 @@ const SUBTABS = [
 	{ id: "settings", name: "Settings", icon: Settings },
 ];
 
-const ComplianceTab = ({ hostId, isConnected }) => {
+const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 	const [activeSubtab, setActiveSubtab] = useState("overview");
 	const [expandedRules, setExpandedRules] = useState({});
 	const [statusFilter, setStatusFilter] = useState("fail");
 	const [selectedProfile, setSelectedProfile] = useState("openscap");
 	const [enableRemediation, setEnableRemediation] = useState(false);
 	const [remediatingRule, setRemediatingRule] = useState(null);
+	const [scanProgress, setScanProgress] = useState(null); // Real-time progress from SSE
 	const queryClient = useQueryClient();
 
 	// Persist scan state in sessionStorage to survive tab switches
@@ -260,6 +261,52 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 		return () => clearInterval(pollInterval);
 	}, [scanInProgress, scanMessage?.startTime, refetchLatest, refetchHistory]);
 
+	// SSE connection for real-time compliance scan progress
+	useEffect(() => {
+		if (!scanInProgress || !apiId) {
+			setScanProgress(null);
+			return;
+		}
+
+		// Get auth token for SSE
+		const token = localStorage.getItem("token");
+		if (!token) {
+			console.warn("No auth token for compliance progress SSE");
+			return;
+		}
+
+		console.log("[Compliance SSE] Connecting for api_id:", apiId);
+		const eventSource = new EventSource(
+			`/api/v1/ws/compliance-progress/${apiId}/stream?token=${encodeURIComponent(token)}`
+		);
+
+		eventSource.onmessage = (event) => {
+			try {
+				const data = JSON.parse(event.data);
+				console.log("[Compliance SSE] Progress:", data);
+				setScanProgress(data);
+
+				// If scan completed or failed, update UI
+				if (data.phase === "completed" || data.phase === "failed") {
+					// Give a moment for the message to be displayed, then clear progress
+					setTimeout(() => setScanProgress(null), 5000);
+				}
+			} catch (err) {
+				console.warn("[Compliance SSE] Failed to parse event:", err);
+			}
+		};
+
+		eventSource.onerror = (err) => {
+			console.warn("[Compliance SSE] Connection error:", err);
+			// EventSource will auto-reconnect, no action needed
+		};
+
+		return () => {
+			console.log("[Compliance SSE] Disconnecting");
+			eventSource.close();
+		};
+	}, [scanInProgress, apiId]);
+
 	const triggerScan = useMutation({
 		mutationFn: (options) => complianceAPI.triggerScan(hostId, options),
 		onSuccess: (_, variables) => {
@@ -364,9 +411,11 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 							<div>
 								<p className="font-medium">Compliance Scan In Progress</p>
 								<p className="text-sm text-primary-300/80">
-									{scanMessage?.profileName
-										? `Running ${scanMessage.profileName}...`
-										: "Scan is running, please wait..."}
+									{scanProgress?.message
+										? scanProgress.message
+										: scanMessage?.profileName
+											? `Running ${scanMessage.profileName}...`
+											: "Scan is running, please wait..."}
 								</p>
 							</div>
 						</div>
@@ -597,20 +646,36 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 							<p className="text-xs text-secondary-500">elapsed</p>
 						</div>
 					</div>
+					{/* Progress bar - use SSE progress if available, otherwise estimate from time */}
 					<div className="w-full bg-secondary-700 rounded-full h-2 mb-3 overflow-hidden">
 						<div
 							className="bg-gradient-to-r from-primary-600 to-primary-400 h-2 rounded-full transition-all duration-1000"
-							style={{ width: `${Math.min(95, (elapsedTime / 300) * 100)}%` }}
+							style={{ width: `${scanProgress?.progress || Math.min(95, (elapsedTime / 300) * 100)}%` }}
 						/>
 					</div>
-					<p className="text-sm text-secondary-400 flex items-center gap-2">
-						<Clock className="h-4 w-4" />
-						{elapsedTime < 120
-							? "OpenSCAP scans typically take 3-5 minutes..."
-							: elapsedTime < 300
-								? "Still scanning, please wait..."
-								: "This scan is taking longer than usual. Complex systems may require more time."}
-					</p>
+					{/* Real-time progress message from SSE */}
+					{scanProgress?.message ? (
+						<div className="space-y-2">
+							<p className="text-sm text-primary-300 flex items-center gap-2">
+								<Clock className="h-4 w-4" />
+								{scanProgress.message}
+							</p>
+							{scanProgress.phase && (
+								<p className="text-xs text-secondary-500">
+									Phase: <span className="capitalize font-medium text-secondary-400">{scanProgress.phase}</span>
+								</p>
+							)}
+						</div>
+					) : (
+						<p className="text-sm text-secondary-400 flex items-center gap-2">
+							<Clock className="h-4 w-4" />
+							{elapsedTime < 120
+								? "OpenSCAP scans typically take 3-5 minutes..."
+								: elapsedTime < 300
+									? "Still scanning, please wait..."
+									: "This scan is taking longer than usual. Complex systems may require more time."}
+						</p>
+					)}
 				</div>
 			) : (
 				<>
