@@ -17,7 +17,6 @@ import {
 	History,
 	Info,
 	Package,
-	Terminal,
 	Server,
 } from "lucide-react";
 import { complianceAPI } from "../../utils/complianceApi";
@@ -679,7 +678,7 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
 					<div className="flex items-center justify-between mb-4">
 						<h3 className="text-lg font-medium text-white flex items-center gap-2">
-							<Terminal className="h-5 w-5 text-primary-400" />
+							<Shield className="h-5 w-5 text-primary-400" />
 							Scanner Status
 						</h3>
 						<button
@@ -874,9 +873,9 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 							</div>
 
 							{/* Last Updated */}
-							{status.updated_at && (
+							{status.timestamp && (
 								<p className="text-xs text-secondary-500 text-right">
-									Last updated: {new Date(status.updated_at).toLocaleString()}
+									Last updated: {new Date(status.timestamp).toLocaleString()}
 								</p>
 							)}
 						</div>

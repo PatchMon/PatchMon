@@ -1052,7 +1052,7 @@ router.get("/integrations", validateApiCredentials, async (req, res) => {
 // Receive integration setup status from agent
 router.post("/integration-status", validateApiCredentials, async (req, res) => {
 	try {
-		const { integration, enabled, status, message, components } = req.body;
+		const { integration, enabled, status, message, components, scanner_info } = req.body;
 		const hostId = req.hostRecord.id;
 		const apiId = req.hostRecord.api_id;
 
@@ -1062,6 +1062,7 @@ router.post("/integration-status", validateApiCredentials, async (req, res) => {
 			status,
 			message,
 			components,
+			scanner_info: scanner_info ? "present" : "not provided",
 		});
 
 		// Store the status update in Redis for real-time UI updates
@@ -1072,6 +1073,7 @@ router.post("/integration-status", validateApiCredentials, async (req, res) => {
 			status,
 			message,
 			components: components || {},
+			scanner_info: scanner_info || null,
 			timestamp: new Date().toISOString(),
 		};
 
