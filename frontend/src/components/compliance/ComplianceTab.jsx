@@ -49,12 +49,60 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 	const [activeSubtab, setActiveSubtab] = useState("overview");
 	const [expandedRules, setExpandedRules] = useState({});
 	const [statusFilter, setStatusFilter] = useState("all");
-	const [scanMessage, setScanMessage] = useState(null);
 	const [selectedProfile, setSelectedProfile] = useState("openscap");
-	const [scanInProgress, setScanInProgress] = useState(false);
 	const [enableRemediation, setEnableRemediation] = useState(false);
 	const [remediatingRule, setRemediatingRule] = useState(null);
 	const queryClient = useQueryClient();
+
+	// Persist scan state in sessionStorage to survive tab switches
+	const scanStateKey = `compliance-scan-${hostId}`;
+	const [scanInProgress, setScanInProgressState] = useState(() => {
+		try {
+			const saved = sessionStorage.getItem(scanStateKey);
+			if (saved) {
+				const parsed = JSON.parse(saved);
+				// Check if scan started less than 10 minutes ago
+				if (parsed.startTime && Date.now() - parsed.startTime < 10 * 60 * 1000) {
+					return true;
+				}
+				// Clear stale scan state
+				sessionStorage.removeItem(scanStateKey);
+			}
+		} catch (e) {
+			// Ignore parsing errors
+		}
+		return false;
+	});
+	const [scanMessage, setScanMessageState] = useState(() => {
+		try {
+			const saved = sessionStorage.getItem(scanStateKey);
+			if (saved) {
+				const parsed = JSON.parse(saved);
+				if (parsed.startTime && Date.now() - parsed.startTime < 10 * 60 * 1000) {
+					return parsed;
+				}
+			}
+		} catch (e) {
+			// Ignore parsing errors
+		}
+		return null;
+	});
+
+	// Wrapper to persist scan state
+	const setScanInProgress = (value) => {
+		setScanInProgressState(value);
+		if (!value) {
+			sessionStorage.removeItem(scanStateKey);
+		}
+	};
+	const setScanMessage = (msg) => {
+		setScanMessageState(msg);
+		if (msg && msg.startTime) {
+			sessionStorage.setItem(scanStateKey, JSON.stringify(msg));
+		} else if (!msg) {
+			sessionStorage.removeItem(scanStateKey);
+		}
+	};
 
 	const { data: latestScan, isLoading, refetch: refetchLatest } = useQuery({
 		queryKey: ["compliance-latest", hostId],
