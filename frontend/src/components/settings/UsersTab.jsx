@@ -192,9 +192,17 @@ const UsersTab = () => {
 									{/* User Name and Avatar */}
 									<div className="flex items-center gap-3">
 										<div className="flex-shrink-0 h-10 w-10">
-											<div className="h-10 w-10 rounded-full bg-primary-100 dark:bg-primary-900 flex items-center justify-center">
-												<User className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-											</div>
+											{user.avatar_url ? (
+												<img
+													src={user.avatar_url}
+													alt={user.username}
+													className="h-10 w-10 rounded-full object-cover"
+												/>
+											) : (
+												<div className="h-10 w-10 rounded-full bg-primary-100 dark:bg-primary-900 flex items-center justify-center">
+													<User className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+												</div>
+											)}
 										</div>
 										<div className="flex-1 min-w-0">
 											<div className="flex items-center gap-2">
@@ -360,9 +368,17 @@ const UsersTab = () => {
 											<td className="px-6 py-4 whitespace-nowrap">
 												<div className="flex items-center">
 													<div className="flex-shrink-0 h-10 w-10">
-														<div className="h-10 w-10 rounded-full bg-primary-100 flex items-center justify-center">
-															<User className="h-5 w-5 text-primary-600" />
-														</div>
+														{user.avatar_url ? (
+															<img
+																src={user.avatar_url}
+																alt={user.username}
+																className="h-10 w-10 rounded-full object-cover"
+															/>
+														) : (
+															<div className="h-10 w-10 rounded-full bg-primary-100 flex items-center justify-center">
+																<User className="h-5 w-5 text-primary-600" />
+															</div>
+														)}
 													</div>
 													<div className="ml-4">
 														<div className="flex items-center">
