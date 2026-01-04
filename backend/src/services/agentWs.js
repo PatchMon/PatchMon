@@ -316,12 +316,22 @@ function pushComplianceScan(apiId, profileType = "all", options = {}) {
 }
 
 function pushUpgradeSSG(apiId) {
+	console.log(`[agent-ws] pushUpgradeSSG called for api_id=${apiId}`);
 	const ws = apiIdToSocket.get(apiId);
+	console.log(`[agent-ws] WebSocket found: ${!!ws}, readyState: ${ws?.readyState}, OPEN=${WebSocket.OPEN}`);
 	if (ws && ws.readyState === WebSocket.OPEN) {
-		safeSend(ws, JSON.stringify({ type: "upgrade_ssg" }));
-		console.log(`[agent-ws] Triggered SSG upgrade for ${apiId}`);
-		return true;
+		const payload = JSON.stringify({ type: "upgrade_ssg" });
+		console.log(`[agent-ws] Sending payload: ${payload}`);
+		try {
+			ws.send(payload);
+			console.log(`[agent-ws] Triggered SSG upgrade for ${apiId}`);
+			return true;
+		} catch (err) {
+			console.error(`[agent-ws] Failed to send SSG upgrade to ${apiId}:`, err);
+			return false;
+		}
 	}
+	console.log(`[agent-ws] Cannot send SSG upgrade - WebSocket not ready for ${apiId}`);
 	return false;
 }
 
