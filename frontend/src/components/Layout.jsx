@@ -786,9 +786,9 @@ const Layout = ({ children }) => {
 
 			{/* Desktop sidebar */}
 			<div
-				className={`hidden lg:fixed lg:inset-y-0 z-[100] lg:flex lg:flex-col transition-all duration-300 relative ${
+				className={`hidden lg:fixed lg:inset-y-0 lg:top-0 lg:bottom-0 z-[100] lg:flex lg:flex-col transition-all duration-300 ${
 					sidebarCollapsed ? "lg:w-16" : "lg:w-56"
-				} bg-white dark:bg-transparent`}
+				} bg-white dark:bg-transparent overflow-hidden`}
 			>
 				{/* Collapse/Expand button on border */}
 				<button
@@ -810,7 +810,7 @@ const Layout = ({ children }) => {
 				</button>
 
 				<div
-					className={`flex grow flex-col h-full border-r border-secondary-200 dark:border-white/10 bg-white ${
+					className={`flex flex-col h-full max-h-screen border-r border-secondary-200 dark:border-white/10 bg-white ${
 						sidebarCollapsed ? "px-2 shadow-lg" : "px-6"
 					}`}
 					style={{
@@ -838,7 +838,7 @@ const Layout = ({ children }) => {
 							</Link>
 						)}
 					</div>
-					<nav className="flex flex-1 flex-col overflow-y-auto overflow-x-hidden py-4 min-h-0">
+					<nav className="flex-1 flex flex-col overflow-y-auto overflow-x-hidden py-4 min-h-0">
 						<ul className="flex flex-1 flex-col gap-y-6">
 							{/* Show message for users with very limited permissions */}
 							{navigation.length === 0 && settingsNavigation.length === 0 && (
@@ -1061,7 +1061,7 @@ const Layout = ({ children }) => {
 					</nav>
 
 					{/* Profile Section - Bottom of Sidebar */}
-					<div className="border-t border-secondary-200 dark:border-secondary-600 shrink-0 pb-4 mt-auto">
+					<div className="border-t border-secondary-200 dark:border-secondary-600 flex-shrink-0 pt-3 pb-4">
 						{!sidebarCollapsed ? (
 							<div>
 								{/* User Info with Sign Out - Username is clickable */}
