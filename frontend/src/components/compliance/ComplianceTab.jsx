@@ -21,8 +21,11 @@ import {
 	Wrench,
 	ToggleLeft,
 	ToggleRight,
+	Download,
+	BookOpen,
 } from "lucide-react";
 import { complianceAPI } from "../../utils/complianceApi";
+import { hostsAPI } from "../../utils/api";
 import ComplianceScore from "./ComplianceScore";
 
 // Lazy load ComplianceTrend to avoid recharts bundling issues
@@ -66,11 +69,28 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 	});
 
 	// Get integration status (scanner info, components)
-	const { data: integrationStatus, refetch: refetchStatus } = useQuery({
+	const { data: integrationStatus, refetch: refetchStatus, isFetching: isRefreshingStatus } = useQuery({
 		queryKey: ["compliance-status", hostId],
 		queryFn: () => complianceAPI.getIntegrationStatus(hostId).then((res) => res.data),
 		enabled: !!hostId,
 		refetchInterval: 30000, // Refresh every 30 seconds
+	});
+
+	// Agent update mutation
+	const [updateMessage, setUpdateMessage] = useState(null);
+	const agentUpdateMutation = useMutation({
+		mutationFn: () => hostsAPI.forceAgentUpdate(hostId),
+		onSuccess: () => {
+			setUpdateMessage({ type: "success", text: "Update command sent! Agent will update shortly." });
+			setTimeout(() => setUpdateMessage(null), 5000);
+		},
+		onError: (error) => {
+			setUpdateMessage({
+				type: "error",
+				text: error.response?.data?.error || "Failed to send update command"
+			});
+			setTimeout(() => setUpdateMessage(null), 5000);
+		},
 	});
 
 	// Poll for scan completion when scan is in progress
@@ -794,10 +814,11 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 						</h3>
 						<button
 							onClick={() => refetchStatus()}
-							className="p-2 hover:bg-secondary-700 rounded-lg transition-colors"
-							title="Refresh status"
+							disabled={isRefreshingStatus}
+							className={`p-2 hover:bg-secondary-700 rounded-lg transition-colors ${isRefreshingStatus ? "cursor-wait" : ""}`}
+							title={isRefreshingStatus ? "Refreshing..." : "Refresh status"}
 						>
-							<RefreshCw className="h-4 w-4 text-secondary-400" />
+							<RefreshCw className={`h-4 w-4 ${isRefreshingStatus ? "text-primary-400 animate-spin" : "text-secondary-400"}`} />
 						</button>
 					</div>
 
@@ -1027,6 +1048,86 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 									CIS Docker Benchmark recommendations.
 								</p>
 							</div>
+						</div>
+					</div>
+				</div>
+
+				{/* Agent Update */}
+				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
+					<h3 className="text-lg font-medium text-white flex items-center gap-2 mb-4">
+						<Download className="h-5 w-5 text-primary-400" />
+						Agent Update
+					</h3>
+					<div className="space-y-4">
+						<p className="text-sm text-secondary-300">
+							Force the agent to check for and download the latest version from GitHub.
+						</p>
+						{updateMessage && (
+							<div className={`p-3 rounded-lg ${
+								updateMessage.type === "success"
+									? "bg-green-900/30 border border-green-700 text-green-300"
+									: "bg-red-900/30 border border-red-700 text-red-300"
+							}`}>
+								{updateMessage.text}
+							</div>
+						)}
+						<button
+							onClick={() => agentUpdateMutation.mutate()}
+							disabled={!isConnected || agentUpdateMutation.isPending}
+							className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+								!isConnected
+									? "bg-secondary-700 text-secondary-500 cursor-not-allowed"
+									: agentUpdateMutation.isPending
+									? "bg-primary-600/50 text-white cursor-wait"
+									: "bg-primary-600 hover:bg-primary-500 text-white"
+							}`}
+						>
+							{agentUpdateMutation.isPending ? (
+								<RefreshCw className="h-4 w-4 animate-spin" />
+							) : (
+								<Download className="h-4 w-4" />
+							)}
+							{agentUpdateMutation.isPending ? "Sending Update Command..." : "Update Agent Now"}
+						</button>
+						{!isConnected && (
+							<p className="text-xs text-secondary-500">Agent must be connected to trigger updates</p>
+						)}
+					</div>
+				</div>
+
+				{/* CIS Level Guide */}
+				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
+					<h3 className="text-lg font-medium text-white flex items-center gap-2 mb-4">
+						<BookOpen className="h-5 w-5 text-primary-400" />
+						CIS Benchmark Levels Guide
+					</h3>
+					<div className="space-y-4">
+						<div className="p-4 bg-green-900/20 border border-green-800/50 rounded-lg">
+							<h4 className="text-green-400 font-medium mb-2">Level 1 - Essential Security</h4>
+							<ul className="text-sm text-green-200/80 space-y-1 list-disc list-inside">
+								<li>Practical security measures with minimal service disruption</li>
+								<li>Suitable for most production environments</li>
+								<li>Covers essential hardening: password policies, file permissions, network settings</li>
+								<li>Recommended as baseline for all systems</li>
+							</ul>
+						</div>
+						<div className="p-4 bg-orange-900/20 border border-orange-800/50 rounded-lg">
+							<h4 className="text-orange-400 font-medium mb-2">Level 2 - Defense in Depth</h4>
+							<ul className="text-sm text-orange-200/80 space-y-1 list-disc list-inside">
+								<li>Extended security for high-security environments</li>
+								<li>May impact functionality - test before applying</li>
+								<li>Includes stricter controls: audit logging, kernel hardening, additional restrictions</li>
+								<li>Recommended for systems handling sensitive data</li>
+							</ul>
+						</div>
+						<div className="p-4 bg-purple-900/20 border border-purple-800/50 rounded-lg">
+							<h4 className="text-purple-400 font-medium mb-2">Other Profiles (STIG, PCI-DSS, HIPAA)</h4>
+							<ul className="text-sm text-purple-200/80 space-y-1 list-disc list-inside">
+								<li><strong>STIG:</strong> DoD Security Technical Implementation Guides</li>
+								<li><strong>PCI-DSS:</strong> Payment Card Industry Data Security Standard</li>
+								<li><strong>HIPAA:</strong> Health Insurance Portability and Accountability Act</li>
+								<li>These profiles target specific compliance requirements</li>
+							</ul>
 						</div>
 					</div>
 				</div>
