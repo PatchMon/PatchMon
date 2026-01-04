@@ -364,53 +364,80 @@ const AgentUpdatesTab = () => {
 					</p>
 				</div>
 
-				{/* Auto-Update Setting */}
-				<div>
-					<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2">
+				{/* Auto-Update Setting (Master Toggle) */}
+				<div className="flex items-start justify-between gap-4 p-4 bg-secondary-50 dark:bg-secondary-800/50 rounded-lg border border-secondary-200 dark:border-secondary-700">
+					<div className="flex-1">
 						<div className="flex items-center gap-2">
-							<input
-								id={autoUpdateId}
-								type="checkbox"
-								checked={formData.autoUpdate}
-								onChange={(e) =>
-									handleInputChange("autoUpdate", e.target.checked)
-								}
-								className="rounded border-secondary-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
-							/>
-							<label htmlFor={autoUpdateId}>
+							<label
+								htmlFor={autoUpdateId}
+								className="text-sm font-medium text-secondary-900 dark:text-secondary-100"
+							>
 								Enable Automatic Agent Updates
 							</label>
+							<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900/50 dark:text-primary-300">
+								Master
+							</span>
 						</div>
-					</label>
-					<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
-						When enabled, agents will automatically update themselves when a
-						newer version is available during their regular update cycle.
-					</p>
+						<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
+							Master switch for all agent auto-updates. Per-host toggles in the
+							dashboard control individual agents. Enabling a host toggle will
+							automatically enable this master switch.
+						</p>
+					</div>
+					<button
+						type="button"
+						id={autoUpdateId}
+						onClick={() => handleInputChange("autoUpdate", !formData.autoUpdate)}
+						className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+							formData.autoUpdate
+								? "bg-primary-600 dark:bg-primary-500"
+								: "bg-secondary-200 dark:bg-secondary-600"
+						}`}
+					>
+						<span
+							className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+								formData.autoUpdate ? "translate-x-5" : "translate-x-0"
+							}`}
+						/>
+					</button>
 				</div>
 
 				{/* SSL Certificate Setting */}
-				<div>
-					<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2">
+				<div className="flex items-start justify-between gap-4 p-4 bg-warning-50 dark:bg-warning-900/20 rounded-lg border border-warning-200 dark:border-warning-700">
+					<div className="flex-1">
 						<div className="flex items-center gap-2">
-							<input
-								id={ignoreSslId}
-								type="checkbox"
-								checked={formData.ignoreSslSelfSigned}
-								onChange={(e) =>
-									handleInputChange("ignoreSslSelfSigned", e.target.checked)
-								}
-								className="rounded border-secondary-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
-							/>
-							<label htmlFor={ignoreSslId}>
+							<label
+								htmlFor={ignoreSslId}
+								className="text-sm font-medium text-secondary-900 dark:text-secondary-100"
+							>
 								Ignore SSL Self-Signed Certificates
 							</label>
+							<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-warning-100 text-warning-800 dark:bg-warning-900/50 dark:text-warning-300">
+								Security
+							</span>
 						</div>
-					</label>
-					<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
-						When enabled, curl commands in agent scripts will use the -k flag to
-						ignore SSL certificate validation errors. Use with caution on
-						production systems as this reduces security.
-					</p>
+						<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
+							When enabled, curl commands in agent scripts will use the -k flag to
+							ignore SSL certificate validation errors. Use with caution on
+							production systems as this reduces security.
+						</p>
+					</div>
+					<button
+						type="button"
+						id={ignoreSslId}
+						onClick={() => handleInputChange("ignoreSslSelfSigned", !formData.ignoreSslSelfSigned)}
+						className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+							formData.ignoreSslSelfSigned
+								? "bg-warning-500 dark:bg-warning-600"
+								: "bg-secondary-200 dark:bg-secondary-600"
+						}`}
+					>
+						<span
+							className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+								formData.ignoreSslSelfSigned ? "translate-x-5" : "translate-x-0"
+							}`}
+						/>
+					</button>
 				</div>
 
 				{/* Save Button */}
