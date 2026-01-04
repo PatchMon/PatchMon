@@ -1025,7 +1025,7 @@ router.get("/integrations", validateApiCredentials, async (req, res) => {
 			select: {
 				id: true,
 				docker_enabled: true,
-				// Future: add other integration fields here
+				compliance_enabled: true,
 			},
 		});
 
@@ -2630,6 +2630,7 @@ router.get(
 					api_id: true,
 					friendly_name: true,
 					docker_enabled: true,
+					compliance_enabled: true,
 				},
 			});
 

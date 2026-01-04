@@ -203,31 +203,35 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 		},
 	});
 
-	// Single rule remediation mutation
+	// Single rule remediation mutation with enhanced feedback
+	const [remediationStatus, setRemediationStatus] = useState(null); // { phase: 'sending'|'running'|'complete'|'error', rule: string, message: string }
 	const remediateRuleMutation = useMutation({
 		mutationFn: (ruleId) => complianceAPI.remediateRule(hostId, ruleId),
 		onMutate: (ruleId) => {
 			setRemediatingRule(ruleId);
+			setRemediationStatus({ phase: "sending", rule: ruleId, message: "Sending remediation command to agent..." });
 		},
 		onSuccess: (_, ruleId) => {
-			setScanMessage({
-				type: "success",
-				text: `Remediation command sent for rule. A new scan will be triggered to verify the fix.`,
-			});
-			setRemediatingRule(null);
-			// Trigger a new scan after remediation to verify the fix
+			setRemediationStatus({ phase: "running", rule: ruleId, message: "Agent is applying the fix. This may take a moment..." });
+			// Show running status for a few seconds, then complete
 			setTimeout(() => {
-				refetchLatest();
-				setScanMessage(null);
-			}, 5000);
+				setRemediationStatus({ phase: "complete", rule: ruleId, message: "Fix applied! Run a new scan to verify the change." });
+				setRemediatingRule(null);
+				// Clear the status and refresh after showing success
+				setTimeout(() => {
+					setRemediationStatus(null);
+					refetchLatest();
+				}, 4000);
+			}, 3000);
 		},
 		onError: (error) => {
-			setScanMessage({
-				type: "error",
-				text: error.response?.data?.error || "Failed to remediate rule",
+			setRemediationStatus({
+				phase: "error",
+				rule: remediatingRule,
+				message: error.response?.data?.error || "Failed to remediate rule"
 			});
 			setRemediatingRule(null);
-			setTimeout(() => setScanMessage(null), 5000);
+			setTimeout(() => setRemediationStatus(null), 6000);
 		},
 	});
 
@@ -1012,6 +1016,55 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 							</button>
 						</div>
 					</div>
+
+					{/* Remediation Status Banner */}
+					{remediationStatus && (
+						<div className={`rounded-lg border p-4 ${
+							remediationStatus.phase === "error"
+								? "bg-red-900/30 border-red-700"
+								: remediationStatus.phase === "complete"
+									? "bg-green-900/30 border-green-700"
+									: "bg-orange-900/30 border-orange-700"
+						}`}>
+							<div className="flex items-center gap-3">
+								{remediationStatus.phase === "sending" && (
+									<div className="h-5 w-5 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
+								)}
+								{remediationStatus.phase === "running" && (
+									<Wrench className="h-5 w-5 text-orange-400 animate-pulse" />
+								)}
+								{remediationStatus.phase === "complete" && (
+									<CheckCircle className="h-5 w-5 text-green-400" />
+								)}
+								{remediationStatus.phase === "error" && (
+									<XCircle className="h-5 w-5 text-red-400" />
+								)}
+								<div className="flex-1">
+									<p className={`font-medium ${
+										remediationStatus.phase === "error"
+											? "text-red-200"
+											: remediationStatus.phase === "complete"
+												? "text-green-200"
+												: "text-orange-200"
+									}`}>
+										{remediationStatus.phase === "sending" && "Sending Fix Command..."}
+										{remediationStatus.phase === "running" && "Applying Fix..."}
+										{remediationStatus.phase === "complete" && "Fix Applied!"}
+										{remediationStatus.phase === "error" && "Fix Failed"}
+									</p>
+									<p className={`text-sm ${
+										remediationStatus.phase === "error"
+											? "text-red-300/80"
+											: remediationStatus.phase === "complete"
+												? "text-green-300/80"
+												: "text-orange-300/80"
+									}`}>
+										{remediationStatus.message}
+									</p>
+								</div>
+							</div>
+						</div>
+					)}
 
 					{/* Results Subtabs */}
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700">
