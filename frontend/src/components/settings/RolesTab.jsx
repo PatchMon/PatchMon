@@ -34,13 +34,24 @@ const RolesTab = () => {
 
 	// Fetch all role permissions
 	const {
-		data: roles,
+		data: rolesData,
 		isLoading,
 		error,
 	} = useQuery({
 		queryKey: ["rolePermissions"],
 		queryFn: () => permissionsAPI.getRoles().then((res) => res.data),
 	});
+
+	// Sort roles: superadmin first, then admin, then user, then alphabetically
+	const roles = rolesData
+		? [...rolesData].sort((a, b) => {
+				const order = { superadmin: 0, admin: 1, user: 2 };
+				const aOrder = order[a.role] ?? 999;
+				const bOrder = order[b.role] ?? 999;
+				if (aOrder !== bOrder) return aOrder - bOrder;
+				return a.role.localeCompare(b.role);
+			})
+		: null;
 
 	// Update role permissions mutation
 	const updateRoleMutation = useMutation({
@@ -306,7 +317,7 @@ const RolePermissionsCard = ({
 		onSave(role.role, permissions);
 	};
 
-	const isBuiltInRole = role.role === "admin" || role.role === "user";
+	const isBuiltInRole = role.role === "superadmin" || role.role === "admin" || role.role === "user";
 
 	return (
 		<div className="bg-white dark:bg-secondary-800 shadow rounded-lg">
