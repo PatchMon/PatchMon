@@ -60,6 +60,7 @@ const HostDetail = () => {
 	const plaintextApiKey = location.state?.apiKey;
 	const [showDeleteModal, setShowDeleteModal] = useState(false);
 	const [activeTab, setActiveTab] = useState("host");
+	const [dockerSubTab, setDockerSubTab] = useState("containers");
 	const [historyPage, setHistoryPage] = useState(0);
 	const [historyLimit] = useState(10);
 	const [notes, setNotes] = useState("");
@@ -318,7 +319,7 @@ const HostDetail = () => {
 			adminHostsAPI.getIntegrations(hostId).then((res) => res.data),
 		staleTime: 30 * 1000, // 30 seconds
 		refetchOnWindowFocus: false,
-		enabled: !!hostId && activeTab === "integrations",
+		enabled: !!hostId, // Always fetch to control tab visibility
 	});
 
 	// Refetch integrations when WebSocket status changes (e.g., after agent restart)
@@ -337,6 +338,58 @@ const HostDetail = () => {
 		integrationsData?.data?.connected,
 		refetchIntegrations,
 	]);
+
+	// Poll for compliance setup status when compliance is enabled
+	const {
+		data: complianceSetupStatus,
+		refetch: refetchComplianceStatus,
+	} = useQuery({
+		queryKey: ["compliance-setup-status", hostId],
+		queryFn: () =>
+			adminHostsAPI.getIntegrationSetupStatus(hostId, "compliance").then((res) => res.data),
+		staleTime: 5 * 1000, // 5 seconds
+		refetchInterval: (data) => {
+			// Poll every 3 seconds while status is "installing" or "removing"
+			const status = data?.status?.status;
+			if (status === "installing" || status === "removing") {
+				return 3000;
+			}
+			return false; // Stop polling when done
+		},
+		refetchOnWindowFocus: false,
+		enabled: !!hostId && integrationsData?.data?.integrations?.compliance,
+	});
+
+	// Refetch compliance status when toggle mutation succeeds
+	useEffect(() => {
+		if (toggleIntegrationMutation.isSuccess) {
+			// Small delay to allow agent to start processing
+			const timeoutId = setTimeout(() => {
+				if (isMountedRef.current) {
+					refetchComplianceStatus();
+				}
+			}, 1000);
+			return () => clearTimeout(timeoutId);
+		}
+	}, [toggleIntegrationMutation.isSuccess, refetchComplianceStatus]);
+
+	// Fetch Docker data for this host (enabled on docker tab or always for mobile view)
+	const {
+		data: dockerData,
+		isLoading: isLoadingDocker,
+	} = useQuery({
+		queryKey: ["docker", "host", hostId],
+		queryFn: async () => {
+			const response = await import("../utils/api").then((m) =>
+				m.default.get(`/docker/hosts/${hostId}`),
+			);
+			return response.data;
+		},
+		staleTime: 30 * 1000,
+		refetchOnWindowFocus: false,
+		// Enable on docker tab or if integrations show docker enabled (for mobile cards)
+		enabled: !!hostId && (activeTab === "docker" || integrationsData?.data?.integrations?.docker),
+	});
 
 	// Toggle integration mutation
 	const toggleIntegrationMutation = useMutation({
@@ -362,8 +415,11 @@ const HostDetail = () => {
 			// Also invalidate to ensure we get fresh data
 			queryClient.invalidateQueries(["host-integrations", hostId]);
 		},
-		onError: () => {
-			// On error, refetch to get the actual state
+		onError: (error) => {
+			// Show error message to user
+			const message = error?.response?.data?.message || error?.response?.data?.error || "Failed to toggle integration";
+			alert(`Integration toggle failed: ${message}`);
+			// Refetch to get the actual state
 			refetchIntegrations();
 		},
 	});
@@ -1543,6 +1599,160 @@ const HostDetail = () => {
 										</p>
 									)}
 								</div>
+
+								{/* Compliance Integration - Mobile */}
+								<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
+									<div className="flex items-start justify-between gap-4">
+										<div className="flex-1">
+											<div className="flex items-center gap-3 mb-2">
+												<Shield className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+												<h4 className="text-sm font-medium text-secondary-900 dark:text-white">
+													Compliance
+												</h4>
+												{integrationsData?.data?.integrations?.compliance ? (
+													<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+														Enabled
+													</span>
+												) : (
+													<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-400">
+														Disabled
+													</span>
+												)}
+											</div>
+											<p className="text-xs text-secondary-600 dark:text-secondary-300">
+												Security compliance scanning with OpenSCAP and Docker
+												Bench.
+											</p>
+										</div>
+										<div className="flex-shrink-0">
+											<button
+												type="button"
+												onClick={() =>
+													toggleIntegrationMutation.mutate({
+														integrationName: "compliance",
+														enabled:
+															!integrationsData?.data?.integrations?.compliance,
+													})
+												}
+												disabled={
+													toggleIntegrationMutation.isPending ||
+													!wsStatus?.connected
+												}
+												className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+													integrationsData?.data?.integrations?.compliance
+														? "bg-primary-600 dark:bg-primary-500"
+														: "bg-secondary-200 dark:bg-secondary-600"
+												} ${
+													toggleIntegrationMutation.isPending ||
+													!integrationsData?.data?.connected
+														? "opacity-50 cursor-not-allowed"
+														: ""
+												}`}
+											>
+												<span
+													className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+														integrationsData?.data?.integrations?.compliance
+															? "translate-x-5"
+															: "translate-x-1"
+													}`}
+												/>
+											</button>
+										</div>
+									</div>
+									{!wsStatus?.connected && (
+										<p className="text-xs text-warning-600 dark:text-warning-400 mt-2">
+											Agent must be connected via WebSocket to toggle
+											integrations
+										</p>
+									)}
+								</div>
+							</div>
+						)}
+					</div>
+
+					{/* Docker Card - Mobile */}
+					<div className="card p-4">
+						<h3 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4 flex items-center gap-2">
+							<Database className="h-5 w-5 text-primary-600" />
+							Docker
+						</h3>
+						{isLoadingDocker ? (
+							<div className="flex items-center justify-center h-32">
+								<RefreshCw className="h-6 w-6 animate-spin text-primary-600" />
+							</div>
+						) : !dockerData?.containers?.length &&
+						  !dockerData?.images?.length ? (
+							<div className="text-center py-6">
+								<Database className="h-10 w-10 text-secondary-400 mx-auto mb-3" />
+								<p className="text-sm text-secondary-600 dark:text-secondary-400">
+									{integrationsData?.data?.integrations?.docker
+										? "No Docker containers or images found."
+										: "Enable Docker integration to monitor containers."}
+								</p>
+							</div>
+						) : (
+							<div className="space-y-4">
+								{/* Stats */}
+								<div className="grid grid-cols-2 gap-3">
+									<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-3">
+										<p className="text-xs text-secondary-600 dark:text-secondary-400">
+											Containers
+										</p>
+										<p className="text-lg font-bold text-secondary-900 dark:text-white">
+											{dockerData?.containers?.length || 0}
+										</p>
+									</div>
+									<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-3">
+										<p className="text-xs text-secondary-600 dark:text-secondary-400">
+											Running
+										</p>
+										<p className="text-lg font-bold text-green-600">
+											{dockerData?.containers?.filter(
+												(c) => c.status === "running",
+											).length || 0}
+										</p>
+									</div>
+								</div>
+
+								{/* Container List Preview */}
+								{dockerData?.containers?.slice(0, 3).map((container) => (
+									<Link
+										key={container.id}
+										to={`/docker/containers/${container.id}`}
+										className="flex items-center justify-between p-3 bg-secondary-50 dark:bg-secondary-700 rounded-lg"
+									>
+										<div className="flex items-center gap-2">
+											<Database
+												className={`h-4 w-4 ${
+													container.status === "running"
+														? "text-green-600"
+														: "text-secondary-400"
+												}`}
+											/>
+											<span className="text-sm text-secondary-900 dark:text-white">
+												{container.name}
+											</span>
+										</div>
+										<span
+											className={`text-xs px-2 py-0.5 rounded ${
+												container.status === "running"
+													? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+													: "bg-secondary-200 text-secondary-600 dark:bg-secondary-600 dark:text-secondary-300"
+											}`}
+										>
+											{container.status}
+										</span>
+									</Link>
+								))}
+
+								{dockerData?.containers?.length > 3 && (
+									<Link
+										to={`/docker/hosts/${hostId}`}
+										className="block text-center text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400"
+									>
+										View all {dockerData.containers.length} containers
+									</Link>
+								)}
 							</div>
 						)}
 					</div>
@@ -1628,18 +1838,34 @@ const HostDetail = () => {
 						>
 							Integrations
 						</button>
-						<button
-							type="button"
-							onClick={() => handleTabChange("compliance")}
-							className={`px-4 py-2 text-sm font-medium ${
-								activeTab === "compliance"
-									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-									: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
-							}`}
-						>
-							<Shield className="h-4 w-4 inline mr-1" />
-							Compliance
-						</button>
+						{integrationsData?.data?.integrations?.compliance && (
+							<button
+								type="button"
+								onClick={() => handleTabChange("compliance")}
+								className={`px-4 py-2 text-sm font-medium ${
+									activeTab === "compliance"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
+								}`}
+							>
+								<Shield className="h-4 w-4 inline mr-1" />
+								Compliance
+							</button>
+						)}
+						{integrationsData?.data?.integrations?.docker && (
+							<button
+								type="button"
+								onClick={() => handleTabChange("docker")}
+								className={`px-4 py-2 text-sm font-medium ${
+									activeTab === "docker"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
+								}`}
+							>
+								<Database className="h-4 w-4 inline mr-1" />
+								Docker
+							</button>
+						)}
 						<button
 							type="button"
 							onClick={() => handleTabChange("terminal")}
@@ -2643,13 +2869,13 @@ const HostDetail = () => {
 
 						{/* Integrations */}
 						{activeTab === "integrations" && (
-							<div className="max-w-2xl space-y-4">
+							<div className="max-w-4xl">
 								{isLoadingIntegrations ? (
 									<div className="flex items-center justify-center h-32">
 										<RefreshCw className="h-6 w-6 animate-spin text-primary-600" />
 									</div>
 								) : (
-									<div className="space-y-4">
+									<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 										{/* Docker Integration */}
 										<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
 											<div className="flex items-start justify-between gap-4">
@@ -2730,7 +2956,161 @@ const HostDetail = () => {
 											)}
 										</div>
 
-										{/* Future integrations can be added here with the same pattern */}
+										{/* Compliance Integration */}
+										<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
+											<div className="flex items-start justify-between gap-4">
+												<div className="flex-1">
+													<div className="flex items-center gap-3 mb-2">
+														<Shield className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+														<h4 className="text-sm font-medium text-secondary-900 dark:text-white">
+															Compliance
+														</h4>
+														{integrationsData?.data?.integrations?.compliance ? (
+															<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+																Enabled
+															</span>
+														) : (
+															<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-400">
+																Disabled
+															</span>
+														)}
+													</div>
+													<p className="text-xs text-secondary-600 dark:text-secondary-300">
+														Security compliance scanning with OpenSCAP and Docker
+														Bench. Assesses hosts against CIS benchmarks.
+													</p>
+												</div>
+												<div className="flex-shrink-0">
+													<button
+														type="button"
+														onClick={() =>
+															toggleIntegrationMutation.mutate({
+																integrationName: "compliance",
+																enabled:
+																	!integrationsData?.data?.integrations?.compliance,
+															})
+														}
+														disabled={
+															toggleIntegrationMutation.isPending ||
+															!wsStatus?.connected
+														}
+														title={
+															!wsStatus?.connected
+																? "Agent is not connected"
+																: integrationsData?.data?.integrations?.compliance
+																	? "Disable Compliance scanning"
+																	: "Enable Compliance scanning"
+														}
+														className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+															integrationsData?.data?.integrations?.compliance
+																? "bg-primary-600 dark:bg-primary-500"
+																: "bg-secondary-200 dark:bg-secondary-600"
+														} ${
+															toggleIntegrationMutation.isPending ||
+															!integrationsData?.data?.connected
+																? "opacity-50 cursor-not-allowed"
+																: ""
+														}`}
+													>
+														<span
+															className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+																integrationsData?.data?.integrations?.compliance
+																	? "translate-x-5"
+																	: "translate-x-1"
+															}`}
+														/>
+													</button>
+												</div>
+											</div>
+											{!wsStatus?.connected && (
+												<p className="text-xs text-warning-600 dark:text-warning-400 mt-2">
+													Agent must be connected via WebSocket to toggle
+													integrations
+												</p>
+											)}
+											{toggleIntegrationMutation.isPending && (
+												<p className="text-xs text-secondary-600 dark:text-secondary-400 mt-2">
+													Updating integration...
+												</p>
+											)}
+											{/* Compliance Setup Status */}
+											{complianceSetupStatus?.status && (
+												<div className="mt-3 p-3 rounded-lg bg-secondary-50 dark:bg-secondary-800/50 border border-secondary-200 dark:border-secondary-700">
+													<div className="flex items-center gap-2">
+														{complianceSetupStatus.status.status === "installing" && (
+															<>
+																<RefreshCw className="h-4 w-4 animate-spin text-primary-500" />
+																<span className="text-sm font-medium text-primary-600 dark:text-primary-400">
+																	Installing compliance tools...
+																</span>
+															</>
+														)}
+														{complianceSetupStatus.status.status === "removing" && (
+															<>
+																<RefreshCw className="h-4 w-4 animate-spin text-warning-500" />
+																<span className="text-sm font-medium text-warning-600 dark:text-warning-400">
+																	Removing compliance tools...
+																</span>
+															</>
+														)}
+														{complianceSetupStatus.status.status === "ready" && (
+															<>
+																<CheckCircle className="h-4 w-4 text-success-500" />
+																<span className="text-sm font-medium text-success-600 dark:text-success-400">
+																	Compliance tools ready
+																</span>
+															</>
+														)}
+														{complianceSetupStatus.status.status === "partial" && (
+															<>
+																<AlertTriangle className="h-4 w-4 text-warning-500" />
+																<span className="text-sm font-medium text-warning-600 dark:text-warning-400">
+																	Some tools failed to install
+																</span>
+															</>
+														)}
+														{complianceSetupStatus.status.status === "disabled" && (
+															<>
+																<X className="h-4 w-4 text-secondary-500" />
+																<span className="text-sm font-medium text-secondary-600 dark:text-secondary-400">
+																	Compliance disabled
+																</span>
+															</>
+														)}
+													</div>
+													{complianceSetupStatus.status.message && (
+														<p className="text-xs text-secondary-600 dark:text-secondary-400 mt-1">
+															{complianceSetupStatus.status.message}
+														</p>
+													)}
+													{/* Component Status */}
+													{complianceSetupStatus.status.components &&
+														Object.keys(complianceSetupStatus.status.components).length > 0 && (
+														<div className="mt-2 flex flex-wrap gap-2">
+															{Object.entries(complianceSetupStatus.status.components).map(([name, status]) => (
+																<span
+																	key={name}
+																	className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
+																		status === "ready"
+																			? "bg-success-100 text-success-700 dark:bg-success-900/50 dark:text-success-300"
+																			: status === "failed"
+																			? "bg-danger-100 text-danger-700 dark:bg-danger-900/50 dark:text-danger-300"
+																			: status === "unavailable"
+																			? "bg-secondary-100 text-secondary-600 dark:bg-secondary-800 dark:text-secondary-400"
+																			: "bg-warning-100 text-warning-700 dark:bg-warning-900/50 dark:text-warning-300"
+																	}`}
+																>
+																	{status === "ready" && <CheckCircle className="h-3 w-3" />}
+																	{status === "failed" && <X className="h-3 w-3" />}
+																	{status === "unavailable" && <AlertCircle className="h-3 w-3" />}
+																	{name}
+																</span>
+															))}
+														</div>
+													)}
+												</div>
+											)}
+										</div>
 									</div>
 								)}
 							</div>
@@ -2739,6 +3119,331 @@ const HostDetail = () => {
 						{/* Compliance */}
 						{activeTab === "compliance" && (
 							<ComplianceTab hostId={hostId} isConnected={wsStatus?.connected} />
+						)}
+
+						{/* Docker */}
+						{activeTab === "docker" && (
+							<div className="space-y-4">
+								{isLoadingDocker ? (
+									<div className="flex items-center justify-center h-32">
+										<RefreshCw className="h-6 w-6 animate-spin text-primary-600" />
+									</div>
+								) : !dockerData?.containers?.length &&
+								  !dockerData?.images?.length &&
+								  !dockerData?.volumes?.length &&
+								  !dockerData?.networks?.length ? (
+									<div className="text-center py-8">
+										<Database className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
+										<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-2">
+											No Docker Data
+										</h3>
+										<p className="text-sm text-secondary-600 dark:text-secondary-400">
+											{integrationsData?.data?.integrations?.docker
+												? "Docker integration is enabled but no containers or images were found."
+												: "Enable Docker integration in the Integrations tab to monitor containers."}
+										</p>
+										{!integrationsData?.data?.integrations?.docker && (
+											<button
+												type="button"
+												onClick={() => handleTabChange("integrations")}
+												className="mt-4 btn-primary"
+											>
+												Go to Integrations
+											</button>
+										)}
+									</div>
+								) : (
+									<>
+										{/* Docker Sub-tabs */}
+										<div className="flex gap-1 border-b border-secondary-200 dark:border-secondary-600 overflow-x-auto">
+											<button
+												type="button"
+												onClick={() => setDockerSubTab("containers")}
+												className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium whitespace-nowrap ${
+													dockerSubTab === "containers"
+														? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+														: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
+												}`}
+											>
+												<Database className="h-4 w-4" />
+												Containers
+												<span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-secondary-100 dark:bg-secondary-700">
+													{dockerData?.containers?.length || 0}
+												</span>
+											</button>
+											<button
+												type="button"
+												onClick={() => setDockerSubTab("running")}
+												className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium whitespace-nowrap ${
+													dockerSubTab === "running"
+														? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+														: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
+												}`}
+											>
+												<Activity className="h-4 w-4 text-green-600" />
+												Running
+												<span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200">
+													{dockerData?.containers?.filter((c) => c.status === "running").length || 0}
+												</span>
+											</button>
+											<button
+												type="button"
+												onClick={() => setDockerSubTab("images")}
+												className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium whitespace-nowrap ${
+													dockerSubTab === "images"
+														? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+														: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
+												}`}
+											>
+												<Package className="h-4 w-4" />
+												Images
+												<span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-secondary-100 dark:bg-secondary-700">
+													{dockerData?.images?.length || 0}
+												</span>
+											</button>
+											<button
+												type="button"
+												onClick={() => setDockerSubTab("volumes")}
+												className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium whitespace-nowrap ${
+													dockerSubTab === "volumes"
+														? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+														: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
+												}`}
+											>
+												<HardDrive className="h-4 w-4" />
+												Volumes
+												<span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-secondary-100 dark:bg-secondary-700">
+													{dockerData?.volumes?.length || 0}
+												</span>
+											</button>
+											<button
+												type="button"
+												onClick={() => setDockerSubTab("networks")}
+												className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium whitespace-nowrap ${
+													dockerSubTab === "networks"
+														? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+														: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
+												}`}
+											>
+												<Wifi className="h-4 w-4" />
+												Networks
+												<span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-secondary-100 dark:bg-secondary-700">
+													{dockerData?.networks?.length || 0}
+												</span>
+											</button>
+										</div>
+
+										{/* Containers Tab */}
+										{dockerSubTab === "containers" && (
+											<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg">
+												{dockerData?.containers?.length > 0 ? (
+													<div className="divide-y divide-secondary-200 dark:divide-secondary-600">
+														{dockerData.containers.map((container) => (
+															<Link
+																key={container.id}
+																to={`/docker/containers/${container.id}`}
+																className="flex items-center justify-between p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
+															>
+																<div className="flex items-center gap-3">
+																	<Database
+																		className={`h-5 w-5 ${
+																			container.status === "running"
+																				? "text-green-600"
+																				: "text-secondary-400"
+																		}`}
+																	/>
+																	<div>
+																		<p className="text-sm font-medium text-secondary-900 dark:text-white">
+																			{container.name}
+																		</p>
+																		<p className="text-xs text-secondary-500 dark:text-secondary-400">
+																			{container.image_name}:{container.image_tag}
+																		</p>
+																	</div>
+																</div>
+																<span
+																	className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+																		container.status === "running"
+																			? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+																			: container.status === "exited"
+																				? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+																				: "bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
+																	}`}
+																>
+																	{container.status}
+																</span>
+															</Link>
+														))}
+													</div>
+												) : (
+													<div className="p-8 text-center text-secondary-500 dark:text-secondary-400">
+														No containers found
+													</div>
+												)}
+											</div>
+										)}
+
+										{/* Running Tab */}
+										{dockerSubTab === "running" && (
+											<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg">
+												{dockerData?.containers?.filter((c) => c.status === "running").length > 0 ? (
+													<div className="divide-y divide-secondary-200 dark:divide-secondary-600">
+														{dockerData.containers
+															.filter((c) => c.status === "running")
+															.map((container) => (
+																<Link
+																	key={container.id}
+																	to={`/docker/containers/${container.id}`}
+																	className="flex items-center justify-between p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
+																>
+																	<div className="flex items-center gap-3">
+																		<Activity className="h-5 w-5 text-green-600" />
+																		<div>
+																			<p className="text-sm font-medium text-secondary-900 dark:text-white">
+																				{container.name}
+																			</p>
+																			<p className="text-xs text-secondary-500 dark:text-secondary-400">
+																				{container.image_name}:{container.image_tag}
+																			</p>
+																		</div>
+																	</div>
+																	<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+																		running
+																	</span>
+																</Link>
+															))}
+													</div>
+												) : (
+													<div className="p-8 text-center text-secondary-500 dark:text-secondary-400">
+														No running containers
+													</div>
+												)}
+											</div>
+										)}
+
+										{/* Images Tab */}
+										{dockerSubTab === "images" && (
+											<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg">
+												{dockerData?.images?.length > 0 ? (
+													<div className="divide-y divide-secondary-200 dark:divide-secondary-600">
+														{dockerData.images.map((image) => (
+															<Link
+																key={image.id}
+																to={`/docker/images/${image.id}`}
+																className="flex items-center justify-between p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
+															>
+																<div className="flex items-center gap-3">
+																	<Package className="h-5 w-5 text-purple-600" />
+																	<div>
+																		<p className="text-sm font-medium text-secondary-900 dark:text-white">
+																			{image.repository}
+																		</p>
+																		<p className="text-xs text-secondary-500 dark:text-secondary-400">
+																			{image.tag}
+																		</p>
+																	</div>
+																</div>
+																{image.size_bytes && (
+																	<span className="text-xs text-secondary-500 dark:text-secondary-400">
+																		{(Number(image.size_bytes) / 1024 / 1024).toFixed(1)} MB
+																	</span>
+																)}
+															</Link>
+														))}
+													</div>
+												) : (
+													<div className="p-8 text-center text-secondary-500 dark:text-secondary-400">
+														No images found
+													</div>
+												)}
+											</div>
+										)}
+
+										{/* Volumes Tab */}
+										{dockerSubTab === "volumes" && (
+											<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg">
+												{dockerData?.volumes?.length > 0 ? (
+													<div className="divide-y divide-secondary-200 dark:divide-secondary-600">
+														{dockerData.volumes.map((volume) => (
+															<div
+																key={volume.id}
+																className="flex items-center justify-between p-4"
+															>
+																<div className="flex items-center gap-3">
+																	<HardDrive className="h-5 w-5 text-orange-600" />
+																	<div>
+																		<p className="text-sm font-medium text-secondary-900 dark:text-white">
+																			{volume.name}
+																		</p>
+																		<p className="text-xs text-secondary-500 dark:text-secondary-400 font-mono">
+																			{volume.driver || "local"}
+																		</p>
+																	</div>
+																</div>
+																<span className="text-xs text-secondary-500 dark:text-secondary-400">
+																	{volume.mountpoint ? "Mounted" : "Available"}
+																</span>
+															</div>
+														))}
+													</div>
+												) : (
+													<div className="p-8 text-center text-secondary-500 dark:text-secondary-400">
+														No volumes found
+													</div>
+												)}
+											</div>
+										)}
+
+										{/* Networks Tab */}
+										{dockerSubTab === "networks" && (
+											<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg">
+												{dockerData?.networks?.length > 0 ? (
+													<div className="divide-y divide-secondary-200 dark:divide-secondary-600">
+														{dockerData.networks.map((network) => (
+															<div
+																key={network.id}
+																className="flex items-center justify-between p-4"
+															>
+																<div className="flex items-center gap-3">
+																	<Wifi className="h-5 w-5 text-cyan-600" />
+																	<div>
+																		<p className="text-sm font-medium text-secondary-900 dark:text-white">
+																			{network.name}
+																		</p>
+																		<p className="text-xs text-secondary-500 dark:text-secondary-400">
+																			{network.driver || "bridge"} • {network.scope || "local"}
+																		</p>
+																	</div>
+																</div>
+																{network.subnet && (
+																	<span className="text-xs text-secondary-500 dark:text-secondary-400 font-mono">
+																		{network.subnet}
+																	</span>
+																)}
+															</div>
+														))}
+													</div>
+												) : (
+													<div className="p-8 text-center text-secondary-500 dark:text-secondary-400">
+														No networks found
+													</div>
+												)}
+											</div>
+										)}
+
+										{/* View Full Docker Details Link */}
+										<div className="text-center pt-2">
+											<Link
+												to={`/docker/hosts/${hostId}`}
+												className="inline-flex items-center gap-2 text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400"
+											>
+												View Full Docker Details
+												<ArrowLeft className="h-4 w-4 rotate-180" />
+											</Link>
+										</div>
+									</>
+								)}
+							</div>
 						)}
 					</div>
 				</div>
@@ -2768,7 +3473,5 @@ const HostDetail = () => {
 		</div>
 	);
 };
-
-// Components moved to separate files in ./hostdetail/
 
 export default HostDetail;
