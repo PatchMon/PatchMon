@@ -338,54 +338,94 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 				<>
 					{/* Profile Selection */}
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
-						<h3 className="text-lg font-medium text-white mb-4">Select Scan Profile</h3>
-						<div className="grid gap-3">
-							{availableProfiles.map((profile) => (
-								<button
-									key={profile.id}
-									onClick={() => setSelectedProfile(profile.id)}
-									className={`flex items-start gap-4 p-4 rounded-lg border transition-all text-left ${
-										selectedProfile === profile.id
-											? "bg-primary-900/30 border-primary-600"
-											: "bg-secondary-700/50 border-secondary-600 hover:border-secondary-500"
-									}`}
-								>
-									<div className={`p-2 rounded-lg ${
-										selectedProfile === profile.id
-											? "bg-primary-600/20"
-											: "bg-secondary-600/50"
-									}`}>
-										{profile.type === "docker-bench" ? (
-											<Package className={`h-5 w-5 ${
-												selectedProfile === profile.id ? "text-primary-400" : "text-secondary-400"
-											}`} />
-										) : (
-											<Shield className={`h-5 w-5 ${
-												selectedProfile === profile.id ? "text-primary-400" : "text-secondary-400"
-											}`} />
-										)}
-									</div>
-									<div className="flex-1">
-										<p className={`font-medium ${
-											selectedProfile === profile.id ? "text-primary-300" : "text-white"
-										}`}>
-											{profile.name}
-										</p>
-										<p className="text-sm text-secondary-400">{profile.description}</p>
-										<span className={`inline-block mt-1 px-2 py-0.5 text-xs rounded ${
-											profile.type === "docker-bench"
-												? "bg-blue-900/30 text-blue-400"
-												: "bg-green-900/30 text-green-400"
-										}`}>
-											{profile.type === "docker-bench" ? "Docker Bench" : "OpenSCAP"}
-										</span>
-									</div>
-									{selectedProfile === profile.id && (
-										<CheckCircle className="h-5 w-5 text-primary-400" />
-									)}
-								</button>
-							))}
+						<div className="flex items-center justify-between mb-4">
+							<h3 className="text-lg font-medium text-white">Select Scan Profile</h3>
+							<span className="text-sm text-secondary-400">
+								{availableProfiles.length} profiles available
+							</span>
 						</div>
+
+						{/* Group profiles by category */}
+						{(() => {
+							const grouped = availableProfiles.reduce((acc, profile) => {
+								const cat = profile.category || "other";
+								if (!acc[cat]) acc[cat] = [];
+								acc[cat].push(profile);
+								return acc;
+							}, {});
+
+							const categoryLabels = {
+								cis: { name: "CIS Benchmarks", color: "text-green-400", bg: "bg-green-900/30" },
+								stig: { name: "DISA STIG", color: "text-orange-400", bg: "bg-orange-900/30" },
+								"pci-dss": { name: "PCI-DSS", color: "text-purple-400", bg: "bg-purple-900/30" },
+								hipaa: { name: "HIPAA", color: "text-blue-400", bg: "bg-blue-900/30" },
+								anssi: { name: "ANSSI", color: "text-cyan-400", bg: "bg-cyan-900/30" },
+								standard: { name: "Standard", color: "text-yellow-400", bg: "bg-yellow-900/30" },
+								other: { name: "Other Profiles", color: "text-secondary-400", bg: "bg-secondary-700/50" },
+							};
+
+							return Object.entries(grouped).map(([category, profiles]) => {
+								const catInfo = categoryLabels[category] || categoryLabels.other;
+								return (
+									<div key={category} className="mb-4 last:mb-0">
+										<h4 className={`text-sm font-medium mb-2 ${catInfo.color}`}>
+											{catInfo.name} ({profiles.length})
+										</h4>
+										<div className="grid gap-2">
+											{profiles.map((profile) => (
+												<button
+													key={profile.id}
+													onClick={() => setSelectedProfile(profile.xccdf_id || profile.id)}
+													className={`flex items-center gap-3 p-3 rounded-lg border transition-all text-left ${
+														selectedProfile === (profile.xccdf_id || profile.id)
+															? "bg-primary-900/30 border-primary-600"
+															: "bg-secondary-700/30 border-secondary-600 hover:border-secondary-500"
+													}`}
+												>
+													<div className={`p-1.5 rounded ${
+														selectedProfile === (profile.xccdf_id || profile.id)
+															? "bg-primary-600/20"
+															: catInfo.bg
+													}`}>
+														{profile.type === "docker-bench" ? (
+															<Package className={`h-4 w-4 ${
+																selectedProfile === (profile.xccdf_id || profile.id) ? "text-primary-400" : catInfo.color
+															}`} />
+														) : (
+															<Shield className={`h-4 w-4 ${
+																selectedProfile === (profile.xccdf_id || profile.id) ? "text-primary-400" : catInfo.color
+															}`} />
+														)}
+													</div>
+													<div className="flex-1 min-w-0">
+														<p className={`font-medium text-sm truncate ${
+															selectedProfile === (profile.xccdf_id || profile.id) ? "text-primary-300" : "text-white"
+														}`}>
+															{profile.name}
+														</p>
+														{profile.description && (
+															<p className="text-xs text-secondary-400 truncate">{profile.description}</p>
+														)}
+													</div>
+													<div className="flex items-center gap-2">
+														<span className={`px-2 py-0.5 text-xs rounded ${
+															profile.type === "docker-bench"
+																? "bg-blue-900/30 text-blue-400"
+																: "bg-green-900/30 text-green-400"
+														}`}>
+															{profile.type === "docker-bench" ? "Docker" : "SCAP"}
+														</span>
+														{selectedProfile === (profile.xccdf_id || profile.id) && (
+															<CheckCircle className="h-4 w-4 text-primary-400" />
+														)}
+													</div>
+												</button>
+											))}
+										</div>
+									</div>
+								);
+							});
+						})()}
 					</div>
 
 					{/* Run Scan Button */}
@@ -394,7 +434,7 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 							<div>
 								<h3 className="text-lg font-medium text-white">Ready to Scan</h3>
 								<p className="text-sm text-secondary-400">
-									Selected: {availableProfiles.find(p => p.id === selectedProfile)?.name || selectedProfile}
+									Selected: {availableProfiles.find(p => (p.xccdf_id || p.id) === selectedProfile)?.name || selectedProfile}
 								</p>
 							</div>
 							<button
