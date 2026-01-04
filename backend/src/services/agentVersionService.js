@@ -540,11 +540,15 @@ class AgentVersionService {
 			// Download binaries for all architectures directly to agents folder
 			await this.downloadBinariesToAgentsFolder(latestRelease);
 
+			// Refresh current version to reflect the newly downloaded binary
+			await this.getCurrentAgentVersion();
+
 			console.log("✅ Latest update downloaded successfully");
 
 			return {
 				success: true,
 				version: this.latestVersion,
+				currentVersion: this.currentVersion,
 				downloadedArchitectures: this.supportedArchitectures,
 				message: `Successfully downloaded version ${this.latestVersion}`,
 			};

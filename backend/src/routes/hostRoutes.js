@@ -1043,6 +1043,69 @@ router.get("/integrations", validateApiCredentials, async (req, res) => {
 	}
 });
 
+// Receive integration setup status from agent
+router.post("/integration-status", validateApiCredentials, async (req, res) => {
+	try {
+		const { integration, enabled, status, message, components } = req.body;
+		const hostId = req.hostRecord.id;
+		const apiId = req.hostRecord.api_id;
+
+		console.log(`📊 Integration status update from ${apiId}:`, {
+			integration,
+			enabled,
+			status,
+			message,
+			components,
+		});
+
+		// Store the status update in Redis for real-time UI updates
+		const statusKey = `integration_status:${apiId}:${integration}`;
+		const statusData = {
+			integration,
+			enabled,
+			status,
+			message,
+			components: components || {},
+			timestamp: new Date().toISOString(),
+		};
+
+		// Store with 1 hour expiry
+		await redis.setex(statusKey, 3600, JSON.stringify(statusData));
+
+		// Also broadcast via WebSocket if available
+		try {
+			const { broadcastToHost } = require("../services/agentWs");
+			if (broadcastToHost) {
+				broadcastToHost(apiId, {
+					type: "integration_status",
+					data: statusData,
+				});
+			}
+		} catch (wsError) {
+			console.log("WebSocket broadcast not available:", wsError.message);
+		}
+
+		// Update host record with compliance setup status
+		if (integration === "compliance" && status === "ready") {
+			await prisma.hosts.update({
+				where: { id: hostId },
+				data: {
+					compliance_enabled: enabled,
+					updated_at: new Date(),
+				},
+			});
+		}
+
+		res.json({
+			success: true,
+			message: "Integration status received",
+		});
+	} catch (error) {
+		console.error("Integration status update error:", error);
+		res.status(500).json({ error: "Failed to process integration status" });
+	}
+});
+
 // Ping endpoint for health checks (now uses API credentials)
 router.post("/ping", validateApiCredentials, async (req, res) => {
 	try {
@@ -2576,6 +2639,47 @@ router.get(
 		} catch (error) {
 			console.error("Get integration status error:", error);
 			res.status(500).json({ error: "Failed to get integration status" });
+		}
+	},
+);
+
+// Get integration setup status for a host (frontend-facing)
+router.get(
+	"/:hostId/integrations/:integrationName/status",
+	authenticateToken,
+	async (req, res) => {
+		try {
+			const { hostId, integrationName } = req.params;
+
+			// Get host to get api_id
+			const host = await prisma.hosts.findUnique({
+				where: { id: hostId },
+				select: { api_id: true },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			// Get status from Redis
+			const statusKey = `integration_status:${host.api_id}:${integrationName}`;
+			const statusData = await redis.get(statusKey);
+
+			if (!statusData) {
+				return res.json({
+					success: true,
+					status: null,
+					message: "No status available",
+				});
+			}
+
+			res.json({
+				success: true,
+				status: JSON.parse(statusData),
+			});
+		} catch (error) {
+			console.error("Get integration setup status error:", error);
+			res.status(500).json({ error: "Failed to get integration setup status" });
 		}
 	},
 );
