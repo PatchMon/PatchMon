@@ -2807,28 +2807,138 @@ const HostDetail = () => {
 															</span>
 														)}
 													</div>
-													<p className="text-xs text-secondary-600 dark:text-secondary-300">
+													<p className="text-xs text-secondary-600 dark:text-secondary-300 mb-2">
 														Run CIS benchmark compliance scans using OpenSCAP.
 														Provides security posture assessment and remediation recommendations.
 													</p>
+
+													{/* Setup Status Display */}
 													{complianceSetupStatus?.status?.status && (
-														<div className="mt-2">
+														<div className="mt-3 p-3 rounded-lg border bg-secondary-100 dark:bg-secondary-800 border-secondary-300 dark:border-secondary-600">
+															{/* Installing State */}
 															{complianceSetupStatus.status.status === "installing" && (
-																<div className="flex items-center gap-2 text-xs text-primary-600 dark:text-primary-400">
-																	<RefreshCw className="h-3 w-3 animate-spin" />
-																	<span>Installing OpenSCAP packages...</span>
+																<div className="space-y-2">
+																	<div className="flex items-center gap-2">
+																		<RefreshCw className="h-4 w-4 animate-spin text-primary-600 dark:text-primary-400" />
+																		<span className="text-sm font-medium text-primary-700 dark:text-primary-300">
+																			Installing Compliance Tools
+																		</span>
+																	</div>
+																	<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-1.5">
+																		<div className="bg-primary-600 h-1.5 rounded-full animate-pulse" style={{ width: "60%" }} />
+																	</div>
+																	<p className="text-xs text-secondary-600 dark:text-secondary-400">
+																		{complianceSetupStatus.status.message || "Installing OpenSCAP packages and security content..."}
+																	</p>
+																	{complianceSetupStatus.status.components && (
+																		<div className="flex flex-wrap gap-2 mt-2">
+																			{Object.entries(complianceSetupStatus.status.components).map(([name, status]) => (
+																				<span
+																					key={name}
+																					className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
+																						status === "ready"
+																							? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
+																							: status === "failed"
+																								? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
+																								: "bg-secondary-200 text-secondary-600 dark:bg-secondary-600 dark:text-secondary-300"
+																					}`}
+																				>
+																					{status === "ready" && <CheckCircle2 className="h-3 w-3" />}
+																					{status === "failed" && <AlertCircle className="h-3 w-3" />}
+																					{status !== "ready" && status !== "failed" && <Clock className="h-3 w-3" />}
+																					{name}
+																				</span>
+																			))}
+																		</div>
+																	)}
 																</div>
 															)}
+
+															{/* Removing State */}
 															{complianceSetupStatus.status.status === "removing" && (
-																<div className="flex items-center gap-2 text-xs text-warning-600 dark:text-warning-400">
-																	<RefreshCw className="h-3 w-3 animate-spin" />
-																	<span>Removing OpenSCAP packages...</span>
+																<div className="space-y-2">
+																	<div className="flex items-center gap-2">
+																		<RefreshCw className="h-4 w-4 animate-spin text-warning-600 dark:text-warning-400" />
+																		<span className="text-sm font-medium text-warning-700 dark:text-warning-300">
+																			Removing Compliance Tools
+																		</span>
+																	</div>
+																	<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-1.5">
+																		<div className="bg-warning-500 h-1.5 rounded-full animate-pulse" style={{ width: "40%" }} />
+																	</div>
+																	<p className="text-xs text-secondary-600 dark:text-secondary-400">
+																		{complianceSetupStatus.status.message || "Removing OpenSCAP packages..."}
+																	</p>
 																</div>
 															)}
+
+															{/* Ready State */}
+															{complianceSetupStatus.status.status === "ready" && (
+																<div className="flex items-center gap-2">
+																	<CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+																	<span className="text-sm font-medium text-green-700 dark:text-green-300">
+																		Compliance Tools Ready
+																	</span>
+																	{complianceSetupStatus.status.components && (
+																		<div className="flex gap-1 ml-2">
+																			{Object.entries(complianceSetupStatus.status.components).map(([name, status]) => (
+																				<span
+																					key={name}
+																					className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
+																				>
+																					<CheckCircle2 className="h-3 w-3" />
+																					{name}
+																				</span>
+																			))}
+																		</div>
+																	)}
+																</div>
+															)}
+
+															{/* Partial State */}
+															{complianceSetupStatus.status.status === "partial" && (
+																<div className="space-y-2">
+																	<div className="flex items-center gap-2">
+																		<AlertTriangle className="h-4 w-4 text-warning-600 dark:text-warning-400" />
+																		<span className="text-sm font-medium text-warning-700 dark:text-warning-300">
+																			Partial Installation
+																		</span>
+																	</div>
+																	<p className="text-xs text-secondary-600 dark:text-secondary-400">
+																		{complianceSetupStatus.status.message || "Some components failed to install"}
+																	</p>
+																	{complianceSetupStatus.status.components && (
+																		<div className="flex flex-wrap gap-2">
+																			{Object.entries(complianceSetupStatus.status.components).map(([name, status]) => (
+																				<span
+																					key={name}
+																					className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
+																						status === "ready"
+																							? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
+																							: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
+																					}`}
+																				>
+																					{status === "ready" ? <CheckCircle2 className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
+																					{name}
+																				</span>
+																			))}
+																		</div>
+																	)}
+																</div>
+															)}
+
+															{/* Error State */}
 															{complianceSetupStatus.status.status === "error" && (
-																<div className="flex items-center gap-2 text-xs text-danger-600 dark:text-danger-400">
-																	<AlertCircle className="h-3 w-3" />
-																	<span>{complianceSetupStatus.status.message || "Setup failed"}</span>
+																<div className="space-y-2">
+																	<div className="flex items-center gap-2">
+																		<AlertCircle className="h-4 w-4 text-danger-600 dark:text-danger-400" />
+																		<span className="text-sm font-medium text-danger-700 dark:text-danger-300">
+																			Installation Failed
+																		</span>
+																	</div>
+																	<p className="text-xs text-danger-600 dark:text-danger-400">
+																		{complianceSetupStatus.status.message || "Setup failed - check agent logs"}
+																	</p>
 																</div>
 															)}
 														</div>
