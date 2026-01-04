@@ -23,6 +23,7 @@ import {
 	ToggleRight,
 	Download,
 	BookOpen,
+	Search,
 } from "lucide-react";
 import { complianceAPI } from "../../utils/complianceApi";
 import ComplianceScore from "./ComplianceScore";
@@ -49,6 +50,8 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 	const [activeSubtab, setActiveSubtab] = useState("overview");
 	const [expandedRules, setExpandedRules] = useState({});
 	const [statusFilter, setStatusFilter] = useState("fail");
+	const [severityFilter, setSeverityFilter] = useState("all"); // Filter by severity within Failed tab
+	const [ruleSearch, setRuleSearch] = useState(""); // Search rules by title/id
 	const [selectedProfile, setSelectedProfile] = useState("openscap");
 	const [enableRemediation, setEnableRemediation] = useState(false);
 	const [remediatingRule, setRemediatingRule] = useState(null);
@@ -895,12 +898,34 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 	// Render Results subtab
 	const renderResults = () => {
 		const results = latestScan?.compliance_results || latestScan?.results || [];
+		const failedResults = results.filter(r => r.status === "fail");
 		const counts = {
-			fail: results.filter(r => r.status === "fail").length,
+			fail: failedResults.length,
 			warn: results.filter(r => r.status === "warn").length,
 			pass: results.filter(r => r.status === "pass").length,
 			skipped: results.filter(r => r.status === "skip" || r.status === "notapplicable").length,
 		};
+
+		// Severity counts for failed rules
+		const getSeverity = (result) => {
+			return result.compliance_rules?.severity || result.rule?.severity || result.severity || "unknown";
+		};
+		const severityCounts = {
+			critical: failedResults.filter(r => getSeverity(r) === "critical").length,
+			high: failedResults.filter(r => getSeverity(r) === "high").length,
+			medium: failedResults.filter(r => getSeverity(r) === "medium").length,
+			low: failedResults.filter(r => getSeverity(r) === "low").length,
+			unknown: failedResults.filter(r => getSeverity(r) === "unknown").length,
+		};
+
+		// Severity subtabs for Failed tab
+		const severitySubtabs = [
+			{ id: "all", label: "All", count: counts.fail },
+			{ id: "critical", label: "Critical", count: severityCounts.critical, color: "text-red-500" },
+			{ id: "high", label: "High", count: severityCounts.high, color: "text-orange-400" },
+			{ id: "medium", label: "Medium", count: severityCounts.medium, color: "text-yellow-400" },
+			{ id: "low", label: "Low", count: severityCounts.low, color: "text-blue-400" },
+		];
 
 		// Results subtabs configuration
 		const resultsSubtabs = [
@@ -910,15 +935,40 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 			{ id: "skipped", label: "Skipped/N/A", count: counts.skipped, icon: MinusCircle, color: "text-secondary-400", bgColor: "bg-secondary-700/50", borderColor: "border-secondary-600" },
 		];
 
+		// Get title for search matching
+		const getTitle = (result) => {
+			return result.compliance_rules?.title || result.rule?.title || result.title || "";
+		};
+		const getRuleId = (result) => {
+			return result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_id || "";
+		};
+
 		// Map statusFilter to include both skip and notapplicable for "skipped" tab
 		const getFilteredResults = () => {
+			let filtered;
 			if (statusFilter === "skipped") {
-				return results.filter(r => r.status === "skip" || r.status === "notapplicable");
+				filtered = results.filter(r => r.status === "skip" || r.status === "notapplicable");
+			} else if (statusFilter === "all") {
+				filtered = results;
+			} else {
+				filtered = results.filter(r => r.status === statusFilter);
 			}
-			if (statusFilter === "all") {
-				return results;
+
+			// Apply severity filter if on Failed tab and not "all"
+			if (statusFilter === "fail" && severityFilter !== "all") {
+				filtered = filtered.filter(r => getSeverity(r) === severityFilter);
 			}
-			return results.filter(r => r.status === statusFilter);
+
+			// Apply search filter
+			if (ruleSearch.trim()) {
+				const searchLower = ruleSearch.toLowerCase().trim();
+				filtered = filtered.filter(r =>
+					getTitle(r).toLowerCase().includes(searchLower) ||
+					getRuleId(r).toLowerCase().includes(searchLower)
+				);
+			}
+
+			return filtered;
 		};
 
 		const currentFilteredResults = getFilteredResults();
@@ -964,7 +1014,13 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 								return (
 									<button
 										key={tab.id}
-										onClick={() => setStatusFilter(tab.id)}
+										onClick={() => {
+											setStatusFilter(tab.id);
+											// Reset severity filter when switching tabs
+											if (tab.id !== "fail") {
+												setSeverityFilter("all");
+											}
+										}}
 										className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
 											isActive
 												? `${tab.color} border-current bg-secondary-700/50`
@@ -981,6 +1037,54 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 									</button>
 								);
 							})}
+						</div>
+
+						{/* Severity subtabs - only show for Failed tab */}
+						{statusFilter === "fail" && (
+							<div className="flex items-center gap-2 px-4 py-2 border-b border-secondary-700 bg-secondary-750">
+								<span className="text-xs text-secondary-400 mr-2">Severity:</span>
+								{severitySubtabs.map((tab) => {
+									const isActive = severityFilter === tab.id;
+									return (
+										<button
+											key={tab.id}
+											onClick={() => setSeverityFilter(tab.id)}
+											className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${
+												isActive
+													? `bg-secondary-600 ${tab.color || "text-white"}`
+													: "text-secondary-400 hover:text-secondary-200 hover:bg-secondary-700"
+											}`}
+										>
+											{tab.label}
+											{tab.count > 0 && (
+												<span className="ml-1 opacity-75">({tab.count})</span>
+											)}
+										</button>
+									);
+								})}
+							</div>
+						)}
+
+						{/* Search bar */}
+						<div className="px-4 py-2 border-b border-secondary-700">
+							<div className="relative">
+								<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400" />
+								<input
+									type="text"
+									placeholder="Search rules by title or ID..."
+									value={ruleSearch}
+									onChange={(e) => setRuleSearch(e.target.value)}
+									className="w-full pl-10 pr-4 py-2 bg-secondary-700 border border-secondary-600 rounded-lg text-sm text-white placeholder-secondary-400 focus:outline-none focus:border-primary-500"
+								/>
+								{ruleSearch && (
+									<button
+										onClick={() => setRuleSearch("")}
+										className="absolute right-3 top-1/2 transform -translate-y-1/2 text-secondary-400 hover:text-white"
+									>
+										<XCircle className="h-4 w-4" />
+									</button>
+								)}
+							</div>
 						</div>
 
 						{/* Results List */}
