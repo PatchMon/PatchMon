@@ -34,4 +34,7 @@ export const complianceAPI = {
 	// Get compliance integration status (scanner info, components)
 	getIntegrationStatus: (hostId) =>
 		api.get(`/hosts/${hostId}/integrations/compliance/status`),
+
+	// Upgrade SSG content packages on the agent
+	upgradeSSG: (hostId) => api.post(`/compliance/upgrade-ssg/${hostId}`),
 };

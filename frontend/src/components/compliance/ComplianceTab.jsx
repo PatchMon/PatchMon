@@ -93,6 +93,26 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 		},
 	});
 
+	// SSG upgrade mutation
+	const [ssgUpgradeMessage, setSSGUpgradeMessage] = useState(null);
+	const ssgUpgradeMutation = useMutation({
+		mutationFn: () => complianceAPI.upgradeSSG(hostId),
+		onSuccess: () => {
+			setSSGUpgradeMessage({ type: "success", text: "SSG upgrade command sent! Packages will be upgraded shortly." });
+			setTimeout(() => {
+				setSSGUpgradeMessage(null);
+				refetchStatus(); // Refresh to get new version
+			}, 5000);
+		},
+		onError: (error) => {
+			setSSGUpgradeMessage({
+				type: "error",
+				text: error.response?.data?.error || "Failed to send SSG upgrade command"
+			});
+			setTimeout(() => setSSGUpgradeMessage(null), 5000);
+		},
+	});
+
 	// Poll for scan completion when scan is in progress
 	useEffect(() => {
 		let pollInterval;
@@ -899,6 +919,47 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 												{info?.content_file || "N/A"}
 											</span>
 										</div>
+										{info?.ssg_version && (
+											<div className="flex justify-between">
+												<span className="text-secondary-400">SSG Version</span>
+												<span className={`font-mono text-xs ${info?.ssg_needs_upgrade ? "text-yellow-400" : "text-secondary-300"}`}>
+													{info.ssg_version}{info?.ssg_needs_upgrade && ` (min: ${info.ssg_min_version})`}
+												</span>
+											</div>
+										)}
+										{info?.ssg_needs_upgrade && (
+											<div className="mt-3 p-2 bg-yellow-600/20 border border-yellow-600/40 rounded-lg">
+												<p className="text-yellow-400 text-xs mb-2">
+													{info.ssg_upgrade_message || "SSG content upgrade recommended"}
+												</p>
+												<button
+													onClick={() => ssgUpgradeMutation.mutate()}
+													disabled={ssgUpgradeMutation.isPending}
+													className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-yellow-600/30 hover:bg-yellow-600/50 text-yellow-300 text-xs rounded transition-colors disabled:opacity-50"
+												>
+													{ssgUpgradeMutation.isPending ? (
+														<>
+															<RefreshCw className="h-3 w-3 animate-spin" />
+															Upgrading...
+														</>
+													) : (
+														<>
+															<Download className="h-3 w-3" />
+															Upgrade SSG Content
+														</>
+													)}
+												</button>
+											</div>
+										)}
+										{ssgUpgradeMessage && (
+											<div className={`mt-2 p-2 rounded text-xs ${
+												ssgUpgradeMessage.type === "success"
+													? "bg-green-600/20 text-green-400 border border-green-600/40"
+													: "bg-red-600/20 text-red-400 border border-red-600/40"
+											}`}>
+												{ssgUpgradeMessage.text}
+											</div>
+										)}
 									</div>
 								</div>
 

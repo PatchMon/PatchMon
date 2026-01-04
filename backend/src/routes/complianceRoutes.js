@@ -559,6 +559,50 @@ router.post("/trigger/:hostId", async (req, res) => {
 });
 
 /**
+ * POST /api/v1/compliance/upgrade-ssg/:hostId
+ * Trigger SSG content package upgrade on the agent
+ */
+router.post("/upgrade-ssg/:hostId", async (req, res) => {
+  try {
+    const { hostId } = req.params;
+
+    // Validate hostId
+    if (!isValidUUID(hostId)) {
+      return res.status(400).json({ error: "Invalid host ID format" });
+    }
+
+    const host = await prisma.hosts.findUnique({
+      where: { id: hostId },
+    });
+
+    if (!host) {
+      return res.status(404).json({ error: "Host not found" });
+    }
+
+    // Use agentWs service to send SSG upgrade command
+    const agentWs = require("../services/agentWs");
+
+    if (!agentWs.isConnected(host.api_id)) {
+      return res.status(400).json({ error: "Host is not connected" });
+    }
+
+    const success = agentWs.pushUpgradeSSG(host.api_id);
+
+    if (success) {
+      res.json({
+        message: "SSG upgrade command sent",
+        host_id: hostId,
+      });
+    } else {
+      res.status(400).json({ error: "Failed to send SSG upgrade command" });
+    }
+  } catch (error) {
+    console.error("[Compliance] Error triggering SSG upgrade:", error);
+    res.status(500).json({ error: "Failed to trigger SSG upgrade" });
+  }
+});
+
+/**
  * GET /api/v1/compliance/trends/:hostId
  * Get compliance score trends over time
  */

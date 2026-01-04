@@ -315,6 +315,16 @@ function pushComplianceScan(apiId, profileType = "all", options = {}) {
 	return false;
 }
 
+function pushUpgradeSSG(apiId) {
+	const ws = apiIdToSocket.get(apiId);
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		safeSend(ws, JSON.stringify({ type: "upgrade_ssg" }));
+		console.log(`[agent-ws] Triggered SSG upgrade for ${apiId}`);
+		return true;
+	}
+	return false;
+}
+
 function pushUpdateNotification(apiId, updateInfo) {
 	const ws = apiIdToSocket.get(apiId);
 	if (ws && ws.readyState === WebSocket.OPEN) {
@@ -503,6 +513,7 @@ module.exports = {
 	pushUpdateNotification,
 	pushUpdateNotificationToAll,
 	pushComplianceScan,
+	pushUpgradeSSG,
 	// Expose read-only view of connected agents
 	getConnectedApiIds: () => Array.from(apiIdToSocket.keys()),
 	getConnectionByApiId,
