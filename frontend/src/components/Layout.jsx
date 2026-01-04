@@ -810,15 +810,13 @@ const Layout = ({ children }) => {
 				</button>
 
 				<div
-					className={`flex grow flex-col gap-y-5 border-r border-secondary-200 dark:border-white/10 bg-white ${
+					className={`flex grow flex-col border-r border-secondary-200 dark:border-white/10 bg-white ${
 						sidebarCollapsed ? "px-2 shadow-lg" : "px-6"
 					}`}
 					style={{
 						backgroundColor: "var(--sidebar-bg, white)",
 						backdropFilter: "var(--sidebar-blur, none)",
 						WebkitBackdropFilter: "var(--sidebar-blur, none)",
-						overflowY: "auto",
-						overflowX: "visible",
 					}}
 				>
 					<div
@@ -840,7 +838,7 @@ const Layout = ({ children }) => {
 							</Link>
 						)}
 					</div>
-					<nav className="flex flex-1 flex-col">
+					<nav className="flex flex-1 flex-col overflow-y-auto overflow-x-hidden py-4">
 						<ul className="flex flex-1 flex-col gap-y-6">
 							{/* Show message for users with very limited permissions */}
 							{navigation.length === 0 && settingsNavigation.length === 0 && (
@@ -1063,7 +1061,7 @@ const Layout = ({ children }) => {
 					</nav>
 
 					{/* Profile Section - Bottom of Sidebar */}
-					<div className="border-t border-secondary-200 dark:border-secondary-600">
+					<div className="border-t border-secondary-200 dark:border-secondary-600 shrink-0 pb-2">
 						{!sidebarCollapsed ? (
 							<div>
 								{/* User Info with Sign Out - Username is clickable */}

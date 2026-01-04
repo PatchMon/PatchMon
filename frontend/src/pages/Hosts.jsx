@@ -21,6 +21,7 @@ import {
 	RotateCcw,
 	Search,
 	Server,
+	Shield,
 	Square,
 	Trash2,
 	Wifi,
@@ -46,6 +47,7 @@ const AddHostModal = ({ isOpen, onClose, onSuccess }) => {
 		friendly_name: "",
 		hostGroupIds: [], // Changed to array for multiple selection
 		docker_enabled: false, // Integration states
+		compliance_enabled: false,
 	});
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState("");
@@ -70,6 +72,7 @@ const AddHostModal = ({ isOpen, onClose, onSuccess }) => {
 				friendly_name: "",
 				hostGroupIds: [],
 				docker_enabled: false,
+				compliance_enabled: false,
 			});
 			setIntegrationsExpanded(false);
 			onClose();
@@ -237,6 +240,34 @@ const AddHostModal = ({ isOpen, onClose, onSuccess }) => {
 											setFormData({
 												...formData,
 												docker_enabled: e.target.checked,
+											})
+										}
+										className="w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+									/>
+								</label>
+
+								{/* Compliance Integration */}
+								<label className="flex items-center justify-between p-3 border-2 rounded-lg transition-all duration-200 cursor-pointer bg-white dark:bg-secondary-700 hover:border-secondary-400 dark:hover:border-secondary-500 border-secondary-300 dark:border-secondary-600">
+									<div className="flex items-center gap-3">
+										<div className="flex-shrink-0">
+											<Shield className="h-5 w-5 text-secondary-600 dark:text-secondary-400" />
+										</div>
+										<div>
+											<div className="text-sm font-medium text-secondary-700 dark:text-secondary-200">
+												Compliance Integration
+											</div>
+											<div className="text-xs text-secondary-500 dark:text-secondary-400">
+												Enable compliance scanning and reporting for this host
+											</div>
+										</div>
+									</div>
+									<input
+										type="checkbox"
+										checked={formData.compliance_enabled}
+										onChange={(e) =>
+											setFormData({
+												...formData,
+												compliance_enabled: e.target.checked,
 											})
 										}
 										className="w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
