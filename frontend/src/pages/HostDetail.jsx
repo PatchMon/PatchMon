@@ -44,7 +44,8 @@ import {
 	repositoryAPI,
 	settingsAPI,
 } from "../utils/api";
-import { OSIcon } from "../utils/osIcons.jsx";
+// import { OSIcon } from "../utils/osIcons.jsx"; // temporarily disabled
+const OSIcon = ({ osType, className }) => <span className={className}>{osType?.slice(0,3) || "?"}</span>;
 
 const HostDetail = () => {
 	const { hostId } = useParams();
