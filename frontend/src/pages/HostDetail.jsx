@@ -34,7 +34,8 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 // import ComplianceTab from "../components/compliance/ComplianceTab"; // temporarily disabled
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
-import SshTerminal from "../components/SshTerminal";
+// import SshTerminal from "../components/SshTerminal"; // temporarily disabled
+const SshTerminal = () => <div className="p-4 text-secondary-400">SSH disabled</div>;
 import {
 	adminHostsAPI,
 	dashboardAPI,
