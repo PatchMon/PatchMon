@@ -1141,9 +1141,29 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 					<ul className="text-sm text-yellow-200/80 space-y-1 list-disc list-inside">
 						<li>If scans show all "N/A" results, the SCAP content may not match your OS version</li>
 						<li>Try disabling and re-enabling compliance to upgrade packages</li>
-						<li>Ubuntu 24.04 requires ssg-base version 0.1.76 or higher</li>
 						<li>Docker Bench requires Docker integration to be enabled first</li>
 					</ul>
+				</div>
+
+				{/* Ubuntu 24.04 Notice */}
+				<div className="bg-blue-900/20 border border-blue-800/50 rounded-lg p-4">
+					<h4 className="text-blue-300 font-medium flex items-center gap-2 mb-2">
+						<Info className="h-4 w-4" />
+						Ubuntu 24.04 Users
+					</h4>
+					<div className="text-sm text-blue-200/80 space-y-2">
+						<p>
+							<strong>Important:</strong> CIS Benchmarks and DISA STIGs for Ubuntu 24.04 (Noble Numbat)
+							are not yet publicly available. The SCAP Security Guide content is in draft/beta state.
+						</p>
+						<p>
+							Scans may show "not applicable" results. For production compliance needs, consider:
+						</p>
+						<ul className="list-disc list-inside ml-2 space-y-1">
+							<li><strong>Canonical's Ubuntu Security Guide (USG)</strong> - Available with Ubuntu Pro subscription</li>
+							<li><strong>OVAL Vulnerability Scanning</strong> - Free CVE content available from Canonical</li>
+						</ul>
+					</div>
 				</div>
 			</div>
 		);
