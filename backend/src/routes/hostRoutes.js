@@ -434,6 +434,10 @@ router.post(
 			.optional()
 			.isBoolean()
 			.withMessage("Docker enabled must be a boolean"),
+		body("compliance_enabled")
+			.optional()
+			.isBoolean()
+			.withMessage("Compliance enabled must be a boolean"),
 	],
 	async (req, res) => {
 		try {
@@ -442,7 +446,7 @@ router.post(
 				return res.status(400).json({ errors: errors.array() });
 			}
 
-			const { friendly_name, hostGroupIds, docker_enabled } = req.body;
+			const { friendly_name, hostGroupIds, docker_enabled, compliance_enabled } = req.body;
 
 			// Generate unique API credentials for this host
 			// apiKey is plaintext (shown to admin once), apiKeyHash is stored in DB
@@ -476,6 +480,7 @@ router.post(
 					api_key: apiKeyHash, // Store hash, not plaintext
 					status: "pending", // Will change to 'active' when agent connects
 					docker_enabled: docker_enabled ?? false, // Set integration state if provided
+					compliance_enabled: compliance_enabled ?? false, // Set compliance integration state if provided
 					updated_at: new Date(),
 					// Create host group memberships if hostGroupIds are provided
 					host_group_memberships:
