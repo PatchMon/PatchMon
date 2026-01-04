@@ -252,6 +252,49 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 	// Render Overview subtab
 	const renderOverview = () => (
 		<div className="space-y-6">
+			{/* Version Mismatch Warnings */}
+			{scannerInfo?.content_mismatch && (
+				<div className="p-4 rounded-lg bg-orange-900/30 border border-orange-700 text-orange-200">
+					<div className="flex items-start gap-3">
+						<AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" />
+						<div className="flex-1">
+							<p className="font-medium">Content Version Mismatch</p>
+							<p className="text-sm text-orange-300/80 mt-1">
+								{scannerInfo.mismatch_warning || "SCAP content may not match your OS version. Results may show many N/A rules."}
+							</p>
+						</div>
+						<button
+							onClick={() => setActiveSubtab("settings")}
+							className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-600/30 hover:bg-orange-600/50 text-orange-200 text-sm rounded-lg transition-colors"
+						>
+							<Settings className="h-4 w-4" />
+							Update
+						</button>
+					</div>
+				</div>
+			)}
+
+			{scannerInfo?.ssg_needs_upgrade && !scannerInfo?.content_mismatch && (
+				<div className="p-4 rounded-lg bg-yellow-900/30 border border-yellow-700 text-yellow-200">
+					<div className="flex items-start gap-3">
+						<AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" />
+						<div className="flex-1">
+							<p className="font-medium">SSG Content Update Available</p>
+							<p className="text-sm text-yellow-300/80 mt-1">
+								{scannerInfo.ssg_upgrade_message || `Current version ${scannerInfo.ssg_version} is below minimum ${scannerInfo.ssg_min_version}. Update recommended for accurate compliance results.`}
+							</p>
+						</div>
+						<button
+							onClick={() => setActiveSubtab("settings")}
+							className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-600/30 hover:bg-yellow-600/50 text-yellow-200 text-sm rounded-lg transition-colors"
+						>
+							<Download className="h-4 w-4" />
+							Update
+						</button>
+					</div>
+				</div>
+			)}
+
 			{/* Latest Scan Summary */}
 			{latestScan ? (
 				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
