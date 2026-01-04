@@ -25,7 +25,6 @@ import {
 	BookOpen,
 } from "lucide-react";
 import { complianceAPI } from "../../utils/complianceApi";
-import { hostsAPI } from "../../utils/api";
 import ComplianceScore from "./ComplianceScore";
 
 // Lazy load ComplianceTrend to avoid recharts bundling issues
@@ -77,24 +76,27 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 		refetchInterval: 30000, // Refresh every 30 seconds
 	});
 
-	// Agent update mutation
+	// SSG content update mutation
 	const [updateMessage, setUpdateMessage] = useState(null);
-	const agentUpdateMutation = useMutation({
+	const ssgUpdateMutation = useMutation({
 		mutationFn: () => {
 			if (!hostId) {
 				return Promise.reject(new Error("No host ID available"));
 			}
-			return hostsAPI.forceAgentUpdate(hostId);
+			return complianceAPI.upgradeSSG(hostId);
 		},
 		onSuccess: () => {
-			setUpdateMessage({ type: "success", text: "Update command sent! Agent will update shortly." });
-			setTimeout(() => setUpdateMessage(null), 5000);
+			setUpdateMessage({ type: "success", text: "SSG update command sent! Security content will be updated shortly." });
+			setTimeout(() => {
+				setUpdateMessage(null);
+				refetchStatus();
+			}, 5000);
 		},
 		onError: (error) => {
-			console.error("Agent update error:", error);
+			console.error("SSG update error:", error);
 			const errorMsg = error.response?.data?.error
 				|| error.message
-				|| "Failed to send update command";
+				|| "Failed to send SSG update command";
 			setUpdateMessage({
 				type: "error",
 				text: errorMsg
@@ -1260,15 +1262,16 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 					</div>
 				</div>
 
-				{/* Agent Update */}
+				{/* SSG Security Content Update */}
 				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
 					<h3 className="text-lg font-medium text-white flex items-center gap-2 mb-4">
 						<Download className="h-5 w-5 text-primary-400" />
-						Agent Update
+						Security Content Update
 					</h3>
 					<div className="space-y-4">
 						<p className="text-sm text-secondary-300">
-							Force the agent to check for and download the latest version from GitHub.
+							Download the latest SCAP Security Guide (SSG) content from GitHub.
+							This updates compliance rules, benchmarks, and remediation scripts.
 						</p>
 						{updateMessage && (
 							<div className={`p-3 rounded-lg ${
@@ -1280,25 +1283,25 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 							</div>
 						)}
 						<button
-							onClick={() => agentUpdateMutation.mutate()}
-							disabled={!isConnected || agentUpdateMutation.isPending}
+							onClick={() => ssgUpdateMutation.mutate()}
+							disabled={!isConnected || ssgUpdateMutation.isPending}
 							className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
 								!isConnected
 									? "bg-secondary-700 text-secondary-500 cursor-not-allowed"
-									: agentUpdateMutation.isPending
+									: ssgUpdateMutation.isPending
 									? "bg-primary-600/50 text-white cursor-wait"
 									: "bg-primary-600 hover:bg-primary-500 text-white"
 							}`}
 						>
-							{agentUpdateMutation.isPending ? (
+							{ssgUpdateMutation.isPending ? (
 								<RefreshCw className="h-4 w-4 animate-spin" />
 							) : (
 								<Download className="h-4 w-4" />
 							)}
-							{agentUpdateMutation.isPending ? "Sending Update Command..." : "Update Agent Now"}
+							{ssgUpdateMutation.isPending ? "Updating Security Content..." : "Update SSG Content"}
 						</button>
 						{!isConnected && (
-							<p className="text-xs text-secondary-500">Agent must be connected to trigger updates</p>
+							<p className="text-xs text-secondary-500">Agent must be connected to update security content</p>
 						)}
 					</div>
 				</div>
