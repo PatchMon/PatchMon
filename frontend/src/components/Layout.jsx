@@ -787,7 +787,7 @@ const Layout = ({ children }) => {
 			{/* Desktop sidebar */}
 			<div
 				className={`hidden lg:fixed lg:inset-y-0 lg:top-0 lg:bottom-0 z-[100] lg:flex lg:flex-col transition-all duration-300 ${
-					sidebarCollapsed ? "lg:w-16" : "lg:w-56"
+					sidebarCollapsed ? "lg:w-16" : "lg:w-64"
 				} bg-white dark:bg-transparent overflow-hidden`}
 			>
 				{/* Collapse/Expand button on border */}
@@ -1100,7 +1100,7 @@ const Layout = ({ children }) => {
 												>
 													{user?.first_name || user?.username}
 												</span>
-												{user?.role === "admin" && (
+												{(user?.role === "admin" || user?.role === "superadmin") && (
 													<span
 														className={`text-xs leading-4 ${
 															isActive("/settings/profile")
@@ -1108,7 +1108,7 @@ const Layout = ({ children }) => {
 																: "text-secondary-500 dark:text-secondary-400"
 														}`}
 													>
-														Role: Admin
+														{user?.role === "superadmin" ? "Super Admin" : "Admin"}
 													</span>
 												)}
 											</div>
@@ -1210,7 +1210,7 @@ const Layout = ({ children }) => {
 			{/* Main content */}
 			<div
 				className={`flex flex-col min-h-screen transition-all duration-300 relative z-10 ${
-					sidebarCollapsed ? "lg:pl-16" : "lg:pl-56"
+					sidebarCollapsed ? "lg:pl-16" : "lg:pl-64"
 				}`}
 			>
 				{/* Top bar */}
