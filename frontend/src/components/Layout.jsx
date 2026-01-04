@@ -154,21 +154,8 @@ const Layout = ({ children }) => {
 				icon: RefreshCw,
 			});
 
-			// Add Compliance item (available to all users with inventory access)
-			inventoryItems.push({
-				name: "Compliance",
-				href: "/compliance",
-				icon: Shield,
-			});
-
 			if (canViewReports()) {
 				inventoryItems.push(
-					{
-						name: "Docker",
-						href: "/docker",
-						icon: Container,
-						beta: true,
-					},
 					{
 						name: "Services",
 						href: "/services",
@@ -196,6 +183,33 @@ const Layout = ({ children }) => {
 				nav.push({
 					section: "Inventory",
 					items: inventoryItems,
+				});
+			}
+
+			// Integrations section - Docker, Compliance, etc.
+			const integrationItems = [];
+
+			// Add Docker item
+			if (canViewReports()) {
+				integrationItems.push({
+					name: "Docker",
+					href: "/docker",
+					icon: Container,
+					beta: true,
+				});
+			}
+
+			// Add Compliance item
+			integrationItems.push({
+				name: "Compliance",
+				href: "/compliance",
+				icon: Shield,
+			});
+
+			if (integrationItems.length > 0) {
+				nav.push({
+					section: "Integrations",
+					items: integrationItems,
 				});
 			}
 		}
