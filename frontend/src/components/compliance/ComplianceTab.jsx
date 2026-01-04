@@ -1739,7 +1739,7 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 					</h3>
 					<div className="space-y-4 text-sm text-secondary-300">
 						<p>
-							PatchMon uses industry-standard compliance scanning tools to evaluate your
+							PatchMonEnhanced uses industry-standard compliance scanning tools to evaluate your
 							systems against security benchmarks.
 						</p>
 						<div className="grid grid-cols-1 md:grid-cols-2 gap-4">

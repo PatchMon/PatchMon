@@ -700,7 +700,7 @@ const Integrations = () => {
 												</h4>
 											</div>
 											<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-3">
-												Programmatic access to PatchMon data with granular
+												Programmatic access to PatchMonEnhanced data with granular
 												scope-based permissions.
 											</p>
 											<a
@@ -732,7 +732,7 @@ const Integrations = () => {
 												GetHomepage Widget Integration
 											</h3>
 											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-												Create API keys to display PatchMon statistics in your
+												Create API keys to display PatchMonEnhanced statistics in your
 												GetHomepage dashboard
 											</p>
 										</div>
@@ -991,7 +991,7 @@ const Integrations = () => {
 											Docker Inventory Collection
 										</h3>
 										<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-											Docker monitoring is now built into the PatchMon Go agent
+											Docker monitoring is now built into the PatchMonEnhanced Go agent
 										</p>
 									</div>
 								</div>
@@ -1005,7 +1005,7 @@ const Integrations = () => {
 												Automatic Docker Discovery
 											</h4>
 											<p className="text-xs md:text-sm text-primary-800 dark:text-primary-300 mb-3">
-												The PatchMon Go agent automatically discovers Docker
+												The PatchMonEnhanced Go agent automatically discovers Docker
 												when it's available on your host and collects
 												comprehensive inventory information:
 											</p>
@@ -1042,7 +1042,7 @@ const Integrations = () => {
 									</h4>
 									<ol className="list-decimal list-inside space-y-3 text-xs md:text-sm text-secondary-700 dark:text-secondary-300">
 										<li>
-											Install the PatchMon Go agent on your host (see the Hosts
+											Install the PatchMonEnhanced Go agent on your host (see the Hosts
 											page for installation instructions)
 										</li>
 										<li>
@@ -1051,7 +1051,7 @@ const Integrations = () => {
 										</li>
 										<li>
 											During each collection cycle, the agent gathers Docker
-											inventory data and sends it to the PatchMon server
+											inventory data and sends it to the PatchMonEnhanced server
 										</li>
 										<li>
 											View your complete Docker inventory (containers, images,
@@ -1095,7 +1095,7 @@ const Integrations = () => {
 										<div className="text-xs md:text-sm text-blue-800 dark:text-blue-200">
 											<p className="font-semibold mb-2">Requirements:</p>
 											<ul className="list-disc list-inside space-y-1 ml-2">
-												<li>PatchMon Go agent must be installed and running</li>
+												<li>PatchMonEnhanced Go agent must be installed and running</li>
 												<li>Docker daemon must be installed and running</li>
 												<li>
 													Agent must have access to the Docker socket (
@@ -1128,7 +1128,7 @@ const Integrations = () => {
 											Compliance Scanning
 										</h3>
 										<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-											Security compliance scanning is built into the PatchMon Go agent
+											Security compliance scanning is built into the PatchMonEnhanced Go agent
 										</p>
 									</div>
 								</div>
@@ -1142,7 +1142,7 @@ const Integrations = () => {
 												Automatic Security Compliance Scanning
 											</h4>
 											<p className="text-xs md:text-sm text-primary-800 dark:text-primary-300 mb-3">
-												The PatchMon Go agent includes built-in compliance scanning
+												The PatchMonEnhanced Go agent includes built-in compliance scanning
 												capabilities that automatically assess your hosts against
 												industry security benchmarks:
 											</p>
@@ -1179,7 +1179,7 @@ const Integrations = () => {
 									</h4>
 									<ol className="list-decimal list-inside space-y-3 text-xs md:text-sm text-secondary-700 dark:text-secondary-300">
 										<li>
-											Install the PatchMon Go agent on your host (see the Hosts
+											Install the PatchMonEnhanced Go agent on your host (see the Hosts
 											page for installation instructions)
 										</li>
 										<li>
@@ -1188,7 +1188,7 @@ const Integrations = () => {
 										</li>
 										<li>
 											Compliance scans run periodically and results are sent to
-											the PatchMon server
+											the PatchMonEnhanced server
 										</li>
 										<li>
 											View compliance scores, failing rules, and remediation
@@ -1266,7 +1266,7 @@ const Integrations = () => {
 										<div className="text-xs md:text-sm text-blue-800 dark:text-blue-200">
 											<p className="font-semibold mb-2">Requirements:</p>
 											<ul className="list-disc list-inside space-y-1 ml-2">
-												<li>PatchMon Go agent must be installed and running</li>
+												<li>PatchMonEnhanced Go agent must be installed and running</li>
 												<li>
 													For OpenSCAP:{" "}
 													<code className="bg-blue-100 dark:bg-blue-900/40 px-1 py-0.5 rounded text-xs">

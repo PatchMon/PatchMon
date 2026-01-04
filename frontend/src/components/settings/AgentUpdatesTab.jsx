@@ -489,7 +489,7 @@ const AgentUpdatesTab = () => {
 							Agent Uninstall Command
 						</h3>
 						<div className="mt-2 text-sm text-red-700 dark:text-red-300">
-							<p className="mb-3">To completely remove PatchMon from a host:</p>
+							<p className="mb-3">To completely remove PatchMonEnhanced from a host:</p>
 
 							{/* Agent Removal Script - Standard */}
 							<div className="mb-3">

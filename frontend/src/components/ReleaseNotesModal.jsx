@@ -266,7 +266,7 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 										</h2>
 										<div className="space-y-4 text-sm text-secondary-600 dark:text-secondary-300 leading-relaxed">
 											<p>
-												PatchMon wouldn't be what it is today without the
+												PatchMonEnhanced wouldn't be what it is today without the
 												incredible support the community has shown over the last
 												3 months.
 											</p>
@@ -282,12 +282,12 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 										<div className="space-y-3">
 											<h3 className="text-base font-medium text-secondary-900 dark:text-white">
 												{isCloudVersion
-													? "Upgrade Your PatchMon Cloud Experience"
-													: "Do you find PatchMon useful?"}
+													? "Upgrade Your PatchMonEnhanced Cloud Experience"
+													: "Do you find PatchMonEnhanced useful?"}
 											</h3>
 											<p className="text-sm text-secondary-600 dark:text-secondary-300 leading-relaxed">
 												{isCloudVersion
-													? "Join as a member to unlock premium features like isolated resources, custom domains, priority support, and more. Help support the project while getting enhanced capabilities for your PatchMon Cloud instance."
+													? "Join as a member to unlock premium features like isolated resources, custom domains, priority support, and more. Help support the project while getting enhanced capabilities for your PatchMonEnhanced Cloud instance."
 													: "Please consider supporting the project to keep the project OpenSource to help me maintain the infrastructure and develop new features."}
 											</p>
 										</div>

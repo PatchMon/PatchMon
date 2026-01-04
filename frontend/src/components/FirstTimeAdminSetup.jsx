@@ -202,7 +202,7 @@ const FirstTimeAdminSetup = () => {
 							</div>
 						</div>
 						<h1 className="text-2xl font-bold text-secondary-900 dark:text-white mb-2">
-							Welcome to PatchMon
+							Welcome to PatchMonEnhanced
 						</h1>
 						<p className="text-secondary-600 dark:text-secondary-300">
 							Let's set up your admin account to get started

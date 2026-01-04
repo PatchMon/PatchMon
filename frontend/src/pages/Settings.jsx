@@ -516,7 +516,7 @@ const Settings = () => {
 
 			<div className="mb-8">
 				<p className="text-secondary-600 dark:text-secondary-300">
-					Configure your PatchMon server settings. These settings will be used
+					Configure your PatchMonEnhanced server settings. These settings will be used
 					in installation scripts and agent communications.
 				</p>
 			</div>
@@ -679,7 +679,7 @@ const Settings = () => {
 									</h3>
 								</div>
 								<p className="text-sm text-secondary-500 dark:text-secondary-300 mb-4">
-									Customize your PatchMon installation with custom logos and
+									Customize your PatchMonEnhanced installation with custom logos and
 									favicon.
 								</p>
 
@@ -1041,7 +1041,7 @@ const Settings = () => {
 										</h2>
 									</div>
 									<p className="text-sm text-secondary-500 dark:text-secondary-300">
-										Manage the PatchMon agent script file used for installations
+										Manage the PatchMonEnhanced agent script file used for installations
 										and updates
 									</p>
 								</div>
@@ -1168,7 +1168,7 @@ const Settings = () => {
 												</h3>
 												<div className="mt-2 text-sm text-red-700 dark:text-red-300">
 													<p className="mb-3">
-														To completely remove PatchMon from a host:
+														To completely remove PatchMonEnhanced from a host:
 													</p>
 
 													{/* Agent Removal Script - Standard */}
@@ -1723,7 +1723,7 @@ const AgentUploadModal = ({ isOpen, onClose, onSubmit, isLoading, error }) => {
 								}}
 								rows={15}
 								className="block w-full border border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white font-mono text-sm"
-								placeholder="#!/bin/bash&#10;&#10;# PatchMon Agent Script&#10;VERSION=&quot;1.0.0&quot;&#10;&#10;# Your script content here..."
+								placeholder="#!/bin/bash&#10;&#10;# PatchMonEnhanced Agent Script&#10;VERSION=&quot;1.0.0&quot;&#10;&#10;# Your script content here..."
 							/>
 						</div>
 

@@ -633,7 +633,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 										{showInstallCommands && (
 											<div className="absolute right-0 top-full mt-1 bg-secondary-800 border border-secondary-600 rounded-lg shadow-lg z-50 w-96 p-3" data-install-commands>
 												<div className="text-xs font-medium text-white mb-2">
-													{host?.agent_version ? "Reinstall PatchMon Agent" : "Install PatchMon Agent"}
+													{host?.agent_version ? "Reinstall PatchMonEnhanced Agent" : "Install PatchMonEnhanced Agent"}
 												</div>
 												<div className="flex gap-1">
 													<code className="flex-1 px-2 py-1 text-xs bg-secondary-900 text-secondary-200 rounded border border-secondary-700 font-mono break-all">

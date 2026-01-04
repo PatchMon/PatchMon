@@ -206,7 +206,7 @@ const HostDetail = () => {
 		},
 	});
 
-	// Toggle agent auto-update mutation (updates PatchMon agent script, not system packages)
+	// Toggle agent auto-update mutation (updates PatchMonEnhanced agent script, not system packages)
 	const toggleAutoUpdateMutation = useMutation({
 		mutationFn: (auto_update) =>
 			adminHostsAPI

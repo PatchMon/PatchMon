@@ -544,7 +544,7 @@ const Login = () => {
 								<div>
 									<img
 										src="/assets/logo_dark.png"
-										alt="PatchMon"
+										alt="PatchMonEnhanced"
 										className="h-16 mb-4"
 									/>
 									<p className="text-sm text-blue-200 font-medium tracking-wide uppercase">
@@ -747,12 +747,12 @@ const Login = () => {
 						<div className="mx-auto h-16 w-16 flex items-center justify-center">
 							<img
 								src="/assets/favicon.svg"
-								alt="PatchMon Logo"
+								alt="PatchMonEnhanced Logo"
 								className="h-16 w-16"
 							/>
 						</div>
 						<h2 className="mt-6 text-center text-3xl font-extrabold text-secondary-900 dark:text-secondary-100">
-							{isSignupMode ? "Create PatchMon Account" : "Sign in to PatchMon"}
+							{isSignupMode ? "Create PatchMonEnhanced Account" : "Sign in to PatchMonEnhanced"}
 						</h2>
 						<p className="mt-2 text-center text-sm text-secondary-600 dark:text-secondary-400">
 							Monitor and manage your Linux package updates
@@ -994,7 +994,7 @@ const Login = () => {
 								<div className="mx-auto h-16 w-16 flex items-center justify-center">
 									<img
 										src="/assets/favicon.svg"
-										alt="PatchMon Logo"
+										alt="PatchMonEnhanced Logo"
 										className="h-16 w-16"
 									/>
 								</div>
