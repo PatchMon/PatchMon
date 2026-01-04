@@ -171,20 +171,21 @@ model repositories {
 }
 
 model role_permissions {
-  id                  String   @id
-  role                String   @unique
-  can_view_dashboard  Boolean  @default(true)
-  can_view_hosts      Boolean  @default(true)
-  can_manage_hosts    Boolean  @default(false)
-  can_view_packages   Boolean  @default(true)
-  can_manage_packages Boolean  @default(false)
-  can_view_users      Boolean  @default(false)
-  can_manage_users    Boolean  @default(false)
-  can_view_reports    Boolean  @default(true)
-  can_export_data     Boolean  @default(false)
-  can_manage_settings Boolean  @default(false)
-  created_at          DateTime @default(now())
-  updated_at          DateTime
+  id                    String   @id
+  role                  String   @unique
+  can_view_dashboard    Boolean  @default(true)
+  can_view_hosts        Boolean  @default(true)
+  can_manage_hosts      Boolean  @default(false)
+  can_view_packages     Boolean  @default(true)
+  can_manage_packages   Boolean  @default(false)
+  can_view_users        Boolean  @default(false)
+  can_manage_users      Boolean  @default(false)
+  can_manage_superusers Boolean  @default(false)
+  can_view_reports      Boolean  @default(true)
+  can_export_data       Boolean  @default(false)
+  can_manage_settings   Boolean  @default(false)
+  created_at            DateTime @default(now())
+  updated_at            DateTime
 }
 
 model settings {

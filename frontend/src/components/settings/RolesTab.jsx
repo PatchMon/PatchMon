@@ -287,6 +287,12 @@ const RolePermissionsCard = ({
 			description: "Add, edit, and delete users",
 		},
 		{
+			key: "can_manage_superusers",
+			label: "Manage Superusers",
+			icon: Shield,
+			description: "Modify superadmin users",
+		},
+		{
 			key: "can_view_reports",
 			label: "View Reports",
 			icon: BarChart3,
@@ -449,6 +455,7 @@ const AddRoleModal = ({ isOpen, onClose, onSuccess }) => {
 		can_manage_packages: false,
 		can_view_users: false,
 		can_manage_users: false,
+		can_manage_superusers: false,
 		can_view_reports: true,
 		can_export_data: false,
 		can_manage_settings: false,
@@ -523,6 +530,7 @@ const AddRoleModal = ({ isOpen, onClose, onSuccess }) => {
 							{ key: "can_manage_packages", label: "Manage Packages" },
 							{ key: "can_view_users", label: "View Users" },
 							{ key: "can_manage_users", label: "Manage Users" },
+							{ key: "can_manage_superusers", label: "Manage Superusers" },
 							{ key: "can_view_reports", label: "View Reports" },
 							{ key: "can_export_data", label: "Export Data" },
 							{ key: "can_manage_settings", label: "Manage Settings" },

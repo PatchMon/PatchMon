@@ -26,6 +26,19 @@ const router = express.Router();
 const prisma = getPrismaClient();
 
 /**
+ * Check if a user has the can_manage_superusers permission
+ * @param {string} role - User's role
+ * @returns {Promise<boolean>} - Whether the user can manage superusers
+ */
+async function canManageSuperusers(role) {
+	const permissions = await prisma.role_permissions.findUnique({
+		where: { role },
+		select: { can_manage_superusers: true },
+	});
+	return permissions?.can_manage_superusers === true;
+}
+
+/**
  * Verify a backup code against stored hashes
  * @param {string} code - Plain text code to verify
  * @param {string[]} hashedCodes - Array of hashed codes
@@ -722,17 +735,18 @@ router.put(
 				return res.status(404).json({ error: "User not found" });
 			}
 
-			// Protect superadmin users from non-superadmin modifications
-			if (existingUser.role === "superadmin" && req.user.role !== "superadmin") {
+			// Protect superadmin users - check can_manage_superusers permission
+			const hasManageSuperusers = await canManageSuperusers(req.user.role);
+			if (existingUser.role === "superadmin" && !hasManageSuperusers) {
 				return res.status(403).json({
-					error: "Only superadmins can modify superadmin users",
+					error: "You do not have permission to modify superadmin users",
 				});
 			}
 
-			// Prevent non-superadmins from assigning superadmin role
-			if (role === "superadmin" && req.user.role !== "superadmin") {
+			// Prevent assigning superadmin role without permission
+			if (role === "superadmin" && !hasManageSuperusers) {
 				return res.status(403).json({
-					error: "Only superadmins can assign the superadmin role",
+					error: "You do not have permission to assign the superadmin role",
 				});
 			}
 
@@ -856,10 +870,11 @@ router.delete(
 				return res.status(404).json({ error: "User not found" });
 			}
 
-			// Protect superadmin users from non-superadmin deletion
-			if (user.role === "superadmin" && req.user.role !== "superadmin") {
+			// Protect superadmin users - check can_manage_superusers permission
+			const hasManageSuperusers = await canManageSuperusers(req.user.role);
+			if (user.role === "superadmin" && !hasManageSuperusers) {
 				return res.status(403).json({
-					error: "Only superadmins can delete superadmin users",
+					error: "You do not have permission to delete superadmin users",
 				});
 			}
 
@@ -959,10 +974,11 @@ router.post(
 				return res.status(404).json({ error: "User not found" });
 			}
 
-			// Protect superadmin users from non-superadmin password resets
-			if (user.role === "superadmin" && req.user.role !== "superadmin") {
+			// Protect superadmin users - check can_manage_superusers permission
+			const hasManageSuperusers = await canManageSuperusers(req.user.role);
+			if (user.role === "superadmin" && !hasManageSuperusers) {
 				return res.status(403).json({
-					error: "Only superadmins can reset superadmin passwords",
+					error: "You do not have permission to reset superadmin passwords",
 				});
 			}
 

@@ -16,10 +16,15 @@ router.get(
 	requireManageUsers,
 	async (_req, res) => {
 		try {
-			const permissions = await prisma.role_permissions.findMany({
-				orderBy: {
-					role: "asc",
-				},
+			const permissions = await prisma.role_permissions.findMany();
+
+			// Sort roles: superadmin first, then admin, then user, then others alphabetically
+			const roleOrder = { superadmin: 0, admin: 1, user: 2 };
+			permissions.sort((a, b) => {
+				const aOrder = roleOrder[a.role] ?? 999;
+				const bOrder = roleOrder[b.role] ?? 999;
+				if (aOrder !== bOrder) return aOrder - bOrder;
+				return a.role.localeCompare(b.role);
 			});
 
 			res.json(permissions);
@@ -71,6 +76,7 @@ router.put(
 				can_manage_packages,
 				can_view_users,
 				can_manage_users,
+				can_manage_superusers,
 				can_view_reports,
 				can_export_data,
 				can_manage_settings,
@@ -93,6 +99,7 @@ router.put(
 					can_manage_packages: can_manage_packages,
 					can_view_users: can_view_users,
 					can_manage_users: can_manage_users,
+					can_manage_superusers: can_manage_superusers,
 					can_view_reports: can_view_reports,
 					can_export_data: can_export_data,
 					can_manage_settings: can_manage_settings,
@@ -108,6 +115,7 @@ router.put(
 					can_manage_packages: can_manage_packages,
 					can_view_users: can_view_users,
 					can_manage_users: can_manage_users,
+					can_manage_superusers: can_manage_superusers,
 					can_view_reports: can_view_reports,
 					can_export_data: can_export_data,
 					can_manage_settings: can_manage_settings,
