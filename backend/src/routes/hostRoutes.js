@@ -3,6 +3,7 @@ const { getPrismaClient } = require("../config/prisma");
 const { body, validationResult } = require("express-validator");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("node:crypto");
+const bcrypt = require("bcryptjs");
 const { authenticateToken } = require("../middleware/auth");
 const {
 	requireManageHosts,
