@@ -26,4 +26,8 @@ export const complianceAPI = {
 	// Get compliance score trends
 	getTrends: (hostId, days = 30) =>
 		api.get(`/compliance/trends/${hostId}`, { params: { days } }),
+
+	// Get compliance integration status (scanner info, components)
+	getIntegrationStatus: (hostId) =>
+		api.get(`/hosts/${hostId}/integrations/compliance/status`),
 };

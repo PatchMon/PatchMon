@@ -15,6 +15,10 @@ import {
 	BarChart3,
 	ListChecks,
 	History,
+	Info,
+	Package,
+	Terminal,
+	Server,
 } from "lucide-react";
 import { complianceAPI } from "../../utils/complianceApi";
 import ComplianceScore from "./ComplianceScore";
@@ -35,6 +39,7 @@ const SUBTABS = [
 	{ id: "scan", name: "Run Scan", icon: Play },
 	{ id: "results", name: "Results", icon: ListChecks },
 	{ id: "history", name: "History", icon: History },
+	{ id: "settings", name: "Settings", icon: Settings },
 ];
 
 const ComplianceTab = ({ hostId, isConnected }) => {
@@ -56,6 +61,14 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 		queryKey: ["compliance-history", hostId],
 		queryFn: () => complianceAPI.getHostScans(hostId, { limit: 10 }).then((res) => res.data),
 		enabled: !!hostId,
+	});
+
+	// Get integration status (scanner info, components)
+	const { data: integrationStatus, refetch: refetchStatus } = useQuery({
+		queryKey: ["compliance-status", hostId],
+		queryFn: () => complianceAPI.getIntegrationStatus(hostId).then((res) => res.data),
+		enabled: !!hostId,
+		refetchInterval: 30000, // Refresh every 30 seconds
 	});
 
 	// Poll for scan completion when scan is in progress
@@ -628,6 +641,183 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 		</div>
 	);
 
+	// Render Settings subtab
+	const renderSettings = () => {
+		const status = integrationStatus?.status;
+		const components = status?.components || {};
+
+		return (
+			<div className="space-y-6">
+				{/* Scanner Status */}
+				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
+					<div className="flex items-center justify-between mb-4">
+						<h3 className="text-lg font-medium text-white flex items-center gap-2">
+							<Terminal className="h-5 w-5 text-primary-400" />
+							Scanner Status
+						</h3>
+						<button
+							onClick={() => refetchStatus()}
+							className="p-2 hover:bg-secondary-700 rounded-lg transition-colors"
+							title="Refresh status"
+						>
+							<RefreshCw className="h-4 w-4 text-secondary-400" />
+						</button>
+					</div>
+
+					{status ? (
+						<div className="space-y-4">
+							{/* Overall Status */}
+							<div className="flex items-center gap-3 p-3 bg-secondary-700/50 rounded-lg">
+								{status.status === "ready" ? (
+									<CheckCircle className="h-5 w-5 text-green-400" />
+								) : status.status === "installing" ? (
+									<RefreshCw className="h-5 w-5 text-blue-400 animate-spin" />
+								) : status.status === "error" ? (
+									<XCircle className="h-5 w-5 text-red-400" />
+								) : (
+									<MinusCircle className="h-5 w-5 text-secondary-400" />
+								)}
+								<div>
+									<p className="text-white font-medium capitalize">{status.status || "Unknown"}</p>
+									{status.message && (
+										<p className="text-sm text-secondary-400">{status.message}</p>
+									)}
+								</div>
+							</div>
+
+							{/* Components Grid */}
+							<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+								{/* OpenSCAP Component */}
+								<div className="bg-secondary-700/30 rounded-lg p-4 border border-secondary-600">
+									<div className="flex items-center gap-3 mb-3">
+										<div className="p-2 bg-primary-600/20 rounded-lg">
+											<Shield className="h-5 w-5 text-primary-400" />
+										</div>
+										<div>
+											<p className="text-white font-medium">OpenSCAP Scanner</p>
+											<p className="text-xs text-secondary-400">CIS Benchmark Scanning</p>
+										</div>
+									</div>
+									<div className="space-y-2 text-sm">
+										<div className="flex justify-between">
+											<span className="text-secondary-400">Status</span>
+											<span className={`capitalize ${
+												components.openscap === "ready" ? "text-green-400" :
+												components.openscap === "installing" ? "text-blue-400" :
+												components.openscap === "error" ? "text-red-400" :
+												"text-secondary-400"
+											}`}>
+												{components.openscap || "Not installed"}
+											</span>
+										</div>
+										<div className="flex justify-between">
+											<span className="text-secondary-400">Package</span>
+											<span className="text-secondary-300">openscap-scanner</span>
+										</div>
+										<div className="flex justify-between">
+											<span className="text-secondary-400">SCAP Content</span>
+											<span className="text-secondary-300">ssg-base, ssg-debderived</span>
+										</div>
+									</div>
+								</div>
+
+								{/* Docker Bench Component */}
+								<div className="bg-secondary-700/30 rounded-lg p-4 border border-secondary-600">
+									<div className="flex items-center gap-3 mb-3">
+										<div className="p-2 bg-blue-600/20 rounded-lg">
+											<Package className="h-5 w-5 text-blue-400" />
+										</div>
+										<div>
+											<p className="text-white font-medium">Docker Bench</p>
+											<p className="text-xs text-secondary-400">Docker Security Scanning</p>
+										</div>
+									</div>
+									<div className="space-y-2 text-sm">
+										<div className="flex justify-between">
+											<span className="text-secondary-400">Status</span>
+											<span className={`capitalize ${
+												components["docker-bench"] === "ready" ? "text-green-400" :
+												components["docker-bench"] === "installing" ? "text-blue-400" :
+												components["docker-bench"] === "unavailable" ? "text-secondary-500" :
+												components["docker-bench"] === "error" ? "text-red-400" :
+												"text-secondary-400"
+											}`}>
+												{components["docker-bench"] || "Not configured"}
+											</span>
+										</div>
+										<div className="flex justify-between">
+											<span className="text-secondary-400">Requirement</span>
+											<span className="text-secondary-300">Docker Integration enabled</span>
+										</div>
+									</div>
+								</div>
+							</div>
+
+							{/* Last Updated */}
+							{status.updated_at && (
+								<p className="text-xs text-secondary-500 text-right">
+									Last updated: {new Date(status.updated_at).toLocaleString()}
+								</p>
+							)}
+						</div>
+					) : (
+						<div className="text-center py-8">
+							<Info className="h-12 w-12 text-secondary-600 mx-auto mb-3" />
+							<p className="text-secondary-400">No scanner status available</p>
+							<p className="text-sm text-secondary-500 mt-1">
+								Enable compliance integration to see scanner details
+							</p>
+						</div>
+					)}
+				</div>
+
+				{/* Information Section */}
+				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
+					<h3 className="text-lg font-medium text-white flex items-center gap-2 mb-4">
+						<Info className="h-5 w-5 text-primary-400" />
+						About Compliance Scanning
+					</h3>
+					<div className="space-y-4 text-sm text-secondary-300">
+						<p>
+							PatchMon uses industry-standard compliance scanning tools to evaluate your
+							systems against security benchmarks.
+						</p>
+						<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+							<div className="p-3 bg-secondary-700/30 rounded-lg">
+								<p className="text-white font-medium mb-1">OpenSCAP (oscap)</p>
+								<p className="text-secondary-400 text-xs">
+									Scans against CIS Benchmarks for Linux distributions.
+									Evaluates system configuration, file permissions, and security settings.
+								</p>
+							</div>
+							<div className="p-3 bg-secondary-700/30 rounded-lg">
+								<p className="text-white font-medium mb-1">Docker Bench for Security</p>
+								<p className="text-secondary-400 text-xs">
+									Checks Docker host and container configurations against
+									CIS Docker Benchmark recommendations.
+								</p>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				{/* Troubleshooting */}
+				<div className="bg-yellow-900/20 border border-yellow-800/50 rounded-lg p-4">
+					<h4 className="text-yellow-300 font-medium flex items-center gap-2 mb-2">
+						<AlertTriangle className="h-4 w-4" />
+						Troubleshooting
+					</h4>
+					<ul className="text-sm text-yellow-200/80 space-y-1 list-disc list-inside">
+						<li>If scans show all "N/A" results, the SCAP content may not match your OS version</li>
+						<li>Try disabling and re-enabling compliance to upgrade packages</li>
+						<li>Ubuntu 24.04 requires ssg-base version 0.1.76 or higher</li>
+						<li>Docker Bench requires Docker integration to be enabled first</li>
+					</ul>
+				</div>
+			</div>
+		);
+	};
+
 	return (
 		<div className="space-y-4">
 			{/* Header */}
@@ -663,6 +853,7 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 				{activeSubtab === "scan" && renderScanTab()}
 				{activeSubtab === "results" && renderResults()}
 				{activeSubtab === "history" && renderHistory()}
+				{activeSubtab === "settings" && renderSettings()}
 			</div>
 		</div>
 	);
