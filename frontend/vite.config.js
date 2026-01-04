@@ -69,22 +69,18 @@ export default defineConfig({
 			output: {
 				manualChunks(id) {
 					if (id.includes("node_modules")) {
-						// React core must be bundled together
-						if (id.includes("/react/") || id.includes("/react-dom/") || id.includes("/scheduler/")) {
-							return "react-core";
-						}
-						// React Router and its dependencies
-						if (id.includes("/react-router") || id.includes("/@remix-run/")) {
-							return "router-vendor";
+						// React ecosystem - ALL in one chunk to ensure proper initialization
+						if (id.includes("/react/") || id.includes("/react-dom/") ||
+						    id.includes("/scheduler/") || id.includes("/react-is/") ||
+						    id.includes("/react-router") || id.includes("/@remix-run/")) {
+							return "react-vendor";
 						}
 						// Query library
 						if (id.includes("/@tanstack/")) {
 							return "query-vendor";
 						}
-						// Chart libraries including recharts and its d3 dependencies
-						if (id.includes("/chart.js/") || id.includes("/react-chartjs-2/") ||
-						    id.includes("/recharts/") || id.includes("/d3-") ||
-						    id.includes("/react-smooth/") || id.includes("/victory-")) {
+						// chart.js only (not recharts - let it bundle with app)
+						if (id.includes("/chart.js/") || id.includes("/react-chartjs-2/")) {
 							return "chart-vendor";
 						}
 						// Icon libraries
@@ -95,6 +91,7 @@ export default defineConfig({
 						if (id.includes("/@dnd-kit/")) {
 							return "dnd-vendor";
 						}
+						// Let recharts and its dependencies bundle with the component that uses it
 					}
 				},
 			},
