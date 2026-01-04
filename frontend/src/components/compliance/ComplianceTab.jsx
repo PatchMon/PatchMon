@@ -1000,19 +1000,19 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 										{getStatusIcon(result.status)}
 										<div className="flex-1 min-w-0">
 											<p className="text-white font-medium">
-												{result.compliance_rules?.title || result.rule?.title || "Unknown Rule"}
+												{result.compliance_rules?.title || result.rule?.title || result.title || "Unknown Rule"}
 											</p>
 											<p className="text-xs text-secondary-400">
-												{(result.compliance_rules?.section || result.rule?.section) &&
-													`${result.compliance_rules?.section || result.rule?.section} • `}
-												{(result.compliance_rules?.severity || result.rule?.severity) && (
+												{(result.compliance_rules?.section || result.rule?.section || result.section) &&
+													`${result.compliance_rules?.section || result.rule?.section || result.section} • `}
+												{(result.compliance_rules?.severity || result.rule?.severity || result.severity) && (
 													<span className={`capitalize ${
-														(result.compliance_rules?.severity || result.rule?.severity) === "critical" ? "text-red-400" :
-														(result.compliance_rules?.severity || result.rule?.severity) === "high" ? "text-orange-400" :
-														(result.compliance_rules?.severity || result.rule?.severity) === "medium" ? "text-yellow-400" :
+														(result.compliance_rules?.severity || result.rule?.severity || result.severity) === "critical" ? "text-red-400" :
+														(result.compliance_rules?.severity || result.rule?.severity || result.severity) === "high" ? "text-orange-400" :
+														(result.compliance_rules?.severity || result.rule?.severity || result.severity) === "medium" ? "text-yellow-400" :
 														"text-secondary-400"
 													}`}>
-														{result.compliance_rules?.severity || result.rule?.severity}
+														{result.compliance_rules?.severity || result.rule?.severity || result.severity}
 													</span>
 												)}
 											</p>
@@ -1033,14 +1033,14 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 													</code>
 												</div>
 											)}
-											{(result.compliance_rules?.description || result.rule?.description) && (
+											{(result.compliance_rules?.description || result.rule?.description || result.description) && (
 												<div>
 													<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
 														<Info className="h-3.5 w-3.5" />
 														Description
 													</p>
 													<p className="text-secondary-300">
-														{result.compliance_rules?.description || result.rule?.description}
+														{result.compliance_rules?.description || result.rule?.description || result.description}
 													</p>
 												</div>
 											)}
@@ -1054,11 +1054,12 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 													</p>
 													<div className="text-red-200/90 text-sm space-y-2">
 														{(() => {
-															const title = result.compliance_rules?.title || result.rule?.title || "";
-															const description = result.compliance_rules?.description || result.rule?.description || "";
-															const remediation = result.compliance_rules?.remediation || result.rule?.remediation || result.remediation || "";
+															// Check all possible locations for metadata (nested or direct from agent)
+															const title = result.compliance_rules?.title || result.rule?.title || result.title || "";
+															const description = result.compliance_rules?.description || result.rule?.description || result.description || "";
+															const rationale = result.compliance_rules?.rationale || result.rule?.rationale || result.rationale || "";
 
-															// If we have a specific finding, show it
+															// If we have a specific finding from the scan, show it first
 															if (result.finding) {
 																return <p>{result.finding}</p>;
 															}
@@ -1084,112 +1085,51 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 																);
 															}
 
-															// Generate context-specific explanation from title/description
-															const titleLower = title.toLowerCase();
-															const descLower = description.toLowerCase();
-															const remLower = remediation.toLowerCase();
+															// PRIORITY: Use actual description from benchmark if available
+															// This is the real explanation from SSG/CIS, not a generic pattern match
+															if (description && description.length > 10) {
+																// Clean up the description - remove extra whitespace
+																const cleanDesc = description.replace(/\s+/g, ' ').trim();
+																return (
+																	<>
+																		<p className="leading-relaxed">{cleanDesc}</p>
+																		{rationale && rationale.length > 10 && (
+																			<p className="mt-2 text-red-300/70 text-xs italic">
+																				<strong>Security Impact:</strong> {rationale.replace(/\s+/g, ' ').trim().substring(0, 200)}{rationale.length > 200 ? "..." : ""}
+																			</p>
+																		)}
+																	</>
+																);
+															}
 
-															// Parse title for "Ensure X is Y" patterns
+															// Fallback: Generate explanation from title if no description
+															// Parse "Ensure X is Y" pattern
 															const ensureMatch = title.match(/^Ensure\s+(.+?)\s+(?:is|are)\s+(.+)$/i);
 															if (ensureMatch) {
 																const [, subject, expectedState] = ensureMatch;
 																return (
 																	<>
-																		<p>This check verifies that <strong>{subject}</strong> is <strong>{expectedState}</strong>.</p>
-																		<p className="mt-1 text-red-300/80">The system does not meet this requirement. The current configuration differs from the expected secure state.</p>
+																		<p>This rule requires that <strong>{subject}</strong> is <strong>{expectedState}</strong>.</p>
+																		<p className="mt-1 text-red-300/80">The current system configuration does not meet this requirement.</p>
 																	</>
 																);
 															}
 
-															// Handle common patterns in titles
-															if (titleLower.includes("disable") || titleLower.includes("disabled")) {
-																const service = title.replace(/^(Ensure\s+)?/i, "").replace(/\s+(is\s+)?disabled.*$/i, "");
+															// Parse "Install X" pattern
+															const installMatch = title.match(/^Install\s+(.+)$/i);
+															if (installMatch) {
 																return (
 																	<>
-																		<p><strong>{service}</strong> should be disabled but is currently enabled or present on the system.</p>
-																		<p className="mt-1 text-red-300/80">This service/feature poses a security risk when enabled.</p>
+																		<p>The package <strong>{installMatch[1]}</strong> must be installed but is not present on this system.</p>
 																	</>
 																);
 															}
 
-															if (titleLower.includes("enable") || titleLower.includes("enabled") || titleLower.includes("configured")) {
-																const feature = title.replace(/^(Ensure\s+)?/i, "").replace(/\s+(is\s+)?(enabled|configured).*$/i, "");
-																return (
-																	<>
-																		<p><strong>{feature}</strong> should be enabled/configured but is not properly set up.</p>
-																		<p className="mt-1 text-red-300/80">This security feature is required but missing or misconfigured.</p>
-																	</>
-																);
-															}
-
-															if (titleLower.includes("permission") || titleLower.includes("ownership") || remLower.includes("chmod") || remLower.includes("chown")) {
-																return (
-																	<>
-																		<p>File or directory permissions do not meet security requirements.</p>
-																		<p className="mt-1 text-red-300/80">The current permissions are too permissive, allowing unauthorized users potential access to sensitive files.</p>
-																	</>
-																);
-															}
-
-															if (titleLower.includes("audit") || descLower.includes("audit")) {
-																return (
-																	<>
-																		<p>Required audit rules are not configured.</p>
-																		<p className="mt-1 text-red-300/80">The system is not logging security-relevant events that could help detect intrusions or policy violations.</p>
-																	</>
-																);
-															}
-
-															if (titleLower.includes("password") || descLower.includes("password")) {
-																return (
-																	<>
-																		<p>Password policy does not meet security requirements.</p>
-																		<p className="mt-1 text-red-300/80">Current password settings may allow weak passwords or lack proper aging/complexity requirements.</p>
-																	</>
-																);
-															}
-
-															if (titleLower.includes("ssh") || remLower.includes("/etc/ssh")) {
-																return (
-																	<>
-																		<p>SSH daemon configuration does not meet security requirements.</p>
-																		<p className="mt-1 text-red-300/80">The current SSH settings may expose the system to unauthorized access or attacks.</p>
-																	</>
-																);
-															}
-
-															if (titleLower.includes("firewall") || titleLower.includes("iptables") || titleLower.includes("nftables")) {
-																return (
-																	<>
-																		<p>Firewall is not properly configured.</p>
-																		<p className="mt-1 text-red-300/80">Network traffic filtering is not set up according to security best practices.</p>
-																	</>
-																);
-															}
-
-															if (remLower.includes("sysctl") || remLower.includes("/proc/sys")) {
-																return (
-																	<>
-																		<p>Kernel parameter is not set to the secure value.</p>
-																		<p className="mt-1 text-red-300/80">A system kernel setting that affects security is not configured as required by the benchmark.</p>
-																	</>
-																);
-															}
-
-															// Default: Use description if available, otherwise construct from title
-															if (description && description.length > 20) {
-																return (
-																	<>
-																		<p>This security check failed verification.</p>
-																		<p className="mt-1 text-red-300/80">{description.substring(0, 200)}{description.length > 200 ? "..." : ""}</p>
-																	</>
-																);
-															}
-
+															// Final fallback
 															return (
 																<>
-																	<p>The system configuration does not meet the requirements for: <strong>{title || "this security check"}</strong></p>
-																	<p className="mt-1 text-red-300/80">Review the remediation steps below to understand what needs to be changed.</p>
+																	<p>The system does not meet the requirement: <strong>{title || "this security check"}</strong></p>
+																	<p className="mt-1 text-red-300/80">See the remediation steps below for how to fix this.</p>
 																</>
 															);
 														})()}
@@ -1198,14 +1138,14 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 											)}
 
 											{/* Rationale - explains WHY this rule matters */}
-											{(result.compliance_rules?.rationale || result.rule?.rationale) && (
+											{(result.compliance_rules?.rationale || result.rule?.rationale || result.rationale) && (
 												<div>
 													<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
 														<BookOpen className="h-3.5 w-3.5" />
 														Why This Matters
 													</p>
 													<p className="text-secondary-300 text-sm leading-relaxed">
-														{result.compliance_rules?.rationale || result.rule?.rationale}
+														{result.compliance_rules?.rationale || result.rule?.rationale || result.rationale}
 													</p>
 												</div>
 											)}

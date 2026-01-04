@@ -179,7 +179,7 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
           const ruleRef = result.rule_ref || result.rule_id || result.id;
           if (!ruleRef) continue;
 
-          // Upsert rule
+          // Upsert rule - always update if we have better metadata
           let rule = await prisma.compliance_rules.findFirst({
             where: {
               profile_id: profile.id,
@@ -200,6 +200,45 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
                 remediation: result.remediation || null,
               },
             });
+          } else {
+            // Update existing rule if we have new/better metadata from agent
+            // Only update fields that have values and are currently missing or generic
+            const updateData = {};
+
+            // Update title if agent provides one and current is missing/generic
+            if (result.title && result.title !== ruleRef &&
+                (!rule.title || rule.title === ruleRef || rule.title === "Unknown" ||
+                 rule.title.toLowerCase().replace(/[_\s]+/g, ' ') === ruleRef.replace(/xccdf_org\.ssgproject\.content_rule_/i, '').replace(/_/g, ' '))) {
+              updateData.title = result.title;
+            }
+
+            // Update description if agent provides one and current is missing
+            if (result.description && !rule.description) {
+              updateData.description = result.description;
+            }
+
+            // Update severity if agent provides one and current is missing
+            if (result.severity && !rule.severity) {
+              updateData.severity = result.severity;
+            }
+
+            // Update section if agent provides one and current is missing
+            if (result.section && !rule.section) {
+              updateData.section = result.section;
+            }
+
+            // Update remediation if agent provides one and current is missing
+            if (result.remediation && !rule.remediation) {
+              updateData.remediation = result.remediation;
+            }
+
+            // Only run update if we have changes
+            if (Object.keys(updateData).length > 0) {
+              rule = await prisma.compliance_rules.update({
+                where: { id: rule.id },
+                data: updateData,
+              });
+            }
           }
 
           // Create result
