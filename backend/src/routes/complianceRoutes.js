@@ -502,6 +502,7 @@ router.post("/trigger/:hostId", async (req, res) => {
     const { hostId } = req.params;
     const {
       profile_type = "all",
+      profile_id = null,
       enable_remediation = false,
       fetch_remote_resources = false,
     } = req.body;
@@ -533,6 +534,7 @@ router.post("/trigger/:hostId", async (req, res) => {
 
     // Build scan options
     const scanOptions = {
+      profileId: profile_id,
       enableRemediation: Boolean(enable_remediation),
       fetchRemoteResources: Boolean(fetch_remote_resources),
     };

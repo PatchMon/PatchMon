@@ -545,10 +545,16 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 								</p>
 							</div>
 							<button
-								onClick={() => triggerScan.mutate({
-									profileType: selectedProfile,
-									enableRemediation: enableRemediation,
-								})}
+								onClick={() => {
+									// Find the selected profile to get its type
+									const profile = availableProfiles.find(p => (p.xccdf_id || p.id) === selectedProfile);
+									const profileType = profile?.type || "openscap"; // Default to openscap for CIS/STIG profiles
+									triggerScan.mutate({
+										profileType: profileType,
+										profileId: selectedProfile, // The specific XCCDF profile ID
+										enableRemediation: enableRemediation,
+									});
+								}}
 								disabled={!isConnected || triggerScan.isPending}
 								className={`flex items-center gap-2 px-6 py-3 ${
 									enableRemediation

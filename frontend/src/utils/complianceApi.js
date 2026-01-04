@@ -23,6 +23,7 @@ export const complianceAPI = {
 	triggerScan: (hostId, options = {}) =>
 		api.post(`/compliance/trigger/${hostId}`, {
 			profile_type: options.profileType || options.profile_type || "all",
+			profile_id: options.profileId || options.profile_id || null,
 			enable_remediation: options.enableRemediation || false,
 			fetch_remote_resources: options.fetchRemoteResources || false,
 		}),

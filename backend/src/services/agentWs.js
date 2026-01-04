@@ -304,12 +304,14 @@ function pushComplianceScan(apiId, profileType = "all", options = {}) {
 		const payload = {
 			type: "compliance_scan",
 			profile_type: profileType,
+			profile_id: options.profileId || null,
 			enable_remediation: options.enableRemediation || false,
 			fetch_remote_resources: options.fetchRemoteResources || false,
 		};
 		safeSend(ws, JSON.stringify(payload));
 		const remediationStatus = options.enableRemediation ? " (with remediation)" : "";
-		console.log(`[agent-ws] Triggered compliance scan for ${apiId}: ${profileType}${remediationStatus}`);
+		const profileInfo = options.profileId ? ` profile=${options.profileId}` : "";
+		console.log(`[agent-ws] Triggered compliance scan for ${apiId}: ${profileType}${profileInfo}${remediationStatus}`);
 		return true;
 	}
 	return false;
