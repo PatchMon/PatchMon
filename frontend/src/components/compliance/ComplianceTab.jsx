@@ -636,10 +636,13 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 
 					{/* Results Filter */}
 					<div className="flex flex-wrap gap-2">
-						{["all", "fail", "warn", "pass", "notapplicable"].map((status) => {
+						{["all", "fail", "warn", "pass", "skip", "notapplicable"].map((status) => {
+							const results = latestScan.compliance_results || latestScan.results || [];
 							const count = status === "all"
-								? (latestScan.compliance_results?.length || latestScan.results?.length || 0)
-								: (latestScan.compliance_results || latestScan.results || []).filter(r => r.status === status).length;
+								? results.length
+								: results.filter(r => r.status === status).length;
+							// Don't show filter button if count is 0 (except for "all")
+							if (count === 0 && status !== "all") return null;
 							return (
 								<button
 									key={status}
@@ -650,7 +653,7 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 											: "bg-secondary-700 text-secondary-300 hover:bg-secondary-600"
 									}`}
 								>
-									{status === "notapplicable" ? "N/A" : status}
+									{status === "notapplicable" ? "N/A" : status === "skip" ? "Skipped" : status}
 									<span className={`px-1.5 py-0.5 rounded text-xs ${
 										statusFilter === status
 											? "bg-primary-500"
