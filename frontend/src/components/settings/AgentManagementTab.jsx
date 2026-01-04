@@ -201,7 +201,7 @@ const AgentManagementTab = () => {
 			{/* Toast Notification */}
 			{toast && (
 				<div
-					className={`fixed top-4 right-4 z-50 max-w-md rounded-lg shadow-lg border-2 p-4 flex items-start space-x-3 animate-in slide-in-from-top-5 ${
+					className={`fixed top-20 right-4 z-[100] max-w-md rounded-lg shadow-lg border-2 p-4 flex items-start space-x-3 animate-in slide-in-from-top-5 ${
 						toast.type === "success"
 							? "bg-green-50 dark:bg-green-900/90 border-green-500 dark:border-green-600"
 							: "bg-red-50 dark:bg-red-900/90 border-red-500 dark:border-red-600"
