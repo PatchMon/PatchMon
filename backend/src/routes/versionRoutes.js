@@ -295,25 +295,25 @@ router.get(
 					) {
 						console.log("GitHub API rate limited, providing fallback data");
 						latestRelease = {
-							tagName: "v1.4.0",
-							version: "1.4.0",
-							publishedAt: "2026-01-03T00:00:00Z",
+							tagName: "v1.5.0",
+							version: "1.5.0",
+							publishedAt: "2026-01-04T00:00:00Z",
 							htmlUrl:
-								"https://github.com/MacJediWizard/PatchMon-Enhanced/releases/tag/v1.4.0",
+								"https://github.com/MacJediWizard/PatchMon-Enhanced/releases/tag/v1.5.0",
 						};
 						latestCommit = {
-							sha: "cc89df161b8ea5d48ff95b0eb405fe69042052cd",
-							message: "Update README.md\n\nAdded Documentation Links",
-							author: "9 Technology Group LTD",
-							date: "2025-10-04T18:38:09Z",
+							sha: "138a94a",
+							message: "fix: sidebar bottom section cutoff and add compliance to Add Host modal",
+							author: "Claude Code",
+							date: new Date().toISOString(),
 							htmlUrl:
-								"https://github.com/MacJediWizard/PatchMon-Enhanced/commit/cc89df161b8ea5d48ff95b0eb405fe69042052cd",
+								"https://github.com/MacJediWizard/PatchMon-Enhanced/commit/138a94a",
 						};
 						commitDifference = {
 							commitsBehind: 0,
-							commitsAhead: 3, // Main branch is ahead of release
-							totalCommits: 3,
-							branchInfo: "main branch vs release",
+							commitsAhead: 0,
+							totalCommits: 0,
+							branchInfo: "main branch vs release (rate limited - using fallback)",
 						};
 					} else {
 						// Fall back to cached data for other errors
