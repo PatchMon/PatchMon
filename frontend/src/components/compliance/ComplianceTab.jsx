@@ -60,12 +60,18 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 		queryKey: ["compliance-latest", hostId],
 		queryFn: () => complianceAPI.getLatestScan(hostId).then((res) => res.data),
 		enabled: !!hostId,
+		staleTime: 30 * 1000, // Consider data fresh for 30 seconds
+		refetchOnWindowFocus: false, // Don't refetch on window focus to avoid flicker
+		placeholderData: (previousData) => previousData, // Keep previous data during refetch
 	});
 
 	const { data: scanHistory, refetch: refetchHistory } = useQuery({
 		queryKey: ["compliance-history", hostId],
 		queryFn: () => complianceAPI.getHostScans(hostId, { limit: 10 }).then((res) => res.data),
 		enabled: !!hostId,
+		staleTime: 30 * 1000,
+		refetchOnWindowFocus: false,
+		placeholderData: (previousData) => previousData,
 	});
 
 	// Get integration status (scanner info, components)
@@ -158,12 +164,29 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 		},
 	});
 
-	// Poll for scan completion when scan is in progress
+	// Elapsed time for scan in progress
+	const [elapsedTime, setElapsedTime] = useState(0);
+
+	// Update elapsed time every second when scan is in progress
+	useEffect(() => {
+		let timer;
+		if (scanInProgress && scanMessage?.startTime) {
+			timer = setInterval(() => {
+				setElapsedTime(Math.floor((Date.now() - scanMessage.startTime) / 1000));
+			}, 1000);
+		} else {
+			setElapsedTime(0);
+		}
+		return () => clearInterval(timer);
+	}, [scanInProgress, scanMessage?.startTime]);
+
+	// Poll for scan completion when scan is in progress (less frequent to reduce flicker)
 	useEffect(() => {
 		let pollInterval;
 		if (scanInProgress) {
-			pollInterval = setInterval(() => {
-				refetchLatest().then((result) => {
+			pollInterval = setInterval(async () => {
+				try {
+					const result = await refetchLatest();
 					if (result.data && scanMessage?.startTime) {
 						const scanTime = new Date(result.data.completed_at).getTime();
 						if (scanTime > scanMessage.startTime) {
@@ -178,8 +201,11 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 							setTimeout(() => setScanMessage(null), 10000);
 						}
 					}
-				});
-			}, 5000);
+				} catch (error) {
+					// Silently ignore polling errors to prevent flicker
+					console.debug("Scan poll error:", error);
+				}
+			}, 10000); // Poll every 10 seconds instead of 5 to reduce load
 		}
 		return () => clearInterval(pollInterval);
 	}, [scanInProgress, scanMessage?.startTime, refetchLatest, refetchHistory]);
@@ -463,23 +489,38 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 			{/* Scan In Progress */}
 			{scanInProgress ? (
 				<div className="bg-secondary-800 rounded-lg border border-primary-600 p-6">
-					<div className="flex items-center gap-4 mb-4">
-						<div className="p-3 bg-primary-600/20 rounded-full">
-							<RefreshCw className="h-6 w-6 animate-spin text-primary-400" />
+					<div className="flex items-center justify-between mb-4">
+						<div className="flex items-center gap-4">
+							<div className="p-3 bg-primary-600/20 rounded-full">
+								<RefreshCw className="h-6 w-6 animate-spin text-primary-400" />
+							</div>
+							<div>
+								<h3 className="text-lg font-medium text-white">Scan In Progress</h3>
+								<p className="text-sm text-secondary-400">
+									Running {availableProfiles.find(p => p.id === selectedProfile)?.name || selectedProfile}
+								</p>
+							</div>
 						</div>
-						<div>
-							<h3 className="text-lg font-medium text-white">Scan In Progress</h3>
-							<p className="text-sm text-secondary-400">
-								Running {availableProfiles.find(p => p.id === selectedProfile)?.name || selectedProfile}
+						<div className="text-right">
+							<p className="text-2xl font-mono font-bold text-primary-400">
+								{Math.floor(elapsedTime / 60)}:{(elapsedTime % 60).toString().padStart(2, '0')}
 							</p>
+							<p className="text-xs text-secondary-500">elapsed</p>
 						</div>
 					</div>
-					<div className="w-full bg-secondary-700 rounded-full h-3 mb-3">
-						<div className="bg-primary-600 h-3 rounded-full animate-pulse" style={{ width: "60%" }} />
+					<div className="w-full bg-secondary-700 rounded-full h-2 mb-3 overflow-hidden">
+						<div
+							className="bg-gradient-to-r from-primary-600 to-primary-400 h-2 rounded-full transition-all duration-1000"
+							style={{ width: `${Math.min(95, (elapsedTime / 300) * 100)}%` }}
+						/>
 					</div>
 					<p className="text-sm text-secondary-400 flex items-center gap-2">
 						<Clock className="h-4 w-4" />
-						OpenSCAP scans typically take 2-5 minutes depending on system configuration
+						{elapsedTime < 120
+							? "OpenSCAP scans typically take 3-5 minutes..."
+							: elapsedTime < 300
+								? "Still scanning, please wait..."
+								: "This scan is taking longer than usual. Complex systems may require more time."}
 					</p>
 				</div>
 			) : (
