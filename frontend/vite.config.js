@@ -65,51 +65,6 @@ export default defineConfig({
 		outDir: "dist",
 		sourcemap: process.env.NODE_ENV !== "production",
 		target: "es2018",
-		rollupOptions: {
-			output: {
-				manualChunks(id) {
-					// Only handle node_modules
-					if (!id.includes("node_modules")) {
-						return;
-					}
-					// React core - must be in same chunk to avoid initialization issues
-					if (
-						id.includes("/react/") ||
-						id.includes("/react-dom/") ||
-						id.includes("/scheduler/") ||
-						id.includes("/react-router") ||
-						id.includes("/@remix-run/")
-					) {
-						return "react-vendor";
-					}
-					// Chart libraries
-					if (
-						id.includes("/chart.js/") ||
-						id.includes("/react-chartjs-2/") ||
-						id.includes("/recharts/") ||
-						id.includes("/d3-") ||
-						id.includes("/victory-")
-					) {
-						return "chart-vendor";
-					}
-					// Icon libraries
-					if (id.includes("/lucide-react/") || id.includes("/react-icons/")) {
-						return "icons-vendor";
-					}
-					// DnD libraries
-					if (id.includes("/@dnd-kit/")) {
-						return "dnd-vendor";
-					}
-					// Utility libraries
-					if (
-						id.includes("/axios/") ||
-						id.includes("/@tanstack/") ||
-						id.includes("/date-fns/")
-					) {
-						return "utils-vendor";
-					}
-				},
-			},
-		},
+		// Let Vite handle chunk splitting automatically to avoid initialization order issues
 	},
 });
