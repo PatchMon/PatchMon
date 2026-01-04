@@ -1816,6 +1816,21 @@ router.patch(
 			const { hostId } = req.params;
 			const { auto_update } = req.body;
 
+			// If enabling auto-update on a host, also enable the global setting
+			// This makes the per-host toggle the primary control
+			let globalEnabled = false;
+			if (auto_update) {
+				const settings = await prisma.settings.findFirst();
+				if (settings && !settings.auto_update) {
+					await prisma.settings.update({
+						where: { id: settings.id },
+						data: { auto_update: true },
+					});
+					globalEnabled = true;
+					console.log("📊 Global auto-update enabled (triggered by host toggle)");
+				}
+			}
+
 			const host = await prisma.hosts.update({
 				where: { id: hostId },
 				data: {
@@ -1825,12 +1840,13 @@ router.patch(
 			});
 
 			res.json({
-				message: `Agent auto-update ${auto_update ? "enabled" : "disabled"} successfully`,
+				message: `Agent auto-update ${auto_update ? "enabled" : "disabled"} successfully${globalEnabled ? " (global setting also enabled)" : ""}`,
 				host: {
 					id: host.id,
 					friendlyName: host.friendly_name,
 					autoUpdate: host.auto_update,
 				},
+				globalEnabled: globalEnabled,
 			});
 		} catch (error) {
 			console.error("Agent auto-update toggle error:", error);
