@@ -52,7 +52,7 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 	const [statusFilter, setStatusFilter] = useState("fail");
 	const [severityFilter, setSeverityFilter] = useState("all"); // Filter by severity within Failed tab
 	const [ruleSearch, setRuleSearch] = useState(""); // Search rules by title/id
-	const [selectedProfile, setSelectedProfile] = useState("openscap");
+	const [selectedProfile, setSelectedProfile] = useState("level1_server");
 	const [enableRemediation, setEnableRemediation] = useState(false);
 	const [remediatingRule, setRemediatingRule] = useState(null);
 	const [scanProgress, setScanProgress] = useState(null); // Real-time progress from SSE
@@ -135,6 +135,19 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 		enabled: !!hostId,
 		refetchInterval: 30000, // Refresh every 30 seconds
 	});
+
+	// Update selected profile when agent profiles are loaded
+	useEffect(() => {
+		const agentProfiles = integrationStatus?.status?.scanner_info?.available_profiles;
+		if (agentProfiles?.length > 0) {
+			// If current selection isn't in the agent's available profiles, select the first one
+			const currentInList = agentProfiles.some(p => (p.xccdf_id || p.id) === selectedProfile);
+			if (!currentInList) {
+				const firstProfile = agentProfiles[0];
+				setSelectedProfile(firstProfile.xccdf_id || firstProfile.id);
+			}
+		}
+	}, [integrationStatus?.status?.scanner_info?.available_profiles]);
 
 	// SSG content update mutation
 	const [updateMessage, setUpdateMessage] = useState(null);
