@@ -414,8 +414,9 @@ router.put(
 				req.body;
 			const updateData = {};
 
-			if (username) updateData.username = username;
-			if (email) updateData.email = email;
+			// Handle all fields consistently - trim and update if provided
+			if (username) updateData.username = username.trim();
+			if (email) updateData.email = email.trim().toLowerCase();
 			if (first_name !== undefined) updateData.first_name = first_name || null;
 			if (last_name !== undefined) updateData.last_name = last_name || null;
 			if (role) updateData.role = role;
@@ -438,8 +439,17 @@ router.put(
 							{ id: { not: userId } },
 							{
 								OR: [
-									...(username ? [{ username }] : []),
-									...(email ? [{ email }] : []),
+									...(username
+										? [
+												{
+													username: {
+														equals: username.trim(),
+														mode: "insensitive",
+													},
+												},
+											]
+										: []),
+									...(email ? [{ email: email.trim().toLowerCase() }] : []),
 								],
 							},
 						],
@@ -859,12 +869,10 @@ router.post(
 			// Get accepted release notes versions
 			let acceptedVersions = [];
 			try {
-				if (prisma.release_notes_acceptances) {
-					acceptedVersions = await prisma.release_notes_acceptances.findMany({
-						where: { user_id: user.id },
-						select: { version: true },
-					});
-				}
+				acceptedVersions = await prisma.release_notes_acceptances.findMany({
+					where: { user_id: user.id },
+					select: { version: true },
+				});
 			} catch (error) {
 				// If table doesn't exist yet or Prisma client not regenerated, use empty array
 				console.warn(
@@ -933,7 +941,10 @@ router.post(
 			// Find user
 			const user = await prisma.users.findFirst({
 				where: {
-					OR: [{ username }, { email: username }],
+					OR: [
+						{ username: { equals: username, mode: "insensitive" } },
+						{ email: username.toLowerCase() },
+					],
 					is_active: true,
 					tfa_enabled: true,
 				},
@@ -1022,12 +1033,10 @@ router.post(
 			// Get accepted release notes versions
 			let acceptedVersions = [];
 			try {
-				if (prisma.release_notes_acceptances) {
-					acceptedVersions = await prisma.release_notes_acceptances.findMany({
-						where: { user_id: user.id },
-						select: { version: true },
-					});
-				}
+				acceptedVersions = await prisma.release_notes_acceptances.findMany({
+					where: { user_id: user.id },
+					select: { version: true },
+				});
 			} catch (error) {
 				// If table doesn't exist yet or Prisma client not regenerated, use empty array
 				console.warn(

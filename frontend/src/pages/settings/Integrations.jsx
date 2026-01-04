@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import SettingsLayout from "../../components/SettingsLayout";
-import api from "../../utils/api";
+import api, { formatDate } from "../../utils/api";
 
 const Integrations = () => {
 	// Generate unique IDs for form elements
@@ -235,10 +235,19 @@ const Integrations = () => {
 
 		try {
 			const data = {
+				token_name: form_data.token_name,
+				max_hosts_per_day: form_data.max_hosts_per_day,
 				allowed_ip_ranges: form_data.allowed_ip_ranges
 					? form_data.allowed_ip_ranges.split(",").map((ip) => ip.trim())
 					: [],
 			};
+
+			// Add default host group if provided
+			if (form_data.default_host_group_id) {
+				data.default_host_group_id = form_data.default_host_group_id;
+			} else {
+				data.default_host_group_id = null;
+			}
 
 			// Add expiration if provided
 			if (form_data.expires_at) {
@@ -323,7 +332,7 @@ const Integrations = () => {
 		}
 	};
 
-	const format_date = (date_string) => {
+	const formatDate = (date_string) => {
 		if (!date_string) return "Never";
 		return new Date(date_string).toLocaleString();
 	};
@@ -579,15 +588,15 @@ const Integrations = () => {
 																		{token.allowed_ip_ranges.join(", ")}
 																	</p>
 																)}
-																<p>Created: {format_date(token.created_at)}</p>
+																<p>Created: {formatDate(token.created_at)}</p>
 																{token.last_used_at && (
 																	<p>
-																		Last Used: {format_date(token.last_used_at)}
+																		Last Used: {formatDate(token.last_used_at)}
 																	</p>
 																)}
 																{token.expires_at && (
 																	<p>
-																		Expires: {format_date(token.expires_at)}
+																		Expires: {formatDate(token.expires_at)}
 																		{new Date(token.expires_at) <
 																			new Date() && (
 																			<span className="ml-2 text-red-600 dark:text-red-400">
@@ -599,15 +608,13 @@ const Integrations = () => {
 															</div>
 														</div>
 														<div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
-															{token.metadata?.integration_type === "api" && (
-																<button
-																	type="button"
-																	onClick={() => open_edit_modal(token)}
-																	className="px-3 py-1 text-xs md:text-sm rounded bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300"
-																>
-																	Edit
-																</button>
-															)}
+															<button
+																type="button"
+																onClick={() => open_edit_modal(token)}
+																className="px-3 py-1 text-xs md:text-sm rounded bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300 dark:hover:bg-blue-800"
+															>
+																Edit
+															</button>
 															<button
 																type="button"
 																onClick={() =>
@@ -791,15 +798,15 @@ const Integrations = () => {
 																		)}
 																	</button>
 																</div>
-																<p>Created: {format_date(token.created_at)}</p>
+																<p>Created: {formatDate(token.created_at)}</p>
 																{token.last_used_at && (
 																	<p>
-																		Last Used: {format_date(token.last_used_at)}
+																		Last Used: {formatDate(token.last_used_at)}
 																	</p>
 																)}
 																{token.expires_at && (
 																	<p>
-																		Expires: {format_date(token.expires_at)}
+																		Expires: {formatDate(token.expires_at)}
 																		{new Date(token.expires_at) <
 																			new Date() && (
 																			<span className="ml-2 text-red-600 dark:text-red-400">
@@ -1821,14 +1828,14 @@ const Integrations = () => {
 				</div>
 			)}
 
-			{/* Edit API Credential Modal */}
+			{/* Edit Token Modal */}
 			{show_edit_modal && edit_token && (
 				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
 					<div className="bg-white dark:bg-secondary-800 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
 						<div className="p-4 md:p-6">
 							<div className="flex items-center justify-between mb-4 md:mb-6 gap-3">
 								<h2 className="text-lg md:text-xl font-bold text-secondary-900 dark:text-white">
-									Edit API Credential
+									Edit Token
 								</h2>
 								<button
 									type="button"
@@ -1843,21 +1850,76 @@ const Integrations = () => {
 							</div>
 
 							<form onSubmit={update_token} className="space-y-4">
-								<div className="block">
+								<label className="block">
 									<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
 										Token Name
 									</span>
 									<input
 										type="text"
 										value={form_data.token_name}
-										readOnly
-										disabled
-										className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-100 dark:bg-secondary-900 text-secondary-500 dark:text-secondary-400"
+										onChange={(e) =>
+											setFormData({ ...form_data, token_name: e.target.value })
+										}
+										placeholder="e.g., my-pve"
+										className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+										required
 									/>
 									<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
-										Token name cannot be changed
+										Update the token name for better organization
 									</p>
-								</div>
+								</label>
+
+								<label className="block">
+									<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+										Max Hosts Per Day
+									</span>
+									<input
+										type="number"
+										min="1"
+										max="1000"
+										value={form_data.max_hosts_per_day}
+										onChange={(e) =>
+											setFormData({
+												...form_data,
+												max_hosts_per_day: parseInt(e.target.value, 10) || 100,
+											})
+										}
+										className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+									/>
+									<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+										Maximum number of hosts that can be enrolled per day with
+										this token
+									</p>
+								</label>
+
+								{(edit_token?.metadata?.integration_type === "proxmox-lxc" ||
+									edit_token?.metadata?.integration_type === "direct-host") && (
+									<label className="block">
+										<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+											Default Host Group (Optional)
+										</span>
+										<select
+											value={form_data.default_host_group_id}
+											onChange={(e) =>
+												setFormData({
+													...form_data,
+													default_host_group_id: e.target.value,
+												})
+											}
+											className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+										>
+											<option value="">No default group</option>
+											{host_groups.map((group) => (
+												<option key={group.id} value={group.id}>
+													{group.name}
+												</option>
+											))}
+										</select>
+										<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+											Auto-enrolled hosts will be assigned to this group
+										</p>
+									</label>
+								)}
 
 								{edit_token?.metadata?.integration_type === "api" && (
 									<div className="block">

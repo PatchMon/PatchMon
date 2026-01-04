@@ -35,15 +35,11 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 		enabled: isOpen && !!versionInfo?.version,
 	});
 
-	// Fetch supporter count from Buy Me a Coffee
-	const { data: supporterData, isLoading: isLoadingSupporters } = useQuery({
-		queryKey: ["buyMeACoffeeSupporters"],
+	// Fetch supporter count from social media stats
+	const { data: socialMediaStats, isLoading: isLoadingSupporters } = useQuery({
+		queryKey: ["socialMediaStats"],
 		queryFn: async () => {
-			const response = await fetch("/api/v1/buy-me-a-coffee/supporter-count", {
-				headers: {
-					Authorization: `Bearer ${localStorage.getItem("token")}`,
-				},
-			});
+			const response = await fetch("/api/v1/social-media-stats");
 			if (!response.ok) return null;
 			return response.json();
 		},
@@ -173,7 +169,7 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 							{currentStep === 2 && (
 								<button
 									type="button"
-									onClick={onAccept}
+									onClick={handleClose}
 									className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-secondary-700 dark:text-secondary-300 bg-secondary-100 dark:bg-secondary-700 border border-secondary-300 dark:border-secondary-600 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500 transition-colors"
 									aria-label="Close"
 								>
@@ -322,12 +318,15 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 								{/* Supporter/Member count - only show for self-hosted */}
 								{!isCloudVersion &&
 									!isLoadingSupporters &&
-									supporterData?.count !== undefined && (
+									socialMediaStats?.buymeacoffee_supporters !== undefined &&
+									socialMediaStats?.buymeacoffee_supporters !== null && (
 										<p className="text-sm text-secondary-600 dark:text-secondary-400 text-center sm:text-left">
 											<span className="font-semibold text-secondary-900 dark:text-secondary-100">
-												{supporterData.count}
+												{socialMediaStats.buymeacoffee_supporters}
 											</span>{" "}
-											{supporterData.count === 1 ? "person has" : "people have"}{" "}
+											{socialMediaStats.buymeacoffee_supporters === 1
+												? "person has"
+												: "people have"}{" "}
 											bought me a coffee so far!
 										</p>
 									)}

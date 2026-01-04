@@ -881,7 +881,7 @@ const HostDetail = () => {
 											<p className="text-xs text-secondary-500 dark:text-secondary-300 mb-3">
 												Network Interfaces
 											</p>
-											<div className="space-y-4">
+											<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 												{host.network_interfaces.map((iface) => (
 													<div
 														key={iface.name}
@@ -1187,7 +1187,7 @@ const HostDetail = () => {
 														<HardDrive className="h-4 w-4 text-primary-600 dark:text-primary-400" />
 														Disk Usage
 													</h5>
-													<div className="space-y-3">
+													<div className="space-y-3 max-h-80 overflow-y-auto pr-2">
 														{host.disk_details.map((disk, index) => (
 															<div
 																key={disk.name || `disk-${index}`}
@@ -1812,7 +1812,7 @@ const HostDetail = () => {
 													<Wifi className="h-4 w-4 text-primary-600 dark:text-primary-400" />
 													Network Interfaces
 												</h4>
-												<div className="space-y-4">
+												<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 													{host.network_interfaces.map((iface) => (
 														<div
 															key={iface.name}
@@ -2141,7 +2141,7 @@ const HostDetail = () => {
 														<HardDrive className="h-4 w-4 text-primary-600 dark:text-primary-400" />
 														Disk Usage
 													</h5>
-													<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+													<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-80 overflow-y-auto pr-2">
 														{host.disk_details.map((disk, index) => (
 															<div
 																key={disk.name || `disk-${index}`}
