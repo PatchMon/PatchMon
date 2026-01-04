@@ -226,8 +226,19 @@ router.get("/callback", async (req, res) => {
 
 		// Create new user if auto-creation is enabled
 		if (!user && process.env.OIDC_AUTO_CREATE_USERS === "true") {
+			// Check if this is the first user (no users exist yet)
+			const userCount = await prisma.users.count();
+			const isFirstUser = userCount === 0;
+
 			// Map groups to role (or use default if no group mapping configured)
-			const userRole = mapGroupsToRole(userInfo.groups);
+			// BUT: If this is the first user, make them admin regardless of groups
+			let userRole;
+			if (isFirstUser) {
+				userRole = "admin";
+				console.log("First OIDC user - automatically assigning admin role");
+			} else {
+				userRole = mapGroupsToRole(userInfo.groups);
+			}
 
 			// Generate a unique username from email prefix (keep periods for firstname.lastname format)
 			let baseUsername = userInfo.email
@@ -261,7 +272,7 @@ router.get("/callback", async (req, res) => {
 				},
 			});
 
-			console.log(`Created new OIDC user: ${user.email} with role: ${userRole}`);
+			console.log(`Created new OIDC user: ${user.email} with role: ${userRole}${isFirstUser ? " (first user)" : ""}`);
 
 			// Create default dashboard preferences for the new user
 			await createDefaultDashboardPreferences(user.id, userRole);

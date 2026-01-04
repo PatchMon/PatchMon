@@ -303,15 +303,27 @@ function get_location_from_ip(ip) {
 
 // Check if any admin users exist (for first-time setup)
 // Note: Only returns boolean, not count (to prevent information disclosure)
+// Also returns OIDC config so frontend can bypass welcome page when OIDC is configured
 router.get("/check-admin-users", async (_req, res) => {
 	try {
 		const adminCount = await prisma.users.count({
 			where: { role: "admin" },
 		});
 
+		// Check OIDC configuration
+		const oidcEnabled = process.env.OIDC_ENABLED === "true";
+		const oidcAutoCreate = process.env.OIDC_AUTO_CREATE_USERS === "true";
+
 		// Only return boolean - don't expose exact count for security
 		res.json({
 			hasAdminUsers: adminCount > 0,
+			// Include OIDC info so frontend can bypass welcome page
+			oidc: {
+				enabled: oidcEnabled,
+				autoCreateUsers: oidcAutoCreate,
+				// If OIDC is enabled with auto-create, first user can be created via OIDC
+				canBypassWelcome: oidcEnabled && oidcAutoCreate,
+			},
 		});
 	} catch (error) {
 		console.error("Error checking admin users:", error.message);

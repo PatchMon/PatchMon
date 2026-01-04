@@ -468,6 +468,7 @@ export const AuthProvider = ({ children }) => {
 	const canManageSettings = () => hasPermission("can_manage_settings");
 
 	// Check if any admin users exist (for first-time setup)
+	// Also checks if OIDC is configured to bypass the welcome page
 	const checkAdminUsersExist = useCallback(async () => {
 		try {
 			const response = await fetch("/api/v1/auth/check-admin-users", {
@@ -479,7 +480,16 @@ export const AuthProvider = ({ children }) => {
 
 			if (response.ok) {
 				const data = await response.json();
-				setNeedsFirstTimeSetup(!data.hasAdminUsers);
+
+				// If OIDC is enabled with auto-create users, bypass the welcome page
+				// The first user will be created via OIDC JIT provisioning as admin
+				if (!data.hasAdminUsers && data.oidc?.canBypassWelcome) {
+					console.log("No admin users, but OIDC can handle first user - bypassing welcome page");
+					setNeedsFirstTimeSetup(false);
+				} else {
+					setNeedsFirstTimeSetup(!data.hasAdminUsers);
+				}
+
 				setAuthPhase(AUTH_PHASES.READY); // Setup check complete, move to ready phase
 			} else {
 				// If endpoint doesn't exist or fails, assume setup is needed
