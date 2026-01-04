@@ -98,11 +98,16 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 	const ssgUpgradeMutation = useMutation({
 		mutationFn: () => complianceAPI.upgradeSSG(hostId),
 		onSuccess: () => {
-			setSSGUpgradeMessage({ type: "success", text: "SSG upgrade command sent! Packages will be upgraded shortly." });
+			setSSGUpgradeMessage({ type: "success", text: "Upgrading SSG content from GitHub... This may take 10-15 seconds." });
+			// First refresh after 8 seconds (download + extract takes ~6-7s)
+			setTimeout(() => {
+				refetchStatus();
+			}, 8000);
+			// Second refresh after 12 seconds to catch any stragglers
 			setTimeout(() => {
 				setSSGUpgradeMessage(null);
-				refetchStatus(); // Refresh to get new version
-			}, 5000);
+				refetchStatus();
+			}, 12000);
 		},
 		onError: (error) => {
 			setSSGUpgradeMessage({
