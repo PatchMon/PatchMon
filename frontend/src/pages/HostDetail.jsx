@@ -315,7 +315,7 @@ const HostDetail = () => {
 			adminHostsAPI.getIntegrations(hostId).then((res) => res.data),
 		staleTime: 30 * 1000, // 30 seconds
 		refetchOnWindowFocus: false,
-		enabled: !!hostId && activeTab === "integrations",
+		enabled: !!hostId, // Always fetch to control tab visibility
 	});
 
 	// Refetch integrations when WebSocket status changes (e.g., after agent restart)
@@ -1797,30 +1797,34 @@ const HostDetail = () => {
 						>
 							Integrations
 						</button>
-						<button
-							type="button"
-							onClick={() => handleTabChange("compliance")}
-							className={`px-4 py-2 text-sm font-medium ${
-								activeTab === "compliance"
-									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-									: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
-							}`}
-						>
-							<Shield className="h-4 w-4 inline mr-1" />
-							Compliance
-						</button>
-						<button
-							type="button"
-							onClick={() => handleTabChange("docker")}
-							className={`px-4 py-2 text-sm font-medium ${
-								activeTab === "docker"
-									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-									: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
-							}`}
-						>
-							<Database className="h-4 w-4 inline mr-1" />
-							Docker
-						</button>
+						{integrationsData?.data?.integrations?.compliance && (
+							<button
+								type="button"
+								onClick={() => handleTabChange("compliance")}
+								className={`px-4 py-2 text-sm font-medium ${
+									activeTab === "compliance"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
+								}`}
+							>
+								<Shield className="h-4 w-4 inline mr-1" />
+								Compliance
+							</button>
+						)}
+						{integrationsData?.data?.integrations?.docker && (
+							<button
+								type="button"
+								onClick={() => handleTabChange("docker")}
+								className={`px-4 py-2 text-sm font-medium ${
+									activeTab === "docker"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
+								}`}
+							>
+								<Database className="h-4 w-4 inline mr-1" />
+								Docker
+							</button>
+						)}
 						<button
 							type="button"
 							onClick={() => handleTabChange("terminal")}
@@ -2824,13 +2828,13 @@ const HostDetail = () => {
 
 						{/* Integrations */}
 						{activeTab === "integrations" && (
-							<div className="max-w-2xl space-y-4">
+							<div className="max-w-4xl">
 								{isLoadingIntegrations ? (
 									<div className="flex items-center justify-center h-32">
 										<RefreshCw className="h-6 w-6 animate-spin text-primary-600" />
 									</div>
 								) : (
-									<div className="space-y-4">
+									<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 										{/* Docker Integration */}
 										<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
 											<div className="flex items-start justify-between gap-4">
@@ -3075,7 +3079,18 @@ const HostDetail = () => {
 													</span>
 												</div>
 												<p className="text-xl font-bold text-secondary-900 dark:text-white">
-													{dockerData?.stats?.volumes || 0}
+													{dockerData?.stats?.totalVolumes || dockerData?.volumes?.length || 0}
+												</p>
+											</div>
+											<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4">
+												<div className="flex items-center gap-2 mb-1">
+													<Wifi className="h-4 w-4 text-cyan-600" />
+													<span className="text-xs text-secondary-600 dark:text-secondary-400">
+														Networks
+													</span>
+												</div>
+												<p className="text-xl font-bold text-secondary-900 dark:text-white">
+													{dockerData?.stats?.totalNetworks || dockerData?.networks?.length || 0}
 												</p>
 											</div>
 										</div>

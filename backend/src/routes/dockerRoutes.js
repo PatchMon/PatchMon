@@ -478,6 +478,18 @@ router.get("/hosts/:id", authenticateToken, async (req, res) => {
 			where: { id: { in: imageIds } },
 		});
 
+		// Get volumes on this host
+		const volumes = await prisma.docker_volumes.findMany({
+			where: { host_id: id },
+			orderBy: { name: "asc" },
+		});
+
+		// Get networks on this host
+		const networks = await prisma.docker_networks.findMany({
+			where: { host_id: id },
+			orderBy: { name: "asc" },
+		});
+
 		// Get container statistics
 		const runningContainers = containers.filter(
 			(c) => c.status === "running",
@@ -491,11 +503,15 @@ router.get("/hosts/:id", authenticateToken, async (req, res) => {
 				host,
 				containers,
 				images,
+				volumes,
+				networks,
 				stats: {
 					totalContainers: containers.length,
 					runningContainers,
 					stoppedContainers,
 					totalImages: images.length,
+					totalVolumes: volumes.length,
+					totalNetworks: networks.length,
 				},
 			}),
 		);
