@@ -1187,7 +1187,7 @@ const HostDetail = () => {
 														<HardDrive className="h-4 w-4 text-primary-600 dark:text-primary-400" />
 														Disk Usage
 													</h5>
-													<div className="space-y-3">
+													<div className="space-y-3 max-h-80 overflow-y-auto pr-2">
 														{host.disk_details.map((disk, index) => (
 															<div
 																key={disk.name || `disk-${index}`}
@@ -2141,7 +2141,7 @@ const HostDetail = () => {
 														<HardDrive className="h-4 w-4 text-primary-600 dark:text-primary-400" />
 														Disk Usage
 													</h5>
-													<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+													<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-80 overflow-y-auto pr-2">
 														{host.disk_details.map((disk, index) => (
 															<div
 																key={disk.name || `disk-${index}`}

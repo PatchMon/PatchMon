@@ -532,7 +532,7 @@ router.post(
 			.withMessage("Disk details must be an array"),
 		// Network Information
 		body("gatewayIp")
-			.optional()
+			.optional({ checkFalsy: true })
 			.isIP()
 			.withMessage("Gateway IP must be a valid IP address"),
 		body("dnsServers")
