@@ -361,12 +361,14 @@ const HostDetail = () => {
 	useEffect(() => {
 		if (toggleIntegrationMutation.isSuccess) {
 			// Small delay to allow agent to start processing
-			const timeoutId = safeSetTimeout(() => {
-				refetchComplianceStatus();
+			const timeoutId = setTimeout(() => {
+				if (isMountedRef.current) {
+					refetchComplianceStatus();
+				}
 			}, 1000);
 			return () => clearTimeout(timeoutId);
 		}
-	}, [toggleIntegrationMutation.isSuccess, refetchComplianceStatus, safeSetTimeout]);
+	}, [toggleIntegrationMutation.isSuccess, refetchComplianceStatus]);
 
 	// Fetch Docker data for this host (enabled on docker tab or always for mobile view)
 	const {
