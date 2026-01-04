@@ -44,6 +44,7 @@ import {
 	repositoryAPI,
 	settingsAPI,
 } from "../utils/api";
+import { complianceAPI } from "../utils/complianceApi";
 import { OSIcon } from "../utils/osIcons.jsx";
 import CredentialsModal from "./hostdetail/CredentialsModal";
 import DeleteConfirmationModal from "./hostdetail/DeleteConfirmationModal";
@@ -158,6 +159,16 @@ const HostDetail = () => {
 		staleTime: 5 * 60 * 1000, // 5 minutes - data stays fresh longer
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 		enabled: !!hostId,
+	});
+
+	// Fetch latest compliance scan for quick view (only if compliance might be enabled)
+	const { data: complianceLatest, isLoading: isLoadingCompliance } = useQuery({
+		queryKey: ["compliance-latest-quickview", hostId],
+		queryFn: () => complianceAPI.getLatestScan(hostId).then((res) => res.data).catch(() => null),
+		staleTime: 2 * 60 * 1000, // 2 minutes
+		refetchOnWindowFocus: false,
+		enabled: !!hostId,
+		retry: false, // Don't retry if compliance not enabled
 	});
 
 	// Fetch host groups for multi-select
@@ -331,16 +342,17 @@ const HostDetail = () => {
 		queryFn: () =>
 			adminHostsAPI.getIntegrationSetupStatus(hostId, "compliance").then((res) => res.data),
 		staleTime: 5 * 1000, // 5 seconds
-		refetchInterval: (data) => {
-			// Poll every 3 seconds while status is "installing" or "removing"
-			const status = data?.status?.status;
+		refetchInterval: (query) => {
+			// Poll every 2 seconds while status is "installing" or "removing"
+			const status = query.state?.data?.status?.status;
 			if (status === "installing" || status === "removing") {
-				return 3000;
+				return 2000; // Poll faster during installation
 			}
 			return false; // Stop polling when done
 		},
 		refetchOnWindowFocus: false,
-		enabled: !!hostId && integrationsData?.data?.integrations?.compliance,
+		// Always enable for hosts - we need to catch status updates
+		enabled: !!hostId,
 	});
 
 	// Fetch Docker data for this host
@@ -396,10 +408,13 @@ const HostDetail = () => {
 			});
 			// Also invalidate to ensure we get fresh data
 			queryClient.invalidateQueries(["host-integrations", hostId]);
-			// If compliance was just enabled, start polling for setup status
-			if (data.data.integration === "compliance" && data.data.enabled) {
-				// Small delay to let the backend start the setup process
-				safeSetTimeout(() => refetchComplianceStatus(), 500);
+			// If compliance was just enabled/disabled, poll for setup status
+			if (data.data.integration === "compliance") {
+				// Poll multiple times to catch status updates (installation takes ~4-10s)
+				const pollTimes = [500, 2000, 4000, 6000, 8000, 10000, 15000];
+				pollTimes.forEach(delay => {
+					safeSetTimeout(() => refetchComplianceStatus(), delay);
+				});
 			}
 		},
 		onError: (error) => {
@@ -737,6 +752,76 @@ const HostDetail = () => {
 					</div>
 				</button>
 			</div>
+
+			{/* Compliance Quick View - Only shows when compliance is enabled and has scan data */}
+			{complianceLatest && complianceLatest.score !== undefined && (
+				<div className="mb-6">
+					<button
+						type="button"
+						onClick={() => handleTabChange("compliance")}
+						className="card p-4 w-full cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left"
+						title="View compliance details"
+					>
+						<div className="flex items-center justify-between">
+							<div className="flex items-center gap-4">
+								<div className="flex-shrink-0">
+									<div
+										className={`w-12 h-12 rounded-full flex items-center justify-center ${
+											complianceLatest.score >= 80
+												? "bg-green-100 dark:bg-green-900/30"
+												: complianceLatest.score >= 60
+													? "bg-yellow-100 dark:bg-yellow-900/30"
+													: "bg-red-100 dark:bg-red-900/30"
+										}`}
+									>
+										<span
+											className={`text-lg font-bold ${
+												complianceLatest.score >= 80
+													? "text-green-600 dark:text-green-400"
+													: complianceLatest.score >= 60
+														? "text-yellow-600 dark:text-yellow-400"
+														: "text-red-600 dark:text-red-400"
+											}`}
+										>
+											{Math.round(complianceLatest.score)}%
+										</span>
+									</div>
+								</div>
+								<div>
+									<div className="flex items-center gap-2">
+										<Shield className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+										<p className="text-sm font-medium text-secondary-900 dark:text-white">
+											Compliance Score
+										</p>
+									</div>
+									<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-0.5">
+										{complianceLatest.compliance_profiles?.name || "Security Profile"}
+										{complianceLatest.completed_at && (
+											<span className="ml-2">
+												• {formatRelativeTime(complianceLatest.completed_at)}
+											</span>
+										)}
+									</p>
+								</div>
+							</div>
+							<div className="flex items-center gap-4 text-sm">
+								<div className="flex items-center gap-1.5">
+									<CheckCircle className="h-4 w-4 text-green-500" />
+									<span className="text-secondary-700 dark:text-secondary-300">{complianceLatest.passed || 0}</span>
+								</div>
+								<div className="flex items-center gap-1.5">
+									<X className="h-4 w-4 text-red-500" />
+									<span className="text-secondary-700 dark:text-secondary-300">{complianceLatest.failed || 0}</span>
+								</div>
+								<div className="flex items-center gap-1.5">
+									<AlertTriangle className="h-4 w-4 text-yellow-500" />
+									<span className="text-secondary-700 dark:text-secondary-300">{complianceLatest.warnings || 0}</span>
+								</div>
+							</div>
+						</div>
+					</button>
+				</div>
+			)}
 
 			{/* Main Content - Full Width */}
 			<div className="flex-1 md:overflow-hidden">

@@ -38,4 +38,8 @@ export const complianceAPI = {
 
 	// Upgrade SSG content packages on the agent
 	upgradeSSG: (hostId) => api.post(`/compliance/upgrade-ssg/${hostId}`),
+
+	// Remediate a single failed rule
+	remediateRule: (hostId, ruleId) =>
+		api.post(`/compliance/remediate/${hostId}`, { rule_id: ruleId }),
 };

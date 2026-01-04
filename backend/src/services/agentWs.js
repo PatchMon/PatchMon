@@ -515,6 +515,20 @@ async function handleDockerStatusEvent(apiId, message) {
 	}
 }
 
+function pushRemediateRule(apiId, ruleId) {
+	const ws = apiIdToSocket.get(apiId);
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		const payload = {
+			type: "remediate_rule",
+			rule_id: ruleId,
+		};
+		safeSend(ws, JSON.stringify(payload));
+		console.log(`[agent-ws] Triggered single rule remediation for ${apiId}: ${ruleId}`);
+		return true;
+	}
+	return false;
+}
+
 module.exports = {
 	init,
 	broadcastSettingsUpdate,
@@ -526,6 +540,7 @@ module.exports = {
 	pushUpdateNotificationToAll,
 	pushComplianceScan,
 	pushUpgradeSSG,
+	pushRemediateRule,
 	// Expose read-only view of connected agents
 	getConnectedApiIds: () => Array.from(apiIdToSocket.keys()),
 	getConnectionByApiId,

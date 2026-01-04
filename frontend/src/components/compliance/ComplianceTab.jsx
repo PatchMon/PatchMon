@@ -54,6 +54,7 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 	const [selectedProfile, setSelectedProfile] = useState("openscap");
 	const [scanInProgress, setScanInProgress] = useState(false);
 	const [enableRemediation, setEnableRemediation] = useState(false);
+	const [remediatingRule, setRemediatingRule] = useState(null);
 	const queryClient = useQueryClient();
 
 	const { data: latestScan, isLoading, refetch: refetchLatest } = useQuery({
@@ -79,17 +80,26 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 	// Agent update mutation
 	const [updateMessage, setUpdateMessage] = useState(null);
 	const agentUpdateMutation = useMutation({
-		mutationFn: () => hostsAPI.forceAgentUpdate(hostId),
+		mutationFn: () => {
+			if (!hostId) {
+				return Promise.reject(new Error("No host ID available"));
+			}
+			return hostsAPI.forceAgentUpdate(hostId);
+		},
 		onSuccess: () => {
 			setUpdateMessage({ type: "success", text: "Update command sent! Agent will update shortly." });
 			setTimeout(() => setUpdateMessage(null), 5000);
 		},
 		onError: (error) => {
+			console.error("Agent update error:", error);
+			const errorMsg = error.response?.data?.error
+				|| error.message
+				|| "Failed to send update command";
 			setUpdateMessage({
 				type: "error",
-				text: error.response?.data?.error || "Failed to send update command"
+				text: errorMsg
 			});
-			setTimeout(() => setUpdateMessage(null), 5000);
+			setTimeout(() => setUpdateMessage(null), 8000);
 		},
 	});
 
@@ -115,6 +125,34 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 				text: error.response?.data?.error || "Failed to send SSG upgrade command"
 			});
 			setTimeout(() => setSSGUpgradeMessage(null), 5000);
+		},
+	});
+
+	// Single rule remediation mutation
+	const remediateRuleMutation = useMutation({
+		mutationFn: (ruleId) => complianceAPI.remediateRule(hostId, ruleId),
+		onMutate: (ruleId) => {
+			setRemediatingRule(ruleId);
+		},
+		onSuccess: (_, ruleId) => {
+			setScanMessage({
+				type: "success",
+				text: `Remediation command sent for rule. A new scan will be triggered to verify the fix.`,
+			});
+			setRemediatingRule(null);
+			// Trigger a new scan after remediation to verify the fix
+			setTimeout(() => {
+				refetchLatest();
+				setScanMessage(null);
+			}, 5000);
+		},
+		onError: (error) => {
+			setScanMessage({
+				type: "error",
+				text: error.response?.data?.error || "Failed to remediate rule",
+			});
+			setRemediatingRule(null);
+			setTimeout(() => setScanMessage(null), 5000);
 		},
 	});
 
@@ -229,31 +267,44 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 								</div>
 							</div>
 
-							{/* Stats Grid */}
-							<div className="grid grid-cols-5 gap-3">
-								<div className="bg-secondary-700/50 rounded-lg p-3 text-center">
-									<p className="text-2xl font-bold text-white">{latestScan.total_rules || 0}</p>
-									<p className="text-xs text-secondary-400">Total Rules</p>
-								</div>
-								<div className="bg-green-900/20 border border-green-800/50 rounded-lg p-3 text-center">
-									<p className="text-2xl font-bold text-green-400">{latestScan.passed || 0}</p>
-									<p className="text-xs text-secondary-400">Passed</p>
-								</div>
-								<div className="bg-red-900/20 border border-red-800/50 rounded-lg p-3 text-center">
-									<p className="text-2xl font-bold text-red-400">{latestScan.failed || 0}</p>
-									<p className="text-xs text-secondary-400">Failed</p>
-								</div>
-								<div className="bg-yellow-900/20 border border-yellow-800/50 rounded-lg p-3 text-center">
-									<p className="text-2xl font-bold text-yellow-400">{latestScan.warnings || 0}</p>
-									<p className="text-xs text-secondary-400">Warnings</p>
-								</div>
-								<div className="bg-secondary-700/50 rounded-lg p-3 text-center">
-									<p className="text-2xl font-bold text-secondary-400">
-										{(latestScan.skipped || 0) + (latestScan.not_applicable || 0)}
-									</p>
-									<p className="text-xs text-secondary-400">N/A</p>
-								</div>
-							</div>
+							{/* Stats Grid - Use actual results for accurate counts */}
+							{(() => {
+								const results = latestScan.compliance_results || latestScan.results || [];
+								const counts = {
+									total: results.length,
+									pass: results.filter(r => r.status === "pass").length,
+									fail: results.filter(r => r.status === "fail").length,
+									warn: results.filter(r => r.status === "warn").length,
+									skip: results.filter(r => r.status === "skip").length,
+									notapplicable: results.filter(r => r.status === "notapplicable").length,
+								};
+								return (
+									<div className="grid grid-cols-5 gap-3">
+										<div className="bg-secondary-700/50 rounded-lg p-3 text-center">
+											<p className="text-2xl font-bold text-white">{counts.total}</p>
+											<p className="text-xs text-secondary-400">Total Rules</p>
+										</div>
+										<div className="bg-green-900/20 border border-green-800/50 rounded-lg p-3 text-center">
+											<p className="text-2xl font-bold text-green-400">{counts.pass}</p>
+											<p className="text-xs text-secondary-400">Passed</p>
+										</div>
+										<div className="bg-red-900/20 border border-red-800/50 rounded-lg p-3 text-center">
+											<p className="text-2xl font-bold text-red-400">{counts.fail}</p>
+											<p className="text-xs text-secondary-400">Failed</p>
+										</div>
+										<div className="bg-yellow-900/20 border border-yellow-800/50 rounded-lg p-3 text-center">
+											<p className="text-2xl font-bold text-yellow-400">{counts.warn}</p>
+											<p className="text-xs text-secondary-400">Warnings</p>
+										</div>
+										<div className="bg-secondary-700/50 rounded-lg p-3 text-center">
+											<p className="text-2xl font-bold text-secondary-400">
+												{counts.skip + counts.notapplicable}
+											</p>
+											<p className="text-xs text-secondary-400">N/A</p>
+										</div>
+									</div>
+								);
+							})()}
 						</div>
 
 						<div className="flex justify-center lg:justify-end">
@@ -707,25 +758,107 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 
 									{expandedRules[result.id] && (
 										<div className="mt-4 ml-8 space-y-3 text-sm border-l-2 border-secondary-600 pl-4">
+											{/* Rule ID reference */}
+											{(result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_id) && (
+												<div className="flex items-center gap-2 text-xs">
+													<span className="text-secondary-500">Rule ID:</span>
+													<code className="bg-secondary-700 px-2 py-0.5 rounded text-secondary-300 font-mono">
+														{result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_id}
+													</code>
+												</div>
+											)}
 											{(result.compliance_rules?.description || result.rule?.description) && (
 												<div>
-													<p className="text-secondary-400 font-medium mb-1">Description</p>
+													<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+														<Info className="h-3.5 w-3.5" />
+														Description
+													</p>
 													<p className="text-secondary-300">
 														{result.compliance_rules?.description || result.rule?.description}
 													</p>
 												</div>
 											)}
+											{/* Rationale - explains WHY this rule matters */}
+											{(result.compliance_rules?.rationale || result.rule?.rationale) && (
+												<div>
+													<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+														<BookOpen className="h-3.5 w-3.5" />
+														Why This Matters
+													</p>
+													<p className="text-secondary-300 text-sm leading-relaxed">
+														{result.compliance_rules?.rationale || result.rule?.rationale}
+													</p>
+												</div>
+											)}
 											{result.finding && (
 												<div>
-													<p className="text-secondary-400 font-medium mb-1">Finding</p>
+													<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+														<AlertTriangle className="h-3.5 w-3.5" />
+														Finding
+													</p>
 													<p className="text-secondary-300">{result.finding}</p>
+												</div>
+											)}
+											{/* Show actual vs expected for clearer understanding */}
+											{(result.actual || result.expected) && (
+												<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+													{result.actual && (
+														<div className="bg-secondary-700/50 rounded p-2">
+															<p className="text-secondary-400 text-xs font-medium mb-1">Actual Value</p>
+															<code className="text-red-300 text-xs break-all">{result.actual}</code>
+														</div>
+													)}
+													{result.expected && (
+														<div className="bg-secondary-700/50 rounded p-2">
+															<p className="text-secondary-400 text-xs font-medium mb-1">Expected Value</p>
+															<code className="text-green-300 text-xs break-all">{result.expected}</code>
+														</div>
+													)}
 												</div>
 											)}
 											{(result.compliance_rules?.remediation || result.rule?.remediation || result.remediation) && (
 												<div>
-													<p className="text-secondary-400 font-medium mb-1">Remediation</p>
-													<p className="text-secondary-300">
+													<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+														<Wrench className="h-3.5 w-3.5" />
+														How to Fix
+													</p>
+													<p className="text-secondary-300 whitespace-pre-wrap">
 														{result.compliance_rules?.remediation || result.rule?.remediation || result.remediation}
+													</p>
+												</div>
+											)}
+											{/* Fix This Rule button - only for failed rules */}
+											{result.status === "fail" && isConnected && (
+												<div className="mt-4 pt-3 border-t border-secondary-600">
+													<button
+														onClick={(e) => {
+															e.stopPropagation();
+															const ruleId = result.compliance_rules?.rule_id || result.rule?.rule_id || result.rule_id;
+															if (ruleId) {
+																remediateRuleMutation.mutate(ruleId);
+															}
+														}}
+														disabled={remediatingRule === (result.compliance_rules?.rule_id || result.rule?.rule_id || result.rule_id) || remediateRuleMutation.isPending}
+														className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+															remediatingRule === (result.compliance_rules?.rule_id || result.rule?.rule_id || result.rule_id)
+																? "bg-orange-600/50 text-orange-200 cursor-wait"
+																: "bg-orange-600 hover:bg-orange-500 text-white"
+														}`}
+													>
+														{remediatingRule === (result.compliance_rules?.rule_id || result.rule?.rule_id || result.rule_id) ? (
+															<>
+																<RefreshCw className="h-4 w-4 animate-spin" />
+																Fixing...
+															</>
+														) : (
+															<>
+																<Wrench className="h-4 w-4" />
+																Fix This Rule
+															</>
+														)}
+													</button>
+													<p className="text-xs text-secondary-500 mt-1">
+														Attempts to automatically remediate this specific rule
 													</p>
 												</div>
 											)}

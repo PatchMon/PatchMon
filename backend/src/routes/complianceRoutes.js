@@ -605,6 +605,58 @@ router.post("/upgrade-ssg/:hostId", async (req, res) => {
 });
 
 /**
+ * POST /api/v1/compliance/remediate/:hostId
+ * Remediate a single failed rule on the agent
+ */
+router.post("/remediate/:hostId", async (req, res) => {
+  try {
+    const { hostId } = req.params;
+    const { rule_id } = req.body;
+
+    // Validate hostId
+    if (!isValidUUID(hostId)) {
+      return res.status(400).json({ error: "Invalid host ID format" });
+    }
+
+    // Validate rule_id
+    if (!rule_id || typeof rule_id !== "string") {
+      return res.status(400).json({ error: "rule_id is required" });
+    }
+
+    const host = await prisma.hosts.findUnique({
+      where: { id: hostId },
+    });
+
+    if (!host) {
+      return res.status(404).json({ error: "Host not found" });
+    }
+
+    // Use agentWs service to send remediation command
+    const agentWs = require("../services/agentWs");
+
+    if (!agentWs.isConnected(host.api_id)) {
+      return res.status(400).json({ error: "Host is not connected" });
+    }
+
+    const success = agentWs.pushRemediateRule(host.api_id, rule_id);
+
+    if (success) {
+      console.log(`[Compliance] Single rule remediation triggered for ${host.api_id}: ${rule_id}`);
+      res.json({
+        message: "Remediation command sent",
+        host_id: hostId,
+        rule_id: rule_id,
+      });
+    } else {
+      res.status(400).json({ error: "Failed to send remediation command" });
+    }
+  } catch (error) {
+    console.error("[Compliance] Error triggering remediation:", error);
+    res.status(500).json({ error: "Failed to trigger remediation" });
+  }
+});
+
+/**
  * GET /api/v1/compliance/trends/:hostId
  * Get compliance score trends over time
  */
