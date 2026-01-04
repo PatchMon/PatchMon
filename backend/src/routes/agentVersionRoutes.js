@@ -159,7 +159,7 @@ router.get("/versions", authenticateToken, async (_req, res) => {
 router.get(
 	"/binary/:version/:architecture",
 	authenticateToken,
-	async (_req, res) => {
+	async (req, res) => {
 		try {
 			const { version, architecture } = req.params;
 			const binaryInfo = await agentVersionService.getBinaryInfo(
@@ -183,7 +183,7 @@ router.get(
 router.get(
 	"/download/:version/:architecture",
 	authenticateToken,
-	async (_req, res) => {
+	async (req, res) => {
 		try {
 			const { version, architecture } = req.params;
 
@@ -239,7 +239,7 @@ router.post(
 	"/notify-update/:apiId",
 	authenticateToken,
 	requirePermission("admin"),
-	async (_req, res) => {
+	async (req, res) => {
 		try {
 			const { apiId } = req.params;
 			const { version, force = false } = req.body;
@@ -281,7 +281,7 @@ router.post(
 	"/notify-update-all",
 	authenticateToken,
 	requirePermission("admin"),
-	async (_req, res) => {
+	async (req, res) => {
 		try {
 			const { version, force = false } = req.body;
 
@@ -323,7 +323,7 @@ router.post(
 	"/check-update/:apiId",
 	authenticateToken,
 	requirePermission("can_manage_settings"),
-	async (_req, res) => {
+	async (req, res) => {
 		try {
 			const { apiId } = req.params;
 			const { version, force = false } = req.body;
@@ -368,7 +368,7 @@ router.post(
 	"/push-updates-all",
 	authenticateToken,
 	requirePermission("can_manage_settings"),
-	async (_req, res) => {
+	async (req, res) => {
 		try {
 			const { force = false } = req.body;
 
