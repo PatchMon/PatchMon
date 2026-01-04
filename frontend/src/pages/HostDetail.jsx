@@ -35,7 +35,7 @@ import ComplianceTab from "../components/compliance/ComplianceTab";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import SshTerminal from "../components/SshTerminal";
-import {
+import api, {
 	adminHostsAPI,
 	dashboardAPI,
 	formatDate,
@@ -379,12 +379,7 @@ const HostDetail = () => {
 		isLoading: isLoadingDocker,
 	} = useQuery({
 		queryKey: ["docker", "host", hostId],
-		queryFn: async () => {
-			const response = await import("../utils/api").then((m) =>
-				m.default.get(`/docker/hosts/${hostId}`),
-			);
-			return response.data;
-		},
+		queryFn: () => api.get(`/docker/hosts/${hostId}`).then((res) => res.data),
 		staleTime: 30 * 1000,
 		refetchOnWindowFocus: false,
 		// Enable on docker tab or if integrations show docker enabled (for mobile cards)
