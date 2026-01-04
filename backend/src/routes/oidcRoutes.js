@@ -51,9 +51,15 @@ const OIDC_SESSION_PREFIX = "oidc:session:";
 
 /**
  * Map OIDC groups to PatchMon role
- * Checks user's groups against configured admin/user group names
+ * Checks user's groups against configured admin/user/superadmin group names
+ *
+ * Role hierarchy:
+ * - superadmin: Must be in BOTH OIDC_ADMIN_GROUP AND OIDC_SUPERADMIN_GROUP
+ * - admin: Must be in OIDC_ADMIN_GROUP (but not superadmin group)
+ * - user: In OIDC_USER_GROUP or default
+ *
  * @param {string[]} groups - Array of group names from IdP
- * @returns {string} - PatchMon role (admin, user, or default)
+ * @returns {string} - PatchMon role (superadmin, admin, user, or default)
  */
 function mapGroupsToRole(groups) {
 	if (!groups || !Array.isArray(groups) || groups.length === 0) {
@@ -61,12 +67,22 @@ function mapGroupsToRole(groups) {
 	}
 
 	// Get configured group names (case-insensitive matching)
+	const superadminGroup = process.env.OIDC_SUPERADMIN_GROUP?.toLowerCase();
 	const adminGroup = process.env.OIDC_ADMIN_GROUP?.toLowerCase();
 	const userGroup = process.env.OIDC_USER_GROUP?.toLowerCase();
 
 	const lowerGroups = groups.map((g) => g.toLowerCase());
 
-	// Check for admin group first (highest privilege)
+	// Check for superadmin: must be in BOTH admin group AND superadmin group
+	if (superadminGroup && adminGroup) {
+		const inSuperadminGroup = lowerGroups.includes(superadminGroup);
+		const inAdminGroup = lowerGroups.includes(adminGroup);
+		if (inSuperadminGroup && inAdminGroup) {
+			return "superadmin";
+		}
+	}
+
+	// Check for admin group
 	if (adminGroup && lowerGroups.includes(adminGroup)) {
 		return "admin";
 	}
@@ -230,14 +246,16 @@ router.get("/callback", async (req, res) => {
 			const userCount = await prisma.users.count();
 			const isFirstUser = userCount === 0;
 
-			// Map groups to role (or use default if no group mapping configured)
-			// BUT: If this is the first user, make them admin regardless of groups
-			let userRole;
-			if (isFirstUser) {
-				userRole = "admin";
-				console.log("First OIDC user - automatically assigning admin role");
-			} else {
-				userRole = mapGroupsToRole(userInfo.groups);
+			// Map groups to role - always respect OIDC group membership
+			const userRole = mapGroupsToRole(userInfo.groups);
+
+			// Warn if first user isn't getting admin/superadmin role
+			if (isFirstUser && userRole === "user") {
+				console.warn(
+					`WARNING: First OIDC user "${userInfo.email}" is being created with role "${userRole}". ` +
+					`Ensure they are in the correct OIDC groups (OIDC_ADMIN_GROUP or OIDC_SUPERADMIN_GROUP) ` +
+					`to have admin access.`
+				);
 			}
 
 			// Generate a unique username from email prefix (keep periods for firstname.lastname format)

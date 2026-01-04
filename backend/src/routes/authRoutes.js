@@ -722,6 +722,20 @@ router.put(
 				return res.status(404).json({ error: "User not found" });
 			}
 
+			// Protect superadmin users from non-superadmin modifications
+			if (existingUser.role === "superadmin" && req.user.role !== "superadmin") {
+				return res.status(403).json({
+					error: "Only superadmins can modify superadmin users",
+				});
+			}
+
+			// Prevent non-superadmins from assigning superadmin role
+			if (role === "superadmin" && req.user.role !== "superadmin") {
+				return res.status(403).json({
+					error: "Only superadmins can assign the superadmin role",
+				});
+			}
+
 			// Check if username/email already exists (excluding current user)
 			if (username || email) {
 				const duplicateUser = await prisma.users.findFirst({
@@ -745,19 +759,45 @@ router.put(
 				}
 			}
 
-			// Prevent deactivating the last admin
-			if (is_active === false && existingUser.role === "admin") {
-				const adminCount = await prisma.users.count({
+			// Prevent deactivating the last superadmin
+			if (is_active === false && existingUser.role === "superadmin") {
+				const superadminCount = await prisma.users.count({
 					where: {
-						role: "admin",
+						role: "superadmin",
 						is_active: true,
 					},
 				});
 
-				if (adminCount <= 1) {
+				if (superadminCount <= 1) {
 					return res
 						.status(400)
-						.json({ error: "Cannot deactivate the last admin user" });
+						.json({ error: "Cannot deactivate the last superadmin user" });
+				}
+			}
+
+			// Prevent deactivating the last admin (when no superadmins exist)
+			if (is_active === false && existingUser.role === "admin") {
+				const superadminCount = await prisma.users.count({
+					where: {
+						role: "superadmin",
+						is_active: true,
+					},
+				});
+
+				// Only protect last admin if there are no superadmins
+				if (superadminCount === 0) {
+					const adminCount = await prisma.users.count({
+						where: {
+							role: "admin",
+							is_active: true,
+						},
+					});
+
+					if (adminCount <= 1) {
+						return res
+							.status(400)
+							.json({ error: "Cannot deactivate the last admin user" });
+					}
 				}
 			}
 
@@ -816,19 +856,52 @@ router.delete(
 				return res.status(404).json({ error: "User not found" });
 			}
 
-			// Prevent deleting the last admin
-			if (user.role === "admin") {
-				const adminCount = await prisma.users.count({
+			// Protect superadmin users from non-superadmin deletion
+			if (user.role === "superadmin" && req.user.role !== "superadmin") {
+				return res.status(403).json({
+					error: "Only superadmins can delete superadmin users",
+				});
+			}
+
+			// Prevent deleting the last superadmin
+			if (user.role === "superadmin") {
+				const superadminCount = await prisma.users.count({
 					where: {
-						role: "admin",
+						role: "superadmin",
 						is_active: true,
 					},
 				});
 
-				if (adminCount <= 1) {
+				if (superadminCount <= 1) {
 					return res
 						.status(400)
-						.json({ error: "Cannot delete the last admin user" });
+						.json({ error: "Cannot delete the last superadmin user" });
+				}
+			}
+
+			// Prevent deleting the last admin (when no superadmins exist)
+			if (user.role === "admin") {
+				const superadminCount = await prisma.users.count({
+					where: {
+						role: "superadmin",
+						is_active: true,
+					},
+				});
+
+				// Only protect last admin if there are no superadmins
+				if (superadminCount === 0) {
+					const adminCount = await prisma.users.count({
+						where: {
+							role: "admin",
+							is_active: true,
+						},
+					});
+
+					if (adminCount <= 1) {
+						return res
+							.status(400)
+							.json({ error: "Cannot delete the last admin user" });
+					}
 				}
 			}
 
@@ -884,6 +957,13 @@ router.post(
 
 			if (!user) {
 				return res.status(404).json({ error: "User not found" });
+			}
+
+			// Protect superadmin users from non-superadmin password resets
+			if (user.role === "superadmin" && req.user.role !== "superadmin") {
+				return res.status(403).json({
+					error: "Only superadmins can reset superadmin passwords",
+				});
 			}
 
 			// Prevent resetting password of inactive users
