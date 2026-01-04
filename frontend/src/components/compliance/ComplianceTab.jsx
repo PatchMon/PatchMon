@@ -48,7 +48,7 @@ const SUBTABS = [
 const ComplianceTab = ({ hostId, isConnected }) => {
 	const [activeSubtab, setActiveSubtab] = useState("overview");
 	const [expandedRules, setExpandedRules] = useState({});
-	const [statusFilter, setStatusFilter] = useState("all");
+	const [statusFilter, setStatusFilter] = useState("fail");
 	const [selectedProfile, setSelectedProfile] = useState("openscap");
 	const [enableRemediation, setEnableRemediation] = useState(false);
 	const [remediatingRule, setRemediatingRule] = useState(null);
@@ -828,7 +828,37 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 	);
 
 	// Render Results subtab
-	const renderResults = () => (
+	const renderResults = () => {
+		const results = latestScan?.compliance_results || latestScan?.results || [];
+		const counts = {
+			fail: results.filter(r => r.status === "fail").length,
+			warn: results.filter(r => r.status === "warn").length,
+			pass: results.filter(r => r.status === "pass").length,
+			skipped: results.filter(r => r.status === "skip" || r.status === "notapplicable").length,
+		};
+
+		// Results subtabs configuration
+		const resultsSubtabs = [
+			{ id: "fail", label: "Failed", count: counts.fail, icon: XCircle, color: "text-red-400", bgColor: "bg-red-900/20", borderColor: "border-red-700" },
+			{ id: "warn", label: "Warnings", count: counts.warn, icon: AlertTriangle, color: "text-yellow-400", bgColor: "bg-yellow-900/20", borderColor: "border-yellow-700" },
+			{ id: "pass", label: "Passed", count: counts.pass, icon: CheckCircle, color: "text-green-400", bgColor: "bg-green-900/20", borderColor: "border-green-700" },
+			{ id: "skipped", label: "Skipped/N/A", count: counts.skipped, icon: MinusCircle, color: "text-secondary-400", bgColor: "bg-secondary-700/50", borderColor: "border-secondary-600" },
+		];
+
+		// Map statusFilter to include both skip and notapplicable for "skipped" tab
+		const getFilteredResults = () => {
+			if (statusFilter === "skipped") {
+				return results.filter(r => r.status === "skip" || r.status === "notapplicable");
+			}
+			if (statusFilter === "all") {
+				return results;
+			}
+			return results.filter(r => r.status === statusFilter);
+		};
+
+		const currentFilteredResults = getFilteredResults();
+
+		return (
 		<div className="space-y-4">
 			{latestScan ? (
 				<>
@@ -860,42 +890,38 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 						</div>
 					</div>
 
-					{/* Results Filter */}
-					<div className="flex flex-wrap gap-2">
-						{["all", "fail", "warn", "pass", "skip", "notapplicable"].map((status) => {
-							const results = latestScan.compliance_results || latestScan.results || [];
-							const count = status === "all"
-								? results.length
-								: results.filter(r => r.status === status).length;
-							// Don't show filter button if count is 0 (except for "all")
-							if (count === 0 && status !== "all") return null;
-							return (
-								<button
-									key={status}
-									onClick={() => setStatusFilter(status)}
-									className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm capitalize transition-colors ${
-										statusFilter === status
-											? "bg-primary-600 text-white"
-											: "bg-secondary-700 text-secondary-300 hover:bg-secondary-600"
-									}`}
-								>
-									{status === "notapplicable" ? "N/A" : status === "skip" ? "Skipped" : status}
-									<span className={`px-1.5 py-0.5 rounded text-xs ${
-										statusFilter === status
-											? "bg-primary-500"
-											: "bg-secondary-600"
-									}`}>
-										{count}
-									</span>
-								</button>
-							);
-						})}
-					</div>
+					{/* Results Subtabs */}
+					<div className="bg-secondary-800 rounded-lg border border-secondary-700">
+						<div className="flex border-b border-secondary-700">
+							{resultsSubtabs.map((tab) => {
+								const Icon = tab.icon;
+								const isActive = statusFilter === tab.id;
+								return (
+									<button
+										key={tab.id}
+										onClick={() => setStatusFilter(tab.id)}
+										className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+											isActive
+												? `${tab.color} border-current bg-secondary-700/50`
+												: "text-secondary-400 border-transparent hover:text-secondary-200 hover:bg-secondary-700/30"
+										}`}
+									>
+										<Icon className="h-4 w-4" />
+										<span>{tab.label}</span>
+										<span className={`px-2 py-0.5 rounded-full text-xs ${
+											isActive ? tab.bgColor : "bg-secondary-600"
+										}`}>
+											{tab.count}
+										</span>
+									</button>
+								);
+							})}
+						</div>
 
-					{/* Results List */}
-					{filteredResults && filteredResults.length > 0 ? (
-						<div className="bg-secondary-800 rounded-lg border border-secondary-700 divide-y divide-secondary-700">
-							{filteredResults.map((result) => (
+						{/* Results List */}
+						{currentFilteredResults && currentFilteredResults.length > 0 ? (
+							<div className="divide-y divide-secondary-700 max-h-[600px] overflow-y-auto">
+								{currentFilteredResults.map((result) => (
 								<div key={result.id} className="p-4">
 									<button
 										onClick={() => toggleRule(result.id)}
@@ -953,6 +979,26 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 													</p>
 												</div>
 											)}
+
+											{/* WHY THIS FAILED - Clear explanation for failed rules */}
+											{result.status === "fail" && (
+												<div className="bg-red-900/20 border border-red-800/50 rounded-lg p-3">
+													<p className="text-red-400 font-medium mb-2 flex items-center gap-1">
+														<XCircle className="h-3.5 w-3.5" />
+														Why This Failed
+													</p>
+													<div className="text-red-200/90 text-sm space-y-2">
+														{result.finding ? (
+															<p>{result.finding}</p>
+														) : result.actual ? (
+															<p>The system has <code className="bg-red-800/50 px-1 rounded">{result.actual}</code> but the benchmark requires <code className="bg-green-800/50 px-1 rounded">{result.expected || "a different value"}</code>.</p>
+														) : (
+															<p>The system configuration does not meet the security requirements defined by this rule. The expected security setting was not found or is incorrectly configured.</p>
+														)}
+													</div>
+												</div>
+											)}
+
 											{/* Rationale - explains WHY this rule matters */}
 											{(result.compliance_rules?.rationale || result.rule?.rationale) && (
 												<div>
@@ -965,41 +1011,73 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 													</p>
 												</div>
 											)}
-											{result.finding && (
-												<div>
-													<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
-														<AlertTriangle className="h-3.5 w-3.5" />
-														Finding
-													</p>
-													<p className="text-secondary-300">{result.finding}</p>
-												</div>
-											)}
 											{/* Show actual vs expected for clearer understanding */}
 											{(result.actual || result.expected) && (
 												<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
 													{result.actual && (
 														<div className="bg-secondary-700/50 rounded p-2">
-															<p className="text-secondary-400 text-xs font-medium mb-1">Actual Value</p>
+															<p className="text-secondary-400 text-xs font-medium mb-1">Current Value</p>
 															<code className="text-red-300 text-xs break-all">{result.actual}</code>
 														</div>
 													)}
 													{result.expected && (
 														<div className="bg-secondary-700/50 rounded p-2">
-															<p className="text-secondary-400 text-xs font-medium mb-1">Expected Value</p>
+															<p className="text-secondary-400 text-xs font-medium mb-1">Required Value</p>
 															<code className="text-green-300 text-xs break-all">{result.expected}</code>
 														</div>
 													)}
 												</div>
 											)}
+
+											{/* WHAT THE FIX DOES - Explanation before remediation */}
+											{result.status === "fail" && (result.compliance_rules?.remediation || result.rule?.remediation || result.remediation) && (
+												<div className="bg-orange-900/20 border border-orange-800/50 rounded-lg p-3">
+													<p className="text-orange-400 font-medium mb-2 flex items-center gap-1">
+														<Wrench className="h-3.5 w-3.5" />
+														What the Fix Does
+													</p>
+													<div className="text-orange-200/90 text-sm space-y-2">
+														<p>
+															{(() => {
+																const remediation = result.compliance_rules?.remediation || result.rule?.remediation || result.remediation || "";
+																const title = result.compliance_rules?.title || result.rule?.title || "";
+																// Generate a user-friendly description based on the rule
+																if (remediation.includes("sysctl") || remediation.includes("/proc/sys")) {
+																	return "This fix will modify kernel parameters to enable the required security setting. Changes are applied immediately and persist across reboots.";
+																} else if (remediation.includes("chmod") || remediation.includes("chown")) {
+																	return "This fix will update file permissions or ownership to meet the required security standard. This restricts unauthorized access to sensitive files.";
+																} else if (remediation.includes("apt") || remediation.includes("yum") || remediation.includes("dnf")) {
+																	return "This fix will install, update, or remove packages as needed to meet the security requirement.";
+																} else if (remediation.includes("systemctl") || remediation.includes("service")) {
+																	return "This fix will enable, disable, or configure a system service to meet the security requirement.";
+																} else if (remediation.includes("/etc/ssh")) {
+																	return "This fix will update SSH daemon configuration to harden remote access security.";
+																} else if (remediation.includes("audit") || remediation.includes("auditd")) {
+																	return "This fix will configure audit logging to track security-relevant system events.";
+																} else if (remediation.includes("pam") || remediation.includes("/etc/pam")) {
+																	return "This fix will configure authentication modules to enforce stronger access controls.";
+																} else if (title.toLowerCase().includes("password")) {
+																	return "This fix will update password policy settings to require stronger passwords or enforce better credential management.";
+																} else if (title.toLowerCase().includes("firewall") || remediation.includes("iptables") || remediation.includes("nftables")) {
+																	return "This fix will configure firewall rules to restrict network access and improve security.";
+																} else {
+																	return "This fix will apply the recommended configuration change to bring your system into compliance with the security benchmark.";
+																}
+															})()}
+														</p>
+													</div>
+												</div>
+											)}
+
 											{(result.compliance_rules?.remediation || result.rule?.remediation || result.remediation) && (
 												<div>
 													<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
 														<Wrench className="h-3.5 w-3.5" />
-														How to Fix
+														Remediation Steps
 													</p>
-													<p className="text-secondary-300 whitespace-pre-wrap">
+													<pre className="text-secondary-300 whitespace-pre-wrap bg-secondary-700/30 rounded p-2 text-xs font-mono overflow-x-auto">
 														{result.compliance_rules?.remediation || result.rule?.remediation || result.remediation}
-													</p>
+													</pre>
 												</div>
 											)}
 											{/* Fix This Rule button - only for failed rules */}
@@ -1043,10 +1121,11 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 							))}
 						</div>
 					) : (
-						<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-8 text-center">
+						<div className="p-8 text-center">
 							<p className="text-secondary-400">No {statusFilter !== "all" ? statusFilter : ""} results found</p>
 						</div>
 					)}
+					</div>
 				</>
 			) : (
 				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-12 text-center">
@@ -1063,7 +1142,8 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 				</div>
 			)}
 		</div>
-	);
+		);
+	};
 
 	// Render History subtab
 	const renderHistory = () => (
