@@ -26,11 +26,10 @@ import ComplianceScore from "./ComplianceScore";
 // Lazy load ComplianceTrend to avoid recharts bundling issues
 const ComplianceTrend = lazy(() => import("./ComplianceTrend"));
 
-// Available scan profiles
-const SCAN_PROFILES = [
-	{ id: "openscap", name: "CIS Benchmark (OpenSCAP)", description: "CIS Level 1 Server hardening checks", icon: Shield },
-	{ id: "docker-bench", name: "Docker Security", description: "Docker daemon and container security", icon: Shield },
-	{ id: "all", name: "Full Scan", description: "Run all available compliance checks", icon: ListChecks },
+// Fallback scan profiles (used if agent doesn't provide any)
+const DEFAULT_SCAN_PROFILES = [
+	{ id: "level1_server", name: "CIS Level 1 Server", description: "Basic security hardening for servers", type: "openscap" },
+	{ id: "level2_server", name: "CIS Level 2 Server", description: "Extended security hardening (more restrictive)", type: "openscap" },
 ];
 
 // Subtab definitions
@@ -259,6 +258,12 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 		</div>
 	);
 
+	// Get available profiles from agent or use defaults
+	const scannerInfo = integrationStatus?.status?.scanner_info;
+	const availableProfiles = scannerInfo?.available_profiles?.length > 0
+		? scannerInfo.available_profiles
+		: DEFAULT_SCAN_PROFILES;
+
 	// Render Run Scan subtab
 	const renderScanTab = () => (
 		<div className="space-y-6">
@@ -271,6 +276,21 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 							<p className="font-medium">Agent Not Connected</p>
 							<p className="text-sm text-yellow-300/80">
 								Scans cannot be triggered until the agent reconnects.
+							</p>
+						</div>
+					</div>
+				</div>
+			)}
+
+			{/* Content Mismatch Warning */}
+			{scannerInfo?.content_mismatch && (
+				<div className="p-4 rounded-lg bg-orange-900/30 border border-orange-700 text-orange-200">
+					<div className="flex items-center gap-3">
+						<AlertTriangle className="h-5 w-5 flex-shrink-0" />
+						<div>
+							<p className="font-medium">Content Version Mismatch</p>
+							<p className="text-sm text-orange-300/80">
+								{scannerInfo.mismatch_warning || "SCAP content may not match your OS version. Results may show many N/A rules."}
 							</p>
 						</div>
 					</div>
@@ -303,7 +323,7 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 						<div>
 							<h3 className="text-lg font-medium text-white">Scan In Progress</h3>
 							<p className="text-sm text-secondary-400">
-								Running {SCAN_PROFILES.find(p => p.id === selectedProfile)?.name}
+								Running {availableProfiles.find(p => p.id === selectedProfile)?.name || selectedProfile}
 							</p>
 						</div>
 					</div>
@@ -321,45 +341,51 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
 						<h3 className="text-lg font-medium text-white mb-4">Select Scan Profile</h3>
 						<div className="grid gap-3">
-							{SCAN_PROFILES.map((profile) => {
-								const ProfileIcon = profile.icon;
-								return (
-									<button
-										key={profile.id}
-										onClick={() => setSelectedProfile(profile.id)}
-										className={`flex items-start gap-4 p-4 rounded-lg border transition-all text-left ${
-											selectedProfile === profile.id
-												? "bg-primary-900/30 border-primary-600"
-												: "bg-secondary-700/50 border-secondary-600 hover:border-secondary-500"
-										}`}
-									>
-										<div className={`p-2 rounded-lg ${
-											selectedProfile === profile.id
-												? "bg-primary-600/20"
-												: "bg-secondary-600/50"
-										}`}>
-											<ProfileIcon className={`h-5 w-5 ${
-												selectedProfile === profile.id
-													? "text-primary-400"
-													: "text-secondary-400"
+							{availableProfiles.map((profile) => (
+								<button
+									key={profile.id}
+									onClick={() => setSelectedProfile(profile.id)}
+									className={`flex items-start gap-4 p-4 rounded-lg border transition-all text-left ${
+										selectedProfile === profile.id
+											? "bg-primary-900/30 border-primary-600"
+											: "bg-secondary-700/50 border-secondary-600 hover:border-secondary-500"
+									}`}
+								>
+									<div className={`p-2 rounded-lg ${
+										selectedProfile === profile.id
+											? "bg-primary-600/20"
+											: "bg-secondary-600/50"
+									}`}>
+										{profile.type === "docker-bench" ? (
+											<Package className={`h-5 w-5 ${
+												selectedProfile === profile.id ? "text-primary-400" : "text-secondary-400"
 											}`} />
-										</div>
-										<div className="flex-1">
-											<p className={`font-medium ${
-												selectedProfile === profile.id
-													? "text-primary-300"
-													: "text-white"
-											}`}>
-												{profile.name}
-											</p>
-											<p className="text-sm text-secondary-400">{profile.description}</p>
-										</div>
-										{selectedProfile === profile.id && (
-											<CheckCircle className="h-5 w-5 text-primary-400" />
+										) : (
+											<Shield className={`h-5 w-5 ${
+												selectedProfile === profile.id ? "text-primary-400" : "text-secondary-400"
+											}`} />
 										)}
-									</button>
-								);
-							})}
+									</div>
+									<div className="flex-1">
+										<p className={`font-medium ${
+											selectedProfile === profile.id ? "text-primary-300" : "text-white"
+										}`}>
+											{profile.name}
+										</p>
+										<p className="text-sm text-secondary-400">{profile.description}</p>
+										<span className={`inline-block mt-1 px-2 py-0.5 text-xs rounded ${
+											profile.type === "docker-bench"
+												? "bg-blue-900/30 text-blue-400"
+												: "bg-green-900/30 text-green-400"
+										}`}>
+											{profile.type === "docker-bench" ? "Docker Bench" : "OpenSCAP"}
+										</span>
+									</div>
+									{selectedProfile === profile.id && (
+										<CheckCircle className="h-5 w-5 text-primary-400" />
+									)}
+								</button>
+							))}
 						</div>
 					</div>
 
@@ -369,7 +395,7 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 							<div>
 								<h3 className="text-lg font-medium text-white">Ready to Scan</h3>
 								<p className="text-sm text-secondary-400">
-									Selected: {SCAN_PROFILES.find(p => p.id === selectedProfile)?.name}
+									Selected: {availableProfiles.find(p => p.id === selectedProfile)?.name || selectedProfile}
 								</p>
 							</div>
 							<button
@@ -645,6 +671,7 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 	const renderSettings = () => {
 		const status = integrationStatus?.status;
 		const components = status?.components || {};
+		const info = status?.scanner_info;
 
 		return (
 			<div className="space-y-6">
@@ -677,7 +704,7 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 								) : (
 									<MinusCircle className="h-5 w-5 text-secondary-400" />
 								)}
-								<div>
+								<div className="flex-1">
 									<p className="text-white font-medium capitalize">{status.status || "Unknown"}</p>
 									{status.message && (
 										<p className="text-sm text-secondary-400">{status.message}</p>
@@ -685,11 +712,24 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 								</div>
 							</div>
 
-							{/* Components Grid */}
-							<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-								{/* OpenSCAP Component */}
+							{/* Content Mismatch Warning */}
+							{info?.content_mismatch && (
+								<div className="p-3 bg-orange-900/30 border border-orange-700 rounded-lg">
+									<div className="flex items-center gap-2 text-orange-300">
+										<AlertTriangle className="h-4 w-4" />
+										<span className="font-medium">Content Version Mismatch</span>
+									</div>
+									<p className="text-sm text-orange-200/80 mt-1">
+										{info.mismatch_warning}
+									</p>
+								</div>
+							)}
+
+							{/* Scanner Details Grid */}
+							<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+								{/* OpenSCAP Details */}
 								<div className="bg-secondary-700/30 rounded-lg p-4 border border-secondary-600">
-									<div className="flex items-center gap-3 mb-3">
+									<div className="flex items-center gap-3 mb-4">
 										<div className="p-2 bg-primary-600/20 rounded-lg">
 											<Shield className="h-5 w-5 text-primary-400" />
 										</div>
@@ -711,19 +751,62 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 											</span>
 										</div>
 										<div className="flex justify-between">
-											<span className="text-secondary-400">Package</span>
-											<span className="text-secondary-300">openscap-scanner</span>
+											<span className="text-secondary-400">Version</span>
+											<span className="text-secondary-300 font-mono text-xs">
+												{info?.openscap_version || "N/A"}
+											</span>
 										</div>
 										<div className="flex justify-between">
-											<span className="text-secondary-400">SCAP Content</span>
-											<span className="text-secondary-300">ssg-base, ssg-debderived</span>
+											<span className="text-secondary-400">Content Package</span>
+											<span className="text-secondary-300 font-mono text-xs">
+												{info?.content_package || "N/A"}
+											</span>
+										</div>
+										<div className="flex justify-between">
+											<span className="text-secondary-400">Content File</span>
+											<span className="text-secondary-300 font-mono text-xs truncate max-w-[180px]" title={info?.content_file}>
+												{info?.content_file || "N/A"}
+											</span>
+										</div>
+									</div>
+								</div>
+
+								{/* OS Info */}
+								<div className="bg-secondary-700/30 rounded-lg p-4 border border-secondary-600">
+									<div className="flex items-center gap-3 mb-4">
+										<div className="p-2 bg-green-600/20 rounded-lg">
+											<Server className="h-5 w-5 text-green-400" />
+										</div>
+										<div>
+											<p className="text-white font-medium">System Information</p>
+											<p className="text-xs text-secondary-400">Detected OS Details</p>
+										</div>
+									</div>
+									<div className="space-y-2 text-sm">
+										<div className="flex justify-between">
+											<span className="text-secondary-400">OS Name</span>
+											<span className="text-secondary-300 capitalize">
+												{info?.os_name || "N/A"}
+											</span>
+										</div>
+										<div className="flex justify-between">
+											<span className="text-secondary-400">Version</span>
+											<span className="text-secondary-300">
+												{info?.os_version || "N/A"}
+											</span>
+										</div>
+										<div className="flex justify-between">
+											<span className="text-secondary-400">Family</span>
+											<span className="text-secondary-300 capitalize">
+												{info?.os_family || "N/A"}
+											</span>
 										</div>
 									</div>
 								</div>
 
 								{/* Docker Bench Component */}
 								<div className="bg-secondary-700/30 rounded-lg p-4 border border-secondary-600">
-									<div className="flex items-center gap-3 mb-3">
+									<div className="flex items-center gap-3 mb-4">
 										<div className="p-2 bg-blue-600/20 rounded-lg">
 											<Package className="h-5 w-5 text-blue-400" />
 										</div>
@@ -746,9 +829,46 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 											</span>
 										</div>
 										<div className="flex justify-between">
-											<span className="text-secondary-400">Requirement</span>
-											<span className="text-secondary-300">Docker Integration enabled</span>
+											<span className="text-secondary-400">Available</span>
+											<span className={info?.docker_bench_available ? "text-green-400" : "text-secondary-500"}>
+												{info?.docker_bench_available ? "Yes" : "No"}
+											</span>
 										</div>
+										<div className="flex justify-between">
+											<span className="text-secondary-400">Requirement</span>
+											<span className="text-secondary-300 text-xs">Docker Integration enabled</span>
+										</div>
+									</div>
+								</div>
+
+								{/* Available Profiles */}
+								<div className="bg-secondary-700/30 rounded-lg p-4 border border-secondary-600">
+									<div className="flex items-center gap-3 mb-4">
+										<div className="p-2 bg-purple-600/20 rounded-lg">
+											<ListChecks className="h-5 w-5 text-purple-400" />
+										</div>
+										<div>
+											<p className="text-white font-medium">Available Profiles</p>
+											<p className="text-xs text-secondary-400">Scan options from agent</p>
+										</div>
+									</div>
+									<div className="space-y-2">
+										{info?.available_profiles?.length > 0 ? (
+											info.available_profiles.map((profile, idx) => (
+												<div key={idx} className="flex items-center justify-between text-sm">
+													<span className="text-secondary-300">{profile.name}</span>
+													<span className={`px-2 py-0.5 text-xs rounded ${
+														profile.type === "docker-bench"
+															? "bg-blue-900/30 text-blue-400"
+															: "bg-green-900/30 text-green-400"
+													}`}>
+														{profile.type}
+													</span>
+												</div>
+											))
+										) : (
+											<p className="text-secondary-500 text-sm">No profiles available</p>
+										)}
 									</div>
 								</div>
 							</div>
