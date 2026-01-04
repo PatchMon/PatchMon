@@ -69,29 +69,21 @@ export default defineConfig({
 			output: {
 				manualChunks(id) {
 					if (id.includes("node_modules")) {
-						// React ecosystem - ALL in one chunk to ensure proper initialization
-						if (id.includes("/react/") || id.includes("/react-dom/") ||
-						    id.includes("/scheduler/") || id.includes("/react-is/") ||
-						    id.includes("/react-router") || id.includes("/@remix-run/")) {
-							return "react-vendor";
-						}
-						// Query library
-						if (id.includes("/@tanstack/")) {
-							return "query-vendor";
-						}
-						// chart.js only (not recharts - let it bundle with app)
-						if (id.includes("/chart.js/") || id.includes("/react-chartjs-2/")) {
+						// Only split large, standalone libraries that don't have React dependencies
+						// chart.js is safe - pure JS library
+						if (id.includes("/chart.js/") && !id.includes("react-chartjs")) {
 							return "chart-vendor";
 						}
-						// Icon libraries
-						if (id.includes("/lucide-react/") || id.includes("/react-icons/")) {
+						// Icon libraries - pure components, no circular deps
+						if (id.includes("/lucide-react/")) {
 							return "icons-vendor";
 						}
 						// DnD libraries
 						if (id.includes("/@dnd-kit/")) {
 							return "dnd-vendor";
 						}
-						// Let recharts and its dependencies bundle with the component that uses it
+						// Let React, react-router, tanstack, and other interconnected
+						// libraries bundle together to avoid initialization order issues
 					}
 				},
 			},
