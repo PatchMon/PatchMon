@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
 	Shield,
@@ -13,7 +13,9 @@ import {
 } from "lucide-react";
 import { complianceAPI } from "../../utils/complianceApi";
 import ComplianceScore from "./ComplianceScore";
-import ComplianceTrend from "./ComplianceTrend";
+
+// Lazy load ComplianceTrend to avoid recharts bundling issues
+const ComplianceTrend = lazy(() => import("./ComplianceTrend"));
 
 const ComplianceTab = ({ hostId, isConnected }) => {
 	const [expandedRules, setExpandedRules] = useState({});
@@ -162,7 +164,9 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 			)}
 
 			{/* Compliance Trend Chart */}
-			<ComplianceTrend hostId={hostId} />
+			<Suspense fallback={<div className="h-48 bg-secondary-800 rounded-lg border border-secondary-700 animate-pulse" />}>
+				<ComplianceTrend hostId={hostId} />
+			</Suspense>
 
 			{/* Results Filter */}
 			{latestScan?.results && (
