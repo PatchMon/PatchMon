@@ -348,6 +348,38 @@ const ComplianceTab = ({ hostId, isConnected }) => {
 				</div>
 			)}
 
+			{/* Scan In Progress Banner */}
+			{scanInProgress && (
+				<div className="p-4 rounded-lg bg-primary-900/30 border border-primary-600 text-primary-200">
+					<div className="flex items-center justify-between">
+						<div className="flex items-center gap-3">
+							<RefreshCw className="h-5 w-5 animate-spin text-primary-400" />
+							<div>
+								<p className="font-medium">Compliance Scan In Progress</p>
+								<p className="text-sm text-primary-300/80">
+									{scanMessage?.text || "Scan is running, please wait..."}
+								</p>
+							</div>
+						</div>
+						<div className="flex items-center gap-4">
+							<div className="text-right">
+								<p className="text-xl font-mono font-bold text-primary-400">
+									{Math.floor(elapsedTime / 60)}:{(elapsedTime % 60).toString().padStart(2, '0')}
+								</p>
+								<p className="text-xs text-primary-400/60">elapsed</p>
+							</div>
+							<button
+								onClick={() => setActiveSubtab("scan")}
+								className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600/30 hover:bg-primary-600/50 text-primary-200 text-sm rounded-lg transition-colors"
+							>
+								<Play className="h-4 w-4" />
+								View
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+
 			{scannerInfo?.ssg_needs_upgrade && !scannerInfo?.content_mismatch && (
 				<div className="p-4 rounded-lg bg-yellow-900/30 border border-yellow-700 text-yellow-200">
 					<div className="flex items-start gap-3">
