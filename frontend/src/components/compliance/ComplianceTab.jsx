@@ -1328,19 +1328,23 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 													<button
 														onClick={(e) => {
 															e.stopPropagation();
-															const ruleId = result.compliance_rules?.rule_id || result.rule?.rule_id || result.rule_id;
-															if (ruleId) {
-																remediateRuleMutation.mutate(ruleId);
+															// Use rule_ref (XCCDF rule ID like xccdf_org.ssgproject...) not rule_id (database UUID)
+															const ruleRef = result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_ref;
+															console.log("[Compliance] Remediate click:", { ruleRef, compliance_rules: result.compliance_rules, result });
+															if (ruleRef) {
+																remediateRuleMutation.mutate(ruleRef);
+															} else {
+																console.error("[Compliance] No rule_ref found for remediation");
 															}
 														}}
-														disabled={remediatingRule === (result.compliance_rules?.rule_id || result.rule?.rule_id || result.rule_id) || remediateRuleMutation.isPending}
+														disabled={remediatingRule === (result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_ref || result.rule_id) || remediateRuleMutation.isPending}
 														className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-															remediatingRule === (result.compliance_rules?.rule_id || result.rule?.rule_id || result.rule_id)
+															remediatingRule === (result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_ref || result.rule_id)
 																? "bg-orange-600/50 text-orange-200 cursor-wait"
 																: "bg-orange-600 hover:bg-orange-500 text-white"
 														}`}
 													>
-														{remediatingRule === (result.compliance_rules?.rule_id || result.rule?.rule_id || result.rule_id) ? (
+														{remediatingRule === (result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_ref || result.rule_id) ? (
 															<>
 																<RefreshCw className="h-4 w-4 animate-spin" />
 																Fixing...
@@ -1537,12 +1541,12 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 										<div className="flex justify-between">
 											<span className="text-secondary-400">Status</span>
 											<span className={`capitalize ${
-												components.openscap === "ready" ? "text-green-400" :
+												(components.openscap === "ready" || info?.openscap_available || info?.openscap_version) ? "text-green-400" :
 												components.openscap === "installing" ? "text-blue-400" :
 												components.openscap === "error" ? "text-red-400" :
 												"text-secondary-400"
 											}`}>
-												{components.openscap || "Not installed"}
+												{components.openscap || (info?.openscap_available || info?.openscap_version ? "Ready" : "Not installed")}
 											</span>
 										</div>
 										<div className="flex justify-between">
