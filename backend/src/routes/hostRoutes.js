@@ -2096,32 +2096,10 @@ router.post("/bootstrap/exchange", async (req, res) => {
 	}
 });
 
-// Serve the removal script (requires API authentication)
+// Serve the removal script (public - no authentication required)
+// The script is static and only removes PatchMon files from the system
 router.get("/remove", async (req, res) => {
 	try {
-		// Verify API credentials
-		const apiId = req.headers["x-api-id"];
-		const apiKey = req.headers["x-api-key"];
-
-		if (!apiId || !apiKey) {
-			return res.status(401).json({ error: "API credentials required" });
-		}
-
-		// Validate API credentials
-		const host = await prisma.hosts.findUnique({
-			where: { api_id: apiId },
-		});
-
-		if (!host) {
-			return res.status(401).json({ error: "Invalid API credentials" });
-		}
-
-		// Verify API key
-		const isValidKey = await verifyApiKey(apiKey, host.api_key);
-		if (!isValidKey) {
-			return res.status(401).json({ error: "Invalid API credentials" });
-		}
-
 		const fs = require("node:fs");
 		const path = require("node:path");
 
