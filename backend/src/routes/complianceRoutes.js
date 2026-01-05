@@ -3,6 +3,7 @@ const logger = require("../utils/logger");
 const router = express.Router();
 const rateLimit = require("express-rate-limit");
 const { getPrismaClient } = require("../config/prisma");
+const { Prisma } = require("@prisma/client");
 const { authenticateToken } = require("../middleware/auth");
 const { v4: uuidv4, validate: uuidValidate } = require("uuid");
 const { verifyApiKey } = require("../utils/apiKeyUtils");
@@ -389,6 +390,7 @@ router.get("/dashboard", async (req, res) => {
     const latestScanIds = latestScans.map(s => s.id);
     let topFailingRules = [];
     if (latestScanIds.length > 0) {
+      // Use Prisma.join for proper array handling in raw SQL
       topFailingRules = await prisma.$queryRaw`
         SELECT
           cr.rule_id,
@@ -397,7 +399,7 @@ router.get("/dashboard", async (req, res) => {
           COUNT(*) as fail_count
         FROM compliance_results cr
         JOIN compliance_rules cru ON cr.rule_id = cru.id
-        WHERE cr.scan_id = ANY(${latestScanIds}::uuid[])
+        WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
           AND cr.status = 'fail'
         GROUP BY cr.rule_id, cru.title, cru.severity
         ORDER BY fail_count DESC
@@ -427,7 +429,7 @@ router.get("/dashboard", async (req, res) => {
           COUNT(*) as count
         FROM compliance_results cr
         JOIN compliance_rules cru ON cr.rule_id = cru.id
-        WHERE cr.scan_id = ANY(${latestScanIds}::uuid[])
+        WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
           AND cr.status = 'fail'
         GROUP BY cru.severity
         ORDER BY
