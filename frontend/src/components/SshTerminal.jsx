@@ -38,6 +38,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	const terminalBufferRef = useRef("");
 	const completionTimeoutRef = useRef(null);
 	const aiInputRef = useRef(null);
+	const currentLineRef = useRef(""); // Track current line for AI completion
 
 	// Load cached username from localStorage, keyed by host ID for per-host caching
 	const getCachedUsername = () => {
@@ -181,10 +182,10 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 				clearTimeout(completionTimeoutRef.current);
 			}
 
-			// Debounce completion requests
+			// Debounce completion requests (150ms for faster response)
 			completionTimeoutRef.current = setTimeout(() => {
 				getCommandCompletion(input);
-			}, 300);
+			}, 150);
 		},
 		[getCommandCompletion]
 	);
@@ -198,10 +199,21 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 					data: commandSuggestion,
 				})
 			);
+			// Update currentInput with the combined value to continue suggesting
+			const newInput = currentInput + commandSuggestion;
+			setCurrentInput(newInput);
 			setCommandSuggestion("");
-			setCurrentInput("");
+			// Trigger new completion after a short delay
+			if (completionTimeoutRef.current) {
+				clearTimeout(completionTimeoutRef.current);
+			}
+			completionTimeoutRef.current = setTimeout(() => {
+				if (aiEnabled && newInput.length >= 3) {
+					getCommandCompletion(newInput);
+				}
+			}, 200);
 		}
-	}, [commandSuggestion]);
+	}, [commandSuggestion, currentInput, aiEnabled, getCommandCompletion]);
 
 	// Clear suggestion
 	const clearSuggestion = useCallback(() => {
@@ -669,13 +681,14 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 		if (!terminalInstanceRef.current || !isConnected) return;
 
 		const term = terminalInstanceRef.current;
-		let currentLine = "";
 
 		const handleData = (data) => {
 			if (wsRef.current?.readyState === WebSocket.OPEN) {
 				// Handle Tab key for AI completion
 				if (data === "\t" && commandSuggestion && aiEnabled) {
-					// Accept AI suggestion
+					// Accept AI suggestion - update the ref with combined value
+					const newLine = currentLineRef.current + commandSuggestion;
+					currentLineRef.current = newLine;
 					wsRef.current.send(
 						JSON.stringify({
 							type: "input",
@@ -683,8 +696,16 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 						})
 					);
 					setCommandSuggestion("");
-					currentLine = "";
-					setCurrentInput("");
+					setCurrentInput(newLine);
+					// Trigger new completion for continued suggestions
+					if (newLine.length >= 3) {
+						if (completionTimeoutRef.current) {
+							clearTimeout(completionTimeoutRef.current);
+						}
+						completionTimeoutRef.current = setTimeout(() => {
+							getCommandCompletion(newLine);
+						}, 200);
+					}
 					resetIdleTimeout();
 					return;
 				}
@@ -695,20 +716,20 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 					return;
 				}
 
-				// Track current line for completion
+				// Track current line for completion using ref (persists across effect re-runs)
 				if (data === "\r" || data === "\n") {
 					// Enter pressed - clear current line
-					currentLine = "";
+					currentLineRef.current = "";
 					setCommandSuggestion("");
 					setCurrentInput("");
 				} else if (data === "\x7f" || data === "\b") {
 					// Backspace - remove last char
-					currentLine = currentLine.slice(0, -1);
-					handleInputChange(currentLine);
+					currentLineRef.current = currentLineRef.current.slice(0, -1);
+					handleInputChange(currentLineRef.current);
 				} else if (data.length === 1 && data.charCodeAt(0) >= 32) {
 					// Printable character
-					currentLine += data;
-					handleInputChange(currentLine);
+					currentLineRef.current += data;
+					handleInputChange(currentLineRef.current);
 				}
 
 				wsRef.current.send(
@@ -730,7 +751,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 				disposable.dispose();
 			}
 		};
-	}, [isConnected, commandSuggestion, aiEnabled, handleInputChange]);
+	}, [isConnected, commandSuggestion, aiEnabled, handleInputChange, getCommandCompletion]);
 
 	// Set up idle timeout when connected, reset on terminal data
 	useEffect(() => {
