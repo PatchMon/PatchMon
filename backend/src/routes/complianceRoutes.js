@@ -390,14 +390,15 @@ router.get("/dashboard", async (req, res) => {
     if (latestScanIds.length > 0) {
       topFailingRules = await prisma.$queryRaw`
         SELECT
-          rule_id,
-          title,
-          severity,
+          cr.rule_id,
+          cru.title,
+          cru.severity,
           COUNT(*) as fail_count
-        FROM compliance_results
-        WHERE scan_id = ANY(${latestScanIds}::uuid[])
-          AND status = 'fail'
-        GROUP BY rule_id, title, severity
+        FROM compliance_results cr
+        JOIN compliance_rules cru ON cr.rule_id = cru.id
+        WHERE cr.scan_id = ANY(${latestScanIds}::uuid[])
+          AND cr.status = 'fail'
+        GROUP BY cr.rule_id, cru.title, cru.severity
         ORDER BY fail_count DESC
         LIMIT 10
       `;
@@ -421,14 +422,15 @@ router.get("/dashboard", async (req, res) => {
     if (latestScanIds.length > 0) {
       severityBreakdown = await prisma.$queryRaw`
         SELECT
-          severity,
+          cru.severity,
           COUNT(*) as count
-        FROM compliance_results
-        WHERE scan_id = ANY(${latestScanIds}::uuid[])
-          AND status = 'fail'
-        GROUP BY severity
+        FROM compliance_results cr
+        JOIN compliance_rules cru ON cr.rule_id = cru.id
+        WHERE cr.scan_id = ANY(${latestScanIds}::uuid[])
+          AND cr.status = 'fail'
+        GROUP BY cru.severity
         ORDER BY
-          CASE severity
+          CASE cru.severity
             WHEN 'critical' THEN 1
             WHEN 'high' THEN 2
             WHEN 'medium' THEN 3

@@ -798,12 +798,13 @@ const Layout = ({ children }) => {
 										{user?.first_name || user?.username}
 										{(user?.role === "admin" || user?.role === "superadmin") && (
 											<span
-												className={`text-xs px-1.5 py-0.5 rounded ${
+												className={`inline-flex items-center text-xs px-1.5 py-0.5 rounded ${
 													user?.role === "superadmin"
 														? "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
 														: "bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200"
 												}`}
 											>
+												<Shield className="h-3 w-3 mr-1" />
 												{user?.role === "superadmin" ? "Super Admin" : "Admin"}
 											</span>
 										)}
@@ -1237,12 +1238,13 @@ const Layout = ({ children }) => {
 												</span>
 												{(user?.role === "admin" || user?.role === "superadmin") && (
 													<span
-														className={`text-xs leading-4 px-1.5 py-0.5 rounded ${
+														className={`inline-flex items-center text-xs leading-4 px-1.5 py-0.5 rounded ${
 															user?.role === "superadmin"
 																? "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
 																: "bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200"
 														}`}
 													>
+														<Shield className="h-3 w-3 mr-1" />
 														{user?.role === "superadmin" ? "Super Admin" : "Admin"}
 													</span>
 												)}

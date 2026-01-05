@@ -1,4 +1,4 @@
-import { GitBranch, Package, Search, Server, User, X } from "lucide-react";
+import { GitBranch, Package, Search, Server, Shield, User, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { searchAPI } from "../utils/api";
@@ -425,6 +425,7 @@ const GlobalSearch = () => {
 																	: "bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
 												}`}
 											>
+												<Shield className="h-3 w-3 mr-1" />
 												{user.role === "superadmin"
 													? "Super Admin"
 													: user.role.charAt(0).toUpperCase() +

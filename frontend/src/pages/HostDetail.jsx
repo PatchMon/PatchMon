@@ -2989,10 +2989,10 @@ const HostDetail = () => {
 													</p>
 
 													{/* Setup Status Display */}
-													{complianceSetupStatus?.status?.status && (
+													{(complianceSetupStatus?.status?.status || integrationsData?.data?.integrations?.compliance) && (
 														<div className="mt-3 p-3 rounded-lg border bg-secondary-100 dark:bg-secondary-800 border-secondary-300 dark:border-secondary-600">
 															{/* Installing State */}
-															{complianceSetupStatus.status.status === "installing" && (
+															{complianceSetupStatus?.status?.status === "installing" && (
 																<div className="space-y-2">
 																	<div className="flex items-center gap-2">
 																		<RefreshCw className="h-4 w-4 animate-spin text-primary-600 dark:text-primary-400" />
@@ -3033,7 +3033,7 @@ const HostDetail = () => {
 															)}
 
 															{/* Removing State */}
-															{complianceSetupStatus.status.status === "removing" && (
+															{complianceSetupStatus?.status?.status === "removing" && (
 																<div className="space-y-2">
 																	<div className="flex items-center gap-2">
 																		<RefreshCw className="h-4 w-4 animate-spin text-warning-600 dark:text-warning-400" />
@@ -3051,7 +3051,7 @@ const HostDetail = () => {
 															)}
 
 															{/* Ready State */}
-															{complianceSetupStatus.status.status === "ready" && (
+															{complianceSetupStatus?.status?.status === "ready" && (
 																<div className="flex items-center gap-2">
 																	<CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
 																	<span className="text-sm font-medium text-green-700 dark:text-green-300">
@@ -3076,7 +3076,7 @@ const HostDetail = () => {
 															)}
 
 															{/* Partial State */}
-															{complianceSetupStatus.status.status === "partial" && (
+															{complianceSetupStatus?.status?.status === "partial" && (
 																<div className="space-y-2">
 																	<div className="flex items-center gap-2">
 																		<AlertTriangle className="h-4 w-4 text-warning-600 dark:text-warning-400" />
@@ -3110,7 +3110,7 @@ const HostDetail = () => {
 															)}
 
 															{/* Error State */}
-															{complianceSetupStatus.status.status === "error" && (
+															{complianceSetupStatus?.status?.status === "error" && (
 																<div className="space-y-2">
 																	<div className="flex items-center gap-2">
 																		<AlertCircle className="h-4 w-4 text-danger-600 dark:text-danger-400" />
@@ -3119,8 +3119,18 @@ const HostDetail = () => {
 																		</span>
 																	</div>
 																	<p className="text-xs text-danger-600 dark:text-danger-400">
-																		{complianceSetupStatus.status.message || "Setup failed - check agent logs"}
+																		{complianceSetupStatus?.status?.message || "Setup failed - check agent logs"}
 																	</p>
+																</div>
+															)}
+
+															{/* Fallback: Compliance enabled but no status in cache - assume ready */}
+															{!complianceSetupStatus?.status?.status && integrationsData?.data?.integrations?.compliance && (
+																<div className="flex items-center gap-2">
+																	<CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+																	<span className="text-sm font-medium text-green-700 dark:text-green-300">
+																		Compliance Tools Ready
+																	</span>
 																</div>
 															)}
 														</div>
