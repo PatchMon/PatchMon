@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import "xterm/css/xterm.css";
-import { X, Loader2, TerminalSquare, Download, Copy, ChevronDown } from "lucide-react";
+import { X, Loader2, TerminalSquare, Download, Copy, ChevronDown, Bot, Send, PanelRightClose, PanelRightOpen, Sparkles } from "lucide-react";
 // Note: Auth is handled via httpOnly cookies - no need for useAuth token
 import { useSidebar } from "../contexts/SidebarContext";
 import { useQuery } from "@tanstack/react-query";
-import { settingsAPI } from "../utils/api";
+import { settingsAPI, aiAPI } from "../utils/api";
 
 const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	const { setSidebarCollapsed, sidebarCollapsed } = useSidebar();
@@ -26,6 +26,17 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 	const IDLE_WARNING_MS = 1 * 60 * 1000; // 1 minute warning before disconnect
 	const [showInstallCommands, setShowInstallCommands] = useState(false);
+
+	// AI Assistant state
+	const [aiPanelOpen, setAiPanelOpen] = useState(false);
+	const [aiMessages, setAiMessages] = useState([]);
+	const [aiInput, setAiInput] = useState("");
+	const [aiLoading, setAiLoading] = useState(false);
+	const [commandSuggestion, setCommandSuggestion] = useState("");
+	const [currentInput, setCurrentInput] = useState("");
+	const terminalBufferRef = useRef("");
+	const completionTimeoutRef = useRef(null);
+	const aiInputRef = useRef(null);
 
 	// Load cached username from localStorage, keyed by host ID for per-host caching
 	const getCachedUsername = () => {
@@ -81,6 +92,116 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	const getCurlFlags = () => {
 		return settings?.ignore_ssl_self_signed ? "-sk" : "-s";
 	};
+
+	// Fetch AI settings
+	const { data: aiSettings } = useQuery({
+		queryKey: ["aiSettings"],
+		queryFn: () => aiAPI.getSettings().then((res) => res.data),
+		staleTime: 60000, // Cache for 1 minute
+	});
+
+	const aiEnabled = aiSettings?.ai_enabled && aiSettings?.ai_api_key_set;
+
+	// Get recent terminal output for AI context
+	const getTerminalContext = useCallback(() => {
+		return terminalBufferRef.current.slice(-3000); // Last ~3000 chars
+	}, []);
+
+	// Send message to AI assistant
+	const sendAiMessage = async () => {
+		if (!aiInput.trim() || aiLoading || !aiEnabled) return;
+
+		const userMessage = aiInput.trim();
+		setAiInput("");
+		setAiMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+		setAiLoading(true);
+
+		try {
+			const response = await aiAPI.assist({
+				question: userMessage,
+				context: getTerminalContext(),
+				history: aiMessages.slice(-10), // Last 10 messages for context
+			});
+
+			setAiMessages((prev) => [
+				...prev,
+				{ role: "assistant", content: response.data.response },
+			]);
+		} catch (err) {
+			setAiMessages((prev) => [
+				...prev,
+				{
+					role: "assistant",
+					content: `Error: ${err.response?.data?.error || "Failed to get AI response"}`,
+					isError: true,
+				},
+			]);
+		} finally {
+			setAiLoading(false);
+		}
+	};
+
+	// Get command completion suggestion (debounced)
+	const getCommandCompletion = useCallback(
+		async (input) => {
+			if (!aiEnabled || input.length < 3) {
+				setCommandSuggestion("");
+				return;
+			}
+
+			try {
+				const response = await aiAPI.complete({
+					input,
+					context: getTerminalContext(),
+				});
+				if (response.data.completion) {
+					setCommandSuggestion(response.data.completion);
+				} else {
+					setCommandSuggestion("");
+				}
+			} catch {
+				setCommandSuggestion("");
+			}
+		},
+		[aiEnabled, getTerminalContext]
+	);
+
+	// Handle current input change for completion
+	const handleInputChange = useCallback(
+		(input) => {
+			setCurrentInput(input);
+
+			// Clear existing timeout
+			if (completionTimeoutRef.current) {
+				clearTimeout(completionTimeoutRef.current);
+			}
+
+			// Debounce completion requests
+			completionTimeoutRef.current = setTimeout(() => {
+				getCommandCompletion(input);
+			}, 300);
+		},
+		[getCommandCompletion]
+	);
+
+	// Accept command suggestion
+	const acceptSuggestion = useCallback(() => {
+		if (commandSuggestion && wsRef.current?.readyState === WebSocket.OPEN) {
+			wsRef.current.send(
+				JSON.stringify({
+					type: "input",
+					data: commandSuggestion,
+				})
+			);
+			setCommandSuggestion("");
+			setCurrentInput("");
+		}
+	}, [commandSuggestion]);
+
+	// Clear suggestion
+	const clearSuggestion = useCallback(() => {
+		setCommandSuggestion("");
+	}, []);
 
 	// Build agent install command
 	const getInstallCommand = () => {
@@ -334,6 +455,8 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 							// Write data to terminal
 							if (terminalInstanceRef.current) {
 								terminalInstanceRef.current.write(message.data);
+								// Capture terminal output for AI context (keep last 5000 chars)
+								terminalBufferRef.current = (terminalBufferRef.current + message.data).slice(-5000);
 								// Reset idle timeout on terminal activity
 								resetIdleTimeout();
 							}
@@ -473,13 +596,53 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 		}, IDLE_TIMEOUT_MS);
 	};
 
-	// Handle terminal input
+	// Handle terminal input with AI completion support
 	useEffect(() => {
 		if (!terminalInstanceRef.current || !isConnected) return;
 
 		const term = terminalInstanceRef.current;
+		let currentLine = "";
+
 		const handleData = (data) => {
 			if (wsRef.current?.readyState === WebSocket.OPEN) {
+				// Handle Tab key for AI completion
+				if (data === "\t" && commandSuggestion && aiEnabled) {
+					// Accept AI suggestion
+					wsRef.current.send(
+						JSON.stringify({
+							type: "input",
+							data: commandSuggestion,
+						})
+					);
+					setCommandSuggestion("");
+					currentLine = "";
+					setCurrentInput("");
+					resetIdleTimeout();
+					return;
+				}
+
+				// Handle Escape key to dismiss suggestion
+				if (data === "\x1b" && commandSuggestion) {
+					setCommandSuggestion("");
+					return;
+				}
+
+				// Track current line for completion
+				if (data === "\r" || data === "\n") {
+					// Enter pressed - clear current line
+					currentLine = "";
+					setCommandSuggestion("");
+					setCurrentInput("");
+				} else if (data === "\x7f" || data === "\b") {
+					// Backspace - remove last char
+					currentLine = currentLine.slice(0, -1);
+					handleInputChange(currentLine);
+				} else if (data.length === 1 && data.charCodeAt(0) >= 32) {
+					// Printable character
+					currentLine += data;
+					handleInputChange(currentLine);
+				}
+
 				wsRef.current.send(
 					JSON.stringify({
 						type: "input",
@@ -499,7 +662,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 				disposable.dispose();
 			}
 		};
-	}, [isConnected]);
+	}, [isConnected, commandSuggestion, aiEnabled, handleInputChange]);
 
 	// Set up idle timeout when connected, reset on terminal data
 	useEffect(() => {
@@ -948,13 +1111,144 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 					</div>
 				)}
 
-				{/* Terminal Container - Shown when connecting or connected */}
+				{/* Terminal Container with AI Panel - Shown when connecting or connected */}
 				{(isConnected || isConnecting) && (
-					<div className="flex-1 p-4 overflow-hidden min-h-[500px] flex flex-col">
-						<div
-							ref={terminalRef}
-							className="w-full h-full bg-black rounded"
-						/>
+					<div className="flex-1 overflow-hidden min-h-[500px] flex">
+						{/* Main Terminal Area */}
+						<div className={`flex-1 p-4 flex flex-col transition-all duration-300 ${aiPanelOpen ? "pr-2" : ""}`}>
+							{/* Command Suggestion Overlay */}
+							{commandSuggestion && aiEnabled && (
+								<div className="mb-2 px-3 py-2 bg-primary-900/40 border border-primary-700/50 rounded-lg flex items-center justify-between">
+									<div className="flex items-center gap-2">
+										<Sparkles className="h-4 w-4 text-primary-400" />
+										<span className="text-sm text-secondary-300">
+											Suggestion: <span className="text-primary-300 font-mono">{currentInput}<span className="text-primary-400/60">{commandSuggestion}</span></span>
+										</span>
+									</div>
+									<div className="flex items-center gap-2 text-xs text-secondary-400">
+										<kbd className="px-1.5 py-0.5 bg-secondary-700 rounded">Tab</kbd>
+										<span>accept</span>
+										<kbd className="px-1.5 py-0.5 bg-secondary-700 rounded">Esc</kbd>
+										<span>dismiss</span>
+									</div>
+								</div>
+							)}
+							<div
+								ref={terminalRef}
+								className="w-full flex-1 bg-black rounded"
+							/>
+							{/* AI Toggle Button */}
+							{aiEnabled && isConnected && (
+								<div className="mt-2 flex items-center justify-end">
+									<button
+										type="button"
+										onClick={() => setAiPanelOpen(!aiPanelOpen)}
+										className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+											aiPanelOpen
+												? "bg-primary-600 text-white"
+												: "bg-secondary-700 text-secondary-300 hover:bg-secondary-600 hover:text-white"
+										}`}
+									>
+										<Bot className="h-4 w-4" />
+										AI Assistant
+										{aiPanelOpen ? (
+											<PanelRightClose className="h-3 w-3" />
+										) : (
+											<PanelRightOpen className="h-3 w-3" />
+										)}
+									</button>
+								</div>
+							)}
+						</div>
+
+						{/* AI Assistant Panel */}
+						{aiPanelOpen && aiEnabled && (
+							<div className="w-80 border-l border-secondary-700 flex flex-col bg-secondary-800/50">
+								{/* Panel Header */}
+								<div className="p-3 border-b border-secondary-700 flex items-center justify-between">
+									<div className="flex items-center gap-2">
+										<Bot className="h-4 w-4 text-primary-400" />
+										<span className="text-sm font-medium text-white">AI Assistant</span>
+									</div>
+									<button
+										type="button"
+										onClick={() => setAiPanelOpen(false)}
+										className="text-secondary-400 hover:text-white"
+									>
+										<X className="h-4 w-4" />
+									</button>
+								</div>
+
+								{/* Messages Area */}
+								<div className="flex-1 overflow-y-auto p-3 space-y-3">
+									{aiMessages.length === 0 && (
+										<div className="text-center text-secondary-400 text-xs py-4">
+											<Bot className="h-8 w-8 mx-auto mb-2 opacity-50" />
+											<p>Ask about terminal output,</p>
+											<p>errors, or get command help.</p>
+										</div>
+									)}
+									{aiMessages.map((msg, idx) => (
+										<div
+											key={idx}
+											className={`text-sm ${
+												msg.role === "user"
+													? "bg-primary-900/30 border border-primary-700/30 rounded-lg p-2 ml-4"
+													: msg.isError
+													? "bg-red-900/30 border border-red-700/30 rounded-lg p-2 mr-4"
+													: "bg-secondary-700/50 rounded-lg p-2 mr-4"
+											}`}
+										>
+											<div className="flex items-start gap-2">
+												{msg.role === "assistant" && (
+													<Bot className={`h-4 w-4 mt-0.5 ${msg.isError ? "text-red-400" : "text-primary-400"}`} />
+												)}
+												<div className="flex-1 text-secondary-200 whitespace-pre-wrap break-words">
+													{msg.content}
+												</div>
+											</div>
+										</div>
+									))}
+									{aiLoading && (
+										<div className="bg-secondary-700/50 rounded-lg p-2 mr-4">
+											<div className="flex items-center gap-2">
+												<Loader2 className="h-4 w-4 animate-spin text-primary-400" />
+												<span className="text-sm text-secondary-400">Thinking...</span>
+											</div>
+										</div>
+									)}
+								</div>
+
+								{/* Input Area */}
+								<div className="p-3 border-t border-secondary-700">
+									<div className="flex gap-2">
+										<input
+											ref={aiInputRef}
+											type="text"
+											value={aiInput}
+											onChange={(e) => setAiInput(e.target.value)}
+											onKeyDown={(e) => {
+												if (e.key === "Enter" && !e.shiftKey) {
+													e.preventDefault();
+													sendAiMessage();
+												}
+											}}
+											placeholder="Ask about the terminal..."
+											className="flex-1 px-3 py-2 text-sm bg-secondary-700 border border-secondary-600 rounded-lg text-white placeholder-secondary-400 focus:outline-none focus:ring-2 focus:ring-primary-500"
+											disabled={aiLoading}
+										/>
+										<button
+											type="button"
+											onClick={sendAiMessage}
+											disabled={!aiInput.trim() || aiLoading}
+											className="px-3 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+										>
+											<Send className="h-4 w-4" />
+										</button>
+									</div>
+								</div>
+							</div>
+						)}
 					</div>
 				)}
 				

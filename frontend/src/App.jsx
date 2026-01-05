@@ -48,6 +48,7 @@ const SettingsServerConfig = lazy(
 );
 const SettingsUsers = lazy(() => import("./pages/settings/SettingsUsers"));
 const SettingsMetrics = lazy(() => import("./pages/settings/SettingsMetrics"));
+const AiSettings = lazy(() => import("./pages/settings/AiSettings"));
 
 // Loading fallback component
 const LoadingFallback = () => (
@@ -431,6 +432,16 @@ function AppRoutes() {
 						<ProtectedRoute requirePermission="can_manage_settings">
 							<Layout>
 								<SettingsMetrics />
+							</Layout>
+						</ProtectedRoute>
+					}
+				/>
+				<Route
+					path="/settings/ai-terminal"
+					element={
+						<ProtectedRoute requirePermission="can_manage_settings">
+							<Layout>
+								<AiSettings />
 							</Layout>
 						</ProtectedRoute>
 					}

@@ -1,6 +1,7 @@
 import {
 	BarChart3,
 	Bell,
+	Bot,
 	ChevronDown,
 	ChevronLeft,
 	ChevronRight,
@@ -121,6 +122,11 @@ const SettingsLayout = ({ children }) => {
 						name: "Integrations",
 						href: "/settings/integrations",
 						icon: Wrench,
+					},
+					{
+						name: "AI Terminal",
+						href: "/settings/ai-terminal",
+						icon: Bot,
 					},
 				],
 			});

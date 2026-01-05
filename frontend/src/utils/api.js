@@ -407,4 +407,14 @@ export const searchAPI = {
 	global: (query) => api.get("/search", { params: { q: query } }),
 };
 
+// AI Terminal Assistant API
+export const aiAPI = {
+	getProviders: () => api.get("/ai/providers"),
+	getSettings: () => api.get("/ai/settings"),
+	updateSettings: (data) => api.put("/ai/settings", data),
+	testConnection: () => api.post("/ai/test"),
+	assist: (data) => api.post("/ai/assist", data),
+	complete: (data) => api.post("/ai/complete", data),
+};
+
 export default api;

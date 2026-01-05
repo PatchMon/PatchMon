@@ -214,6 +214,11 @@ model settings {
   metrics_anonymous_id         String?
   metrics_last_sent            DateTime?
   show_github_version_on_login Boolean   @default(true)
+  // AI Terminal Assistant settings
+  ai_enabled                   Boolean   @default(false)
+  ai_provider                  String    @default("openrouter") // openrouter, anthropic, openai, gemini
+  ai_model                     String?
+  ai_api_key                   String?   // Encrypted API key
 }
 
 model update_history {
