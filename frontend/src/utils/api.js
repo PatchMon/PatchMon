@@ -409,8 +409,9 @@ export const searchAPI = {
 
 // AI Terminal Assistant API
 export const aiAPI = {
+	getStatus: () => api.get("/ai/status"), // Available to all authenticated users
 	getProviders: () => api.get("/ai/providers"),
-	getSettings: () => api.get("/ai/settings"),
+	getSettings: () => api.get("/ai/settings"), // Admin only
 	updateSettings: (data) => api.put("/ai/settings", data),
 	testConnection: () => api.post("/ai/test"),
 	assist: (data) => api.post("/ai/assist", data),

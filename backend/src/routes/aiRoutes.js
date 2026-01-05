@@ -42,6 +42,25 @@ setInterval(() => {
 }, RATE_LIMIT_WINDOW);
 
 /**
+ * Get AI status (available to all authenticated users)
+ * GET /api/v1/ai/status
+ */
+router.get("/status", authenticateToken, async (_req, res) => {
+	try {
+		const prisma = getPrismaClient();
+		const settings = await prisma.settings.findFirst();
+
+		res.json({
+			ai_enabled: settings?.ai_enabled || false,
+			ai_api_key_set: !!settings?.ai_api_key,
+		});
+	} catch (error) {
+		logger.error("Error fetching AI status:", error);
+		res.status(500).json({ error: "Failed to fetch AI status" });
+	}
+});
+
+/**
  * Get available AI providers and their models
  * GET /api/v1/ai/providers
  */
@@ -56,7 +75,7 @@ router.get("/providers", authenticateToken, (_req, res) => {
 });
 
 /**
- * Get AI settings
+ * Get AI settings (admin only - includes full configuration)
  * GET /api/v1/ai/settings
  */
 router.get("/settings", authenticateToken, requireManageSettings, async (_req, res) => {

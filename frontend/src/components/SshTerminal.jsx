@@ -93,14 +93,14 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 		return settings?.ignore_ssl_self_signed ? "-sk" : "-s";
 	};
 
-	// Fetch AI settings
-	const { data: aiSettings } = useQuery({
-		queryKey: ["aiSettings"],
-		queryFn: () => aiAPI.getSettings().then((res) => res.data),
+	// Fetch AI status (available to all authenticated users)
+	const { data: aiStatus } = useQuery({
+		queryKey: ["aiStatus"],
+		queryFn: () => aiAPI.getStatus().then((res) => res.data),
 		staleTime: 60000, // Cache for 1 minute
 	});
 
-	const aiEnabled = aiSettings?.ai_enabled && aiSettings?.ai_api_key_set;
+	const aiEnabled = aiStatus?.ai_enabled && aiStatus?.ai_api_key_set;
 
 	// Get recent terminal output for AI context
 	const getTerminalContext = useCallback(() => {
