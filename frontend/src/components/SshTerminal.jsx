@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import "xterm/css/xterm.css";
-import { X, Loader2, TerminalSquare, Download, Copy, ChevronDown, Bot, Send, PanelRightClose, PanelRightOpen, Sparkles } from "lucide-react";
+import { X, Loader2, TerminalSquare, Download, Copy, ChevronDown, Bot, Send, PanelRightClose, PanelRightOpen, Sparkles, Play } from "lucide-react";
 // Note: Auth is handled via httpOnly cookies - no need for useAuth token
 import { useSidebar } from "../contexts/SidebarContext";
 import { useQuery } from "@tanstack/react-query";
@@ -34,6 +34,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	const [aiLoading, setAiLoading] = useState(false);
 	const [commandSuggestion, setCommandSuggestion] = useState("");
 	const [currentInput, setCurrentInput] = useState("");
+	const [completionLoading, setCompletionLoading] = useState(false);
 	const terminalBufferRef = useRef("");
 	const completionTimeoutRef = useRef(null);
 	const aiInputRef = useRef(null);
@@ -146,9 +147,11 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 		async (input) => {
 			if (!aiEnabled || input.length < 3) {
 				setCommandSuggestion("");
+				setCompletionLoading(false);
 				return;
 			}
 
+			setCompletionLoading(true);
 			try {
 				const response = await aiAPI.complete({
 					input,
@@ -161,6 +164,8 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 				}
 			} catch {
 				setCommandSuggestion("");
+			} finally {
+				setCompletionLoading(false);
 			}
 		},
 		[aiEnabled, getTerminalContext]
@@ -201,6 +206,47 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	// Clear suggestion
 	const clearSuggestion = useCallback(() => {
 		setCommandSuggestion("");
+	}, []);
+
+	// Send a command from AI to terminal (without pressing Enter)
+	const sendCommandToTerminal = useCallback((command) => {
+		if (wsRef.current?.readyState === WebSocket.OPEN) {
+			wsRef.current.send(
+				JSON.stringify({
+					type: "input",
+					data: command,
+				})
+			);
+		}
+	}, []);
+
+	// Extract code blocks from AI message content
+	const extractCodeBlocks = useCallback((content) => {
+		const codeBlockRegex = /```(?:\w*\n)?([\s\S]*?)```/g;
+		const inlineCodeRegex = /`([^`\n]+)`/g;
+		const blocks = [];
+
+		// Extract fenced code blocks
+		let match;
+		while ((match = codeBlockRegex.exec(content)) !== null) {
+			const code = match[1].trim();
+			if (code && code.length < 500) { // Reasonable command length
+				blocks.push(code);
+			}
+		}
+
+		// If no fenced blocks, look for inline code that looks like commands
+		if (blocks.length === 0) {
+			while ((match = inlineCodeRegex.exec(content)) !== null) {
+				const code = match[1].trim();
+				// Only include if it looks like a command (starts with common commands or has no spaces for short ones)
+				if (code && code.length < 200 && /^(sudo|apt|yum|dnf|systemctl|docker|kubectl|npm|pip|cd|ls|cat|grep|find|chmod|chown|mkdir|rm|cp|mv|curl|wget|git|ssh|scp|tar|zip|unzip|nano|vim|vi|echo|export|source|\.\/|\/)/.test(code)) {
+					blocks.push(code);
+				}
+			}
+		}
+
+		return blocks;
 	}, []);
 
 	// Build agent install command
@@ -320,6 +366,28 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 			term.dispose();
 		};
 	}, [isOpen, isConnected]);
+
+	// Resize terminal when AI panel opens/closes
+	useEffect(() => {
+		if (fitAddonRef.current && isConnected) {
+			// Small delay to let CSS transition complete
+			const resizeTimeout = setTimeout(() => {
+				fitAddonRef.current.fit();
+				// Also update SSH server with new dimensions
+				if (wsRef.current?.readyState === WebSocket.OPEN) {
+					const dimensions = fitAddonRef.current.proposeDimensions();
+					wsRef.current.send(
+						JSON.stringify({
+							type: "resize",
+							cols: dimensions?.cols || 80,
+							rows: dimensions?.rows || 24,
+						})
+					);
+				}
+			}, 350); // Match CSS transition duration
+			return () => clearTimeout(resizeTimeout);
+		}
+	}, [aiPanelOpen, isConnected]);
 
 	// Connect to SSH via WebSocket
 	const connectSsh = async () => {
@@ -1114,32 +1182,45 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 				{/* Terminal Container with AI Panel - Shown when connecting or connected */}
 				{(isConnected || isConnecting) && (
 					<div className="flex-1 overflow-hidden min-h-[500px] flex">
-						{/* Main Terminal Area */}
-						<div className={`flex-1 p-4 flex flex-col transition-all duration-300 ${aiPanelOpen ? "pr-2" : ""}`}>
-							{/* Command Suggestion Overlay */}
-							{commandSuggestion && aiEnabled && (
-								<div className="mb-2 px-3 py-2 bg-primary-900/40 border border-primary-700/50 rounded-lg flex items-center justify-between">
-									<div className="flex items-center gap-2">
-										<Sparkles className="h-4 w-4 text-primary-400" />
-										<span className="text-sm text-secondary-300">
-											Suggestion: <span className="text-primary-300 font-mono">{currentInput}<span className="text-primary-400/60">{commandSuggestion}</span></span>
-										</span>
-									</div>
-									<div className="flex items-center gap-2 text-xs text-secondary-400">
-										<kbd className="px-1.5 py-0.5 bg-secondary-700 rounded">Tab</kbd>
-										<span>accept</span>
-										<kbd className="px-1.5 py-0.5 bg-secondary-700 rounded">Esc</kbd>
-										<span>dismiss</span>
-									</div>
+						{/* Main Terminal Area - flex-shrink to allow AI panel space */}
+						<div className={`flex flex-col transition-all duration-300 overflow-hidden ${aiPanelOpen ? "flex-1 min-w-0 pr-2" : "flex-1"}`}>
+							{/* Command Suggestion / Loading Indicator Bar */}
+							{aiEnabled && (completionLoading || commandSuggestion) && (
+								<div className="mx-4 mt-4 mb-0 px-3 py-2 bg-primary-900/40 border border-primary-700/50 rounded-lg flex items-center justify-between">
+									{completionLoading && !commandSuggestion ? (
+										<div className="flex items-center gap-2">
+											<Loader2 className="h-4 w-4 text-primary-400 animate-spin" />
+											<span className="text-sm text-secondary-400">Getting AI suggestion...</span>
+										</div>
+									) : commandSuggestion ? (
+										<>
+											<div className="flex items-center gap-2 min-w-0 flex-1">
+												<Sparkles className="h-4 w-4 text-primary-400 flex-shrink-0" />
+												<span className="text-sm text-secondary-300 truncate">
+													<span className="text-primary-300 font-mono">{currentInput}</span>
+													<span className="text-primary-400/60 font-mono">{commandSuggestion}</span>
+												</span>
+											</div>
+											<div className="flex items-center gap-2 text-xs text-secondary-400 flex-shrink-0 ml-2">
+												<kbd className="px-1.5 py-0.5 bg-secondary-700 rounded">Tab</kbd>
+												<span>accept</span>
+												<kbd className="px-1.5 py-0.5 bg-secondary-700 rounded">Esc</kbd>
+												<span>dismiss</span>
+											</div>
+										</>
+									) : null}
 								</div>
 							)}
-							<div
-								ref={terminalRef}
-								className="w-full flex-1 bg-black rounded"
-							/>
+							{/* Terminal */}
+							<div className="flex-1 p-4 min-h-0">
+								<div
+									ref={terminalRef}
+									className="w-full h-full bg-black rounded"
+								/>
+							</div>
 							{/* AI Toggle Button */}
 							{aiEnabled && isConnected && (
-								<div className="mt-2 flex items-center justify-end">
+								<div className="px-4 pb-2 flex items-center justify-end">
 									<button
 										type="button"
 										onClick={() => setAiPanelOpen(!aiPanelOpen)}
@@ -1161,9 +1242,9 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 							)}
 						</div>
 
-						{/* AI Assistant Panel */}
+						{/* AI Assistant Panel - Fixed width, doesn't shrink */}
 						{aiPanelOpen && aiEnabled && (
-							<div className="w-80 border-l border-secondary-700 flex flex-col bg-secondary-800/50">
+							<div className="w-80 flex-shrink-0 border-l border-secondary-700 flex flex-col bg-secondary-800/50">
 								{/* Panel Header */}
 								<div className="p-3 border-b border-secondary-700 flex items-center justify-between">
 									<div className="flex items-center gap-2">
@@ -1186,29 +1267,55 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 											<Bot className="h-8 w-8 mx-auto mb-2 opacity-50" />
 											<p>Ask about terminal output,</p>
 											<p>errors, or get command help.</p>
+											<p className="mt-2 text-secondary-500">Commands can be sent directly to terminal!</p>
 										</div>
 									)}
-									{aiMessages.map((msg, idx) => (
-										<div
-											key={idx}
-											className={`text-sm ${
-												msg.role === "user"
-													? "bg-primary-900/30 border border-primary-700/30 rounded-lg p-2 ml-4"
-													: msg.isError
-													? "bg-red-900/30 border border-red-700/30 rounded-lg p-2 mr-4"
-													: "bg-secondary-700/50 rounded-lg p-2 mr-4"
-											}`}
-										>
-											<div className="flex items-start gap-2">
-												{msg.role === "assistant" && (
-													<Bot className={`h-4 w-4 mt-0.5 ${msg.isError ? "text-red-400" : "text-primary-400"}`} />
-												)}
-												<div className="flex-1 text-secondary-200 whitespace-pre-wrap break-words">
-													{msg.content}
+									{aiMessages.map((msg, idx) => {
+										const codeBlocks = msg.role === "assistant" && !msg.isError ? extractCodeBlocks(msg.content) : [];
+										return (
+											<div
+												key={idx}
+												className={`text-sm ${
+													msg.role === "user"
+														? "bg-primary-900/30 border border-primary-700/30 rounded-lg p-2 ml-4"
+														: msg.isError
+														? "bg-red-900/30 border border-red-700/30 rounded-lg p-2 mr-4"
+														: "bg-secondary-700/50 rounded-lg p-2 mr-4"
+												}`}
+											>
+												<div className="flex items-start gap-2">
+													{msg.role === "assistant" && (
+														<Bot className={`h-4 w-4 mt-0.5 flex-shrink-0 ${msg.isError ? "text-red-400" : "text-primary-400"}`} />
+													)}
+													<div className="flex-1 min-w-0">
+														<div className="text-secondary-200 whitespace-pre-wrap break-words">
+															{msg.content}
+														</div>
+														{/* Send to Terminal buttons for detected commands */}
+														{codeBlocks.length > 0 && isConnected && (
+															<div className="mt-2 pt-2 border-t border-secondary-600/50 space-y-1.5">
+																<span className="text-xs text-secondary-400">Send to terminal:</span>
+																{codeBlocks.map((cmd, cmdIdx) => (
+																	<button
+																		key={cmdIdx}
+																		type="button"
+																		onClick={() => sendCommandToTerminal(cmd)}
+																		className="w-full flex items-center gap-2 px-2 py-1.5 text-xs bg-secondary-600/50 hover:bg-primary-600/50 border border-secondary-500/50 hover:border-primary-500/50 rounded text-left transition-colors group"
+																		title="Click to send command to terminal"
+																	>
+																		<Play className="h-3 w-3 text-primary-400 group-hover:text-primary-300 flex-shrink-0" />
+																		<code className="flex-1 text-secondary-200 group-hover:text-white font-mono truncate">
+																			{cmd}
+																		</code>
+																	</button>
+																))}
+															</div>
+														)}
+													</div>
 												</div>
 											</div>
-										</div>
-									))}
+										);
+									})}
 									{aiLoading && (
 										<div className="bg-secondary-700/50 rounded-lg p-2 mr-4">
 											<div className="flex items-center gap-2">
