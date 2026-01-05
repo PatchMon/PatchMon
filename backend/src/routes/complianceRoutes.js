@@ -24,7 +24,7 @@ const scanSubmitLimiter = rateLimit({
 
 const VALID_RESULT_STATUSES = ["pass", "fail", "warn", "skip", "notapplicable", "error"];
 const VALID_SEVERITIES = ["low", "medium", "high", "critical"];
-const VALID_PROFILE_TYPES = ["openscap", "docker-bench", "all"];
+const VALID_PROFILE_TYPES = ["openscap", "docker-bench", "oscap-docker", "all"];
 
 function isValidUUID(id) {
   return id && uuidValidate(id);
@@ -621,6 +621,8 @@ router.post("/trigger/:hostId", async (req, res) => {
       profile_id = null,
       enable_remediation = false,
       fetch_remote_resources = false,
+      image_name = null,
+      scan_all_images = false,
     } = req.body;
 
     // Validate hostId
@@ -654,6 +656,26 @@ router.post("/trigger/:hostId", async (req, res) => {
       enableRemediation: Boolean(enable_remediation),
       fetchRemoteResources: Boolean(fetch_remote_resources),
     };
+
+    // Handle Docker image CVE scanning separately
+    if (profile_type === "oscap-docker") {
+      const dockerScanOptions = {
+        imageName: image_name || null,
+        scanAllImages: Boolean(scan_all_images),
+      };
+      const success = agentWs.pushDockerImageScan(host.api_id, dockerScanOptions);
+      if (success) {
+        return res.json({
+          message: "Docker image CVE scan triggered",
+          host_id: hostId,
+          profile_type,
+          scan_all_images: Boolean(scan_all_images),
+          image_name: image_name || null,
+        });
+      } else {
+        return res.status(400).json({ error: "Failed to send Docker image scan trigger" });
+      }
+    }
 
     // Use the dedicated pushComplianceScan function with options
     const success = agentWs.pushComplianceScan(host.api_id, profile_type, scanOptions);

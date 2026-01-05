@@ -26,6 +26,9 @@ export const complianceAPI = {
 			profile_id: options.profileId || options.profile_id || null,
 			enable_remediation: options.enableRemediation || false,
 			fetch_remote_resources: options.fetchRemoteResources || false,
+			// Docker image CVE scan options
+			image_name: options.imageName || null,
+			scan_all_images: options.scanAllImages || false,
 		}),
 
 	// Get compliance score trends

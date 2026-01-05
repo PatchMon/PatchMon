@@ -344,6 +344,29 @@ function pushUpgradeSSG(apiId) {
 	return false;
 }
 
+function pushDockerImageScan(apiId, options = {}) {
+	const ws = apiIdToSocket.get(apiId);
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		const payload = {
+			type: "docker_image_scan",
+			image_name: options.imageName || null,
+			container_name: options.containerName || null,
+			scan_all_images: options.scanAllImages || false,
+		};
+		safeSend(ws, JSON.stringify(payload));
+		const scanTarget = options.scanAllImages
+			? "all images"
+			: options.imageName
+			? `image: ${options.imageName}`
+			: options.containerName
+			? `container: ${options.containerName}`
+			: "unknown target";
+		console.log(`[agent-ws] Triggered Docker image CVE scan for ${apiId}: ${scanTarget}`);
+		return true;
+	}
+	return false;
+}
+
 function pushUpdateNotification(apiId, updateInfo) {
 	const ws = apiIdToSocket.get(apiId);
 	if (ws && ws.readyState === WebSocket.OPEN) {
@@ -597,6 +620,7 @@ module.exports = {
 	pushComplianceScan,
 	pushUpgradeSSG,
 	pushRemediateRule,
+	pushDockerImageScan,
 	// Expose read-only view of connected agents
 	getConnectedApiIds: () => Array.from(apiIdToSocket.keys()),
 	getConnectionByApiId,

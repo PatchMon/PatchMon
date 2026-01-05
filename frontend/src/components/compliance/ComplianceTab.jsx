@@ -24,6 +24,8 @@ import {
 	Download,
 	BookOpen,
 	Search,
+	Container,
+	Box,
 } from "lucide-react";
 import { complianceAPI } from "../../utils/complianceApi";
 import ComplianceScore from "./ComplianceScore";
@@ -57,6 +59,8 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 	const [enableRemediation, setEnableRemediation] = useState(false);
 	const [remediatingRule, setRemediatingRule] = useState(null);
 	const [scanProgress, setScanProgress] = useState(null); // Real-time progress from SSE
+	const [dockerImageName, setDockerImageName] = useState(""); // Docker image name for CVE scan
+	const [scanAllDockerImages, setScanAllDockerImages] = useState(true); // Scan all Docker images
 	const queryClient = useQueryClient();
 
 	// Persist scan state in sessionStorage to survive tab switches
@@ -940,6 +944,84 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 						</div>
 					</div>
 
+					{/* Docker Image Options - Only show for oscap-docker profile type */}
+					{(() => {
+						const selectedProfileData = availableProfiles.find(p => (p.xccdf_id || p.id) === selectedProfile);
+						if (selectedProfileData?.type !== "oscap-docker") return null;
+
+						return (
+							<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
+								<div className="flex items-center gap-3 mb-4">
+									<div className="p-2 bg-blue-500/20 rounded-lg">
+										<Container className="h-5 w-5 text-blue-400" />
+									</div>
+									<div>
+										<h3 className="text-lg font-medium text-white">Docker Image Selection</h3>
+										<p className="text-sm text-secondary-400">Choose which Docker images to scan for CVEs</p>
+									</div>
+								</div>
+
+								<div className="space-y-4">
+									{/* Scan All Images Toggle */}
+									<div className="flex items-center justify-between p-4 bg-secondary-900/50 rounded-lg">
+										<div className="flex items-center gap-3">
+											<Box className="h-5 w-5 text-blue-400" />
+											<div>
+												<p className="text-white font-medium">Scan All Images</p>
+												<p className="text-sm text-secondary-400">Scan all Docker images on this host</p>
+											</div>
+										</div>
+										<button
+											onClick={() => setScanAllDockerImages(!scanAllDockerImages)}
+											className="focus:outline-none"
+										>
+											{scanAllDockerImages ? (
+												<ToggleRight className="h-8 w-8 text-blue-500" />
+											) : (
+												<ToggleLeft className="h-8 w-8 text-secondary-500" />
+											)}
+										</button>
+									</div>
+
+									{/* Specific Image Input - Only show when Scan All is off */}
+									{!scanAllDockerImages && (
+										<div className="space-y-2">
+											<label className="block text-sm font-medium text-secondary-300">
+												Image Name (e.g., nginx:latest or ubuntu:22.04)
+											</label>
+											<input
+												type="text"
+												value={dockerImageName}
+												onChange={(e) => setDockerImageName(e.target.value)}
+												placeholder="Enter Docker image name..."
+												className="w-full px-4 py-2 bg-secondary-900 border border-secondary-700 rounded-lg text-white placeholder-secondary-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+											/>
+											{!dockerImageName && (
+												<p className="text-sm text-yellow-400 flex items-center gap-1">
+													<AlertTriangle className="h-3 w-3" />
+													Please enter an image name or enable "Scan All Images"
+												</p>
+											)}
+										</div>
+									)}
+
+									<div className="p-3 bg-blue-900/20 border border-blue-800/50 rounded-lg">
+										<div className="flex items-start gap-2">
+											<Info className="h-4 w-4 text-blue-400 mt-0.5 flex-shrink-0" />
+											<div className="text-sm text-blue-200">
+												<p className="font-medium">About Docker Image CVE Scanning</p>
+												<p className="text-blue-300/80 mt-1">
+													Uses OpenSCAP to scan Docker images for known vulnerabilities (CVEs).
+													The scan downloads the latest OVAL vulnerability data for the image's OS.
+												</p>
+											</div>
+										</div>
+									</div>
+								</div>
+							</div>
+						);
+					})()}
+
 					{/* Run Scan Button */}
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
 						<div className="flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -959,13 +1041,29 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 									// Find the selected profile to get its type
 									const profile = availableProfiles.find(p => (p.xccdf_id || p.id) === selectedProfile);
 									const profileType = profile?.type || "openscap"; // Default to openscap for CIS/STIG profiles
-									triggerScan.mutate({
+
+									// Build scan options
+									const scanOptions = {
 										profileType: profileType,
-										profileId: selectedProfile, // The specific XCCDF profile ID
+										profileId: selectedProfile,
 										enableRemediation: enableRemediation,
-									});
+									};
+
+									// Add Docker image options for oscap-docker
+									if (profileType === "oscap-docker") {
+										scanOptions.scanAllImages = scanAllDockerImages;
+										if (!scanAllDockerImages && dockerImageName) {
+											scanOptions.imageName = dockerImageName;
+										}
+									}
+
+									triggerScan.mutate(scanOptions);
 								}}
-								disabled={!isConnected || triggerScan.isPending}
+								disabled={!isConnected || triggerScan.isPending || (
+									// Disable if oscap-docker profile but no image specified and not scanning all
+									availableProfiles.find(p => (p.xccdf_id || p.id) === selectedProfile)?.type === "oscap-docker" &&
+									!scanAllDockerImages && !dockerImageName
+								)}
 								className={`flex items-center gap-2 px-6 py-3 ${
 									enableRemediation
 										? "bg-orange-600 hover:bg-orange-700"
