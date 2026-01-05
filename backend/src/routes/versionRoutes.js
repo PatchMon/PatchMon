@@ -294,27 +294,20 @@ router.get(
 						githubError.message.includes("rate limit") ||
 						githubError.message.includes("API rate limit")
 					) {
-						logger.info("GitHub API rate limited, providing fallback data");
+						logger.info("GitHub API rate limited, using current version as fallback");
+						// Use current version from package.json as fallback instead of hardcoded values
 						latestRelease = {
-							tagName: "v1.5.0",
-							version: "1.5.0",
-							publishedAt: "2026-01-04T00:00:00Z",
-							htmlUrl:
-								"https://github.com/MacJediWizard/PatchMon-Enhanced/releases/tag/v1.5.0",
+							tagName: `v${currentVersion}`,
+							version: currentVersion,
+							publishedAt: null,
+							htmlUrl: `https://github.com/${owner}/${repo}/releases/tag/v${currentVersion}`,
 						};
-						latestCommit = {
-							sha: "138a94a",
-							message: "fix: sidebar bottom section cutoff and add compliance to Add Host modal",
-							author: "Claude Code",
-							date: new Date().toISOString(),
-							htmlUrl:
-								"https://github.com/MacJediWizard/PatchMon-Enhanced/commit/138a94a",
-						};
+						latestCommit = null;
 						commitDifference = {
 							commitsBehind: 0,
 							commitsAhead: 0,
 							totalCommits: 0,
-							branchInfo: "main branch vs release (rate limited - using fallback)",
+							branchInfo: "GitHub API rate limited - showing current version",
 						};
 					} else {
 						// Fall back to cached data for other errors

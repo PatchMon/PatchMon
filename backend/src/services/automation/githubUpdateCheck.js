@@ -1,6 +1,7 @@
 const { prisma } = require("./shared/prisma");
 const logger = require("../../utils/logger");
 const { compareVersions, checkPublicRepo } = require("./shared/utils");
+const { invalidateCache } = require("../settingsService");
 
 /**
  * GitHub Update Check Automation
@@ -86,6 +87,9 @@ class GitHubUpdateCheck {
 				},
 			});
 
+			// Invalidate settings cache so frontend gets fresh data
+			invalidateCache();
+
 			const executionTime = Date.now() - startTime;
 			logger.info(
 				`✅ GitHub update check completed in ${executionTime}ms - Current: ${currentVersion}, Latest: ${latestVersion}, Update Available: ${isUpdateAvailable}`,
@@ -116,6 +120,8 @@ class GitHubUpdateCheck {
 							update_available: false,
 						},
 					});
+					// Invalidate settings cache
+					invalidateCache();
 				}
 			} catch (updateError) {
 				logger.error(
