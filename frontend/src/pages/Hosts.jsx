@@ -10,6 +10,7 @@ import {
 	ChevronUp,
 	Clock,
 	Columns,
+	Container,
 	ExternalLink,
 	Eye as EyeIcon,
 	EyeOff as EyeOffIcon,
@@ -427,18 +428,19 @@ const Hosts = () => {
 				order: 8,
 			},
 			{ id: "ws_status", label: "Connection", visible: true, order: 9 },
-			{ id: "status", label: "Status", visible: true, order: 10 },
-			{ id: "needs_reboot", label: "Reboot", visible: true, order: 11 },
-			{ id: "updates", label: "Updates", visible: true, order: 12 },
+			{ id: "integrations", label: "Integrations", visible: true, order: 10 },
+			{ id: "status", label: "Status", visible: true, order: 11 },
+			{ id: "needs_reboot", label: "Reboot", visible: true, order: 12 },
+			{ id: "updates", label: "Updates", visible: true, order: 13 },
 			{
 				id: "security_updates",
 				label: "Security Updates",
 				visible: true,
-				order: 13,
+				order: 14,
 			},
-			{ id: "notes", label: "Notes", visible: false, order: 14 },
-			{ id: "last_update", label: "Last Update", visible: true, order: 15 },
-			{ id: "actions", label: "Actions", visible: true, order: 16 },
+			{ id: "notes", label: "Notes", visible: false, order: 15 },
+			{ id: "last_update", label: "Last Update", visible: true, order: 16 },
+			{ id: "actions", label: "Actions", visible: true, order: 17 },
 		];
 
 		const saved = localStorage.getItem("hosts-column-config");
@@ -981,18 +983,19 @@ const Hosts = () => {
 				order: 8,
 			},
 			{ id: "ws_status", label: "Connection", visible: true, order: 9 },
-			{ id: "status", label: "Status", visible: true, order: 10 },
-			{ id: "needs_reboot", label: "Reboot", visible: true, order: 11 },
-			{ id: "updates", label: "Updates", visible: true, order: 12 },
+			{ id: "integrations", label: "Integrations", visible: true, order: 10 },
+			{ id: "status", label: "Status", visible: true, order: 11 },
+			{ id: "needs_reboot", label: "Reboot", visible: true, order: 12 },
+			{ id: "updates", label: "Updates", visible: true, order: 13 },
 			{
 				id: "security_updates",
 				label: "Security Updates",
 				visible: true,
-				order: 13,
+				order: 14,
 			},
-			{ id: "notes", label: "Notes", visible: false, order: 14 },
-			{ id: "last_update", label: "Last Update", visible: true, order: 15 },
-			{ id: "actions", label: "Actions", visible: true, order: 16 },
+			{ id: "notes", label: "Notes", visible: false, order: 15 },
+			{ id: "last_update", label: "Last Update", visible: true, order: 16 },
+			{ id: "actions", label: "Actions", visible: true, order: 17 },
 		];
 		updateColumnConfig(defaultConfig);
 	};
@@ -1146,6 +1149,32 @@ const Hosts = () => {
 					</span>
 				);
 			}
+			case "integrations":
+				return (
+					<div className="flex items-center gap-1">
+						{host.docker_enabled && (
+							<span
+								className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+								title="Docker monitoring enabled"
+							>
+								<Container className="h-3 w-3" />
+							</span>
+						)}
+						{host.compliance_enabled && (
+							<span
+								className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200"
+								title="Compliance scanning enabled"
+							>
+								<Shield className="h-3 w-3" />
+							</span>
+						)}
+						{!host.docker_enabled && !host.compliance_enabled && (
+							<span className="text-xs text-secondary-400 dark:text-secondary-500">
+								—
+							</span>
+						)}
+					</div>
+				);
 			case "status":
 				return (
 					<div className="text-sm text-secondary-900 dark:text-white">

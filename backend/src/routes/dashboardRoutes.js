@@ -227,6 +227,8 @@ router.get("/hosts", authenticateToken, requireViewHosts, async (_req, res) => {
 				notes: true,
 				api_id: true,
 				needs_reboot: true,
+				docker_enabled: true,
+				compliance_enabled: true,
 				host_group_memberships: {
 					include: {
 						host_groups: {
