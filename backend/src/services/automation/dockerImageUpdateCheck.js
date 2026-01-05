@@ -12,6 +12,54 @@ class DockerImageUpdateCheck {
 		this.queueName = "docker-image-update-check";
 		// Cache tokens to avoid requesting new ones for each image
 		this.tokenCache = new Map();
+		// SECURITY: Allowlist of trusted container registries to prevent SSRF attacks
+		// Only these registries will be contacted for update checks
+		this.trustedRegistries = new Set([
+			"registry-1.docker.io", // Docker Hub
+			"docker.io",
+			"ghcr.io",             // GitHub Container Registry
+			"gcr.io",              // Google Container Registry
+			"quay.io",             // Red Hat Quay
+			"mcr.microsoft.com",   // Microsoft Container Registry
+			"public.ecr.aws",      // AWS Public ECR
+			"registry.k8s.io",     // Kubernetes registry
+			"docker.elastic.co",   // Elastic
+			"nvcr.io",             // NVIDIA
+		]);
+	}
+
+	/**
+	 * Check if a registry hostname is trusted
+	 * @param {string} registry - The registry hostname to check
+	 * @returns {boolean} True if the registry is trusted
+	 */
+	isRegistryTrusted(registry) {
+		// Normalize registry name
+		const normalizedRegistry = registry.toLowerCase().trim();
+
+		// Check exact match
+		if (this.trustedRegistries.has(normalizedRegistry)) {
+			return true;
+		}
+
+		// Check if it's a subdomain of a trusted registry (e.g., us.gcr.io, europe-west1-docker.pkg.dev)
+		for (const trusted of this.trustedRegistries) {
+			if (normalizedRegistry.endsWith(`.${trusted}`)) {
+				return true;
+			}
+		}
+
+		// Allow Google Artifact Registry regions
+		if (/^[a-z0-9-]+-docker\.pkg\.dev$/.test(normalizedRegistry)) {
+			return true;
+		}
+
+		// Allow AWS ECR private registries (account-id.dkr.ecr.region.amazonaws.com)
+		if (/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com$/.test(normalizedRegistry)) {
+			return true;
+		}
+
+		return false;
 	}
 
 	/**
@@ -135,6 +183,14 @@ class DockerImageUpdateCheck {
 	 */
 	async getRemoteDigest(imageName, tag = "latest") {
 		const registryInfo = this.parseImageName(imageName);
+
+		// SECURITY: Validate registry is trusted to prevent SSRF attacks
+		if (!this.isRegistryTrusted(registryInfo.registry)) {
+			throw new Error(
+				`Untrusted registry: ${registryInfo.registry}. Only images from trusted registries can be checked for updates.`
+			);
+		}
+
 		const manifestPath = `/v2/${registryInfo.repository}/manifests/${tag}`;
 
 		const options = {

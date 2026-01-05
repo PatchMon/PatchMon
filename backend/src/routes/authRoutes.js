@@ -1,6 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const rateLimit = require("express-rate-limit");
 const { getPrismaClient } = require("../config/prisma");
 const { body, validationResult } = require("express-validator");
 const { authenticateToken } = require("../middleware/auth");
@@ -24,6 +25,27 @@ const { AUDIT_EVENTS, logAuditEvent } = require("../utils/auditLogger");
 
 const router = express.Router();
 const prisma = getPrismaClient();
+
+// SECURITY: Strict rate limiting for password operations (5 requests per 15 minutes per IP)
+const passwordOperationLimiter = rateLimit({
+	windowMs: parseInt(process.env.PASSWORD_RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000, // 15 minutes
+	max: parseInt(process.env.PASSWORD_RATE_LIMIT_MAX, 10) || 5, // 5 attempts
+	message: {
+		error: "Too many password operation attempts, please try again later.",
+		retryAfter: Math.ceil(
+			(parseInt(process.env.PASSWORD_RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000) / 1000,
+		),
+	},
+	standardHeaders: true,
+	legacyHeaders: false,
+	skipSuccessfulRequests: false,
+	keyGenerator: (req) => {
+		// Use a combination of IP and user ID (if authenticated) for more targeted limiting
+		const ip = req.ip || req.connection?.remoteAddress || "unknown";
+		const userId = req.user?.id || "unauthenticated";
+		return `password:${ip}:${userId}`;
+	},
+});
 
 /**
  * Check if a user has the can_manage_superusers permission
@@ -948,6 +970,7 @@ router.delete(
 // Admin endpoint to reset user password
 router.post(
 	"/admin/users/:userId/reset-password",
+	passwordOperationLimiter,
 	authenticateToken,
 	requireManageUsers,
 	[
@@ -1876,6 +1899,7 @@ router.put(
 // Change password
 router.put(
 	"/change-password",
+	passwordOperationLimiter,
 	authenticateToken,
 	[
 		body("currentPassword")

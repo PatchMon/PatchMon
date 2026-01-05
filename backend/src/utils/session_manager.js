@@ -82,22 +82,60 @@ function parse_expiration(expiration_string) {
 
 /**
  * Generate device fingerprint from request data
+ * SECURITY: Combines multiple factors including server-side data to prevent spoofing
+ * The fingerprint includes: client device ID + user-agent + accept-language + IP subnet
  */
 function generate_device_fingerprint(req) {
 	// Use the X-Device-ID header from frontend (unique per browser profile/localStorage)
 	const deviceId = req.get("x-device-id");
 
-	if (deviceId) {
-		// Hash the device ID for consistent storage format
-		return crypto
-			.createHash("sha256")
-			.update(deviceId)
-			.digest("hex")
-			.substring(0, 32);
+	if (!deviceId) {
+		// No device ID - return null (user needs to provide device ID for remember-me)
+		return null;
 	}
 
-	// No device ID - return null (user needs to provide device ID for remember-me)
-	return null;
+	// SECURITY: Include server-side data to make fingerprint harder to spoof
+	// An attacker would need to know/match ALL of these:
+	// 1. The device ID (from localStorage)
+	// 2. The exact user-agent string
+	// 3. The accept-language header
+	// 4. Be on the same IP subnet (first 3 octets for IPv4, first 4 segments for IPv6)
+
+	const userAgent = req.get("user-agent") || "";
+	const acceptLanguage = req.get("accept-language") || "";
+
+	// Get IP address and extract subnet (first 3 octets for IPv4)
+	// This provides some protection while allowing for DHCP changes within a network
+	let ipSubnet = "";
+	const ip = req.ip || req.connection?.remoteAddress || "";
+	if (ip) {
+		// Handle IPv4
+		const ipv4Match = ip.match(/(\d+\.\d+\.\d+)\.\d+/);
+		if (ipv4Match) {
+			ipSubnet = ipv4Match[1]; // First 3 octets (e.g., "192.168.1")
+		} else if (ip.includes(":")) {
+			// Handle IPv6 - use first 4 segments
+			const ipv6Parts = ip.split(":");
+			ipSubnet = ipv6Parts.slice(0, 4).join(":");
+		} else {
+			ipSubnet = ip;
+		}
+	}
+
+	// Combine all factors into the fingerprint
+	const fingerprintData = [
+		deviceId,
+		userAgent,
+		acceptLanguage,
+		ipSubnet,
+	].join("|");
+
+	// Hash for consistent storage format
+	return crypto
+		.createHash("sha256")
+		.update(fingerprintData)
+		.digest("hex")
+		.substring(0, 32);
 }
 
 /**
