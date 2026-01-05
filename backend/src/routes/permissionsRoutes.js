@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateToken } = require("../middleware/auth");
 const {
@@ -29,7 +30,7 @@ router.get(
 
 			res.json(permissions);
 		} catch (error) {
-			console.error("Get role permissions error:", error);
+			logger.error("Get role permissions error:", error);
 			res.status(500).json({ error: "Failed to fetch role permissions" });
 		}
 	},
@@ -54,7 +55,7 @@ router.get(
 
 			res.json(permissions);
 		} catch (error) {
-			console.error("Get role permission error:", error);
+			logger.error("Get role permission error:", error);
 			res.status(500).json({ error: "Failed to fetch role permission" });
 		}
 	},
@@ -128,7 +129,7 @@ router.put(
 				permissions,
 			});
 		} catch (error) {
-			console.error("Update role permissions error:", error);
+			logger.error("Update role permissions error:", error);
 			res.status(500).json({ error: "Failed to update role permissions" });
 		}
 	},
@@ -169,7 +170,7 @@ router.delete(
 				message: `Role "${role}" deleted successfully`,
 			});
 		} catch (error) {
-			console.error("Delete role error:", error);
+			logger.error("Delete role error:", error);
 			res.status(500).json({ error: "Failed to delete role" });
 		}
 	},
@@ -203,7 +204,7 @@ router.get("/user-permissions", authenticateToken, async (req, res) => {
 
 		res.json(permissions);
 	} catch (error) {
-		console.error("Get user permissions error:", error);
+		logger.error("Get user permissions error:", error);
 		res.status(500).json({ error: "Failed to fetch user permissions" });
 	}
 });

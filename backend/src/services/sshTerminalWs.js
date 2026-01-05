@@ -1,4 +1,5 @@
 // SSH Terminal WebSocket Service
+const logger = require("../utils/logger");
 // Allows users to SSH into hosts from the PatchMon UI
 // Auth: One-time ticket (preferred) or JWT token (legacy) via query parameter
 
@@ -89,17 +90,17 @@ async function checkSshAuthorization(user, host) {
  */
 async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 	try {
-		console.log(`[ssh-terminal] Upgrade request received: ${pathname}`);
+		logger.info(`[ssh-terminal] Upgrade request received: ${pathname}`);
 		
 		// Parse path: /api/v1/ssh-terminal/{hostId}
 		const parts = pathname.split("/").filter(Boolean);
 		if (parts.length !== 4 || parts[2] !== "ssh-terminal") {
-			console.log(`[ssh-terminal] Path does not match SSH terminal pattern: ${pathname}`);
+			logger.info(`[ssh-terminal] Path does not match SSH terminal pattern: ${pathname}`);
 			return false; // Not an SSH terminal connection
 		}
 
 		const hostId = parts[3];
-		console.log(`[ssh-terminal] Processing connection for host ID: ${hostId}`);
+		logger.info(`[ssh-terminal] Processing connection for host ID: ${hostId}`);
 
 		// SECURITY: Prefer one-time tickets over tokens in URLs
 		// Tickets don't expose sensitive data in server logs or browser history
@@ -112,11 +113,11 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 
 		if (ticket) {
 			// Preferred: Ticket-based authentication (one-time use, not logged in URLs)
-			console.log(`[ssh-terminal] Using ticket authentication for host ${hostId}`);
+			logger.info(`[ssh-terminal] Using ticket authentication for host ${hostId}`);
 
 			const ticketResult = await consumeSshTicket(ticket, hostId);
 			if (!ticketResult.valid) {
-				console.log(`[ssh-terminal] Ticket validation failed for host ${hostId}: ${ticketResult.reason}`);
+				logger.info(`[ssh-terminal] Ticket validation failed for host ${hostId}: ${ticketResult.reason}`);
 				socket.destroy();
 				return true;
 			}
@@ -128,25 +129,25 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 			});
 
 			if (!dbUser || !dbUser.is_active) {
-				console.log(`[ssh-terminal] User not found or inactive for host ${hostId}`);
+				logger.info(`[ssh-terminal] User not found or inactive for host ${hostId}`);
 				socket.destroy();
 				return true;
 			}
 
 			user = dbUser;
 			sessionId = ticketResult.sessionId;
-			console.log(`[ssh-terminal] Ticket authenticated user ${user.username} for host ${hostId}`);
+			logger.info(`[ssh-terminal] Ticket authenticated user ${user.username} for host ${hostId}`);
 
 		} else if (token) {
 			// Legacy: Token-based authentication (less secure - token visible in URLs)
-			console.log(`[ssh-terminal] Using legacy token authentication for host ${hostId}`);
+			logger.info(`[ssh-terminal] Using legacy token authentication for host ${hostId}`);
 
 			// Verify token
 			let decoded;
 			try {
 				decoded = jwt.verify(token, process.env.JWT_SECRET);
 			} catch (err) {
-				console.log(`[ssh-terminal] Token verification failed for host ${hostId}:`, err.message);
+				logger.info(`[ssh-terminal] Token verification failed for host ${hostId}:`, err.message);
 				socket.destroy();
 				return true;
 			}
@@ -156,14 +157,14 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 			if (decoded.purpose === "websocket") {
 				validation = await validate_session(decoded.sessionId, "");
 				if (!validation.valid) {
-					console.log(`[ssh-terminal] WS token session validation failed for host ${hostId}`);
+					logger.info(`[ssh-terminal] WS token session validation failed for host ${hostId}`);
 					socket.destroy();
 					return true;
 				}
 			} else {
 				validation = await validate_session(decoded.sessionId, token);
 				if (!validation.valid) {
-					console.log(`[ssh-terminal] Session validation failed for host ${hostId}`);
+					logger.info(`[ssh-terminal] Session validation failed for host ${hostId}`);
 					socket.destroy();
 					return true;
 				}
@@ -171,10 +172,10 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 
 			user = validation.user;
 			sessionId = decoded.sessionId;
-			console.log(`[ssh-terminal] Token authenticated user ${user.username} for host ${hostId}`);
+			logger.info(`[ssh-terminal] Token authenticated user ${user.username} for host ${hostId}`);
 
 		} else {
-			console.log(`[ssh-terminal] No ticket or token provided for host ${hostId}`);
+			logger.info(`[ssh-terminal] No ticket or token provided for host ${hostId}`);
 			socket.destroy();
 			return true;
 		}
@@ -188,18 +189,18 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 		});
 
 		if (!host) {
-			console.log(`[ssh-terminal] Host ${hostId} not found`);
+			logger.info(`[ssh-terminal] Host ${hostId} not found`);
 			socket.destroy();
 			return true;
 		}
 
-		console.log(`[ssh-terminal] Host found: ${host.friendly_name || host.hostname} (${host.ip || host.hostname})`);
+		logger.info(`[ssh-terminal] Host found: ${host.friendly_name || host.hostname} (${host.ip || host.hostname})`);
 
 		// Check user permissions to access SSH terminal for this host
 		const authCheck = await checkSshAuthorization(user, host);
 
 		if (!authCheck.allowed) {
-			console.log(`[ssh-terminal] Access denied for user ${user.username} to host ${hostId}: ${authCheck.reason}`);
+			logger.info(`[ssh-terminal] Access denied for user ${user.username} to host ${hostId}: ${authCheck.reason}`);
 
 			// Log the denied access attempt
 			await logAuditEvent({
@@ -220,7 +221,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 			return true;
 		}
 
-		console.log(`[ssh-terminal] Access granted for user ${user.username} to host ${hostId}: ${authCheck.reason}`);
+		logger.info(`[ssh-terminal] Access granted for user ${user.username} to host ${hostId}: ${authCheck.reason}`);
 
 		// Log the successful access
 		await logAuditEvent({
@@ -245,7 +246,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 			let sshClient = null;
 			let sshStream = null;
 
-			console.log(`[ssh-terminal] User ${user.username} connecting to host ${host.friendly_name} (${host.id})`);
+			logger.info(`[ssh-terminal] User ${user.username} connecting to host ${host.friendly_name} (${host.id})`);
 
 			ws.on("message", async (message) => {
 				try {
@@ -261,7 +262,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 						sshClient = new Client();
 
 						sshClient.on("ready", () => {
-							console.log(`[ssh-terminal] SSH connection established to ${host.friendly_name}`);
+							logger.info(`[ssh-terminal] SSH connection established to ${host.friendly_name}`);
 							ws.send(JSON.stringify({ type: "connected" }));
 
 							// Open shell session
@@ -290,7 +291,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 									});
 
 									stream.on("close", () => {
-										console.log(`[ssh-terminal] SSH stream closed for ${host.friendly_name}`);
+										logger.info(`[ssh-terminal] SSH stream closed for ${host.friendly_name}`);
 										if (ws.readyState === WebSocket.OPEN) {
 											ws.send(JSON.stringify({ type: "closed" }));
 										}
@@ -312,8 +313,8 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 						});
 
 						sshClient.on("error", (err) => {
-							console.error(`[ssh-terminal] SSH error for ${host.friendly_name}:`, err);
-							console.error(`[ssh-terminal] SSH error details:`, {
+							logger.error(`[ssh-terminal] SSH error for ${host.friendly_name}:`, err);
+							logger.error(`[ssh-terminal] SSH error details:`, {
 								message: err.message,
 								code: err.code,
 								level: err.level,
@@ -331,7 +332,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 						});
 
 						sshClient.on("close", () => {
-							console.log(`[ssh-terminal] SSH connection closed for ${host.friendly_name}`);
+							logger.info(`[ssh-terminal] SSH connection closed for ${host.friendly_name}`);
 							sshClient = null;
 							sshStream = null;
 						});
@@ -361,7 +362,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 							sshConfig.tryKeyboard = false;
 						}
 
-						console.log(`[ssh-terminal] Connecting to ${sshConfig.host}:${sshConfig.port} as ${sshConfig.username} using ${data.privateKey ? 'private key' : 'password'} authentication`);
+						logger.info(`[ssh-terminal] Connecting to ${sshConfig.host}:${sshConfig.port} as ${sshConfig.username} using ${data.privateKey ? 'private key' : 'password'} authentication`);
 						sshClient.connect(sshConfig);
 					} else if (data.type === "input") {
 						// Send input to SSH session
@@ -379,14 +380,14 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 							try {
 								sshClient.end();
 							} catch (err) {
-								console.error(`[ssh-terminal] Error disconnecting SSH client:`, err);
+								logger.error(`[ssh-terminal] Error disconnecting SSH client:`, err);
 							}
 						}
 						sshClient = null;
 						sshStream = null;
 					}
 				} catch (err) {
-					console.error("[ssh-terminal] Error handling message:", err);
+					logger.error("[ssh-terminal] Error handling message:", err);
 					if (ws.readyState === WebSocket.OPEN) {
 						ws.send(JSON.stringify({
 							type: "error",
@@ -397,12 +398,12 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 			});
 
 			ws.on("close", () => {
-				console.log(`[ssh-terminal] WebSocket closed for ${host.friendly_name}`);
+				logger.info(`[ssh-terminal] WebSocket closed for ${host.friendly_name}`);
 				if (sshClient) {
 					try {
 						sshClient.end();
 					} catch (err) {
-						console.error(`[ssh-terminal] Error closing SSH client:`, err);
+						logger.error(`[ssh-terminal] Error closing SSH client:`, err);
 					}
 				}
 				sshClient = null;
@@ -410,12 +411,12 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 			});
 
 			ws.on("error", (err) => {
-				console.error(`[ssh-terminal] WebSocket error for ${host.friendly_name}:`, err);
+				logger.error(`[ssh-terminal] WebSocket error for ${host.friendly_name}:`, err);
 				if (sshClient) {
 					try {
 						sshClient.end();
 					} catch (closeErr) {
-						console.error(`[ssh-terminal] Error closing SSH client:`, closeErr);
+						logger.error(`[ssh-terminal] Error closing SSH client:`, closeErr);
 					}
 				}
 				sshClient = null;
@@ -423,17 +424,17 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 			});
 		});
 		
-		console.log(`[ssh-terminal] WebSocket upgrade completed for host ${host.friendly_name}`);
+		logger.info(`[ssh-terminal] WebSocket upgrade completed for host ${host.friendly_name}`);
 		} catch (upgradeErr) {
-			console.error(`[ssh-terminal] Failed to handle upgrade for host ${host.friendly_name}:`, upgradeErr);
+			logger.error(`[ssh-terminal] Failed to handle upgrade for host ${host.friendly_name}:`, upgradeErr);
 			socket.destroy();
 			return true;
 		}
 
 		return true; // Handled
 	} catch (err) {
-		console.error("[ssh-terminal] Error in upgrade handler:", err);
-		console.error("[ssh-terminal] Error stack:", err.stack);
+		logger.error("[ssh-terminal] Error in upgrade handler:", err);
+		logger.error("[ssh-terminal] Error stack:", err.stack);
 		// Try to complete upgrade before destroying to avoid 1006 error
 		try {
 			const wss = new WebSocket.Server({ noServer: true });
@@ -441,7 +442,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 				ws.close(1011, "Internal server error");
 			});
 		} catch (upgradeErr) {
-			console.error("[ssh-terminal] Failed to complete upgrade:", upgradeErr);
+			logger.error("[ssh-terminal] Failed to complete upgrade:", upgradeErr);
 			socket.destroy();
 		}
 		return true;

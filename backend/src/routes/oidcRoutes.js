@@ -1,4 +1,5 @@
 /**
+const logger = require("../utils/logger");
  * OIDC Authentication Routes
  *
  * Handles the OIDC authentication flow:
@@ -35,7 +36,7 @@ function requireHTTPS(req, res, next) {
 	const isSecure = req.secure || req.headers["x-forwarded-proto"] === "https";
 
 	if (isProduction && !isSecure) {
-		console.error("OIDC request rejected: HTTPS required in production");
+		logger.error("OIDC request rejected: HTTPS required in production");
 		return res.status(403).json({
 			error: "HTTPS required for authentication",
 		});
@@ -142,7 +143,7 @@ async function getAndDeleteOIDCSession(state) {
 		try {
 			return JSON.parse(data);
 		} catch (e) {
-			console.error("Failed to parse OIDC session data:", e);
+			logger.error("Failed to parse OIDC session data:", e);
 			return null;
 		}
 	}
@@ -188,7 +189,7 @@ router.get("/login", async (req, res) => {
 
 		res.redirect(url);
 	} catch (error) {
-		console.error("OIDC login error:", error);
+		logger.error("OIDC login error:", error);
 		res.status(500).json({ error: "Failed to initiate OIDC login" });
 	}
 });
@@ -210,34 +211,34 @@ router.get("/callback", async (req, res) => {
 		// Check for errors from the IdP
 		if (error) {
 			// Log error details for debugging (error_description provides context)
-			console.error(`OIDC error from IdP: ${error}${error_description ? ` - ${error_description}` : ""}`);
+			logger.error(`OIDC error from IdP: ${error}${error_description ? ` - ${error_description}` : ""}`);
 			// Don't expose detailed error messages to users
 			return res.redirect("/login?error=Authentication+failed");
 		}
 
 		// Validate state parameter
 		if (!state) {
-			console.error("OIDC callback missing state parameter");
+			logger.error("OIDC callback missing state parameter");
 			return res.redirect("/login?error=Invalid+authentication+response");
 		}
 
 		// Validate code parameter
 		if (!code) {
-			console.error("OIDC callback missing code parameter");
+			logger.error("OIDC callback missing code parameter");
 			return res.redirect("/login?error=Invalid+authentication+response");
 		}
 
 		// Validate state matches cookie (additional CSRF protection)
 		const cookieState = req.cookies?.oidc_state;
 		if (cookieState && cookieState !== state) {
-			console.error("OIDC state mismatch between cookie and query param");
+			logger.error("OIDC state mismatch between cookie and query param");
 			return res.redirect("/login?error=Invalid+authentication+response");
 		}
 
 		// Retrieve session data from Redis
 		const session = await getAndDeleteOIDCSession(state);
 		if (!session) {
-			console.error("OIDC state not found or expired");
+			logger.error("OIDC state not found or expired");
 			return res.redirect("/login?error=Session+expired");
 		}
 
@@ -265,7 +266,7 @@ router.get("/callback", async (req, res) => {
 
 			// Warn if first user isn't getting admin/superadmin role
 			if (isFirstUser && userRole === "user") {
-				console.warn(
+				logger.warn(
 					`WARNING: First OIDC user "${userInfo.email}" is being created with role "${userRole}". ` +
 					`Ensure they are in the correct OIDC groups (OIDC_ADMIN_GROUP or OIDC_SUPERADMIN_GROUP) ` +
 					`to have admin access.`
@@ -304,7 +305,7 @@ router.get("/callback", async (req, res) => {
 				},
 			});
 
-			console.log(`Created new OIDC user: ${user.email} with role: ${userRole}${isFirstUser ? " (first user)" : ""}`);
+			logger.info(`Created new OIDC user: ${user.email} with role: ${userRole}${isFirstUser ? " (first user)" : ""}`);
 
 			// Create default dashboard preferences for the new user
 			await createDefaultDashboardPreferences(user.id, userRole);
@@ -320,7 +321,7 @@ router.get("/callback", async (req, res) => {
 				});
 
 				if (existingOidcUser) {
-					console.error(
+					logger.error(
 						`OIDC subject already linked to another user: ${existingOidcUser.email}`,
 					);
 					return res.redirect("/login?error=Account+linking+failed");
@@ -335,16 +336,16 @@ router.get("/callback", async (req, res) => {
 						updated_at: new Date(),
 					},
 				});
-				console.log(`Linked OIDC to existing user: ${user.email}`);
+				logger.info(`Linked OIDC to existing user: ${user.email}`);
 			} else {
-				console.warn(
+				logger.warn(
 					`Skipping OIDC linking for unverified email: ${userInfo.email}`,
 				);
 			}
 		}
 
 		if (!user) {
-			console.error(
+			logger.error(
 				`OIDC user not found and auto-creation disabled: ${userInfo.email}`,
 			);
 			return res.redirect("/login?error=User+not+found");
@@ -352,7 +353,7 @@ router.get("/callback", async (req, res) => {
 
 		// Check if user is active
 		if (!user.is_active) {
-			console.error(`OIDC login attempted for inactive user: ${user.email}`);
+			logger.error(`OIDC login attempted for inactive user: ${user.email}`);
 			return res.redirect("/login?error=Account+disabled");
 		}
 
@@ -365,17 +366,17 @@ router.get("/callback", async (req, res) => {
 		// Sync avatar from IdP on every login
 		if (userInfo.picture && userInfo.picture !== user.avatar_url) {
 			updateData.avatar_url = userInfo.picture;
-			console.log(`OIDC avatar sync: ${user.email} avatar updated`);
+			logger.info(`OIDC avatar sync: ${user.email} avatar updated`);
 		}
 
 		// Sync first/last name from IdP on every login
 		if (userInfo.givenName && userInfo.givenName !== user.first_name) {
 			updateData.first_name = userInfo.givenName;
-			console.log(`OIDC name sync: ${user.email} first_name updated`);
+			logger.info(`OIDC name sync: ${user.email} first_name updated`);
 		}
 		if (userInfo.familyName && userInfo.familyName !== user.last_name) {
 			updateData.last_name = userInfo.familyName;
-			console.log(`OIDC name sync: ${user.email} last_name updated`);
+			logger.info(`OIDC name sync: ${user.email} last_name updated`);
 		}
 
 		// Sync role from groups on every login if enabled
@@ -383,7 +384,7 @@ router.get("/callback", async (req, res) => {
 			const newRole = mapGroupsToRole(userInfo.groups);
 			if (newRole !== user.role) {
 				updateData.role = newRole;
-				console.log(`OIDC role sync: ${user.email} role changed from ${user.role} to ${newRole}`);
+				logger.info(`OIDC role sync: ${user.email} role changed from ${user.role} to ${newRole}`);
 			}
 		}
 
@@ -440,7 +441,7 @@ router.get("/callback", async (req, res) => {
 		const frontendUrl = process.env.CORS_ORIGIN || "http://localhost:3000";
 		res.redirect(`${frontendUrl}/login?oidc=success`);
 	} catch (error) {
-		console.error("OIDC callback error:", error);
+		logger.error("OIDC callback error:", error);
 		// Audit log failed OIDC login
 		await logAuditEvent({
 			event: AUDIT_EVENTS.OIDC_LOGIN_FAILED,
@@ -481,7 +482,7 @@ router.get("/logout", async (req, res) => {
 			res.redirect("/login");
 		}
 	} catch (error) {
-		console.error("OIDC logout error:", error.message);
+		logger.error("OIDC logout error:", error.message);
 		res.redirect("/login");
 	}
 });

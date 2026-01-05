@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const router = express.Router();
 const agentVersionService = require("../services/agentVersionService");
 const { authenticateToken } = require("../middleware/auth");
@@ -32,7 +33,7 @@ router.get(
 				rateLimitLimit: response.headers["x-ratelimit-limit"],
 			});
 		} catch (error) {
-			console.error("❌ GitHub API test failed:", error.message);
+			logger.error("❌ GitHub API test failed:", error.message);
 			// SECURITY: Only expose detailed error info in development
 			const isDev = process.env.NODE_ENV === "development";
 			res.status(500).json({
@@ -51,13 +52,13 @@ router.get(
 router.get("/version", authenticateToken, async (_req, res) => {
 	try {
 		const versionInfo = await agentVersionService.getVersionInfo();
-		console.log(
+		logger.info(
 			"📊 Version info response:",
 			JSON.stringify(versionInfo, null, 2),
 		);
 		res.json(versionInfo);
 	} catch (error) {
-		console.error("❌ Failed to get version info:", error.message);
+		logger.error("❌ Failed to get version info:", error.message);
 		res.status(500).json({
 			error: "Failed to get version information",
 			details: error.message,
@@ -73,9 +74,9 @@ router.post(
 	requirePermission("can_manage_settings"),
 	async (_req, res) => {
 		try {
-			console.log("🔄 Refreshing current agent version...");
+			logger.info("🔄 Refreshing current agent version...");
 			const currentVersion = await agentVersionService.refreshCurrentVersion();
-			console.log("📊 Refreshed current version:", currentVersion);
+			logger.info("📊 Refreshed current version:", currentVersion);
 			res.json({
 				success: true,
 				currentVersion: currentVersion,
@@ -84,7 +85,7 @@ router.post(
 					: "No agent binary found",
 			});
 		} catch (error) {
-			console.error("❌ Failed to refresh current version:", error.message);
+			logger.error("❌ Failed to refresh current version:", error.message);
 			res.status(500).json({
 				success: false,
 				error: "Failed to refresh current version",
@@ -101,15 +102,15 @@ router.post(
 	requirePermission("can_manage_settings"),
 	async (_req, res) => {
 		try {
-			console.log("🔄 Downloading latest agent update...");
+			logger.info("🔄 Downloading latest agent update...");
 			const downloadResult = await agentVersionService.downloadLatestUpdate();
-			console.log(
+			logger.info(
 				"📊 Download result:",
 				JSON.stringify(downloadResult, null, 2),
 			);
 			res.json(downloadResult);
 		} catch (error) {
-			console.error("❌ Failed to download latest update:", error.message);
+			logger.error("❌ Failed to download latest update:", error.message);
 			res.status(500).json({
 				success: false,
 				error: "Failed to download latest update",
@@ -126,15 +127,15 @@ router.post(
 	requirePermission("can_manage_settings"),
 	async (_req, res) => {
 		try {
-			console.log("🔄 Manual update check triggered");
+			logger.info("🔄 Manual update check triggered");
 			const updateInfo = await agentVersionService.checkForUpdates();
-			console.log(
+			logger.info(
 				"📊 Update check result:",
 				JSON.stringify(updateInfo, null, 2),
 			);
 			res.json(updateInfo);
 		} catch (error) {
-			console.error("❌ Failed to check for updates:", error.message);
+			logger.error("❌ Failed to check for updates:", error.message);
 			res.status(500).json({ error: "Failed to check for updates" });
 		}
 	},
@@ -144,13 +145,13 @@ router.post(
 router.get("/versions", authenticateToken, async (_req, res) => {
 	try {
 		const versions = await agentVersionService.getAvailableVersions();
-		console.log(
+		logger.info(
 			"📦 Available versions response:",
 			JSON.stringify(versions, null, 2),
 		);
 		res.json({ versions });
 	} catch (error) {
-		console.error("❌ Failed to get available versions:", error.message);
+		logger.error("❌ Failed to get available versions:", error.message);
 		res.status(500).json({ error: "Failed to get available versions" });
 	}
 });
@@ -168,7 +169,7 @@ router.get(
 			);
 			res.json(binaryInfo);
 		} catch (error) {
-			console.error("❌ Failed to get binary info:", error.message);
+			logger.error("❌ Failed to get binary info:", error.message);
 			// SECURITY: Use generic error message in production
 			res.status(404).json({
 				error: process.env.NODE_ENV === "development"
@@ -194,7 +195,7 @@ router.get(
 
 			await agentVersionService.serveBinary(version, architecture, res);
 		} catch (error) {
-			console.error("❌ Failed to serve binary:", error.message);
+			logger.error("❌ Failed to serve binary:", error.message);
 			res.status(500).json({ error: "Failed to serve binary" });
 		}
 	},
@@ -229,7 +230,7 @@ router.get("/latest/:architecture", async (req, res) => {
 			downloadUrl: `/api/v1/agent/download/${binaryInfo.version}/${binaryInfo.architecture}`,
 		});
 	} catch (error) {
-		console.error("❌ Failed to get latest binary info:", error.message);
+		logger.error("❌ Failed to get latest binary info:", error.message);
 		res.status(500).json({ error: "Failed to get latest binary information" });
 	}
 });
@@ -270,7 +271,7 @@ router.post(
 				version: targetVersion,
 			});
 		} catch (error) {
-			console.error("❌ Failed to notify agent update:", error.message);
+			logger.error("❌ Failed to notify agent update:", error.message);
 			res.status(500).json({ error: "Failed to notify agent update" });
 		}
 	},
@@ -312,7 +313,7 @@ router.post(
 				failedCount: result.failedCount,
 			});
 		} catch (error) {
-			console.error("❌ Failed to notify all agents update:", error.message);
+			logger.error("❌ Failed to notify all agents update:", error.message);
 			res.status(500).json({ error: "Failed to notify all agents update" });
 		}
 	},
@@ -335,7 +336,7 @@ router.post(
 				});
 			}
 
-			console.log(
+			logger.info(
 				`🔍 Checking update for agent ${apiId} (version: ${version})`,
 			);
 			const result = await agentVersionService.checkAndPushAgentUpdate(
@@ -343,7 +344,7 @@ router.post(
 				version,
 				force,
 			);
-			console.log(
+			logger.info(
 				"📊 Agent update check result:",
 				JSON.stringify(result, null, 2),
 			);
@@ -353,7 +354,7 @@ router.post(
 				...result,
 			});
 		} catch (error) {
-			console.error("❌ Failed to check agent update:", error.message);
+			logger.error("❌ Failed to check agent update:", error.message);
 			res.status(500).json({
 				success: false,
 				error: "Failed to check agent update",
@@ -372,13 +373,13 @@ router.post(
 		try {
 			const { force = false } = req.body;
 
-			console.log(`🔄 Pushing updates to all agents (force: ${force})`);
+			logger.info(`🔄 Pushing updates to all agents (force: ${force})`);
 			const result = await agentVersionService.checkAndPushUpdatesToAll(force);
-			console.log("📊 Bulk update result:", JSON.stringify(result, null, 2));
+			logger.info("📊 Bulk update result:", JSON.stringify(result, null, 2));
 
 			res.json(result);
 		} catch (error) {
-			console.error("❌ Failed to push updates to all agents:", error.message);
+			logger.error("❌ Failed to push updates to all agents:", error.message);
 			res.status(500).json({
 				success: false,
 				error: "Failed to push updates to all agents",
@@ -400,7 +401,7 @@ router.post("/report-version", authenticateToken, async (req, res) => {
 			});
 		}
 
-		console.log(`📊 Agent ${apiId} reported version: ${version}`);
+		logger.info(`📊 Agent ${apiId} reported version: ${version}`);
 
 		// Check if agent needs update and push notification if needed
 		const updateResult = await agentVersionService.checkAndPushAgentUpdate(
@@ -414,7 +415,7 @@ router.post("/report-version", authenticateToken, async (req, res) => {
 			updateCheck: updateResult,
 		});
 	} catch (error) {
-		console.error("❌ Failed to process agent version report:", error.message);
+		logger.error("❌ Failed to process agent version report:", error.message);
 		res.status(500).json({
 			success: false,
 			error: "Failed to process version report",

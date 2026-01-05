@@ -1,4 +1,5 @@
 /**
+const logger = require("./logger");
  * Security Audit Logger
  *
  * Logs security-relevant events for compliance and incident investigation.
@@ -103,9 +104,9 @@ async function logAuditEvent({
 	const logMessage = `[AUDIT] ${event} | user=${userId || username || "anonymous"} | ip=${ipAddress || "unknown"} | success=${success}`;
 
 	if (logLevel === "warn") {
-		console.warn(logMessage, { audit: auditEntry });
+		logger.warn(logMessage, { audit: auditEntry });
 	} else {
-		console.log(logMessage, { audit: auditEntry });
+		logger.info(logMessage, { audit: auditEntry });
 	}
 
 	// Store in database
@@ -191,7 +192,7 @@ async function storeAuditLog(auditEntry) {
 			},
 		});
 	} catch (error) {
-		console.error("Failed to store audit log:", error.message);
+		logger.error("Failed to store audit log:", error.message);
 	}
 }
 

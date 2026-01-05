@@ -1,4 +1,5 @@
 /**
+const logger = require("../utils/logger");
  * OIDC Authentication Service
  *
  * Handles OpenID Connect authentication flow with external identity providers.
@@ -16,7 +17,7 @@ let oidcIssuer = null;
  */
 async function initializeOIDC() {
 	if (process.env.OIDC_ENABLED !== "true") {
-		console.log("OIDC authentication is disabled");
+		logger.info("OIDC authentication is disabled");
 		return false;
 	}
 
@@ -27,8 +28,8 @@ async function initializeOIDC() {
 
 	// Validate required configuration
 	if (!issuerUrl || !clientId || !clientSecret || !redirectUri) {
-		console.error("OIDC is enabled but missing required configuration");
-		console.error(
+		logger.error("OIDC is enabled but missing required configuration");
+		logger.error(
 			"Required: OIDC_ISSUER_URL, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_REDIRECT_URI",
 		);
 		return false;
@@ -36,9 +37,9 @@ async function initializeOIDC() {
 
 	try {
 		// Discover OIDC configuration from the issuer
-		console.log(`Discovering OIDC configuration from: ${issuerUrl}`);
+		logger.info(`Discovering OIDC configuration from: ${issuerUrl}`);
 		oidcIssuer = await Issuer.discover(issuerUrl);
-		console.log(`OIDC Issuer discovered: ${oidcIssuer.metadata.issuer}`);
+		logger.info(`OIDC Issuer discovered: ${oidcIssuer.metadata.issuer}`);
 
 		// Create the OIDC client
 		oidcClient = new oidcIssuer.Client({
@@ -49,10 +50,10 @@ async function initializeOIDC() {
 			token_endpoint_auth_method: "client_secret_basic",
 		});
 
-		console.log("OIDC client initialized successfully");
+		logger.info("OIDC client initialized successfully");
 		return true;
 	} catch (error) {
-		console.error("Failed to initialize OIDC:", error.message);
+		logger.error("Failed to initialize OIDC:", error.message);
 		return false;
 	}
 }
@@ -136,7 +137,7 @@ async function handleCallback(code, codeVerifier, expectedNonce) {
 	const claims = tokenSet.claims();
 
 	// Debug: Log all claims received from IdP
-	console.log("OIDC claims received from IdP:", JSON.stringify(claims, null, 2));
+	logger.info("OIDC claims received from IdP:", JSON.stringify(claims, null, 2));
 
 	// Validate required claims
 	if (!claims.sub) {

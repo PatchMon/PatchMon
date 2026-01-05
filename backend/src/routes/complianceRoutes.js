@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const router = express.Router();
 const rateLimit = require("express-rate-limit");
 const { getPrismaClient } = require("../config/prisma");
@@ -77,7 +78,7 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
     if (req.body.scans && Array.isArray(req.body.scans)) {
       // New nested format from agent
       scansToProcess = req.body.scans;
-      console.log(`[Compliance] Received ${scansToProcess.length} scans from agent payload`);
+      logger.info(`[Compliance] Received ${scansToProcess.length} scans from agent payload`);
     } else if (req.body.profile_name) {
       // Legacy flat format - wrap in array
       scansToProcess = [{
@@ -114,7 +115,7 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
       } = scanData;
 
       if (!profile_name) {
-        console.warn("[Compliance] Skipping scan with no profile_name");
+        logger.warn("[Compliance] Skipping scan with no profile_name");
         continue;
       }
 
@@ -257,7 +258,7 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
         }
       }
 
-      console.log(`[Compliance] Scan saved for host ${host.friendly_name || host.hostname} (${profile_name}): ${stats.passed}/${stats.total_rules} passed (${score}%)`);
+      logger.info(`[Compliance] Scan saved for host ${host.friendly_name || host.hostname} (${profile_name}): ${stats.passed}/${stats.total_rules} passed (${score}%)`);
       processedScans.push({ scan_id: scan.id, profile_name, score: scan.score, stats });
     }
 
@@ -267,7 +268,7 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
       scans: processedScans,
     });
   } catch (error) {
-    console.error("[Compliance] Error saving scan results:", error);
+    logger.error("[Compliance] Error saving scan results:", error);
     res.status(500).json({ error: "Failed to save scan results" });
   }
 });
@@ -296,7 +297,7 @@ router.get("/profiles", async (req, res) => {
 
     res.json(profiles);
   } catch (error) {
-    console.error("[Compliance] Error fetching profiles:", error);
+    logger.error("[Compliance] Error fetching profiles:", error);
     res.status(500).json({ error: "Failed to fetch profiles" });
   }
 });
@@ -471,7 +472,7 @@ router.get("/dashboard", async (req, res) => {
       })),
     });
   } catch (error) {
-    console.error("[Compliance] Error fetching dashboard:", error);
+    logger.error("[Compliance] Error fetching dashboard:", error);
     res.status(500).json({ error: "Failed to fetch dashboard data" });
   }
 });
@@ -517,7 +518,7 @@ router.get("/scans/:hostId", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("[Compliance] Error fetching scans:", error);
+    logger.error("[Compliance] Error fetching scans:", error);
     res.status(500).json({ error: "Failed to fetch scans" });
   }
 });
@@ -557,7 +558,7 @@ router.get("/scans/:hostId/latest", async (req, res) => {
 
     res.json(scan);
   } catch (error) {
-    console.error("[Compliance] Error fetching latest scan:", error);
+    logger.error("[Compliance] Error fetching latest scan:", error);
     res.status(500).json({ error: "Failed to fetch latest scan" });
   }
 });
@@ -606,7 +607,7 @@ router.get("/results/:scanId", async (req, res) => {
 
     res.json(filteredResults);
   } catch (error) {
-    console.error("[Compliance] Error fetching results:", error);
+    logger.error("[Compliance] Error fetching results:", error);
     res.status(500).json({ error: "Failed to fetch results" });
   }
 });
@@ -695,7 +696,7 @@ router.post("/trigger/:hostId", async (req, res) => {
       res.status(400).json({ error: "Failed to send scan trigger" });
     }
   } catch (error) {
-    console.error("[Compliance] Error triggering scan:", error);
+    logger.error("[Compliance] Error triggering scan:", error);
     res.status(500).json({ error: "Failed to trigger scan" });
   }
 });
@@ -739,7 +740,7 @@ router.post("/upgrade-ssg/:hostId", async (req, res) => {
       res.status(400).json({ error: "Failed to send SSG upgrade command" });
     }
   } catch (error) {
-    console.error("[Compliance] Error triggering SSG upgrade:", error);
+    logger.error("[Compliance] Error triggering SSG upgrade:", error);
     res.status(500).json({ error: "Failed to trigger SSG upgrade" });
   }
 });
@@ -781,7 +782,7 @@ router.post("/remediate/:hostId", async (req, res) => {
     const success = agentWs.pushRemediateRule(host.api_id, rule_id);
 
     if (success) {
-      console.log(`[Compliance] Single rule remediation triggered for ${host.api_id}: ${rule_id}`);
+      logger.info(`[Compliance] Single rule remediation triggered for ${host.api_id}: ${rule_id}`);
       res.json({
         message: "Remediation command sent",
         host_id: hostId,
@@ -791,7 +792,7 @@ router.post("/remediate/:hostId", async (req, res) => {
       res.status(400).json({ error: "Failed to send remediation command" });
     }
   } catch (error) {
-    console.error("[Compliance] Error triggering remediation:", error);
+    logger.error("[Compliance] Error triggering remediation:", error);
     res.status(500).json({ error: "Failed to trigger remediation" });
   }
 });
@@ -831,7 +832,7 @@ router.get("/trends/:hostId", async (req, res) => {
 
     res.json(scans);
   } catch (error) {
-    console.error("[Compliance] Error fetching trends:", error);
+    logger.error("[Compliance] Error fetching trends:", error);
     res.status(500).json({ error: "Failed to fetch trends" });
   }
 });

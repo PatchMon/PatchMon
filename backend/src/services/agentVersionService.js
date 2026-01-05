@@ -1,4 +1,5 @@
 const axios = require("axios");
+const logger = require("../utils/logger");
 const fs = require("node:fs").promises;
 const path = require("node:path");
 const os = require("node:os");
@@ -45,7 +46,7 @@ class AgentVersionService {
 			// Ensure agents directory exists
 			await fs.mkdir(this.agentsDir, { recursive: true });
 
-			console.log("🔍 Testing GitHub API connectivity...");
+			logger.info("🔍 Testing GitHub API connectivity...");
 			try {
 				const testResponse = await axios.get(
 					"https://api.github.com/repos/MacJediWizard/PatchMonEnhanced-agent/releases",
@@ -57,19 +58,19 @@ class AgentVersionService {
 						},
 					},
 				);
-				console.log(
+				logger.info(
 					`✅ GitHub API accessible - found ${testResponse.data.length} releases`,
 				);
 			} catch (testError) {
-				console.error("❌ GitHub API not accessible:", testError.message);
+				logger.error("❌ GitHub API not accessible:", testError.message);
 				if (testError.response) {
-					console.error(
+					logger.error(
 						"❌ Status:",
 						testError.response.status,
 						testError.response.statusText,
 					);
 					if (testError.response.status === 403) {
-						console.log("⚠️ GitHub API rate limit exceeded - will retry later");
+						logger.info("⚠️ GitHub API rate limit exceeded - will retry later");
 					}
 				}
 			}
@@ -81,7 +82,7 @@ class AgentVersionService {
 			try {
 				await this.checkForUpdates();
 			} catch (updateError) {
-				console.log(
+				logger.info(
 					"⚠️ Failed to check for updates on startup, will retry later:",
 					updateError.message,
 				);
@@ -90,13 +91,13 @@ class AgentVersionService {
 			// Set up periodic checking
 			setInterval(() => {
 				this.checkForUpdates().catch((error) => {
-					console.log("⚠️ Periodic update check failed:", error.message);
+					logger.info("⚠️ Periodic update check failed:", error.message);
 				});
 			}, this.checkInterval);
 
-			console.log("✅ Agent Version Service initialized");
+			logger.info("✅ Agent Version Service initialized");
 		} catch (error) {
-			console.error(
+			logger.error(
 				"❌ Failed to initialize Agent Version Service:",
 				error.message,
 			);
@@ -105,7 +106,7 @@ class AgentVersionService {
 
 	async getCurrentAgentVersion() {
 		try {
-			console.log("🔍 Getting current agent version...");
+			logger.info("🔍 Getting current agent version...");
 
 			// Detect server architecture and map to Go architecture names
 			const serverArch = os.arch();
@@ -118,7 +119,7 @@ class AgentVersionService {
 			};
 			const serverGoArch = archMap[serverArch] || serverArch;
 
-			console.log(
+			logger.info(
 				`🔍 Detected server architecture: ${serverArch} -> ${serverGoArch}`,
 			);
 
@@ -134,7 +135,7 @@ class AgentVersionService {
 				try {
 					await fs.access(testPath);
 					agentPath = testPath;
-					console.log(`✅ Found agent binary at: ${testPath}`);
+					logger.info(`✅ Found agent binary at: ${testPath}`);
 					break;
 				} catch {
 					// Path doesn't exist, continue to next
@@ -142,10 +143,10 @@ class AgentVersionService {
 			}
 
 			if (!agentPath) {
-				console.log(
+				logger.info(
 					`⚠️ No agent binary found in agents/ folder for architecture ${serverGoArch}, current version will be unknown`,
 				);
-				console.log("💡 Use the Download Updates button to get agent binaries");
+				logger.info("💡 Use the Download Updates button to get agent binaries");
 				this.currentVersion = null;
 				return;
 			}
@@ -175,7 +176,7 @@ class AgentVersionService {
 				});
 
 				if (result.stderr) {
-					console.log("⚠️ Agent help stderr:", result.stderr);
+					logger.info("⚠️ Agent help stderr:", result.stderr);
 				}
 
 				// Parse version from help output (e.g., "PatchMon Agent v1.3.0")
@@ -184,27 +185,27 @@ class AgentVersionService {
 				);
 				if (versionMatch) {
 					this.currentVersion = versionMatch[1];
-					console.log(`✅ Current agent version: ${this.currentVersion}`);
+					logger.info(`✅ Current agent version: ${this.currentVersion}`);
 				} else {
-					console.log(
+					logger.info(
 						"⚠️ Could not parse version from agent help output:",
 						result.stdout,
 					);
 					this.currentVersion = null;
 				}
 			} catch (execError) {
-				console.error("❌ Failed to execute agent binary:", execError.message);
+				logger.error("❌ Failed to execute agent binary:", execError.message);
 				this.currentVersion = null;
 			}
 		} catch (error) {
-			console.error("❌ Failed to get current agent version:", error.message);
+			logger.error("❌ Failed to get current agent version:", error.message);
 			this.currentVersion = null;
 		}
 	}
 
 	async checkForUpdates() {
 		try {
-			console.log("🔍 Checking for agent updates...");
+			logger.info("🔍 Checking for agent updates...");
 
 			const response = await axios.get(this.githubApiUrl, {
 				timeout: 10000,
@@ -214,12 +215,12 @@ class AgentVersionService {
 				},
 			});
 
-			console.log(`📡 GitHub API response status: ${response.status}`);
-			console.log(`📦 Found ${response.data.length} releases`);
+			logger.info(`📡 GitHub API response status: ${response.status}`);
+			logger.info(`📦 Found ${response.data.length} releases`);
 
 			const releases = response.data;
 			if (releases.length === 0) {
-				console.log("ℹ️ No releases found");
+				logger.info("ℹ️ No releases found");
 				this.latestVersion = null;
 				this.lastChecked = new Date();
 				return {
@@ -234,10 +235,10 @@ class AgentVersionService {
 			this.latestVersion = latestRelease.tag_name.replace("v", ""); // Remove 'v' prefix
 			this.lastChecked = new Date();
 
-			console.log(`📦 Latest agent version: ${this.latestVersion}`);
+			logger.info(`📦 Latest agent version: ${this.latestVersion}`);
 
 			// Don't download binaries automatically - only when explicitly requested
-			console.log(
+			logger.info(
 				"ℹ️ Skipping automatic binary download - binaries will be downloaded on demand",
 			);
 
@@ -248,14 +249,14 @@ class AgentVersionService {
 				lastChecked: this.lastChecked,
 			};
 		} catch (error) {
-			console.error("❌ Failed to check for updates:", error.message);
+			logger.error("❌ Failed to check for updates:", error.message);
 			if (error.response) {
-				console.error(
+				logger.error(
 					"❌ GitHub API error:",
 					error.response.status,
 					error.response.statusText,
 				);
-				console.error(
+				logger.error(
 					"❌ Rate limit info:",
 					error.response.headers["x-ratelimit-remaining"],
 					"/",
@@ -268,7 +269,7 @@ class AgentVersionService {
 
 	async downloadBinariesToAgentsFolder(release) {
 		try {
-			console.log(
+			logger.info(
 				`⬇️ Downloading binaries for version ${release.tag_name} to agents folder...`,
 			);
 
@@ -277,13 +278,13 @@ class AgentVersionService {
 				const asset = release.assets.find((a) => a.name === assetName);
 
 				if (!asset) {
-					console.warn(`⚠️ Binary not found for architecture: ${arch}`);
+					logger.warn(`⚠️ Binary not found for architecture: ${arch}`);
 					continue;
 				}
 
 				const binaryPath = path.join(this.agentsDir, assetName);
 
-				console.log(`⬇️ Downloading ${assetName}...`);
+				logger.info(`⬇️ Downloading ${assetName}...`);
 
 				const response = await axios.get(asset.browser_download_url, {
 					responseType: "stream",
@@ -301,10 +302,10 @@ class AgentVersionService {
 				// Make executable
 				await fs.chmod(binaryPath, "755");
 
-				console.log(`✅ Downloaded: ${assetName} to agents folder`);
+				logger.info(`✅ Downloaded: ${assetName} to agents folder`);
 			}
 		} catch (error) {
-			console.error(
+			logger.error(
 				"❌ Failed to download binaries to agents folder:",
 				error.message,
 			);
@@ -314,7 +315,7 @@ class AgentVersionService {
 
 	async downloadBinaryForVersion(version, architecture) {
 		try {
-			console.log(
+			logger.info(
 				`⬇️ Downloading binary for version ${version} architecture ${architecture}...`,
 			);
 
@@ -348,7 +349,7 @@ class AgentVersionService {
 				`${release.tag_name}-${assetName}`,
 			);
 
-			console.log(`⬇️ Downloading ${assetName}...`);
+			logger.info(`⬇️ Downloading ${assetName}...`);
 
 			const downloadResponse = await axios.get(asset.browser_download_url, {
 				responseType: "stream",
@@ -366,10 +367,10 @@ class AgentVersionService {
 			// Make executable
 			await fs.chmod(binaryPath, "755");
 
-			console.log(`✅ Downloaded: ${assetName}`);
+			logger.info(`✅ Downloaded: ${assetName}`);
 			return binaryPath;
 		} catch (error) {
-			console.error(
+			logger.error(
 				`❌ Failed to download binary ${version}-${architecture}:`,
 				error.message,
 			);
@@ -410,7 +411,7 @@ class AgentVersionService {
 			stream.pipe(res);
 		} catch (_error) {
 			// Binary doesn't exist, try to download it
-			console.log(
+			logger.info(
 				`⬇️ Binary not found locally, attempting to download ${version}-${architecture}...`,
 			);
 			try {
@@ -431,7 +432,7 @@ class AgentVersionService {
 				const stream = require("node:fs").createReadStream(binaryPath);
 				stream.pipe(res);
 			} catch (downloadError) {
-				console.error(
+				logger.error(
 					`❌ Failed to download binary ${version}-${architecture}:`,
 					downloadError.message,
 				);
@@ -450,17 +451,17 @@ class AgentVersionService {
 		// currentVersion = what's installed locally
 		// latestVersion = what's available on GitHub
 		if (this.latestVersion) {
-			console.log(`📦 Latest version from GitHub: ${this.latestVersion}`);
+			logger.info(`📦 Latest version from GitHub: ${this.latestVersion}`);
 		} else {
-			console.log(
+			logger.info(
 				`⚠️ No GitHub release version available (API may be unavailable)`,
 			);
 		}
 
 		if (this.currentVersion) {
-			console.log(`💾 Current local agent version: ${this.currentVersion}`);
+			logger.info(`💾 Current local agent version: ${this.currentVersion}`);
 		} else {
-			console.log(`⚠️ No local agent binary found`);
+			logger.info(`⚠️ No local agent binary found`);
 		}
 
 		// Determine update status by comparing current vs latest (from GitHub)
@@ -508,7 +509,7 @@ class AgentVersionService {
 
 	async downloadLatestUpdate() {
 		try {
-			console.log("⬇️ Downloading latest agent update...");
+			logger.info("⬇️ Downloading latest agent update...");
 
 			// First check for updates to get the latest release info
 			const _updateInfo = await this.checkForUpdates();
@@ -533,7 +534,7 @@ class AgentVersionService {
 				throw new Error("No releases found");
 			}
 
-			console.log(
+			logger.info(
 				`⬇️ Downloading binaries for version ${latestRelease.tag_name}...`,
 			);
 
@@ -543,7 +544,7 @@ class AgentVersionService {
 			// Refresh current version to reflect the newly downloaded binary
 			await this.getCurrentAgentVersion();
 
-			console.log("✅ Latest update downloaded successfully");
+			logger.info("✅ Latest update downloaded successfully");
 
 			return {
 				success: true,
@@ -553,7 +554,7 @@ class AgentVersionService {
 				message: `Successfully downloaded version ${this.latestVersion}`,
 			};
 		} catch (error) {
-			console.error("❌ Failed to download latest update:", error.message);
+			logger.error("❌ Failed to download latest update:", error.message);
 			throw error;
 		}
 	}
@@ -623,7 +624,7 @@ class AgentVersionService {
 	 */
 	async checkAndPushAgentUpdate(agentApiId, agentVersion, force = false) {
 		try {
-			console.log(
+			logger.info(
 				`🔍 Checking update for agent ${agentApiId} (version: ${agentVersion})`,
 			);
 
@@ -632,7 +633,7 @@ class AgentVersionService {
 			const prisma = getPrismaClient();
 			const settings = await prisma.settings.findFirst();
 			if (!settings || !settings.auto_update) {
-				console.log(
+				logger.info(
 					`⚠️ Auto-update is disabled in server settings, skipping update check for agent ${agentApiId}`,
 				);
 				return {
@@ -649,7 +650,7 @@ class AgentVersionService {
 			});
 
 			if (!host) {
-				console.log(
+				logger.info(
 					`⚠️ Host not found for agent ${agentApiId}, skipping update check`,
 				);
 				return {
@@ -660,7 +661,7 @@ class AgentVersionService {
 			}
 
 			if (!host.auto_update) {
-				console.log(
+				logger.info(
 					`⚠️ Auto-update is disabled for host ${agentApiId}, skipping update check`,
 				);
 				return {
@@ -674,7 +675,7 @@ class AgentVersionService {
 			const versionInfo = await this.getVersionInfo();
 
 			if (!versionInfo.latestVersion) {
-				console.log(`⚠️ No latest version available for agent ${agentApiId}`);
+				logger.info(`⚠️ No latest version available for agent ${agentApiId}`);
 				return {
 					needsUpdate: false,
 					reason: "no-latest-version",
@@ -690,7 +691,7 @@ class AgentVersionService {
 			const needsUpdate = force || comparison < 0;
 
 			if (needsUpdate) {
-				console.log(
+				logger.info(
 					`📤 Agent ${agentApiId} needs update: ${agentVersion} → ${versionInfo.latestVersion}`,
 				);
 
@@ -709,7 +710,7 @@ class AgentVersionService {
 				const pushed = pushUpdateNotification(agentApiId, updateInfo);
 
 				if (pushed) {
-					console.log(`✅ Update notification pushed to agent ${agentApiId}`);
+					logger.info(`✅ Update notification pushed to agent ${agentApiId}`);
 					return {
 						needsUpdate: true,
 						reason: force ? "force-update" : "version-outdated",
@@ -717,7 +718,7 @@ class AgentVersionService {
 						targetVersion: versionInfo.latestVersion,
 					};
 				} else {
-					console.log(
+					logger.info(
 						`⚠️ Failed to push update notification to agent ${agentApiId} (not connected)`,
 					);
 					return {
@@ -728,7 +729,7 @@ class AgentVersionService {
 					};
 				}
 			} else {
-				console.log(`✅ Agent ${agentApiId} is up to date: ${agentVersion}`);
+				logger.info(`✅ Agent ${agentApiId} is up to date: ${agentVersion}`);
 				return {
 					needsUpdate: false,
 					reason: "up-to-date",
@@ -736,7 +737,7 @@ class AgentVersionService {
 				};
 			}
 		} catch (error) {
-			console.error(
+			logger.error(
 				`❌ Failed to check update for agent ${agentApiId}:`,
 				error.message,
 			);
@@ -755,7 +756,7 @@ class AgentVersionService {
 	 */
 	async checkAndPushUpdatesToAll(force = false) {
 		try {
-			console.log(
+			logger.info(
 				`🔍 Checking updates for all connected agents (force: ${force})`,
 			);
 
@@ -764,7 +765,7 @@ class AgentVersionService {
 			const prisma = getPrismaClient();
 			const settings = await prisma.settings.findFirst();
 			if (!settings || !settings.auto_update) {
-				console.log(
+				logger.info(
 					`⚠️ Auto-update is disabled in server settings, skipping bulk update check`,
 				);
 				return {
@@ -800,7 +801,7 @@ class AgentVersionService {
 
 			const result = await pushUpdateNotificationToAll(updateInfo);
 
-			console.log(
+			logger.info(
 				`✅ Bulk update notification sent to ${result.notifiedCount} agents`,
 			);
 
@@ -812,7 +813,7 @@ class AgentVersionService {
 				targetVersion: versionInfo.latestVersion,
 			};
 		} catch (error) {
-			console.error("❌ Failed to push updates to all agents:", error.message);
+			logger.error("❌ Failed to push updates to all agents:", error.message);
 			return {
 				success: false,
 				message: `Error pushing updates: ${error.message}`,

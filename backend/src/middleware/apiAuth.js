@@ -1,4 +1,5 @@
 const { getPrismaClient } = require("../config/prisma");
+const logger = require("../utils/logger");
 const bcrypt = require("bcryptjs");
 
 const prisma = getPrismaClient();
@@ -139,7 +140,7 @@ const authenticateApiToken = (integrationType) => {
 
 			if (!token) {
 				// Don't log the actual API key for security
-				console.log("API key authentication failed: key not found");
+				logger.info("API key authentication failed: key not found");
 				return res.status(401).json({ error: "Invalid API key" });
 			}
 
@@ -173,7 +174,7 @@ const authenticateApiToken = (integrationType) => {
 
 				// Use proper CIDR validation
 				if (!isIPAllowed(clientIp, token.allowed_ip_ranges)) {
-					console.log(
+					logger.info(
 						`IP validation failed. Client IP: ${clientIp}, Allowed ranges: ${token.allowed_ip_ranges.join(", ")}`,
 					);
 					return res.status(403).json({ error: "IP address not allowed" });
@@ -190,7 +191,7 @@ const authenticateApiToken = (integrationType) => {
 			req.apiToken = token;
 			next();
 		} catch (error) {
-			console.error("API key authentication error:", error);
+			logger.error("API key authentication error:", error);
 			res.status(500).json({ error: "Authentication failed" });
 		}
 	};

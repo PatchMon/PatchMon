@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const logger = require("./logger");
 const crypto = require("node:crypto");
 const { getPrismaClient } = require("../config/prisma");
 
@@ -174,7 +175,7 @@ async function check_suspicious_activity(
 			unique_ips.size > TFA_SUSPICIOUS_ACTIVITY_THRESHOLD ||
 			unique_devices.size > TFA_SUSPICIOUS_ACTIVITY_THRESHOLD
 		) {
-			console.warn(
+			logger.warn(
 				`Suspicious activity detected for user ${user_id}: ${unique_ips.size} IPs, ${unique_devices.size} devices`,
 			);
 			return true;
@@ -182,7 +183,7 @@ async function check_suspicious_activity(
 
 		return false;
 	} catch (error) {
-		console.error("Error checking suspicious activity:", error);
+		logger.error("Error checking suspicious activity:", error);
 		return false;
 	}
 }
@@ -213,7 +214,7 @@ async function create_session(
 				device_fingerprint,
 			);
 			if (is_suspicious) {
-				console.warn(
+				logger.warn(
 					`Suspicious activity detected for user ${user_id}, session creation may be restricted`,
 				);
 			}
@@ -275,7 +276,7 @@ async function create_session(
 			tfa_bypass_until,
 		};
 	} catch (error) {
-		console.error("Error creating session:", error);
+		logger.error("Error creating session:", error);
 		throw error;
 	}
 }
@@ -339,7 +340,7 @@ async function validate_session(session_id, access_token) {
 			user: session.users,
 		};
 	} catch (error) {
-		console.error("Error validating session:", error);
+		logger.error("Error validating session:", error);
 		return { valid: false, reason: "Validation error" };
 	}
 }
@@ -355,7 +356,7 @@ async function update_session_activity(session_id) {
 		});
 		return true;
 	} catch (error) {
-		console.error("Error updating session activity:", error);
+		logger.error("Error updating session activity:", error);
 		return false;
 	}
 }
@@ -400,7 +401,7 @@ async function refresh_access_token(refresh_token) {
 			user: session.users,
 		};
 	} catch (error) {
-		console.error("Error refreshing access token:", error);
+		logger.error("Error refreshing access token:", error);
 		return { success: false, error: "Token refresh failed" };
 	}
 }
@@ -416,7 +417,7 @@ async function revoke_session(session_id) {
 		});
 		return true;
 	} catch (error) {
-		console.error("Error revoking session:", error);
+		logger.error("Error revoking session:", error);
 		return false;
 	}
 }
@@ -432,7 +433,7 @@ async function revoke_all_user_sessions(user_id) {
 		});
 		return true;
 	} catch (error) {
-		console.error("Error revoking user sessions:", error);
+		logger.error("Error revoking user sessions:", error);
 		return false;
 	}
 }
@@ -447,10 +448,10 @@ async function cleanup_expired_sessions() {
 				OR: [{ expires_at: { lt: new Date() } }, { is_revoked: true }],
 			},
 		});
-		console.log(`Cleaned up ${result.count} expired sessions`);
+		logger.info(`Cleaned up ${result.count} expired sessions`);
 		return result.count;
 	} catch (error) {
-		console.error("Error cleaning up sessions:", error);
+		logger.error("Error cleaning up sessions:", error);
 		return 0;
 	}
 }
@@ -479,7 +480,7 @@ async function get_user_sessions(user_id) {
 			orderBy: { last_activity: "desc" },
 		});
 	} catch (error) {
-		console.error("Error getting user sessions:", error);
+		logger.error("Error getting user sessions:", error);
 		return [];
 	}
 }
@@ -515,7 +516,7 @@ async function is_tfa_bypassed(session_id) {
 
 		return false;
 	} catch (error) {
-		console.error("Error checking TFA bypass:", error);
+		logger.error("Error checking TFA bypass:", error);
 		return false;
 	}
 }

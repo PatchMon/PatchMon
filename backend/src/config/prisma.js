@@ -1,4 +1,5 @@
 /**
+const logger = require("../utils/logger");
  * Centralized Prisma Client Singleton
  * Prevents multiple Prisma clients from creating connection leaks
  */
@@ -34,7 +35,7 @@ function getOptimizedDatabaseUrl() {
 		process.env.ENABLE_LOGGING === "true" ||
 		process.env.LOG_LEVEL === "debug"
 	) {
-		console.log(
+		logger.info(
 			`[Database Pool] connection_limit=${connectionLimit}, pool_timeout=${poolTimeout}s, connect_timeout=${connectTimeout}s`,
 		);
 	}
@@ -87,7 +88,7 @@ async function checkDatabaseConnection(prisma) {
 		await prisma.$queryRaw`SELECT 1`;
 		return true;
 	} catch (error) {
-		console.error("Database connection check failed:", error.message);
+		logger.error("Database connection check failed:", error.message);
 		return false;
 	}
 }
@@ -104,7 +105,7 @@ async function waitForDatabase(prisma, options = {}) {
 		2;
 
 	if (process.env.ENABLE_LOGGING === "true") {
-		console.log(
+		logger.info(
 			`Waiting for database connection (max ${maxAttempts} attempts, ${waitInterval}s interval)...`,
 		);
 	}
@@ -114,7 +115,7 @@ async function waitForDatabase(prisma, options = {}) {
 			const isConnected = await checkDatabaseConnection(prisma);
 			if (isConnected) {
 				if (process.env.ENABLE_LOGGING === "true") {
-					console.log(
+					logger.info(
 						`Database connected successfully after ${attempt} attempt(s)`,
 					);
 				}
@@ -126,7 +127,7 @@ async function waitForDatabase(prisma, options = {}) {
 
 		if (attempt < maxAttempts) {
 			if (process.env.ENABLE_LOGGING === "true") {
-				console.log(
+				logger.info(
 					`⏳ Database not ready (attempt ${attempt}/${maxAttempts}), retrying in ${waitInterval}s...`,
 				);
 			}
@@ -144,12 +145,12 @@ async function disconnectPrisma(prisma, maxRetries = 3) {
 	for (let i = 0; i < maxRetries; i++) {
 		try {
 			await prisma.$disconnect();
-			console.log("Database disconnected successfully");
+			logger.info("Database disconnected successfully");
 			return;
 		} catch (error) {
-			console.error(`Disconnect attempt ${i + 1} failed:`, error.message);
+			logger.error(`Disconnect attempt ${i + 1} failed:`, error.message);
 			if (i === maxRetries - 1) {
-				console.error("Failed to disconnect from database after all retries");
+				logger.error("Failed to disconnect from database after all retries");
 			} else {
 				await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second
 			}

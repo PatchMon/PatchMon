@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const rateLimit = require("express-rate-limit");
@@ -361,7 +362,7 @@ router.get("/check-admin-users", async (_req, res) => {
 			},
 		});
 	} catch (error) {
-		console.error("Error checking admin users:", error.message);
+		logger.error("Error checking admin users:", error.message);
 		res.status(500).json({
 			error: "Failed to check admin users",
 			hasAdminUsers: true, // Assume admin exists for security
@@ -491,7 +492,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Error creating admin user:", error);
+			logger.error("Error creating admin user:", error);
 			res.status(500).json({
 				error: "Failed to create admin user",
 			});
@@ -569,7 +570,7 @@ router.get(
 						},
 			});
 		} catch (error) {
-			console.error("List users error:", error);
+			logger.error("List users error:", error);
 			res.status(500).json({ error: "Failed to fetch users" });
 		}
 	},
@@ -686,7 +687,7 @@ router.post(
 					.status(409)
 					.json({ error: "Username or email already exists" });
 			}
-			console.error("User creation error:", error);
+			logger.error("User creation error:", error);
 			res.status(500).json({ error: "Failed to create user" });
 		}
 	},
@@ -871,7 +872,7 @@ router.put(
 				user: updatedUser,
 			});
 		} catch (error) {
-			console.error("User update error:", error);
+			logger.error("User update error:", error);
 			res.status(500).json({ error: "Failed to update user" });
 		}
 	},
@@ -961,7 +962,7 @@ router.delete(
 				message: "User deleted successfully",
 			});
 		} catch (error) {
-			console.error("User deletion error:", error);
+			logger.error("User deletion error:", error);
 			res.status(500).json({ error: "Failed to delete user" });
 		}
 	},
@@ -1052,7 +1053,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Password reset error:", error.message);
+			logger.error("Password reset error:", error.message);
 			res.status(500).json({ error: "Failed to reset password" });
 		}
 	},
@@ -1064,7 +1065,7 @@ router.get("/signup-enabled", async (_req, res) => {
 		const settings = await prisma.settings.findFirst();
 		res.json({ signupEnabled: settings?.signup_enabled || false });
 	} catch (error) {
-		console.error("Error checking signup status:", error);
+		logger.error("Error checking signup status:", error);
 		res.status(500).json({ error: "Failed to check signup status" });
 	}
 });
@@ -1152,7 +1153,7 @@ router.post(
 			// Create default dashboard preferences for the new user
 			await createDefaultDashboardPreferences(user.id, defaultRole);
 
-			console.log(`New user registered: ${user.username} (${user.email})`);
+			logger.info(`New user registered: ${user.username} (${user.email})`);
 
 			// Generate token for immediate login
 			const token = generateToken(user.id);
@@ -1173,7 +1174,7 @@ router.post(
 					.status(409)
 					.json({ error: "Username or email already exists" });
 			}
-			console.error("Signup error:", error.message);
+			logger.error("Signup error:", error.message);
 			res.status(500).json({ error: "Failed to create account" });
 		}
 	},
@@ -1376,7 +1377,7 @@ router.post(
 				});
 			} catch (error) {
 				// If table doesn't exist yet or Prisma client not regenerated, use empty array
-				console.warn(
+				logger.warn(
 					"Could not fetch release notes acceptances:",
 					error.message,
 				);
@@ -1411,7 +1412,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Login error:", error.message);
+			logger.error("Login error:", error.message);
 			res.status(500).json({ error: "Login failed" });
 		}
 	},
@@ -1499,7 +1500,7 @@ router.post(
 				try {
 					hashedBackupCodes = JSON.parse(user.tfa_backup_codes);
 				} catch (parseError) {
-					console.error("Failed to parse TFA backup codes:", parseError.message);
+					logger.error("Failed to parse TFA backup codes:", parseError.message);
 					hashedBackupCodes = [];
 				}
 			}
@@ -1606,7 +1607,7 @@ router.post(
 				});
 			} catch (error) {
 				// If table doesn't exist yet or Prisma client not regenerated, use empty array
-				console.warn(
+				logger.warn(
 					"Could not fetch release notes acceptances:",
 					error.message,
 				);
@@ -1630,7 +1631,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("TFA verification error:", error.message);
+			logger.error("TFA verification error:", error.message);
 			res.status(500).json({ error: "TFA verification failed" });
 		}
 	},
@@ -1653,7 +1654,7 @@ router.get("/ws-token", authenticateToken, async (req, res) => {
 
 		res.json({ token: wsToken, expiresIn: 300 }); // 300 seconds = 5 minutes
 	} catch (error) {
-		console.error("WebSocket token generation error:", error);
+		logger.error("WebSocket token generation error:", error);
 		res.status(500).json({ error: "Failed to generate WebSocket token" });
 	}
 });
@@ -1691,7 +1692,7 @@ router.post("/ssh-ticket", authenticateToken, async (req, res) => {
 			expiresIn: SSH_TICKET_TTL,
 		});
 	} catch (error) {
-		console.error("SSH ticket generation error:", error);
+		logger.error("SSH ticket generation error:", error);
 		res.status(500).json({ error: "Failed to generate SSH ticket" });
 	}
 });
@@ -1746,7 +1747,7 @@ router.get("/profile", authenticateToken, async (req, res) => {
 			},
 		});
 	} catch (error) {
-		console.error("Get profile error:", error);
+		logger.error("Get profile error:", error);
 		res.status(500).json({ error: "Failed to get profile" });
 	}
 });
@@ -1890,7 +1891,7 @@ router.put(
 				user: responseUser,
 			});
 		} catch (error) {
-			console.error("Update profile error:", error);
+			logger.error("Update profile error:", error);
 			res.status(500).json({ error: "Failed to update profile" });
 		}
 	},
@@ -1955,7 +1956,7 @@ router.put(
 				message: "Password changed successfully",
 			});
 		} catch (error) {
-			console.error("Change password error:", error.message);
+			logger.error("Change password error:", error.message);
 			res.status(500).json({ error: "Failed to change password" });
 		}
 	},
@@ -1976,7 +1977,7 @@ router.post("/logout", authenticateToken, async (req, res) => {
 			message: "Logout successful",
 		});
 	} catch (error) {
-		console.error("Logout error:", error);
+		logger.error("Logout error:", error);
 		res.status(500).json({ error: "Logout failed" });
 	}
 });
@@ -1993,7 +1994,7 @@ router.post("/logout-all", authenticateToken, async (req, res) => {
 			message: "All sessions logged out successfully",
 		});
 	} catch (error) {
-		console.error("Logout all error:", error);
+		logger.error("Logout all error:", error);
 		res.status(500).json({ error: "Logout all failed" });
 	}
 });
@@ -2044,7 +2045,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Refresh token error:", error.message);
+			logger.error("Refresh token error:", error.message);
 			res.status(500).json({ error: "Token refresh failed" });
 		}
 	},
@@ -2092,7 +2093,7 @@ router.get("/sessions", authenticateToken, async (req, res) => {
 			sessions: enhanced_sessions,
 		});
 	} catch (error) {
-		console.error("Get sessions error:", error);
+		logger.error("Get sessions error:", error);
 		res.status(500).json({ error: "Failed to fetch sessions" });
 	}
 });
@@ -2122,7 +2123,7 @@ router.delete("/sessions/:session_id", authenticateToken, async (req, res) => {
 			message: "Session revoked successfully",
 		});
 	} catch (error) {
-		console.error("Revoke session error:", error);
+		logger.error("Revoke session error:", error);
 		res.status(500).json({ error: "Failed to revoke session" });
 	}
 });
@@ -2143,7 +2144,7 @@ router.delete("/sessions", authenticateToken, async (req, res) => {
 			message: "All other sessions revoked successfully",
 		});
 	} catch (error) {
-		console.error("Revoke all sessions error:", error);
+		logger.error("Revoke all sessions error:", error);
 		res.status(500).json({ error: "Failed to revoke sessions" });
 	}
 });

@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
 const speakeasy = require("speakeasy");
 const QRCode = require("qrcode");
@@ -73,7 +74,7 @@ router.get("/setup", authenticateToken, async (req, res) => {
 			manualEntryKey: secret.base32,
 		});
 	} catch (error) {
-		console.error("TFA setup error:", error);
+		logger.error("TFA setup error:", error);
 		res
 			.status(500)
 			.json({ error: "Failed to setup two-factor authentication" });
@@ -165,7 +166,7 @@ router.post(
 				backupCodes: backupCodes,
 			});
 		} catch (error) {
-			console.error("TFA verification error:", error);
+			logger.error("TFA verification error:", error);
 			res
 				.status(500)
 				.json({ error: "Failed to verify two-factor authentication setup" });
@@ -232,7 +233,7 @@ router.post(
 				message: "Two-factor authentication has been disabled successfully",
 			});
 		} catch (error) {
-			console.error("TFA disable error:", error);
+			logger.error("TFA disable error:", error);
 			res
 				.status(500)
 				.json({ error: "Failed to disable two-factor authentication" });
@@ -259,7 +260,7 @@ router.get("/status", authenticateToken, async (req, res) => {
 			hasBackupCodes: !!user.tfa_backup_codes,
 		});
 	} catch (error) {
-		console.error("TFA status error:", error);
+		logger.error("TFA status error:", error);
 		res.status(500).json({ error: "Failed to get TFA status" });
 	}
 });
@@ -303,7 +304,7 @@ router.post("/regenerate-backup-codes", authenticateToken, async (req, res) => {
 			backupCodes: backupCodes,
 		});
 	} catch (error) {
-		console.error("TFA backup codes regeneration error:", error);
+		logger.error("TFA backup codes regeneration error:", error);
 		res.status(500).json({ error: "Failed to regenerate backup codes" });
 	}
 });
@@ -352,7 +353,7 @@ router.post(
 				try {
 					hashedBackupCodes = JSON.parse(user.tfa_backup_codes);
 				} catch (parseError) {
-					console.error("Failed to parse TFA backup codes:", parseError.message);
+					logger.error("Failed to parse TFA backup codes:", parseError.message);
 					hashedBackupCodes = [];
 				}
 			}
@@ -396,7 +397,7 @@ router.post(
 				userId: user.id,
 			});
 		} catch (error) {
-			console.error("TFA verification error:", error);
+			logger.error("TFA verification error:", error);
 			res
 				.status(500)
 				.json({ error: "Failed to verify two-factor authentication" });

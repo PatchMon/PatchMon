@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { authenticateToken } = require("../middleware/auth");
 const { getPrismaClient } = require("../config/prisma");
 const { v4: uuidv4 } = require("uuid");
@@ -133,7 +134,7 @@ router.get("/dashboard", authenticateToken, async (_req, res) => {
 			imagesBySource,
 		});
 	} catch (error) {
-		console.error("Error fetching Docker dashboard:", error);
+		logger.error("Error fetching Docker dashboard:", error);
 		res.status(500).json({ error: "Failed to fetch Docker dashboard" });
 	}
 });
@@ -199,7 +200,7 @@ router.get("/containers", authenticateToken, async (req, res) => {
 			}),
 		);
 	} catch (error) {
-		console.error("Error fetching containers:", error);
+		logger.error("Error fetching containers:", error);
 		res.status(500).json({ error: "Failed to fetch containers" });
 	}
 });
@@ -256,7 +257,7 @@ router.get("/containers/:id", authenticateToken, async (req, res) => {
 			}),
 		);
 	} catch (error) {
-		console.error("Error fetching container detail:", error);
+		logger.error("Error fetching container detail:", error);
 		res.status(500).json({ error: "Failed to fetch container detail" });
 	}
 });
@@ -328,7 +329,7 @@ router.get("/images", authenticateToken, async (req, res) => {
 			}),
 		);
 	} catch (error) {
-		console.error("Error fetching images:", error);
+		logger.error("Error fetching images:", error);
 		res.status(500).json({ error: "Failed to fetch images" });
 	}
 });
@@ -370,7 +371,7 @@ router.get("/images/:id", authenticateToken, async (req, res) => {
 			}),
 		);
 	} catch (error) {
-		console.error("Error fetching image detail:", error);
+		logger.error("Error fetching image detail:", error);
 		res.status(500).json({ error: "Failed to fetch image detail" });
 	}
 });
@@ -439,7 +440,7 @@ router.get("/hosts", authenticateToken, async (req, res) => {
 			}),
 		);
 	} catch (error) {
-		console.error("Error fetching Docker hosts:", error);
+		logger.error("Error fetching Docker hosts:", error);
 		res.status(500).json({ error: "Failed to fetch Docker hosts" });
 	}
 });
@@ -516,7 +517,7 @@ router.get("/hosts/:id", authenticateToken, async (req, res) => {
 			}),
 		);
 	} catch (error) {
-		console.error("Error fetching host Docker detail:", error);
+		logger.error("Error fetching host Docker detail:", error);
 		res.status(500).json({ error: "Failed to fetch host Docker detail" });
 	}
 });
@@ -590,7 +591,7 @@ router.get("/updates", authenticateToken, async (req, res) => {
 			}),
 		);
 	} catch (error) {
-		console.error("Error fetching Docker updates:", error);
+		logger.error("Error fetching Docker updates:", error);
 		res.status(500).json({ error: "Failed to fetch Docker updates" });
 	}
 });
@@ -808,10 +809,10 @@ router.post("/collect", async (req, res) => {
 
 		res.json({ success: true, message: "Docker data collected successfully" });
 	} catch (error) {
-		console.error("Error collecting Docker data:", error);
-		console.error("Error stack:", error.stack);
+		logger.error("Error collecting Docker data:", error);
+		logger.error("Error stack:", error.stack);
 		// Sanitize request body before logging to prevent credential exposure
-		console.error("Request body (sanitized):", JSON.stringify(sanitizeBodyForLogging(req.body), null, 2));
+		logger.error("Request body (sanitized):", JSON.stringify(sanitizeBodyForLogging(req.body), null, 2));
 		res.status(500).json({
 			error: "Failed to collect Docker data",
 			message: error.message,
@@ -842,14 +843,14 @@ router.delete("/containers/:id", authenticateToken, async (req, res) => {
 			where: { id },
 		});
 
-		console.log(`🗑️  Deleted container: ${container.name} (${id})`);
+		logger.info(`🗑️  Deleted container: ${container.name} (${id})`);
 
 		res.json({
 			success: true,
 			message: `Container ${container.name} deleted successfully`,
 		});
 	} catch (error) {
-		console.error("Error deleting container:", error);
+		logger.error("Error deleting container:", error);
 		res.status(500).json({ error: "Failed to delete container" });
 	}
 });
@@ -893,14 +894,14 @@ router.delete("/images/:id", authenticateToken, async (req, res) => {
 			where: { id },
 		});
 
-		console.log(`🗑️  Deleted image: ${image.repository}:${image.tag} (${id})`);
+		logger.info(`🗑️  Deleted image: ${image.repository}:${image.tag} (${id})`);
 
 		res.json({
 			success: true,
 			message: `Image ${image.repository}:${image.tag} deleted successfully`,
 		});
 	} catch (error) {
-		console.error("Error deleting image:", error);
+		logger.error("Error deleting image:", error);
 		res.status(500).json({ error: "Failed to delete image" });
 	}
 });
@@ -951,7 +952,7 @@ router.get("/volumes", authenticateToken, async (req, res) => {
 			}),
 		);
 	} catch (error) {
-		console.error("Error fetching volumes:", error);
+		logger.error("Error fetching volumes:", error);
 		res.status(500).json({ error: "Failed to fetch volumes" });
 	}
 });
@@ -983,7 +984,7 @@ router.get("/volumes/:id", authenticateToken, async (req, res) => {
 
 		res.json(convertBigIntToString({ volume }));
 	} catch (error) {
-		console.error("Error fetching volume detail:", error);
+		logger.error("Error fetching volume detail:", error);
 		res.status(500).json({ error: "Failed to fetch volume detail" });
 	}
 });
@@ -1034,7 +1035,7 @@ router.get("/networks", authenticateToken, async (req, res) => {
 			}),
 		);
 	} catch (error) {
-		console.error("Error fetching networks:", error);
+		logger.error("Error fetching networks:", error);
 		res.status(500).json({ error: "Failed to fetch networks" });
 	}
 });
@@ -1066,7 +1067,7 @@ router.get("/networks/:id", authenticateToken, async (req, res) => {
 
 		res.json(convertBigIntToString({ network }));
 	} catch (error) {
-		console.error("Error fetching network detail:", error);
+		logger.error("Error fetching network detail:", error);
 		res.status(500).json({ error: "Failed to fetch network detail" });
 	}
 });
@@ -1097,7 +1098,7 @@ router.get("/agent", async (_req, res) => {
 		);
 		res.send(agentScript);
 	} catch (error) {
-		console.error("Error serving Docker agent:", error);
+		logger.error("Error serving Docker agent:", error);
 		res.status(500).json({ error: "Failed to serve Docker agent script" });
 	}
 });
@@ -1121,14 +1122,14 @@ router.delete("/volumes/:id", authenticateToken, async (req, res) => {
 			where: { id },
 		});
 
-		console.log(`🗑️  Deleted volume: ${volume.name} (${id})`);
+		logger.info(`🗑️  Deleted volume: ${volume.name} (${id})`);
 
 		res.json({
 			success: true,
 			message: `Volume ${volume.name} deleted successfully`,
 		});
 	} catch (error) {
-		console.error("Error deleting volume:", error);
+		logger.error("Error deleting volume:", error);
 		res.status(500).json({ error: "Failed to delete volume" });
 	}
 });
@@ -1152,14 +1153,14 @@ router.delete("/networks/:id", authenticateToken, async (req, res) => {
 			where: { id },
 		});
 
-		console.log(`🗑️  Deleted network: ${network.name} (${id})`);
+		logger.info(`🗑️  Deleted network: ${network.name} (${id})`);
 
 		res.json({
 			success: true,
 			message: `Network ${network.name} deleted successfully`,
 		});
 	} catch (error) {
-		console.error("Error deleting network:", error);
+		logger.error("Error deleting network:", error);
 		res.status(500).json({ error: "Failed to delete network" });
 	}
 });

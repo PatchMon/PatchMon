@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { body, validationResult } = require("express-validator");
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateToken } = require("../middleware/auth");
@@ -55,11 +56,11 @@ router.get("/", authenticateToken, requireManageSettings, async (_req, res) => {
 	try {
 		const settings = await getSettings();
 		if (process.env.ENABLE_LOGGING === "true") {
-			console.log("Returning settings:", settings);
+			logger.info("Returning settings:", settings);
 		}
 		res.json(settings);
 	} catch (error) {
-		console.error("Settings fetch error:", error);
+		logger.error("Settings fetch error:", error);
 		res.status(500).json({ error: "Failed to fetch settings" });
 	}
 });
@@ -142,7 +143,7 @@ router.put(
 		try {
 			const errors = validationResult(req);
 			if (!errors.isEmpty()) {
-				console.log("Validation errors:", errors.array());
+				logger.info("Validation errors:", errors.array());
 				return res.status(400).json({ errors: errors.array() });
 			}
 
@@ -203,14 +204,14 @@ router.put(
 				updateData,
 			);
 
-			console.log("Settings updated successfully:", updatedSettings);
+			logger.info("Settings updated successfully:", updatedSettings);
 
 			// If update interval changed, enqueue persistent jobs for agents
 			if (
 				updateInterval !== undefined &&
 				oldUpdateInterval !== updateData.update_interval
 			) {
-				console.log(
+				logger.info(
 					`Update interval changed from ${oldUpdateInterval} to ${updateData.update_interval} minutes. Enqueueing agent settings updates...`,
 				);
 
@@ -242,7 +243,7 @@ router.put(
 				settings: updatedSettings,
 			});
 		} catch (error) {
-			console.error("Settings update error:", error);
+			logger.error("Settings update error:", error);
 			res.status(500).json({ error: "Failed to update settings" });
 		}
 	},
@@ -255,7 +256,7 @@ router.get("/server-url", async (_req, res) => {
 		const serverUrl = settings.server_url;
 		res.json({ server_url: serverUrl });
 	} catch (error) {
-		console.error("Server URL fetch error:", error);
+		logger.error("Server URL fetch error:", error);
 		res.status(500).json({ error: "Failed to fetch server URL" });
 	}
 });
@@ -270,7 +271,7 @@ router.get("/login-settings", async (_req, res) => {
 			signup_enabled: settings.signup_enabled || false,
 		});
 	} catch (error) {
-		console.error("Failed to fetch login settings:", error);
+		logger.error("Failed to fetch login settings:", error);
 		res.status(500).json({ error: "Failed to fetch login settings" });
 	}
 });
@@ -308,7 +309,7 @@ router.get("/update-interval", async (req, res) => {
 			cronExpression: buildCronExpression(interval),
 		});
 	} catch (error) {
-		console.error("Update interval fetch error:", error);
+		logger.error("Update interval fetch error:", error);
 		res.json({ updateInterval: 60, cronExpression: "0 * * * *" });
 	}
 });
@@ -344,7 +345,7 @@ router.get("/auto-update", async (req, res) => {
 			autoUpdate: settings.auto_update || false,
 		});
 	} catch (error) {
-		console.error("Auto-update fetch error:", error);
+		logger.error("Auto-update fetch error:", error);
 		res.json({ autoUpdate: false });
 	}
 });
@@ -466,11 +467,11 @@ router.post(
 			try {
 				const backupPath = `${filePath}.backup.${Date.now()}`;
 				await fs.copyFile(filePath, backupPath);
-				console.log(`Created backup: ${backupPath}`);
+				logger.info(`Created backup: ${backupPath}`);
 			} catch (error) {
 				// Ignore if original doesn't exist
 				if (error.code !== "ENOENT") {
-					console.warn("Failed to create backup:", error.message);
+					logger.warn("Failed to create backup:", error.message);
 				}
 			}
 
@@ -503,7 +504,7 @@ router.post(
 				sizeFormatted: `${(stats.size / 1024).toFixed(1)} KB`,
 			});
 		} catch (error) {
-			console.error("Upload logo error:", error);
+			logger.error("Upload logo error:", error);
 			res.status(500).json({ error: "Failed to upload logo" });
 		}
 	},
@@ -550,7 +551,7 @@ router.post(
 				logoType,
 			});
 		} catch (error) {
-			console.error("Reset logo error:", error);
+			logger.error("Reset logo error:", error);
 			res.status(500).json({ error: "Failed to reset logo" });
 		}
 	},

@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
 const {
 	validate_session,
@@ -76,7 +77,7 @@ const authenticateToken = async (req, res, next) => {
 		if (error.name === "TokenExpiredError") {
 			return res.status(401).json({ error: "Token expired" });
 		}
-		console.error("Auth middleware error:", error);
+		logger.error("Auth middleware error:", error);
 		return res.status(500).json({ error: "Authentication failed" });
 	}
 };
@@ -145,7 +146,7 @@ const requireTfaIfEnabled = async (req, res, next) => {
 
 		next();
 	} catch (error) {
-		console.error("TFA requirement check error:", error);
+		logger.error("TFA requirement check error:", error);
 		return res.status(500).json({ error: "Authentication check failed" });
 	}
 };

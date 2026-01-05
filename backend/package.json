@@ -1,6 +1,6 @@
 {
 	"name": "patchmon-backend",
-	"version": "1.6.9",
+	"version": "1.6.10",
 	"description": "Backend API for Linux Patch Monitoring System",
 	"license": "AGPL-3.0",
 	"main": "src/server.js",
@@ -27,6 +27,7 @@
 		"bullmq": "^5.61.0",
 		"cookie-parser": "^1.4.7",
 		"cors": "^2.8.5",
+		"date-fns": "^4.1.0",
 		"dotenv": "^16.4.7",
 		"express": "^4.21.2",
 		"express-rate-limit": "^7.5.0",
@@ -35,14 +36,13 @@
 		"ioredis": "^5.8.1",
 		"jsonwebtoken": "^9.0.2",
 		"openid-client": "^5.6.0",
-		"moment": "^2.30.1",
+		"prisma": "^6.1.0",
 		"qrcode": "^1.5.4",
 		"speakeasy": "^2.0.0",
 		"ssh2": "^1.16.0",
 		"swagger-ui-express": "^5.0.0",
 		"uuid": "^11.0.3",
 		"winston": "^3.17.0",
-		"prisma": "^6.1.0",
 		"ws": "^8.18.0"
 	},
 	"devDependencies": {

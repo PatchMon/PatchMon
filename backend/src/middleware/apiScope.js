@@ -1,4 +1,5 @@
 /**
+const logger = require("../utils/logger");
  * Middleware factory to validate API token scopes
  * Only applies to tokens with metadata.integration_type === "api"
  * @param {string} resource - The resource being accessed (e.g., "host")
@@ -23,7 +24,7 @@ const requireApiScope = (resource, action) => {
 
 			// Check if token has scopes field
 			if (!token.scopes || typeof token.scopes !== "object") {
-				console.warn(
+				logger.warn(
 					`API token ${token.token_key} missing scopes field for ${resource}:${action}`,
 				);
 				return res.status(403).json({
@@ -34,7 +35,7 @@ const requireApiScope = (resource, action) => {
 
 			// Check if resource exists in scopes
 			if (!token.scopes[resource]) {
-				console.warn(
+				logger.warn(
 					`API token ${token.token_key} missing resource ${resource} for ${action}`,
 				);
 				return res.status(403).json({
@@ -45,7 +46,7 @@ const requireApiScope = (resource, action) => {
 
 			// Check if action exists in resource scopes
 			if (!Array.isArray(token.scopes[resource])) {
-				console.warn(
+				logger.warn(
 					`API token ${token.token_key} has invalid scopes structure for ${resource}`,
 				);
 				return res.status(403).json({
@@ -55,7 +56,7 @@ const requireApiScope = (resource, action) => {
 			}
 
 			if (!token.scopes[resource].includes(action)) {
-				console.warn(
+				logger.warn(
 					`API token ${token.token_key} missing action ${action} for resource ${resource}`,
 				);
 				return res.status(403).json({
@@ -67,7 +68,7 @@ const requireApiScope = (resource, action) => {
 			// Scope validation passed
 			next();
 		} catch (error) {
-			console.error("Scope validation error:", error);
+			logger.error("Scope validation error:", error);
 			res.status(500).json({ error: "Scope validation failed" });
 		}
 	};

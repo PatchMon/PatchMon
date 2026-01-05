@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { authenticateToken } = require("../middleware/auth");
 const {
 	getConnectionInfo,
@@ -28,7 +29,7 @@ router.get("/status", authenticateToken, async (req, res) => {
 			data: statusMap,
 		});
 	} catch (error) {
-		console.error("Error fetching bulk WebSocket status:", error);
+		logger.error("Error fetching bulk WebSocket status:", error);
 		res.status(500).json({
 			success: false,
 			error: "Failed to fetch WebSocket status",
@@ -50,7 +51,7 @@ router.get("/status/:apiId", authenticateToken, async (req, res) => {
 			data: connectionInfo,
 		});
 	} catch (error) {
-		console.error("Error fetching WebSocket status:", error);
+		logger.error("Error fetching WebSocket status:", error);
 		res.status(500).json({
 			success: false,
 			error: "Failed to fetch WebSocket status",
@@ -92,7 +93,7 @@ router.get("/status/:apiId/stream", async (req, res) => {
 			return res.status(401).json({ error: "Invalid or expired token" });
 		}
 
-		console.log("[SSE] Client connected for api_id:", apiId);
+		logger.info("[SSE] Client connected for api_id:", apiId);
 
 		// Set headers for SSE
 		res.setHeader("Content-Type", "text/event-stream");
@@ -110,12 +111,12 @@ router.get("/status/:apiId/stream", async (req, res) => {
 			try {
 				// Push update to client instantly when status changes
 				const connectionInfo = getConnectionInfo(apiId);
-				console.log(
+				logger.info(
 					`[SSE] Pushing status change for ${apiId}: connected=${connectionInfo.connected} secure=${connectionInfo.secure}`,
 				);
 				res.write(`data: ${JSON.stringify(connectionInfo)}\n\n`);
 			} catch (err) {
-				console.error("[SSE] Error writing to stream:", err);
+				logger.error("[SSE] Error writing to stream:", err);
 			}
 		});
 
@@ -124,14 +125,14 @@ router.get("/status/:apiId/stream", async (req, res) => {
 			try {
 				res.write(": heartbeat\n\n");
 			} catch (err) {
-				console.error("[SSE] Error writing heartbeat:", err);
+				logger.error("[SSE] Error writing heartbeat:", err);
 				clearInterval(heartbeat);
 			}
 		}, 30000);
 
 		// Cleanup on client disconnect
 		req.on("close", () => {
-			console.log("[SSE] Client disconnected for api_id:", apiId);
+			logger.info("[SSE] Client disconnected for api_id:", apiId);
 			clearInterval(heartbeat);
 			unsubscribe();
 		});
@@ -140,9 +141,9 @@ router.get("/status/:apiId/stream", async (req, res) => {
 		req.on("error", (err) => {
 			// Only log non-connection-reset errors to reduce noise
 			if (err.code !== "ECONNRESET" && err.code !== "EPIPE") {
-				console.error("[SSE] Request error:", err);
+				logger.error("[SSE] Request error:", err);
 			} else {
-				console.log("[SSE] Client connection reset for api_id:", apiId);
+				logger.info("[SSE] Client connection reset for api_id:", apiId);
 			}
 			clearInterval(heartbeat);
 			unsubscribe();
@@ -151,13 +152,13 @@ router.get("/status/:apiId/stream", async (req, res) => {
 		// Handle response errors
 		res.on("error", (err) => {
 			if (err.code !== "ECONNRESET" && err.code !== "EPIPE") {
-				console.error("[SSE] Response error:", err);
+				logger.error("[SSE] Response error:", err);
 			}
 			clearInterval(heartbeat);
 			unsubscribe();
 		});
 	} catch (error) {
-		console.error("[SSE] Unexpected error:", error);
+		logger.error("[SSE] Unexpected error:", error);
 		if (!res.headersSent) {
 			res.status(500).json({ error: "Internal server error" });
 		}
@@ -198,7 +199,7 @@ router.get("/compliance-progress/:apiId/stream", async (req, res) => {
 			return res.status(401).json({ error: "Invalid or expired token" });
 		}
 
-		console.log("[SSE] Client connected for compliance progress, api_id:", apiId);
+		logger.info("[SSE] Client connected for compliance progress, api_id:", apiId);
 
 		// Set headers for SSE
 		res.setHeader("Content-Type", "text/event-stream");
@@ -214,12 +215,12 @@ router.get("/compliance-progress/:apiId/stream", async (req, res) => {
 		const unsubscribe = subscribeToComplianceProgress(apiId, (progressData) => {
 			try {
 				// Push progress update to client instantly
-				console.log(
+				logger.info(
 					`[SSE] Pushing compliance progress for ${apiId}: phase=${progressData.phase} progress=${progressData.progress}%`,
 				);
 				res.write(`data: ${JSON.stringify(progressData)}\n\n`);
 			} catch (err) {
-				console.error("[SSE] Error writing compliance progress to stream:", err);
+				logger.error("[SSE] Error writing compliance progress to stream:", err);
 			}
 		});
 
@@ -228,14 +229,14 @@ router.get("/compliance-progress/:apiId/stream", async (req, res) => {
 			try {
 				res.write(": heartbeat\n\n");
 			} catch (err) {
-				console.error("[SSE] Error writing heartbeat:", err);
+				logger.error("[SSE] Error writing heartbeat:", err);
 				clearInterval(heartbeat);
 			}
 		}, 30000);
 
 		// Cleanup on client disconnect
 		req.on("close", () => {
-			console.log("[SSE] Client disconnected for compliance progress, api_id:", apiId);
+			logger.info("[SSE] Client disconnected for compliance progress, api_id:", apiId);
 			clearInterval(heartbeat);
 			unsubscribe();
 		});
@@ -243,7 +244,7 @@ router.get("/compliance-progress/:apiId/stream", async (req, res) => {
 		// Handle errors
 		req.on("error", (err) => {
 			if (err.code !== "ECONNRESET" && err.code !== "EPIPE") {
-				console.error("[SSE] Compliance progress request error:", err);
+				logger.error("[SSE] Compliance progress request error:", err);
 			}
 			clearInterval(heartbeat);
 			unsubscribe();
@@ -251,13 +252,13 @@ router.get("/compliance-progress/:apiId/stream", async (req, res) => {
 
 		res.on("error", (err) => {
 			if (err.code !== "ECONNRESET" && err.code !== "EPIPE") {
-				console.error("[SSE] Compliance progress response error:", err);
+				logger.error("[SSE] Compliance progress response error:", err);
 			}
 			clearInterval(heartbeat);
 			unsubscribe();
 		});
 	} catch (error) {
-		console.error("[SSE] Unexpected error in compliance progress:", error);
+		logger.error("[SSE] Unexpected error in compliance progress:", error);
 		if (!res.headersSent) {
 			res.status(500).json({ error: "Internal server error" });
 		}

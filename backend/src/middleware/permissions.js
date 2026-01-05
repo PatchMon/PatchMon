@@ -1,4 +1,5 @@
 const { getPrismaClient } = require("../config/prisma");
+const logger = require("../utils/logger");
 const prisma = getPrismaClient();
 
 // Permission middleware factory
@@ -14,12 +15,12 @@ const requirePermission = (permission) => {
 			// Only 'admin' role is allowed without explicit permissions for backward compatibility
 			if (!rolePermissions) {
 				if (req.user.role === "admin") {
-					console.warn(
+					logger.warn(
 						`No permissions found for admin role, allowing access for backward compatibility`,
 					);
 					return next();
 				}
-				console.error(
+				logger.error(
 					`Access denied: No permissions found for role: ${req.user.role}`,
 				);
 				return res.status(403).json({
@@ -38,7 +39,7 @@ const requirePermission = (permission) => {
 
 			next();
 		} catch (error) {
-			console.error("Permission check error:", error);
+			logger.error("Permission check error:", error);
 			res.status(500).json({ error: "Permission check failed" });
 		}
 	};

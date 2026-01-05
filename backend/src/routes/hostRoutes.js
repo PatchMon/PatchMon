@@ -4,6 +4,7 @@ const { body, validationResult } = require("express-validator");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("node:crypto");
 const bcrypt = require("bcryptjs");
+const logger = require("../utils/logger");
 const { authenticateToken } = require("../middleware/auth");
 const {
 	requireManageHosts,
@@ -94,7 +95,7 @@ const validateApiCredentials = async (req, res, next) => {
 		req.hostRecord = host;
 		next();
 	} catch (error) {
-		console.error("API credential validation error:", error);
+		logger.error("API credential validation error:", error);
 		res.status(500).json({ error: "API credential validation failed" });
 	}
 };
@@ -163,7 +164,7 @@ router.get("/agent/download", async (req, res) => {
 			fileStream.pipe(res);
 
 			fileStream.on("error", (error) => {
-				console.error("Migration script stream error:", error);
+				logger.error("Migration script stream error:", error);
 				if (!res.headersSent) {
 					res.status(500).json({ error: "Failed to stream migration script" });
 				}
@@ -201,14 +202,14 @@ router.get("/agent/download", async (req, res) => {
 			fileStream.pipe(res);
 
 			fileStream.on("error", (error) => {
-				console.error("Binary stream error:", error);
+				logger.error("Binary stream error:", error);
 				if (!res.headersSent) {
 					res.status(500).json({ error: "Failed to stream agent binary" });
 				}
 			});
 		}
 	} catch (error) {
-		console.error("Agent download error:", error);
+		logger.error("Agent download error:", error);
 		res.status(500).json({ error: "Failed to serve agent" });
 	}
 });
@@ -311,7 +312,7 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 					}
 				} catch (execError) {
 					// Execution failed (likely cross-architecture) - try alternative method
-					console.warn(
+					logger.warn(
 						`Failed to execute binary ${binaryName} to get version (may be cross-architecture): ${execError.message}`,
 					);
 
@@ -331,12 +332,12 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 
 						if (versionMatch) {
 							serverVersion = versionMatch[1];
-							console.log(
+							logger.info(
 								`✅ Extracted version ${serverVersion} from binary using strings command`,
 							);
 						}
 					} catch (stringsError) {
-						console.warn(
+						logger.warn(
 							`Failed to extract version using strings command: ${stringsError.message}`,
 						);
 					}
@@ -356,7 +357,7 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 						const binaryContent = fs.readFileSync(binaryPath);
 						binaryHash = crypto.createHash("sha256").update(binaryContent).digest("hex");
 					} catch (hashErr) {
-						console.warn(`Failed to calculate hash for binary ${binaryName}: ${hashErr.message}`);
+						logger.warn(`Failed to calculate hash for binary ${binaryName}: ${hashErr.message}`);
 					}
 
 					// Return update info, but indicate if auto-update is disabled
@@ -378,7 +379,7 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 				}
 
 				// If we couldn't get version, fall through to error response
-				console.warn(
+				logger.warn(
 					`Could not determine version for binary ${binaryName} using any method`,
 				);
 			}
@@ -400,7 +401,7 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 			});
 		}
 	} catch (error) {
-		console.error("Version check error:", error);
+		logger.error("Version check error:", error);
 		res.status(500).json({ error: "Failed to get agent version" });
 	}
 });
@@ -525,7 +526,7 @@ router.post(
 					"Use these credentials in your patchmon agent configuration. System information will be automatically detected when the agent connects.",
 			});
 		} catch (error) {
-			console.error("Host creation error:", error);
+			logger.error("Host creation error:", error);
 
 			// Check if error is related to connection pool exhaustion
 			if (
@@ -534,14 +535,14 @@ router.post(
 					error.message.includes("Timed out fetching") ||
 					error.message.includes("pool timeout"))
 			) {
-				console.error("⚠️  DATABASE CONNECTION POOL EXHAUSTED!");
-				console.error(
+				logger.error("⚠️  DATABASE CONNECTION POOL EXHAUSTED!");
+				logger.error(
 					`⚠️  Current limit: DB_CONNECTION_LIMIT=${process.env.DB_CONNECTION_LIMIT || "30"}`,
 				);
-				console.error(
+				logger.error(
 					`⚠️  Pool timeout: DB_POOL_TIMEOUT=${process.env.DB_POOL_TIMEOUT || "20"}s`,
 				);
-				console.error(
+				logger.error(
 					"⚠️  Suggestion: Increase DB_CONNECTION_LIMIT in your .env file",
 				);
 			}
@@ -715,7 +716,7 @@ router.post(
 				updateData.gateway_ip = req.body.gatewayIp;
 			} else if (Object.hasOwn(req.body, "gatewayIp")) {
 				// Log warning if gateway field was sent but empty (isolated network)
-				console.warn(
+				logger.warn(
 					`Host ${host.hostname} reported with no default gateway configured`,
 				);
 			}
@@ -974,7 +975,7 @@ router.post(
 
 			res.json(response);
 		} catch (error) {
-			console.error("Host update error:", error);
+			logger.error("Host update error:", error);
 
 			// Log error in update history
 			try {
@@ -989,7 +990,7 @@ router.post(
 					},
 				});
 			} catch (logError) {
-				console.error("Failed to log update error:", logError);
+				logger.error("Failed to log update error:", logError);
 			}
 
 			res.status(500).json({ error: "Failed to update host" });
@@ -1019,7 +1020,7 @@ router.get("/info", validateApiCredentials, async (req, res) => {
 
 		res.json(host);
 	} catch (error) {
-		console.error("Get host info error:", error);
+		logger.error("Get host info error:", error);
 		res.status(500).json({ error: "Failed to fetch host information" });
 	}
 });
@@ -1051,7 +1052,7 @@ router.get("/integrations", validateApiCredentials, async (req, res) => {
 			integrations: integrations,
 		});
 	} catch (error) {
-		console.error("Get integration status error:", error);
+		logger.error("Get integration status error:", error);
 		res.status(500).json({ error: "Failed to get integration status" });
 	}
 });
@@ -1063,7 +1064,7 @@ router.post("/integration-status", validateApiCredentials, async (req, res) => {
 		const hostId = req.hostRecord.id;
 		const apiId = req.hostRecord.api_id;
 
-		console.log(`📊 Integration status update from ${apiId}:`, {
+		logger.info(`📊 Integration status update from ${apiId}:`, {
 			integration,
 			enabled,
 			status,
@@ -1097,7 +1098,7 @@ router.post("/integration-status", validateApiCredentials, async (req, res) => {
 				});
 			}
 		} catch (wsError) {
-			console.log("WebSocket broadcast not available:", wsError.message);
+			logger.info("WebSocket broadcast not available:", wsError.message);
 		}
 
 		// Update host record with compliance setup status
@@ -1116,7 +1117,7 @@ router.post("/integration-status", validateApiCredentials, async (req, res) => {
 			message: "Integration status received",
 		});
 	} catch (error) {
-		console.error("Integration status update error:", error);
+		logger.error("Integration status update error:", error);
 		res.status(500).json({ error: "Failed to process integration status" });
 	}
 });
@@ -1134,13 +1135,13 @@ router.post("/ping", validateApiCredentials, async (req, res) => {
 
 		// Log agent startup
 		if (isStartup) {
-			console.log(
+			logger.info(
 				`🚀 Agent startup detected: ${req.hostRecord.friendly_name} (${req.hostRecord.hostname || req.hostRecord.api_id})`,
 			);
 
 			// Check if status was previously offline
 			if (req.hostRecord.status === "offline") {
-				console.log(`✅ Agent back online: ${req.hostRecord.friendly_name}`);
+				logger.info(`✅ Agent back online: ${req.hostRecord.friendly_name}`);
 			}
 		}
 
@@ -1170,7 +1171,7 @@ router.post("/ping", validateApiCredentials, async (req, res) => {
 
 		// Check if this is a crontab update trigger
 		if (req.body.triggerCrontabUpdate && req.hostRecord.auto_update) {
-			console.log(
+			logger.info(
 				`Triggering crontab update for host: ${req.hostRecord.friendly_name}`,
 			);
 			response.crontabUpdate = {
@@ -1183,7 +1184,7 @@ router.post("/ping", validateApiCredentials, async (req, res) => {
 
 		res.json(response);
 	} catch (error) {
-		console.error("Ping error:", error);
+		logger.error("Ping error:", error);
 		res.status(500).json({ error: "Ping failed" });
 	}
 });
@@ -1234,7 +1235,7 @@ router.post(
 			if (error.message === "HOST_NOT_FOUND") {
 				return res.status(404).json({ error: "Host not found" });
 			}
-			console.error("Credential regeneration error:", error);
+			logger.error("Credential regeneration error:", error);
 			res.status(500).json({ error: "Failed to regenerate credentials" });
 		}
 	},
@@ -1346,7 +1347,7 @@ router.put(
 				hosts: updatedHosts,
 			});
 		} catch (error) {
-			console.error("Bulk host groups update error:", error);
+			logger.error("Bulk host groups update error:", error);
 			res.status(500).json({ error: "Failed to update host groups" });
 		}
 	},
@@ -1435,7 +1436,7 @@ router.put(
 				host: updatedHost,
 			});
 		} catch (error) {
-			console.error("Host groups update error:", error);
+			logger.error("Host groups update error:", error);
 			res.status(500).json({ error: "Failed to update host groups" });
 		}
 	},
@@ -1522,7 +1523,7 @@ router.put(
 				host: updatedHost,
 			});
 		} catch (error) {
-			console.error("Host group update error:", error);
+			logger.error("Host group update error:", error);
 			res.status(500).json({ error: "Failed to update host group" });
 		}
 	},
@@ -1600,7 +1601,7 @@ router.get(
 						},
 			});
 		} catch (error) {
-			console.error("List hosts error:", error);
+			logger.error("List hosts error:", error);
 			res.status(500).json({ error: "Failed to fetch hosts" });
 		}
 	},
@@ -1650,7 +1651,7 @@ router.delete(
 
 			// Check if all hosts were actually deleted
 			if (deleteResult.count !== hostIds.length) {
-				console.warn(
+				logger.warn(
 					`Expected to delete ${hostIds.length} hosts, but only deleted ${deleteResult.count}`,
 				);
 			}
@@ -1665,7 +1666,7 @@ router.delete(
 				})),
 			});
 		} catch (error) {
-			console.error("Bulk host deletion error:", error);
+			logger.error("Bulk host deletion error:", error);
 
 			// Handle specific Prisma errors
 			if (error.code === "P2025") {
@@ -1726,7 +1727,7 @@ router.delete(
 				},
 			});
 		} catch (error) {
-			console.error("Host deletion error:", error);
+			logger.error("Host deletion error:", error);
 
 			// Handle specific Prisma errors
 			if (error.code === "P2025") {
@@ -1805,7 +1806,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Force fetch report error:", error);
+			logger.error("Force fetch report error:", error);
 			res.status(500).json({ error: "Failed to fetch report" });
 		}
 	},
@@ -1842,7 +1843,7 @@ router.patch(
 						data: { auto_update: true },
 					});
 					globalEnabled = true;
-					console.log("📊 Global auto-update enabled (triggered by host toggle)");
+					logger.info("📊 Global auto-update enabled (triggered by host toggle)");
 				}
 			}
 
@@ -1864,7 +1865,7 @@ router.patch(
 				globalEnabled: globalEnabled,
 			});
 		} catch (error) {
-			console.error("Agent auto-update toggle error:", error);
+			logger.error("Agent auto-update toggle error:", error);
 			res.status(500).json({ error: "Failed to toggle agent auto-update" });
 		}
 	},
@@ -1926,7 +1927,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Force agent update error:", error);
+			logger.error("Force agent update error:", error);
 			res.status(500).json({ error: "Failed to force agent update" });
 		}
 	},
@@ -1983,7 +1984,7 @@ router.get("/install", async (req, res) => {
 				serverUrl = settings.server_url;
 			}
 		} catch (settingsError) {
-			console.warn(
+			logger.warn(
 				"Could not fetch settings, using default server URL:",
 				settingsError.message,
 			);
@@ -1999,7 +2000,7 @@ router.get("/install", async (req, res) => {
 				skipSSLVerify = "true";
 			}
 		} catch (sslSettingsError) {
-			console.warn("Could not fetch SSL settings:", sslSettingsError.message);
+			logger.warn("Could not fetch SSL settings:", sslSettingsError.message);
 		}
 
 		// Check for --force parameter
@@ -2059,7 +2060,7 @@ fetch_credentials
 		);
 		res.send(script);
 	} catch (error) {
-		console.error("Installation script error:", error);
+		logger.error("Installation script error:", error);
 		res.status(500).json({ error: "Failed to serve installation script" });
 	}
 });
@@ -2090,7 +2091,7 @@ router.post("/bootstrap/exchange", async (req, res) => {
 			apiKey: credentials.apiKey,
 		});
 	} catch (error) {
-		console.error("Bootstrap token exchange error:", error.message);
+		logger.error("Bootstrap token exchange error:", error.message);
 		res.status(500).json({ error: "Failed to exchange bootstrap token" });
 	}
 });
@@ -2147,7 +2148,7 @@ router.get("/remove", async (req, res) => {
 				curlFlags = "-sk";
 			}
 		} catch (settingsError) {
-			console.warn("Could not fetch settings:", settingsError.message);
+			logger.warn("Could not fetch settings:", settingsError.message);
 		}
 
 		// Prepend environment for CURL_FLAGS so script can use it if needed
@@ -2163,7 +2164,7 @@ router.get("/remove", async (req, res) => {
 		);
 		res.send(script);
 	} catch (error) {
-		console.error("Removal script error:", error.message);
+		logger.error("Removal script error:", error.message);
 		res.status(500).json({ error: "Failed to serve removal script" });
 	}
 });
@@ -2214,7 +2215,7 @@ router.get(
 				}
 			}
 		} catch (error) {
-			console.error("Get agent info error:", error);
+			logger.error("Get agent info error:", error);
 			res.status(500).json({ error: "Failed to get agent information" });
 		}
 	},
@@ -2252,11 +2253,11 @@ router.post(
 			try {
 				const backupPath = `${agentPath}.backup.${Date.now()}`;
 				await fs.copyFile(agentPath, backupPath);
-				console.log(`Created backup: ${backupPath}`);
+				logger.info(`Created backup: ${backupPath}`);
 			} catch (error) {
 				// Ignore if original doesn't exist
 				if (error.code !== "ENOENT") {
-					console.warn("Failed to create backup:", error.message);
+					logger.warn("Failed to create backup:", error.message);
 				}
 			}
 
@@ -2276,7 +2277,7 @@ router.post(
 				sizeFormatted: `${(stats.size / 1024).toFixed(1)} KB`,
 			});
 		} catch (error) {
-			console.error("Upload agent error:", error);
+			logger.error("Upload agent error:", error);
 			res.status(500).json({ error: "Failed to update agent script" });
 		}
 	},
@@ -2340,7 +2341,7 @@ router.get("/agent/timestamp", async (req, res) => {
 			}
 		}
 	} catch (error) {
-		console.error("Get agent timestamp error:", error);
+		logger.error("Get agent timestamp error:", error);
 		res.status(500).json({ error: "Failed to get agent timestamp" });
 	}
 });
@@ -2379,7 +2380,7 @@ router.get("/settings", async (req, res) => {
 			host_auto_update: host.auto_update || false,
 		});
 	} catch (error) {
-		console.error("Get settings error:", error);
+		logger.error("Get settings error:", error);
 		res.status(500).json({ error: "Failed to get settings" });
 	}
 });
@@ -2461,7 +2462,7 @@ router.patch(
 				host: updatedHost,
 			});
 		} catch (error) {
-			console.error("Update friendly name error:", error);
+			logger.error("Update friendly name error:", error);
 			res.status(500).json({ error: "Failed to update friendly name" });
 		}
 	},
@@ -2541,7 +2542,7 @@ router.patch(
 				host: updatedHost,
 			});
 		} catch (error) {
-			console.error("Update host connection error:", error);
+			logger.error("Update host connection error:", error);
 			res.status(500).json({ error: "Failed to update host connection information" });
 		}
 	},
@@ -2614,7 +2615,7 @@ router.patch(
 				host: updatedHost,
 			});
 		} catch (error) {
-			console.error("Update notes error:", error);
+			logger.error("Update notes error:", error);
 			res.status(500).json({ error: "Failed to update notes" });
 		}
 	},
@@ -2669,7 +2670,7 @@ router.get(
 				},
 			});
 		} catch (error) {
-			console.error("Get integration status error:", error);
+			logger.error("Get integration status error:", error);
 			res.status(500).json({ error: "Failed to get integration status" });
 		}
 	},
@@ -2710,7 +2711,7 @@ router.get(
 				status: JSON.parse(statusData),
 			});
 		} catch (error) {
-			console.error("Get integration setup status error:", error);
+			logger.error("Get integration setup status error:", error);
 			res.status(500).json({ error: "Failed to get integration setup status" });
 		}
 	},
@@ -2812,7 +2813,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Toggle integration error:", error);
+			logger.error("Toggle integration error:", error);
 			res.status(500).json({ error: "Failed to toggle integration" });
 		}
 	},

@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { authenticateToken } = require("../middleware/auth");
 const { requireManageSettings } = require("../middleware/permissions");
 const { getPrismaClient } = require("../config/prisma");
@@ -19,7 +20,7 @@ function getCurrentVersion() {
 		}
 		return packageJson.version;
 	} catch (packageError) {
-		console.error(
+		logger.error(
 			"Could not read version from package.json:",
 			packageError.message,
 		);
@@ -81,7 +82,7 @@ async function getLatestRelease(owner, repo) {
 			htmlUrl: releaseData.html_url,
 		};
 	} catch (error) {
-		console.error("Error fetching latest release:", error.message);
+		logger.error("Error fetching latest release:", error.message);
 		throw error; // Re-throw to be caught by the calling function
 	}
 }
@@ -122,7 +123,7 @@ async function getLatestCommit(owner, repo) {
 			htmlUrl: commitData.html_url,
 		};
 	} catch (error) {
-		console.error("Error fetching latest commit:", error.message);
+		logger.error("Error fetching latest commit:", error.message);
 		throw error; // Re-throw to be caught by the calling function
 	}
 }
@@ -230,7 +231,7 @@ router.get("/current", authenticateToken, async (_req, res) => {
 			},
 		});
 	} catch (error) {
-		console.error("Error getting current version:", error);
+		logger.error("Error getting current version:", error);
 		res.status(500).json({ error: "Failed to get current version" });
 	}
 });
@@ -283,7 +284,7 @@ router.get(
 					latestCommit = commitData;
 					commitDifference = differenceData;
 				} catch (githubError) {
-					console.warn(
+					logger.warn(
 						"Failed to fetch fresh GitHub data:",
 						githubError.message,
 					);
@@ -293,7 +294,7 @@ router.get(
 						githubError.message.includes("rate limit") ||
 						githubError.message.includes("API rate limit")
 					) {
-						console.log("GitHub API rate limited, providing fallback data");
+						logger.info("GitHub API rate limited, providing fallback data");
 						latestRelease = {
 							tagName: "v1.5.0",
 							version: "1.5.0",
@@ -352,7 +353,7 @@ router.get(
 				},
 			});
 		} catch (error) {
-			console.error("Error getting update information:", error);
+			logger.error("Error getting update information:", error);
 			res.status(500).json({ error: "Failed to get update information" });
 		}
 	},

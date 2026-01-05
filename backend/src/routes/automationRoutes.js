@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const crypto = require("node:crypto");
 const { queueManager, QUEUE_NAMES } = require("../services/automation");
 const { getConnectedApiIds } = require("../services/agentWs");
@@ -33,7 +34,7 @@ router.post("/bullboard-ticket", authenticateToken, requireAdmin, async (req, re
 			expiresIn: BULL_BOARD_TICKET_TTL,
 		});
 	} catch (error) {
-		console.error("Bull Board ticket generation error:", error);
+		logger.error("Bull Board ticket generation error:", error);
 		res.status(500).json({ error: "Failed to generate Bull Board ticket" });
 	}
 });
@@ -83,7 +84,7 @@ router.get("/stats", authenticateToken, async (_req, res) => {
 			data: stats,
 		});
 	} catch (error) {
-		console.error("Error fetching queue stats:", error);
+		logger.error("Error fetching queue stats:", error);
 		res.status(500).json({
 			success: false,
 			error: "Failed to fetch queue statistics",
@@ -109,7 +110,7 @@ router.get("/stats/:queueName", authenticateToken, async (req, res) => {
 			data: stats,
 		});
 	} catch (error) {
-		console.error("Error fetching queue stats:", error);
+		logger.error("Error fetching queue stats:", error);
 		res.status(500).json({
 			success: false,
 			error: "Failed to fetch queue statistics",
@@ -160,7 +161,7 @@ router.get("/jobs/:queueName", authenticateToken, async (req, res) => {
 			data: formattedJobs,
 		});
 	} catch (error) {
-		console.error("Error fetching recent jobs:", error);
+		logger.error("Error fetching recent jobs:", error);
 		res.status(500).json({
 			success: false,
 			error: "Failed to fetch recent jobs",
@@ -180,7 +181,7 @@ router.post("/trigger/github-update", authenticateToken, async (_req, res) => {
 			},
 		});
 	} catch (error) {
-		console.error("Error triggering GitHub update check:", error);
+		logger.error("Error triggering GitHub update check:", error);
 		res.status(500).json({
 			success: false,
 			error: "Failed to trigger GitHub update check",
@@ -203,7 +204,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Error triggering session cleanup:", error);
+			logger.error("Error triggering session cleanup:", error);
 			res.status(500).json({
 				success: false,
 				error: "Failed to trigger session cleanup",
@@ -231,7 +232,7 @@ router.post(
 			await queue.addBulk(jobs);
 			res.json({ success: true, data: { enqueued: jobs.length } });
 		} catch (error) {
-			console.error("Error triggering agent collection:", error);
+			logger.error("Error triggering agent collection:", error);
 			res
 				.status(500)
 				.json({ success: false, error: "Failed to trigger agent collection" });
@@ -254,7 +255,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Error triggering orphaned repository cleanup:", error);
+			logger.error("Error triggering orphaned repository cleanup:", error);
 			res.status(500).json({
 				success: false,
 				error: "Failed to trigger orphaned repository cleanup",
@@ -278,7 +279,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Error triggering orphaned package cleanup:", error);
+			logger.error("Error triggering orphaned package cleanup:", error);
 			res.status(500).json({
 				success: false,
 				error: "Failed to trigger orphaned package cleanup",
@@ -302,7 +303,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Error triggering Docker inventory cleanup:", error);
+			logger.error("Error triggering Docker inventory cleanup:", error);
 			res.status(500).json({
 				success: false,
 				error: "Failed to trigger Docker inventory cleanup",
@@ -326,7 +327,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Error triggering system statistics collection:", error);
+			logger.error("Error triggering system statistics collection:", error);
 			res.status(500).json({
 				success: false,
 				error: "Failed to trigger system statistics collection",
@@ -370,7 +371,7 @@ router.get("/health", authenticateToken, async (_req, res) => {
 			data: health,
 		});
 	} catch (error) {
-		console.error("Error checking queue health:", error);
+		logger.error("Error checking queue health:", error);
 		res.status(500).json({
 			success: false,
 			error: "Failed to check queue health",
@@ -563,7 +564,7 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 			data: overview,
 		});
 	} catch (error) {
-		console.error("Error fetching automation overview:", error);
+		logger.error("Error fetching automation overview:", error);
 		res.status(500).json({
 			success: false,
 			error: "Failed to fetch automation overview",

@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
 const crypto = require("node:crypto");
 const bcrypt = require("bcryptjs");
@@ -149,7 +150,7 @@ const validate_auto_enrollment_token = async (req, res, next) => {
 			const ip_allowed = isIPAllowed(client_ip, token.allowed_ip_ranges);
 
 			if (!ip_allowed) {
-				console.warn(
+				logger.warn(
 					`Auto-enrollment attempt from unauthorized IP: ${client_ip}`,
 				);
 				return res
@@ -185,7 +186,7 @@ const validate_auto_enrollment_token = async (req, res, next) => {
 		req.auto_enrollment_token = token;
 		next();
 	} catch (error) {
-		console.error("Auto-enrollment token validation error:", error);
+		logger.error("Auto-enrollment token validation error:", error);
 		res.status(500).json({ error: "Token validation failed" });
 	}
 };
@@ -329,7 +330,7 @@ router.post(
 				warning: "⚠️ Save the token_secret now - it cannot be retrieved later!",
 			});
 		} catch (error) {
-			console.error("Create auto-enrollment token error:", error);
+			logger.error("Create auto-enrollment token error:", error);
 			res.status(500).json({ error: "Failed to create token" });
 		}
 	},
@@ -378,7 +379,7 @@ router.get(
 
 			res.json(tokens);
 		} catch (error) {
-			console.error("List auto-enrollment tokens error:", error);
+			logger.error("List auto-enrollment tokens error:", error);
 			res.status(500).json({ error: "Failed to list tokens" });
 		}
 	},
@@ -423,7 +424,7 @@ router.get(
 
 			res.json(token_data);
 		} catch (error) {
-			console.error("Get token error:", error);
+			logger.error("Get token error:", error);
 			res.status(500).json({ error: "Failed to get token" });
 		}
 	},
@@ -566,7 +567,7 @@ router.patch(
 				token: token_data,
 			});
 		} catch (error) {
-			console.error("Update token error:", error);
+			logger.error("Update token error:", error);
 			res.status(500).json({ error: "Failed to update token" });
 		}
 	},
@@ -601,7 +602,7 @@ router.delete(
 				},
 			});
 		} catch (error) {
-			console.error("Delete token error:", error);
+			logger.error("Delete token error:", error);
 			res.status(500).json({ error: "Failed to delete token" });
 		}
 	},
@@ -697,7 +698,7 @@ router.get("/script", async (req, res) => {
 				server_url = settings.server_url;
 			}
 		} catch (settings_error) {
-			console.warn(
+			logger.warn(
 				"Could not fetch settings, using default server URL:",
 				settings_error.message,
 			);
@@ -711,7 +712,7 @@ router.get("/script", async (req, res) => {
 				curl_flags = "-sk";
 			}
 		} catch (curlFlagsError) {
-			console.warn("Could not fetch SSL settings for curl flags:", curlFlagsError.message);
+			logger.warn("Could not fetch SSL settings for curl flags:", curlFlagsError.message);
 		}
 
 		// Check for --force parameter
@@ -749,7 +750,7 @@ export FORCE_INSTALL="${force_install ? "true" : "false"}"
 		);
 		res.send(script);
 	} catch (error) {
-		console.error("Script serve error:", error);
+		logger.error("Script serve error:", error);
 		res.status(500).json({ error: "Failed to serve enrollment script" });
 	}
 });
@@ -823,7 +824,7 @@ router.post(
 				},
 			});
 
-			console.log(
+			logger.info(
 				`Auto-enrolled host: ${friendly_name} (${host.id}) via token: ${req.auto_enrollment_token.token_name}`,
 			);
 
@@ -852,7 +853,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Auto-enrollment error:", error);
+			logger.error("Auto-enrollment error:", error);
 			res.status(500).json({ error: "Failed to enroll host" });
 		}
 	},
@@ -965,7 +966,7 @@ router.post(
 				results,
 			});
 		} catch (error) {
-			console.error("Bulk auto-enrollment error:", error);
+			logger.error("Bulk auto-enrollment error:", error);
 			res.status(500).json({ error: "Failed to bulk enroll hosts" });
 		}
 	},

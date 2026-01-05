@@ -1,6 +1,7 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
-const moment = require("moment");
+const { subMinutes, subDays, isBefore } = require("date-fns");
 const { authenticateToken } = require("../middleware/auth");
 const {
 	requireViewDashboard,
@@ -29,9 +30,7 @@ router.get(
 			// Calculate the threshold based on the actual update interval
 			// Use 2x the update interval as the threshold for "errored" hosts
 			const thresholdMinutes = updateIntervalMinutes * 2;
-			const thresholdTime = moment(now)
-				.subtract(thresholdMinutes, "minutes")
-				.toDate();
+			const thresholdTime = subMinutes(now, thresholdMinutes);
 
 			// Get all statistics in parallel for better performance
 			const [
@@ -100,9 +99,7 @@ router.get(
 					where: {
 						status: "active",
 						last_update: {
-							lt: moment(now)
-								.subtract(updateIntervalMinutes * 3, "minutes")
-								.toDate(),
+							lt: subMinutes(now, updateIntervalMinutes * 3),
 						},
 					},
 				}),
@@ -137,7 +134,7 @@ router.get(
 					by: ["timestamp"],
 					where: {
 						timestamp: {
-							gte: moment(now).subtract(7, "days").toDate(),
+							gte: subDays(now, 7),
 						},
 					},
 					_count: {
@@ -196,7 +193,7 @@ router.get(
 				lastUpdated: now.toISOString(),
 			});
 		} catch (error) {
-			console.error("Error fetching dashboard stats:", error);
+			logger.error("Error fetching dashboard stats:", error);
 			res.status(500).json({ error: "Failed to fetch dashboard statistics" });
 		}
 	},
@@ -297,8 +294,9 @@ router.get("/hosts", authenticateToken, requireViewHosts, async (_req, res) => {
 			const totalPackagesCount = totalCountMap.get(host.id) || 0;
 
 			// Calculate effective status based on reporting interval
-			const isStale = moment(host.last_update).isBefore(
-				moment().subtract(thresholdMinutes, "minutes"),
+			const isStale = isBefore(
+				new Date(host.last_update),
+				subMinutes(new Date(), thresholdMinutes),
 			);
 			let effectiveStatus = host.status;
 
@@ -319,7 +317,7 @@ router.get("/hosts", authenticateToken, requireViewHosts, async (_req, res) => {
 
 		res.json(hostsWithUpdateInfo);
 	} catch (error) {
-		console.error("Error fetching hosts:", error);
+		logger.error("Error fetching hosts:", error);
 		res.status(500).json({ error: "Failed to fetch hosts" });
 	}
 });
@@ -386,7 +384,7 @@ router.get(
 
 			res.json(packagesWithHostInfo);
 		} catch (error) {
-			console.error("Error fetching packages:", error);
+			logger.error("Error fetching packages:", error);
 			res.status(500).json({ error: "Failed to fetch packages" });
 		}
 	},
@@ -465,7 +463,7 @@ router.get(
 
 			res.json(hostWithStats);
 		} catch (error) {
-			console.error("Error fetching host details:", error);
+			logger.error("Error fetching host details:", error);
 			res.status(500).json({ error: "Failed to fetch host details" });
 		}
 	},
@@ -507,7 +505,7 @@ router.get(
 				},
 			});
 		} catch (error) {
-			console.error("Error fetching host queue status:", error);
+			logger.error("Error fetching host queue status:", error);
 			res.status(500).json({
 				success: false,
 				error: "Failed to fetch host queue status",
@@ -546,7 +544,7 @@ router.get(
 
 			res.json(users);
 		} catch (error) {
-			console.error("Error fetching recent users:", error);
+			logger.error("Error fetching recent users:", error);
 			res.status(500).json({ error: "Failed to fetch recent users" });
 		}
 	},
@@ -575,7 +573,7 @@ router.get(
 
 			res.json(hosts);
 		} catch (error) {
-			console.error("Error fetching recent collection:", error);
+			logger.error("Error fetching recent collection:", error);
 			res.status(500).json({ error: "Failed to fetch recent collection" });
 		}
 	},
@@ -1078,7 +1076,7 @@ router.get(
 				},
 			});
 		} catch (error) {
-			console.error("Error fetching package trends:", error);
+			logger.error("Error fetching package trends:", error);
 			res.status(500).json({ error: "Failed to fetch package trends" });
 		}
 	},
@@ -1107,10 +1105,10 @@ router.get(
 			const endTime = new Date(targetDateTime);
 			endTime.setHours(endTime.getHours() + parseInt(hours, 10));
 
-			console.log(
+			logger.info(
 				`Analyzing package spike around ${targetDateTime.toISOString()}`,
 			);
-			console.log(
+			logger.info(
 				`Time range: ${startTime.toISOString()} to ${endTime.toISOString()}`,
 			);
 
@@ -1422,7 +1420,7 @@ router.get(
 				],
 			});
 		} catch (error) {
-			console.error("Error analyzing package spike:", error);
+			logger.error("Error analyzing package spike:", error);
 			res.status(500).json({ error: "Failed to analyze package spike" });
 		}
 	},
