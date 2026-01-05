@@ -601,7 +601,7 @@ router.post(
 			.custom(async (value) => {
 				if (!value) return true; // Optional field
 				// Allow built-in roles even if not in role_permissions table yet
-				const builtInRoles = ["admin", "user"];
+				const builtInRoles = ["superadmin", "admin", "host_manager", "readonly", "user"];
 				if (builtInRoles.includes(value)) return true;
 				const rolePermissions = await prisma.role_permissions.findUnique({
 					where: { role: value },
