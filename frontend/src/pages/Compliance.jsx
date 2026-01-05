@@ -12,8 +12,12 @@ import {
 	Server,
 	BarChart3,
 	PieChart as PieChartIcon,
+	CheckCircle,
+	XCircle,
+	AlertTriangle,
+	List,
 } from "lucide-react";
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { complianceAPI } from "../utils/complianceApi";
 import ComplianceScore from "../components/compliance/ComplianceScore";
 
@@ -40,7 +44,7 @@ const Compliance = () => {
 		);
 	}
 
-	const { summary, recent_scans, worst_hosts } = dashboard || {};
+	const { summary, recent_scans, worst_hosts, top_failing_rules, profile_distribution, severity_breakdown } = dashboard || {};
 
 	return (
 		<div className="space-y-6">
@@ -52,7 +56,7 @@ const Compliance = () => {
 				</div>
 			</div>
 
-			{/* Summary Cards */}
+			{/* Summary Cards - Row 1: Host Stats */}
 			<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
 				<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-700">
 					<div className="flex items-center gap-2 text-secondary-400 mb-2">
@@ -102,6 +106,47 @@ const Compliance = () => {
 					<p className="text-2xl font-bold text-secondary-400">{summary?.unscanned || 0}</p>
 				</div>
 			</div>
+
+			{/* Summary Cards - Row 2: Rule Stats */}
+			{summary?.total_rules > 0 && (
+				<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+					<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-700">
+						<div className="flex items-center gap-2 text-secondary-400 mb-2">
+							<List className="h-4 w-4" />
+							<span className="text-sm">Total Rules Evaluated</span>
+						</div>
+						<p className="text-2xl font-bold text-white">{summary?.total_rules?.toLocaleString() || 0}</p>
+					</div>
+
+					<div className="bg-secondary-800 rounded-lg p-4 border border-green-700/50">
+						<div className="flex items-center gap-2 text-green-400 mb-2">
+							<CheckCircle className="h-4 w-4" />
+							<span className="text-sm">Rules Passed</span>
+						</div>
+						<p className="text-2xl font-bold text-green-400">{summary?.total_passed_rules?.toLocaleString() || 0}</p>
+					</div>
+
+					<div className="bg-secondary-800 rounded-lg p-4 border border-red-700/50">
+						<div className="flex items-center gap-2 text-red-400 mb-2">
+							<XCircle className="h-4 w-4" />
+							<span className="text-sm">Rules Failed</span>
+						</div>
+						<p className="text-2xl font-bold text-red-400">{summary?.total_failed_rules?.toLocaleString() || 0}</p>
+					</div>
+
+					<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-700">
+						<div className="flex items-center gap-2 text-secondary-400 mb-2">
+							<TrendingUp className="h-4 w-4" />
+							<span className="text-sm">Pass Rate</span>
+						</div>
+						<p className="text-2xl font-bold text-white">
+							{summary?.total_rules > 0
+								? ((summary?.total_passed_rules / summary?.total_rules) * 100).toFixed(1)
+								: 0}%
+						</p>
+					</div>
+				</div>
+			)}
 
 			{/* Charts Section */}
 			{summary && (summary.total_hosts > 0 || summary.unscanned > 0) && (() => {
@@ -200,6 +245,146 @@ const Compliance = () => {
 					</div>
 				);
 			})()}
+
+			{/* Additional Charts - Severity & Profile Distribution */}
+			{((severity_breakdown && severity_breakdown.length > 0) || (profile_distribution && profile_distribution.length > 0)) && (
+				<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+					{/* Severity Breakdown */}
+					{severity_breakdown && severity_breakdown.length > 0 && (() => {
+						const severityColors = {
+							critical: "#ef4444",
+							high: "#f97316",
+							medium: "#eab308",
+							low: "#22c55e",
+							unknown: "#6b7280",
+						};
+						const severityData = severity_breakdown.map(s => ({
+							name: s.severity.charAt(0).toUpperCase() + s.severity.slice(1),
+							value: s.count,
+							color: severityColors[s.severity] || severityColors.unknown,
+						}));
+
+						return (
+							<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
+								<h3 className="text-white font-medium mb-4 flex items-center gap-2">
+									<AlertTriangle className="h-4 w-4 text-primary-400" />
+									Failed Rules by Severity
+								</h3>
+								<div className="h-48">
+									<ResponsiveContainer width="100%" height="100%">
+										<PieChart>
+											<Pie
+												data={severityData}
+												cx="50%"
+												cy="50%"
+												innerRadius={40}
+												outerRadius={70}
+												dataKey="value"
+												label={({ name, value }) => `${value}`}
+												labelLine={false}
+											>
+												{severityData.map((entry, index) => (
+													<Cell key={`cell-${index}`} fill={entry.color} />
+												))}
+											</Pie>
+											<Tooltip
+												contentStyle={{
+													backgroundColor: "#1f2937",
+													border: "1px solid #374151",
+													borderRadius: "0.5rem",
+												}}
+												formatter={(value, name) => [value, name]}
+											/>
+										</PieChart>
+									</ResponsiveContainer>
+								</div>
+								<div className="flex flex-wrap justify-center gap-4 mt-2">
+									{severityData.map((entry) => (
+										<div key={entry.name} className="flex items-center gap-2 text-sm">
+											<div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color }} />
+											<span className="text-secondary-400">{entry.name}: {entry.value}</span>
+										</div>
+									))}
+								</div>
+							</div>
+						);
+					})()}
+
+					{/* Profile Distribution */}
+					{profile_distribution && profile_distribution.length > 0 && (
+						<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
+							<h3 className="text-white font-medium mb-4 flex items-center gap-2">
+								<Shield className="h-4 w-4 text-primary-400" />
+								Profiles in Use
+							</h3>
+							<div className="h-48">
+								<ResponsiveContainer width="100%" height="100%">
+									<BarChart data={profile_distribution} layout="vertical">
+										<XAxis type="number" stroke="#6b7280" fontSize={12} />
+										<YAxis
+											type="category"
+											dataKey="name"
+											stroke="#6b7280"
+											fontSize={11}
+											width={140}
+											tickFormatter={(value) => value.length > 20 ? value.slice(0, 20) + "..." : value}
+										/>
+										<Tooltip
+											contentStyle={{
+												backgroundColor: "#1f2937",
+												border: "1px solid #374151",
+												borderRadius: "0.5rem",
+											}}
+											formatter={(value) => [value, "Hosts"]}
+										/>
+										<Bar dataKey="host_count" fill="#6366f1" radius={[0, 4, 4, 0]} />
+									</BarChart>
+								</ResponsiveContainer>
+							</div>
+						</div>
+					)}
+				</div>
+			)}
+
+			{/* Top Failing Rules */}
+			{top_failing_rules && top_failing_rules.length > 0 && (
+				<div className="bg-secondary-800 rounded-lg border border-secondary-700">
+					<div className="px-4 py-3 border-b border-secondary-700">
+						<h2 className="text-lg font-semibold text-white flex items-center gap-2">
+							<XCircle className="h-5 w-5 text-red-400" />
+							Top Failing Rules
+						</h2>
+					</div>
+					<div className="divide-y divide-secondary-700">
+						{top_failing_rules.map((rule) => {
+							const severityColors = {
+								critical: "bg-red-500/20 text-red-400 border-red-500/30",
+								high: "bg-orange-500/20 text-orange-400 border-orange-500/30",
+								medium: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+								low: "bg-green-500/20 text-green-400 border-green-500/30",
+							};
+							const severityClass = severityColors[rule.severity] || "bg-secondary-700 text-secondary-400 border-secondary-600";
+
+							return (
+								<div key={rule.rule_id} className="flex items-center justify-between px-4 py-3">
+									<div className="flex-1 min-w-0">
+										<p className="text-white font-medium truncate">{rule.title}</p>
+										<p className="text-sm text-secondary-400 truncate">{rule.rule_id}</p>
+									</div>
+									<div className="flex items-center gap-3 ml-4">
+										<span className={`px-2 py-0.5 rounded text-xs font-medium border ${severityClass}`}>
+											{rule.severity}
+										</span>
+										<span className="text-red-400 font-bold whitespace-nowrap">
+											{rule.fail_count} {rule.fail_count === 1 ? "host" : "hosts"}
+										</span>
+									</div>
+								</div>
+							);
+						})}
+					</div>
+				</div>
+			)}
 
 			<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 				{/* Recent Scans */}

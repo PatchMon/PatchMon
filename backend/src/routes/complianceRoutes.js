@@ -379,6 +379,65 @@ router.get("/dashboard", async (req, res) => {
       compliance_profiles: undefined,
     }));
 
+    // Get aggregate rule statistics from latest scans
+    const totalPassedRules = latestScans.reduce((sum, s) => sum + (Number(s.passed) || 0), 0);
+    const totalFailedRules = latestScans.reduce((sum, s) => sum + (Number(s.failed) || 0), 0);
+    const totalRules = latestScans.reduce((sum, s) => sum + (Number(s.total_rules) || 0), 0);
+
+    // Get top failing rules across all hosts (most recent scan per host)
+    const latestScanIds = latestScans.map(s => s.id);
+    let topFailingRules = [];
+    if (latestScanIds.length > 0) {
+      topFailingRules = await prisma.$queryRaw`
+        SELECT
+          rule_id,
+          title,
+          severity,
+          COUNT(*) as fail_count
+        FROM compliance_results
+        WHERE scan_id = ANY(${latestScanIds}::uuid[])
+          AND status = 'fail'
+        GROUP BY rule_id, title, severity
+        ORDER BY fail_count DESC
+        LIMIT 10
+      `;
+    }
+
+    // Get profile distribution (how many hosts use each profile)
+    const profileDistribution = await prisma.$queryRaw`
+      SELECT
+        cp.name as profile_name,
+        cp.type as profile_type,
+        COUNT(DISTINCT cs.host_id) as host_count
+      FROM compliance_scans cs
+      JOIN compliance_profiles cp ON cs.profile_id = cp.id
+      WHERE cs.status = 'completed'
+      GROUP BY cp.id, cp.name, cp.type
+      ORDER BY host_count DESC
+    `;
+
+    // Get severity breakdown from latest scans
+    let severityBreakdown = [];
+    if (latestScanIds.length > 0) {
+      severityBreakdown = await prisma.$queryRaw`
+        SELECT
+          severity,
+          COUNT(*) as count
+        FROM compliance_results
+        WHERE scan_id = ANY(${latestScanIds}::uuid[])
+          AND status = 'fail'
+        GROUP BY severity
+        ORDER BY
+          CASE severity
+            WHEN 'critical' THEN 1
+            WHEN 'high' THEN 2
+            WHEN 'medium' THEN 3
+            WHEN 'low' THEN 4
+            ELSE 5
+          END
+      `;
+    }
+
     res.json({
       summary: {
         total_hosts: totalHosts,
@@ -387,9 +446,27 @@ router.get("/dashboard", async (req, res) => {
         warning,
         critical,
         unscanned,
+        total_passed_rules: totalPassedRules,
+        total_failed_rules: totalFailedRules,
+        total_rules: totalRules,
       },
       recent_scans: transformedRecentScans,
       worst_hosts: worstHosts,
+      top_failing_rules: topFailingRules.map(r => ({
+        rule_id: r.rule_id,
+        title: r.title,
+        severity: r.severity,
+        fail_count: Number(r.fail_count),
+      })),
+      profile_distribution: profileDistribution.map(p => ({
+        name: p.profile_name,
+        type: p.profile_type,
+        host_count: Number(p.host_count),
+      })),
+      severity_breakdown: severityBreakdown.map(s => ({
+        severity: s.severity || 'unknown',
+        count: Number(s.count),
+      })),
     });
   } catch (error) {
     console.error("[Compliance] Error fetching dashboard:", error);
