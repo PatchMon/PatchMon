@@ -832,6 +832,16 @@ const Hosts = () => {
 					aValue = (a.notes || "").toLowerCase();
 					bValue = (b.notes || "").toLowerCase();
 					break;
+				case "integrations": {
+					// Sort by integration count: both=2, one=1, none=0
+					const aScore =
+						(a.docker_enabled ? 1 : 0) + (a.compliance_enabled ? 1 : 0);
+					const bScore =
+						(b.docker_enabled ? 1 : 0) + (b.compliance_enabled ? 1 : 0);
+					aValue = aScore;
+					bValue = bScore;
+					break;
+				}
 				default:
 					aValue = a[sortField];
 					bValue = b[sortField];
@@ -2026,6 +2036,17 @@ const Hosts = () => {
 																				<Wifi className="h-3 w-3" />
 																				{column.label}
 																			</div>
+																		) : column.id === "integrations" ? (
+																			<button
+																				type="button"
+																				onClick={() =>
+																					handleSort("integrations")
+																				}
+																				className="flex items-center gap-2 hover:text-secondary-700 font-normal text-xs text-secondary-500 dark:text-secondary-300 normal-case tracking-wider"
+																			>
+																				{column.label}
+																				{getSortIcon("integrations")}
+																			</button>
 																		) : column.id === "status" ? (
 																			<button
 																				type="button"
