@@ -1915,7 +1915,7 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 										</div>
 										<div>
 											<p className="text-white font-medium">Docker Bench</p>
-											<p className="text-xs text-secondary-400">Docker Security Scanning</p>
+											<p className="text-xs text-secondary-400">CIS Docker Benchmark</p>
 										</div>
 									</div>
 									<div className="space-y-2 text-sm">
@@ -1944,6 +1944,43 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 									</div>
 								</div>
 
+								{/* oscap-docker Component */}
+								<div className="bg-secondary-700/30 rounded-lg p-4 border border-secondary-600">
+									<div className="flex items-center gap-3 mb-4">
+										<div className="p-2 bg-orange-600/20 rounded-lg">
+											<Package className="h-5 w-5 text-orange-400" />
+										</div>
+										<div>
+											<p className="text-white font-medium">oscap-docker</p>
+											<p className="text-xs text-secondary-400">Docker Image CVE Scanning</p>
+										</div>
+									</div>
+									<div className="space-y-2 text-sm">
+										<div className="flex justify-between">
+											<span className="text-secondary-400">Status</span>
+											<span className={`capitalize ${
+												components["oscap-docker"] === "ready" ? "text-green-400" :
+												components["oscap-docker"] === "installing" ? "text-blue-400" :
+												components["oscap-docker"] === "unavailable" ? "text-secondary-500" :
+												components["oscap-docker"] === "error" ? "text-red-400" :
+												"text-secondary-400"
+											}`}>
+												{components["oscap-docker"] || "Not configured"}
+											</span>
+										</div>
+										<div className="flex justify-between">
+											<span className="text-secondary-400">Available</span>
+											<span className={info?.oscap_docker_available ? "text-green-400" : "text-secondary-500"}>
+												{info?.oscap_docker_available ? "Yes" : "No"}
+											</span>
+										</div>
+										<div className="flex justify-between">
+											<span className="text-secondary-400">Requirement</span>
+											<span className="text-secondary-300 text-xs">Docker + Compliance enabled</span>
+										</div>
+									</div>
+								</div>
+
 								{/* Available Profiles */}
 								<div className="bg-secondary-700/30 rounded-lg p-4 border border-secondary-600">
 									<div className="flex items-center gap-3 mb-4">
@@ -1963,6 +2000,8 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 													<span className={`px-2 py-0.5 text-xs rounded ${
 														profile.type === "docker-bench"
 															? "bg-blue-900/30 text-blue-400"
+															: profile.type === "oscap-docker"
+															? "bg-orange-900/30 text-orange-400"
 															: "bg-green-900/30 text-green-400"
 													}`}>
 														{profile.type}

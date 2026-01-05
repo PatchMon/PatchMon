@@ -26,14 +26,45 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 	const IDLE_WARNING_MS = 1 * 60 * 1000; // 1 minute warning before disconnect
 	const [showInstallCommands, setShowInstallCommands] = useState(false);
+
+	// Load cached username from localStorage, keyed by host ID for per-host caching
+	const getCachedUsername = () => {
+		if (!host?.id) return "root";
+		try {
+			const cached = localStorage.getItem(`ssh_username_${host.id}`);
+			return cached || "root";
+		} catch {
+			return "root";
+		}
+	};
+
 	const [sshConfig, setSshConfig] = useState({
-		username: "root",
+		username: "root", // Will be updated in useEffect when host is available
 		password: "",
 		privateKey: "",
 		passphrase: "",
 		port: 22,
 		authMethod: "password", // "password" or "key"
 	});
+
+	// Load cached username when host changes
+	useEffect(() => {
+		if (host?.id) {
+			const cachedUsername = getCachedUsername();
+			setSshConfig(prev => ({ ...prev, username: cachedUsername }));
+		}
+	}, [host?.id]);
+
+	// Save username to localStorage when it changes (debounced on blur/connect)
+	const saveUsername = (username) => {
+		if (host?.id && username) {
+			try {
+				localStorage.setItem(`ssh_username_${host.id}`, username);
+			} catch {
+				// localStorage might be full or disabled
+			}
+		}
+	};
 
 	// Fetch server URL and settings for agent install command
 	const { data: serverUrlData } = useQuery({
@@ -289,6 +320,8 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 							setIsConnecting(false);
 							setIsConnected(true);
 							setError(null);
+							// Cache the username for future connections
+							saveUsername(sshConfig.username);
 							// Resize terminal to fit expanded container
 							setTimeout(() => {
 								if (fitAddonRef.current) {
@@ -742,6 +775,8 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 											onChange={(e) =>
 												setSshConfig({ ...sshConfig, username: e.target.value })
 											}
+											onBlur={(e) => saveUsername(e.target.value)}
+											autoComplete="username"
 											className="w-full px-3 py-2 text-sm bg-secondary-700 border border-secondary-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
 											placeholder="root"
 											tabIndex={1}
@@ -810,6 +845,8 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 											onChange={(e) =>
 												setSshConfig({ ...sshConfig, username: e.target.value })
 											}
+											onBlur={(e) => saveUsername(e.target.value)}
+											autoComplete="username"
 											className="w-full px-3 py-2 text-sm bg-secondary-700 border border-secondary-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
 											placeholder="root"
 											tabIndex={1}
@@ -998,6 +1035,8 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 										onChange={(e) =>
 											setSshConfig({ ...sshConfig, username: e.target.value })
 										}
+										onBlur={(e) => saveUsername(e.target.value)}
+										autoComplete="username"
 										className="w-full px-3 py-2 bg-secondary-700 border border-secondary-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
 										placeholder="root"
 									/>
