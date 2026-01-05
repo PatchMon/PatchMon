@@ -1,4 +1,6 @@
 const express = require("express");
+const fs = require("fs");
+const path = require("path");
 const logger = require("../utils/logger");
 const { authenticateToken } = require("../middleware/auth");
 const { requireManageSettings } = require("../middleware/permissions");
@@ -12,9 +14,12 @@ const DEFAULT_GITHUB_REPO = "https://github.com/MacJediWizard/PatchMon-Enhanced.
 const router = express.Router();
 
 // Helper function to get current version from package.json
+// Uses fs.readFileSync to get fresh version on each call (avoids require cache)
 function getCurrentVersion() {
 	try {
-		const packageJson = require("../../package.json");
+		const packagePath = path.join(__dirname, "../../package.json");
+		const packageContent = fs.readFileSync(packagePath, "utf8");
+		const packageJson = JSON.parse(packageContent);
 		if (!packageJson?.version) {
 			throw new Error("Version not found in package.json");
 		}

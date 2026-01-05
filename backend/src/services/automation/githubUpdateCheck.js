@@ -1,3 +1,5 @@
+const fs = require("fs");
+const path = require("path");
 const { prisma } = require("./shared/prisma");
 const logger = require("../../utils/logger");
 const { compareVersions, checkPublicRepo } = require("./shared/utils");
@@ -53,10 +55,12 @@ class GitHubUpdateCheck {
 				throw new Error("Could not determine latest version");
 			}
 
-			// Read version from package.json
+			// Read version from package.json (using fs to avoid require cache)
 			let currentVersion = null;
 			try {
-				const packageJson = require("../../../package.json");
+				const packagePath = path.join(__dirname, "../../../package.json");
+				const packageContent = fs.readFileSync(packagePath, "utf8");
+				const packageJson = JSON.parse(packageContent);
 				if (packageJson?.version) {
 					currentVersion = packageJson.version;
 				}
