@@ -1,5 +1,4 @@
 /**
-const logger = require("../utils/logger");
  * OIDC Authentication Routes
  *
  * Handles the OIDC authentication flow:
@@ -9,6 +8,7 @@ const logger = require("../utils/logger");
  */
 
 const express = require("express");
+const logger = require("../utils/logger");
 const router = express.Router();
 const { v4: uuidv4 } = require("uuid");
 const {

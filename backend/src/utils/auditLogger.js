@@ -1,11 +1,11 @@
 /**
-const logger = require("./logger");
  * Security Audit Logger
  *
  * Logs security-relevant events for compliance and incident investigation.
  * Events are logged to both console/winston and can be extended to database storage.
  */
 
+const logger = require("./logger");
 const { getPrismaClient } = require("../config/prisma");
 
 // Audit event types

@@ -1,5 +1,4 @@
 /**
-const logger = require("../utils/logger");
  * OIDC Authentication Service
  *
  * Handles OpenID Connect authentication flow with external identity providers.
@@ -7,6 +6,7 @@ const logger = require("../utils/logger");
  */
 
 const { Issuer, generators } = require("openid-client");
+const logger = require("../utils/logger");
 
 let oidcClient = null;
 let oidcIssuer = null;

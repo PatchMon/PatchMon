@@ -1,10 +1,10 @@
 /**
-const logger = require("../utils/logger");
  * Centralized Prisma Client Singleton
  * Prevents multiple Prisma clients from creating connection leaks
  */
 
 const { PrismaClient } = require("@prisma/client");
+const logger = require("../utils/logger");
 
 // Parse DATABASE_URL and add connection pooling parameters
 function getOptimizedDatabaseUrl() {

@@ -1,5 +1,6 @@
-/**
 const logger = require("../utils/logger");
+
+/**
  * Middleware factory to validate API token scopes
  * Only applies to tokens with metadata.integration_type === "api"
  * @param {string} resource - The resource being accessed (e.g., "host")
