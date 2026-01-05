@@ -57,7 +57,9 @@ class DockerImageUpdateCheck {
 		const params = {};
 		const regex = /(\w+)="([^"]+)"/g;
 		let match;
-		while ((match = regex.exec(header)) !== null) {
+		while (true) {
+			match = regex.exec(header);
+			if (match === null) break;
 			params[match[1]] = match[2];
 		}
 
@@ -104,7 +106,9 @@ class DockerImageUpdateCheck {
 		const response = await this.httpsRequest(options);
 
 		if (response.statusCode !== 200) {
-			throw new Error(`Token request failed with status ${response.statusCode}`);
+			throw new Error(
+				`Token request failed with status ${response.statusCode}`,
+			);
 		}
 
 		const tokenData = JSON.parse(response.body);
@@ -187,13 +191,14 @@ class DockerImageUpdateCheck {
 		// Get digest from Docker-Content-Digest header
 		const digest = response.headers["docker-content-digest"];
 		if (!digest) {
-			throw new Error(`No Docker-Content-Digest header for ${imageName}:${tag}`);
+			throw new Error(
+				`No Docker-Content-Digest header for ${imageName}:${tag}`,
+			);
 		}
 
 		// Clean up digest (remove sha256: prefix if present)
 		return digest.startsWith("sha256:") ? digest.substring(7) : digest;
 	}
-
 
 	/**
 	 * Parse image name to extract registry and repository
@@ -213,7 +218,11 @@ class DockerImageUpdateCheck {
 			const firstPart = parts[0];
 
 			// Check if first part looks like a registry (contains . or : or is localhost)
-			if (firstPart.includes(".") || firstPart.includes(":") || firstPart === "localhost") {
+			if (
+				firstPart.includes(".") ||
+				firstPart.includes(":") ||
+				firstPart === "localhost"
+			) {
 				registry = firstPart;
 				repository = parts.slice(1).join("/");
 			}

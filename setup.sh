@@ -1348,6 +1348,62 @@ EOF
     print_status "Systemd service created: $SERVICE_NAME (running as $INSTANCE_USER)"
 }
 
+# Get nginx HTTP/2 syntax based on version
+get_nginx_http2_syntax() {
+    local listen_line=""
+    local http2_line=""
+    
+    # Get nginx version (e.g., "nginx version: nginx/1.18.0" or "nginx/1.24.0")
+    local nginx_version=""
+    
+    if command -v nginx >/dev/null 2>&1; then
+        local nginx_version_output=$(nginx -v 2>&1)
+        # Try Perl regex first (more reliable)
+        if echo "$nginx_version_output" | grep -oP 'nginx/\K[0-9]+\.[0-9]+' >/dev/null 2>&1; then
+            nginx_version=$(echo "$nginx_version_output" | grep -oP 'nginx/\K[0-9]+\.[0-9]+' | head -1)
+        else
+            # Fallback: use sed for systems without Perl regex support
+            nginx_version=$(echo "$nginx_version_output" | sed -n 's/.*nginx\/\([0-9]\+\.[0-9]\+\).*/\1/p' | head -1)
+        fi
+        
+        # If still empty, try nginx -V (verbose output)
+        if [ -z "$nginx_version" ]; then
+            local nginx_verbose_output=$(nginx -V 2>&1)
+            if echo "$nginx_verbose_output" | grep -oP 'nginx/\K[0-9]+\.[0-9]+' >/dev/null 2>&1; then
+                nginx_version=$(echo "$nginx_verbose_output" | grep -oP 'nginx/\K[0-9]+\.[0-9]+' | head -1)
+            else
+                nginx_version=$(echo "$nginx_verbose_output" | sed -n 's/.*nginx\/\([0-9]\+\.[0-9]\+\).*/\1/p' | head -1)
+            fi
+        fi
+    fi
+    
+    if [ -z "$nginx_version" ]; then
+        # Fallback: assume newer version syntax (1.24.x+)
+        print_warning "Could not detect nginx version, using newer syntax (1.24.x+)"
+        listen_line="    listen 443 ssl;"
+        http2_line="    http2 on;"
+    else
+        # Extract major and minor version
+        local major_version=$(echo "$nginx_version" | cut -d. -f1)
+        local minor_version=$(echo "$nginx_version" | cut -d. -f2)
+        
+        # nginx 1.18.x and earlier use: listen 443 ssl http2;
+        # nginx 1.24.x and later use: listen 443 ssl; and http2 on; separately
+        # For versions 1.19-1.23, use newer syntax as it's safer
+        if [ "$major_version" -lt 1 ] || ([ "$major_version" -eq 1 ] && [ "$minor_version" -le 18 ]); then
+            print_info "Detected nginx version $nginx_version, using legacy HTTP/2 syntax (listen 443 ssl http2;)"
+            listen_line="    listen 443 ssl http2;"
+            http2_line=""
+        else
+            print_info "Detected nginx version $nginx_version, using modern HTTP/2 syntax (listen 443 ssl; http2 on;)"
+            listen_line="    listen 443 ssl;"
+            http2_line="    http2 on;"
+        fi
+    fi
+    
+    echo "$listen_line|$http2_line"
+}
+
 # Unified nginx configuration generator
 generate_nginx_config() {
     local fqdn="$1"
@@ -1359,6 +1415,11 @@ generate_nginx_config() {
     print_info "Generating nginx configuration for $fqdn (SSL: $ssl_enabled)"
     
     if [ "$ssl_enabled" = "true" ]; then
+        # Get HTTP/2 syntax based on nginx version
+        local http2_syntax=$(get_nginx_http2_syntax)
+        local listen_line=$(echo "$http2_syntax" | cut -d'|' -f1)
+        local http2_line=$(echo "$http2_syntax" | cut -d'|' -f2)
+        
         # SSL Configuration
         cat > "$config_file" << EOF
 # HTTP to HTTPS redirect

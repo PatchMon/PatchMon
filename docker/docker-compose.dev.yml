@@ -24,6 +24,8 @@ services:
       - "5432:5432"
     volumes:
       - ./compose_dev_data/db:/var/lib/postgresql/data
+    networks:
+      - patchmon-internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U patchmon_user -d patchmon_db"]
       interval: 3s
@@ -41,6 +43,8 @@ services:
       - "6379:6379"
     volumes:
       - ./compose_dev_data/redis:/data
+    networks:
+      - patchmon-internal
     healthcheck:
       test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "1NS3CU6E_DEV_R3DIS_PASSW0RD", "ping"]
       interval: 3s
@@ -81,10 +85,15 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: 1NS3CU6E_DEV_R3DIS_PASSW0RD
       REDIS_DB: 0
+      # Assets directory for custom branding (logos, favicons)
+      ASSETS_DIR: /app/assets
     ports:
       - "3001:3001"
     volumes:
       - ./compose_dev_data/agents:/app/agents
+      - ./compose_dev_data/assets:/app/assets
+    networks:
+      - patchmon-internal
     depends_on:
       database:
         condition: service_healthy
@@ -115,6 +124,10 @@ services:
       BACKEND_PORT: 3001
     ports:
       - "3000:3000"
+    volumes:
+      - ./compose_dev_data/assets:/app/frontend/public/assets
+    networks:
+      - patchmon-internal
     depends_on:
       backend:
         condition: service_healthy
@@ -127,3 +140,7 @@ services:
             - node_modules/
         - action: rebuild
           path: ../frontend/package.json
+
+networks:
+  patchmon-internal:
+    driver: bridge

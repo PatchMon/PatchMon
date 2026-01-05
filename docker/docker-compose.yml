@@ -26,6 +26,8 @@ services:
       POSTGRES_PASSWORD: # CREATE A STRONG DB PASSWORD AND PUT IT HERE
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - patchmon-internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U patchmon_user -d patchmon_db"]
       interval: 3s
@@ -38,6 +40,8 @@ services:
     command: redis-server --requirepass your-redis-password-here # CHANGE THIS TO YOUR REDIS PASSWORD
     volumes:
       - redis_data:/data
+    networks:
+      - patchmon-internal
     healthcheck:
       test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "your-redis-password-here", "ping"] # CHANGE THIS TO YOUR REDIS PASSWORD
       interval: 3s
@@ -74,8 +78,13 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: your-redis-password-here
       REDIS_DB: 0
+      # Assets directory for custom branding (logos, favicons)
+      ASSETS_DIR: /app/assets
     volumes:
       - agent_files:/app/agents
+      - branding_assets:/app/assets
+    networks:
+      - patchmon-internal
     depends_on:
       database:
         condition: service_healthy
@@ -87,6 +96,10 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+    volumes:
+      - branding_assets:/usr/share/nginx/html/assets
+    networks:
+      - patchmon-internal
     depends_on:
       backend:
         condition: service_healthy
@@ -95,3 +108,8 @@ volumes:
   postgres_data:
   redis_data:
   agent_files:
+  branding_assets:
+
+networks:
+  patchmon-internal:
+    driver: bridge

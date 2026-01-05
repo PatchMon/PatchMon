@@ -96,6 +96,7 @@ const buyMeACoffeeRoutes = require("./routes/buyMeACoffeeRoutes");
 const oidcRoutes = require("./routes/oidcRoutes");
 const complianceRoutes = require("./routes/complianceRoutes");
 const { initializeOIDC } = require("./auth/oidc");
+const socialMediaStatsRoutes = require("./routes/socialMediaStatsRoutes");
 const { initSettings } = require("./services/settingsService");
 const { queueManager } = require("./services/automation");
 const { authenticateToken, requireAdmin } = require("./middleware/auth");
@@ -440,7 +441,7 @@ app.use(
 		credentials: true,
 		// Additional CORS options for better cookie handling
 		optionsSuccessStatus: 200,
-		methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+		methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 		allowedHeaders: [
 			"Content-Type",
 			"Authorization",
@@ -555,6 +556,7 @@ app.use(
 );
 app.use(`/api/${apiVersion}/buy-me-a-coffee`, buyMeACoffeeRoutes);
 app.use(`/api/${apiVersion}/compliance`, complianceRoutes);
+app.use(`/api/${apiVersion}/social-media-stats`, socialMediaStatsRoutes);
 
 // Bull Board - will be populated after queue manager initializes
 let bullBoardRouter = null;
@@ -1005,6 +1007,9 @@ async function startServer() {
 
 		// Schedule recurring jobs
 		await queueManager.scheduleAllJobs();
+
+		// Trigger social media stats collection on boot
+		await queueManager.triggerSocialMediaStats();
 
 		// Set up Bull Board for queue monitoring
 		const serverAdapter = new ExpressAdapter();

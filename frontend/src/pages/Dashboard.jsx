@@ -1599,7 +1599,7 @@ const Dashboard = () => {
 					<button
 						type="button"
 						onClick={() => setShowSettingsModal(true)}
-						className="hidden md:flex btn-outline items-center gap-2"
+						className="hidden md:flex btn-outline items-center gap-2 min-h-[44px] min-w-[44px] justify-center"
 						title="Customize dashboard layout"
 					>
 						<Settings className="h-4 w-4" />

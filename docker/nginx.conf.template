@@ -95,6 +95,16 @@ server {
     }
 
 
+    # Custom branding assets (logos, favicons) - served from mounted volume
+    # This allows logos to persist across container restarts
+    location /assets/ {
+        alias /usr/share/nginx/html/assets/;
+        expires 1h;
+        add_header Cache-Control "public, must-revalidate";
+        # Allow CORS for assets if needed
+        add_header Access-Control-Allow-Origin *;
+    }
+
     # Static assets caching (exclude Bull Board assets)
     location ~* ^/(?!bullboard).*\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
         expires 1y;

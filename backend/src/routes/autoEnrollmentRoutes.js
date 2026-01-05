@@ -435,9 +435,16 @@ router.patch(
 	authenticateToken,
 	requireManageSettings,
 	[
+		body("token_name")
+			.optional()
+			.isLength({ min: 1, max: 255 })
+			.withMessage("Token name must be between 1 and 255 characters"),
 		body("is_active").optional().isBoolean(),
 		body("max_hosts_per_day").optional().isInt({ min: 1, max: 1000 }),
 		body("allowed_ip_ranges").optional().isArray(),
+		body("default_host_group_id")
+			.optional({ nullable: true, checkFalsy: true })
+			.isString(),
 		body("expires_at").optional().isISO8601(),
 		body("scopes")
 			.optional()
@@ -464,6 +471,9 @@ router.patch(
 
 			const update_data = { updated_at: new Date() };
 
+			// Allow updating token name
+			if (req.body.token_name !== undefined)
+				update_data.token_name = req.body.token_name;
 			if (req.body.is_active !== undefined)
 				update_data.is_active = req.body.is_active;
 			if (req.body.max_hosts_per_day !== undefined)
@@ -472,6 +482,25 @@ router.patch(
 				update_data.allowed_ip_ranges = req.body.allowed_ip_ranges;
 			if (req.body.expires_at !== undefined)
 				update_data.expires_at = new Date(req.body.expires_at);
+
+			// Handle default host group update
+			if (req.body.default_host_group_id !== undefined) {
+				if (req.body.default_host_group_id) {
+					// Validate host group exists
+					const host_group = await prisma.host_groups.findUnique({
+						where: { id: req.body.default_host_group_id },
+					});
+
+					if (!host_group) {
+						return res.status(400).json({ error: "Host group not found" });
+					}
+
+					update_data.default_host_group_id = req.body.default_host_group_id;
+				} else {
+					// Allow clearing the default host group
+					update_data.default_host_group_id = null;
+				}
+			}
 
 			// Handle scopes updates for API tokens only
 			if (req.body.scopes !== undefined) {
@@ -512,9 +541,16 @@ router.patch(
 				where: { id: tokenId },
 				data: update_data,
 				include: {
-					host_groups: true,
+					host_groups: {
+						select: {
+							id: true,
+							name: true,
+							color: true,
+						},
+					},
 					users: {
 						select: {
+							id: true,
 							username: true,
 							first_name: true,
 							last_name: true,

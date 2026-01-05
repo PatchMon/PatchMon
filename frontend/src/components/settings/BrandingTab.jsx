@@ -25,19 +25,45 @@ const BrandingTab = () => {
 		queryFn: () => settingsAPI.get().then((res) => res.data),
 	});
 
+	// Helper function to encode logo path for URLs (handles spaces and special characters)
+	const encodeLogoPath = (path) => {
+		if (!path) return path;
+		// Split path into directory and filename
+		const parts = path.split("/");
+		const filename = parts.pop();
+		const directory = parts.join("/");
+		// Encode only the filename part, keep directory structure
+		return directory
+			? `${directory}/${encodeURIComponent(filename)}`
+			: encodeURIComponent(filename);
+	};
+
 	// Logo upload mutation
 	const uploadLogoMutation = useMutation({
-		mutationFn: ({ logoType, fileContent, fileName }) =>
-			fetch("/api/v1/settings/logos/upload", {
+		mutationFn: async ({ logoType, fileContent, fileName }) => {
+			const res = await fetch("/api/v1/settings/logos/upload", {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
 				},
 				credentials: "include",
 				body: JSON.stringify({ logoType, fileContent, fileName }),
-			}).then((res) => res.json()),
-		onSuccess: (_data, variables) => {
+			});
+			const data = await res.json();
+			if (!res.ok) {
+				throw new Error(data.error || data.details || "Failed to upload logo");
+			}
+			return data;
+		},
+		onSuccess: async (data, variables) => {
+			// Invalidate and refetch settings to get updated timestamp
 			queryClient.invalidateQueries(["settings"]);
+			// Wait for refetch to complete before closing modal
+			try {
+				await queryClient.refetchQueries(["settings"]);
+			} catch (error) {
+				// Continue anyway - settings will update on next render
+			}
 			setLogoUploadState((prev) => ({
 				...prev,
 				[variables.logoType]: { uploading: false, error: null },
@@ -133,7 +159,12 @@ const BrandingTab = () => {
 					</h4>
 					<div className="flex items-center justify-center p-4 bg-secondary-50 dark:bg-secondary-700 rounded-lg mb-4">
 						<img
-							src={`${settings?.logo_dark || "/assets/logo_dark.png"}?v=${Date.now()}`}
+							key={`dark-${settings?.logo_dark}-${settings?.updated_at}`}
+							src={`${encodeLogoPath(settings?.logo_dark || "/assets/logo_dark.png")}?v=${
+								settings?.updated_at
+									? new Date(settings.updated_at).getTime()
+									: Date.now()
+							}`}
 							alt="Dark Logo"
 							className="max-h-16 max-w-full object-contain"
 							onError={(e) => {
@@ -194,7 +225,12 @@ const BrandingTab = () => {
 					</h4>
 					<div className="flex items-center justify-center p-4 bg-secondary-50 dark:bg-secondary-700 rounded-lg mb-4">
 						<img
-							src={`${settings?.logo_light || "/assets/logo_light.png"}?v=${Date.now()}`}
+							key={`light-${settings?.logo_light}-${settings?.updated_at}`}
+							src={`${encodeLogoPath(settings?.logo_light || "/assets/logo_light.png")}?v=${
+								settings?.updated_at
+									? new Date(settings.updated_at).getTime()
+									: Date.now()
+							}`}
 							alt="Light Logo"
 							className="max-h-16 max-w-full object-contain"
 							onError={(e) => {
@@ -255,7 +291,12 @@ const BrandingTab = () => {
 					</h4>
 					<div className="flex items-center justify-center p-4 bg-secondary-50 dark:bg-secondary-700 rounded-lg mb-4">
 						<img
-							src={`${settings?.favicon || "/assets/favicon.svg"}?v=${Date.now()}`}
+							key={`favicon-${settings?.favicon}-${settings?.updated_at}`}
+							src={`${encodeLogoPath(settings?.favicon || "/assets/favicon.svg")}?v=${
+								settings?.updated_at
+									? new Date(settings.updated_at).getTime()
+									: Date.now()
+							}`}
 							alt="Favicon"
 							className="h-8 w-8 object-contain"
 							onError={(e) => {

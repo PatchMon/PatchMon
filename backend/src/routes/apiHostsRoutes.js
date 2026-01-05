@@ -160,7 +160,12 @@ router.get(
 			}
 
 			// Calculate statistics for this specific host
-			const [totalInstalledPackages, outdatedPackagesCount, securityUpdatesCount, totalRepos] = await Promise.all([
+			const [
+				totalInstalledPackages,
+				outdatedPackagesCount,
+				securityUpdatesCount,
+				totalRepos,
+			] = await Promise.all([
 				// Total packages installed on this host
 				prisma.host_packages.count({
 					where: {
@@ -295,7 +300,9 @@ router.get(
 			});
 		} catch (error) {
 			console.error("Error fetching host network info:", error);
-			res.status(500).json({ error: "Failed to fetch host network information" });
+			res
+				.status(500)
+				.json({ error: "Failed to fetch host network information" });
 		}
 	},
 );
@@ -351,7 +358,9 @@ router.get(
 			});
 		} catch (error) {
 			console.error("Error fetching host system info:", error);
-			res.status(500).json({ error: "Failed to fetch host system information" });
+			res
+				.status(500)
+				.json({ error: "Failed to fetch host system information" });
 		}
 	},
 );
@@ -465,17 +474,17 @@ router.get(
 			try {
 				// Try to get live queue stats from Bull/BullMQ if available
 				const { queueManager } = require("../services/automation");
-				if (queueManager && queueManager.getQueue) {
-					const agentQueue = queueManager.getQueue(host.api_id);
-					if (agentQueue) {
-						const counts = await agentQueue.getJobCounts();
-						queueStats = {
-							waiting: counts.waiting || 0,
-							active: counts.active || 0,
-							delayed: counts.delayed || 0,
-							failed: counts.failed || 0,
-						};
-					}
+				if (queueManager && queueManager.getHostJobs) {
+					const hostQueueData = await queueManager.getHostJobs(
+						host.api_id,
+						Number.parseInt(limit, 10),
+					);
+					queueStats = {
+						waiting: hostQueueData.waiting || 0,
+						active: hostQueueData.active || 0,
+						delayed: hostQueueData.delayed || 0,
+						failed: hostQueueData.failed || 0,
+					};
 				}
 			} catch (queueError) {
 				console.warn("Could not fetch live queue stats:", queueError.message);
@@ -577,7 +586,8 @@ router.get(
 					containers_count: containers,
 					volumes_count: volumes,
 					networks_count: networks,
-					description: "Monitor Docker containers, images, volumes, and networks. Collects real-time container status events.",
+					description:
+						"Monitor Docker containers, images, volumes, and networks. Collects real-time container status events.",
 				};
 			}
 
@@ -586,7 +596,8 @@ router.get(
 				integrations: {
 					docker: dockerDetails || {
 						enabled: false,
-						description: "Monitor Docker containers, images, volumes, and networks. Collects real-time container status events.",
+						description:
+							"Monitor Docker containers, images, volumes, and networks. Collects real-time container status events.",
 					},
 				},
 			});
