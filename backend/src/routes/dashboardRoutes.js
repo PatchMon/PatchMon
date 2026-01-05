@@ -14,6 +14,16 @@ const { queueManager } = require("../services/automation");
 const router = express.Router();
 const prisma = getPrismaClient();
 
+// Helper function to format bytes to human-readable string
+function formatBytes(bytes) {
+	if (!bytes || bytes === 0n || bytes === 0) return "0 B";
+	const num = typeof bytes === "bigint" ? Number(bytes) : bytes;
+	const units = ["B", "KB", "MB", "GB", "TB"];
+	const exponent = Math.min(Math.floor(Math.log(num) / Math.log(1024)), units.length - 1);
+	const value = num / Math.pow(1024, exponent);
+	return `${value.toFixed(1)} ${units[exponent]}`;
+}
+
 // Get dashboard statistics
 router.get(
 	"/stats",
@@ -401,6 +411,7 @@ router.get(
 
 			const limit = parseInt(req.query.limit, 10) || 10;
 			const offset = parseInt(req.query.offset, 10) || 0;
+			const include = req.query.include; // Optional: "docker" to include Docker data
 
 			const [host, totalHistoryCount] = await Promise.all([
 				prisma.hosts.findUnique({
@@ -460,6 +471,73 @@ router.get(
 					hasMore: offset + limit < totalHistoryCount,
 				},
 			};
+
+			// Include Docker data if requested
+			if (include === "docker") {
+				const [containers, images, volumes, networks] = await Promise.all([
+					prisma.docker_containers.findMany({
+						where: { host_id: hostId },
+						orderBy: { name: "asc" },
+					}),
+					prisma.docker_images.findMany({
+						where: {
+							docker_containers: {
+								some: { host_id: hostId },
+							},
+						},
+						distinct: ["id"],
+					}),
+					prisma.docker_volumes.findMany({
+						where: { host_id: hostId },
+						orderBy: { name: "asc" },
+					}),
+					prisma.docker_networks.findMany({
+						where: { host_id: hostId },
+						orderBy: { name: "asc" },
+					}),
+				]);
+
+				// Convert BigInt to string for JSON serialization
+				const convertBigInt = (obj) => {
+					if (obj === null || obj === undefined) return obj;
+					if (typeof obj === "bigint") return obj.toString();
+					if (Array.isArray(obj)) return obj.map(convertBigInt);
+					if (typeof obj === "object") {
+						const result = {};
+						for (const key of Object.keys(obj)) {
+							result[key] = convertBigInt(obj[key]);
+						}
+						return result;
+					}
+					return obj;
+				};
+
+				// Transform containers to include combined image field for frontend
+				const transformedContainers = containers.map((c) => ({
+					...c,
+					image: c.image_tag ? `${c.image_name}:${c.image_tag}` : c.image_name,
+				}));
+
+				// Transform images to include size field for frontend
+				const transformedImages = images.map((img) => ({
+					...img,
+					size: img.size_bytes ? formatBytes(img.size_bytes) : null,
+				}));
+
+				hostWithStats.docker = {
+					containers: convertBigInt(transformedContainers),
+					images: convertBigInt(transformedImages),
+					volumes: convertBigInt(volumes),
+					networks: convertBigInt(networks),
+					stats: {
+						total_containers: containers.length,
+						running_containers: containers.filter((c) => c.state === "running").length,
+						total_images: images.length,
+						total_volumes: volumes.length,
+						total_networks: networks.length,
+					},
+				};
+			}
 
 			res.json(hostWithStats);
 		} catch (error) {
