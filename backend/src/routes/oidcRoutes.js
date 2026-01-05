@@ -51,15 +51,17 @@ const OIDC_SESSION_PREFIX = "oidc:session:";
 
 /**
  * Map OIDC groups to PatchMon role
- * Checks user's groups against configured admin/user/superadmin group names
+ * Checks user's groups against configured group names
  *
- * Role hierarchy:
+ * Role hierarchy (checked in order):
  * - superadmin: Must be in BOTH OIDC_ADMIN_GROUP AND OIDC_SUPERADMIN_GROUP
  * - admin: Must be in OIDC_ADMIN_GROUP (but not superadmin group)
+ * - host_manager: Must be in OIDC_HOST_MANAGER_GROUP
+ * - readonly: Must be in OIDC_READONLY_GROUP
  * - user: In OIDC_USER_GROUP or default
  *
  * @param {string[]} groups - Array of group names from IdP
- * @returns {string} - PatchMon role (superadmin, admin, user, or default)
+ * @returns {string} - PatchMon role (superadmin, admin, host_manager, readonly, user, or default)
  */
 function mapGroupsToRole(groups) {
 	if (!groups || !Array.isArray(groups) || groups.length === 0) {
@@ -69,6 +71,8 @@ function mapGroupsToRole(groups) {
 	// Get configured group names (case-insensitive matching)
 	const superadminGroup = process.env.OIDC_SUPERADMIN_GROUP?.toLowerCase();
 	const adminGroup = process.env.OIDC_ADMIN_GROUP?.toLowerCase();
+	const hostManagerGroup = process.env.OIDC_HOST_MANAGER_GROUP?.toLowerCase();
+	const readonlyGroup = process.env.OIDC_READONLY_GROUP?.toLowerCase();
 	const userGroup = process.env.OIDC_USER_GROUP?.toLowerCase();
 
 	const lowerGroups = groups.map((g) => g.toLowerCase());
@@ -85,6 +89,16 @@ function mapGroupsToRole(groups) {
 	// Check for admin group
 	if (adminGroup && lowerGroups.includes(adminGroup)) {
 		return "admin";
+	}
+
+	// Check for host_manager group
+	if (hostManagerGroup && lowerGroups.includes(hostManagerGroup)) {
+		return "host_manager";
+	}
+
+	// Check for readonly group
+	if (readonlyGroup && lowerGroups.includes(readonlyGroup)) {
+		return "readonly";
 	}
 
 	// Check for user group
