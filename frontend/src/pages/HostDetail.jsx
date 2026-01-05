@@ -71,6 +71,9 @@ const HostDetail = () => {
 	const [reportMessage, setReportMessage] = useState({ text: "", jobId: "" });
 	const [showAllReports, setShowAllReports] = useState(false);
 
+	// State for auto-update confirmation dialog
+	const [autoUpdateDialog, setAutoUpdateDialog] = useState(false);
+
 	// Ref to track component mount state for setTimeout cleanup
 	const isMountedRef = useRef(true);
 	const timeoutRefs = useRef([]);
@@ -116,6 +119,12 @@ const HostDetail = () => {
 				.then((res) => res.data),
 		staleTime: 5 * 60 * 1000, // 5 minutes - data stays fresh longer
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
+	});
+
+	// Fetch global settings to check if auto-update master toggle is enabled
+	const { data: settings } = useQuery({
+		queryKey: ["settings"],
+		queryFn: () => settingsAPI.get().then((res) => res.data),
 	});
 
 	// WebSocket connection status using polling (secure - uses httpOnly cookies)
@@ -218,6 +227,50 @@ const HostDetail = () => {
 			queryClient.invalidateQueries(["hosts"]);
 		},
 	});
+
+	// Mutation to enable global auto-update setting
+	const enableGlobalAutoUpdateMutation = useMutation({
+		mutationFn: () =>
+			settingsAPI.update({ autoUpdate: true }).then((res) => res.data),
+		onSuccess: () => {
+			queryClient.invalidateQueries(["settings"]);
+		},
+	});
+
+	// Handle auto-update toggle with global setting check
+	const handleAutoUpdateToggle = () => {
+		// If currently enabled, just disable
+		if (host?.auto_update) {
+			toggleAutoUpdateMutation.mutate(false);
+			return;
+		}
+
+		// If enabling and global is OFF, show confirmation dialog
+		if (!settings?.auto_update) {
+			setAutoUpdateDialog(true);
+			return;
+		}
+
+		// Global is ON, just enable the host
+		toggleAutoUpdateMutation.mutate(true);
+	};
+
+	// Handle dialog actions
+	const handleEnableBoth = () => {
+		// Enable global setting first, then host
+		enableGlobalAutoUpdateMutation.mutate(undefined, {
+			onSuccess: () => {
+				toggleAutoUpdateMutation.mutate(true);
+				setAutoUpdateDialog(false);
+			},
+		});
+	};
+
+	const handleEnableHostOnly = () => {
+		// Just enable the host (user acknowledges it won't work)
+		toggleAutoUpdateMutation.mutate(true);
+		setAutoUpdateDialog(false);
+	};
 
 	// Force agent update mutation
 	const forceAgentUpdateMutation = useMutation({
@@ -952,24 +1005,33 @@ const HostDetail = () => {
 									<p className="text-xs text-secondary-500 dark:text-secondary-300 mb-1.5">
 										Agent Auto-update
 									</p>
-									<button
-										type="button"
-										onClick={() =>
-											toggleAutoUpdateMutation.mutate(!host.auto_update)
-										}
-										disabled={toggleAutoUpdateMutation.isPending}
-										className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
-											host.auto_update
-												? "bg-primary-600 dark:bg-primary-500"
-												: "bg-secondary-200 dark:bg-secondary-600"
-										}`}
-									>
-										<span
-											className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-												host.auto_update ? "translate-x-5" : "translate-x-1"
+									<div className="flex items-center gap-2">
+										<button
+											type="button"
+											onClick={handleAutoUpdateToggle}
+											disabled={toggleAutoUpdateMutation.isPending}
+											className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+												host.auto_update
+													? "bg-primary-600 dark:bg-primary-500"
+													: "bg-secondary-200 dark:bg-secondary-600"
 											}`}
-										/>
-									</button>
+										>
+											<span
+												className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+													host.auto_update ? "translate-x-5" : "translate-x-1"
+												}`}
+											/>
+										</button>
+										{/* Warning badge when global auto-update is disabled */}
+										{!settings?.auto_update && host.auto_update && (
+											<span
+												className="text-amber-500 dark:text-amber-400"
+												title="Global auto-updates disabled in Settings → Agent Updates"
+											>
+												<AlertTriangle className="h-4 w-4" />
+											</span>
+										)}
+									</div>
 								</div>
 
 								<div>
@@ -1952,24 +2014,33 @@ const HostDetail = () => {
 										<p className="text-xs text-secondary-500 dark:text-secondary-300 mb-1.5">
 											Agent Auto-update
 										</p>
-										<button
-											type="button"
-											onClick={() =>
-												toggleAutoUpdateMutation.mutate(!host.auto_update)
-											}
-											disabled={toggleAutoUpdateMutation.isPending}
-											className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
-												host.auto_update
-													? "bg-primary-600 dark:bg-primary-500"
-													: "bg-secondary-200 dark:bg-secondary-600"
-											}`}
-										>
-											<span
-												className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-													host.auto_update ? "translate-x-5" : "translate-x-1"
+										<div className="flex items-center gap-2">
+											<button
+												type="button"
+												onClick={handleAutoUpdateToggle}
+												disabled={toggleAutoUpdateMutation.isPending}
+												className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+													host.auto_update
+														? "bg-primary-600 dark:bg-primary-500"
+														: "bg-secondary-200 dark:bg-secondary-600"
 												}`}
-											/>
-										</button>
+											>
+												<span
+													className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+														host.auto_update ? "translate-x-5" : "translate-x-1"
+													}`}
+												/>
+											</button>
+											{/* Warning badge when global auto-update is disabled */}
+											{!settings?.auto_update && host.auto_update && (
+												<span
+													className="text-amber-500 dark:text-amber-400"
+													title="Global auto-updates disabled in Settings → Agent Updates"
+												>
+													<AlertTriangle className="h-4 w-4" />
+												</span>
+											)}
+										</div>
 									</div>
 
 									<div>
@@ -3351,6 +3422,56 @@ const HostDetail = () => {
 					onConfirm={handleDeleteHost}
 					isLoading={deleteHostMutation.isPending}
 				/>
+			)}
+
+			{/* Auto-Update Confirmation Dialog */}
+			{autoUpdateDialog && (
+				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
+						<div className="p-6">
+							<div className="flex items-start gap-4">
+								<div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+									<AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+								</div>
+								<div className="flex-1">
+									<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+										Global Auto-Updates Disabled
+									</h3>
+									<p className="mt-2 text-sm text-secondary-600 dark:text-secondary-300">
+										The master auto-update setting is currently <strong>disabled</strong> in Settings → Agent Updates.
+									</p>
+									<p className="mt-2 text-sm text-secondary-600 dark:text-secondary-300">
+										Enabling auto-update for <strong>{host?.friendly_name || host?.hostname}</strong> won't take effect until global auto-updates are enabled.
+									</p>
+								</div>
+							</div>
+						</div>
+						<div className="bg-secondary-50 dark:bg-secondary-700/50 px-6 py-4 flex flex-col sm:flex-row gap-3 sm:justify-end">
+							<button
+								type="button"
+								onClick={() => setAutoUpdateDialog(false)}
+								className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={handleEnableHostOnly}
+								className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
+							>
+								Enable Host Only
+							</button>
+							<button
+								type="button"
+								onClick={handleEnableBoth}
+								disabled={enableGlobalAutoUpdateMutation.isPending}
+								className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+							>
+								{enableGlobalAutoUpdateMutation.isPending ? "Enabling..." : "Enable Both"}
+							</button>
+						</div>
+					</div>
+				</div>
 			)}
 
 		</div>
