@@ -1155,12 +1155,16 @@ const Integrations = () => {
 											</p>
 											<ul className="list-disc list-inside space-y-2 text-xs md:text-sm text-primary-800 dark:text-primary-300 ml-2">
 												<li>
-													<strong>OpenSCAP</strong> - Security Content Automation
-													Protocol scanning for Linux hosts using CIS benchmarks
+													<strong>OpenSCAP</strong> - CIS benchmark scanning for Linux
+													hosts with automatic tool installation
 												</li>
 												<li>
 													<strong>Docker Bench</strong> - CIS Docker Benchmark
 													security assessment for container hosts
+												</li>
+												<li>
+													<strong>Docker Image CVE Scanning</strong> - Vulnerability
+													scanning for Docker images using oscap-docker
 												</li>
 												<li>
 													<strong>Scoring</strong> - Compliance scores calculated
@@ -1173,6 +1177,10 @@ const Integrations = () => {
 												<li>
 													<strong>On-Demand Scans</strong> - Trigger compliance
 													scans from the dashboard at any time
+												</li>
+												<li>
+													<strong>Auto-Remediation</strong> - Automatically fix
+													failing rules when enabled
 												</li>
 											</ul>
 										</div>
@@ -1190,8 +1198,15 @@ const Integrations = () => {
 											page for installation instructions)
 										</li>
 										<li>
-											The agent automatically detects available compliance tools
-											(OpenSCAP, Docker) on the host
+											Enable the Compliance integration from the dashboard
+										</li>
+										<li>
+											The agent automatically installs required scanning tools
+											(OpenSCAP, SCAP Security Guide)
+										</li>
+										<li>
+											If Docker integration is also enabled, Docker Bench and
+											oscap-docker are set up automatically
 										</li>
 										<li>
 											Compliance scans run periodically and results are sent to
@@ -1208,7 +1223,8 @@ const Integrations = () => {
 											</a>
 										</li>
 										<li>
-											Trigger on-demand scans from the host details page when needed
+											Trigger on-demand scans or enable auto-remediation from the
+											host details page
 										</li>
 									</ol>
 								</div>
@@ -1218,7 +1234,7 @@ const Integrations = () => {
 									<h4 className="text-sm md:text-base font-semibold text-secondary-900 dark:text-white mb-4">
 										Supported Compliance Profiles
 									</h4>
-									<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+									<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
 										<div className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4">
 											<div className="flex items-center gap-2 mb-2">
 												<Shield className="h-5 w-5 text-blue-600 dark:text-blue-400" />
@@ -1227,9 +1243,9 @@ const Integrations = () => {
 												</h5>
 											</div>
 											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-												CIS (Center for Internet Security) benchmarks for Linux
-												distributions including Ubuntu, Debian, RHEL, and CentOS.
-												Comprehensive security configuration assessment.
+												CIS benchmarks for Ubuntu, Debian, RHEL, CentOS, Rocky,
+												AlmaLinux, Fedora, SLES, and OpenSUSE. Supports Level 1
+												and Level 2 server profiles.
 											</p>
 										</div>
 										<div className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4">
@@ -1240,27 +1256,41 @@ const Integrations = () => {
 												</h5>
 											</div>
 											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-												CIS Docker Benchmark security checks for container hosts.
-												Assesses Docker daemon configuration, container images,
-												and runtime security settings.
+												CIS Docker Benchmark security checks. Assesses Docker
+												daemon configuration, container images, and runtime
+												security. Requires Docker integration enabled.
+											</p>
+										</div>
+										<div className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4">
+											<div className="flex items-center gap-2 mb-2">
+												<AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+												<h5 className="font-semibold text-secondary-900 dark:text-white">
+													Docker Image CVE
+												</h5>
+											</div>
+											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
+												Vulnerability scanning for Docker container images using
+												oscap-docker. Identifies known CVEs in your images.
+												Requires both Docker and Compliance enabled.
 											</p>
 										</div>
 									</div>
 								</div>
 
-								{/* No Configuration Required */}
+								{/* Automatic Tool Installation */}
 								<div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 md:p-4">
 									<div className="flex items-start gap-2">
 										<CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
 										<div className="text-xs md:text-sm text-green-800 dark:text-green-200">
 											<p className="font-semibold mb-1">
-												No Additional Configuration Required
+												Automatic Tool Installation
 											</p>
 											<p>
-												Once the Go agent is installed and compliance tools are
-												available on your host, scanning happens automatically.
-												The agent detects which scanners are available and runs
-												the appropriate benchmarks.
+												When you enable the Compliance integration, the agent
+												automatically installs openscap-scanner and
+												scap-security-guide packages. If Docker integration is
+												also enabled, oscap-docker is set up automatically for
+												container image scanning.
 											</p>
 										</div>
 									</div>
@@ -1274,24 +1304,10 @@ const Integrations = () => {
 											<p className="font-semibold mb-2">Requirements:</p>
 											<ul className="list-disc list-inside space-y-1 ml-2">
 												<li>PatchMonEnhanced Go agent must be installed and running</li>
+												<li>Agent must run as root for full compliance scanning capabilities</li>
 												<li>
-													For OpenSCAP:{" "}
-													<code className="bg-blue-100 dark:bg-blue-900/40 px-1 py-0.5 rounded text-xs">
-														openscap-scanner
-													</code>{" "}
-													and{" "}
-													<code className="bg-blue-100 dark:bg-blue-900/40 px-1 py-0.5 rounded text-xs">
-														scap-security-guide
-													</code>{" "}
-													packages
-												</li>
-												<li>
-													For Docker Bench: Docker must be installed and the
-													agent must have access to the Docker socket
-												</li>
-												<li>
-													Agent must run as root for full compliance scanning
-													capabilities
+													For Docker scanning: Docker must be installed and Docker
+													integration must be enabled
 												</li>
 											</ul>
 										</div>
