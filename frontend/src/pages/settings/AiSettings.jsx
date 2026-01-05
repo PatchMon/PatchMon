@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Bot, Check, Eye, EyeOff, Loader2, RefreshCw, Sparkles, X } from "lucide-react";
+import { AlertTriangle, Bot, Check, Eye, EyeOff, Loader2, RefreshCw, Sparkles, X } from "lucide-react";
 import { aiAPI } from "../../utils/api";
 import SettingsLayout from "../../components/SettingsLayout";
 
@@ -99,6 +99,27 @@ const AiSettings = () => {
 						</p>
 					</div>
 				</div>
+
+				{/* API Key Invalid Warning */}
+				{settings?.ai_api_key_invalid && (
+					<div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4">
+						<div className="flex items-start gap-3">
+							<AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+							<div>
+								<h3 className="font-medium text-amber-800 dark:text-amber-200">
+									API Key Needs to be Re-entered
+								</h3>
+								<p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
+									Your AI API key was encrypted with a different secret and cannot be decrypted.
+									This can happen if <code className="bg-amber-100 dark:bg-amber-900 px-1 rounded">SESSION_SECRET</code> was changed or not set consistently.
+								</p>
+								<p className="text-sm text-amber-600 dark:text-amber-400 mt-2">
+									Please re-enter your API key below to restore AI functionality.
+								</p>
+							</div>
+						</div>
+					</div>
+				)}
 
 				{/* Enable/Disable Toggle */}
 				<div className="bg-secondary-50 dark:bg-secondary-900/50 rounded-lg p-4 border border-secondary-200 dark:border-secondary-700">
@@ -241,9 +262,14 @@ const AiSettings = () => {
 									Save
 								</button>
 							</div>
-							{settings?.ai_api_key_set && (
+							{settings?.ai_api_key_set && !settings?.ai_api_key_invalid && (
 								<p className="mt-1 text-xs text-green-600 dark:text-green-400">
 									API key is configured
+								</p>
+							)}
+							{settings?.ai_api_key_invalid && (
+								<p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+									API key needs to be re-entered (encryption key changed)
 								</p>
 							)}
 							<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">

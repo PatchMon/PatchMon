@@ -50,9 +50,19 @@ router.get("/status", authenticateToken, async (_req, res) => {
 		const prisma = getPrismaClient();
 		const settings = await prisma.settings.findFirst();
 
+		// Check if API key exists and can be decrypted
+		let apiKeyValid = false;
+		if (settings?.ai_api_key) {
+			const decrypted = decrypt(settings.ai_api_key);
+			apiKeyValid = !!decrypted;
+			if (!decrypted && settings.ai_api_key) {
+				logger.warn("AI API key exists but cannot be decrypted - encryption key may have changed");
+			}
+		}
+
 		res.json({
 			ai_enabled: settings?.ai_enabled || false,
-			ai_api_key_set: !!settings?.ai_api_key,
+			ai_api_key_set: apiKeyValid,
 		});
 	} catch (error) {
 		logger.error("Error fetching AI status:", error);
@@ -89,14 +99,28 @@ router.get("/settings", authenticateToken, requireManageSettings, async (_req, r
 				ai_provider: "openrouter",
 				ai_model: null,
 				ai_api_key_set: false,
+				ai_api_key_invalid: false,
 			});
+		}
+
+		// Check if API key exists and can be decrypted
+		let apiKeyValid = false;
+		let apiKeyInvalid = false;
+		if (settings.ai_api_key) {
+			const decrypted = decrypt(settings.ai_api_key);
+			apiKeyValid = !!decrypted;
+			apiKeyInvalid = !decrypted; // Key exists but can't be decrypted
+			if (apiKeyInvalid) {
+				logger.warn("AI API key cannot be decrypted - SESSION_SECRET or AI_ENCRYPTION_KEY may have changed. Please re-enter the API key.");
+			}
 		}
 
 		res.json({
 			ai_enabled: settings.ai_enabled || false,
 			ai_provider: settings.ai_provider || "openrouter",
 			ai_model: settings.ai_model || null,
-			ai_api_key_set: !!settings.ai_api_key,
+			ai_api_key_set: apiKeyValid,
+			ai_api_key_invalid: apiKeyInvalid, // True if key exists but can't be decrypted
 		});
 	} catch (error) {
 		logger.error("Error fetching AI settings:", error);
