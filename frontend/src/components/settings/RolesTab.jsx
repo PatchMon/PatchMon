@@ -61,10 +61,11 @@ const RolesTab = () => {
 		queryFn: () => permissionsAPI.getRoles().then((res) => res.data),
 	});
 
-	// Sort roles: superadmin first, then admin, then host_manager, then readonly, then user, then alphabetically
+	// Sort roles by permission level: superadmin > admin > host_manager > user > readonly
+	// Custom roles come after built-in roles, sorted alphabetically
 	const roles = rolesData
 		? [...rolesData].sort((a, b) => {
-				const order = { superadmin: 0, admin: 1, host_manager: 2, readonly: 3, user: 4 };
+				const order = { superadmin: 0, admin: 1, host_manager: 2, user: 3, readonly: 4 };
 				const aOrder = order[a.role] ?? 999;
 				const bOrder = order[b.role] ?? 999;
 				if (aOrder !== bOrder) return aOrder - bOrder;
@@ -153,11 +154,11 @@ const RolesTab = () => {
 								Roles are managed via your Identity Provider (IdP) groups. Configure the following environment variables to map IdP groups to roles:
 							</p>
 							<ul className="mt-2 text-sm text-blue-600 dark:text-blue-400 list-disc list-inside space-y-1">
-								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_SUPERADMIN_GROUP</code> + <code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_ADMIN_GROUP</code> → Super Admin</li>
+								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_SUPERADMIN_GROUP</code> + <code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_ADMIN_GROUP</code> → Super Admin (highest)</li>
 								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_ADMIN_GROUP</code> → Admin</li>
 								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_HOST_MANAGER_GROUP</code> → Host Manager</li>
-								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_READONLY_GROUP</code> → Readonly</li>
-								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_USER_GROUP</code> → User (default)</li>
+								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_USER_GROUP</code> → User (can export data)</li>
+								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_READONLY_GROUP</code> → Readonly (view only, lowest)</li>
 							</ul>
 						</div>
 					</div>

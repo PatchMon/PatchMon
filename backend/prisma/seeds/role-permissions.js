@@ -50,7 +50,9 @@ async function seedRolePermissions() {
 			can_manage_settings: false,
 		},
 		{
-			role: "readonly",
+			// User role: Can view everything and export data, but cannot manage hosts/packages/users/settings
+			// This is one level above readonly - useful for team members who need to generate reports
+			role: "user",
 			can_view_dashboard: true,
 			can_view_hosts: true,
 			can_manage_hosts: false,
@@ -60,11 +62,13 @@ async function seedRolePermissions() {
 			can_manage_users: false,
 			can_manage_superusers: false,
 			can_view_reports: true,
-			can_export_data: false,
+			can_export_data: true, // Key difference from readonly
 			can_manage_settings: false,
 		},
 		{
-			role: "user",
+			// Readonly role: Minimum permissions - view only, no export
+			// This is the most restrictive role for users who only need to monitor
+			role: "readonly",
 			can_view_dashboard: true,
 			can_view_hosts: true,
 			can_manage_hosts: false,
