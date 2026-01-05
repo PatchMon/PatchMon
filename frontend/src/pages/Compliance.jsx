@@ -5,11 +5,15 @@ import {
 	ShieldCheck,
 	ShieldAlert,
 	ShieldX,
+	ShieldOff,
 	TrendingUp,
 	TrendingDown,
 	Clock,
 	Server,
+	BarChart3,
+	PieChart as PieChartIcon,
 } from "lucide-react";
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { complianceAPI } from "../utils/complianceApi";
 import ComplianceScore from "../components/compliance/ComplianceScore";
 
@@ -49,11 +53,11 @@ const Compliance = () => {
 			</div>
 
 			{/* Summary Cards */}
-			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+			<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
 				<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-700">
 					<div className="flex items-center gap-2 text-secondary-400 mb-2">
 						<Server className="h-4 w-4" />
-						<span className="text-sm">Total Hosts</span>
+						<span className="text-sm">Scanned Hosts</span>
 					</div>
 					<p className="text-2xl font-bold text-white">{summary?.total_hosts || 0}</p>
 				</div>
@@ -89,7 +93,113 @@ const Compliance = () => {
 					</div>
 					<p className="text-2xl font-bold text-red-400">{summary?.critical || 0}</p>
 				</div>
+
+				<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-600">
+					<div className="flex items-center gap-2 text-secondary-400 mb-2">
+						<ShieldOff className="h-4 w-4" />
+						<span className="text-sm">Not Scanned</span>
+					</div>
+					<p className="text-2xl font-bold text-secondary-400">{summary?.unscanned || 0}</p>
+				</div>
 			</div>
+
+			{/* Charts Section */}
+			{summary && (summary.total_hosts > 0 || summary.unscanned > 0) && (() => {
+				const hostDistribution = [
+					{ name: "Compliant (≥80%)", value: summary.compliant || 0, color: "#22c55e" },
+					{ name: "Warning (60-80%)", value: summary.warning || 0, color: "#eab308" },
+					{ name: "Critical (<60%)", value: summary.critical || 0, color: "#ef4444" },
+					{ name: "Not Scanned", value: summary.unscanned || 0, color: "#6b7280" },
+				].filter(d => d.value > 0);
+
+				// Score ranges for bar chart
+				const scoreRanges = [
+					{ range: "90-100%", count: recent_scans?.filter(s => s.score >= 90).length || 0, color: "#22c55e" },
+					{ range: "80-89%", count: recent_scans?.filter(s => s.score >= 80 && s.score < 90).length || 0, color: "#84cc16" },
+					{ range: "70-79%", count: recent_scans?.filter(s => s.score >= 70 && s.score < 80).length || 0, color: "#eab308" },
+					{ range: "60-69%", count: recent_scans?.filter(s => s.score >= 60 && s.score < 70).length || 0, color: "#f97316" },
+					{ range: "<60%", count: recent_scans?.filter(s => s.score < 60).length || 0, color: "#ef4444" },
+				];
+
+				return (
+					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+						{/* Host Compliance Distribution */}
+						<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
+							<h3 className="text-white font-medium mb-4 flex items-center gap-2">
+								<PieChartIcon className="h-4 w-4 text-primary-400" />
+								Host Compliance Status
+							</h3>
+							<div className="h-48">
+								<ResponsiveContainer width="100%" height="100%">
+									<PieChart>
+										<Pie
+											data={hostDistribution}
+											cx="50%"
+											cy="50%"
+											innerRadius={40}
+											outerRadius={70}
+											dataKey="value"
+											label={({ name, value }) => `${value}`}
+											labelLine={false}
+										>
+											{hostDistribution.map((entry, index) => (
+												<Cell key={`cell-${index}`} fill={entry.color} />
+											))}
+										</Pie>
+										<Tooltip
+											contentStyle={{
+												backgroundColor: "#1f2937",
+												border: "1px solid #374151",
+												borderRadius: "0.5rem",
+											}}
+											formatter={(value, name) => [value, name]}
+										/>
+									</PieChart>
+								</ResponsiveContainer>
+							</div>
+							<div className="flex flex-wrap justify-center gap-4 mt-2">
+								{hostDistribution.map((entry) => (
+									<div key={entry.name} className="flex items-center gap-2 text-sm">
+										<div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color }} />
+										<span className="text-secondary-400">{entry.name}: {entry.value}</span>
+									</div>
+								))}
+							</div>
+						</div>
+
+						{/* Recent Scan Score Distribution */}
+						{recent_scans && recent_scans.length > 0 && (
+							<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
+								<h3 className="text-white font-medium mb-4 flex items-center gap-2">
+									<BarChart3 className="h-4 w-4 text-primary-400" />
+									Recent Scans by Score
+								</h3>
+								<div className="h-48">
+									<ResponsiveContainer width="100%" height="100%">
+										<BarChart data={scoreRanges} layout="vertical">
+											<XAxis type="number" stroke="#6b7280" fontSize={12} />
+											<YAxis type="category" dataKey="range" stroke="#6b7280" fontSize={12} width={60} />
+											<Tooltip
+												contentStyle={{
+													backgroundColor: "#1f2937",
+													border: "1px solid #374151",
+													borderRadius: "0.5rem",
+												}}
+												formatter={(value) => [value, "Scans"]}
+											/>
+											<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+												{scoreRanges.map((entry, index) => (
+													<Cell key={`cell-${index}`} fill={entry.color} />
+												))}
+											</Bar>
+										</BarChart>
+									</ResponsiveContainer>
+								</div>
+							</div>
+						)}
+					</div>
+				);
+			})()}
 
 			<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 				{/* Recent Scans */}
