@@ -796,9 +796,15 @@ const Layout = ({ children }) => {
 									)}
 									<span className="flex items-center gap-2">
 										{user?.first_name || user?.username}
-										{user?.role === "admin" && (
-											<span className="text-xs bg-secondary-100 dark:bg-secondary-600 text-secondary-600 dark:text-secondary-200 px-1.5 py-0.5 rounded">
-												Admin
+										{(user?.role === "admin" || user?.role === "superadmin") && (
+											<span
+												className={`text-xs px-1.5 py-0.5 rounded ${
+													user?.role === "superadmin"
+														? "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+														: "bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200"
+												}`}
+											>
+												{user?.role === "superadmin" ? "Super Admin" : "Admin"}
 											</span>
 										)}
 									</span>
@@ -1231,10 +1237,10 @@ const Layout = ({ children }) => {
 												</span>
 												{(user?.role === "admin" || user?.role === "superadmin") && (
 													<span
-														className={`text-xs leading-4 ${
-															isActive("/settings/profile")
-																? "text-primary-600 dark:text-primary-200"
-																: "text-secondary-500 dark:text-secondary-400"
+														className={`text-xs leading-4 px-1.5 py-0.5 rounded ${
+															user?.role === "superadmin"
+																? "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+																: "bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200"
 														}`}
 													>
 														{user?.role === "superadmin" ? "Super Admin" : "Admin"}

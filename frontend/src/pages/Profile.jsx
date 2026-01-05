@@ -213,18 +213,22 @@ const Profile = () => {
 						<div className="mt-2">
 							<span
 								className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium ${
-									user?.role === "admin"
-										? "bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200"
-										: user?.role === "host_manager"
-											? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-											: user?.role === "readonly"
-												? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
-												: "bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
+									user?.role === "superadmin"
+										? "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+										: user?.role === "admin"
+											? "bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200"
+											: user?.role === "host_manager"
+												? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+												: user?.role === "readonly"
+													? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+													: "bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
 								}`}
 							>
 								<Shield className="h-3 w-3 mr-1" />
-								{user?.role?.charAt(0).toUpperCase() +
-									user?.role?.slice(1).replace("_", " ")}
+								{user?.role === "superadmin"
+									? "Super Admin"
+									: user?.role?.charAt(0).toUpperCase() +
+										user?.role?.slice(1).replace("_", " ")}
 							</span>
 						</div>
 					</div>

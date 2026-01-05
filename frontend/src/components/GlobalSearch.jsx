@@ -412,9 +412,24 @@ const GlobalSearch = () => {
 														{display.secondary}
 													</span>
 												</div>
-												<div className="flex-shrink-0 text-xs text-secondary-400 dark:text-white/60">
-													{user.role}
-												</div>
+												<span
+												className={`flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
+													user.role === "superadmin"
+														? "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+														: user.role === "admin"
+															? "bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200"
+															: user.role === "host_manager"
+																? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+																: user.role === "readonly"
+																	? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+																	: "bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
+												}`}
+											>
+												{user.role === "superadmin"
+													? "Super Admin"
+													: user.role.charAt(0).toUpperCase() +
+														user.role.slice(1).replace("_", " ")}
+											</span>
 											</button>
 										);
 									})}
