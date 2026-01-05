@@ -3,6 +3,7 @@ import {
 	Calendar,
 	CheckCircle,
 	Edit,
+	Info,
 	Key,
 	Mail,
 	Save,
@@ -29,13 +30,31 @@ const UsersTab = () => {
 	});
 	const [isSignupDirty, setIsSignupDirty] = useState(false);
 
-	// Listen for the header button event to open add modal
+	// Fetch OIDC config to determine if OIDC is enabled
+	const { data: oidcConfig } = useQuery({
+		queryKey: ["oidcConfig"],
+		queryFn: async () => {
+			const response = await fetch("/api/v1/auth/oidc/config");
+			if (response.ok) {
+				return response.json();
+			}
+			return { enabled: false };
+		},
+	});
+
+	const isOIDCEnabled = oidcConfig?.enabled || false;
+
+	// Listen for the header button event to open add modal (only if OIDC is not enabled)
 	useEffect(() => {
-		const handleOpenAddModal = () => setShowAddModal(true);
+		const handleOpenAddModal = () => {
+			if (!isOIDCEnabled) {
+				setShowAddModal(true);
+			}
+		};
 		window.addEventListener("openAddUserModal", handleOpenAddModal);
 		return () =>
 			window.removeEventListener("openAddUserModal", handleOpenAddModal);
-	}, []);
+	}, [isOIDCEnabled]);
 
 	// Fetch users
 	const {
@@ -519,13 +538,15 @@ const UsersTab = () => {
 				)}
 			</div>
 
-			{/* Add User Modal */}
-			<AddUserModal
-				isOpen={showAddModal}
-				onClose={() => setShowAddModal(false)}
-				onUserCreated={handleUserCreated}
-				roles={roles}
-			/>
+			{/* Add User Modal - only show when OIDC is not enabled */}
+			{!isOIDCEnabled && (
+				<AddUserModal
+					isOpen={showAddModal}
+					onClose={() => setShowAddModal(false)}
+					onUserCreated={handleUserCreated}
+					roles={roles}
+				/>
+			)}
 
 			{/* Edit User Modal */}
 			{editingUser && (
@@ -550,7 +571,26 @@ const UsersTab = () => {
 				/>
 			)}
 
-			{/* User Registration Settings */}
+			{/* OIDC Info Banner - show when OIDC is enabled */}
+			{isOIDCEnabled && (
+				<div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+					<div className="flex">
+						<Info className="h-5 w-5 text-blue-500 dark:text-blue-400 flex-shrink-0" />
+						<div className="ml-3">
+							<h3 className="text-sm font-medium text-blue-800 dark:text-blue-200">
+								OIDC Authentication Enabled
+							</h3>
+							<p className="mt-1 text-sm text-blue-700 dark:text-blue-300">
+								User management is handled by your Identity Provider (IdP). Users are created automatically when they log in via OIDC.
+								Roles are assigned based on IdP group membership configured in your environment variables.
+							</p>
+						</div>
+					</div>
+				</div>
+			)}
+
+			{/* User Registration Settings - only show when OIDC is not enabled */}
+			{!isOIDCEnabled && (
 			<div className="bg-white dark:bg-secondary-800 shadow overflow-hidden sm:rounded-lg">
 				<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
 					<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
@@ -681,6 +721,7 @@ const UsersTab = () => {
 					)}
 				</div>
 			</div>
+			)}
 		</div>
 	);
 };

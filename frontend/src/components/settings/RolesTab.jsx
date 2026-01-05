@@ -5,6 +5,7 @@ import {
 	CheckCircle,
 	Download,
 	Edit,
+	Info,
 	Package,
 	Save,
 	Server,
@@ -24,13 +25,31 @@ const RolesTab = () => {
 	const queryClient = useQueryClient();
 	const { refreshPermissions } = useAuth();
 
-	// Listen for the header button event to open add modal
+	// Fetch OIDC config to determine if OIDC is enabled
+	const { data: oidcConfig } = useQuery({
+		queryKey: ["oidcConfig"],
+		queryFn: async () => {
+			const response = await fetch("/api/v1/auth/oidc/config");
+			if (response.ok) {
+				return response.json();
+			}
+			return { enabled: false };
+		},
+	});
+
+	const isOIDCEnabled = oidcConfig?.enabled || false;
+
+	// Listen for the header button event to open add modal (only if OIDC is not enabled)
 	useEffect(() => {
-		const handleOpenAddModal = () => setShowAddModal(true);
+		const handleOpenAddModal = () => {
+			if (!isOIDCEnabled) {
+				setShowAddModal(true);
+			}
+		};
 		window.addEventListener("openAddRoleModal", handleOpenAddModal);
 		return () =>
 			window.removeEventListener("openAddRoleModal", handleOpenAddModal);
-	}, []);
+	}, [isOIDCEnabled]);
 
 	// Fetch all role permissions
 	const {
@@ -42,10 +61,10 @@ const RolesTab = () => {
 		queryFn: () => permissionsAPI.getRoles().then((res) => res.data),
 	});
 
-	// Sort roles: superadmin first, then admin, then user, then alphabetically
+	// Sort roles: superadmin first, then admin, then host_manager, then readonly, then user, then alphabetically
 	const roles = rolesData
 		? [...rolesData].sort((a, b) => {
-				const order = { superadmin: 0, admin: 1, user: 2 };
+				const order = { superadmin: 0, admin: 1, host_manager: 2, readonly: 3, user: 4 };
 				const aOrder = order[a.role] ?? 999;
 				const bOrder = order[b.role] ?? 999;
 				if (aOrder !== bOrder) return aOrder - bOrder;
@@ -121,6 +140,30 @@ const RolesTab = () => {
 
 	return (
 		<div className="space-y-6">
+			{/* OIDC Info Banner */}
+			{isOIDCEnabled && (
+				<div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+					<div className="flex">
+						<Info className="h-5 w-5 text-blue-500 dark:text-blue-400 flex-shrink-0" />
+						<div className="ml-3">
+							<h3 className="text-sm font-medium text-blue-800 dark:text-blue-200">
+								OIDC Role Mapping Enabled
+							</h3>
+							<p className="mt-1 text-sm text-blue-700 dark:text-blue-300">
+								Roles are managed via your Identity Provider (IdP) groups. Configure the following environment variables to map IdP groups to roles:
+							</p>
+							<ul className="mt-2 text-sm text-blue-600 dark:text-blue-400 list-disc list-inside space-y-1">
+								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_SUPERADMIN_GROUP</code> + <code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_ADMIN_GROUP</code> → Super Admin</li>
+								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_ADMIN_GROUP</code> → Admin</li>
+								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_HOST_MANAGER_GROUP</code> → Host Manager</li>
+								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_READONLY_GROUP</code> → Readonly</li>
+								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_USER_GROUP</code> → User (default)</li>
+							</ul>
+						</div>
+					</div>
+				</div>
+			)}
+
 			{/* Roles Matrix Table */}
 			<div className="bg-white dark:bg-secondary-800 shadow overflow-hidden sm:rounded-lg">
 				<div className="overflow-x-auto">
@@ -205,6 +248,7 @@ const RolesTab = () => {
 								key={`editor-${r.role}`}
 								role={r}
 								isEditing={true}
+								isOIDCEnabled={isOIDCEnabled}
 								onEdit={() => {}}
 								onCancel={() => setEditingRole(null)}
 								onSave={handleSavePermissions}
@@ -214,15 +258,17 @@ const RolesTab = () => {
 				</div>
 			)}
 
-			{/* Add Role Modal */}
-			<AddRoleModal
-				isOpen={showAddModal}
-				onClose={() => setShowAddModal(false)}
-				onSuccess={() => {
-					queryClient.invalidateQueries(["rolePermissions"]);
-					setShowAddModal(false);
-				}}
-			/>
+			{/* Add Role Modal - only show when OIDC is not enabled */}
+			{!isOIDCEnabled && (
+				<AddRoleModal
+					isOpen={showAddModal}
+					onClose={() => setShowAddModal(false)}
+					onSuccess={() => {
+						queryClient.invalidateQueries(["rolePermissions"]);
+						setShowAddModal(false);
+					}}
+				/>
+			)}
 		</div>
 	);
 };
@@ -231,6 +277,7 @@ const RolesTab = () => {
 const RolePermissionsCard = ({
 	role,
 	isEditing,
+	isOIDCEnabled = false,
 	onEdit,
 	onCancel,
 	onSave,
@@ -323,7 +370,17 @@ const RolePermissionsCard = ({
 		onSave(role.role, permissions);
 	};
 
-	const isBuiltInRole = role.role === "superadmin" || role.role === "admin" || role.role === "user";
+	// Standard built-in roles (always protected from deletion and permission changes)
+	const standardBuiltInRoles = ["superadmin", "admin", "user"];
+	// OIDC roles (protected from deletion when OIDC is enabled, but permissions can be edited)
+	const oidcRoles = ["superadmin", "admin", "host_manager", "readonly", "user"];
+
+	const isBuiltInRole = standardBuiltInRoles.includes(role.role);
+	const isOIDCRole = oidcRoles.includes(role.role);
+	// Can't delete OIDC roles or built-in roles
+	const cannotDelete = isOIDCEnabled ? isOIDCRole : isBuiltInRole;
+	// Can't edit permissions for built-in roles (superadmin, admin, user)
+	const cannotEditPermissions = isBuiltInRole;
 
 	return (
 		<div className="bg-white dark:bg-secondary-800 shadow rounded-lg">
@@ -332,10 +389,15 @@ const RolePermissionsCard = ({
 					<div className="flex items-center">
 						<Shield className="h-5 w-5 text-primary-600 mr-3" />
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white capitalize">
-							{role.role}
+							{role.role.replace(/_/g, " ")}
 						</h3>
-						{isBuiltInRole && (
-							<span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-primary-100 text-primary-800">
+						{isOIDCEnabled && isOIDCRole && (
+							<span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+								OIDC Role
+							</span>
+						)}
+						{!isOIDCEnabled && isBuiltInRole && (
+							<span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200">
 								Built-in Role
 							</span>
 						)}
@@ -359,7 +421,7 @@ const RolePermissionsCard = ({
 									<X className="h-4 w-4 mr-1" />
 									Cancel
 								</button>
-								{!isBuiltInRole && (
+								{!cannotDelete && (
 									<button
 										type="button"
 										onClick={() => onDelete(role.role)}
@@ -375,13 +437,13 @@ const RolePermissionsCard = ({
 								<button
 									type="button"
 									onClick={onEdit}
-									disabled={isBuiltInRole}
+									disabled={cannotEditPermissions}
 									className="inline-flex items-center px-3 py-1 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
 								>
 									<Edit className="h-4 w-4 mr-1" />
 									Edit
 								</button>
-								{!isBuiltInRole && (
+								{!cannotDelete && (
 									<button
 										type="button"
 										onClick={() => onDelete(role.role)}
@@ -415,7 +477,7 @@ const RolePermissionsCard = ({
 										}
 										disabled={
 											!isEditing ||
-											(isBuiltInRole && field.key === "can_manage_users")
+											cannotEditPermissions
 										}
 										className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 rounded disabled:opacity-50"
 									/>
