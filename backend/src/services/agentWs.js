@@ -279,6 +279,20 @@ function pushUpdateAgent(apiId) {
 	safeSend(ws, JSON.stringify({ type: "update_agent" }));
 }
 
+function pushRefreshIntegrationStatus(apiId) {
+	const ws = apiIdToSocket.get(apiId);
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		safeSend(ws, JSON.stringify({ type: "refresh_integration_status" }));
+		logger.info(`📤 Pushed refresh integration status to agent ${apiId}`);
+		return true;
+	} else {
+		logger.info(
+			`⚠️ Agent ${apiId} not connected, cannot refresh integration status`,
+		);
+		return false;
+	}
+}
+
 function pushIntegrationToggle(apiId, integrationName, enabled) {
 	const ws = apiIdToSocket.get(apiId);
 	if (ws && ws.readyState === WebSocket.OPEN) {
@@ -615,6 +629,7 @@ module.exports = {
 	pushReportNow,
 	pushSettingsUpdate,
 	pushUpdateAgent,
+	pushRefreshIntegrationStatus,
 	pushIntegrationToggle,
 	pushUpdateNotification,
 	pushUpdateNotificationToAll,

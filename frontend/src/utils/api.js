@@ -121,6 +121,8 @@ export const adminHostsAPI = {
 	toggleAutoUpdate: (hostId, autoUpdate) =>
 		api.patch(`/hosts/${hostId}/auto-update`, { auto_update: autoUpdate }),
 	forceAgentUpdate: (hostId) => api.post(`/hosts/${hostId}/force-agent-update`),
+	refreshIntegrationStatus: (hostId) =>
+		api.post(`/hosts/${hostId}/refresh-integration-status`),
 	fetchReport: (hostId) => api.post(`/hosts/${hostId}/fetch-report`),
 	updateFriendlyName: (hostId, friendlyName) =>
 		api.patch(`/hosts/${hostId}/friendly-name`, {

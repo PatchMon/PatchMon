@@ -1155,16 +1155,11 @@ router.post("/ping", validateApiCredentials, async (req, res) => {
 			},
 		});
 
-		// Fetch settings for integration status interval
-		const settings = await prisma.settings.findFirst();
-		const integrationStatusInterval = settings?.integration_status_interval || 30;
-
 		const response = {
 			message: "Ping successful",
 			timestamp: now.toISOString(),
 			friendlyName: req.hostRecord.friendly_name,
 			agentStartup: isStartup,
-			integrationStatusInterval, // How often agent should report integration status (minutes)
 		};
 
 		// Include integration states in ping response for initial agent configuration
@@ -1933,7 +1928,74 @@ router.post(
 			});
 		} catch (error) {
 			logger.error("Force agent update error:", error);
-			res.status(500).json({ error: "Failed to force agent update" });
+			res.status(500).json({
+				error: "Failed to queue agent update",
+				details: error.message || "Unknown error occurred"
+			});
+		}
+	},
+);
+
+// Refresh integration status for specific host
+// This triggers the agent to re-scan and report its integration capabilities
+router.post(
+	"/:hostId/refresh-integration-status",
+	authenticateToken,
+	requireManageHosts,
+	async (req, res) => {
+		try {
+			const { hostId } = req.params;
+
+			// Get host to verify it exists
+			const host = await prisma.hosts.findUnique({
+				where: { id: hostId },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			// Get the agent-commands queue
+			const queue = queueManager.queues[QUEUE_NAMES.AGENT_COMMANDS];
+
+			if (!queue) {
+				return res.status(500).json({
+					error: "Queue not available",
+				});
+			}
+
+			// Add job to queue to refresh integration status
+			const job = await queue.add(
+				"refresh_integration_status",
+				{
+					api_id: host.api_id,
+					type: "refresh_integration_status",
+				},
+				{
+					attempts: 2,
+					backoff: {
+						type: "exponential",
+						delay: 1000,
+					},
+				},
+			);
+
+			res.json({
+				success: true,
+				message: "Integration status refresh queued",
+				jobId: job.id,
+				host: {
+					id: host.id,
+					friendlyName: host.friendly_name,
+					apiId: host.api_id,
+				},
+			});
+		} catch (error) {
+			logger.error("Refresh integration status error:", error);
+			res.status(500).json({
+				error: "Failed to refresh integration status",
+				details: error.message || "Unknown error occurred"
+			});
 		}
 	},
 );

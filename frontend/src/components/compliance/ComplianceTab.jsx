@@ -9,6 +9,7 @@ import {
 	AlertTriangle,
 	MinusCircle,
 	ChevronDown,
+	ChevronLeft,
 	ChevronRight,
 	Settings,
 	Clock,
@@ -26,6 +27,9 @@ import {
 	Search,
 	Container,
 	Box,
+	Folder,
+	FolderOpen,
+	Layers,
 } from "lucide-react";
 import { complianceAPI } from "../../utils/complianceApi";
 import ComplianceScore from "./ComplianceScore";
@@ -61,6 +65,10 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 	const [scanProgress, setScanProgress] = useState(null); // Real-time progress from SSE
 	const [dockerImageName, setDockerImageName] = useState(""); // Docker image name for CVE scan
 	const [scanAllDockerImages, setScanAllDockerImages] = useState(true); // Scan all Docker images
+	const [currentPage, setCurrentPage] = useState(1); // Pagination for results
+	const [groupBySection, setGroupBySection] = useState(false); // Group results by CIS section
+	const [expandedSections, setExpandedSections] = useState({}); // Track which sections are expanded
+	const resultsPerPage = 25; // Number of results per page
 	const queryClient = useQueryClient();
 
 	// Persist scan state in sessionStorage to survive tab switches
@@ -1187,6 +1195,53 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 
 		const currentFilteredResults = getFilteredResults();
 
+		// Pagination calculations
+		const totalResults = currentFilteredResults.length;
+		const totalPages = Math.ceil(totalResults / resultsPerPage);
+		const startIndex = (currentPage - 1) * resultsPerPage;
+		const endIndex = startIndex + resultsPerPage;
+		const paginatedResults = currentFilteredResults.slice(startIndex, endIndex);
+
+		// Group results by CIS section (e.g., "1.1", "5.2")
+		const getParentSection = (result) => {
+			const section = result.compliance_rules?.section || result.rule?.section || result.section || "";
+			// Extract parent section (e.g., "1.1.1.1" -> "1.1", "5.2.3" -> "5.2")
+			const parts = section.split(".");
+			return parts.length >= 2 ? `${parts[0]}.${parts[1]}` : section || "Other";
+		};
+
+		const groupedResults = groupBySection
+			? paginatedResults.reduce((groups, result) => {
+					const section = getParentSection(result);
+					if (!groups[section]) {
+						groups[section] = [];
+					}
+					groups[section].push(result);
+					return groups;
+				}, {})
+			: null;
+
+		const sortedSections = groupedResults
+			? Object.keys(groupedResults).sort((a, b) => {
+					// Sort numerically by section
+					const aParts = a.split(".").map(Number);
+					const bParts = b.split(".").map(Number);
+					for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+						const aVal = aParts[i] || 0;
+						const bVal = bParts[i] || 0;
+						if (aVal !== bVal) return aVal - bVal;
+					}
+					return 0;
+				})
+			: [];
+
+		const toggleSection = (section) => {
+			setExpandedSections((prev) => ({
+				...prev,
+				[section]: !prev[section],
+			}));
+		};
+
 		return (
 		<div className="space-y-4">
 			{latestScan ? (
@@ -1279,6 +1334,7 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 										key={tab.id}
 										onClick={() => {
 											setStatusFilter(tab.id);
+											setCurrentPage(1); // Reset to first page when changing filter
 											// Reset severity filter when switching tabs
 											if (tab.id !== "fail") {
 												setSeverityFilter("all");
@@ -1311,7 +1367,7 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 									return (
 										<button
 											key={tab.id}
-											onClick={() => setSeverityFilter(tab.id)}
+											onClick={() => { setSeverityFilter(tab.id); setCurrentPage(1); }}
 											className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${
 												isActive
 													? `bg-secondary-600 ${tab.color || "text-white"}`
@@ -1328,32 +1384,155 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 							</div>
 						)}
 
-						{/* Search bar */}
+						{/* Search bar and grouping toggle */}
 						<div className="px-4 py-2 border-b border-secondary-700">
-							<div className="relative">
-								<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400" />
-								<input
-									type="text"
-									placeholder="Search rules by title or ID..."
-									value={ruleSearch}
-									onChange={(e) => setRuleSearch(e.target.value)}
-									className="w-full pl-10 pr-4 py-2 bg-secondary-700 border border-secondary-600 rounded-lg text-sm text-white placeholder-secondary-400 focus:outline-none focus:border-primary-500"
-								/>
-								{ruleSearch && (
-									<button
-										onClick={() => setRuleSearch("")}
-										className="absolute right-3 top-1/2 transform -translate-y-1/2 text-secondary-400 hover:text-white"
-									>
-										<XCircle className="h-4 w-4" />
-									</button>
-								)}
+							<div className="flex items-center gap-3">
+								<div className="relative flex-1">
+									<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400" />
+									<input
+										type="text"
+										placeholder="Search rules by title or ID..."
+										value={ruleSearch}
+										onChange={(e) => { setRuleSearch(e.target.value); setCurrentPage(1); }}
+										className="w-full pl-10 pr-4 py-2 bg-secondary-700 border border-secondary-600 rounded-lg text-sm text-white placeholder-secondary-400 focus:outline-none focus:border-primary-500"
+									/>
+									{ruleSearch && (
+										<button
+											onClick={() => { setRuleSearch(""); setCurrentPage(1); }}
+											className="absolute right-3 top-1/2 transform -translate-y-1/2 text-secondary-400 hover:text-white"
+										>
+											<XCircle className="h-4 w-4" />
+										</button>
+									)}
+								</div>
+								<button
+									onClick={() => { setGroupBySection(!groupBySection); setCurrentPage(1); setExpandedSections({}); }}
+									className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+										groupBySection
+											? "bg-primary-600 text-white"
+											: "bg-secondary-700 text-secondary-300 hover:bg-secondary-600"
+									}`}
+									title={groupBySection ? "Show flat list" : "Group by CIS section"}
+								>
+									<Layers className="h-4 w-4" />
+									<span className="hidden sm:inline">Group</span>
+								</button>
 							</div>
 						</div>
 
-						{/* Results List */}
+						{/* Results List with Pagination Info */}
+						{currentFilteredResults && currentFilteredResults.length > 0 && (
+							<div className="px-4 py-2 border-b border-secondary-700 flex items-center justify-between text-xs text-secondary-400">
+								<span>
+									Showing {startIndex + 1}-{Math.min(endIndex, totalResults)} of {totalResults} results
+								</span>
+								{totalPages > 1 && (
+									<span>Page {currentPage} of {totalPages}</span>
+								)}
+							</div>
+						)}
 						{currentFilteredResults && currentFilteredResults.length > 0 ? (
-							<div className="divide-y divide-secondary-700 max-h-[600px] overflow-y-auto">
-								{currentFilteredResults.map((result) => (
+							<div className="divide-y divide-secondary-700">
+								{/* Grouped View */}
+								{groupBySection && sortedSections.map((section) => (
+									<div key={section} className="bg-secondary-800/50">
+										<button
+											onClick={() => toggleSection(section)}
+											className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary-700/50 transition-colors"
+										>
+											{expandedSections[section] ? (
+												<FolderOpen className="h-5 w-5 text-primary-400" />
+											) : (
+												<Folder className="h-5 w-5 text-secondary-400" />
+											)}
+											<span className="text-white font-medium">Section {section}</span>
+											<span className="px-2 py-0.5 rounded-full text-xs bg-secondary-600 text-secondary-300">
+												{groupedResults[section].length} rules
+											</span>
+											{expandedSections[section] ? (
+												<ChevronDown className="h-4 w-4 text-secondary-400 ml-auto" />
+											) : (
+												<ChevronRight className="h-4 w-4 text-secondary-400 ml-auto" />
+											)}
+										</button>
+										{expandedSections[section] && (
+											<div className="divide-y divide-secondary-700 border-t border-secondary-700">
+												{groupedResults[section].map((result) => (
+													<div key={result.id} className="p-4 pl-8">
+														<button
+															onClick={() => toggleRule(result.id)}
+															className="w-full flex items-center gap-3 text-left"
+														>
+															{expandedRules[result.id] ? (
+																<ChevronDown className="h-4 w-4 text-secondary-400 flex-shrink-0" />
+															) : (
+																<ChevronRight className="h-4 w-4 text-secondary-400 flex-shrink-0" />
+															)}
+															{getStatusIcon(result.status)}
+															<div className="flex-1 min-w-0">
+																<p className="text-white font-medium">
+																	{result.compliance_rules?.title || result.rule?.title || result.title || "Unknown Rule"}
+																</p>
+																<p className="text-xs text-secondary-400">
+																	{(result.compliance_rules?.severity || result.rule?.severity || result.severity) && (
+																		<span className={`capitalize ${
+																			(result.compliance_rules?.severity || result.rule?.severity || result.severity) === "critical" ? "text-red-400" :
+																			(result.compliance_rules?.severity || result.rule?.severity || result.severity) === "high" ? "text-orange-400" :
+																			(result.compliance_rules?.severity || result.rule?.severity || result.severity) === "medium" ? "text-yellow-400" :
+																			"text-secondary-400"
+																		}`}>
+																			{result.compliance_rules?.severity || result.rule?.severity || result.severity}
+																		</span>
+																	)}
+																</p>
+															</div>
+															<span className={`px-2 py-1 rounded text-xs border ${getStatusBadge(result.status)}`}>
+																{result.status}
+															</span>
+														</button>
+
+														{expandedRules[result.id] && (
+															<div className="mt-4 ml-8 space-y-3 text-sm border-l-2 border-secondary-600 pl-4">
+																{(result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_id) && (
+																	<div className="flex items-center gap-2 text-xs">
+																		<span className="text-secondary-500">Rule ID:</span>
+																		<code className="bg-secondary-700 px-2 py-0.5 rounded text-secondary-300 font-mono">
+																			{result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_id}
+																		</code>
+																	</div>
+																)}
+																{(result.compliance_rules?.description || result.rule?.description || result.description) && (
+																	<div>
+																		<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+																			<Info className="h-3.5 w-3.5" />
+																			Description
+																		</p>
+																		<p className="text-secondary-300">
+																			{result.compliance_rules?.description || result.rule?.description || result.description}
+																		</p>
+																	</div>
+																)}
+																{(result.compliance_rules?.remediation || result.rule?.remediation || result.remediation) && (
+																	<div>
+																		<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+																			<Wrench className="h-3.5 w-3.5" />
+																			Remediation
+																		</p>
+																		<pre className="text-secondary-300 whitespace-pre-wrap bg-secondary-700/30 rounded p-2 text-xs font-mono overflow-x-auto">
+																			{result.compliance_rules?.remediation || result.rule?.remediation || result.remediation}
+																		</pre>
+																	</div>
+																)}
+															</div>
+														)}
+													</div>
+												))}
+											</div>
+										)}
+									</div>
+								))}
+								{/* Flat View */}
+								{!groupBySection && paginatedResults.map((result) => (
 								<div key={result.id} className="p-4">
 									<button
 										onClick={() => toggleRule(result.id)}
@@ -1628,6 +1807,71 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 									)}
 								</div>
 							))}
+							{/* Pagination Controls */}
+							{totalPages > 1 && (
+								<div className="px-4 py-3 border-t border-secondary-700 flex items-center justify-between">
+									<div className="flex items-center gap-2">
+										<button
+											onClick={() => setCurrentPage(1)}
+											disabled={currentPage === 1}
+											className="px-2 py-1 text-xs rounded bg-secondary-700 text-secondary-300 hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+										>
+											First
+										</button>
+										<button
+											onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+											disabled={currentPage === 1}
+											className="p-1.5 rounded bg-secondary-700 text-secondary-300 hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+										>
+											<ChevronLeft className="h-4 w-4" />
+										</button>
+									</div>
+									<div className="flex items-center gap-1">
+										{/* Show page numbers with ellipsis for large page counts */}
+										{Array.from({ length: totalPages }, (_, i) => i + 1)
+											.filter(page => {
+												// Show first, last, current, and pages near current
+												if (page === 1 || page === totalPages) return true;
+												if (Math.abs(page - currentPage) <= 1) return true;
+												return false;
+											})
+											.map((page, index, filteredPages) => (
+												<>
+													{index > 0 && filteredPages[index - 1] !== page - 1 && (
+														<span key={`ellipsis-${page}`} className="px-1 text-secondary-500">...</span>
+													)}
+													<button
+														key={page}
+														onClick={() => setCurrentPage(page)}
+														className={`px-3 py-1 text-sm rounded ${
+															currentPage === page
+																? "bg-primary-600 text-white"
+																: "bg-secondary-700 text-secondary-300 hover:bg-secondary-600"
+														}`}
+													>
+														{page}
+													</button>
+												</>
+											))}
+									</div>
+									<div className="flex items-center gap-2">
+										<button
+											onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+											disabled={currentPage === totalPages}
+											className="p-1.5 rounded bg-secondary-700 text-secondary-300 hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+										>
+											<ChevronRight className="h-4 w-4" />
+										</button>
+										<button
+											onClick={() => setCurrentPage(totalPages)}
+											disabled={currentPage === totalPages}
+											className="px-2 py-1 text-xs rounded bg-secondary-700 text-secondary-300 hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+										>
+											Last
+										</button>
+									</div>
+								</div>
+							)}
 						</div>
 					) : (
 						<div className="p-8 text-center">

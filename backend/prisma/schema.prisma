@@ -197,7 +197,6 @@ model settings {
   created_at                   DateTime  @default(now())
   updated_at                   DateTime
   update_interval              Int       @default(60)
-  integration_status_interval  Int       @default(30) // How often agents report integration status (minutes)
   auto_update                  Boolean   @default(false)
   github_repo_url              String    @default("https://github.com/MacJediWizard/PatchMon-Enhanced.git")
   ssh_key_path                 String?
@@ -529,9 +528,10 @@ model compliance_scans {
   total_rules   Int       @default(0)
   passed        Int       @default(0)
   failed        Int       @default(0)
-  warnings      Int       @default(0)
-  skipped       Int       @default(0)
-  score         Float? // Percentage 0-100
+  warnings       Int       @default(0)
+  skipped        Int       @default(0)
+  not_applicable Int       @default(0)
+  score          Float? // Percentage 0-100
   error_message String?   @db.Text // Error details when status is "failed"
   raw_output    String?   @db.Text
   created_at    DateTime  @default(now())

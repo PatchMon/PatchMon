@@ -311,6 +311,19 @@ class QueueManager {
 								`Agent ${api_id} is not connected. Cannot send update command.`,
 							);
 						}
+					} else if (type === "refresh_integration_status") {
+						// Request agent to refresh and report integration status
+						const ws = agentWs.getConnectionByApiId(api_id);
+						if (ws && ws.readyState === 1) {
+							// WebSocket.OPEN
+							agentWs.pushRefreshIntegrationStatus(api_id);
+							logger.info(`✅ Refresh integration status command sent to agent ${api_id}`);
+						} else {
+							logger.error(`❌ Agent ${api_id} is not connected`);
+							throw new Error(
+								`Agent ${api_id} is not connected. Cannot refresh integration status.`,
+							);
+						}
 					} else {
 						logger.error(`Unknown agent command type: ${type}`);
 					}

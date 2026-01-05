@@ -69,6 +69,7 @@ const HostDetail = () => {
 	const [notesMessage, setNotesMessage] = useState({ text: "", type: "" });
 	const [updateMessage, setUpdateMessage] = useState({ text: "", jobId: "" });
 	const [reportMessage, setReportMessage] = useState({ text: "", jobId: "" });
+	const [integrationRefreshMessage, setIntegrationRefreshMessage] = useState({ text: "", isError: false });
 	const [showAllReports, setShowAllReports] = useState(false);
 
 	// State for auto-update confirmation dialog
@@ -290,11 +291,14 @@ const HostDetail = () => {
 			}
 		},
 		onError: (error) => {
+			const errorMsg = error.response?.data?.error || "Failed to send update command";
+			const details = error.response?.data?.details;
 			setUpdateMessage({
-				text: error.response?.data?.error || "Failed to queue update",
+				text: details ? `${errorMsg}: ${details}` : errorMsg,
 				jobId: "",
+				isError: true,
 			});
-			safeSetTimeout(() => setUpdateMessage({ text: "", jobId: "" }), 5000);
+			safeSetTimeout(() => setUpdateMessage({ text: "", jobId: "", isError: false }), 5000);
 		},
 	});
 
@@ -320,6 +324,31 @@ const HostDetail = () => {
 				jobId: "",
 			});
 			safeSetTimeout(() => setReportMessage({ text: "", jobId: "" }), 5000);
+		},
+	});
+
+	// Refresh integration status mutation
+	const refreshIntegrationStatusMutation = useMutation({
+		mutationFn: () =>
+			adminHostsAPI.refreshIntegrationStatus(hostId).then((res) => res.data),
+		onSuccess: () => {
+			setIntegrationRefreshMessage({
+				text: "Integration status refresh requested",
+				isError: false,
+			});
+			// Refetch integrations data after a short delay to allow agent to respond
+			safeSetTimeout(() => {
+				refetchIntegrations();
+				queryClient.invalidateQueries(["compliance-setup-status", hostId]);
+			}, 2000);
+			safeSetTimeout(() => setIntegrationRefreshMessage({ text: "", isError: false }), 5000);
+		},
+		onError: (error) => {
+			setIntegrationRefreshMessage({
+				text: error.response?.data?.error || "Failed to refresh integration status",
+				isError: true,
+			});
+			safeSetTimeout(() => setIntegrationRefreshMessage({ text: "", isError: false }), 5000);
 		},
 	});
 
@@ -2878,6 +2907,26 @@ const HostDetail = () => {
 						{/* Integrations */}
 						{activeTab === "integrations" && (
 							<div className="space-y-4">
+								{/* Header with refresh button */}
+								<div className="flex items-center justify-between">
+									<div className="flex items-center gap-2">
+										{integrationRefreshMessage.text && (
+											<span className={`text-sm ${integrationRefreshMessage.isError ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+												{integrationRefreshMessage.text}
+											</span>
+										)}
+									</div>
+									<button
+										type="button"
+										onClick={() => refreshIntegrationStatusMutation.mutate()}
+										disabled={refreshIntegrationStatusMutation.isPending || !wsStatus?.connected}
+										title={wsStatus?.connected ? "Refresh integration status from agent" : "Agent is not connected"}
+										className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-secondary-100 dark:bg-secondary-700 hover:bg-secondary-200 dark:hover:bg-secondary-600 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+									>
+										<RefreshCw className={`h-4 w-4 ${refreshIntegrationStatusMutation.isPending ? 'animate-spin' : ''}`} />
+										{refreshIntegrationStatusMutation.isPending ? 'Refreshing...' : 'Refresh Status'}
+									</button>
+								</div>
 								{isLoadingIntegrations ? (
 									<div className="flex items-center justify-center h-32">
 										<RefreshCw className="h-6 w-6 animate-spin text-primary-600" />
@@ -2988,8 +3037,8 @@ const HostDetail = () => {
 														Provides security posture assessment and remediation recommendations.
 													</p>
 
-													{/* Setup Status Display */}
-													{(complianceSetupStatus?.status?.status || integrationsData?.data?.integrations?.compliance) && (
+													{/* Setup Status Display - hide when status is "disabled" */}
+													{((complianceSetupStatus?.status?.status && complianceSetupStatus?.status?.status !== "disabled") || (!complianceSetupStatus?.status?.status && integrationsData?.data?.integrations?.compliance)) && (
 														<div className="mt-3 p-3 rounded-lg border bg-secondary-100 dark:bg-secondary-800 border-secondary-300 dark:border-secondary-600">
 															{/* Installing State */}
 															{complianceSetupStatus?.status?.status === "installing" && (
