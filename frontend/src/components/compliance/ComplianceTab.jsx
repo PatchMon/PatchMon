@@ -49,7 +49,7 @@ const SUBTABS = [
 	{ id: "settings", name: "Settings", icon: Settings },
 ];
 
-const ComplianceTab = ({ hostId, apiId, isConnected }) => {
+const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, dockerEnabled = false }) => {
 	const [activeSubtab, setActiveSubtab] = useState("overview");
 	const [expandedRules, setExpandedRules] = useState({});
 	const [statusFilter, setStatusFilter] = useState("fail");
@@ -1734,8 +1734,71 @@ const ComplianceTab = ({ hostId, apiId, isConnected }) => {
 		const components = status?.components || {};
 		const info = status?.scanner_info;
 
+		// Detect mismatches between enabled integrations and available services
+		const openscapAvailable = components.openscap === "ready" || info?.openscap_available || info?.openscap_version;
+		const dockerBenchAvailable = components["docker-bench"] === "ready" || info?.docker_bench_available;
+		const oscapDockerAvailable = components["oscap-docker"] === "ready" || info?.oscap_docker_available;
+
+		// Mismatch: compliance enabled but scanner not available
+		const complianceMismatch = complianceEnabled && status && !openscapAvailable;
+		// Mismatch: docker enabled but docker-bench not available (only if compliance is also enabled)
+		const dockerMismatch = dockerEnabled && complianceEnabled && status && !dockerBenchAvailable && components["docker-bench"] !== "unavailable";
+
 		return (
 			<div className="space-y-6">
+				{/* Integration Mismatch Warnings */}
+				{complianceMismatch && (
+					<div className="p-4 bg-red-900/30 border border-red-700 rounded-lg">
+						<div className="flex items-start gap-3">
+							<AlertTriangle className="h-5 w-5 text-red-400 flex-shrink-0 mt-0.5" />
+							<div>
+								<h4 className="font-medium text-red-300">Compliance Enabled but Scanner Unavailable</h4>
+								<p className="text-sm text-red-200/80 mt-1">
+									Compliance integration is enabled for this host, but OpenSCAP is not installed or available on the agent.
+									The agent will attempt to install it automatically, or you can manually install it:
+								</p>
+								<code className="block mt-2 p-2 bg-red-900/50 rounded text-xs text-red-200 font-mono">
+									# Debian/Ubuntu: apt install openscap-scanner scap-security-guide
+									<br />
+									# RHEL/CentOS: yum install openscap-scanner scap-security-guide
+								</code>
+							</div>
+						</div>
+					</div>
+				)}
+
+				{dockerMismatch && (
+					<div className="p-4 bg-yellow-900/30 border border-yellow-700 rounded-lg">
+						<div className="flex items-start gap-3">
+							<AlertTriangle className="h-5 w-5 text-yellow-400 flex-shrink-0 mt-0.5" />
+							<div>
+								<h4 className="font-medium text-yellow-300">Docker Integration Enabled but Docker Bench Unavailable</h4>
+								<p className="text-sm text-yellow-200/80 mt-1">
+									Docker integration is enabled, but Docker Bench for Security is not available.
+									Ensure Docker is installed and running on the agent host.
+								</p>
+							</div>
+						</div>
+					</div>
+				)}
+
+				{/* No Status Available Warning */}
+				{complianceEnabled && !status && (
+					<div className="p-4 bg-blue-900/30 border border-blue-700 rounded-lg">
+						<div className="flex items-start gap-3">
+							<Info className="h-5 w-5 text-blue-400 flex-shrink-0 mt-0.5" />
+							<div>
+								<h4 className="font-medium text-blue-300">Waiting for Agent Status Report</h4>
+								<p className="text-sm text-blue-200/80 mt-1">
+									Compliance is enabled but the agent hasn't reported its scanner status yet.
+									The agent reports status on startup and periodically (default every 30 minutes).
+									Try refreshing or wait for the next check-in.
+								</p>
+							</div>
+						</div>
+					</div>
+				)}
+
 				{/* Scanner Status */}
 				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
 					<div className="flex items-center justify-between mb-4">

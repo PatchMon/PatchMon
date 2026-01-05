@@ -1155,11 +1155,16 @@ router.post("/ping", validateApiCredentials, async (req, res) => {
 			},
 		});
 
+		// Fetch settings for integration status interval
+		const settings = await prisma.settings.findFirst();
+		const integrationStatusInterval = settings?.integration_status_interval || 30;
+
 		const response = {
 			message: "Ping successful",
 			timestamp: now.toISOString(),
 			friendlyName: req.hostRecord.friendly_name,
 			agentStartup: isStartup,
+			integrationStatusInterval, // How often agent should report integration status (minutes)
 		};
 
 		// Include integration states in ping response for initial agent configuration

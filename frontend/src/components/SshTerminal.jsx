@@ -878,7 +878,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	// Embedded mode - render inline without modal overlay
 	if (embedded) {
 		return (
-			<div className="bg-secondary-900 rounded-lg w-full flex flex-col" style={{ minHeight: isConnected || isConnecting ? "750px" : "auto", maxHeight: "calc(100vh - 150px)" }}>
+			<div className="bg-secondary-900 rounded-lg w-full flex flex-col overflow-hidden" style={{ height: isConnected || isConnecting ? "calc(100vh - 150px)" : "auto", minHeight: isConnected || isConnecting ? "600px" : "auto" }}>
 				{/* Compact Header */}
 				<div className="flex items-center justify-between px-4 py-2 border-b border-secondary-700 flex-shrink-0">
 					<div className="flex items-center gap-2">
@@ -1202,7 +1202,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 
 				{/* Terminal Container with AI Panel - Shown when connecting or connected */}
 				{(isConnected || isConnecting) && (
-					<div className="flex-1 overflow-hidden min-h-[500px] flex">
+					<div className="flex-1 overflow-hidden flex min-h-0">
 						{/* Main Terminal Area - flex-shrink to allow AI panel space */}
 						<div className={`flex flex-col transition-all duration-300 overflow-hidden ${aiPanelOpen ? "flex-1 min-w-0 pr-2" : "flex-1"}`}>
 							{/* Command Suggestion / Loading Indicator Bar */}
@@ -1263,9 +1263,9 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 							)}
 						</div>
 
-						{/* AI Assistant Panel - Fixed width, doesn't shrink */}
+						{/* AI Assistant Panel - Fixed width, doesn't shrink, constrained height for scrolling */}
 						{aiPanelOpen && aiEnabled && (
-							<div className="w-80 flex-shrink-0 border-l border-secondary-700 flex flex-col bg-secondary-800/50">
+							<div className="w-80 flex-shrink-0 border-l border-secondary-700 flex flex-col bg-secondary-800/50 overflow-hidden">
 								{/* Panel Header */}
 								<div className="p-3 border-b border-secondary-700 flex items-center justify-between">
 									<div className="flex items-center gap-2">

@@ -5,10 +5,12 @@ import { settingsAPI } from "../../utils/api";
 
 const AgentUpdatesTab = () => {
 	const updateIntervalId = useId();
+	const integrationStatusIntervalId = useId();
 	const autoUpdateId = useId();
 	const ignoreSslId = useId();
 	const [formData, setFormData] = useState({
 		updateInterval: 60,
+		integrationStatusInterval: 30,
 		autoUpdate: false,
 		ignoreSslSelfSigned: false,
 	});
@@ -83,6 +85,7 @@ const AgentUpdatesTab = () => {
 		if (settings) {
 			const newFormData = {
 				updateInterval: settings.update_interval || 60,
+				integrationStatusInterval: settings.integration_status_interval || 30,
 				autoUpdate: settings.auto_update || false,
 				ignoreSslSelfSigned: settings.ignore_ssl_self_signed === true,
 			};
@@ -361,6 +364,39 @@ const AgentUpdatesTab = () => {
 					<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
 						This affects new installations and will update existing ones when
 						they next reach out.
+					</p>
+				</div>
+
+				{/* Integration Status Interval */}
+				<div>
+					<label
+						htmlFor={integrationStatusIntervalId}
+						className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2"
+					>
+						Integration Status Check-in Interval
+					</label>
+					<p className="text-sm text-secondary-500 dark:text-secondary-400 mb-3">
+						How often agents report their integration capabilities (compliance scanner status, Docker availability, etc.)
+					</p>
+					<div className="flex flex-wrap items-center gap-2">
+						{[15, 30, 45, 60].map((m) => (
+							<button
+								key={m}
+								type="button"
+								onClick={() => handleInputChange("integrationStatusInterval", m)}
+								className={`px-4 py-2 rounded-md text-sm font-medium border ${
+									formData.integrationStatusInterval === m
+										? "bg-primary-600 text-white border-primary-600"
+										: "bg-white dark:bg-secondary-700 text-secondary-700 dark:text-secondary-200 border-secondary-300 dark:border-secondary-600 hover:bg-secondary-50 dark:hover:bg-secondary-600"
+								}`}
+							>
+								{m} min
+							</button>
+						))}
+					</div>
+					<p className="mt-2 text-xs text-secondary-500 dark:text-secondary-400">
+						Lower values provide more up-to-date scanner status in the UI but increase server load.
+						Changes take effect on next agent startup.
 					</p>
 				</div>
 

@@ -197,6 +197,7 @@ model settings {
   created_at                   DateTime  @default(now())
   updated_at                   DateTime
   update_interval              Int       @default(60)
+  integration_status_interval  Int       @default(30) // How often agents report integration status (minutes)
   auto_update                  Boolean   @default(false)
   github_repo_url              String    @default("https://github.com/MacJediWizard/PatchMon-Enhanced.git")
   ssh_key_path                 String?

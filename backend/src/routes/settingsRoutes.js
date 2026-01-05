@@ -87,6 +87,10 @@ router.put(
 			.optional()
 			.isInt({ min: 5, max: 1440 })
 			.withMessage("Update interval must be between 5 and 1440 minutes"),
+		body("integrationStatusInterval")
+			.optional()
+			.isInt({ min: 15, max: 60 })
+			.withMessage("Integration status interval must be between 15 and 60 minutes"),
 		body("autoUpdate")
 			.optional()
 			.isBoolean()
@@ -152,6 +156,7 @@ router.put(
 				serverHost,
 				serverPort,
 				updateInterval,
+				integrationStatusInterval,
 				autoUpdate,
 				ignoreSslSelfSigned,
 				signupEnabled,
@@ -179,6 +184,13 @@ router.put(
 			if (serverPort !== undefined) updateData.server_port = serverPort;
 			if (updateInterval !== undefined) {
 				updateData.update_interval = normalizeUpdateInterval(updateInterval);
+			}
+			if (integrationStatusInterval !== undefined) {
+				// Valid values: 15, 30, 45, 60
+				const validIntervals = [15, 30, 45, 60];
+				updateData.integration_status_interval = validIntervals.includes(integrationStatusInterval)
+					? integrationStatusInterval
+					: 30;
 			}
 			if (autoUpdate !== undefined) updateData.auto_update = autoUpdate;
 			if (ignoreSslSelfSigned !== undefined)
