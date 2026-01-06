@@ -525,92 +525,148 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 				</div>
 			)}
 
-			{/* Latest Scan Summary */}
-			{latestScan ? (
-				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
-					<div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-						<div className="flex-1">
-							<div className="flex items-center gap-3 mb-4">
-								<Shield className="h-8 w-8 text-primary-400" />
-								<div>
-									<h3 className="text-lg font-semibold text-white">
-										{latestScan.compliance_profiles?.name || latestScan.profile?.name || "Security Scan"}
-									</h3>
-									<p className="text-sm text-secondary-400">
-										Last scanned {new Date(latestScan.completed_at).toLocaleString()}
-									</p>
-								</div>
+			{/* Scan Results by Type - Show both OpenSCAP and Docker Bench */}
+			{(scansByType?.openscap || scansByType?.["docker-bench"]) ? (
+				<>
+				<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+					{/* OpenSCAP Card */}
+					<div className={`bg-secondary-800 rounded-lg border ${scansByType?.openscap ? "border-green-700/50" : "border-secondary-700"} p-6`}>
+						<div className="flex items-center gap-3 mb-4">
+							<div className="p-2 rounded-lg bg-green-900/30">
+								<Shield className="h-6 w-6 text-green-400" />
 							</div>
+							<div className="flex-1">
+								<h3 className="text-lg font-semibold text-white">OpenSCAP</h3>
+								<p className="text-xs text-secondary-400">CIS Benchmark Scanning</p>
+							</div>
+							{scansByType?.openscap && (
+								<ComplianceScore score={scansByType.openscap.score} size="md" />
+							)}
+						</div>
 
-							{/* Stats Grid - Use actual results for accurate counts */}
-							{(() => {
-								const results = latestScan.compliance_results || latestScan.results || [];
-								const counts = {
-									total: results.length,
-									pass: results.filter(r => r.status === "pass").length,
-									fail: results.filter(r => r.status === "fail").length,
-									warn: results.filter(r => r.status === "warn").length,
-									skip: results.filter(r => r.status === "skip").length,
-									notapplicable: results.filter(r => r.status === "notapplicable").length,
-								};
-								return (
-									<div className="grid grid-cols-5 gap-3">
-										<div className="bg-secondary-700/50 rounded-lg p-3 text-center">
-											<p className="text-2xl font-bold text-white">{counts.total}</p>
-											<p className="text-xs text-secondary-400">Total Rules</p>
-										</div>
-										<div className="bg-green-900/20 border border-green-800/50 rounded-lg p-3 text-center">
-											<p className="text-2xl font-bold text-green-400">{counts.pass}</p>
-											<p className="text-xs text-secondary-400">Passed</p>
-										</div>
-										<div className="bg-red-900/20 border border-red-800/50 rounded-lg p-3 text-center">
-											<p className="text-2xl font-bold text-red-400">{counts.fail}</p>
-											<p className="text-xs text-secondary-400">Failed</p>
-										</div>
-										<div className="bg-yellow-900/20 border border-yellow-800/50 rounded-lg p-3 text-center">
-											<p className="text-2xl font-bold text-yellow-400">{counts.warn}</p>
-											<p className="text-xs text-secondary-400">Warnings</p>
-										</div>
-										<div className="bg-secondary-700/50 rounded-lg p-3 text-center">
-											<p className="text-2xl font-bold text-secondary-400">
-												{counts.skip + counts.notapplicable}
-											</p>
-											<p className="text-xs text-secondary-400">N/A</p>
-										</div>
+						{scansByType?.openscap ? (
+							<>
+								<div className="grid grid-cols-4 gap-2 mb-4">
+									<div className="bg-secondary-700/50 rounded p-2 text-center">
+										<p className="text-lg font-bold text-white">{scansByType.openscap.total_rules}</p>
+										<p className="text-xs text-secondary-400">Total</p>
 									</div>
-								);
-							})()}
-						</div>
-
-						<div className="flex justify-center lg:justify-end">
-							<ComplianceScore score={latestScan.score} size="xl" />
-						</div>
+									<div className="bg-green-900/20 rounded p-2 text-center">
+										<p className="text-lg font-bold text-green-400">{scansByType.openscap.passed}</p>
+										<p className="text-xs text-secondary-400">Passed</p>
+									</div>
+									<div className="bg-red-900/20 rounded p-2 text-center">
+										<p className="text-lg font-bold text-red-400">{scansByType.openscap.failed}</p>
+										<p className="text-xs text-secondary-400">Failed</p>
+									</div>
+									<div className="bg-secondary-700/50 rounded p-2 text-center">
+										<p className="text-lg font-bold text-secondary-400">{scansByType.openscap.skipped || 0}</p>
+										<p className="text-xs text-secondary-400">N/A</p>
+									</div>
+								</div>
+								<p className="text-xs text-secondary-500 mb-3">
+									Last scan: {new Date(scansByType.openscap.completed_at).toLocaleString()}
+								</p>
+								<button
+									onClick={() => {
+										setProfileTypeFilter("openscap");
+										setStatusFilter("fail");
+										setActiveSubtab("results");
+									}}
+									className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-green-600/20 hover:bg-green-600/30 text-green-400 rounded-lg transition-colors text-sm"
+								>
+									<ListChecks className="h-4 w-4" />
+									View Results
+								</button>
+							</>
+						) : (
+							<div className="text-center py-6">
+								<p className="text-secondary-500 text-sm mb-3">No OpenSCAP scan data</p>
+								<button
+									onClick={() => setActiveSubtab("scan")}
+									className="text-xs text-primary-400 hover:text-primary-300"
+								>
+									Run a scan →
+								</button>
+							</div>
+						)}
 					</div>
 
-					{latestScan.error_message && (
-						<div className="mt-4 p-3 bg-red-900/20 border border-red-800 rounded-lg text-sm text-red-300">
-							<strong>Error:</strong> {latestScan.error_message}
+					{/* Docker Bench Card */}
+					<div className={`bg-secondary-800 rounded-lg border ${scansByType?.["docker-bench"] ? "border-blue-700/50" : "border-secondary-700"} p-6`}>
+						<div className="flex items-center gap-3 mb-4">
+							<div className="p-2 rounded-lg bg-blue-900/30">
+								<Container className="h-6 w-6 text-blue-400" />
+							</div>
+							<div className="flex-1">
+								<h3 className="text-lg font-semibold text-white">Docker Bench</h3>
+								<p className="text-xs text-secondary-400">CIS Docker Benchmark</p>
+							</div>
+							{scansByType?.["docker-bench"] && (
+								<ComplianceScore score={scansByType["docker-bench"].score} size="md" />
+							)}
 						</div>
-					)}
 
-					{/* Quick Actions */}
-					<div className="mt-6 pt-4 border-t border-secondary-700 flex flex-wrap gap-3">
-						<button
-							onClick={() => setActiveSubtab("scan")}
-							className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
-						>
-							<Play className="h-4 w-4" />
-							Run New Scan
-						</button>
-						<button
-							onClick={() => setActiveSubtab("results")}
-							className="flex items-center gap-2 px-4 py-2 bg-secondary-700 hover:bg-secondary-600 text-white rounded-lg transition-colors"
-						>
-							<ListChecks className="h-4 w-4" />
-							View Details
-						</button>
+						{scansByType?.["docker-bench"] ? (
+							<>
+								<div className="grid grid-cols-4 gap-2 mb-4">
+									<div className="bg-secondary-700/50 rounded p-2 text-center">
+										<p className="text-lg font-bold text-white">{scansByType["docker-bench"].total_rules}</p>
+										<p className="text-xs text-secondary-400">Total</p>
+									</div>
+									<div className="bg-green-900/20 rounded p-2 text-center">
+										<p className="text-lg font-bold text-green-400">{scansByType["docker-bench"].passed}</p>
+										<p className="text-xs text-secondary-400">Passed</p>
+									</div>
+									<div className="bg-yellow-900/20 rounded p-2 text-center">
+										<p className="text-lg font-bold text-yellow-400">{scansByType["docker-bench"].warnings}</p>
+										<p className="text-xs text-secondary-400">Warnings</p>
+									</div>
+									<div className="bg-secondary-700/50 rounded p-2 text-center">
+										<p className="text-lg font-bold text-secondary-400">{scansByType["docker-bench"].skipped || 0}</p>
+										<p className="text-xs text-secondary-400">Info</p>
+									</div>
+								</div>
+								<p className="text-xs text-secondary-500 mb-3">
+									Last scan: {new Date(scansByType["docker-bench"].completed_at).toLocaleString()}
+								</p>
+								<button
+									onClick={() => {
+										setProfileTypeFilter("docker-bench");
+										setStatusFilter("warn");
+										setActiveSubtab("results");
+									}}
+									className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg transition-colors text-sm"
+								>
+									<ListChecks className="h-4 w-4" />
+									View Results
+								</button>
+							</>
+						) : (
+							<div className="text-center py-6">
+								<p className="text-secondary-500 text-sm mb-3">No Docker Bench scan data</p>
+								<button
+									onClick={() => setActiveSubtab("scan")}
+									className="text-xs text-primary-400 hover:text-primary-300"
+								>
+									Run a scan →
+								</button>
+							</div>
+						)}
 					</div>
 				</div>
+
+				{/* Quick Actions */}
+				<div className="flex justify-center gap-3 mt-4">
+					<button
+						onClick={() => setActiveSubtab("scan")}
+						className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
+					>
+						<Play className="h-4 w-4" />
+						Run New Scan
+					</button>
+				</div>
+				</>
 			) : (
 				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-12 text-center">
 					<Shield className="h-16 w-16 text-secondary-600 mx-auto mb-4" />
@@ -628,113 +684,12 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 				</div>
 			)}
 
-			{/* Charts Section */}
-			{latestScan && (() => {
-				const results = latestScan.compliance_results || latestScan.results || [];
-				const failedResults = results.filter(r => r.status === "fail");
-
-				// Results breakdown data
-				const resultsData = [
-					{ name: "Passed", value: results.filter(r => r.status === "pass").length, color: "#22c55e" },
-					{ name: "Failed", value: results.filter(r => r.status === "fail").length, color: "#ef4444" },
-					{ name: "Warnings", value: results.filter(r => r.status === "warn").length, color: "#eab308" },
-					{ name: "N/A", value: results.filter(r => r.status === "skip" || r.status === "notapplicable").length, color: "#6b7280" },
-				].filter(d => d.value > 0);
-
-				// Severity breakdown for failed rules
-				const getSeverity = (r) => r.compliance_rules?.severity || r.rule?.severity || r.severity || "unknown";
-				const severityData = [
-					{ name: "Critical", value: failedResults.filter(r => getSeverity(r) === "critical").length, color: "#dc2626" },
-					{ name: "High", value: failedResults.filter(r => getSeverity(r) === "high").length, color: "#f97316" },
-					{ name: "Medium", value: failedResults.filter(r => getSeverity(r) === "medium").length, color: "#eab308" },
-					{ name: "Low", value: failedResults.filter(r => getSeverity(r) === "low").length, color: "#3b82f6" },
-					{ name: "Unknown", value: failedResults.filter(r => getSeverity(r) === "unknown").length, color: "#6b7280" },
-				].filter(d => d.value > 0);
-
-				return (
-					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-						{/* Results Breakdown Pie Chart */}
-						<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
-							<h3 className="text-white font-medium mb-4 flex items-center gap-2">
-								<BarChart3 className="h-4 w-4 text-primary-400" />
-								Results Breakdown
-							</h3>
-							<div className="h-48">
-								<ResponsiveContainer width="100%" height="100%">
-									<PieChart>
-										<Pie
-											data={resultsData}
-											cx="50%"
-											cy="50%"
-											innerRadius={40}
-											outerRadius={70}
-											dataKey="value"
-											label={({ name, value }) => `${name}: ${value}`}
-											labelLine={false}
-										>
-											{resultsData.map((entry, index) => (
-												<Cell key={`cell-${index}`} fill={entry.color} />
-											))}
-										</Pie>
-										<Tooltip
-											contentStyle={{
-												backgroundColor: "#1f2937",
-												border: "1px solid #374151",
-												borderRadius: "0.5rem",
-											}}
-											labelStyle={{ color: "#9ca3af" }}
-										/>
-									</PieChart>
-								</ResponsiveContainer>
-							</div>
-							<div className="flex flex-wrap justify-center gap-4 mt-2">
-								{resultsData.map((entry) => (
-									<div key={entry.name} className="flex items-center gap-2 text-sm">
-										<div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color }} />
-										<span className="text-secondary-400">{entry.name}</span>
-									</div>
-								))}
-							</div>
-						</div>
-
-						{/* Failed Rules by Severity */}
-						{failedResults.length > 0 && (
-							<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
-								<h3 className="text-white font-medium mb-4 flex items-center gap-2">
-									<AlertTriangle className="h-4 w-4 text-red-400" />
-									Failed Rules by Severity
-								</h3>
-								<div className="h-48">
-									<ResponsiveContainer width="100%" height="100%">
-										<BarChart data={severityData} layout="vertical">
-											<XAxis type="number" stroke="#6b7280" fontSize={12} />
-											<YAxis type="category" dataKey="name" stroke="#6b7280" fontSize={12} width={70} />
-											<Tooltip
-												contentStyle={{
-													backgroundColor: "#1f2937",
-													border: "1px solid #374151",
-													borderRadius: "0.5rem",
-												}}
-												labelStyle={{ color: "#9ca3af" }}
-											/>
-											<Bar dataKey="value" radius={[0, 4, 4, 0]}>
-												{severityData.map((entry, index) => (
-													<Cell key={`cell-${index}`} fill={entry.color} />
-												))}
-											</Bar>
-										</BarChart>
-									</ResponsiveContainer>
-								</div>
-							</div>
-						)}
-					</div>
-				);
-			})()}
-
-			{/* Compliance Trend Chart */}
-			<Suspense fallback={<div className="h-48 bg-secondary-800 rounded-lg border border-secondary-700 animate-pulse" />}>
-				<ComplianceTrend hostId={hostId} />
-			</Suspense>
+			{/* Compliance Score Trend */}
+			{(scansByType?.openscap || scansByType?.["docker-bench"]) && (
+				<Suspense fallback={<div className="h-48 bg-secondary-800 rounded-lg border border-secondary-700 animate-pulse" />}>
+					<ComplianceTrend hostId={hostId} />
+				</Suspense>
+			)}
 		</div>
 	);
 
