@@ -679,30 +679,28 @@ router.get("/scans/:hostId/latest-by-type", async (req, res) => {
       return res.status(400).json({ error: "Invalid host ID format" });
     }
 
-    // Get distinct profile types that have scans for this host
-    const profileTypes = await prisma.$queryRaw`
-      SELECT DISTINCT cp.type
-      FROM compliance_scans cs
-      JOIN compliance_profiles cp ON cs.profile_id = cp.id
-      WHERE cs.host_id = ${hostId}::uuid AND cs.status = 'completed'
-    `;
+    // Get all completed scans for this host with their profile types
+    const scans = await prisma.compliance_scans.findMany({
+      where: {
+        host_id: hostId,
+        status: "completed",
+      },
+      orderBy: { completed_at: "desc" },
+      include: {
+        compliance_profiles: {
+          select: { type: true, name: true },
+        },
+      },
+    });
 
-    // For each profile type, get the latest scan summary
+    // Group by profile type and get the latest for each
     const results = {};
-    for (const { type } of profileTypes) {
-      const scan = await prisma.compliance_scans.findFirst({
-        where: {
-          host_id: hostId,
-          status: "completed",
-          compliance_profiles: { type },
-        },
-        orderBy: { completed_at: "desc" },
-        include: {
-          compliance_profiles: true,
-        },
-      });
+    for (const scan of scans) {
+      const type = scan.compliance_profiles?.type;
+      if (!type) continue;
 
-      if (scan) {
+      // Only keep the first (latest) scan for each type
+      if (!results[type]) {
         results[type] = {
           id: scan.id,
           profile_name: scan.compliance_profiles?.name,
