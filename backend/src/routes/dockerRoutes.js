@@ -669,6 +669,7 @@ router.post("/collect", async (req, res) => {
 						status: containerData.status,
 						state: containerData.state,
 						ports: containerData.ports || null,
+						labels: containerData.labels || null,
 						started_at: containerData.started_at
 							? parse_date(containerData.started_at, null)
 							: null,
@@ -686,6 +687,7 @@ router.post("/collect", async (req, res) => {
 						status: containerData.status,
 						state: containerData.state,
 						ports: containerData.ports || null,
+						labels: containerData.labels || null,
 						created_at: parse_date(containerData.created_at, now),
 						started_at: containerData.started_at
 							? parse_date(containerData.started_at, null)

@@ -116,6 +116,7 @@ router.post("/docker", async (req, res) => {
 						status: containerData.status,
 						state: containerData.state || containerData.status,
 						ports: containerData.ports || null,
+						labels: containerData.labels || null,
 						started_at: containerData.started_at
 							? parseDate(containerData.started_at)
 							: null,
@@ -133,6 +134,7 @@ router.post("/docker", async (req, res) => {
 						status: containerData.status,
 						state: containerData.state || containerData.status,
 						ports: containerData.ports || null,
+						labels: containerData.labels || null,
 						created_at: parseDate(containerData.created_at),
 						started_at: containerData.started_at
 							? parseDate(containerData.started_at)

@@ -3265,104 +3265,274 @@ const HostDetail = () => {
 								) : (
 									<>
 										{/* Summary Stats */}
-										<div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-											<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
-												<div className="flex items-center gap-2 mb-1">
-													<div className="w-2 h-2 rounded-full bg-green-500" />
-													<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Running</span>
+										{(() => {
+											// Calculate stacks from container labels
+											const stacks = new Set();
+											dockerData.containers?.forEach(c => {
+												const project = c.labels?.["com.docker.compose.project"];
+												if (project) stacks.add(project);
+											});
+											const stackCount = stacks.size;
+
+											return (
+												<div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+													<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
+														<div className="flex items-center gap-2 mb-1">
+															<div className="w-2 h-2 rounded-full bg-green-500" />
+															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Running</span>
+														</div>
+														<p className="text-xl font-bold text-secondary-900 dark:text-white">
+															{dockerData.containers?.filter(c => c.state === "running").length || 0}
+														</p>
+													</div>
+													<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
+														<div className="flex items-center gap-2 mb-1">
+															<div className="w-2 h-2 rounded-full bg-red-500" />
+															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Stopped</span>
+														</div>
+														<p className="text-xl font-bold text-secondary-900 dark:text-white">
+															{dockerData.containers?.filter(c => c.state !== "running").length || 0}
+														</p>
+													</div>
+													<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
+														<div className="flex items-center gap-2 mb-1">
+															<Server className="w-3 h-3 text-orange-500" />
+															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Stacks</span>
+														</div>
+														<p className="text-xl font-bold text-secondary-900 dark:text-white">
+															{stackCount}
+														</p>
+													</div>
+													<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
+														<div className="flex items-center gap-2 mb-1">
+															<Package className="w-3 h-3 text-blue-500" />
+															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Images</span>
+														</div>
+														<p className="text-xl font-bold text-secondary-900 dark:text-white">
+															{dockerData.images?.length || 0}
+														</p>
+													</div>
+													<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
+														<div className="flex items-center gap-2 mb-1">
+															<HardDrive className="w-3 h-3 text-purple-500" />
+															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Volumes</span>
+														</div>
+														<p className="text-xl font-bold text-secondary-900 dark:text-white">
+															{dockerData.volumes?.length || 0}
+														</p>
+													</div>
 												</div>
-												<p className="text-xl font-bold text-secondary-900 dark:text-white">
-													{dockerData.containers?.filter(c => c.state === "running").length || 0}
-												</p>
-											</div>
-											<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
-												<div className="flex items-center gap-2 mb-1">
-													<div className="w-2 h-2 rounded-full bg-red-500" />
-													<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Stopped</span>
-												</div>
-												<p className="text-xl font-bold text-secondary-900 dark:text-white">
-													{dockerData.containers?.filter(c => c.state !== "running").length || 0}
-												</p>
-											</div>
-											<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
-												<div className="flex items-center gap-2 mb-1">
-													<Package className="w-3 h-3 text-blue-500" />
-													<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Images</span>
-												</div>
-												<p className="text-xl font-bold text-secondary-900 dark:text-white">
-													{dockerData.images?.length || 0}
-												</p>
-											</div>
-											<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
-												<div className="flex items-center gap-2 mb-1">
-													<HardDrive className="w-3 h-3 text-purple-500" />
-													<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Volumes</span>
-												</div>
-												<p className="text-xl font-bold text-secondary-900 dark:text-white">
-													{dockerData.volumes?.length || 0}
-												</p>
-											</div>
-										</div>
+											);
+										})()}
 
 										{/* Docker Sub-tabs */}
-										<div className="flex gap-2 border-b border-secondary-200 dark:border-secondary-600 pb-2">
-											<button
-												type="button"
-												onClick={() => setDockerSubTab("containers")}
-												className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
-													dockerSubTab === "containers"
-														? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
-														: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
-												}`}
-											>
-												Containers
-												<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
-													{dockerData.containers?.length || 0}
-												</span>
-											</button>
-											<button
-												type="button"
-												onClick={() => setDockerSubTab("running")}
-												className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
-													dockerSubTab === "running"
-														? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
-														: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
-												}`}
-											>
-												Running
-												<span className="px-1.5 py-0.5 text-xs rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
-													{dockerData.containers?.filter(c => c.state === "running").length || 0}
-												</span>
-											</button>
-											<button
-												type="button"
-												onClick={() => setDockerSubTab("images")}
-												className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
-													dockerSubTab === "images"
-														? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
-														: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
-												}`}
-											>
-												Images
-												<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
-													{dockerData.images?.length || 0}
-												</span>
-											</button>
-											<button
-												type="button"
-												onClick={() => setDockerSubTab("volumes")}
-												className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
-													dockerSubTab === "volumes"
-														? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
-														: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
-												}`}
-											>
-												Volumes
-												<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
-													{dockerData.volumes?.length || 0}
-												</span>
-											</button>
-										</div>
+										{(() => {
+											// Calculate stacks for tab count
+											const stacksSet = new Set();
+											dockerData.containers?.forEach(c => {
+												const project = c.labels?.["com.docker.compose.project"];
+												if (project) stacksSet.add(project);
+											});
+											const stackCount = stacksSet.size;
+
+											return (
+												<div className="flex gap-2 border-b border-secondary-200 dark:border-secondary-600 pb-2 flex-wrap">
+													<button
+														type="button"
+														onClick={() => setDockerSubTab("stacks")}
+														className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+															dockerSubTab === "stacks"
+																? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+																: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+														}`}
+													>
+														Stacks
+														<span className="px-1.5 py-0.5 text-xs rounded bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400">
+															{stackCount}
+														</span>
+													</button>
+													<button
+														type="button"
+														onClick={() => setDockerSubTab("containers")}
+														className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+															dockerSubTab === "containers"
+																? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+																: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+														}`}
+													>
+														Containers
+														<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
+															{dockerData.containers?.length || 0}
+														</span>
+													</button>
+													<button
+														type="button"
+														onClick={() => setDockerSubTab("running")}
+														className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+															dockerSubTab === "running"
+																? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+																: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+														}`}
+													>
+														Running
+														<span className="px-1.5 py-0.5 text-xs rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
+															{dockerData.containers?.filter(c => c.state === "running").length || 0}
+														</span>
+													</button>
+													<button
+														type="button"
+														onClick={() => setDockerSubTab("images")}
+														className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+															dockerSubTab === "images"
+																? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+																: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+														}`}
+													>
+														Images
+														<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
+															{dockerData.images?.length || 0}
+														</span>
+													</button>
+													<button
+														type="button"
+														onClick={() => setDockerSubTab("volumes")}
+														className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+															dockerSubTab === "volumes"
+																? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+																: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+														}`}
+													>
+														Volumes
+														<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
+															{dockerData.volumes?.length || 0}
+														</span>
+													</button>
+												</div>
+											);
+										})()}
+
+										{/* Stacks Sub-tab */}
+										{dockerSubTab === "stacks" && (
+											<div className="space-y-4">
+												{(() => {
+													// Group containers by compose project
+													const stacksMap = new Map();
+													const standaloneContainers = [];
+
+													dockerData.containers?.forEach(container => {
+														const project = container.labels?.["com.docker.compose.project"];
+														if (project) {
+															if (!stacksMap.has(project)) {
+																stacksMap.set(project, []);
+															}
+															stacksMap.get(project).push(container);
+														} else {
+															standaloneContainers.push(container);
+														}
+													});
+
+													const stacks = Array.from(stacksMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+
+													if (stacks.length === 0) {
+														return (
+															<div className="text-center py-8">
+																<Server className="h-12 w-12 text-secondary-400 mx-auto mb-3" />
+																<p className="text-secondary-500 dark:text-secondary-400">
+																	No Docker Compose stacks found
+																</p>
+																<p className="text-xs text-secondary-400 mt-1">
+																	Containers started with docker-compose will appear here
+																</p>
+															</div>
+														);
+													}
+
+													return (
+														<div className="space-y-4">
+															{stacks.map(([stackName, containers]) => {
+																const runningCount = containers.filter(c => c.state === "running").length;
+																const totalCount = containers.length;
+																const allRunning = runningCount === totalCount;
+
+																return (
+																	<div key={stackName} className="bg-secondary-50 dark:bg-secondary-700/30 rounded-lg border border-secondary-200 dark:border-secondary-600 overflow-hidden">
+																		{/* Stack Header */}
+																		<div className="px-4 py-3 bg-secondary-100 dark:bg-secondary-700/50 border-b border-secondary-200 dark:border-secondary-600">
+																			<div className="flex items-center justify-between">
+																				<div className="flex items-center gap-3">
+																					<div className={`w-3 h-3 rounded-full ${allRunning ? "bg-green-500" : "bg-yellow-500"}`} />
+																					<h4 className="font-medium text-secondary-900 dark:text-white">
+																						{stackName}
+																					</h4>
+																				</div>
+																				<span className={`text-xs px-2 py-1 rounded-full ${
+																					allRunning
+																						? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+																						: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400"
+																				}`}>
+																					{runningCount}/{totalCount} running
+																				</span>
+																			</div>
+																		</div>
+																		{/* Stack Containers */}
+																		<div className="divide-y divide-secondary-200 dark:divide-secondary-600">
+																			{containers.map(container => (
+																				<div key={container.id} className="px-4 py-2 flex items-center justify-between hover:bg-secondary-100 dark:hover:bg-secondary-700/50">
+																					<div className="flex items-center gap-3">
+																						<span className={`w-2 h-2 rounded-full ${
+																							container.state === "running" ? "bg-green-500" :
+																							container.state === "exited" ? "bg-red-500" : "bg-yellow-500"
+																						}`} />
+																						<div>
+																							<p className="text-sm font-medium text-secondary-900 dark:text-white">
+																								{container.labels?.["com.docker.compose.service"] || container.name}
+																							</p>
+																							<p className="text-xs text-secondary-500 dark:text-secondary-400 font-mono">
+																								{container.image}
+																							</p>
+																						</div>
+																					</div>
+																					<span className={`text-xs px-2 py-0.5 rounded ${
+																						container.state === "running"
+																							? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+																							: "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+																					}`}>
+																						{container.state}
+																					</span>
+																				</div>
+																			))}
+																		</div>
+																	</div>
+																);
+															})}
+
+															{/* Standalone containers section */}
+															{standaloneContainers.length > 0 && (
+																<div className="mt-4 pt-4 border-t border-secondary-200 dark:border-secondary-600">
+																	<h4 className="text-sm font-medium text-secondary-600 dark:text-secondary-400 mb-3">
+																		Standalone Containers ({standaloneContainers.length})
+																	</h4>
+																	<div className="space-y-2">
+																		{standaloneContainers.map(container => (
+																			<div key={container.id} className="flex items-center justify-between px-3 py-2 bg-secondary-100 dark:bg-secondary-700/30 rounded-lg">
+																				<div className="flex items-center gap-2">
+																					<span className={`w-2 h-2 rounded-full ${
+																						container.state === "running" ? "bg-green-500" :
+																						container.state === "exited" ? "bg-red-500" : "bg-yellow-500"
+																					}`} />
+																					<span className="text-sm text-secondary-900 dark:text-white">{container.name}</span>
+																				</div>
+																				<span className="text-xs text-secondary-500 dark:text-secondary-400 font-mono">{container.image}</span>
+																			</div>
+																		))}
+																	</div>
+																</div>
+															)}
+														</div>
+													);
+												})()}
+											</div>
+										)}
 
 										{/* Containers Sub-tab */}
 										{dockerSubTab === "containers" && (

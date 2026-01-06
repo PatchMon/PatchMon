@@ -341,6 +341,7 @@ model docker_containers {
   status        String
   state         String?
   ports         Json?
+  labels        Json?
   created_at    DateTime
   started_at    DateTime?
   updated_at    DateTime
