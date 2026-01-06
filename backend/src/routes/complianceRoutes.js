@@ -244,9 +244,22 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
             }
           }
 
-          // Create result
-          await prisma.compliance_results.create({
-            data: {
+          // Create or update result (upsert to handle duplicate rules in same scan)
+          await prisma.compliance_results.upsert({
+            where: {
+              scan_id_rule_id: {
+                scan_id: scan.id,
+                rule_id: rule.id,
+              },
+            },
+            update: {
+              status: result.status,
+              finding: result.finding || result.message || null,
+              actual: result.actual || null,
+              expected: result.expected || null,
+              remediation: result.remediation || null,
+            },
+            create: {
               id: uuidv4(),
               scan_id: scan.id,
               rule_id: rule.id,
