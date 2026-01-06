@@ -2285,6 +2285,17 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 											<span className="text-secondary-400">Requirement</span>
 											<span className="text-secondary-300 text-xs">Docker + Compliance enabled</span>
 										</div>
+										{components["oscap-docker"] === "unavailable" && (
+											<div className="mt-3 pt-3 border-t border-secondary-600">
+												<p className="text-xs text-secondary-400 mb-2">Supported Platforms:</p>
+												<div className="flex flex-wrap gap-1">
+													<span className="px-2 py-0.5 bg-green-900/30 text-green-400 text-xs rounded">RHEL 7/8/9</span>
+													<span className="px-2 py-0.5 bg-green-900/30 text-green-400 text-xs rounded">Fedora</span>
+													<span className="px-2 py-0.5 bg-green-900/30 text-green-400 text-xs rounded">CentOS</span>
+												</div>
+												<p className="text-xs text-secondary-500 mt-2">Not available on Ubuntu/Debian (requires atomic package)</p>
+											</div>
+										)}
 									</div>
 								</div>
 
