@@ -29,7 +29,6 @@ class AgentVersionService {
 		this.githubApiUrl =
 			"https://api.github.com/repos/MacJediWizard/PatchMonEnhanced-agent/releases";
 		this.agentsDir = path.resolve(__dirname, "../../../agents");
-		this.agentBinariesDir = this.agentsDir; // Same directory for all binaries
 		this.supportedArchitectures = [
 			"linux-amd64",
 			"linux-arm64",
@@ -109,20 +108,6 @@ class AgentVersionService {
 		try {
 			logger.info("🔍 Getting current agent version...");
 
-			// First, try to read from version.json metadata file (created during download)
-			const versionFilePath = path.join(this.agentsDir, "version.json");
-			try {
-				const versionData = await fs.readFile(versionFilePath, "utf8");
-				const metadata = JSON.parse(versionData);
-				if (metadata.version) {
-					this.currentVersion = metadata.version;
-					logger.info(`✅ Current agent version from metadata: ${this.currentVersion}`);
-					return;
-				}
-			} catch {
-				logger.info("📝 No version.json found, checking for binaries...");
-			}
-
 			// Detect server architecture and map to Go architecture names
 			const serverArch = os.arch();
 			// Map Node.js architecture to Go architecture names
@@ -166,8 +151,7 @@ class AgentVersionService {
 				return;
 			}
 
-			// Try to execute the agent binary with help flag to get version info
-			// This may fail in Docker containers, so it's a fallback method
+			// Execute the agent binary with help flag to get version info
 			try {
 				const child = spawn(agentPath, ["--help"], {
 					timeout: 10000,
@@ -204,26 +188,14 @@ class AgentVersionService {
 					logger.info(`✅ Current agent version: ${this.currentVersion}`);
 				} else {
 					logger.info(
-						"⚠️ Could not parse version from agent help output, binary exists but version unknown",
+						"⚠️ Could not parse version from agent help output:",
+						result.stdout,
 					);
-					// Binary exists but we can't determine version - use latest as assumption
-					if (this.latestVersion) {
-						this.currentVersion = this.latestVersion;
-						logger.info(`📦 Assuming current version matches latest: ${this.currentVersion}`);
-					} else {
-						this.currentVersion = null;
-					}
-				}
-			} catch (execError) {
-				logger.warn("⚠️ Could not execute agent binary (normal in Docker):", execError.message);
-				// Binary exists but can't be executed in this environment
-				// If we have a latest version from GitHub, assume that's what was downloaded
-				if (this.latestVersion) {
-					this.currentVersion = this.latestVersion;
-					logger.info(`📦 Binary found, assuming current version: ${this.currentVersion}`);
-				} else {
 					this.currentVersion = null;
 				}
+			} catch (execError) {
+				logger.error("❌ Failed to execute agent binary:", execError.message);
+				this.currentVersion = null;
 			}
 		} catch (error) {
 			logger.error("❌ Failed to get current agent version:", error.message);
@@ -300,10 +272,6 @@ class AgentVersionService {
 			logger.info(
 				`⬇️ Downloading binaries for version ${release.tag_name} to agents folder...`,
 			);
-			logger.info(`📁 Target directory: ${this.agentsDir}`);
-
-			let downloadedCount = 0;
-			const errors = [];
 
 			for (const arch of this.supportedArchitectures) {
 				const assetName = `patchmonenhanced-agent-${arch}`;
@@ -311,78 +279,31 @@ class AgentVersionService {
 
 				if (!asset) {
 					logger.warn(`⚠️ Binary not found for architecture: ${arch}`);
-					errors.push(`Binary not found for architecture: ${arch}`);
 					continue;
 				}
 
 				const binaryPath = path.join(this.agentsDir, assetName);
 
-				logger.info(`⬇️ Downloading ${assetName} (${(asset.size / 1024 / 1024).toFixed(2)} MB)...`);
-				logger.info(`🔗 URL: ${asset.browser_download_url}`);
+				logger.info(`⬇️ Downloading ${assetName}...`);
 
-				try {
-					const response = await axios.get(asset.browser_download_url, {
-						responseType: "stream",
-						timeout: 300000, // 5 minutes for large files
-						maxRedirects: 5, // GitHub uses redirects for releases
-						headers: {
-							"User-Agent": "PatchMon-Server/1.0",
-							Accept: "application/octet-stream",
-						},
-					});
+				const response = await axios.get(asset.browser_download_url, {
+					responseType: "stream",
+					timeout: 60000,
+				});
 
-					logger.info(`📡 Response status: ${response.status}`);
+				const writer = require("node:fs").createWriteStream(binaryPath);
+				response.data.pipe(writer);
 
-					const writer = require("node:fs").createWriteStream(binaryPath);
-					response.data.pipe(writer);
+				await new Promise((resolve, reject) => {
+					writer.on("finish", resolve);
+					writer.on("error", reject);
+				});
 
-					await new Promise((resolve, reject) => {
-						writer.on("finish", () => {
-							logger.info(`✅ Write completed for ${assetName}`);
-							resolve();
-						});
-						writer.on("error", (err) => {
-							logger.error(`❌ Write error for ${assetName}: ${err.message}`);
-							reject(err);
-						});
-						response.data.on("error", (err) => {
-							logger.error(`❌ Stream error for ${assetName}: ${err.message}`);
-							reject(err);
-						});
-					});
+				// Make executable
+				await fs.chmod(binaryPath, "755");
 
-					// Verify file size
-					const stats = await fs.stat(binaryPath);
-					logger.info(`📊 Downloaded file size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
-
-					// Make executable
-					await fs.chmod(binaryPath, "755");
-
-					logger.info(`✅ Downloaded: ${assetName} to agents folder`);
-					downloadedCount++;
-				} catch (archError) {
-					logger.error(`❌ Failed to download ${assetName}: ${archError.message}`);
-					errors.push(`${arch}: ${archError.message}`);
-				}
+				logger.info(`✅ Downloaded: ${assetName} to agents folder`);
 			}
-
-			if (downloadedCount === 0) {
-				throw new Error(`No binaries downloaded successfully. Errors: ${errors.join(", ")}`);
-			}
-
-			// Save version metadata file so we know which version was downloaded
-			const versionFromTag = release.tag_name.replace("v", "");
-			const versionFilePath = path.join(this.agentsDir, "version.json");
-			await fs.writeFile(versionFilePath, JSON.stringify({
-				version: versionFromTag,
-				downloadedAt: new Date().toISOString(),
-				architectures: this.supportedArchitectures.filter((arch) =>
-					!errors.some((e) => e.includes(arch))
-				),
-			}, null, 2));
-			logger.info(`📝 Saved version metadata: ${versionFromTag}`);
-
-			logger.info(`✅ Downloaded ${downloadedCount}/${this.supportedArchitectures.length} binaries`);
 		} catch (error) {
 			logger.error(
 				"❌ Failed to download binaries to agents folder:",
@@ -423,45 +344,25 @@ class AgentVersionService {
 				throw new Error(`Binary not found for architecture: ${architecture}`);
 			}
 
-			// Download directly to agentsDir with simple name (no version prefix)
-			const binaryPath = path.join(this.agentsDir, assetName);
+			const binaryPath = path.join(
+				this.agentBinariesDir,
+				`${release.tag_name}-${assetName}`,
+			);
 
-			logger.info(`⬇️ Downloading ${assetName} (${(asset.size / 1024 / 1024).toFixed(2)} MB)...`);
-			logger.info(`🔗 URL: ${asset.browser_download_url}`);
+			logger.info(`⬇️ Downloading ${assetName}...`);
 
 			const downloadResponse = await axios.get(asset.browser_download_url, {
 				responseType: "stream",
-				timeout: 300000, // 5 minutes for large files
-				maxRedirects: 5,
-				headers: {
-					"User-Agent": "PatchMon-Server/1.0",
-					Accept: "application/octet-stream",
-				},
+				timeout: 60000,
 			});
-
-			logger.info(`📡 Response status: ${downloadResponse.status}`);
 
 			const writer = require("node:fs").createWriteStream(binaryPath);
 			downloadResponse.data.pipe(writer);
 
 			await new Promise((resolve, reject) => {
-				writer.on("finish", () => {
-					logger.info(`✅ Write completed for ${assetName}`);
-					resolve();
-				});
-				writer.on("error", (err) => {
-					logger.error(`❌ Write error: ${err.message}`);
-					reject(err);
-				});
-				downloadResponse.data.on("error", (err) => {
-					logger.error(`❌ Stream error: ${err.message}`);
-					reject(err);
-				});
+				writer.on("finish", resolve);
+				writer.on("error", reject);
 			});
-
-			// Verify file size
-			const stats = await fs.stat(binaryPath);
-			logger.info(`📊 Downloaded file size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
 
 			// Make executable
 			await fs.chmod(binaryPath, "755");
