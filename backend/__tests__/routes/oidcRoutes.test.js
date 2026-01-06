@@ -35,6 +35,7 @@ const mockPrisma = {
 		findUnique: jest.fn(),
 		create: jest.fn(),
 		update: jest.fn(),
+		count: jest.fn().mockResolvedValue(1), // Default: not first user
 	},
 };
 

@@ -138,7 +138,9 @@ describe("Compliance Routes", () => {
         .expect(200);
 
       expect(response.body.message).toBe("Scan results saved successfully");
-      expect(response.body.scan_id).toBeDefined();
+      expect(response.body.scans).toBeDefined();
+      expect(response.body.scans.length).toBeGreaterThan(0);
+      expect(response.body.scans[0].scan_id).toBeDefined();
       expect(mockPrisma.compliance_scans.create).toHaveBeenCalled();
     });
 
@@ -207,11 +209,12 @@ describe("Compliance Routes", () => {
         })
         .expect(200);
 
-      expect(response.body.stats.total_rules).toBe(5);
-      expect(response.body.stats.passed).toBe(2);
-      expect(response.body.stats.failed).toBe(1);
-      expect(response.body.stats.warnings).toBe(1);
-      expect(response.body.stats.skipped).toBe(1);
+      expect(response.body.scans).toBeDefined();
+      expect(response.body.scans[0].stats.total_rules).toBe(5);
+      expect(response.body.scans[0].stats.passed).toBe(2);
+      expect(response.body.scans[0].stats.failed).toBe(1);
+      expect(response.body.scans[0].stats.warnings).toBe(1);
+      expect(response.body.scans[0].stats.skipped).toBe(1);
     });
   });
 
@@ -382,7 +385,11 @@ describe("Compliance Routes", () => {
         .expect(200);
 
       expect(response.body.message).toBe("Compliance scan triggered");
-      expect(agentWs.pushComplianceScan).toHaveBeenCalledWith("test-api-id", "openscap");
+      expect(agentWs.pushComplianceScan).toHaveBeenCalledWith("test-api-id", "openscap", {
+        enableRemediation: false,
+        fetchRemoteResources: false,
+        profileId: null,
+      });
     });
 
     it("should return 404 if host not found", async () => {
