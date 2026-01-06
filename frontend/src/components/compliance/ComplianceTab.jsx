@@ -1758,14 +1758,14 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 												</div>
 											)}
 
-											{/* WHY THIS FAILED - Clear explanation for failed rules */}
-											{result.status === "fail" && (
-												<div className="bg-red-900/20 border border-red-800/50 rounded-lg p-3">
-													<p className="text-red-400 font-medium mb-2 flex items-center gap-1">
+											{/* WHY THIS FAILED/WARNED - Clear explanation for failed/warn rules */}
+											{(result.status === "fail" || result.status === "warn") && (
+												<div className={`${result.status === "warn" ? "bg-yellow-900/20 border-yellow-800/50" : "bg-red-900/20 border-red-800/50"} border rounded-lg p-3`}>
+													<p className={`${result.status === "warn" ? "text-yellow-400" : "text-red-400"} font-medium mb-2 flex items-center gap-1`}>
 														<XCircle className="h-3.5 w-3.5" />
-														Why This Failed
+														{result.status === "warn" ? "Why This Warning" : "Why This Failed"}
 													</p>
-													<div className="text-red-200/90 text-sm space-y-2">
+													<div className={`${result.status === "warn" ? "text-yellow-200/90" : "text-red-200/90"} text-sm space-y-2`}>
 														{(() => {
 															// Check all possible locations for metadata (nested or direct from agent)
 															const title = result.compliance_rules?.title || result.rule?.title || result.title || "";
@@ -1881,7 +1881,7 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 											)}
 
 											{/* WHAT THE FIX DOES - Explanation before remediation */}
-											{result.status === "fail" && (result.compliance_rules?.remediation || result.rule?.remediation || result.remediation) && (
+											{(result.status === "fail" || result.status === "warn") && (result.compliance_rules?.remediation || result.rule?.remediation || result.remediation) && (
 												<div className="bg-orange-900/20 border border-orange-800/50 rounded-lg p-3">
 													<p className="text-orange-400 font-medium mb-2 flex items-center gap-1">
 														<Wrench className="h-3.5 w-3.5" />
@@ -2066,24 +2066,92 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 	};
 
 	// Render History subtab
-	const renderHistory = () => (
+	const renderHistory = () => {
+		// Group scans by profile type for better display
+		const groupedByType = scanHistory?.scans?.reduce((acc, scan) => {
+			const type = scan.compliance_profiles?.type || "unknown";
+			if (!acc[type]) acc[type] = [];
+			acc[type].push(scan);
+			return acc;
+		}, {}) || {};
+
+		const typeLabels = {
+			openscap: { name: "OpenSCAP", color: "bg-green-600", icon: Shield },
+			"docker-bench": { name: "Docker Bench", color: "bg-blue-600", icon: Container },
+			unknown: { name: "Other", color: "bg-secondary-600", icon: Shield },
+		};
+
+		return (
 		<div className="space-y-4">
+			{/* Summary Cards by Type */}
+			{Object.keys(groupedByType).length > 0 && (
+				<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+					{Object.entries(groupedByType).map(([type, scans]) => {
+						const typeInfo = typeLabels[type] || typeLabels.unknown;
+						const latestScan = scans[0];
+						const Icon = typeInfo.icon;
+						return (
+							<div key={type} className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
+								<div className="flex items-center gap-3 mb-3">
+									<div className={`p-2 rounded-lg ${typeInfo.color}`}>
+										<Icon className="h-5 w-5 text-white" />
+									</div>
+									<div>
+										<h4 className="text-white font-medium">{typeInfo.name}</h4>
+										<p className="text-xs text-secondary-400">{scans.length} scan{scans.length !== 1 ? "s" : ""}</p>
+									</div>
+								</div>
+								{latestScan && (
+									<div className="flex items-center justify-between">
+										<ComplianceScore score={latestScan.score} size="sm" />
+										<div className="text-right text-sm">
+											<div className="flex items-center gap-2">
+												<span className="text-green-400">{latestScan.passed} passed</span>
+												{type === "docker-bench" ? (
+													<span className="text-yellow-400">{latestScan.warnings} warn</span>
+												) : (
+													<span className="text-red-400">{latestScan.failed} failed</span>
+												)}
+											</div>
+											<p className="text-xs text-secondary-500">
+												{new Date(latestScan.completed_at).toLocaleDateString()}
+											</p>
+										</div>
+									</div>
+								)}
+							</div>
+						);
+					})}
+				</div>
+			)}
+
+			{/* Full History List */}
 			{scanHistory?.scans && scanHistory.scans.length > 0 ? (
 				<div className="bg-secondary-800 rounded-lg border border-secondary-700 divide-y divide-secondary-700">
-					{scanHistory.scans.map((scan, index) => (
+					{scanHistory.scans.map((scan, index) => {
+						const type = scan.compliance_profiles?.type || "unknown";
+						const typeInfo = typeLabels[type] || typeLabels.unknown;
+						const isDockerBench = type === "docker-bench";
+						// Find if this is the latest scan for its type
+						const isLatestOfType = groupedByType[type]?.[0]?.id === scan.id;
+
+						return (
 						<div
 							key={scan.id}
-							className={`p-4 ${index === 0 ? "bg-primary-900/10" : ""}`}
+							className={`p-4 ${isLatestOfType ? "bg-primary-900/10" : ""}`}
 						>
 							<div className="flex items-center justify-between">
 								<div className="flex items-center gap-4">
 									<ComplianceScore score={scan.score} size="sm" />
 									<div>
-										<div className="flex items-center gap-2">
+										<div className="flex items-center gap-2 flex-wrap">
+											<span className={`px-2 py-0.5 text-xs ${typeInfo.color} text-white rounded`}>
+												{typeInfo.name}
+											</span>
 											<p className="text-white font-medium">
 												{scan.compliance_profiles?.name || "Compliance Scan"}
 											</p>
-											{index === 0 && (
+											{isLatestOfType && (
 												<span className="px-2 py-0.5 text-xs bg-primary-600/30 text-primary-300 rounded">
 													Latest
 												</span>
@@ -2097,9 +2165,10 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 								<div className="text-right">
 									<div className="flex items-center gap-3 text-sm">
 										<span className="text-green-400">{scan.passed} passed</span>
-										<span className="text-red-400">{scan.failed} failed</span>
-										{scan.warnings > 0 && (
+										{isDockerBench ? (
 											<span className="text-yellow-400">{scan.warnings} warn</span>
+										) : (
+											<span className="text-red-400">{scan.failed} failed</span>
 										)}
 									</div>
 									<p className="text-xs text-secondary-500">
@@ -2113,7 +2182,7 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 								</div>
 							)}
 						</div>
-					))}
+					)})}
 				</div>
 			) : (
 				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-12 text-center">
@@ -2137,7 +2206,8 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 				</Suspense>
 			)}
 		</div>
-	);
+		);
+	};
 
 	// Render Settings subtab
 	const renderSettings = () => {
