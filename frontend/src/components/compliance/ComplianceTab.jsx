@@ -1184,16 +1184,37 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 			{ id: "low", label: "Low", count: severityCounts.low, color: "text-blue-400" },
 		];
 
-		// Profile type tabs configuration
+		// Profile type tabs configuration - always show both if compliance is enabled
 		const hasOpenSCAP = !!scansByType?.openscap;
 		const hasDockerBench = !!scansByType?.["docker-bench"];
-		const showProfileTypeTabs = hasOpenSCAP || hasDockerBench;
+		const openscapData = scansByType?.openscap;
+		const dockerBenchData = scansByType?.["docker-bench"];
 
+		// Build profile type tabs with metrics
 		const profileTypeTabs = [
-			{ id: null, label: "All", icon: Shield },
-			{ id: "openscap", label: "OpenSCAP", icon: Server, available: hasOpenSCAP, count: scansByType?.openscap?.total_rules },
-			{ id: "docker-bench", label: "Docker Bench", icon: Container, available: hasDockerBench, count: scansByType?.["docker-bench"]?.total_rules },
-		].filter(t => t.id === null || t.available);
+			{
+				id: "openscap",
+				label: "OpenSCAP",
+				icon: Server,
+				available: hasOpenSCAP,
+				score: openscapData?.score,
+				passed: openscapData?.passed,
+				failed: openscapData?.failed,
+				total: openscapData?.total_rules,
+				date: openscapData?.completed_at,
+			},
+			{
+				id: "docker-bench",
+				label: "Docker Bench",
+				icon: Container,
+				available: hasDockerBench,
+				score: dockerBenchData?.score,
+				passed: dockerBenchData?.passed,
+				warnings: dockerBenchData?.warnings,
+				total: dockerBenchData?.total_rules,
+				date: dockerBenchData?.completed_at,
+			},
+		];
 
 		// Results subtabs configuration - labels adapt based on profile type
 		const resultsSubtabs = isDockerBenchResults ? [
@@ -1375,45 +1396,80 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						</div>
 					)}
 
-					{/* Profile Type Tabs - Only show if we have multiple scan types */}
-					{showProfileTypeTabs && profileTypeTabs.length > 1 && (
-						<div className="flex items-center gap-2 mb-4">
-							{profileTypeTabs.map((tab) => {
-								const Icon = tab.icon;
-								const isActive = profileTypeFilter === tab.id;
-								return (
-									<button
-										key={tab.id || "all"}
-										onClick={() => {
+					{/* Profile Type Tabs - Card style with metrics */}
+					<div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+						{profileTypeTabs.map((tab) => {
+							const Icon = tab.icon;
+							const isActive = profileTypeFilter === tab.id;
+							const isDisabled = !tab.available;
+
+							return (
+								<button
+									key={tab.id}
+									onClick={() => {
+										if (!isDisabled) {
 											setProfileTypeFilter(tab.id);
 											setCurrentPage(1);
-											// Reset to appropriate default status filter based on profile type
 											if (tab.id === "docker-bench") {
 												setStatusFilter("warn");
 											} else {
 												setStatusFilter("fail");
 											}
-										}}
-										className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-											isActive
-												? "bg-primary-600 text-white"
-												: "bg-secondary-800 text-secondary-300 hover:bg-secondary-700 border border-secondary-700"
-										}`}
-									>
-										<Icon className="h-4 w-4" />
-										<span>{tab.label}</span>
-										{tab.count && (
-											<span className={`px-2 py-0.5 rounded-full text-xs ${
-												isActive ? "bg-primary-700" : "bg-secondary-600"
+										}
+									}}
+									disabled={isDisabled}
+									className={`text-left p-4 rounded-lg border-2 transition-all ${
+										isActive
+											? "bg-primary-900/30 border-primary-500"
+											: isDisabled
+												? "bg-secondary-800/50 border-secondary-700 opacity-50 cursor-not-allowed"
+												: "bg-secondary-800 border-secondary-700 hover:border-secondary-500"
+									}`}
+								>
+									<div className="flex items-center justify-between mb-2">
+										<div className="flex items-center gap-2">
+											<Icon className={`h-5 w-5 ${isActive ? "text-primary-400" : "text-secondary-400"}`} />
+											<span className={`font-medium ${isActive ? "text-white" : "text-secondary-200"}`}>
+												{tab.label}
+											</span>
+										</div>
+										{tab.available && tab.score != null && (
+											<span className={`text-lg font-bold ${
+												tab.score >= 80 ? "text-green-400" :
+												tab.score >= 60 ? "text-yellow-400" : "text-red-400"
 											}`}>
-												{tab.count}
+												{Math.round(tab.score)}%
 											</span>
 										)}
-									</button>
-								);
-							})}
-						</div>
-					)}
+									</div>
+									{tab.available ? (
+										<div className="flex items-center gap-4 text-xs text-secondary-400">
+											{tab.id === "docker-bench" ? (
+												<>
+													<span className="text-green-400">{tab.passed} passed</span>
+													<span className="text-yellow-400">{tab.warnings} warnings</span>
+													<span>{tab.total} rules</span>
+												</>
+											) : (
+												<>
+													<span className="text-green-400">{tab.passed} passed</span>
+													<span className="text-red-400">{tab.failed} failed</span>
+													<span>{tab.total} rules</span>
+												</>
+											)}
+										</div>
+									) : (
+										<p className="text-xs text-secondary-500">No scan data available</p>
+									)}
+									{tab.date && (
+										<p className="text-xs text-secondary-500 mt-1">
+											{new Date(tab.date).toLocaleDateString()}
+										</p>
+									)}
+								</button>
+							);
+						})}
+					</div>
 
 					{/* Results Subtabs */}
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700">
