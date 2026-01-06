@@ -359,7 +359,7 @@ router.get("/dashboard", async (req, res) => {
 
     // Worst performing hosts (latest scan per host, sorted by score)
     const worstHostsRaw = await prisma.$queryRaw`
-      SELECT DISTINCT ON (host_id) cs.*, h.hostname, h.friendly_name, cp.name as profile_name
+      SELECT DISTINCT ON (host_id) cs.*, h.hostname, h.friendly_name, cp.name as profile_name, cp.type as profile_type
       FROM compliance_scans cs
       JOIN hosts h ON cs.host_id = h.id
       JOIN compliance_profiles cp ON cs.profile_id = cp.id
@@ -384,15 +384,20 @@ router.get("/dashboard", async (req, res) => {
         profile: {
           name: h.profile_name,
         },
+        // Include compliance_profiles for frontend filtering
+        compliance_profiles: {
+          type: h.profile_type,
+          name: h.profile_name,
+        },
       }));
 
-    // Transform recent_scans to match frontend expectations (host instead of hosts, profile instead of compliance_profiles)
+    // Transform recent_scans to match frontend expectations
+    // Keep compliance_profiles for filtering, also add host/profile aliases for display
     const transformedRecentScans = recentScans.map((scan) => ({
       ...scan,
       host: scan.hosts,
       profile: scan.compliance_profiles,
-      hosts: undefined,
-      compliance_profiles: undefined,
+      // Keep compliance_profiles for filtering (don't set to undefined)
     }));
 
     // Get aggregate rule statistics from latest scans
@@ -405,17 +410,21 @@ router.get("/dashboard", async (req, res) => {
     let topFailingRules = [];
     if (latestScanIds.length > 0) {
       // Use Prisma.join for proper array handling in raw SQL
+      // Include profile_type for filtering
       topFailingRules = await prisma.$queryRaw`
         SELECT
           cr.rule_id,
           cru.title,
           cru.severity,
+          cp.type as profile_type,
           COUNT(*) as fail_count
         FROM compliance_results cr
         JOIN compliance_rules cru ON cr.rule_id = cru.id
+        JOIN compliance_scans cs ON cr.scan_id = cs.id
+        JOIN compliance_profiles cp ON cs.profile_id = cp.id
         WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
           AND cr.status = 'fail'
-        GROUP BY cr.rule_id, cru.title, cru.severity
+        GROUP BY cr.rule_id, cru.title, cru.severity, cp.type
         ORDER BY fail_count DESC
         LIMIT 10
       `;
@@ -495,6 +504,7 @@ router.get("/dashboard", async (req, res) => {
         rule_id: r.rule_id,
         title: r.title,
         severity: r.severity,
+        profile_type: r.profile_type,
         fail_count: Number(r.fail_count),
       })),
       profile_distribution: profileDistribution.map(p => ({
