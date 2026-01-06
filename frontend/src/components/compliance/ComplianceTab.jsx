@@ -2251,7 +2251,8 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 									</div>
 								</div>
 
-								{/* oscap-docker Component */}
+								{/* oscap-docker Component - Only show when available or potentially available (not on Ubuntu/Debian) */}
+								{components["oscap-docker"] !== "unavailable" && (
 								<div className="bg-secondary-700/30 rounded-lg p-4 border border-secondary-600">
 									<div className="flex items-center gap-3 mb-4">
 										<div className="p-2 bg-orange-600/20 rounded-lg">
@@ -2268,7 +2269,6 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 											<span className={`capitalize ${
 												components["oscap-docker"] === "ready" ? "text-green-400" :
 												components["oscap-docker"] === "installing" ? "text-blue-400" :
-												components["oscap-docker"] === "unavailable" ? "text-secondary-500" :
 												components["oscap-docker"] === "error" ? "text-red-400" :
 												"text-secondary-400"
 											}`}>
@@ -2285,19 +2285,9 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 											<span className="text-secondary-400">Requirement</span>
 											<span className="text-secondary-300 text-xs">Docker + Compliance enabled</span>
 										</div>
-										{components["oscap-docker"] === "unavailable" && (
-											<div className="mt-3 pt-3 border-t border-secondary-600">
-												<p className="text-xs text-secondary-400 mb-2">Supported Platforms:</p>
-												<div className="flex flex-wrap gap-1">
-													<span className="px-2 py-0.5 bg-green-900/30 text-green-400 text-xs rounded">RHEL 7/8/9</span>
-													<span className="px-2 py-0.5 bg-green-900/30 text-green-400 text-xs rounded">Fedora</span>
-													<span className="px-2 py-0.5 bg-green-900/30 text-green-400 text-xs rounded">CentOS</span>
-												</div>
-												<p className="text-xs text-secondary-500 mt-2">Not available on Ubuntu/Debian (requires atomic package)</p>
-											</div>
-										)}
 									</div>
 								</div>
+								)}
 
 								{/* Available Profiles */}
 								<div className="bg-secondary-700/30 rounded-lg p-4 border border-secondary-600">

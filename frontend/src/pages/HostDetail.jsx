@@ -3251,54 +3251,6 @@ const HostDetail = () => {
 						{/* Docker Tab */}
 						{activeTab === "docker" && (
 							<div className="space-y-4">
-								{/* Docker Sub-tabs */}
-								<div className="flex gap-2 border-b border-secondary-200 dark:border-secondary-600 pb-2">
-									<button
-										type="button"
-										onClick={() => setDockerSubTab("containers")}
-										className={`px-3 py-1.5 text-xs font-medium rounded-t ${
-											dockerSubTab === "containers"
-												? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
-												: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
-										}`}
-									>
-										All Containers
-									</button>
-									<button
-										type="button"
-										onClick={() => setDockerSubTab("running")}
-										className={`px-3 py-1.5 text-xs font-medium rounded-t ${
-											dockerSubTab === "running"
-												? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
-												: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
-										}`}
-									>
-										Running
-									</button>
-									<button
-										type="button"
-										onClick={() => setDockerSubTab("images")}
-										className={`px-3 py-1.5 text-xs font-medium rounded-t ${
-											dockerSubTab === "images"
-												? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
-												: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
-										}`}
-									>
-										Images
-									</button>
-									<button
-										type="button"
-										onClick={() => setDockerSubTab("volumes")}
-										className={`px-3 py-1.5 text-xs font-medium rounded-t ${
-											dockerSubTab === "volumes"
-												? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
-												: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
-										}`}
-									>
-										Volumes
-									</button>
-								</div>
-
 								{isLoadingDocker ? (
 									<div className="flex items-center justify-center h-32">
 										<RefreshCw className="h-6 w-6 animate-spin text-primary-600" />
@@ -3312,140 +3264,310 @@ const HostDetail = () => {
 									</div>
 								) : (
 									<>
+										{/* Summary Stats */}
+										<div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+											<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
+												<div className="flex items-center gap-2 mb-1">
+													<div className="w-2 h-2 rounded-full bg-green-500" />
+													<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Running</span>
+												</div>
+												<p className="text-xl font-bold text-secondary-900 dark:text-white">
+													{dockerData.containers?.filter(c => c.state === "running").length || 0}
+												</p>
+											</div>
+											<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
+												<div className="flex items-center gap-2 mb-1">
+													<div className="w-2 h-2 rounded-full bg-red-500" />
+													<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Stopped</span>
+												</div>
+												<p className="text-xl font-bold text-secondary-900 dark:text-white">
+													{dockerData.containers?.filter(c => c.state !== "running").length || 0}
+												</p>
+											</div>
+											<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
+												<div className="flex items-center gap-2 mb-1">
+													<Package className="w-3 h-3 text-blue-500" />
+													<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Images</span>
+												</div>
+												<p className="text-xl font-bold text-secondary-900 dark:text-white">
+													{dockerData.images?.length || 0}
+												</p>
+											</div>
+											<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
+												<div className="flex items-center gap-2 mb-1">
+													<HardDrive className="w-3 h-3 text-purple-500" />
+													<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Volumes</span>
+												</div>
+												<p className="text-xl font-bold text-secondary-900 dark:text-white">
+													{dockerData.volumes?.length || 0}
+												</p>
+											</div>
+										</div>
+
+										{/* Docker Sub-tabs */}
+										<div className="flex gap-2 border-b border-secondary-200 dark:border-secondary-600 pb-2">
+											<button
+												type="button"
+												onClick={() => setDockerSubTab("containers")}
+												className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+													dockerSubTab === "containers"
+														? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+														: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+												}`}
+											>
+												Containers
+												<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
+													{dockerData.containers?.length || 0}
+												</span>
+											</button>
+											<button
+												type="button"
+												onClick={() => setDockerSubTab("running")}
+												className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+													dockerSubTab === "running"
+														? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+														: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+												}`}
+											>
+												Running
+												<span className="px-1.5 py-0.5 text-xs rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
+													{dockerData.containers?.filter(c => c.state === "running").length || 0}
+												</span>
+											</button>
+											<button
+												type="button"
+												onClick={() => setDockerSubTab("images")}
+												className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+													dockerSubTab === "images"
+														? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+														: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+												}`}
+											>
+												Images
+												<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
+													{dockerData.images?.length || 0}
+												</span>
+											</button>
+											<button
+												type="button"
+												onClick={() => setDockerSubTab("volumes")}
+												className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+													dockerSubTab === "volumes"
+														? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+														: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+												}`}
+											>
+												Volumes
+												<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
+													{dockerData.volumes?.length || 0}
+												</span>
+											</button>
+										</div>
+
 										{/* Containers Sub-tab */}
 										{dockerSubTab === "containers" && (
-											<div className="space-y-3">
+											<div className="space-y-2">
 												{dockerData.containers?.length === 0 ? (
 													<p className="text-secondary-500 dark:text-secondary-400 text-center py-4">
 														No containers found
 													</p>
 												) : (
-													dockerData.containers?.map((container) => (
-														<div
-															key={container.id}
-															className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600"
-														>
-															<div className="flex items-center justify-between">
-																<div className="flex items-center gap-2">
-																	<span
-																		className={`w-2 h-2 rounded-full ${
-																			container.state === "running"
-																				? "bg-green-500"
-																				: container.state === "exited"
-																					? "bg-red-500"
-																					: "bg-yellow-500"
-																		}`}
-																	/>
-																	<span className="font-medium text-secondary-900 dark:text-white text-sm">
-																		{container.name}
-																	</span>
-																</div>
-																<span className="text-xs text-secondary-500 dark:text-secondary-400">
-																	{container.state}
-																</span>
-															</div>
-															<div className="mt-1 text-xs text-secondary-600 dark:text-secondary-300">
-																<span className="font-mono">{container.image}</span>
-															</div>
-														</div>
-													))
+													<div className="overflow-x-auto">
+														<table className="w-full text-sm">
+															<thead>
+																<tr className="text-left text-xs text-secondary-500 dark:text-secondary-400 border-b border-secondary-200 dark:border-secondary-600">
+																	<th className="pb-2 font-medium">Status</th>
+																	<th className="pb-2 font-medium">Name</th>
+																	<th className="pb-2 font-medium">Image</th>
+																	<th className="pb-2 font-medium">Ports</th>
+																	<th className="pb-2 font-medium text-right">Uptime</th>
+																</tr>
+															</thead>
+															<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
+																{dockerData.containers?.map((container) => (
+																	<tr key={container.id} className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50">
+																		<td className="py-2">
+																			<span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+																				container.state === "running"
+																					? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+																					: container.state === "exited"
+																						? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+																						: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400"
+																			}`}>
+																				<span className={`w-1.5 h-1.5 rounded-full ${
+																					container.state === "running" ? "bg-green-500" :
+																					container.state === "exited" ? "bg-red-500" : "bg-yellow-500"
+																				}`} />
+																				{container.state}
+																			</span>
+																		</td>
+																		<td className="py-2 font-medium text-secondary-900 dark:text-white">
+																			{container.name}
+																		</td>
+																		<td className="py-2 font-mono text-xs text-secondary-600 dark:text-secondary-300 max-w-[200px] truncate" title={container.image}>
+																			{container.image}
+																		</td>
+																		<td className="py-2 text-xs text-secondary-500 dark:text-secondary-400">
+																			{container.ports?.length > 0 ? (
+																				<div className="flex flex-wrap gap-1">
+																					{container.ports.slice(0, 2).map((port, idx) => (
+																						<span key={idx} className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs">
+																							{port.PublicPort || port.PrivatePort}
+																						</span>
+																					))}
+																					{container.ports.length > 2 && (
+																						<span className="text-secondary-400">+{container.ports.length - 2}</span>
+																					)}
+																				</div>
+																			) : (
+																				<span className="text-secondary-400">-</span>
+																			)}
+																		</td>
+																		<td className="py-2 text-xs text-secondary-500 dark:text-secondary-400 text-right">
+																			{container.status || "-"}
+																		</td>
+																	</tr>
+																))}
+															</tbody>
+														</table>
+													</div>
 												)}
 											</div>
 										)}
 
 										{/* Running Sub-tab */}
 										{dockerSubTab === "running" && (
-											<div className="space-y-3">
+											<div className="space-y-2">
 												{dockerData.containers?.filter((c) => c.state === "running").length === 0 ? (
 													<p className="text-secondary-500 dark:text-secondary-400 text-center py-4">
 														No running containers
 													</p>
 												) : (
-													dockerData.containers
-														?.filter((c) => c.state === "running")
-														.map((container) => (
-															<div
-																key={container.id}
-																className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600"
-															>
-																<div className="flex items-center justify-between">
-																	<div className="flex items-center gap-2">
-																		<span className="w-2 h-2 rounded-full bg-green-500" />
-																		<span className="font-medium text-secondary-900 dark:text-white text-sm">
-																			{container.name}
+													<div className="grid gap-3">
+														{dockerData.containers
+															?.filter((c) => c.state === "running")
+															.map((container) => (
+																<div
+																	key={container.id}
+																	className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600"
+																>
+																	<div className="flex items-start justify-between">
+																		<div className="flex items-center gap-3">
+																			<div className="w-10 h-10 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+																				<span className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
+																			</div>
+																			<div>
+																				<h4 className="font-medium text-secondary-900 dark:text-white">
+																					{container.name}
+																				</h4>
+																				<p className="text-xs font-mono text-secondary-500 dark:text-secondary-400 max-w-[250px] truncate">
+																					{container.image}
+																				</p>
+																			</div>
+																		</div>
+																		<span className="text-xs text-secondary-500 dark:text-secondary-400">
+																			{container.status}
 																		</span>
 																	</div>
-																	<span className="text-xs text-secondary-500 dark:text-secondary-400">
-																		{container.status}
-																	</span>
+																	{container.ports?.length > 0 && (
+																		<div className="mt-3 pt-3 border-t border-secondary-200 dark:border-secondary-600">
+																			<p className="text-xs text-secondary-500 dark:text-secondary-400 mb-1.5">Ports</p>
+																			<div className="flex flex-wrap gap-1.5">
+																				{container.ports.map((port, idx) => (
+																					<span key={idx} className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs font-mono">
+																						{port.PublicPort ? `${port.PublicPort}:${port.PrivatePort}` : port.PrivatePort}/{port.Type || 'tcp'}
+																					</span>
+																				))}
+																			</div>
+																		</div>
+																	)}
 																</div>
-																<div className="mt-1 text-xs text-secondary-600 dark:text-secondary-300">
-																	<span className="font-mono">{container.image}</span>
-																</div>
-															</div>
-														))
+															))}
+													</div>
 												)}
 											</div>
 										)}
 
 										{/* Images Sub-tab */}
 										{dockerSubTab === "images" && (
-											<div className="space-y-3">
+											<div className="space-y-2">
 												{dockerData.images?.length === 0 ? (
 													<p className="text-secondary-500 dark:text-secondary-400 text-center py-4">
 														No images found
 													</p>
 												) : (
-													dockerData.images?.map((image) => (
-														<div
-															key={image.id}
-															className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600"
-														>
-															<div className="flex items-center justify-between">
-																<span className="font-medium text-secondary-900 dark:text-white text-sm font-mono">
-																	{image.repository}:{image.tag}
-																</span>
-																<span className="text-xs text-secondary-500 dark:text-secondary-400">
-																	{image.size}
-																</span>
-															</div>
-															<div className="mt-1 text-xs text-secondary-600 dark:text-secondary-300">
-																ID: {image.id?.slice(0, 12)}
-															</div>
-														</div>
-													))
+													<div className="overflow-x-auto">
+														<table className="w-full text-sm">
+															<thead>
+																<tr className="text-left text-xs text-secondary-500 dark:text-secondary-400 border-b border-secondary-200 dark:border-secondary-600">
+																	<th className="pb-2 font-medium">Repository</th>
+																	<th className="pb-2 font-medium">Tag</th>
+																	<th className="pb-2 font-medium">ID</th>
+																	<th className="pb-2 font-medium text-right">Size</th>
+																</tr>
+															</thead>
+															<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
+																{dockerData.images?.map((image) => (
+																	<tr key={image.id} className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50">
+																		<td className="py-2 font-mono text-secondary-900 dark:text-white max-w-[200px] truncate" title={image.repository}>
+																			{image.repository || "<none>"}
+																		</td>
+																		<td className="py-2">
+																			<span className="px-2 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 rounded text-xs font-mono">
+																				{image.tag || "latest"}
+																			</span>
+																		</td>
+																		<td className="py-2 text-xs font-mono text-secondary-500 dark:text-secondary-400">
+																			{image.id?.slice(7, 19) || "-"}
+																		</td>
+																		<td className="py-2 text-xs text-secondary-500 dark:text-secondary-400 text-right">
+																			{image.size || "-"}
+																		</td>
+																	</tr>
+																))}
+															</tbody>
+														</table>
+													</div>
 												)}
 											</div>
 										)}
 
 										{/* Volumes Sub-tab */}
 										{dockerSubTab === "volumes" && (
-											<div className="space-y-3">
+											<div className="space-y-2">
 												{dockerData.volumes?.length === 0 ? (
 													<p className="text-secondary-500 dark:text-secondary-400 text-center py-4">
 														No volumes found
 													</p>
 												) : (
-													dockerData.volumes?.map((volume) => (
-														<div
-															key={volume.name}
-															className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600"
-														>
-															<div className="flex items-center justify-between">
-																<span className="font-medium text-secondary-900 dark:text-white text-sm font-mono">
-																	{volume.name}
-																</span>
-																<span className="text-xs text-secondary-500 dark:text-secondary-400">
-																	{volume.driver}
-																</span>
-															</div>
-															{volume.mountpoint && (
-																<div className="mt-1 text-xs text-secondary-600 dark:text-secondary-300 font-mono truncate">
-																	{volume.mountpoint}
-																</div>
-															)}
-														</div>
-													))
+													<div className="overflow-x-auto">
+														<table className="w-full text-sm">
+															<thead>
+																<tr className="text-left text-xs text-secondary-500 dark:text-secondary-400 border-b border-secondary-200 dark:border-secondary-600">
+																	<th className="pb-2 font-medium">Name</th>
+																	<th className="pb-2 font-medium">Driver</th>
+																	<th className="pb-2 font-medium">Mount Point</th>
+																</tr>
+															</thead>
+															<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
+																{dockerData.volumes?.map((volume) => (
+																	<tr key={volume.name} className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50">
+																		<td className="py-2 font-mono text-secondary-900 dark:text-white max-w-[200px] truncate" title={volume.name}>
+																			{volume.name}
+																		</td>
+																		<td className="py-2">
+																			<span className="px-2 py-0.5 bg-secondary-100 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-300 rounded text-xs">
+																				{volume.driver || "local"}
+																			</span>
+																		</td>
+																		<td className="py-2 text-xs font-mono text-secondary-500 dark:text-secondary-400 max-w-[300px] truncate" title={volume.mountpoint}>
+																			{volume.mountpoint || "-"}
+																		</td>
+																	</tr>
+																))}
+															</tbody>
+														</table>
+													</div>
 												)}
 											</div>
 										)}

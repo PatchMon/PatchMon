@@ -878,7 +878,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	// Embedded mode - render inline without modal overlay
 	if (embedded) {
 		return (
-			<div className="bg-secondary-900 rounded-lg w-full flex flex-col overflow-hidden" style={{ height: isConnected || isConnecting ? "calc(100vh - 150px)" : "auto", minHeight: isConnected || isConnecting ? "600px" : "auto" }}>
+			<div className="bg-secondary-900 rounded-lg w-full flex flex-col overflow-hidden" style={{ height: isConnected || isConnecting ? "calc(50vh - 50px)" : "auto", minHeight: isConnected || isConnecting ? "300px" : "auto" }}>
 				{/* Compact Header */}
 				<div className="flex items-center justify-between px-4 py-2 border-b border-secondary-700 flex-shrink-0">
 					<div className="flex items-center gap-2">
