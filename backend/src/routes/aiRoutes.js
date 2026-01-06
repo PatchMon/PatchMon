@@ -6,40 +6,31 @@ const { authenticateToken } = require("../middleware/auth");
 const { requireManageSettings } = require("../middleware/permissions");
 const { encrypt, decrypt, isEncrypted, getEncryptionStatus } = require("../utils/encryption");
 const { getProviders, getCompletion, getAssistance } = require("../services/aiService");
+const { redis } = require("../services/automation/shared/redis");
 
 const router = express.Router();
 
-// Rate limiting for AI endpoints
-const requestCounts = new Map();
-const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
+// Rate limiting for AI endpoints using Redis (works across multiple instances)
+const RATE_LIMIT_WINDOW = 60; // 1 minute in seconds
 const RATE_LIMIT_MAX = 30; // 30 requests per minute
 
-function checkRateLimit(userId) {
-	const now = Date.now();
-	const userKey = `ai_${userId}`;
-	const userData = requestCounts.get(userKey) || { count: 0, windowStart: now };
+async function checkRateLimit(userId) {
+	try {
+		const key = `ratelimit:ai:${userId}`;
+		const count = await redis.incr(key);
 
-	// Reset window if expired
-	if (now - userData.windowStart > RATE_LIMIT_WINDOW) {
-		userData.count = 0;
-		userData.windowStart = now;
-	}
-
-	userData.count++;
-	requestCounts.set(userKey, userData);
-
-	return userData.count <= RATE_LIMIT_MAX;
-}
-
-// Clean up old rate limit entries periodically
-setInterval(() => {
-	const now = Date.now();
-	for (const [key, data] of requestCounts.entries()) {
-		if (now - data.windowStart > RATE_LIMIT_WINDOW * 2) {
-			requestCounts.delete(key);
+		// Set expiry only on first request in window
+		if (count === 1) {
+			await redis.expire(key, RATE_LIMIT_WINDOW);
 		}
+
+		return count <= RATE_LIMIT_MAX;
+	} catch (error) {
+		// If Redis is unavailable, allow the request (fail open)
+		logger.warn("Rate limit check failed, allowing request:", error.message);
+		return true;
 	}
-}, RATE_LIMIT_WINDOW);
+}
 
 /**
  * Get AI status (available to all authenticated users)
@@ -97,7 +88,9 @@ router.get("/debug", authenticateToken, requireManageSettings, async (_req, res)
 			encryption: encryptionStatus,
 			roundTripTest: roundTripOk ? "passed" : "failed",
 			existingApiKey: existingKeyStatus,
-			recommendation: encryptionStatus.source === "hostname_fallback" || encryptionStatus.source === "file"
+			recommendation: encryptionStatus.source === "ephemeral"
+				? "CRITICAL: Using ephemeral key - encrypted data will be lost on restart. Set SESSION_SECRET environment variable."
+				: encryptionStatus.source === "file"
 				? "Set SESSION_SECRET environment variable for consistent encryption across restarts"
 				: "Configuration looks good",
 		});
@@ -297,7 +290,7 @@ router.post(
 		}
 
 		// Rate limit check
-		if (!checkRateLimit(req.user.id)) {
+		if (!(await checkRateLimit(req.user.id))) {
 			return res.status(429).json({ error: "Rate limit exceeded. Please wait a moment." });
 		}
 
@@ -352,7 +345,7 @@ router.post(
 		}
 
 		// Rate limit check (stricter for completions)
-		if (!checkRateLimit(req.user.id)) {
+		if (!(await checkRateLimit(req.user.id))) {
 			return res.status(429).json({ error: "Rate limit exceeded" });
 		}
 

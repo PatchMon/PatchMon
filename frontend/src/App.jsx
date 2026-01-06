@@ -12,6 +12,7 @@ import { ColorThemeProvider } from "./contexts/ColorThemeContext";
 import { SettingsProvider } from "./contexts/SettingsContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { UpdateNotificationProvider } from "./contexts/UpdateNotificationContext";
+import { ToastProvider } from "./contexts/ToastContext";
 
 // Lazy load pages
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -478,11 +479,13 @@ function App() {
 				<ThemeProvider>
 					<SettingsProvider>
 						<ColorThemeProvider>
-							<UpdateNotificationProvider>
-								<LogoProvider>
-									<AppRoutes />
-								</LogoProvider>
-							</UpdateNotificationProvider>
+							<ToastProvider>
+								<UpdateNotificationProvider>
+									<LogoProvider>
+										<AppRoutes />
+									</LogoProvider>
+								</UpdateNotificationProvider>
+							</ToastProvider>
 						</ColorThemeProvider>
 					</SettingsProvider>
 				</ThemeProvider>

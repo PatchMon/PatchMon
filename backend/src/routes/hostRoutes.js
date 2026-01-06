@@ -15,6 +15,7 @@ const { pushIntegrationToggle, isConnected } = require("../services/agentWs");
 const { compareVersions } = require("../services/automation/shared/utils");
 const { redis } = require("../services/automation/shared/redis");
 const { verifyApiKey } = require("../utils/apiKeyUtils");
+const { encrypt, decrypt } = require("../utils/encryption");
 
 const router = express.Router();
 const prisma = getPrismaClient();
@@ -33,8 +34,11 @@ async function generateBootstrapToken(apiId, apiKey) {
 	const token = crypto.randomBytes(32).toString("hex");
 	const key = `${BOOTSTRAP_TOKEN_PREFIX}${token}`;
 
+	// Encrypt the API key before storing in Redis
+	const encryptedApiKey = encrypt(apiKey);
+
 	// Store the credentials encrypted in Redis with short TTL
-	const data = JSON.stringify({ apiId, apiKey, createdAt: Date.now() });
+	const data = JSON.stringify({ apiId, apiKey: encryptedApiKey, createdAt: Date.now() });
 	await redis.setex(key, BOOTSTRAP_TOKEN_TTL, data);
 
 	return token;
@@ -57,15 +61,33 @@ async function consumeBootstrapToken(token) {
 	await redis.del(key);
 
 	try {
-		return JSON.parse(data);
+		const parsed = JSON.parse(data);
+		// Decrypt the API key
+		const decryptedApiKey = decrypt(parsed.apiKey);
+		if (!decryptedApiKey) {
+			logger.error("Failed to decrypt bootstrap token API key");
+			return null;
+		}
+		return { apiId: parsed.apiId, apiKey: decryptedApiKey, createdAt: parsed.createdAt };
 	} catch (e) {
 		return null;
 	}
 }
 
-// In-memory cache for integration states (api_id -> { integration_name -> enabled })
-// This stores the last known state from successful toggles
+// In-memory cache for integration states (api_id -> { integrations: {}, lastAccess: timestamp })
+// This stores the last known state from successful toggles with TTL cleanup
 const integrationStateCache = new Map();
+const INTEGRATION_CACHE_TTL = 5 * 60 * 1000; // 5 minutes TTL
+
+// Periodic cleanup of stale integration cache entries
+setInterval(() => {
+	const now = Date.now();
+	for (const [key, value] of integrationStateCache.entries()) {
+		if (now - value.lastAccess > INTEGRATION_CACHE_TTL) {
+			integrationStateCache.delete(key);
+		}
+	}
+}, 60 * 1000); // Clean up every minute
 
 // Middleware to validate API credentials
 const validateApiCredentials = async (req, res, next) => {
@@ -2760,7 +2782,11 @@ router.get(
 
 			// Get integration states from database (persisted) with cache fallback
 			// Database is source of truth, cache is used for quick WebSocket lookups
-			const cachedState = integrationStateCache.get(host.api_id) || {};
+			const cached = integrationStateCache.get(host.api_id);
+			const cachedState = cached?.integrations || {};
+			if (cached) {
+				cached.lastAccess = Date.now(); // Update access time
+			}
 			const integrations = {
 				docker: host.docker_enabled ?? cachedState.docker ?? false,
 				compliance: host.compliance_enabled ?? cachedState.compliance ?? false,
@@ -2903,10 +2929,13 @@ router.post(
 			}
 
 			// Update cache with new state (for quick WebSocket lookups)
+			const now = Date.now();
 			if (!integrationStateCache.has(host.api_id)) {
-				integrationStateCache.set(host.api_id, {});
+				integrationStateCache.set(host.api_id, { integrations: {}, lastAccess: now });
 			}
-			integrationStateCache.get(host.api_id)[integrationName] = enabled;
+			const cacheEntry = integrationStateCache.get(host.api_id);
+			cacheEntry.integrations[integrationName] = enabled;
+			cacheEntry.lastAccess = now;
 
 			res.json({
 				success: true,

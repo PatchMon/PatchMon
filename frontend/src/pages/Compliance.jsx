@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
@@ -29,9 +29,11 @@ import { complianceAPI } from "../utils/complianceApi";
 import { adminHostsAPI } from "../utils/api";
 import ComplianceScore from "../components/compliance/ComplianceScore";
 import { formatDistanceToNow } from "date-fns";
+import { useToast } from "../contexts/ToastContext";
 
 const Compliance = () => {
 	const queryClient = useQueryClient();
+	const toast = useToast();
 	const [showBulkScanModal, setShowBulkScanModal] = useState(false);
 	const [selectedHosts, setSelectedHosts] = useState([]);
 	const [bulkScanOptions, setBulkScanOptions] = useState({
@@ -39,6 +41,7 @@ const Compliance = () => {
 		enableRemediation: false,
 	});
 	const [bulkScanResult, setBulkScanResult] = useState(null);
+	const prevActiveScanIds = useRef(new Set());
 
 	const { data: dashboard, isLoading, error } = useQuery({
 		queryKey: ["compliance-dashboard"],
@@ -60,20 +63,45 @@ const Compliance = () => {
 		staleTime: 60000,
 	});
 
+	// Track active scans and notify when they complete
+	useEffect(() => {
+		const activeScans = activeScansData?.activeScans || [];
+		const currentIds = new Set(activeScans.map((s) => s.id));
+
+		// Find scans that were active before but are now gone (completed)
+		for (const prevId of prevActiveScanIds.current) {
+			if (!currentIds.has(prevId)) {
+				// A scan completed - refresh dashboard data
+				queryClient.invalidateQueries(["compliance-dashboard"]);
+				toast.success("Compliance scan completed");
+				break; // Only show one notification per batch
+			}
+		}
+
+		prevActiveScanIds.current = currentIds;
+	}, [activeScansData, queryClient, toast]);
+
 	// Bulk scan mutation
 	const bulkScanMutation = useMutation({
 		mutationFn: (data) => complianceAPI.triggerBulkScan(data.hostIds, data.options),
 		onSuccess: (response) => {
 			setBulkScanResult(response.data);
 			queryClient.invalidateQueries(["compliance-active-scans"]);
-			// Auto-close modal after 3 seconds if all succeeded
-			if (response.data.summary?.failed === 0) {
+			const { triggered, failed } = response.data.summary || {};
+			if (failed === 0) {
+				toast.success(`Started ${triggered} compliance scan(s)`);
+				// Auto-close modal after 3 seconds if all succeeded
 				setTimeout(() => {
 					setShowBulkScanModal(false);
 					setBulkScanResult(null);
 					setSelectedHosts([]);
 				}, 3000);
+			} else {
+				toast.warning(`Started ${triggered} scan(s), ${failed} failed`);
 			}
+		},
+		onError: (error) => {
+			toast.error(`Bulk scan failed: ${error.message}`);
 		},
 	});
 

@@ -60,18 +60,19 @@ function getEncryptionKey() {
 				logger.warn("╚══════════════════════════════════════════════════════════════════╝");
 			}
 		} catch (fileError) {
-			// If we can't read/write the key file, fall back to deterministic key
-			// based on hostname (better than random, but not ideal)
+			// SECURITY: Do NOT fall back to hostname-based key as it's predictable
+			// Instead, generate an ephemeral key and warn loudly
 			logger.error(`Could not read/write encryption key file: ${fileError.message}`);
-			logger.warn("╔══════════════════════════════════════════════════════════════════╗");
-			logger.warn("║  WARNING: Using hostname-based encryption key (not recommended)  ║");
-			logger.warn("║  Set SESSION_SECRET or AI_ENCRYPTION_KEY in your environment.    ║");
-			logger.warn("╚══════════════════════════════════════════════════════════════════╝");
+			logger.error("╔══════════════════════════════════════════════════════════════════════════╗");
+			logger.error("║  CRITICAL: Cannot persist encryption key!                                ║");
+			logger.error("║  Using ephemeral key - encrypted data will be LOST on restart.          ║");
+			logger.error("║  Set SESSION_SECRET or AI_ENCRYPTION_KEY in your environment.           ║");
+			logger.error("║  Or ensure the backend directory is writable for key file storage.      ║");
+			logger.error("╚══════════════════════════════════════════════════════════════════════════╝");
 
-			// Use hostname + app identifier for deterministic key
-			const hostname = os.hostname();
-			keySource = `hostname fallback (${hostname})`;
-			key = crypto.createHash("sha256").update(`patchmon-enhanced-${hostname}`).digest();
+			// Generate a random ephemeral key (secure but not persistent)
+			keySource = "ephemeral (WARNING: not persistent!)";
+			key = crypto.randomBytes(32);
 		}
 	}
 
@@ -174,10 +175,10 @@ function getEncryptionStatus() {
 			if (fs.existsSync(keyFilePath)) {
 				source = "file";
 			} else {
-				source = "hostname_fallback";
+				source = "ephemeral";
 			}
 		} catch {
-			source = "hostname_fallback";
+			source = "ephemeral";
 		}
 	}
 
