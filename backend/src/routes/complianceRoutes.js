@@ -323,18 +323,20 @@ router.get("/profiles", async (req, res) => {
  */
 router.get("/dashboard", async (req, res) => {
   try {
-    // Get latest scan per host using raw query for PostgreSQL
+    // Get latest scan per host per profile using raw query for PostgreSQL
+    // This ensures we get both OpenSCAP and Docker Bench scans for each host
     const latestScans = await prisma.$queryRaw`
-      SELECT DISTINCT ON (host_id) *
+      SELECT DISTINCT ON (host_id, profile_id) *
       FROM compliance_scans
       WHERE status = 'completed'
-      ORDER BY host_id, completed_at DESC
+      ORDER BY host_id, profile_id, completed_at DESC
     `;
 
-    // Calculate averages
-    const totalHosts = latestScans.length;
-    const avgScore = totalHosts > 0
-      ? latestScans.reduce((sum, s) => sum + (Number(s.score) || 0), 0) / totalHosts
+    // Calculate averages - use unique hosts, not scan count
+    const uniqueHostIds = [...new Set(latestScans.map(s => s.host_id))];
+    const totalHosts = uniqueHostIds.length;
+    const avgScore = latestScans.length > 0
+      ? latestScans.reduce((sum, s) => sum + (Number(s.score) || 0), 0) / latestScans.length
       : 0;
 
     // Get hosts by compliance level
@@ -357,14 +359,15 @@ router.get("/dashboard", async (req, res) => {
       },
     });
 
-    // Worst performing hosts (latest scan per host, sorted by score)
+    // Worst performing hosts (latest scan per host per profile, sorted by score)
+    // Include both OpenSCAP and Docker Bench scans for each host
     const worstHostsRaw = await prisma.$queryRaw`
-      SELECT DISTINCT ON (host_id) cs.*, h.hostname, h.friendly_name, cp.name as profile_name, cp.type as profile_type
+      SELECT DISTINCT ON (host_id, profile_id) cs.*, h.hostname, h.friendly_name, cp.name as profile_name, cp.type as profile_type
       FROM compliance_scans cs
       JOIN hosts h ON cs.host_id = h.id
       JOIN compliance_profiles cp ON cs.profile_id = cp.id
       WHERE cs.status = 'completed'
-      ORDER BY cs.host_id, cs.completed_at DESC
+      ORDER BY cs.host_id, cs.profile_id, cs.completed_at DESC
     `;
 
     // Sort by score ascending and take top 5
