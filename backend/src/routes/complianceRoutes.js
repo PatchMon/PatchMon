@@ -177,6 +177,14 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
 
       // Create rule and result records
       if (results && Array.isArray(results)) {
+        // Debug: Count status values received from agent
+        const receivedStatusCounts = {};
+        for (const r of results) {
+          receivedStatusCounts[r.status] = (receivedStatusCounts[r.status] || 0) + 1;
+        }
+        console.log(`=== DEBUG: Received ${results.length} results for ${profile_type} ===`);
+        console.log(`=== DEBUG: Status counts received: ${JSON.stringify(receivedStatusCounts)} ===`);
+
         for (const result of results) {
           // Get rule_ref from various possible field names
           const ruleRef = result.rule_ref || result.rule_id || result.id;
