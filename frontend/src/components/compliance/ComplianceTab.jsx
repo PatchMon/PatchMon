@@ -800,11 +800,22 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 					) : (
 						<p className="text-sm text-secondary-400 flex items-center gap-2">
 							<Clock className="h-4 w-4" />
-							{elapsedTime < 120
-								? "OpenSCAP scans typically take 3-5 minutes..."
-								: elapsedTime < 300
-									? "Still scanning, please wait..."
-									: "This scan is taking longer than usual. Complex systems may require more time."}
+							{(() => {
+								const currentProfile = availableProfiles.find(p => (p.xccdf_id || p.id) === selectedProfile);
+								const isDockerBench = currentProfile?.type === "docker-bench";
+								if (isDockerBench) {
+									return elapsedTime < 60
+										? "Docker Bench scans typically complete in 1-2 minutes..."
+										: elapsedTime < 180
+											? "Still scanning Docker configuration..."
+											: "This scan is taking longer than usual.";
+								}
+								return elapsedTime < 120
+									? "OpenSCAP scans typically take 3-5 minutes..."
+									: elapsedTime < 300
+										? "Still scanning, please wait..."
+										: "This scan is taking longer than usual. Complex systems may require more time.";
+							})()}
 						</p>
 					)}
 				</div>
