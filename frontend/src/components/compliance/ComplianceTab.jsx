@@ -1292,34 +1292,6 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 		<div className="space-y-4">
 			{latestScan ? (
 				<>
-					{/* Scan Info Header */}
-					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
-						<div className="flex items-center justify-between">
-							<div className="flex items-center gap-4">
-								<ComplianceScore score={latestScan.score} size="md" />
-								<div>
-									<h3 className="text-white font-medium">
-										{latestScan.compliance_profiles?.name || latestScan.profile?.name || "Scan Results"}
-									</h3>
-									<p className="text-sm text-secondary-400">
-										{new Date(latestScan.completed_at).toLocaleString()} •
-										{latestScan.total_rules} rules evaluated
-									</p>
-								</div>
-							</div>
-							<button
-								onClick={() => {
-									refetchLatest();
-									refetchHistory();
-								}}
-								className="p-2 hover:bg-secondary-700 rounded-lg transition-colors"
-								title="Refresh results"
-							>
-								<RefreshCw className="h-4 w-4 text-secondary-400" />
-							</button>
-						</div>
-					</div>
-
 					{/* Remediation Status Banner */}
 					{remediationStatus && (
 						<div className={`rounded-lg border p-4 ${
@@ -1369,8 +1341,11 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						</div>
 					)}
 
-					{/* Profile Type Tabs - Click to switch between scan results */}
-					<div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+					{/* Profile Type Selection - Click to switch between scan types */}
+					<div className="mb-2">
+						<h3 className="text-sm font-medium text-secondary-400 mb-2">Select Scan Type to View</h3>
+					</div>
+					<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 						{profileTypeTabs.map((tab) => {
 							const Icon = tab.icon;
 							const isActive = profileTypeFilter === tab.id;
@@ -1454,25 +1429,39 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						})}
 					</div>
 
-					{/* Current Scan Header */}
+					{/* Current Scan Header - Shows which scan's results are displayed */}
 					{latestScan && (
-						<div className="flex items-center justify-between px-4 py-3 bg-secondary-800 rounded-lg border border-secondary-700 mb-4">
-							<div className="flex items-center gap-3">
-								{isDockerBenchResults ? (
-									<Container className="h-5 w-5 text-blue-400" />
-								) : (
-									<Shield className="h-5 w-5 text-green-400" />
-								)}
+						<div className="flex items-center justify-between px-4 py-3 bg-secondary-800 rounded-lg border border-secondary-700">
+							<div className="flex items-center gap-4">
+								<div className={`p-2 rounded-lg ${isDockerBenchResults ? "bg-blue-900/30" : "bg-green-900/30"}`}>
+									{isDockerBenchResults ? (
+										<Container className="h-5 w-5 text-blue-400" />
+									) : (
+										<Shield className="h-5 w-5 text-green-400" />
+									)}
+								</div>
 								<div>
 									<p className="text-white font-medium">
-										{latestScan.compliance_profiles?.name || (isDockerBenchResults ? "Docker Bench" : "OpenSCAP")} Results
+										{latestScan.compliance_profiles?.name || (isDockerBenchResults ? "Docker Bench" : "OpenSCAP")}
 									</p>
 									<p className="text-xs text-secondary-400">
-										Scanned {new Date(latestScan.completed_at).toLocaleString()}
+										{new Date(latestScan.completed_at).toLocaleString()} • {latestScan.total_rules} rules evaluated
 									</p>
 								</div>
 							</div>
-							<ComplianceScore score={latestScan.score} size="sm" />
+							<div className="flex items-center gap-3">
+								<ComplianceScore score={latestScan.score} size="md" />
+								<button
+									onClick={() => {
+										refetchLatest();
+										refetchHistory();
+									}}
+									className="p-2 hover:bg-secondary-700 rounded-lg transition-colors"
+									title="Refresh results"
+								>
+									<RefreshCw className="h-4 w-4 text-secondary-400" />
+								</button>
+							</div>
 						</div>
 					)}
 
