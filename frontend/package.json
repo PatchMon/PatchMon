@@ -1,7 +1,7 @@
 {
 	"name": "patchmon-frontend",
 	"private": true,
-	"version": "1.7.35",
+	"version": "1.7.36",
 	"license": "AGPL-3.0",
 	"type": "module",
 	"scripts": {

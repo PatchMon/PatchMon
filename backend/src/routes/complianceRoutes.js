@@ -323,6 +323,7 @@ router.get("/profiles", async (req, res) => {
  */
 router.get("/dashboard", async (req, res) => {
   try {
+    console.log("=== DASHBOARD ENDPOINT HIT ===");
     // Get latest scan per host per profile using raw query for PostgreSQL
     // This ensures we get both OpenSCAP and Docker Bench scans for each host
     const latestScans = await prisma.$queryRaw`
@@ -410,7 +411,7 @@ router.get("/dashboard", async (req, res) => {
 
     // Get top failing rules across all hosts (most recent scan per host) - for OpenSCAP
     const latestScanIds = latestScans.map(s => s.id);
-    logger.info(`[Compliance Dashboard] latestScans count: ${latestScans.length}, latestScanIds: ${latestScanIds.length}`);
+    console.log(`=== latestScans: ${latestScans.length}, latestScanIds: ${latestScanIds.length} ===`);
     let topFailingRules = [];
     if (latestScanIds.length > 0) {
       // Use Prisma.join for proper array handling in raw SQL
@@ -447,7 +448,7 @@ router.get("/dashboard", async (req, res) => {
         GROUP BY cr.status, cp.type
         ORDER BY cp.type, cr.status
       `;
-      logger.info(`[Compliance Dashboard] Status values in results: ${JSON.stringify(statusCheck)}`);
+      console.log(`=== Status values: ${JSON.stringify(statusCheck)} ===`);
 
       topWarningRules = await prisma.$queryRaw`
         SELECT
@@ -466,7 +467,7 @@ router.get("/dashboard", async (req, res) => {
         ORDER BY warn_count DESC
         LIMIT 10
       `;
-      logger.info(`[Compliance Dashboard] Top warning rules found: ${topWarningRules.length}`);
+      console.log(`=== Top warning rules: ${topWarningRules.length} ===`);
     }
 
     // Get profile distribution (how many hosts use each profile)
