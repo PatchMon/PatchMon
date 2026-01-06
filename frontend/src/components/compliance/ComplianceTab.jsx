@@ -172,6 +172,15 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 		}
 	}, [integrationStatus?.status?.scanner_info?.available_profiles]);
 
+	// Auto-switch status filter based on profile type when viewing results
+	// Docker Bench uses "warn" for issues, OpenSCAP uses "fail"
+	useEffect(() => {
+		const profileType = latestScan?.compliance_profiles?.type;
+		if (profileType === "docker-bench" && statusFilter === "fail") {
+			setStatusFilter("warn");
+		}
+	}, [latestScan?.compliance_profiles?.type]);
+
 	// SSG content update mutation
 	const [updateMessage, setUpdateMessage] = useState(null);
 	const ssgUpdateMutation = useMutation({
@@ -1152,6 +1161,7 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 		// Determine if this is a Docker Bench scan
 		const currentProfileType = latestScan?.compliance_profiles?.type || "openscap";
 		const isDockerBenchResults = currentProfileType === "docker-bench";
+
 
 		// Severity counts for failed rules
 		const getSeverity = (result) => {
