@@ -11,9 +11,15 @@ export const complianceAPI = {
 	getHostScans: (hostId, params = {}) =>
 		api.get(`/compliance/scans/${hostId}`, { params }),
 
-	// Get latest scan for a host
-	getLatestScan: (hostId) =>
-		api.get(`/compliance/scans/${hostId}/latest`),
+	// Get latest scan for a host (optionally filter by profile type)
+	getLatestScan: (hostId, profileType = null) =>
+		api.get(`/compliance/scans/${hostId}/latest`, {
+			params: profileType ? { profile_type: profileType } : {},
+		}),
+
+	// Get latest scan summary for each profile type (openscap, docker-bench)
+	getLatestScansByType: (hostId) =>
+		api.get(`/compliance/scans/${hostId}/latest-by-type`),
 
 	// Get detailed results for a scan
 	getScanResults: (scanId, params = {}) =>

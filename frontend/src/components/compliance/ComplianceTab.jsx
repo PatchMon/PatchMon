@@ -68,6 +68,7 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 	const [currentPage, setCurrentPage] = useState(1); // Pagination for results
 	const [groupBySection, setGroupBySection] = useState(false); // Group results by CIS section
 	const [expandedSections, setExpandedSections] = useState({}); // Track which sections are expanded
+	const [profileTypeFilter, setProfileTypeFilter] = useState(null); // Filter by profile type (null = show latest overall)
 	const resultsPerPage = 25; // Number of results per page
 	const queryClient = useQueryClient();
 
@@ -123,9 +124,18 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 		}
 	};
 
+	// Get latest scan summary for each profile type (for tab display)
+	const { data: scansByType } = useQuery({
+		queryKey: ["compliance-scans-by-type", hostId],
+		queryFn: () => complianceAPI.getLatestScansByType(hostId).then((res) => res.data),
+		enabled: !!hostId,
+		staleTime: 30 * 1000,
+		refetchOnWindowFocus: false,
+	});
+
 	const { data: latestScan, isLoading, refetch: refetchLatest } = useQuery({
-		queryKey: ["compliance-latest", hostId],
-		queryFn: () => complianceAPI.getLatestScan(hostId).then((res) => res.data),
+		queryKey: ["compliance-latest", hostId, profileTypeFilter],
+		queryFn: () => complianceAPI.getLatestScan(hostId, profileTypeFilter).then((res) => res.data),
 		enabled: !!hostId,
 		staleTime: 30 * 1000, // Consider data fresh for 30 seconds
 		refetchOnWindowFocus: false, // Don't refetch on window focus to avoid flicker
@@ -1139,6 +1149,10 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 			skipped: results.filter(r => r.status === "skip" || r.status === "notapplicable").length,
 		};
 
+		// Determine if this is a Docker Bench scan
+		const currentProfileType = latestScan?.compliance_profiles?.type || "openscap";
+		const isDockerBenchResults = currentProfileType === "docker-bench";
+
 		// Severity counts for failed rules
 		const getSeverity = (result) => {
 			return result.compliance_rules?.severity || result.rule?.severity || result.severity || "unknown";
@@ -1160,8 +1174,25 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 			{ id: "low", label: "Low", count: severityCounts.low, color: "text-blue-400" },
 		];
 
-		// Results subtabs configuration
-		const resultsSubtabs = [
+		// Profile type tabs configuration
+		const hasOpenSCAP = !!scansByType?.openscap;
+		const hasDockerBench = !!scansByType?.["docker-bench"];
+		const showProfileTypeTabs = hasOpenSCAP || hasDockerBench;
+
+		const profileTypeTabs = [
+			{ id: null, label: "All", icon: Shield },
+			{ id: "openscap", label: "OpenSCAP", icon: Server, available: hasOpenSCAP, count: scansByType?.openscap?.total_rules },
+			{ id: "docker-bench", label: "Docker Bench", icon: Container, available: hasDockerBench, count: scansByType?.["docker-bench"]?.total_rules },
+		].filter(t => t.id === null || t.available);
+
+		// Results subtabs configuration - labels adapt based on profile type
+		const resultsSubtabs = isDockerBenchResults ? [
+			// Docker Bench uses WARN for issues that need attention (not FAIL)
+			{ id: "warn", label: "Issues (WARN)", count: counts.warn, icon: AlertTriangle, color: "text-yellow-400", bgColor: "bg-yellow-900/20", borderColor: "border-yellow-700" },
+			{ id: "pass", label: "Passed", count: counts.pass, icon: CheckCircle, color: "text-green-400", bgColor: "bg-green-900/20", borderColor: "border-green-700" },
+			{ id: "skipped", label: "Info/Note", count: counts.skipped, icon: MinusCircle, color: "text-secondary-400", bgColor: "bg-secondary-700/50", borderColor: "border-secondary-600" },
+		] : [
+			// OpenSCAP uses standard terminology
 			{ id: "fail", label: "Failed", count: counts.fail, icon: XCircle, color: "text-red-400", bgColor: "bg-red-900/20", borderColor: "border-red-700" },
 			{ id: "warn", label: "Warnings", count: counts.warn, icon: AlertTriangle, color: "text-yellow-400", bgColor: "bg-yellow-900/20", borderColor: "border-yellow-700" },
 			{ id: "pass", label: "Passed", count: counts.pass, icon: CheckCircle, color: "text-green-400", bgColor: "bg-green-900/20", borderColor: "border-green-700" },
@@ -1334,6 +1365,46 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						</div>
 					)}
 
+					{/* Profile Type Tabs - Only show if we have multiple scan types */}
+					{showProfileTypeTabs && profileTypeTabs.length > 1 && (
+						<div className="flex items-center gap-2 mb-4">
+							{profileTypeTabs.map((tab) => {
+								const Icon = tab.icon;
+								const isActive = profileTypeFilter === tab.id;
+								return (
+									<button
+										key={tab.id || "all"}
+										onClick={() => {
+											setProfileTypeFilter(tab.id);
+											setCurrentPage(1);
+											// Reset to appropriate default status filter based on profile type
+											if (tab.id === "docker-bench") {
+												setStatusFilter("warn");
+											} else {
+												setStatusFilter("fail");
+											}
+										}}
+										className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+											isActive
+												? "bg-primary-600 text-white"
+												: "bg-secondary-800 text-secondary-300 hover:bg-secondary-700 border border-secondary-700"
+										}`}
+									>
+										<Icon className="h-4 w-4" />
+										<span>{tab.label}</span>
+										{tab.count && (
+											<span className={`px-2 py-0.5 rounded-full text-xs ${
+												isActive ? "bg-primary-700" : "bg-secondary-600"
+											}`}>
+												{tab.count}
+											</span>
+										)}
+									</button>
+								);
+							})}
+						</div>
+					)}
+
 					{/* Results Subtabs */}
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700">
 						<div className="flex border-b border-secondary-700">
@@ -1369,8 +1440,8 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 							})}
 						</div>
 
-						{/* Severity subtabs - only show for Failed tab */}
-						{statusFilter === "fail" && (
+						{/* Severity subtabs - only show for Failed tab in OpenSCAP results (Docker Bench doesn't have severity) */}
+						{statusFilter === "fail" && !isDockerBenchResults && (
 							<div className="flex items-center gap-2 px-4 py-2 border-b border-secondary-700 bg-secondary-750">
 								<span className="text-xs text-secondary-400 mr-2">Severity:</span>
 								{severitySubtabs.map((tab) => {

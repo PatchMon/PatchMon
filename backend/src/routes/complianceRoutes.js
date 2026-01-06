@@ -588,18 +588,29 @@ router.get("/scans/:hostId", async (req, res) => {
 /**
  * GET /api/v1/compliance/scans/:hostId/latest
  * Get the latest scan for a host
+ * Query params:
+ *   - profile_type: Filter by profile type (openscap, docker-bench)
  */
 router.get("/scans/:hostId/latest", async (req, res) => {
   try {
     const { hostId } = req.params;
+    const { profile_type } = req.query;
 
     // Validate hostId
     if (!isValidUUID(hostId)) {
       return res.status(400).json({ error: "Invalid host ID format" });
     }
 
+    // Build where clause
+    const where = { host_id: hostId, status: "completed" };
+
+    // Filter by profile type if specified
+    if (profile_type) {
+      where.compliance_profiles = { type: profile_type };
+    }
+
     const scan = await prisma.compliance_scans.findFirst({
-      where: { host_id: hostId, status: "completed" },
+      where,
       orderBy: { completed_at: "desc" },
       include: {
         compliance_profiles: true,
@@ -622,6 +633,66 @@ router.get("/scans/:hostId/latest", async (req, res) => {
   } catch (error) {
     logger.error("[Compliance] Error fetching latest scan:", error);
     res.status(500).json({ error: "Failed to fetch latest scan" });
+  }
+});
+
+/**
+ * GET /api/v1/compliance/scans/:hostId/latest-by-type
+ * Get the latest scan for each profile type (openscap, docker-bench)
+ * Returns summary info for tab display
+ */
+router.get("/scans/:hostId/latest-by-type", async (req, res) => {
+  try {
+    const { hostId } = req.params;
+
+    // Validate hostId
+    if (!isValidUUID(hostId)) {
+      return res.status(400).json({ error: "Invalid host ID format" });
+    }
+
+    // Get distinct profile types that have scans for this host
+    const profileTypes = await prisma.$queryRaw`
+      SELECT DISTINCT cp.type
+      FROM compliance_scans cs
+      JOIN compliance_profiles cp ON cs.profile_id = cp.id
+      WHERE cs.host_id = ${hostId}::uuid AND cs.status = 'completed'
+    `;
+
+    // For each profile type, get the latest scan summary
+    const results = {};
+    for (const { type } of profileTypes) {
+      const scan = await prisma.compliance_scans.findFirst({
+        where: {
+          host_id: hostId,
+          status: "completed",
+          compliance_profiles: { type },
+        },
+        orderBy: { completed_at: "desc" },
+        include: {
+          compliance_profiles: true,
+        },
+      });
+
+      if (scan) {
+        results[type] = {
+          id: scan.id,
+          profile_name: scan.compliance_profiles?.name,
+          profile_type: type,
+          score: scan.score,
+          total_rules: scan.total_rules,
+          passed: scan.passed,
+          failed: scan.failed,
+          warnings: scan.warnings,
+          skipped: scan.skipped,
+          completed_at: scan.completed_at,
+        };
+      }
+    }
+
+    res.json(results);
+  } catch (error) {
+    logger.error("[Compliance] Error fetching latest scans by type:", error);
+    res.status(500).json({ error: "Failed to fetch latest scans by type" });
   }
 });
 
