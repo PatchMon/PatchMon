@@ -127,6 +127,35 @@ const Compliance = () => {
 	const { summary, recent_scans, worst_hosts, top_failing_rules, profile_distribution, severity_breakdown, profile_type_stats } = dashboard || {};
 	const activeScans = activeScansData?.activeScans || [];
 
+	// Get stats for the selected profile type
+	const openscapStats = profile_type_stats?.find(p => p.type === "openscap");
+	const dockerBenchStats = profile_type_stats?.find(p => p.type === "docker-bench");
+
+	// Calculate filtered summary based on selected tab
+	const getFilteredSummary = () => {
+		if (profileTypeFilter === "all") {
+			return summary;
+		}
+		const stats = profileTypeFilter === "openscap" ? openscapStats : dockerBenchStats;
+		if (!stats) return null;
+
+		// Calculate pass rate
+		const passRate = stats.total_rules > 0
+			? (stats.total_passed / stats.total_rules) * 100
+			: 0;
+
+		return {
+			total_hosts: stats.hosts_scanned || 0,
+			average_score: stats.average_score || 0,
+			total_rules: stats.total_rules || 0,
+			total_passed_rules: stats.total_passed || 0,
+			total_failed_rules: stats.total_failed || 0,
+			total_warnings: stats.total_warnings || 0,
+			pass_rate: passRate,
+		};
+	};
+	const filteredSummary = getFilteredSummary();
+
 	// Filter data by profile type
 	const filteredScans = recent_scans?.filter(scan => {
 		if (profileTypeFilter === "all") return true;
@@ -142,6 +171,13 @@ const Compliance = () => {
 		if (profileTypeFilter === "all") return true;
 		return rule.profile_type === profileTypeFilter;
 	}) || [];
+
+	// Get display name for current filter
+	const getFilterDisplayName = () => {
+		if (profileTypeFilter === "openscap") return "OpenSCAP";
+		if (profileTypeFilter === "docker-bench") return "Docker Bench";
+		return "All Scans";
+	};
 
 	const allHosts = hostsData?.hosts || [];
 
@@ -411,195 +447,279 @@ const Compliance = () => {
 				</div>
 			)}
 
-			{/* Summary Cards - Row 1: Host Stats */}
-			<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-				<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-700">
-					<div className="flex items-center gap-2 text-secondary-400 mb-2">
-						<Server className="h-4 w-4" />
-						<span className="text-sm">Scanned Hosts</span>
-					</div>
-					<p className="text-2xl font-bold text-white">{summary?.total_hosts || 0}</p>
-				</div>
-
-				<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-700">
-					<div className="flex items-center gap-2 text-secondary-400 mb-2">
-						<TrendingUp className="h-4 w-4" />
-						<span className="text-sm">Average Score</span>
-					</div>
-					<p className="text-2xl font-bold text-white">{summary?.average_score?.toFixed(1) || 0}%</p>
-				</div>
-
-				<div className="bg-secondary-800 rounded-lg p-4 border border-green-700/50">
-					<div className="flex items-center gap-2 text-green-400 mb-2">
-						<ShieldCheck className="h-4 w-4" />
-						<span className="text-sm">Compliant</span>
-					</div>
-					<p className="text-2xl font-bold text-green-400">{summary?.compliant || 0}</p>
-				</div>
-
-				<div className="bg-secondary-800 rounded-lg p-4 border border-yellow-700/50">
-					<div className="flex items-center gap-2 text-yellow-400 mb-2">
-						<ShieldAlert className="h-4 w-4" />
-						<span className="text-sm">Warning</span>
-					</div>
-					<p className="text-2xl font-bold text-yellow-400">{summary?.warning || 0}</p>
-				</div>
-
-				<div className="bg-secondary-800 rounded-lg p-4 border border-red-700/50">
-					<div className="flex items-center gap-2 text-red-400 mb-2">
-						<ShieldX className="h-4 w-4" />
-						<span className="text-sm">Critical</span>
-					</div>
-					<p className="text-2xl font-bold text-red-400">{summary?.critical || 0}</p>
-				</div>
-
-				<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-600">
-					<div className="flex items-center gap-2 text-secondary-400 mb-2">
-						<ShieldOff className="h-4 w-4" />
-						<span className="text-sm">Not Scanned</span>
-					</div>
-					<p className="text-2xl font-bold text-secondary-400">{summary?.unscanned || 0}</p>
-				</div>
+			{/* Section Header - Shows which data is being displayed */}
+			<div className="flex items-center gap-3 px-1">
+				{profileTypeFilter === "openscap" && <Server className="h-5 w-5 text-green-400" />}
+				{profileTypeFilter === "docker-bench" && <Container className="h-5 w-5 text-blue-400" />}
+				{profileTypeFilter === "all" && <Shield className="h-5 w-5 text-primary-400" />}
+				<h2 className="text-lg font-semibold text-white">
+					{getFilterDisplayName()} Statistics
+				</h2>
 			</div>
 
-			{/* Summary Cards - Row 2: Rule Stats */}
-			{summary?.total_rules > 0 && (
-				<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-					<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-700">
-						<div className="flex items-center gap-2 text-secondary-400 mb-2">
-							<List className="h-4 w-4" />
-							<span className="text-sm">Total Rules Evaluated</span>
+			{/* Summary Cards - Filtered by selected tab */}
+			{filteredSummary ? (
+				<>
+					{/* Row 1: Host and Score Stats */}
+					<div className={`grid gap-4 ${profileTypeFilter === "all" ? "grid-cols-2 md:grid-cols-3 lg:grid-cols-6" : "grid-cols-2 md:grid-cols-4"}`}>
+						<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-700">
+							<div className="flex items-center gap-2 text-secondary-400 mb-2">
+								<Server className="h-4 w-4" />
+								<span className="text-sm">Hosts Scanned</span>
+							</div>
+							<p className="text-2xl font-bold text-white">{filteredSummary.total_hosts || 0}</p>
 						</div>
-						<p className="text-2xl font-bold text-white">{summary?.total_rules?.toLocaleString() || 0}</p>
+
+						<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-700">
+							<div className="flex items-center gap-2 text-secondary-400 mb-2">
+								<TrendingUp className="h-4 w-4" />
+								<span className="text-sm">Average Score</span>
+							</div>
+							<p className="text-2xl font-bold text-white">{filteredSummary.average_score?.toFixed(1) || 0}%</p>
+						</div>
+
+						{/* Show compliance levels only for "All Scans" tab */}
+						{profileTypeFilter === "all" && (
+							<>
+								<div className="bg-secondary-800 rounded-lg p-4 border border-green-700/50">
+									<div className="flex items-center gap-2 text-green-400 mb-2">
+										<ShieldCheck className="h-4 w-4" />
+										<span className="text-sm">Compliant (≥80%)</span>
+									</div>
+									<p className="text-2xl font-bold text-green-400">{summary?.compliant || 0}</p>
+								</div>
+
+								<div className="bg-secondary-800 rounded-lg p-4 border border-yellow-700/50">
+									<div className="flex items-center gap-2 text-yellow-400 mb-2">
+										<ShieldAlert className="h-4 w-4" />
+										<span className="text-sm">Warning (60-80%)</span>
+									</div>
+									<p className="text-2xl font-bold text-yellow-400">{summary?.warning || 0}</p>
+								</div>
+
+								<div className="bg-secondary-800 rounded-lg p-4 border border-red-700/50">
+									<div className="flex items-center gap-2 text-red-400 mb-2">
+										<ShieldX className="h-4 w-4" />
+										<span className="text-sm">Critical (&lt;60%)</span>
+									</div>
+									<p className="text-2xl font-bold text-red-400">{summary?.critical || 0}</p>
+								</div>
+
+								<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-600">
+									<div className="flex items-center gap-2 text-secondary-400 mb-2">
+										<ShieldOff className="h-4 w-4" />
+										<span className="text-sm">Not Scanned</span>
+									</div>
+									<p className="text-2xl font-bold text-secondary-400">{summary?.unscanned || 0}</p>
+								</div>
+							</>
+						)}
+
+						{/* For specific scan types, show rules stats inline */}
+						{profileTypeFilter !== "all" && (
+							<>
+								<div className="bg-secondary-800 rounded-lg p-4 border border-green-700/50">
+									<div className="flex items-center gap-2 text-green-400 mb-2">
+										<CheckCircle className="h-4 w-4" />
+										<span className="text-sm">Rules Passed</span>
+									</div>
+									<p className="text-2xl font-bold text-green-400">{filteredSummary.total_passed_rules?.toLocaleString() || 0}</p>
+								</div>
+
+								{profileTypeFilter === "docker-bench" ? (
+									<div className="bg-secondary-800 rounded-lg p-4 border border-yellow-700/50">
+										<div className="flex items-center gap-2 text-yellow-400 mb-2">
+											<AlertTriangle className="h-4 w-4" />
+											<span className="text-sm">Warnings</span>
+										</div>
+										<p className="text-2xl font-bold text-yellow-400">{filteredSummary.total_warnings?.toLocaleString() || 0}</p>
+									</div>
+								) : (
+									<div className="bg-secondary-800 rounded-lg p-4 border border-red-700/50">
+										<div className="flex items-center gap-2 text-red-400 mb-2">
+											<XCircle className="h-4 w-4" />
+											<span className="text-sm">Rules Failed</span>
+										</div>
+										<p className="text-2xl font-bold text-red-400">{filteredSummary.total_failed_rules?.toLocaleString() || 0}</p>
+									</div>
+								)}
+							</>
+						)}
 					</div>
 
-					<div className="bg-secondary-800 rounded-lg p-4 border border-green-700/50">
-						<div className="flex items-center gap-2 text-green-400 mb-2">
-							<CheckCircle className="h-4 w-4" />
-							<span className="text-sm">Rules Passed</span>
-						</div>
-						<p className="text-2xl font-bold text-green-400">{summary?.total_passed_rules?.toLocaleString() || 0}</p>
-					</div>
+					{/* Row 2: Rule Stats - Only show for "All Scans" or when there are rules */}
+					{profileTypeFilter === "all" && summary?.total_rules > 0 && (
+						<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+							<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-700">
+								<div className="flex items-center gap-2 text-secondary-400 mb-2">
+									<List className="h-4 w-4" />
+									<span className="text-sm">Total Rules Evaluated</span>
+								</div>
+								<p className="text-2xl font-bold text-white">{summary.total_rules?.toLocaleString() || 0}</p>
+							</div>
 
-					<div className="bg-secondary-800 rounded-lg p-4 border border-red-700/50">
-						<div className="flex items-center gap-2 text-red-400 mb-2">
-							<XCircle className="h-4 w-4" />
-							<span className="text-sm">Rules Failed</span>
-						</div>
-						<p className="text-2xl font-bold text-red-400">{summary?.total_failed_rules?.toLocaleString() || 0}</p>
-					</div>
+							<div className="bg-secondary-800 rounded-lg p-4 border border-green-700/50">
+								<div className="flex items-center gap-2 text-green-400 mb-2">
+									<CheckCircle className="h-4 w-4" />
+									<span className="text-sm">Rules Passed</span>
+								</div>
+								<p className="text-2xl font-bold text-green-400">{summary.total_passed_rules?.toLocaleString() || 0}</p>
+							</div>
 
-					<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-700">
-						<div className="flex items-center gap-2 text-secondary-400 mb-2">
-							<TrendingUp className="h-4 w-4" />
-							<span className="text-sm">Pass Rate</span>
+							<div className="bg-secondary-800 rounded-lg p-4 border border-red-700/50">
+								<div className="flex items-center gap-2 text-red-400 mb-2">
+									<XCircle className="h-4 w-4" />
+									<span className="text-sm">Rules Failed</span>
+								</div>
+								<p className="text-2xl font-bold text-red-400">{summary.total_failed_rules?.toLocaleString() || 0}</p>
+							</div>
+
+							<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-700">
+								<div className="flex items-center gap-2 text-secondary-400 mb-2">
+									<TrendingUp className="h-4 w-4" />
+									<span className="text-sm">Pass Rate</span>
+								</div>
+								<p className="text-2xl font-bold text-white">
+									{summary.total_rules > 0
+										? ((summary.total_passed_rules / summary.total_rules) * 100).toFixed(1)
+										: 0}%
+								</p>
+							</div>
 						</div>
-						<p className="text-2xl font-bold text-white">
-							{summary?.total_rules > 0
-								? ((summary?.total_passed_rules / summary?.total_rules) * 100).toFixed(1)
-								: 0}%
-						</p>
-					</div>
+					)}
+
+					{/* Rule details for specific scan types */}
+					{profileTypeFilter !== "all" && filteredSummary.total_rules > 0 && (
+						<div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+							<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-700">
+								<div className="flex items-center gap-2 text-secondary-400 mb-2">
+									<List className="h-4 w-4" />
+									<span className="text-sm">Total Rules</span>
+								</div>
+								<p className="text-2xl font-bold text-white">{filteredSummary.total_rules?.toLocaleString() || 0}</p>
+							</div>
+
+							<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-700">
+								<div className="flex items-center gap-2 text-secondary-400 mb-2">
+									<TrendingUp className="h-4 w-4" />
+									<span className="text-sm">Pass Rate</span>
+								</div>
+								<p className="text-2xl font-bold text-white">
+									{filteredSummary.total_rules > 0
+										? ((filteredSummary.total_passed_rules / filteredSummary.total_rules) * 100).toFixed(1)
+										: 0}%
+								</p>
+							</div>
+
+							{profileTypeFilter === "docker-bench" && (
+								<div className="bg-secondary-800 rounded-lg p-4 border border-secondary-700">
+									<div className="flex items-center gap-2 text-secondary-400 mb-2">
+										<AlertTriangle className="h-4 w-4" />
+										<span className="text-sm">Warning Rate</span>
+									</div>
+									<p className="text-2xl font-bold text-white">
+										{filteredSummary.total_rules > 0
+											? ((filteredSummary.total_warnings / filteredSummary.total_rules) * 100).toFixed(1)
+											: 0}%
+									</p>
+								</div>
+							)}
+						</div>
+					)}
+				</>
+			) : (
+				<div className="bg-secondary-800 rounded-lg p-8 border border-secondary-700 text-center">
+					<p className="text-secondary-400">No {getFilterDisplayName()} scan data available</p>
 				</div>
 			)}
 
-			{/* Profile Type Stats - OpenSCAP vs Docker Bench */}
-			{profile_type_stats && profile_type_stats.length > 0 && (
+			{/* Scan Type Detail Cards - Show based on selected tab */}
+			{profileTypeFilter === "all" && (openscapStats || dockerBenchStats) && (
 				<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-					{/* OpenSCAP Card */}
-					{(() => {
-						const openscap = profile_type_stats.find(p => p.type === "openscap");
-						return (
-							<div className={`bg-secondary-800 rounded-lg p-4 border-2 ${openscap ? "border-blue-700/50" : "border-secondary-700 opacity-50"}`}>
-								<div className="flex items-center justify-between mb-3">
-									<div className="flex items-center gap-2">
-										<Server className="h-5 w-5 text-blue-400" />
-										<h3 className="text-white font-medium">OpenSCAP</h3>
-									</div>
-									{openscap?.average_score != null && (
-										<span className={`text-xl font-bold ${
-											openscap.average_score >= 80 ? "text-green-400" :
-											openscap.average_score >= 60 ? "text-yellow-400" : "text-red-400"
-										}`}>
-											{Math.round(openscap.average_score)}%
-										</span>
-									)}
-								</div>
-								{openscap ? (
-									<div className="grid grid-cols-2 gap-3 text-sm">
-										<div>
-											<p className="text-secondary-400">Hosts Scanned</p>
-											<p className="text-white font-medium">{openscap.hosts_scanned}</p>
-										</div>
-										<div>
-											<p className="text-secondary-400">Total Rules</p>
-											<p className="text-white font-medium">{openscap.total_rules?.toLocaleString()}</p>
-										</div>
-										<div>
-											<p className="text-green-400">Passed</p>
-											<p className="text-white font-medium">{openscap.total_passed?.toLocaleString()}</p>
-										</div>
-										<div>
-											<p className="text-red-400">Failed</p>
-											<p className="text-white font-medium">{openscap.total_failed?.toLocaleString()}</p>
-										</div>
-									</div>
-								) : (
-									<p className="text-secondary-500 text-sm">No OpenSCAP scans yet</p>
-								)}
+					{/* OpenSCAP Detail Card */}
+					<div className={`bg-secondary-800 rounded-lg p-4 border-2 ${openscapStats ? "border-green-700/50" : "border-secondary-700 opacity-50"}`}>
+						<div className="flex items-center justify-between mb-3">
+							<div className="flex items-center gap-2">
+								<Server className="h-5 w-5 text-green-400" />
+								<h3 className="text-white font-medium">OpenSCAP - CIS Benchmark</h3>
 							</div>
-						);
-					})()}
+							{openscapStats?.average_score != null && (
+								<span className={`text-xl font-bold ${
+									openscapStats.average_score >= 80 ? "text-green-400" :
+									openscapStats.average_score >= 60 ? "text-yellow-400" : "text-red-400"
+								}`}>
+									{Math.round(openscapStats.average_score)}%
+								</span>
+							)}
+						</div>
+						{openscapStats ? (
+							<div className="grid grid-cols-2 gap-3 text-sm">
+								<div>
+									<p className="text-secondary-400">Hosts Scanned</p>
+									<p className="text-white font-medium">{openscapStats.hosts_scanned}</p>
+								</div>
+								<div>
+									<p className="text-secondary-400">Total Rules</p>
+									<p className="text-white font-medium">{openscapStats.total_rules?.toLocaleString()}</p>
+								</div>
+								<div>
+									<p className="text-green-400">Passed</p>
+									<p className="text-white font-medium">{openscapStats.total_passed?.toLocaleString()}</p>
+								</div>
+								<div>
+									<p className="text-red-400">Failed</p>
+									<p className="text-white font-medium">{openscapStats.total_failed?.toLocaleString()}</p>
+								</div>
+							</div>
+						) : (
+							<p className="text-secondary-500 text-sm">No OpenSCAP scans yet</p>
+						)}
+					</div>
 
-					{/* Docker Bench Card */}
-					{(() => {
-						const dockerBench = profile_type_stats.find(p => p.type === "docker-bench");
-						return (
-							<div className={`bg-secondary-800 rounded-lg p-4 border-2 ${dockerBench ? "border-cyan-700/50" : "border-secondary-700 opacity-50"}`}>
-								<div className="flex items-center justify-between mb-3">
-									<div className="flex items-center gap-2">
-										<Container className="h-5 w-5 text-cyan-400" />
-										<h3 className="text-white font-medium">Docker Bench</h3>
-									</div>
-									{dockerBench?.average_score != null && (
-										<span className={`text-xl font-bold ${
-											dockerBench.average_score >= 80 ? "text-green-400" :
-											dockerBench.average_score >= 60 ? "text-yellow-400" : "text-red-400"
-										}`}>
-											{Math.round(dockerBench.average_score)}%
-										</span>
-									)}
-								</div>
-								{dockerBench ? (
-									<div className="grid grid-cols-2 gap-3 text-sm">
-										<div>
-											<p className="text-secondary-400">Hosts Scanned</p>
-											<p className="text-white font-medium">{dockerBench.hosts_scanned}</p>
-										</div>
-										<div>
-											<p className="text-secondary-400">Total Rules</p>
-											<p className="text-white font-medium">{dockerBench.total_rules?.toLocaleString()}</p>
-										</div>
-										<div>
-											<p className="text-green-400">Passed</p>
-											<p className="text-white font-medium">{dockerBench.total_passed?.toLocaleString()}</p>
-										</div>
-										<div>
-											<p className="text-yellow-400">Warnings</p>
-											<p className="text-white font-medium">{dockerBench.total_warnings?.toLocaleString()}</p>
-										</div>
-									</div>
-								) : (
-									<p className="text-secondary-500 text-sm">No Docker Bench scans yet</p>
-								)}
+					{/* Docker Bench Detail Card */}
+					<div className={`bg-secondary-800 rounded-lg p-4 border-2 ${dockerBenchStats ? "border-blue-700/50" : "border-secondary-700 opacity-50"}`}>
+						<div className="flex items-center justify-between mb-3">
+							<div className="flex items-center gap-2">
+								<Container className="h-5 w-5 text-blue-400" />
+								<h3 className="text-white font-medium">Docker Bench - Container Security</h3>
 							</div>
-						);
-					})()}
+							{dockerBenchStats?.average_score != null && (
+								<span className={`text-xl font-bold ${
+									dockerBenchStats.average_score >= 80 ? "text-green-400" :
+									dockerBenchStats.average_score >= 60 ? "text-yellow-400" : "text-red-400"
+								}`}>
+									{Math.round(dockerBenchStats.average_score)}%
+								</span>
+							)}
+						</div>
+						{dockerBenchStats ? (
+							<div className="grid grid-cols-2 gap-3 text-sm">
+								<div>
+									<p className="text-secondary-400">Hosts Scanned</p>
+									<p className="text-white font-medium">{dockerBenchStats.hosts_scanned}</p>
+								</div>
+								<div>
+									<p className="text-secondary-400">Total Rules</p>
+									<p className="text-white font-medium">{dockerBenchStats.total_rules?.toLocaleString()}</p>
+								</div>
+								<div>
+									<p className="text-green-400">Passed</p>
+									<p className="text-white font-medium">{dockerBenchStats.total_passed?.toLocaleString()}</p>
+								</div>
+								<div>
+									<p className="text-yellow-400">Warnings</p>
+									<p className="text-white font-medium">{dockerBenchStats.total_warnings?.toLocaleString()}</p>
+								</div>
+							</div>
+						) : (
+							<p className="text-secondary-500 text-sm">No Docker Bench scans yet</p>
+						)}
+					</div>
 				</div>
 			)}
 
-			{/* Charts Section */}
-			{summary && (summary.total_hosts > 0 || summary.unscanned > 0) && (() => {
+			{/* Charts Section - Only show for "All Scans" tab */}
+			{profileTypeFilter === "all" && summary && (summary.total_hosts > 0 || summary.unscanned > 0) && (() => {
 				const hostDistribution = [
 					{ name: "Compliant (≥80%)", value: summary.compliant || 0, color: "#22c55e" },
 					{ name: "Warning (60-80%)", value: summary.warning || 0, color: "#eab308" },
@@ -607,7 +727,7 @@ const Compliance = () => {
 					{ name: "Not Scanned", value: summary.unscanned || 0, color: "#6b7280" },
 				].filter(d => d.value > 0);
 
-				// Score ranges for bar chart
+				// Score ranges for bar chart - all scans
 				const scoreRanges = [
 					{ range: "90-100%", count: filteredScans?.filter(s => s.score >= 90).length || 0, color: "#22c55e" },
 					{ range: "80-89%", count: filteredScans?.filter(s => s.score >= 80 && s.score < 90).length || 0, color: "#84cc16" },
@@ -618,11 +738,11 @@ const Compliance = () => {
 
 				return (
 					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-						{/* Host Compliance Distribution */}
+						{/* Host Compliance Distribution - Combined view */}
 						<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
 							<h3 className="text-white font-medium mb-4 flex items-center gap-2">
 								<PieChartIcon className="h-4 w-4 text-primary-400" />
-								Host Compliance Status
+								Host Compliance Status (All Scan Types)
 							</h3>
 							<div className="h-48">
 								<ResponsiveContainer width="100%" height="100%">
@@ -667,7 +787,7 @@ const Compliance = () => {
 							<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
 								<h3 className="text-white font-medium mb-4 flex items-center gap-2">
 									<BarChart3 className="h-4 w-4 text-primary-400" />
-									Recent Scans by Score
+									Recent Scans by Score (All Types)
 								</h3>
 								<div className="h-48">
 									<ResponsiveContainer width="100%" height="100%">
@@ -696,8 +816,54 @@ const Compliance = () => {
 				);
 			})()}
 
-			{/* Additional Charts - Severity & Profile Distribution */}
-			{((severity_breakdown && severity_breakdown.length > 0) || (profile_distribution && profile_distribution.length > 0)) && (
+			{/* Charts Section - For specific scan types */}
+			{profileTypeFilter !== "all" && filteredScans && filteredScans.length > 0 && (() => {
+				// Score ranges for bar chart - filtered scans
+				const scoreRanges = [
+					{ range: "90-100%", count: filteredScans.filter(s => s.score >= 90).length, color: "#22c55e" },
+					{ range: "80-89%", count: filteredScans.filter(s => s.score >= 80 && s.score < 90).length, color: "#84cc16" },
+					{ range: "70-79%", count: filteredScans.filter(s => s.score >= 70 && s.score < 80).length, color: "#eab308" },
+					{ range: "60-69%", count: filteredScans.filter(s => s.score >= 60 && s.score < 70).length, color: "#f97316" },
+					{ range: "<60%", count: filteredScans.filter(s => s.score < 60).length, color: "#ef4444" },
+				];
+
+				return (
+					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
+						<h3 className="text-white font-medium mb-4 flex items-center gap-2">
+							{profileTypeFilter === "openscap" ? (
+								<Server className="h-4 w-4 text-green-400" />
+							) : (
+								<Container className="h-4 w-4 text-blue-400" />
+							)}
+							{getFilterDisplayName()} - Score Distribution
+						</h3>
+						<div className="h-48">
+							<ResponsiveContainer width="100%" height="100%">
+								<BarChart data={scoreRanges} layout="vertical">
+									<XAxis type="number" stroke="#6b7280" fontSize={12} />
+									<YAxis type="category" dataKey="range" stroke="#6b7280" fontSize={12} width={60} />
+									<Tooltip
+										contentStyle={{
+											backgroundColor: "#1f2937",
+											border: "1px solid #374151",
+											borderRadius: "0.5rem",
+										}}
+										formatter={(value) => [value, "Scans"]}
+									/>
+									<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+										{scoreRanges.map((entry, index) => (
+											<Cell key={`cell-${index}`} fill={entry.color} />
+										))}
+									</Bar>
+								</BarChart>
+							</ResponsiveContainer>
+						</div>
+					</div>
+				);
+			})()}
+
+			{/* Additional Charts - Severity & Profile Distribution - Only for "All Scans" tab */}
+			{profileTypeFilter === "all" && ((severity_breakdown && severity_breakdown.length > 0) || (profile_distribution && profile_distribution.length > 0)) && (
 				<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 					{/* Severity Breakdown */}
 					{severity_breakdown && severity_breakdown.length > 0 && (() => {
@@ -718,7 +884,7 @@ const Compliance = () => {
 							<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
 								<h3 className="text-white font-medium mb-4 flex items-center gap-2">
 									<AlertTriangle className="h-4 w-4 text-primary-400" />
-									Failed Rules by Severity
+									Failed Rules by Severity (All Scan Types)
 								</h3>
 								<div className="h-48">
 									<ResponsiveContainer width="100%" height="100%">
@@ -765,7 +931,7 @@ const Compliance = () => {
 						<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
 							<h3 className="text-white font-medium mb-4 flex items-center gap-2">
 								<Shield className="h-4 w-4 text-primary-400" />
-								Profiles in Use
+								Profiles in Use (All Scan Types)
 							</h3>
 							<div className="h-48">
 								<ResponsiveContainer width="100%" height="100%">
@@ -801,13 +967,14 @@ const Compliance = () => {
 				<div className="bg-secondary-800 rounded-lg border border-secondary-700">
 					<div className="px-4 py-3 border-b border-secondary-700">
 						<h2 className="text-lg font-semibold text-white flex items-center gap-2">
-							<XCircle className="h-5 w-5 text-red-400" />
-							Top Failing Rules
-							{profileTypeFilter !== "all" && (
-								<span className="text-sm font-normal text-secondary-400 ml-2">
-									({profileTypeFilter === "openscap" ? "OpenSCAP" : "Docker Bench"})
-								</span>
+							{profileTypeFilter === "openscap" ? (
+								<Server className="h-5 w-5 text-green-400" />
+							) : profileTypeFilter === "docker-bench" ? (
+								<Container className="h-5 w-5 text-blue-400" />
+							) : (
+								<XCircle className="h-5 w-5 text-red-400" />
 							)}
+							Top Failing Rules - {getFilterDisplayName()}
 						</h2>
 					</div>
 					<div className="divide-y divide-secondary-700">
@@ -846,13 +1013,14 @@ const Compliance = () => {
 				<div className="bg-secondary-800 rounded-lg border border-secondary-700">
 					<div className="px-4 py-3 border-b border-secondary-700">
 						<h2 className="text-lg font-semibold text-white flex items-center gap-2">
-							<Clock className="h-5 w-5 text-secondary-400" />
-							Recent Scans
-							{profileTypeFilter !== "all" && (
-								<span className="text-sm font-normal text-secondary-400 ml-2">
-									({profileTypeFilter === "openscap" ? "OpenSCAP" : "Docker Bench"})
-								</span>
+							{profileTypeFilter === "openscap" ? (
+								<Server className="h-5 w-5 text-green-400" />
+							) : profileTypeFilter === "docker-bench" ? (
+								<Container className="h-5 w-5 text-blue-400" />
+							) : (
+								<Clock className="h-5 w-5 text-secondary-400" />
 							)}
+							Recent Scans - {getFilterDisplayName()}
 						</h2>
 					</div>
 					<div className="divide-y divide-secondary-700">
@@ -885,7 +1053,7 @@ const Compliance = () => {
 						))}
 						{(!filteredScans || filteredScans.length === 0) && (
 							<div className="px-4 py-8 text-center text-secondary-400">
-								No compliance scans yet
+								No {getFilterDisplayName()} scans found
 							</div>
 						)}
 					</div>
@@ -895,13 +1063,14 @@ const Compliance = () => {
 				<div className="bg-secondary-800 rounded-lg border border-secondary-700">
 					<div className="px-4 py-3 border-b border-secondary-700">
 						<h2 className="text-lg font-semibold text-white flex items-center gap-2">
-							<TrendingDown className="h-5 w-5 text-red-400" />
-							Needs Attention
-							{profileTypeFilter !== "all" && (
-								<span className="text-sm font-normal text-secondary-400 ml-2">
-									({profileTypeFilter === "openscap" ? "OpenSCAP" : "Docker Bench"})
-								</span>
+							{profileTypeFilter === "openscap" ? (
+								<Server className="h-5 w-5 text-green-400" />
+							) : profileTypeFilter === "docker-bench" ? (
+								<Container className="h-5 w-5 text-blue-400" />
+							) : (
+								<TrendingDown className="h-5 w-5 text-red-400" />
 							)}
+							Needs Attention - {getFilterDisplayName()}
 						</h2>
 					</div>
 					<div className="divide-y divide-secondary-700">
@@ -929,7 +1098,7 @@ const Compliance = () => {
 						))}
 						{(!filteredWorstHosts || filteredWorstHosts.length === 0) && (
 							<div className="px-4 py-8 text-center text-secondary-400">
-								No hosts with low compliance scores
+								No {getFilterDisplayName()} hosts with low scores
 							</div>
 						)}
 					</div>
