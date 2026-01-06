@@ -438,7 +438,7 @@ router.get("/dashboard", async (req, res) => {
     if (latestScanIds.length > 0) {
       // First check what statuses exist for these scans
       const statusCheck = await prisma.$queryRaw`
-        SELECT DISTINCT cr.status, cp.type as profile_type, COUNT(*) as count
+        SELECT DISTINCT cr.status, cp.type as profile_type, COUNT(*)::int as count
         FROM compliance_results cr
         JOIN compliance_scans cs ON cr.scan_id = cs.id
         JOIN compliance_profiles cp ON cs.profile_id = cp.id
