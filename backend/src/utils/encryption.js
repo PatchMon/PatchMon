@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const logger = require("./logger");
 
-// Use a consistent encryption key from environment or persisted file
+// Use a consistent encryption key from environment or database URL
 function getEncryptionKey() {
 	let keySource = "unknown";
 	let key = null;
@@ -23,9 +23,13 @@ function getEncryptionKey() {
 		// Derive encryption key from session secret
 		keySource = "SESSION_SECRET env var";
 		key = crypto.createHash("sha256").update(process.env.SESSION_SECRET).digest();
+	} else if (process.env.DATABASE_URL) {
+		// Derive encryption key from DATABASE_URL - this is always set and stable
+		// This ensures the key is consistent across container restarts without extra config
+		keySource = "DATABASE_URL derived";
+		key = crypto.createHash("sha256").update(`patchmon-enc-${process.env.DATABASE_URL}`).digest();
 	} else {
-		// Try to load or create a persistent encryption key file
-		// This ensures the key survives server restarts when env vars aren't set
+		// Last resort: Try file-based key or hostname fallback
 		const keyFilePath = path.join(__dirname, "../../.encryption_key");
 		logger.info(`Encryption key file path: ${keyFilePath}`);
 
@@ -163,6 +167,8 @@ function getEncryptionStatus() {
 		source = "AI_ENCRYPTION_KEY";
 	} else if (process.env.SESSION_SECRET) {
 		source = "SESSION_SECRET";
+	} else if (process.env.DATABASE_URL) {
+		source = "DATABASE_URL";
 	} else {
 		try {
 			if (fs.existsSync(keyFilePath)) {
