@@ -410,6 +410,7 @@ router.get("/dashboard", async (req, res) => {
 
     // Get top failing rules across all hosts (most recent scan per host) - for OpenSCAP
     const latestScanIds = latestScans.map(s => s.id);
+    logger.info(`[Compliance Dashboard] latestScans count: ${latestScans.length}, latestScanIds: ${latestScanIds.length}`);
     let topFailingRules = [];
     if (latestScanIds.length > 0) {
       // Use Prisma.join for proper array handling in raw SQL
