@@ -164,3 +164,4 @@ docker/compose_dev_*
 
 # Conductor agent prompts (keep local, not public)
 docs/conductor-prompts/
+.encryption_key

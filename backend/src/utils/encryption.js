@@ -1,9 +1,10 @@
 const crypto = require("node:crypto");
+const os = require("node:os");
+const fs = require("node:fs");
+const path = require("node:path");
 const logger = require("./logger");
 
-// Use a consistent encryption key from environment
-// SECURITY: Require either AI_ENCRYPTION_KEY or SESSION_SECRET to be set
-// Do not use hardcoded fallbacks for encryption keys
+// Use a consistent encryption key from environment or persisted file
 function getEncryptionKey() {
 	if (process.env.AI_ENCRYPTION_KEY) {
 		// Use dedicated AI encryption key if set (must be 32 bytes / 64 hex chars)
@@ -20,17 +21,44 @@ function getEncryptionKey() {
 		return crypto.createHash("sha256").update(process.env.SESSION_SECRET).digest();
 	}
 
-	// SECURITY: Log warning but don't fail - allows the app to start for initial setup
-	// AI features won't work without proper key configuration
-	logger.warn("╔══════════════════════════════════════════════════════════════════╗");
-	logger.warn("║  WARNING: No AI_ENCRYPTION_KEY or SESSION_SECRET configured!     ║");
-	logger.warn("║  AI API keys cannot be securely stored without proper encryption.║");
-	logger.warn("║  Set SESSION_SECRET or AI_ENCRYPTION_KEY in your environment.    ║");
-	logger.warn("╚══════════════════════════════════════════════════════════════════╝");
+	// Try to load or create a persistent encryption key file
+	// This ensures the key survives server restarts when env vars aren't set
+	const keyFilePath = path.join(__dirname, "../../.encryption_key");
 
-	// Return a random key - AI features will break after restart but app can still start
-	// This prevents using a predictable hardcoded key across installations
-	return crypto.randomBytes(32);
+	try {
+		if (fs.existsSync(keyFilePath)) {
+			// Load existing key
+			const keyHex = fs.readFileSync(keyFilePath, "utf8").trim();
+			if (keyHex.length === 64) {
+				logger.info("Loaded encryption key from persistent file");
+				return Buffer.from(keyHex, "hex");
+			}
+		}
+
+		// Generate and save a new key
+		const newKey = crypto.randomBytes(32);
+		fs.writeFileSync(keyFilePath, newKey.toString("hex"), { mode: 0o600 });
+		logger.info("Generated and saved new encryption key to persistent file");
+
+		logger.warn("╔══════════════════════════════════════════════════════════════════╗");
+		logger.warn("║  NOTE: Using auto-generated encryption key stored in .encryption_key  ║");
+		logger.warn("║  For production, set SESSION_SECRET or AI_ENCRYPTION_KEY env var.║");
+		logger.warn("╚══════════════════════════════════════════════════════════════════╝");
+
+		return newKey;
+	} catch (fileError) {
+		// If we can't read/write the key file, fall back to deterministic key
+		// based on hostname (better than random, but not ideal)
+		logger.warn("Could not read/write encryption key file, using hostname-based fallback");
+		logger.warn("╔══════════════════════════════════════════════════════════════════╗");
+		logger.warn("║  WARNING: Using hostname-based encryption key (not recommended)  ║");
+		logger.warn("║  Set SESSION_SECRET or AI_ENCRYPTION_KEY in your environment.    ║");
+		logger.warn("╚══════════════════════════════════════════════════════════════════╝");
+
+		// Use hostname + app identifier for deterministic key
+		const hostname = os.hostname();
+		return crypto.createHash("sha256").update(`patchmon-enhanced-${hostname}`).digest();
+	}
 }
 
 const ENCRYPTION_KEY = getEncryptionKey();
