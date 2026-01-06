@@ -436,6 +436,18 @@ router.get("/dashboard", async (req, res) => {
     // Get top warning rules across all hosts - for Docker Bench (uses 'warn' status)
     let topWarningRules = [];
     if (latestScanIds.length > 0) {
+      // First check what statuses exist for these scans
+      const statusCheck = await prisma.$queryRaw`
+        SELECT DISTINCT cr.status, cp.type as profile_type, COUNT(*) as count
+        FROM compliance_results cr
+        JOIN compliance_scans cs ON cr.scan_id = cs.id
+        JOIN compliance_profiles cp ON cs.profile_id = cp.id
+        WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
+        GROUP BY cr.status, cp.type
+        ORDER BY cp.type, cr.status
+      `;
+      logger.info(`[Compliance Dashboard] Status values in results: ${JSON.stringify(statusCheck)}`);
+
       topWarningRules = await prisma.$queryRaw`
         SELECT
           cr.rule_id,
@@ -453,6 +465,7 @@ router.get("/dashboard", async (req, res) => {
         ORDER BY warn_count DESC
         LIMIT 10
       `;
+      logger.info(`[Compliance Dashboard] Top warning rules found: ${topWarningRules.length}`);
     }
 
     // Get profile distribution (how many hosts use each profile)
