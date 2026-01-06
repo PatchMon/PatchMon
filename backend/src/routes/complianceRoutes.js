@@ -481,6 +481,65 @@ router.get("/dashboard", async (req, res) => {
 });
 
 /**
+ * GET /api/v1/compliance/scans/active
+ * Get all currently running compliance scans
+ */
+router.get("/scans/active", async (req, res) => {
+  try {
+    // Get all scans that are still running (completed_at is null or status is "running")
+    const activeScans = await prisma.compliance_scans.findMany({
+      where: {
+        OR: [
+          { status: "running" },
+          { completed_at: null, status: { not: "failed" } },
+        ],
+      },
+      orderBy: { started_at: "desc" },
+      include: {
+        hosts: {
+          select: {
+            id: true,
+            hostname: true,
+            friendly_name: true,
+            api_id: true,
+          },
+        },
+        compliance_profiles: {
+          select: {
+            name: true,
+            type: true,
+          },
+        },
+      },
+    });
+
+    // Add connection status for each host
+    const scansWithStatus = activeScans.map((scan) => {
+      const connected = agentWs.isConnected(scan.hosts?.api_id);
+      return {
+        id: scan.id,
+        hostId: scan.host_id,
+        hostName: scan.hosts?.friendly_name || scan.hosts?.hostname,
+        apiId: scan.hosts?.api_id,
+        profileName: scan.compliance_profiles?.name,
+        profileType: scan.compliance_profiles?.type,
+        startedAt: scan.started_at,
+        status: scan.status,
+        connected,
+      };
+    });
+
+    res.json({
+      activeScans: scansWithStatus,
+      count: scansWithStatus.length,
+    });
+  } catch (error) {
+    logger.error("[Compliance] Error fetching active scans:", error);
+    res.status(500).json({ error: "Failed to fetch active scans" });
+  }
+});
+
+/**
  * GET /api/v1/compliance/scans/:hostId
  * Get scan history for a specific host
  */
@@ -701,6 +760,117 @@ router.post("/trigger/:hostId", async (req, res) => {
   } catch (error) {
     logger.error("[Compliance] Error triggering scan:", error);
     res.status(500).json({ error: "Failed to trigger scan" });
+  }
+});
+
+/**
+ * POST /api/v1/compliance/trigger/bulk
+ * Trigger compliance scans on multiple hosts at once
+ */
+router.post("/trigger/bulk", async (req, res) => {
+  try {
+    const {
+      hostIds = [],
+      profile_type = "all",
+      profile_id = null,
+      enable_remediation = false,
+      fetch_remote_resources = false,
+    } = req.body;
+
+    // Validate hostIds array
+    if (!Array.isArray(hostIds) || hostIds.length === 0) {
+      return res.status(400).json({ error: "hostIds must be a non-empty array" });
+    }
+
+    if (hostIds.length > 100) {
+      return res.status(400).json({ error: "Maximum 100 hosts per bulk operation" });
+    }
+
+    // Validate all UUIDs
+    const invalidIds = hostIds.filter((id) => !isValidUUID(id));
+    if (invalidIds.length > 0) {
+      return res.status(400).json({ error: `Invalid host IDs: ${invalidIds.join(", ")}` });
+    }
+
+    // Validate profile_type
+    if (!VALID_PROFILE_TYPES.includes(profile_type)) {
+      return res.status(400).json({ error: `Invalid profile_type. Must be one of: ${VALID_PROFILE_TYPES.join(", ")}` });
+    }
+
+    // Get all hosts
+    const hosts = await prisma.hosts.findMany({
+      where: { id: { in: hostIds } },
+      select: { id: true, api_id: true, hostname: true, friendly_name: true },
+    });
+
+    const hostMap = new Map(hosts.map((h) => [h.id, h]));
+    const agentWs = require("../services/agentWs");
+
+    const results = {
+      triggered: [],
+      failed: [],
+    };
+
+    // Build scan options
+    const scanOptions = {
+      profileId: profile_id,
+      enableRemediation: Boolean(enable_remediation),
+      fetchRemoteResources: Boolean(fetch_remote_resources),
+    };
+
+    // Process each host
+    for (const hostId of hostIds) {
+      const host = hostMap.get(hostId);
+
+      if (!host) {
+        results.failed.push({ hostId, error: "Host not found" });
+        continue;
+      }
+
+      if (!agentWs.isConnected(host.api_id)) {
+        results.failed.push({
+          hostId,
+          hostName: host.friendly_name || host.hostname,
+          error: "Host not connected",
+        });
+        continue;
+      }
+
+      const success = agentWs.pushComplianceScan(host.api_id, profile_type, scanOptions);
+
+      if (success) {
+        results.triggered.push({
+          hostId,
+          hostName: host.friendly_name || host.hostname,
+          apiId: host.api_id,
+        });
+      } else {
+        results.failed.push({
+          hostId,
+          hostName: host.friendly_name || host.hostname,
+          error: "Failed to send trigger command",
+        });
+      }
+    }
+
+    const message = `Triggered ${results.triggered.length} of ${hostIds.length} scans`;
+    logger.info(`[Compliance] Bulk scan: ${message}`);
+
+    res.json({
+      message,
+      profile_type,
+      enable_remediation,
+      triggered: results.triggered,
+      failed: results.failed,
+      summary: {
+        total: hostIds.length,
+        success: results.triggered.length,
+        failed: results.failed.length,
+      },
+    });
+  } catch (error) {
+    logger.error("[Compliance] Error triggering bulk scan:", error);
+    res.status(500).json({ error: "Failed to trigger bulk scan" });
   }
 });
 

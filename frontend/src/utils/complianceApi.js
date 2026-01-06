@@ -45,4 +45,17 @@ export const complianceAPI = {
 	// Remediate a single failed rule
 	remediateRule: (hostId, ruleId) =>
 		api.post(`/compliance/remediate/${hostId}`, { rule_id: ruleId }),
+
+	// Get currently running/active scans
+	getActiveScans: () => api.get("/compliance/scans/active"),
+
+	// Trigger bulk compliance scans on multiple hosts
+	triggerBulkScan: (hostIds, options = {}) =>
+		api.post("/compliance/trigger/bulk", {
+			hostIds,
+			profile_type: options.profileType || "all",
+			profile_id: options.profileId || null,
+			enable_remediation: options.enableRemediation || false,
+			fetch_remote_resources: options.fetchRemoteResources || false,
+		}),
 };

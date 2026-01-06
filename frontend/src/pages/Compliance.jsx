@@ -16,16 +16,27 @@ import {
 	XCircle,
 	AlertTriangle,
 	List,
+	RefreshCw,
+	Wifi,
+	WifiOff,
 } from "lucide-react";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { complianceAPI } from "../utils/complianceApi";
 import ComplianceScore from "../components/compliance/ComplianceScore";
+import { formatDistanceToNow } from "date-fns";
 
 const Compliance = () => {
 	const { data: dashboard, isLoading, error } = useQuery({
 		queryKey: ["compliance-dashboard"],
 		queryFn: () => complianceAPI.getDashboard().then((res) => res.data),
 		refetchInterval: 30000,
+	});
+
+	// Fetch active/running scans
+	const { data: activeScansData } = useQuery({
+		queryKey: ["compliance-active-scans"],
+		queryFn: () => complianceAPI.getActiveScans().then((res) => res.data),
+		refetchInterval: 5000, // Refresh every 5 seconds for active scans
 	});
 
 	if (isLoading) {
@@ -45,6 +56,7 @@ const Compliance = () => {
 	}
 
 	const { summary, recent_scans, worst_hosts, top_failing_rules, profile_distribution, severity_breakdown } = dashboard || {};
+	const activeScans = activeScansData?.activeScans || [];
 
 	return (
 		<div className="space-y-6">
@@ -55,6 +67,46 @@ const Compliance = () => {
 					<h1 className="text-2xl font-bold text-white">Security Compliance</h1>
 				</div>
 			</div>
+
+			{/* Active Scans Section - Only show if there are running scans */}
+			{activeScans.length > 0 && (
+				<div className="bg-blue-900/30 border border-blue-700/50 rounded-lg p-4">
+					<div className="flex items-center gap-2 mb-3">
+						<RefreshCw className="h-5 w-5 text-blue-400 animate-spin" />
+						<h2 className="text-lg font-semibold text-blue-300">
+							Scans in Progress ({activeScans.length})
+						</h2>
+					</div>
+					<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+						{activeScans.map((scan) => (
+							<Link
+								key={scan.id}
+								to={`/hosts/${scan.hostId}`}
+								className="bg-secondary-800/50 rounded-lg p-3 border border-secondary-700 hover:border-blue-600 transition-colors"
+							>
+								<div className="flex items-center justify-between mb-2">
+									<span className="font-medium text-white truncate">
+										{scan.hostName}
+									</span>
+									{scan.connected ? (
+										<Wifi className="h-4 w-4 text-green-400" title="Connected" />
+									) : (
+										<WifiOff className="h-4 w-4 text-red-400" title="Disconnected" />
+									)}
+								</div>
+								<div className="flex items-center gap-2 text-sm text-secondary-400">
+									<span className="px-2 py-0.5 bg-blue-900/50 text-blue-300 rounded text-xs">
+										{scan.profileType || "Scanning..."}
+									</span>
+									<span className="text-xs">
+										Started {formatDistanceToNow(new Date(scan.startedAt), { addSuffix: true })}
+									</span>
+								</div>
+							</Link>
+						))}
+					</div>
+				</div>
+			)}
 
 			{/* Summary Cards - Row 1: Host Stats */}
 			<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
