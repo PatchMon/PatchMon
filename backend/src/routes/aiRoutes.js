@@ -4,7 +4,7 @@ const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateToken } = require("../middleware/auth");
 const { requireManageSettings } = require("../middleware/permissions");
-const { encrypt, decrypt, isEncrypted } = require("../utils/encryption");
+const { encrypt, decrypt, isEncrypted, getEncryptionStatus } = require("../utils/encryption");
 const { getProviders, getCompletion, getAssistance } = require("../services/aiService");
 
 const router = express.Router();
@@ -67,6 +67,43 @@ router.get("/status", authenticateToken, async (_req, res) => {
 	} catch (error) {
 		logger.error("Error fetching AI status:", error);
 		res.status(500).json({ error: "Failed to fetch AI status" });
+	}
+});
+
+/**
+ * Get encryption debug info (admin only)
+ * GET /api/v1/ai/debug
+ */
+router.get("/debug", authenticateToken, requireManageSettings, async (_req, res) => {
+	try {
+		const prisma = getPrismaClient();
+		const settings = await prisma.settings.findFirst();
+		const encryptionStatus = getEncryptionStatus();
+
+		// Test encryption round-trip
+		const testValue = "test-" + Date.now();
+		const encrypted = encrypt(testValue);
+		const decrypted = decrypt(encrypted);
+		const roundTripOk = decrypted === testValue;
+
+		// Check if existing AI key can be decrypted
+		let existingKeyStatus = "not_set";
+		if (settings?.ai_api_key) {
+			const decryptedKey = decrypt(settings.ai_api_key);
+			existingKeyStatus = decryptedKey ? "valid" : "invalid_cannot_decrypt";
+		}
+
+		res.json({
+			encryption: encryptionStatus,
+			roundTripTest: roundTripOk ? "passed" : "failed",
+			existingApiKey: existingKeyStatus,
+			recommendation: encryptionStatus.source === "hostname_fallback" || encryptionStatus.source === "file"
+				? "Set SESSION_SECRET environment variable for consistent encryption across restarts"
+				: "Configuration looks good",
+		});
+	} catch (error) {
+		logger.error("Error fetching AI debug info:", error);
+		res.status(500).json({ error: "Failed to fetch debug info" });
 	}
 });
 

@@ -6,59 +6,76 @@ const logger = require("./logger");
 
 // Use a consistent encryption key from environment or persisted file
 function getEncryptionKey() {
+	let keySource = "unknown";
+	let key = null;
+
 	if (process.env.AI_ENCRYPTION_KEY) {
 		// Use dedicated AI encryption key if set (must be 32 bytes / 64 hex chars)
 		const keyHex = process.env.AI_ENCRYPTION_KEY;
+		keySource = "AI_ENCRYPTION_KEY env var";
 		if (keyHex.length === 64) {
-			return Buffer.from(keyHex, "hex");
+			key = Buffer.from(keyHex, "hex");
+		} else {
+			// If not 64 hex chars, derive from it using SHA-256
+			key = crypto.createHash("sha256").update(keyHex).digest();
 		}
-		// If not 64 hex chars, derive from it using SHA-256
-		return crypto.createHash("sha256").update(keyHex).digest();
-	}
-
-	if (process.env.SESSION_SECRET) {
+	} else if (process.env.SESSION_SECRET) {
 		// Derive encryption key from session secret
-		return crypto.createHash("sha256").update(process.env.SESSION_SECRET).digest();
-	}
+		keySource = "SESSION_SECRET env var";
+		key = crypto.createHash("sha256").update(process.env.SESSION_SECRET).digest();
+	} else {
+		// Try to load or create a persistent encryption key file
+		// This ensures the key survives server restarts when env vars aren't set
+		const keyFilePath = path.join(__dirname, "../../.encryption_key");
+		logger.info(`Encryption key file path: ${keyFilePath}`);
 
-	// Try to load or create a persistent encryption key file
-	// This ensures the key survives server restarts when env vars aren't set
-	const keyFilePath = path.join(__dirname, "../../.encryption_key");
-
-	try {
-		if (fs.existsSync(keyFilePath)) {
-			// Load existing key
-			const keyHex = fs.readFileSync(keyFilePath, "utf8").trim();
-			if (keyHex.length === 64) {
-				logger.info("Loaded encryption key from persistent file");
-				return Buffer.from(keyHex, "hex");
+		try {
+			if (fs.existsSync(keyFilePath)) {
+				// Load existing key
+				const keyHex = fs.readFileSync(keyFilePath, "utf8").trim();
+				if (keyHex.length === 64) {
+					keySource = `file (${keyFilePath})`;
+					key = Buffer.from(keyHex, "hex");
+					logger.info("Loaded encryption key from persistent file");
+				} else {
+					logger.warn(`Encryption key file exists but has invalid length: ${keyHex.length} (expected 64)`);
+				}
 			}
+
+			if (!key) {
+				// Generate and save a new key
+				const newKey = crypto.randomBytes(32);
+				fs.writeFileSync(keyFilePath, newKey.toString("hex"), { mode: 0o600 });
+				keySource = `new file (${keyFilePath})`;
+				key = newKey;
+				logger.info("Generated and saved new encryption key to persistent file");
+
+				logger.warn("╔══════════════════════════════════════════════════════════════════╗");
+				logger.warn("║  NOTE: Using auto-generated encryption key stored in .encryption_key  ║");
+				logger.warn("║  For production, set SESSION_SECRET or AI_ENCRYPTION_KEY env var.║");
+				logger.warn("╚══════════════════════════════════════════════════════════════════╝");
+			}
+		} catch (fileError) {
+			// If we can't read/write the key file, fall back to deterministic key
+			// based on hostname (better than random, but not ideal)
+			logger.error(`Could not read/write encryption key file: ${fileError.message}`);
+			logger.warn("╔══════════════════════════════════════════════════════════════════╗");
+			logger.warn("║  WARNING: Using hostname-based encryption key (not recommended)  ║");
+			logger.warn("║  Set SESSION_SECRET or AI_ENCRYPTION_KEY in your environment.    ║");
+			logger.warn("╚══════════════════════════════════════════════════════════════════╝");
+
+			// Use hostname + app identifier for deterministic key
+			const hostname = os.hostname();
+			keySource = `hostname fallback (${hostname})`;
+			key = crypto.createHash("sha256").update(`patchmon-enhanced-${hostname}`).digest();
 		}
-
-		// Generate and save a new key
-		const newKey = crypto.randomBytes(32);
-		fs.writeFileSync(keyFilePath, newKey.toString("hex"), { mode: 0o600 });
-		logger.info("Generated and saved new encryption key to persistent file");
-
-		logger.warn("╔══════════════════════════════════════════════════════════════════╗");
-		logger.warn("║  NOTE: Using auto-generated encryption key stored in .encryption_key  ║");
-		logger.warn("║  For production, set SESSION_SECRET or AI_ENCRYPTION_KEY env var.║");
-		logger.warn("╚══════════════════════════════════════════════════════════════════╝");
-
-		return newKey;
-	} catch (fileError) {
-		// If we can't read/write the key file, fall back to deterministic key
-		// based on hostname (better than random, but not ideal)
-		logger.warn("Could not read/write encryption key file, using hostname-based fallback");
-		logger.warn("╔══════════════════════════════════════════════════════════════════╗");
-		logger.warn("║  WARNING: Using hostname-based encryption key (not recommended)  ║");
-		logger.warn("║  Set SESSION_SECRET or AI_ENCRYPTION_KEY in your environment.    ║");
-		logger.warn("╚══════════════════════════════════════════════════════════════════╝");
-
-		// Use hostname + app identifier for deterministic key
-		const hostname = os.hostname();
-		return crypto.createHash("sha256").update(`patchmon-enhanced-${hostname}`).digest();
 	}
+
+	// Log key fingerprint (first 8 chars of SHA256 hash) for debugging
+	const keyFingerprint = crypto.createHash("sha256").update(key).digest("hex").substring(0, 8);
+	logger.info(`Encryption key source: ${keySource}, fingerprint: ${keyFingerprint}`);
+
+	return key;
 }
 
 const ENCRYPTION_KEY = getEncryptionKey();
@@ -133,8 +150,42 @@ function isEncrypted(text) {
 		parts[1].length === AUTH_TAG_LENGTH * 2;
 }
 
+/**
+ * Get encryption status for debugging (does not expose actual key)
+ * @returns {Object} - Status info about encryption configuration
+ */
+function getEncryptionStatus() {
+	const keyFilePath = path.join(__dirname, "../../.encryption_key");
+	const keyFingerprint = crypto.createHash("sha256").update(ENCRYPTION_KEY).digest("hex").substring(0, 8);
+
+	let source = "unknown";
+	if (process.env.AI_ENCRYPTION_KEY) {
+		source = "AI_ENCRYPTION_KEY";
+	} else if (process.env.SESSION_SECRET) {
+		source = "SESSION_SECRET";
+	} else {
+		try {
+			if (fs.existsSync(keyFilePath)) {
+				source = "file";
+			} else {
+				source = "hostname_fallback";
+			}
+		} catch {
+			source = "hostname_fallback";
+		}
+	}
+
+	return {
+		source,
+		fingerprint: keyFingerprint,
+		keyFilePath: source === "file" || source === "hostname_fallback" ? keyFilePath : null,
+		keyFileExists: source === "file" ? fs.existsSync(keyFilePath) : null,
+	};
+}
+
 module.exports = {
 	encrypt,
 	decrypt,
 	isEncrypted,
+	getEncryptionStatus,
 };
