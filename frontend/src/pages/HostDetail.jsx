@@ -70,6 +70,7 @@ const HostDetail = () => {
 	const [updateMessage, setUpdateMessage] = useState({ text: "", jobId: "" });
 	const [reportMessage, setReportMessage] = useState({ text: "", jobId: "" });
 	const [integrationRefreshMessage, setIntegrationRefreshMessage] = useState({ text: "", isError: false });
+	const [dockerRefreshMessage, setDockerRefreshMessage] = useState({ text: "", isError: false });
 	const [showAllReports, setShowAllReports] = useState(false);
 
 	// State for auto-update confirmation dialog
@@ -352,6 +353,31 @@ const HostDetail = () => {
 		},
 	});
 
+	// Refresh Docker inventory mutation
+	const refreshDockerMutation = useMutation({
+		mutationFn: () =>
+			adminHostsAPI.refreshDocker(hostId).then((res) => res.data),
+		onSuccess: () => {
+			setDockerRefreshMessage({
+				text: "Docker refresh requested - data will update shortly",
+				isError: false,
+			});
+			// Refetch Docker data after a short delay to allow agent to respond
+			safeSetTimeout(() => {
+				refetchDocker();
+				queryClient.invalidateQueries(["docker", "host", hostId]);
+			}, 3000);
+			safeSetTimeout(() => setDockerRefreshMessage({ text: "", isError: false }), 5000);
+		},
+		onError: (error) => {
+			setDockerRefreshMessage({
+				text: error.response?.data?.error || "Failed to refresh Docker data",
+				isError: true,
+			});
+			safeSetTimeout(() => setDockerRefreshMessage({ text: "", isError: false }), 5000);
+		},
+	});
+
 	const updateFriendlyNameMutation = useMutation({
 		mutationFn: (friendlyName) =>
 			adminHostsAPI
@@ -442,6 +468,7 @@ const HostDetail = () => {
 	const {
 		data: dockerData,
 		isLoading: isLoadingDocker,
+		refetch: refetchDocker,
 	} = useQuery({
 		queryKey: ["docker", "host", hostId],
 		queryFn: () =>
@@ -3264,6 +3291,26 @@ const HostDetail = () => {
 									</div>
 								) : (
 									<>
+										{/* Docker Header with Refresh Button */}
+										<div className="flex items-center justify-between mb-4">
+											<div className="flex items-center gap-2">
+												{dockerRefreshMessage.text && (
+													<span className={`text-sm ${dockerRefreshMessage.isError ? "text-red-600" : "text-green-600"}`}>
+														{dockerRefreshMessage.text}
+													</span>
+												)}
+											</div>
+											<button
+												onClick={() => refreshDockerMutation.mutate()}
+												disabled={refreshDockerMutation.isPending}
+												className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-900/20 hover:bg-primary-100 dark:hover:bg-primary-900/30 rounded-lg border border-primary-200 dark:border-primary-800 transition-colors disabled:opacity-50"
+												title="Refresh Docker data from agent"
+											>
+												<RefreshCw className={`h-4 w-4 ${refreshDockerMutation.isPending ? "animate-spin" : ""}`} />
+												Refresh
+											</button>
+										</div>
+
 										{/* Summary Stats */}
 										{(() => {
 											// Calculate stacks from container labels

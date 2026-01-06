@@ -141,6 +141,7 @@ export const adminHostsAPI = {
 		}),
 	getIntegrationSetupStatus: (hostId, integrationName) =>
 		api.get(`/hosts/${hostId}/integrations/${integrationName}/status`),
+	refreshDocker: (hostId) => api.post(`/hosts/${hostId}/refresh-docker`),
 };
 
 // Host Groups API

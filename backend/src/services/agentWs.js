@@ -293,6 +293,20 @@ function pushRefreshIntegrationStatus(apiId) {
 	}
 }
 
+function pushDockerInventoryRefresh(apiId) {
+	const ws = apiIdToSocket.get(apiId);
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		safeSend(ws, JSON.stringify({ type: "docker_inventory_refresh" }));
+		logger.info(`📤 Pushed Docker inventory refresh to agent ${apiId}`);
+		return true;
+	} else {
+		logger.info(
+			`⚠️ Agent ${apiId} not connected, cannot refresh Docker inventory`,
+		);
+		return false;
+	}
+}
+
 function pushIntegrationToggle(apiId, integrationName, enabled) {
 	const ws = apiIdToSocket.get(apiId);
 	if (ws && ws.readyState === WebSocket.OPEN) {
@@ -630,6 +644,7 @@ module.exports = {
 	pushSettingsUpdate,
 	pushUpdateAgent,
 	pushRefreshIntegrationStatus,
+	pushDockerInventoryRefresh,
 	pushIntegrationToggle,
 	pushUpdateNotification,
 	pushUpdateNotificationToAll,

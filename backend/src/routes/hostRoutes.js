@@ -2000,6 +2000,70 @@ router.post(
 	},
 );
 
+// Refresh Docker inventory for a host
+// This triggers the agent to re-collect and report Docker data
+router.post(
+	"/:hostId/refresh-docker",
+	authenticateToken,
+	requireManageHosts,
+	async (req, res) => {
+		try {
+			const { hostId } = req.params;
+
+			// Get host to verify it exists
+			const host = await prisma.hosts.findUnique({
+				where: { id: hostId },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			// Get the agent-commands queue
+			const queue = queueManager.queues[QUEUE_NAMES.AGENT_COMMANDS];
+
+			if (!queue) {
+				return res.status(500).json({
+					error: "Queue not available",
+				});
+			}
+
+			// Add job to queue to refresh Docker inventory
+			const job = await queue.add(
+				"docker_inventory_refresh",
+				{
+					api_id: host.api_id,
+					type: "docker_inventory_refresh",
+				},
+				{
+					attempts: 2,
+					backoff: {
+						type: "exponential",
+						delay: 1000,
+					},
+				},
+			);
+
+			res.json({
+				success: true,
+				message: "Docker inventory refresh queued",
+				jobId: job.id,
+				host: {
+					id: host.id,
+					friendlyName: host.friendly_name,
+					apiId: host.api_id,
+				},
+			});
+		} catch (error) {
+			logger.error("Refresh Docker inventory error:", error);
+			res.status(500).json({
+				error: "Failed to refresh Docker inventory",
+				details: error.message || "Unknown error occurred"
+			});
+		}
+	},
+);
+
 // Serve the installation script (requires API authentication)
 router.get("/install", async (req, res) => {
 	try {

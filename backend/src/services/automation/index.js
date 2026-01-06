@@ -324,6 +324,19 @@ class QueueManager {
 								`Agent ${api_id} is not connected. Cannot refresh integration status.`,
 							);
 						}
+					} else if (type === "docker_inventory_refresh") {
+						// Request agent to refresh and report Docker inventory
+						const ws = agentWs.getConnectionByApiId(api_id);
+						if (ws && ws.readyState === 1) {
+							// WebSocket.OPEN
+							agentWs.pushDockerInventoryRefresh(api_id);
+							logger.info(`✅ Docker inventory refresh command sent to agent ${api_id}`);
+						} else {
+							logger.error(`❌ Agent ${api_id} is not connected`);
+							throw new Error(
+								`Agent ${api_id} is not connected. Cannot refresh Docker inventory.`,
+							);
+						}
 					} else {
 						logger.error(`Unknown agent command type: ${type}`);
 					}
