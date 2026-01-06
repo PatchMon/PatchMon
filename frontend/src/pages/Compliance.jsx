@@ -61,6 +61,7 @@ const Compliance = () => {
 		queryKey: ["hosts-list"],
 		queryFn: () => adminHostsAPI.list().then((res) => res.data),
 		staleTime: 60000,
+		select: (data) => ({ hosts: data.data || [] }),
 	});
 
 	// Track active scans and notify when they complete
@@ -87,9 +88,9 @@ const Compliance = () => {
 		onSuccess: (response) => {
 			setBulkScanResult(response.data);
 			queryClient.invalidateQueries(["compliance-active-scans"]);
-			const { triggered, failed } = response.data.summary || {};
+			const { success, failed } = response.data.summary || {};
 			if (failed === 0) {
-				toast.success(`Started ${triggered} compliance scan(s)`);
+				toast.success(`Started ${success} compliance scan(s)`);
 				// Auto-close modal after 3 seconds if all succeeded
 				setTimeout(() => {
 					setShowBulkScanModal(false);
@@ -97,7 +98,7 @@ const Compliance = () => {
 					setSelectedHosts([]);
 				}, 3000);
 			} else {
-				toast.warning(`Started ${triggered} scan(s), ${failed} failed`);
+				toast.warning(`Started ${success} scan(s), ${failed} failed`);
 			}
 		},
 		onError: (error) => {
