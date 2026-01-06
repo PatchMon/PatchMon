@@ -181,6 +181,25 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 		}
 	}, [latestScan?.compliance_profiles?.type]);
 
+	// Auto-select the first available profile type when scan data loads
+	useEffect(() => {
+		if (scansByType && profileTypeFilter === null) {
+			// Set to the type of the latest scan, or first available
+			const latestType = latestScan?.compliance_profiles?.type;
+			if (latestType && scansByType[latestType]) {
+				setProfileTypeFilter(latestType);
+				if (latestType === "docker-bench") {
+					setStatusFilter("warn");
+				}
+			} else if (scansByType.openscap) {
+				setProfileTypeFilter("openscap");
+			} else if (scansByType["docker-bench"]) {
+				setProfileTypeFilter("docker-bench");
+				setStatusFilter("warn");
+			}
+		}
+	}, [scansByType, latestScan?.compliance_profiles?.type]);
+
 	// SSG content update mutation
 	const [updateMessage, setUpdateMessage] = useState(null);
 	const ssgUpdateMutation = useMutation({
