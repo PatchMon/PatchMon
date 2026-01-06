@@ -109,6 +109,20 @@ class AgentVersionService {
 		try {
 			logger.info("🔍 Getting current agent version...");
 
+			// First, try to read from version.json metadata file (created during download)
+			const versionFilePath = path.join(this.agentsDir, "version.json");
+			try {
+				const versionData = await fs.readFile(versionFilePath, "utf8");
+				const metadata = JSON.parse(versionData);
+				if (metadata.version) {
+					this.currentVersion = metadata.version;
+					logger.info(`✅ Current agent version from metadata: ${this.currentVersion}`);
+					return;
+				}
+			} catch {
+				logger.info("📝 No version.json found, checking for binaries...");
+			}
+
 			// Detect server architecture and map to Go architecture names
 			const serverArch = os.arch();
 			// Map Node.js architecture to Go architecture names
@@ -152,7 +166,8 @@ class AgentVersionService {
 				return;
 			}
 
-			// Execute the agent binary with help flag to get version info
+			// Try to execute the agent binary with help flag to get version info
+			// This may fail in Docker containers, so it's a fallback method
 			try {
 				const child = spawn(agentPath, ["--help"], {
 					timeout: 10000,
@@ -189,14 +204,26 @@ class AgentVersionService {
 					logger.info(`✅ Current agent version: ${this.currentVersion}`);
 				} else {
 					logger.info(
-						"⚠️ Could not parse version from agent help output:",
-						result.stdout,
+						"⚠️ Could not parse version from agent help output, binary exists but version unknown",
 					);
-					this.currentVersion = null;
+					// Binary exists but we can't determine version - use latest as assumption
+					if (this.latestVersion) {
+						this.currentVersion = this.latestVersion;
+						logger.info(`📦 Assuming current version matches latest: ${this.currentVersion}`);
+					} else {
+						this.currentVersion = null;
+					}
 				}
 			} catch (execError) {
-				logger.error("❌ Failed to execute agent binary:", execError.message);
-				this.currentVersion = null;
+				logger.warn("⚠️ Could not execute agent binary (normal in Docker):", execError.message);
+				// Binary exists but can't be executed in this environment
+				// If we have a latest version from GitHub, assume that's what was downloaded
+				if (this.latestVersion) {
+					this.currentVersion = this.latestVersion;
+					logger.info(`📦 Binary found, assuming current version: ${this.currentVersion}`);
+				} else {
+					this.currentVersion = null;
+				}
 			}
 		} catch (error) {
 			logger.error("❌ Failed to get current agent version:", error.message);
@@ -342,6 +369,18 @@ class AgentVersionService {
 			if (downloadedCount === 0) {
 				throw new Error(`No binaries downloaded successfully. Errors: ${errors.join(", ")}`);
 			}
+
+			// Save version metadata file so we know which version was downloaded
+			const versionFromTag = release.tag_name.replace("v", "");
+			const versionFilePath = path.join(this.agentsDir, "version.json");
+			await fs.writeFile(versionFilePath, JSON.stringify({
+				version: versionFromTag,
+				downloadedAt: new Date().toISOString(),
+				architectures: this.supportedArchitectures.filter((arch) =>
+					!errors.some((e) => e.includes(arch))
+				),
+			}, null, 2));
+			logger.info(`📝 Saved version metadata: ${versionFromTag}`);
 
 			logger.info(`✅ Downloaded ${downloadedCount}/${this.supportedArchitectures.length} binaries`);
 		} catch (error) {
