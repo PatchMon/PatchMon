@@ -133,13 +133,12 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 		refetchOnWindowFocus: false,
 	});
 
-	const { data: latestScan, isLoading, refetch: refetchLatest } = useQuery({
+	const { data: latestScan, isLoading, isFetching, refetch: refetchLatest } = useQuery({
 		queryKey: ["compliance-latest", hostId, profileTypeFilter],
 		queryFn: () => complianceAPI.getLatestScan(hostId, profileTypeFilter).then((res) => res.data),
-		enabled: !!hostId,
+		enabled: !!hostId && profileTypeFilter !== null,
 		staleTime: 30 * 1000, // Consider data fresh for 30 seconds
 		refetchOnWindowFocus: false, // Don't refetch on window focus to avoid flicker
-		placeholderData: (previousData) => previousData, // Keep previous data during refetch
 	});
 
 	const { data: scanHistory, refetch: refetchHistory } = useQuery({
@@ -1370,12 +1369,13 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						</div>
 					)}
 
-					{/* Profile Type Tabs - Card style with metrics */}
+					{/* Profile Type Tabs - Click to switch between scan results */}
 					<div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
 						{profileTypeTabs.map((tab) => {
 							const Icon = tab.icon;
 							const isActive = profileTypeFilter === tab.id;
 							const isDisabled = !tab.available;
+							const isLoadingThis = isActive && isFetching;
 
 							return (
 								<button
@@ -1402,10 +1402,19 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 								>
 									<div className="flex items-center justify-between mb-2">
 										<div className="flex items-center gap-2">
-											<Icon className={`h-5 w-5 ${isActive ? "text-primary-400" : "text-secondary-400"}`} />
+											{isLoadingThis ? (
+												<RefreshCw className="h-5 w-5 text-primary-400 animate-spin" />
+											) : (
+												<Icon className={`h-5 w-5 ${isActive ? "text-primary-400" : "text-secondary-400"}`} />
+											)}
 											<span className={`font-medium ${isActive ? "text-white" : "text-secondary-200"}`}>
 												{tab.label}
 											</span>
+											{isActive && (
+												<span className="px-2 py-0.5 text-xs bg-primary-600 text-white rounded">
+													Selected
+												</span>
+											)}
 										</div>
 										{tab.available && tab.score != null && (
 											<span className={`text-lg font-bold ${
@@ -1445,7 +1454,38 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						})}
 					</div>
 
+					{/* Current Scan Header */}
+					{latestScan && (
+						<div className="flex items-center justify-between px-4 py-3 bg-secondary-800 rounded-lg border border-secondary-700 mb-4">
+							<div className="flex items-center gap-3">
+								{isDockerBenchResults ? (
+									<Container className="h-5 w-5 text-blue-400" />
+								) : (
+									<Shield className="h-5 w-5 text-green-400" />
+								)}
+								<div>
+									<p className="text-white font-medium">
+										{latestScan.compliance_profiles?.name || (isDockerBenchResults ? "Docker Bench" : "OpenSCAP")} Results
+									</p>
+									<p className="text-xs text-secondary-400">
+										Scanned {new Date(latestScan.completed_at).toLocaleString()}
+									</p>
+								</div>
+							</div>
+							<ComplianceScore score={latestScan.score} size="sm" />
+						</div>
+					)}
+
+					{/* Loading State */}
+					{isFetching && (
+						<div className="flex items-center justify-center py-8 bg-secondary-800 rounded-lg border border-secondary-700 mb-4">
+							<RefreshCw className="h-6 w-6 text-primary-400 animate-spin mr-3" />
+							<span className="text-secondary-400">Loading {profileTypeFilter === "docker-bench" ? "Docker Bench" : "OpenSCAP"} results...</span>
+						</div>
+					)}
+
 					{/* Results Subtabs */}
+					{!isFetching && latestScan && (
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700">
 						<div className="flex border-b border-secondary-700">
 							{resultsSubtabs.map((tab) => {
@@ -2001,6 +2041,7 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						</div>
 					)}
 					</div>
+					)}
 				</>
 			) : (
 				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-12 text-center">

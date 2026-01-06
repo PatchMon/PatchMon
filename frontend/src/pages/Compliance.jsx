@@ -43,6 +43,7 @@ const Compliance = () => {
 	});
 	const [bulkScanResult, setBulkScanResult] = useState(null);
 	const prevActiveScanIds = useRef(new Set());
+	const [profileTypeFilter, setProfileTypeFilter] = useState("all"); // "all", "openscap", "docker-bench"
 
 	const { data: dashboard, isLoading, error } = useQuery({
 		queryKey: ["compliance-dashboard"],
@@ -126,6 +127,22 @@ const Compliance = () => {
 	const { summary, recent_scans, worst_hosts, top_failing_rules, profile_distribution, severity_breakdown, profile_type_stats } = dashboard || {};
 	const activeScans = activeScansData?.activeScans || [];
 
+	// Filter data by profile type
+	const filteredScans = recent_scans?.filter(scan => {
+		if (profileTypeFilter === "all") return true;
+		return scan.compliance_profiles?.type === profileTypeFilter;
+	}) || [];
+
+	const filteredWorstHosts = worst_hosts?.filter(host => {
+		if (profileTypeFilter === "all") return true;
+		return host.compliance_profiles?.type === profileTypeFilter;
+	}) || [];
+
+	const filteredTopFailingRules = top_failing_rules?.filter(rule => {
+		if (profileTypeFilter === "all") return true;
+		return rule.profile_type === profileTypeFilter;
+	}) || [];
+
 	const allHosts = hostsData?.hosts || [];
 
 	const handleToggleHost = (hostId) => {
@@ -169,6 +186,43 @@ const Compliance = () => {
 				>
 					<Play className="h-4 w-4" />
 					Bulk Scan
+				</button>
+			</div>
+
+			{/* Profile Type Filter Tabs */}
+			<div className="flex items-center gap-2 bg-secondary-800 p-1 rounded-lg border border-secondary-700 w-fit">
+				<button
+					onClick={() => setProfileTypeFilter("all")}
+					className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors ${
+						profileTypeFilter === "all"
+							? "bg-primary-600 text-white"
+							: "text-secondary-400 hover:text-white hover:bg-secondary-700"
+					}`}
+				>
+					<Shield className="h-4 w-4" />
+					All Scans
+				</button>
+				<button
+					onClick={() => setProfileTypeFilter("openscap")}
+					className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors ${
+						profileTypeFilter === "openscap"
+							? "bg-green-600 text-white"
+							: "text-secondary-400 hover:text-white hover:bg-secondary-700"
+					}`}
+				>
+					<Server className="h-4 w-4" />
+					OpenSCAP
+				</button>
+				<button
+					onClick={() => setProfileTypeFilter("docker-bench")}
+					className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors ${
+						profileTypeFilter === "docker-bench"
+							? "bg-blue-600 text-white"
+							: "text-secondary-400 hover:text-white hover:bg-secondary-700"
+					}`}
+				>
+					<Container className="h-4 w-4" />
+					Docker Bench
 				</button>
 			</div>
 
@@ -555,11 +609,11 @@ const Compliance = () => {
 
 				// Score ranges for bar chart
 				const scoreRanges = [
-					{ range: "90-100%", count: recent_scans?.filter(s => s.score >= 90).length || 0, color: "#22c55e" },
-					{ range: "80-89%", count: recent_scans?.filter(s => s.score >= 80 && s.score < 90).length || 0, color: "#84cc16" },
-					{ range: "70-79%", count: recent_scans?.filter(s => s.score >= 70 && s.score < 80).length || 0, color: "#eab308" },
-					{ range: "60-69%", count: recent_scans?.filter(s => s.score >= 60 && s.score < 70).length || 0, color: "#f97316" },
-					{ range: "<60%", count: recent_scans?.filter(s => s.score < 60).length || 0, color: "#ef4444" },
+					{ range: "90-100%", count: filteredScans?.filter(s => s.score >= 90).length || 0, color: "#22c55e" },
+					{ range: "80-89%", count: filteredScans?.filter(s => s.score >= 80 && s.score < 90).length || 0, color: "#84cc16" },
+					{ range: "70-79%", count: filteredScans?.filter(s => s.score >= 70 && s.score < 80).length || 0, color: "#eab308" },
+					{ range: "60-69%", count: filteredScans?.filter(s => s.score >= 60 && s.score < 70).length || 0, color: "#f97316" },
+					{ range: "<60%", count: filteredScans?.filter(s => s.score < 60).length || 0, color: "#ef4444" },
 				];
 
 				return (
@@ -609,7 +663,7 @@ const Compliance = () => {
 						</div>
 
 						{/* Recent Scan Score Distribution */}
-						{recent_scans && recent_scans.length > 0 && (
+						{filteredScans && filteredScans.length > 0 && (
 							<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
 								<h3 className="text-white font-medium mb-4 flex items-center gap-2">
 									<BarChart3 className="h-4 w-4 text-primary-400" />
@@ -743,16 +797,21 @@ const Compliance = () => {
 			)}
 
 			{/* Top Failing Rules */}
-			{top_failing_rules && top_failing_rules.length > 0 && (
+			{filteredTopFailingRules && filteredTopFailingRules.length > 0 && (
 				<div className="bg-secondary-800 rounded-lg border border-secondary-700">
 					<div className="px-4 py-3 border-b border-secondary-700">
 						<h2 className="text-lg font-semibold text-white flex items-center gap-2">
 							<XCircle className="h-5 w-5 text-red-400" />
 							Top Failing Rules
+							{profileTypeFilter !== "all" && (
+								<span className="text-sm font-normal text-secondary-400 ml-2">
+									({profileTypeFilter === "openscap" ? "OpenSCAP" : "Docker Bench"})
+								</span>
+							)}
 						</h2>
 					</div>
 					<div className="divide-y divide-secondary-700">
-						{top_failing_rules.map((rule) => {
+						{filteredTopFailingRules.map((rule) => {
 							const severityColors = {
 								critical: "bg-red-500/20 text-red-400 border-red-500/30",
 								high: "bg-orange-500/20 text-orange-400 border-orange-500/30",
@@ -789,20 +848,32 @@ const Compliance = () => {
 						<h2 className="text-lg font-semibold text-white flex items-center gap-2">
 							<Clock className="h-5 w-5 text-secondary-400" />
 							Recent Scans
+							{profileTypeFilter !== "all" && (
+								<span className="text-sm font-normal text-secondary-400 ml-2">
+									({profileTypeFilter === "openscap" ? "OpenSCAP" : "Docker Bench"})
+								</span>
+							)}
 						</h2>
 					</div>
 					<div className="divide-y divide-secondary-700">
-						{recent_scans?.map((scan) => (
+						{filteredScans?.map((scan) => (
 							<Link
 								key={scan.id}
 								to={`/hosts/${scan.host?.id}`}
 								className="flex items-center justify-between px-4 py-3 hover:bg-secondary-700/50 transition-colors"
 							>
-								<div>
-									<p className="text-white font-medium">
-										{scan.host?.friendly_name || scan.host?.hostname}
-									</p>
-									<p className="text-sm text-secondary-400">{scan.profile?.name}</p>
+								<div className="flex items-center gap-3">
+									{scan.compliance_profiles?.type === "docker-bench" ? (
+										<Container className="h-4 w-4 text-blue-400 flex-shrink-0" />
+									) : (
+										<Server className="h-4 w-4 text-green-400 flex-shrink-0" />
+									)}
+									<div>
+										<p className="text-white font-medium">
+											{scan.host?.friendly_name || scan.host?.hostname}
+										</p>
+										<p className="text-sm text-secondary-400">{scan.profile?.name}</p>
+									</div>
 								</div>
 								<div className="flex items-center gap-3">
 									<ComplianceScore score={scan.score} size="sm" />
@@ -812,7 +883,7 @@ const Compliance = () => {
 								</div>
 							</Link>
 						))}
-						{(!recent_scans || recent_scans.length === 0) && (
+						{(!filteredScans || filteredScans.length === 0) && (
 							<div className="px-4 py-8 text-center text-secondary-400">
 								No compliance scans yet
 							</div>
@@ -826,25 +897,37 @@ const Compliance = () => {
 						<h2 className="text-lg font-semibold text-white flex items-center gap-2">
 							<TrendingDown className="h-5 w-5 text-red-400" />
 							Needs Attention
+							{profileTypeFilter !== "all" && (
+								<span className="text-sm font-normal text-secondary-400 ml-2">
+									({profileTypeFilter === "openscap" ? "OpenSCAP" : "Docker Bench"})
+								</span>
+							)}
 						</h2>
 					</div>
 					<div className="divide-y divide-secondary-700">
-						{worst_hosts?.map((scan) => (
+						{filteredWorstHosts?.map((scan) => (
 							<Link
 								key={scan.id}
 								to={`/hosts/${scan.host?.id}`}
 								className="flex items-center justify-between px-4 py-3 hover:bg-secondary-700/50 transition-colors"
 							>
-								<div>
-									<p className="text-white font-medium">
-										{scan.host?.friendly_name || scan.host?.hostname}
-									</p>
-									<p className="text-sm text-secondary-400">{scan.profile?.name}</p>
+								<div className="flex items-center gap-3">
+									{scan.compliance_profiles?.type === "docker-bench" ? (
+										<Container className="h-4 w-4 text-blue-400 flex-shrink-0" />
+									) : (
+										<Server className="h-4 w-4 text-green-400 flex-shrink-0" />
+									)}
+									<div>
+										<p className="text-white font-medium">
+											{scan.host?.friendly_name || scan.host?.hostname}
+										</p>
+										<p className="text-sm text-secondary-400">{scan.profile?.name}</p>
+									</div>
 								</div>
 								<ComplianceScore score={scan.score} size="sm" />
 							</Link>
 						))}
-						{(!worst_hosts || worst_hosts.length === 0) && (
+						{(!filteredWorstHosts || filteredWorstHosts.length === 0) && (
 							<div className="px-4 py-8 text-center text-secondary-400">
 								No hosts with low compliance scores
 							</div>
