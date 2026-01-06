@@ -23,6 +23,7 @@ import {
 	Play,
 	X,
 	Check,
+	Container,
 } from "lucide-react";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { complianceAPI } from "../utils/complianceApi";
@@ -122,7 +123,7 @@ const Compliance = () => {
 		);
 	}
 
-	const { summary, recent_scans, worst_hosts, top_failing_rules, profile_distribution, severity_breakdown } = dashboard || {};
+	const { summary, recent_scans, worst_hosts, top_failing_rules, profile_distribution, severity_breakdown, profile_type_stats } = dashboard || {};
 	const activeScans = activeScansData?.activeScans || [];
 
 	const allHosts = hostsData?.hosts || [];
@@ -445,6 +446,101 @@ const Compliance = () => {
 								: 0}%
 						</p>
 					</div>
+				</div>
+			)}
+
+			{/* Profile Type Stats - OpenSCAP vs Docker Bench */}
+			{profile_type_stats && profile_type_stats.length > 0 && (
+				<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+					{/* OpenSCAP Card */}
+					{(() => {
+						const openscap = profile_type_stats.find(p => p.type === "openscap");
+						return (
+							<div className={`bg-secondary-800 rounded-lg p-4 border-2 ${openscap ? "border-blue-700/50" : "border-secondary-700 opacity-50"}`}>
+								<div className="flex items-center justify-between mb-3">
+									<div className="flex items-center gap-2">
+										<Server className="h-5 w-5 text-blue-400" />
+										<h3 className="text-white font-medium">OpenSCAP</h3>
+									</div>
+									{openscap?.average_score != null && (
+										<span className={`text-xl font-bold ${
+											openscap.average_score >= 80 ? "text-green-400" :
+											openscap.average_score >= 60 ? "text-yellow-400" : "text-red-400"
+										}`}>
+											{Math.round(openscap.average_score)}%
+										</span>
+									)}
+								</div>
+								{openscap ? (
+									<div className="grid grid-cols-2 gap-3 text-sm">
+										<div>
+											<p className="text-secondary-400">Hosts Scanned</p>
+											<p className="text-white font-medium">{openscap.hosts_scanned}</p>
+										</div>
+										<div>
+											<p className="text-secondary-400">Total Rules</p>
+											<p className="text-white font-medium">{openscap.total_rules?.toLocaleString()}</p>
+										</div>
+										<div>
+											<p className="text-green-400">Passed</p>
+											<p className="text-white font-medium">{openscap.total_passed?.toLocaleString()}</p>
+										</div>
+										<div>
+											<p className="text-red-400">Failed</p>
+											<p className="text-white font-medium">{openscap.total_failed?.toLocaleString()}</p>
+										</div>
+									</div>
+								) : (
+									<p className="text-secondary-500 text-sm">No OpenSCAP scans yet</p>
+								)}
+							</div>
+						);
+					})()}
+
+					{/* Docker Bench Card */}
+					{(() => {
+						const dockerBench = profile_type_stats.find(p => p.type === "docker-bench");
+						return (
+							<div className={`bg-secondary-800 rounded-lg p-4 border-2 ${dockerBench ? "border-cyan-700/50" : "border-secondary-700 opacity-50"}`}>
+								<div className="flex items-center justify-between mb-3">
+									<div className="flex items-center gap-2">
+										<Container className="h-5 w-5 text-cyan-400" />
+										<h3 className="text-white font-medium">Docker Bench</h3>
+									</div>
+									{dockerBench?.average_score != null && (
+										<span className={`text-xl font-bold ${
+											dockerBench.average_score >= 80 ? "text-green-400" :
+											dockerBench.average_score >= 60 ? "text-yellow-400" : "text-red-400"
+										}`}>
+											{Math.round(dockerBench.average_score)}%
+										</span>
+									)}
+								</div>
+								{dockerBench ? (
+									<div className="grid grid-cols-2 gap-3 text-sm">
+										<div>
+											<p className="text-secondary-400">Hosts Scanned</p>
+											<p className="text-white font-medium">{dockerBench.hosts_scanned}</p>
+										</div>
+										<div>
+											<p className="text-secondary-400">Total Rules</p>
+											<p className="text-white font-medium">{dockerBench.total_rules?.toLocaleString()}</p>
+										</div>
+										<div>
+											<p className="text-green-400">Passed</p>
+											<p className="text-white font-medium">{dockerBench.total_passed?.toLocaleString()}</p>
+										</div>
+										<div>
+											<p className="text-yellow-400">Warnings</p>
+											<p className="text-white font-medium">{dockerBench.total_warnings?.toLocaleString()}</p>
+										</div>
+									</div>
+								) : (
+									<p className="text-secondary-500 text-sm">No Docker Bench scans yet</p>
+								)}
+							</div>
+						);
+					})()}
 				</div>
 			)}
 

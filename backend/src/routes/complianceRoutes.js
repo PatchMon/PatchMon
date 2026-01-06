@@ -444,6 +444,26 @@ router.get("/dashboard", async (req, res) => {
       `;
     }
 
+    // Get aggregate stats by profile type (openscap vs docker-bench)
+    const profileTypeStats = await prisma.$queryRaw`
+      SELECT
+        cp.type as profile_type,
+        COUNT(DISTINCT cs.host_id) as hosts_scanned,
+        AVG(cs.score) as average_score,
+        SUM(cs.passed) as total_passed,
+        SUM(cs.failed) as total_failed,
+        SUM(cs.warnings) as total_warnings,
+        SUM(cs.total_rules) as total_rules
+      FROM (
+        SELECT DISTINCT ON (host_id, profile_id) *
+        FROM compliance_scans
+        WHERE status = 'completed'
+        ORDER BY host_id, profile_id, completed_at DESC
+      ) cs
+      JOIN compliance_profiles cp ON cs.profile_id = cp.id
+      GROUP BY cp.type
+    `;
+
     res.json({
       summary: {
         total_hosts: totalHosts,
@@ -472,6 +492,15 @@ router.get("/dashboard", async (req, res) => {
       severity_breakdown: severityBreakdown.map(s => ({
         severity: s.severity || 'unknown',
         count: Number(s.count),
+      })),
+      profile_type_stats: profileTypeStats.map(p => ({
+        type: p.profile_type,
+        hosts_scanned: Number(p.hosts_scanned),
+        average_score: p.average_score ? Math.round(Number(p.average_score) * 100) / 100 : null,
+        total_passed: Number(p.total_passed) || 0,
+        total_failed: Number(p.total_failed) || 0,
+        total_warnings: Number(p.total_warnings) || 0,
+        total_rules: Number(p.total_rules) || 0,
       })),
     });
   } catch (error) {
