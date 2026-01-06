@@ -405,7 +405,7 @@ router.get("/dashboard", async (req, res) => {
     const totalFailedRules = latestScans.reduce((sum, s) => sum + (Number(s.failed) || 0), 0);
     const totalRules = latestScans.reduce((sum, s) => sum + (Number(s.total_rules) || 0), 0);
 
-    // Get top failing rules across all hosts (most recent scan per host)
+    // Get top failing rules across all hosts (most recent scan per host) - for OpenSCAP
     const latestScanIds = latestScans.map(s => s.id);
     let topFailingRules = [];
     if (latestScanIds.length > 0) {
@@ -426,6 +426,28 @@ router.get("/dashboard", async (req, res) => {
           AND cr.status = 'fail'
         GROUP BY cr.rule_id, cru.title, cru.severity, cp.type
         ORDER BY fail_count DESC
+        LIMIT 10
+      `;
+    }
+
+    // Get top warning rules across all hosts - for Docker Bench (uses 'warn' status)
+    let topWarningRules = [];
+    if (latestScanIds.length > 0) {
+      topWarningRules = await prisma.$queryRaw`
+        SELECT
+          cr.rule_id,
+          cru.title,
+          cru.severity,
+          cp.type as profile_type,
+          COUNT(*) as warn_count
+        FROM compliance_results cr
+        JOIN compliance_rules cru ON cr.rule_id = cru.id
+        JOIN compliance_scans cs ON cr.scan_id = cs.id
+        JOIN compliance_profiles cp ON cs.profile_id = cp.id
+        WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
+          AND cr.status = 'warn'
+        GROUP BY cr.rule_id, cru.title, cru.severity, cp.type
+        ORDER BY warn_count DESC
         LIMIT 10
       `;
     }
@@ -506,6 +528,13 @@ router.get("/dashboard", async (req, res) => {
         severity: r.severity,
         profile_type: r.profile_type,
         fail_count: Number(r.fail_count),
+      })),
+      top_warning_rules: topWarningRules.map(r => ({
+        rule_id: r.rule_id,
+        title: r.title,
+        severity: r.severity,
+        profile_type: r.profile_type,
+        warn_count: Number(r.warn_count),
       })),
       profile_distribution: profileDistribution.map(p => ({
         name: p.profile_name,
