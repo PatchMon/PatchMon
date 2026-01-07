@@ -185,7 +185,39 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
         console.log(`=== DEBUG: Received ${results.length} results for ${profile_type} ===`);
         console.log(`=== DEBUG: Status counts received: ${JSON.stringify(receivedStatusCounts)} ===`);
 
+        // Deduplicate results by rule_ref, prioritizing important statuses
+        // Priority: fail > warn > pass > skip > notapplicable > error
+        const statusPriority = { fail: 6, warn: 5, pass: 4, skip: 3, notapplicable: 2, error: 1 };
+        const deduplicatedResults = new Map();
+
         for (const result of results) {
+          const ruleRef = result.rule_ref || result.rule_id || result.id;
+          if (!ruleRef) continue;
+
+          const existingResult = deduplicatedResults.get(ruleRef);
+          if (!existingResult) {
+            deduplicatedResults.set(ruleRef, result);
+          } else {
+            // Keep the result with higher priority status
+            const existingPriority = statusPriority[existingResult.status] || 0;
+            const newPriority = statusPriority[result.status] || 0;
+            if (newPriority > existingPriority) {
+              deduplicatedResults.set(ruleRef, result);
+            }
+          }
+        }
+
+        const uniqueResults = Array.from(deduplicatedResults.values());
+        console.log(`=== DEBUG: Deduplicated ${results.length} results to ${uniqueResults.length} unique results ===`);
+
+        // Count deduplicated statuses
+        const deduplicatedStatusCounts = {};
+        for (const r of uniqueResults) {
+          deduplicatedStatusCounts[r.status] = (deduplicatedStatusCounts[r.status] || 0) + 1;
+        }
+        console.log(`=== DEBUG: Deduplicated status counts: ${JSON.stringify(deduplicatedStatusCounts)} ===`);
+
+        for (const result of uniqueResults) {
           // Get rule_ref from various possible field names
           const ruleRef = result.rule_ref || result.rule_id || result.id;
           if (!ruleRef) continue;
