@@ -393,15 +393,36 @@ router.get("/dashboard", async (req, res) => {
       ? latestScans.reduce((sum, s) => sum + (Number(s.score) || 0), 0) / latestScans.length
       : 0;
 
-    // Get hosts by compliance level
-    const compliant = latestScans.filter((s) => Number(s.score) >= 80).length;
-    const warning = latestScans.filter((s) => Number(s.score) >= 60 && Number(s.score) < 80).length;
-    const critical = latestScans.filter((s) => Number(s.score) < 60).length;
+    // Get SCAN counts by compliance level (these are scan-level, not host-level)
+    const scans_compliant = latestScans.filter((s) => Number(s.score) >= 80).length;
+    const scans_warning = latestScans.filter((s) => Number(s.score) >= 60 && Number(s.score) < 80).length;
+    const scans_critical = latestScans.filter((s) => Number(s.score) < 60).length;
     const unscanned = await prisma.hosts.count({
       where: {
         compliance_scans: { none: {} },
       },
     });
+
+    // Get HOST-LEVEL compliance status (using worst score per host)
+    // A host is compliant only if ALL its scans are >=80%
+    // A host is critical if ANY of its scans are <60%
+    // A host is warning if its worst score is 60-80%
+    const hostWorstScores = new Map();
+    for (const scan of latestScans) {
+      const currentWorst = hostWorstScores.get(scan.host_id);
+      const scanScore = Number(scan.score) || 0;
+      if (currentWorst === undefined || scanScore < currentWorst) {
+        hostWorstScores.set(scan.host_id, scanScore);
+      }
+    }
+    const hosts_compliant = [...hostWorstScores.values()].filter(s => s >= 80).length;
+    const hosts_warning = [...hostWorstScores.values()].filter(s => s >= 60 && s < 80).length;
+    const hosts_critical = [...hostWorstScores.values()].filter(s => s < 60).length;
+
+    // For backwards compatibility, keep the old field names as scan counts
+    const compliant = scans_compliant;
+    const warning = scans_warning;
+    const critical = scans_critical;
 
     // Recent scans
     const recentScans = await prisma.compliance_scans.findMany({
@@ -590,10 +611,18 @@ router.get("/dashboard", async (req, res) => {
       summary: {
         total_hosts: totalHosts,
         average_score: Math.round(avgScore * 100) / 100,
+        // Host-level status (based on worst score per host)
+        hosts_compliant,
+        hosts_warning,
+        hosts_critical,
+        unscanned,
+        // Scan-level counts (for backwards compatibility)
         compliant,
         warning,
         critical,
-        unscanned,
+        // Total scans
+        total_scans: latestScans.length,
+        // Rule totals
         total_passed_rules: totalPassedRules,
         total_failed_rules: totalFailedRules,
         total_rules: totalRules,

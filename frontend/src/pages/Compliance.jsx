@@ -463,52 +463,45 @@ const Compliance = () => {
 						<div className="flex-1 h-px bg-secondary-700" />
 					</div>
 
-					{/* Combined Overview Card */}
+					{/* HOST STATUS - Shows unique hosts by their worst score */}
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-5">
-						{/* Host Compliance Status Row */}
-						<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-6 mb-6">
+						<div className="flex items-center gap-2 mb-4">
+							<Server className="h-4 w-4 text-primary-400" />
+							<h3 className="text-white font-medium">Host Status</h3>
+							<span className="text-xs text-secondary-500">(based on worst score per host)</span>
+						</div>
+						<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
 							<div className="text-center">
 								<div className="flex items-center justify-center gap-2 mb-2">
 									<Server className="h-4 w-4 text-secondary-400" />
-									<span className="text-xs text-secondary-400 uppercase tracking-wide">Hosts</span>
+									<span className="text-xs text-secondary-400 uppercase tracking-wide">Total</span>
 								</div>
-								<p className="text-3xl font-bold text-white">{filteredSummary.total_hosts || 0}</p>
-								<p className="text-xs text-secondary-500 mt-1">scanned</p>
-							</div>
-							<div className="text-center">
-								<div className="flex items-center justify-center gap-2 mb-2">
-									<TrendingUp className="h-4 w-4 text-secondary-400" />
-									<span className="text-xs text-secondary-400 uppercase tracking-wide">Avg Score</span>
-								</div>
-								<p className={`text-3xl font-bold ${
-									filteredSummary.average_score >= 80 ? "text-green-400" :
-									filteredSummary.average_score >= 60 ? "text-yellow-400" : "text-red-400"
-								}`}>{filteredSummary.average_score?.toFixed(1) || 0}%</p>
-								<p className="text-xs text-secondary-500 mt-1">compliance</p>
+								<p className="text-3xl font-bold text-white">{summary?.total_hosts || 0}</p>
+								<p className="text-xs text-secondary-500 mt-1">hosts scanned</p>
 							</div>
 							<div className="text-center">
 								<div className="flex items-center justify-center gap-2 mb-2">
 									<ShieldCheck className="h-4 w-4 text-green-400" />
 									<span className="text-xs text-green-400 uppercase tracking-wide">Compliant</span>
 								</div>
-								<p className="text-3xl font-bold text-green-400">{summary?.compliant || 0}</p>
-								<p className="text-xs text-secondary-500 mt-1">≥80% score</p>
+								<p className="text-3xl font-bold text-green-400">{summary?.hosts_compliant || 0}</p>
+								<p className="text-xs text-secondary-500 mt-1">all scans ≥80%</p>
 							</div>
 							<div className="text-center">
 								<div className="flex items-center justify-center gap-2 mb-2">
 									<ShieldAlert className="h-4 w-4 text-yellow-400" />
 									<span className="text-xs text-yellow-400 uppercase tracking-wide">Warning</span>
 								</div>
-								<p className="text-3xl font-bold text-yellow-400">{summary?.warning || 0}</p>
-								<p className="text-xs text-secondary-500 mt-1">60-80% score</p>
+								<p className="text-3xl font-bold text-yellow-400">{summary?.hosts_warning || 0}</p>
+								<p className="text-xs text-secondary-500 mt-1">worst 60-80%</p>
 							</div>
 							<div className="text-center">
 								<div className="flex items-center justify-center gap-2 mb-2">
 									<ShieldX className="h-4 w-4 text-red-400" />
 									<span className="text-xs text-red-400 uppercase tracking-wide">Critical</span>
 								</div>
-								<p className="text-3xl font-bold text-red-400">{summary?.critical || 0}</p>
-								<p className="text-xs text-secondary-500 mt-1">&lt;60% score</p>
+								<p className="text-3xl font-bold text-red-400">{summary?.hosts_critical || 0}</p>
+								<p className="text-xs text-secondary-500 mt-1">any scan &lt;60%</p>
 							</div>
 							<div className="text-center">
 								<div className="flex items-center justify-center gap-2 mb-2">
@@ -519,25 +512,28 @@ const Compliance = () => {
 								<p className="text-xs text-secondary-500 mt-1">no data</p>
 							</div>
 						</div>
+					</div>
 
-						{/* Scan Type Breakdown */}
-						<div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-5 border-t border-secondary-700">
-							{/* OpenSCAP Summary */}
-							<div className="bg-green-900/10 rounded-lg p-4 border border-green-700/30">
-								<div className="flex items-center gap-2 mb-3">
-									<span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs font-bold rounded-full border border-green-500/30">
-										OpenSCAP
-									</span>
+					{/* SCAN TYPE BREAKDOWN - OpenSCAP vs Docker Bench */}
+					<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+						{/* OpenSCAP Summary */}
+						<div className="bg-secondary-800 rounded-lg border-2 border-green-700/50 overflow-hidden">
+							<div className="px-4 py-3 bg-green-900/20 border-b border-green-700/30 flex items-center justify-between">
+								<div className="flex items-center gap-2">
+									<Server className="h-4 w-4 text-green-400" />
+									<span className="text-green-400 font-bold">OpenSCAP</span>
 									<span className="text-secondary-400 text-sm">CIS Benchmark</span>
-									{openscapStats?.average_score != null && (
-										<span className={`ml-auto text-lg font-bold ${
-											openscapStats.average_score >= 80 ? "text-green-400" :
-											openscapStats.average_score >= 60 ? "text-yellow-400" : "text-red-400"
-										}`}>
-											{Math.round(openscapStats.average_score)}%
-										</span>
-									)}
 								</div>
+								{openscapStats?.average_score != null && (
+									<span className={`text-lg font-bold ${
+										openscapStats.average_score >= 80 ? "text-green-400" :
+										openscapStats.average_score >= 60 ? "text-yellow-400" : "text-red-400"
+									}`}>
+										{Math.round(openscapStats.average_score)}%
+									</span>
+								)}
+							</div>
+							<div className="p-4">
 								{openscapStats ? (
 									<>
 										<div className="grid grid-cols-4 gap-2 text-center text-sm">
@@ -555,36 +551,41 @@ const Compliance = () => {
 											</div>
 											<div>
 												<p className="text-xl font-bold text-white">{openscapStats.total_rules?.toLocaleString()}</p>
-												<p className="text-xs text-secondary-400">Total</p>
+												<p className="text-xs text-secondary-400">Rules</p>
 											</div>
 										</div>
-										{/* Progress bar */}
-										<div className="mt-3 h-1.5 bg-secondary-700 rounded-full overflow-hidden flex">
+										<div className="mt-3 h-2 bg-secondary-700 rounded-full overflow-hidden flex">
 											<div className="h-full bg-green-500" style={{ width: `${(openscapStats.total_passed / openscapStats.total_rules) * 100}%` }} />
 											<div className="h-full bg-red-500" style={{ width: `${(openscapStats.total_failed / openscapStats.total_rules) * 100}%` }} />
 										</div>
+										<p className="text-xs text-secondary-500 mt-2 text-center">
+											{openscapStats.total_rules - openscapStats.total_passed - openscapStats.total_failed} skipped/N/A
+										</p>
 									</>
 								) : (
-									<p className="text-secondary-500 text-sm">No OpenSCAP scans yet</p>
+									<p className="text-secondary-500 text-sm text-center py-4">No OpenSCAP scans yet</p>
 								)}
 							</div>
+						</div>
 
-							{/* Docker Bench Summary */}
-							<div className="bg-blue-900/10 rounded-lg p-4 border border-blue-700/30">
-								<div className="flex items-center gap-2 mb-3">
-									<span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs font-bold rounded-full border border-blue-500/30">
-										Docker Bench
-									</span>
+						{/* Docker Bench Summary */}
+						<div className="bg-secondary-800 rounded-lg border-2 border-blue-700/50 overflow-hidden">
+							<div className="px-4 py-3 bg-blue-900/20 border-b border-blue-700/30 flex items-center justify-between">
+								<div className="flex items-center gap-2">
+									<Container className="h-4 w-4 text-blue-400" />
+									<span className="text-blue-400 font-bold">Docker Bench</span>
 									<span className="text-secondary-400 text-sm">Container Security</span>
-									{dockerBenchStats?.average_score != null && (
-										<span className={`ml-auto text-lg font-bold ${
-											dockerBenchStats.average_score >= 80 ? "text-green-400" :
-											dockerBenchStats.average_score >= 60 ? "text-yellow-400" : "text-red-400"
-										}`}>
-											{Math.round(dockerBenchStats.average_score)}%
-										</span>
-									)}
 								</div>
+								{dockerBenchStats?.average_score != null && (
+									<span className={`text-lg font-bold ${
+										dockerBenchStats.average_score >= 80 ? "text-green-400" :
+										dockerBenchStats.average_score >= 60 ? "text-yellow-400" : "text-red-400"
+									}`}>
+										{Math.round(dockerBenchStats.average_score)}%
+									</span>
+								)}
+							</div>
+							<div className="p-4">
 								{dockerBenchStats ? (
 									<>
 										<div className="grid grid-cols-4 gap-2 text-center text-sm">
@@ -602,17 +603,19 @@ const Compliance = () => {
 											</div>
 											<div>
 												<p className="text-xl font-bold text-white">{dockerBenchStats.total_rules?.toLocaleString()}</p>
-												<p className="text-xs text-secondary-400">Total</p>
+												<p className="text-xs text-secondary-400">Rules</p>
 											</div>
 										</div>
-										{/* Progress bar */}
-										<div className="mt-3 h-1.5 bg-secondary-700 rounded-full overflow-hidden flex">
+										<div className="mt-3 h-2 bg-secondary-700 rounded-full overflow-hidden flex">
 											<div className="h-full bg-green-500" style={{ width: `${(dockerBenchStats.total_passed / dockerBenchStats.total_rules) * 100}%` }} />
 											<div className="h-full bg-yellow-500" style={{ width: `${(dockerBenchStats.total_warnings / dockerBenchStats.total_rules) * 100}%` }} />
 										</div>
+										<p className="text-xs text-secondary-500 mt-2 text-center">
+											{dockerBenchStats.total_rules - dockerBenchStats.total_passed - dockerBenchStats.total_warnings} skipped/N/A
+										</p>
 									</>
 								) : (
-									<p className="text-secondary-500 text-sm">No Docker Bench scans yet</p>
+									<p className="text-secondary-500 text-sm text-center py-4">No Docker Bench scans yet</p>
 								)}
 							</div>
 						</div>
@@ -701,11 +704,12 @@ const Compliance = () => {
 
 			{/* ==================== ANALYSIS SECTION ==================== */}
 			{profileTypeFilter === "all" && summary && (summary.total_hosts > 0 || summary.unscanned > 0) && (() => {
+				// Use HOST-LEVEL counts (based on worst score per host)
 				const hostDistribution = [
-					{ name: "Compliant (≥80%)", value: summary.compliant || 0, color: "#22c55e" },
-					{ name: "Warning (60-80%)", value: summary.warning || 0, color: "#eab308" },
-					{ name: "Critical (<60%)", value: summary.critical || 0, color: "#ef4444" },
-					{ name: "Not Scanned", value: summary.unscanned || 0, color: "#6b7280" },
+					{ name: "Compliant Hosts", value: summary.hosts_compliant || 0, color: "#22c55e" },
+					{ name: "Warning Hosts", value: summary.hosts_warning || 0, color: "#eab308" },
+					{ name: "Critical Hosts", value: summary.hosts_critical || 0, color: "#ef4444" },
+					{ name: "Unscanned Hosts", value: summary.unscanned || 0, color: "#6b7280" },
 				].filter(d => d.value > 0);
 
 				// OpenSCAP scans for score distribution
@@ -752,10 +756,11 @@ const Compliance = () => {
 
 					{/* Host Compliance Distribution */}
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
-						<h3 className="text-white font-medium mb-4 flex items-center gap-2">
+						<h3 className="text-white font-medium mb-1 flex items-center gap-2">
 							<PieChartIcon className="h-4 w-4 text-primary-400" />
 							Host Compliance Status
 						</h3>
+						<p className="text-xs text-secondary-500 mb-3">Unique hosts by worst score (combines all scan types)</p>
 						<div className="h-48">
 							<ResponsiveContainer width="100%" height="100%">
 								<PieChart>
@@ -1019,13 +1024,15 @@ const Compliance = () => {
 							value: s.count,
 							color: severityColors[s.severity] || severityColors.unknown,
 						}));
+						const totalFailures = severityData.reduce((sum, s) => sum + s.value, 0);
 
 						return (
 							<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
-								<h3 className="text-white font-medium mb-4 flex items-center gap-2">
+								<h3 className="text-white font-medium mb-1 flex items-center gap-2">
 									<AlertTriangle className="h-4 w-4 text-primary-400" />
-									Failed Rules by Severity (All Scan Types)
+									Rule Failures by Severity
 								</h3>
+								<p className="text-xs text-secondary-500 mb-3">{totalFailures.toLocaleString()} total rule failures across all hosts</p>
 								<div className="h-48">
 									<ResponsiveContainer width="100%" height="100%">
 										<PieChart>
@@ -1069,10 +1076,11 @@ const Compliance = () => {
 					{/* Profile Distribution */}
 					{profile_distribution && profile_distribution.length > 0 && (
 						<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
-							<h3 className="text-white font-medium mb-4 flex items-center gap-2">
+							<h3 className="text-white font-medium mb-1 flex items-center gap-2">
 								<Shield className="h-4 w-4 text-primary-400" />
-								Profiles in Use (All Scan Types)
+								Compliance Profiles in Use
 							</h3>
+							<p className="text-xs text-secondary-500 mb-3">Number of hosts scanned with each profile</p>
 							<div className="h-48">
 								<ResponsiveContainer width="100%" height="100%">
 									<BarChart data={profile_distribution} layout="vertical">
