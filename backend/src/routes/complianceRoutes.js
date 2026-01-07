@@ -645,6 +645,25 @@ router.get("/dashboard", async (req, res) => {
       `;
     }
 
+    // Docker Bench issues by section (since Docker Bench doesn't have severity)
+    let dockerBenchBySection = [];
+    if (latestScanIds.length > 0) {
+      dockerBenchBySection = await prisma.$queryRaw`
+        SELECT
+          cru.section,
+          COUNT(*) as count
+        FROM compliance_results cr
+        JOIN compliance_rules cru ON cr.rule_id = cru.id
+        JOIN compliance_scans cs ON cr.scan_id = cs.id
+        JOIN compliance_profiles cp ON cs.profile_id = cp.id
+        WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
+          AND cr.status = 'warn'
+          AND cp.type = 'docker-bench'
+        GROUP BY cru.section
+        ORDER BY cru.section
+      `;
+    }
+
     // Get aggregate stats by profile type (openscap vs docker-bench)
     const profileTypeStats = await prisma.$queryRaw`
       SELECT
@@ -715,6 +734,10 @@ router.get("/dashboard", async (req, res) => {
       severity_by_profile_type: severityByProfileType.map(s => ({
         severity: s.severity || 'unknown',
         profile_type: s.profile_type,
+        count: Number(s.count),
+      })),
+      docker_bench_by_section: dockerBenchBySection.map(s => ({
+        section: s.section || 'Unknown',
         count: Number(s.count),
       })),
       profile_type_stats: profileTypeStats.map(p => ({

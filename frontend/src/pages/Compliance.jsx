@@ -172,7 +172,7 @@ const Compliance = () => {
 		);
 	}
 
-	const { summary, recent_scans, worst_hosts, top_failing_rules, top_warning_rules, profile_distribution, severity_breakdown, severity_by_profile_type, profile_type_stats } = dashboard || {};
+	const { summary, recent_scans, worst_hosts, top_failing_rules, top_warning_rules, profile_distribution, severity_breakdown, severity_by_profile_type, docker_bench_by_section, profile_type_stats } = dashboard || {};
 	const activeScans = activeScansData?.activeScans || [];
 
 	// Get stats for the selected profile type
@@ -1071,83 +1071,156 @@ const Compliance = () => {
 				);
 			})()}
 
-			{/* Additional Charts - Severity & Profile Distribution - Only for "All Scans" tab */}
-			{profileTypeFilter === "all" && ((severity_breakdown && severity_breakdown.length > 0) || (profile_distribution && profile_distribution.length > 0)) && (
+			{/* Additional Charts - Severity (OpenSCAP), Section (Docker Bench) & Profile Distribution - Only for "All Scans" tab */}
+			{profileTypeFilter === "all" && ((severity_by_profile_type && severity_by_profile_type.length > 0) || (docker_bench_by_section && docker_bench_by_section.length > 0) || (profile_distribution && profile_distribution.length > 0)) && (
 				<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-					{/* Severity Breakdown with Scan Type */}
-					{severity_breakdown && severity_breakdown.length > 0 && (() => {
-						const totalFailures = severity_breakdown.reduce((sum, s) => sum + s.count, 0);
+					{/* OpenSCAP Failures by Severity - OpenSCAP only (has real severity data) */}
+					{severity_by_profile_type && severity_by_profile_type.filter(s => s.profile_type === 'openscap').length > 0 && (() => {
+						// Filter to OpenSCAP only - Docker Bench doesn't have severity
+						const openscapSeverity = severity_by_profile_type.filter(s => s.profile_type === 'openscap');
+						const totalFailures = openscapSeverity.reduce((sum, s) => sum + s.count, 0);
 
-						// Build chart data with scan type breakdown
-						const severityOrder = ['critical', 'high', 'medium', 'low', 'unknown'];
+						// Build chart data - OpenSCAP only
+						const severityOrder = ['critical', 'high', 'medium', 'low'];
+						const severityColors = {
+							critical: "#ef4444",
+							high: "#f97316",
+							medium: "#eab308",
+							low: "#22c55e",
+						};
 						const chartData = severityOrder
 							.map(sev => {
-								const total = severity_breakdown.find(s => s.severity === sev)?.count || 0;
-								if (total === 0) return null;
-
-								// Get breakdown by profile type
-								const openscapCount = severity_by_profile_type?.find(
-									s => s.severity === sev && s.profile_type === 'openscap'
-								)?.count || 0;
-								const dockerCount = severity_by_profile_type?.find(
-									s => s.severity === sev && s.profile_type === 'docker-bench'
-								)?.count || 0;
+								const count = openscapSeverity.find(s => s.severity === sev)?.count || 0;
+								if (count === 0) return null;
 
 								return {
 									name: sev.charAt(0).toUpperCase() + sev.slice(1),
 									severity: sev,
-									openscap: openscapCount,
-									dockerBench: dockerCount,
-									total,
+									count,
+									color: severityColors[sev],
 								};
 							})
 							.filter(Boolean);
 
 						return (
-							<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
-								<h3 className="text-white font-medium mb-1 flex items-center gap-2">
-									<AlertTriangle className="h-4 w-4 text-primary-400" />
-									Rule Issues by Severity
-								</h3>
-								<p className="text-xs text-secondary-500 mb-3">{totalFailures.toLocaleString()} total issues (failures + warnings) - by scan type</p>
-								<div className="h-48">
+							<div className="bg-secondary-800 rounded-lg border border-green-700/50 p-4">
+								<div className="flex items-center gap-2 mb-1">
+									<span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs font-bold rounded-full border border-green-500/30">
+										OpenSCAP
+									</span>
+									<h3 className="text-white font-medium flex items-center gap-2">
+										<AlertTriangle className="h-4 w-4 text-red-400" />
+										Failures by Severity
+									</h3>
+								</div>
+								<p className="text-xs text-secondary-500 mb-3">{totalFailures.toLocaleString()} total CIS benchmark failures</p>
+								<div className="h-40">
 									<ResponsiveContainer width="100%" height="100%">
 										<BarChart data={chartData} layout="vertical">
 											<XAxis type="number" stroke="#6b7280" fontSize={12} />
 											<YAxis type="category" dataKey="name" stroke="#6b7280" fontSize={12} width={70} />
 											<Tooltip content={<CustomTooltip type="severity" />} />
-											<Bar dataKey="openscap" stackId="a" fill="#22c55e" name="openscap" radius={[0, 0, 0, 0]} />
-											<Bar dataKey="dockerBench" stackId="a" fill="#3b82f6" name="dockerBench" radius={[0, 4, 4, 0]} />
+											<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+												{chartData.map((entry, index) => (
+													<Cell key={`cell-${index}`} fill={entry.color} />
+												))}
+											</Bar>
 										</BarChart>
 									</ResponsiveContainer>
 								</div>
-								<div className="flex justify-center gap-6 mt-2">
-									<div className="flex items-center gap-2 text-sm">
-										<div className="w-3 h-3 rounded bg-green-500" />
-										<span className="text-green-400">OpenSCAP</span>
-									</div>
-									<div className="flex items-center gap-2 text-sm">
-										<div className="w-3 h-3 rounded bg-blue-500" />
-										<span className="text-blue-400">Docker Bench</span>
-									</div>
-								</div>
-								{/* Detailed breakdown */}
-								<div className="mt-4 pt-3 border-t border-secondary-700 grid grid-cols-2 md:grid-cols-4 gap-2 text-center text-xs">
+								{/* Breakdown summary */}
+								<div className="mt-3 pt-3 border-t border-secondary-700 flex justify-center gap-4 text-xs">
 									{chartData.map((item) => (
-										<div key={item.name} className="space-y-1">
-											<p className={`font-medium ${
-												item.severity === "critical" ? "text-red-400" :
-												item.severity === "high" ? "text-orange-400" :
-												item.severity === "medium" ? "text-yellow-400" :
-												item.severity === "low" ? "text-green-400" : "text-secondary-400"
-											}`}>{item.name}: {item.total.toLocaleString()}</p>
-											<p className="text-secondary-500">
-												{item.openscap > 0 && <span className="text-green-400">{item.openscap.toLocaleString()} OS</span>}
-												{item.openscap > 0 && item.dockerBench > 0 && " / "}
-												{item.dockerBench > 0 && <span className="text-blue-400">{item.dockerBench.toLocaleString()} DB</span>}
-											</p>
+										<div key={item.name} className="flex items-center gap-1.5">
+											<div className="w-2.5 h-2.5 rounded" style={{ backgroundColor: item.color }} />
+											<span className="text-secondary-400">{item.name}:</span>
+											<span className="text-white font-medium">{item.count.toLocaleString()}</span>
 										</div>
 									))}
+								</div>
+							</div>
+						);
+					})()}
+
+					{/* Docker Bench Warnings by Section - Docker Bench only (doesn't have severity) */}
+					{docker_bench_by_section && docker_bench_by_section.length > 0 && (() => {
+						const totalWarnings = docker_bench_by_section.reduce((sum, s) => sum + s.count, 0);
+
+						// Section colors
+						const sectionColors = {
+							"Host Configuration": "#ef4444",
+							"Docker Daemon Configuration": "#f97316",
+							"Docker Daemon Configuration Files": "#eab308",
+							"Container Images and Build File": "#84cc16",
+							"Container Runtime": "#22c55e",
+							"Docker Security Operations": "#3b82f6",
+							"Docker Swarm Configuration": "#8b5cf6",
+						};
+
+						const chartData = docker_bench_by_section.map(s => ({
+							name: s.section,
+							shortName: s.section.length > 25 ? `${s.section.slice(0, 22)}...` : s.section,
+							count: s.count,
+							color: sectionColors[s.section] || "#6b7280",
+						}));
+
+						return (
+							<div className="bg-secondary-800 rounded-lg border border-blue-700/50 p-4">
+								<div className="flex items-center gap-2 mb-1">
+									<span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs font-bold rounded-full border border-blue-500/30">
+										Docker Bench
+									</span>
+									<h3 className="text-white font-medium flex items-center gap-2">
+										<Container className="h-4 w-4 text-yellow-400" />
+										Warnings by Section
+									</h3>
+								</div>
+								<p className="text-xs text-secondary-500 mb-3">{totalWarnings.toLocaleString()} total container security warnings</p>
+								<div className="h-40">
+									<ResponsiveContainer width="100%" height="100%">
+										<BarChart data={chartData} layout="vertical">
+											<XAxis type="number" stroke="#6b7280" fontSize={12} />
+											<YAxis
+												type="category"
+												dataKey="shortName"
+												stroke="#6b7280"
+												fontSize={10}
+												width={100}
+											/>
+											<Tooltip
+												content={({ active, payload }) => {
+													if (!active || !payload || payload.length === 0) return null;
+													const data = payload[0].payload;
+													return (
+														<div className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 shadow-lg max-w-xs">
+															<p className="text-white font-medium text-sm mb-1">{data.name}</p>
+															<div className="flex items-center gap-2 text-sm">
+																<div className="w-2.5 h-2.5 rounded" style={{ backgroundColor: data.color }} />
+																<span className="text-gray-300">Warnings:</span>
+																<span className="text-white font-medium">{data.count.toLocaleString()}</span>
+															</div>
+														</div>
+													);
+												}}
+											/>
+											<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+												{chartData.map((entry, index) => (
+													<Cell key={`cell-${index}`} fill={entry.color} />
+												))}
+											</Bar>
+										</BarChart>
+									</ResponsiveContainer>
+								</div>
+								{/* Section legend */}
+								<div className="mt-3 pt-3 border-t border-secondary-700">
+									<div className="grid grid-cols-2 gap-1 text-xs">
+										{chartData.slice(0, 4).map((item) => (
+											<div key={item.name} className="flex items-center gap-1.5 truncate">
+												<div className="w-2 h-2 rounded flex-shrink-0" style={{ backgroundColor: item.color }} />
+												<span className="text-secondary-400 truncate">{item.shortName}</span>
+											</div>
+										))}
+									</div>
 								</div>
 							</div>
 						);
@@ -1171,7 +1244,7 @@ const Compliance = () => {
 											stroke="#6b7280"
 											fontSize={11}
 											width={140}
-											tickFormatter={(value) => value.length > 20 ? value.slice(0, 20) + "..." : value}
+											tickFormatter={(value) => value.length > 20 ? `${value.slice(0, 20)}...` : value}
 										/>
 										<Tooltip content={<CustomTooltip type="profile" />} />
 										<Bar dataKey="host_count" fill="#6366f1" radius={[0, 4, 4, 0]} />
