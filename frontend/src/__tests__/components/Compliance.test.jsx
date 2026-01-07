@@ -6,16 +6,33 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { BrowserRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ToastProvider } from "../../contexts/ToastContext";
 import Compliance from "../../pages/Compliance";
+
+// Mock ResizeObserver for recharts
+global.ResizeObserver = vi.fn().mockImplementation(() => ({
+	observe: vi.fn(),
+	unobserve: vi.fn(),
+	disconnect: vi.fn(),
+}));
 
 // Mock the complianceAPI
 vi.mock("../../utils/complianceApi", () => ({
 	complianceAPI: {
 		getDashboard: vi.fn(),
+		getActiveScans: vi.fn(),
+	},
+}));
+
+// Mock the adminHostsAPI
+vi.mock("../../utils/api", () => ({
+	adminHostsAPI: {
+		list: vi.fn(),
 	},
 }));
 
 import { complianceAPI } from "../../utils/complianceApi";
+import { adminHostsAPI } from "../../utils/api";
 
 describe("Compliance Dashboard", () => {
 	let queryClient;
@@ -24,11 +41,31 @@ describe("Compliance Dashboard", () => {
 		summary: {
 			total_hosts: 10,
 			average_score: 78.5,
-			compliant: 6,
-			warning: 2,
-			critical: 1,
-			unscanned: 1,
+			hosts_compliant: 6,
+			hosts_warning: 2,
+			hosts_critical: 3,
+			unscanned: 4,
 		},
+		profile_type_stats: [
+			{
+				type: "openscap",
+				hosts_scanned: 8,
+				average_score: 78.5,
+				total_rules: 100,
+				total_passed: 79,
+				total_failed: 21,
+				total_warnings: 0,
+			},
+			{
+				type: "docker-bench",
+				hosts_scanned: 5,
+				average_score: 72,
+				total_rules: 50,
+				total_passed: 36,
+				total_failed: 10,
+				total_warnings: 4,
+			},
+		],
 		recent_scans: [
 			{
 				id: "scan-1",
@@ -74,14 +111,20 @@ describe("Compliance Dashboard", () => {
 				queries: { retry: false },
 			},
 		});
+
+		// Set default mock implementations
+		complianceAPI.getActiveScans.mockResolvedValue({ data: [] });
+		adminHostsAPI.list.mockResolvedValue({ data: [] });
 	});
 
 	const renderComponent = () => {
 		return render(
 			<QueryClientProvider client={queryClient}>
-				<BrowserRouter>
-					<Compliance />
-				</BrowserRouter>
+				<ToastProvider>
+					<BrowserRouter>
+						<Compliance />
+					</BrowserRouter>
+				</ToastProvider>
 			</QueryClientProvider>,
 		);
 	};
@@ -127,7 +170,8 @@ describe("Compliance Dashboard", () => {
 			renderComponent();
 
 			await waitFor(() => {
-				expect(screen.getByText(/78\.5%/)).toBeInTheDocument();
+				// Component uses Math.round() so 78.5 becomes 79%
+				expect(screen.getByText(/79%/)).toBeInTheDocument();
 			});
 		});
 
@@ -157,7 +201,7 @@ describe("Compliance Dashboard", () => {
 			renderComponent();
 
 			await waitFor(() => {
-				expect(screen.getByText("1")).toBeInTheDocument();
+				expect(screen.getByText("3")).toBeInTheDocument();
 			});
 		});
 
@@ -235,7 +279,7 @@ describe("Compliance Dashboard", () => {
 
 			await waitFor(() => {
 				expect(
-					screen.getByText(/No compliance scans yet/i),
+					screen.getByText(/No.*scan.*available|No.*scans found/i),
 				).toBeInTheDocument();
 			});
 		});
@@ -253,7 +297,7 @@ describe("Compliance Dashboard", () => {
 
 			await waitFor(() => {
 				expect(
-					screen.getByText(/No hosts with low compliance scores/i),
+					screen.getByText(/No.*hosts with low scores/i),
 				).toBeInTheDocument();
 			});
 		});

@@ -44,14 +44,18 @@ const mockPrisma = {
 		findMany: jest.fn(),
 		findFirst: jest.fn(),
 		count: jest.fn(),
+		deleteMany: jest.fn(),
 	},
 	compliance_rules: {
 		findFirst: jest.fn(),
 		create: jest.fn(),
+		update: jest.fn(),
 	},
 	compliance_results: {
 		create: jest.fn(),
+		createMany: jest.fn(),
 		findMany: jest.fn(),
+		upsert: jest.fn(),
 	},
 	$queryRaw: jest.fn(),
 };
@@ -112,6 +116,7 @@ describe("Compliance Routes", () => {
 		beforeEach(() => {
 			mockPrisma.hosts.findFirst.mockResolvedValue(mockHost);
 			mockPrisma.compliance_profiles.findFirst.mockResolvedValue(mockProfile);
+			mockPrisma.compliance_scans.deleteMany.mockResolvedValue({ count: 0 });
 			mockPrisma.compliance_scans.create.mockResolvedValue(mockScan);
 			mockPrisma.compliance_rules.findFirst.mockResolvedValue(null);
 			mockPrisma.compliance_rules.create.mockResolvedValue({
@@ -121,6 +126,14 @@ describe("Compliance Routes", () => {
 				title: "Test Rule",
 			});
 			mockPrisma.compliance_results.create.mockResolvedValue({});
+			mockPrisma.compliance_results.createMany.mockResolvedValue({ count: 0 });
+			mockPrisma.compliance_results.upsert.mockResolvedValue({});
+			mockPrisma.compliance_rules.update.mockResolvedValue({
+				id: "c1d2e3f4-a5b6-7890-abcd-ef1234567892",
+				profile_id: "b1c2d3e4-f5a6-7890-abcd-ef1234567891",
+				rule_ref: "test-rule",
+				title: "Test Rule",
+			});
 		});
 
 		it("should accept scan results with valid API credentials", async () => {
