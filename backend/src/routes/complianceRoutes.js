@@ -595,9 +595,11 @@ router.get("/dashboard", async (req, res) => {
       ORDER BY host_count DESC
     `;
 
-    // Get severity breakdown from latest scans
+    // Get severity breakdown from latest scans (with profile type for breakdown)
     let severityBreakdown = [];
+    let severityByProfileType = [];
     if (latestScanIds.length > 0) {
+      // Overall severity breakdown
       severityBreakdown = await prisma.$queryRaw`
         SELECT
           cru.severity,
@@ -607,6 +609,29 @@ router.get("/dashboard", async (req, res) => {
         WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
           AND cr.status = 'fail'
         GROUP BY cru.severity
+        ORDER BY
+          CASE cru.severity
+            WHEN 'critical' THEN 1
+            WHEN 'high' THEN 2
+            WHEN 'medium' THEN 3
+            WHEN 'low' THEN 4
+            ELSE 5
+          END
+      `;
+
+      // Severity breakdown by profile type (for stacked chart)
+      severityByProfileType = await prisma.$queryRaw`
+        SELECT
+          cru.severity,
+          cp.type as profile_type,
+          COUNT(*) as count
+        FROM compliance_results cr
+        JOIN compliance_rules cru ON cr.rule_id = cru.id
+        JOIN compliance_scans cs ON cr.scan_id = cs.id
+        JOIN compliance_profiles cp ON cs.profile_id = cp.id
+        WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
+          AND cr.status = 'fail'
+        GROUP BY cru.severity, cp.type
         ORDER BY
           CASE cru.severity
             WHEN 'critical' THEN 1
@@ -683,6 +708,11 @@ router.get("/dashboard", async (req, res) => {
       })),
       severity_breakdown: severityBreakdown.map(s => ({
         severity: s.severity || 'unknown',
+        count: Number(s.count),
+      })),
+      severity_by_profile_type: severityByProfileType.map(s => ({
+        severity: s.severity || 'unknown',
+        profile_type: s.profile_type,
         count: Number(s.count),
       })),
       profile_type_stats: profileTypeStats.map(p => ({

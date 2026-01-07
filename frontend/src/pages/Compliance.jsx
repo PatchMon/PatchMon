@@ -124,7 +124,7 @@ const Compliance = () => {
 		);
 	}
 
-	const { summary, recent_scans, worst_hosts, top_failing_rules, top_warning_rules, profile_distribution, severity_breakdown, profile_type_stats } = dashboard || {};
+	const { summary, recent_scans, worst_hosts, top_failing_rules, top_warning_rules, profile_distribution, severity_breakdown, severity_by_profile_type, profile_type_stats } = dashboard || {};
 	const activeScans = activeScansData?.activeScans || [];
 
 	// Get stats for the selected profile type
@@ -1055,21 +1055,34 @@ const Compliance = () => {
 			{/* Additional Charts - Severity & Profile Distribution - Only for "All Scans" tab */}
 			{profileTypeFilter === "all" && ((severity_breakdown && severity_breakdown.length > 0) || (profile_distribution && profile_distribution.length > 0)) && (
 				<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-					{/* Severity Breakdown */}
+					{/* Severity Breakdown with Scan Type */}
 					{severity_breakdown && severity_breakdown.length > 0 && (() => {
-						const severityColors = {
-							critical: "#ef4444",
-							high: "#f97316",
-							medium: "#eab308",
-							low: "#22c55e",
-							unknown: "#6b7280",
-						};
-						const severityData = severity_breakdown.map(s => ({
-							name: s.severity.charAt(0).toUpperCase() + s.severity.slice(1),
-							value: s.count,
-							color: severityColors[s.severity] || severityColors.unknown,
-						}));
-						const totalFailures = severityData.reduce((sum, s) => sum + s.value, 0);
+						const totalFailures = severity_breakdown.reduce((sum, s) => sum + s.count, 0);
+
+						// Build chart data with scan type breakdown
+						const severityOrder = ['critical', 'high', 'medium', 'low', 'unknown'];
+						const chartData = severityOrder
+							.map(sev => {
+								const total = severity_breakdown.find(s => s.severity === sev)?.count || 0;
+								if (total === 0) return null;
+
+								// Get breakdown by profile type
+								const openscapCount = severity_by_profile_type?.find(
+									s => s.severity === sev && s.profile_type === 'openscap'
+								)?.count || 0;
+								const dockerCount = severity_by_profile_type?.find(
+									s => s.severity === sev && s.profile_type === 'docker-bench'
+								)?.count || 0;
+
+								return {
+									name: sev.charAt(0).toUpperCase() + sev.slice(1),
+									severity: sev,
+									openscap: openscapCount,
+									dockerBench: dockerCount,
+									total,
+								};
+							})
+							.filter(Boolean);
 
 						return (
 							<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
@@ -1077,40 +1090,53 @@ const Compliance = () => {
 									<AlertTriangle className="h-4 w-4 text-primary-400" />
 									Rule Failures by Severity
 								</h3>
-								<p className="text-xs text-secondary-500 mb-3">{totalFailures.toLocaleString()} total rule failures across all hosts</p>
+								<p className="text-xs text-secondary-500 mb-3">{totalFailures.toLocaleString()} total rule failures - showing scan type breakdown</p>
 								<div className="h-48">
 									<ResponsiveContainer width="100%" height="100%">
-										<PieChart>
-											<Pie
-												data={severityData}
-												cx="50%"
-												cy="50%"
-												innerRadius={40}
-												outerRadius={70}
-												dataKey="value"
-												label={({ name, value }) => `${value}`}
-												labelLine={false}
-											>
-												{severityData.map((entry, index) => (
-													<Cell key={`cell-${index}`} fill={entry.color} />
-												))}
-											</Pie>
+										<BarChart data={chartData} layout="vertical">
+											<XAxis type="number" stroke="#6b7280" fontSize={12} />
+											<YAxis type="category" dataKey="name" stroke="#6b7280" fontSize={12} width={70} />
 											<Tooltip
 												contentStyle={{
 													backgroundColor: "#1f2937",
 													border: "1px solid #374151",
 													borderRadius: "0.5rem",
 												}}
-												formatter={(value, name) => [value, name]}
+												formatter={(value, name) => [
+													value.toLocaleString(),
+													name === "openscap" ? "OpenSCAP" : "Docker Bench"
+												]}
 											/>
-										</PieChart>
+											<Bar dataKey="openscap" stackId="a" fill="#22c55e" name="openscap" radius={[0, 0, 0, 0]} />
+											<Bar dataKey="dockerBench" stackId="a" fill="#3b82f6" name="dockerBench" radius={[0, 4, 4, 0]} />
+										</BarChart>
 									</ResponsiveContainer>
 								</div>
-								<div className="flex flex-wrap justify-center gap-4 mt-2">
-									{severityData.map((entry) => (
-										<div key={entry.name} className="flex items-center gap-2 text-sm">
-											<div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color }} />
-											<span className="text-secondary-400">{entry.name}: {entry.value}</span>
+								<div className="flex justify-center gap-6 mt-2">
+									<div className="flex items-center gap-2 text-sm">
+										<div className="w-3 h-3 rounded bg-green-500" />
+										<span className="text-green-400">OpenSCAP</span>
+									</div>
+									<div className="flex items-center gap-2 text-sm">
+										<div className="w-3 h-3 rounded bg-blue-500" />
+										<span className="text-blue-400">Docker Bench</span>
+									</div>
+								</div>
+								{/* Detailed breakdown */}
+								<div className="mt-4 pt-3 border-t border-secondary-700 grid grid-cols-2 md:grid-cols-4 gap-2 text-center text-xs">
+									{chartData.map((item) => (
+										<div key={item.name} className="space-y-1">
+											<p className={`font-medium ${
+												item.severity === "critical" ? "text-red-400" :
+												item.severity === "high" ? "text-orange-400" :
+												item.severity === "medium" ? "text-yellow-400" :
+												item.severity === "low" ? "text-green-400" : "text-secondary-400"
+											}`}>{item.name}: {item.total.toLocaleString()}</p>
+											<p className="text-secondary-500">
+												{item.openscap > 0 && <span className="text-green-400">{item.openscap.toLocaleString()} OS</span>}
+												{item.openscap > 0 && item.dockerBench > 0 && " / "}
+												{item.dockerBench > 0 && <span className="text-blue-400">{item.dockerBench.toLocaleString()} DB</span>}
+											</p>
 										</div>
 									))}
 								</div>
