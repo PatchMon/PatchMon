@@ -1,9 +1,6 @@
 const express = require("express");
 const logger = require("../utils/logger");
 const router = express.Router();
-
-// DEBUG: Log when this module loads
-console.log("=== COMPLIANCE ROUTES MODULE LOADED ===");
 const rateLimit = require("express-rate-limit");
 const { getPrismaClient } = require("../config/prisma");
 const { Prisma } = require("@prisma/client");
@@ -163,14 +160,12 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
       // 1. Bulk trigger creates running scans with first profile of each type
       // 2. Actual scan results may use a different profile name/id
       // 3. When real results arrive, the "running" placeholder is no longer needed
-      console.log(`=== DELETE RUNNING: host_id=${host.id} (all profiles) ===`);
-      const deleteResult = await prisma.compliance_scans.deleteMany({
+      await prisma.compliance_scans.deleteMany({
         where: {
           host_id: host.id,
           status: "running",
         },
       });
-      console.log(`=== DELETE RUNNING: Deleted ${deleteResult.count} records ===`);
 
       // Create scan record
       const scan = await prisma.compliance_scans.create({
@@ -200,8 +195,6 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
         for (const r of results) {
           receivedStatusCounts[r.status] = (receivedStatusCounts[r.status] || 0) + 1;
         }
-        console.log(`=== DEBUG: Received ${results.length} results for ${profile_type} ===`);
-        console.log(`=== DEBUG: Status counts received: ${JSON.stringify(receivedStatusCounts)} ===`);
 
         // Deduplicate results by rule_ref, prioritizing important statuses
         // Priority: fail > warn > pass > skip > notapplicable > error
@@ -226,14 +219,6 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
         }
 
         const uniqueResults = Array.from(deduplicatedResults.values());
-        console.log(`=== DEBUG: Deduplicated ${results.length} results to ${uniqueResults.length} unique results ===`);
-
-        // Count deduplicated statuses
-        const deduplicatedStatusCounts = {};
-        for (const r of uniqueResults) {
-          deduplicatedStatusCounts[r.status] = (deduplicatedStatusCounts[r.status] || 0) + 1;
-        }
-        console.log(`=== DEBUG: Deduplicated status counts: ${JSON.stringify(deduplicatedStatusCounts)} ===`);
 
         for (const result of uniqueResults) {
           // Get rule_ref from various possible field names
@@ -303,10 +288,6 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
           }
 
           // Create or update result (upsert to handle duplicate rules in same scan)
-          // Debug: log warn status results being stored
-          if (result.status === 'warn') {
-            console.log(`=== DEBUG: Storing WARN result: scan_id=${scan.id}, rule_ref=${ruleRef}, status=${result.status} ===`);
-          }
           await prisma.compliance_results.upsert({
             where: {
               scan_id_rule_id: {
@@ -334,15 +315,6 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
           });
         }
       }
-
-      // Debug: verify what was stored in the scan
-      const storedCounts = await prisma.$queryRaw`
-        SELECT status, COUNT(*)::int as count
-        FROM compliance_results
-        WHERE scan_id = ${scan.id}
-        GROUP BY status
-      `;
-      console.log(`=== DEBUG: Stored results for scan ${scan.id}: ${JSON.stringify(storedCounts)} ===`);
 
       logger.info(`[Compliance] Scan saved for host ${host.friendly_name || host.hostname} (${profile_name}): ${stats.passed}/${stats.total_rules} passed (${score}%)`);
       processedScans.push({ scan_id: scan.id, profile_name, score: scan.score, stats });
@@ -394,7 +366,6 @@ router.get("/profiles", async (req, res) => {
  */
 router.get("/dashboard", async (req, res) => {
   try {
-    console.log("=== DASHBOARD ENDPOINT HIT ===");
     // Get latest scan per host per profile using raw query for PostgreSQL
     // This ensures we get both OpenSCAP and Docker Bench scans for each host
     const latestScans = await prisma.$queryRaw`
@@ -534,14 +505,6 @@ router.get("/dashboard", async (req, res) => {
 
     // Get top failing rules across all hosts (most recent scan per host) - for OpenSCAP
     const latestScanIds = latestScans.map(s => s.id);
-    console.log(`=== latestScans: ${latestScans.length}, latestScanIds: ${latestScanIds.length} ===`);
-
-    // Debug: Show which docker-bench scans are included
-    const dockerBenchScans = latestScans.filter(s => {
-      // Check profile_id to determine type - we need to look this up
-      return true; // Will show all for now
-    });
-    console.log(`=== latestScanIds for aggregation: ${JSON.stringify(latestScanIds.slice(0, 5))}... ===`);
     let topFailingRules = [];
     if (latestScanIds.length > 0) {
       // Use Prisma.join for proper array handling in raw SQL
@@ -568,18 +531,6 @@ router.get("/dashboard", async (req, res) => {
     // Get top warning rules across all hosts - for Docker Bench (uses 'warn' status)
     let topWarningRules = [];
     if (latestScanIds.length > 0) {
-      // First check what statuses exist for these scans
-      const statusCheck = await prisma.$queryRaw`
-        SELECT DISTINCT cr.status, cp.type as profile_type, COUNT(*)::int as count
-        FROM compliance_results cr
-        JOIN compliance_scans cs ON cr.scan_id = cs.id
-        JOIN compliance_profiles cp ON cs.profile_id = cp.id
-        WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
-        GROUP BY cr.status, cp.type
-        ORDER BY cp.type, cr.status
-      `;
-      console.log(`=== Status values: ${JSON.stringify(statusCheck)} ===`);
-
       topWarningRules = await prisma.$queryRaw`
         SELECT
           cr.rule_id,
@@ -597,7 +548,6 @@ router.get("/dashboard", async (req, res) => {
         ORDER BY warn_count DESC
         LIMIT 10
       `;
-      console.log(`=== Top warning rules: ${topWarningRules.length} ===`);
     }
 
     // Get profile distribution (how many hosts use each profile)
@@ -848,12 +798,6 @@ router.get("/scans/active", async (req, res) => {
         },
       },
     });
-
-    // Debug: always log scan count
-    console.log(`=== ACTIVE SCANS: Found ${activeScans.length} running scans ===`);
-    if (activeScans.length > 0) {
-      activeScans.forEach(s => console.log(`  - ${s.id} status=${s.status} host=${s.host_id}`));
-    }
 
     // Add connection status for each host
     const scansWithStatus = activeScans.map((scan) => {
@@ -1132,21 +1076,12 @@ router.get("/results/:scanId", async (req, res) => {
   }
 });
 
-// DEBUG: Log all requests to /trigger/* paths
-router.use("/trigger", (req, res, next) => {
-  console.log(`=== TRIGGER PATH HIT: ${req.method} ${req.path} ===`);
-  console.log("Full URL:", req.originalUrl);
-  next();
-});
-
 /**
  * POST /api/v1/compliance/trigger/bulk
  * Trigger compliance scans on multiple hosts at once
  * NOTE: This route MUST be defined before /trigger/:hostId to prevent "bulk" being matched as a hostId
  */
 router.post("/trigger/bulk", async (req, res) => {
-  console.log("=== BULK TRIGGER ROUTE HIT ===");
-  console.log("Request body:", JSON.stringify(req.body));
   try {
     const {
       hostIds = [],
@@ -1156,42 +1091,33 @@ router.post("/trigger/bulk", async (req, res) => {
       fetch_remote_resources = false,
     } = req.body;
 
-    console.log(`=== Bulk trigger: ${hostIds.length} hosts, profile_type=${profile_type} ===`);
     logger.info(`[Compliance] Bulk trigger received: ${hostIds.length} hosts, profile_type=${profile_type}`);
 
     // Validate hostIds array
     if (!Array.isArray(hostIds) || hostIds.length === 0) {
-      console.log("=== BULK: Failed - empty hostIds array ===");
       return res.status(400).json({ error: "hostIds must be a non-empty array" });
     }
 
     if (hostIds.length > 100) {
-      console.log("=== BULK: Failed - too many hosts ===");
       return res.status(400).json({ error: "Maximum 100 hosts per bulk operation" });
     }
 
     // Validate all UUIDs
     const invalidIds = hostIds.filter((id) => !isValidUUID(id));
     if (invalidIds.length > 0) {
-      console.log(`=== BULK: Failed - invalid UUIDs: ${invalidIds.join(", ")} ===`);
       return res.status(400).json({ error: `Invalid host IDs: ${invalidIds.join(", ")}` });
     }
 
     // Validate profile_type
     if (!VALID_PROFILE_TYPES.includes(profile_type)) {
-      console.log(`=== BULK: Failed - invalid profile_type: ${profile_type} ===`);
       return res.status(400).json({ error: `Invalid profile_type. Must be one of: ${VALID_PROFILE_TYPES.join(", ")}` });
     }
-
-    console.log("=== BULK: Validation passed, fetching hosts ===");
 
     // Get all hosts
     const hosts = await prisma.hosts.findMany({
       where: { id: { in: hostIds } },
       select: { id: true, api_id: true, hostname: true, friendly_name: true },
     });
-
-    console.log(`=== BULK: Found ${hosts.length} hosts in DB ===`);
 
     const hostMap = new Map(hosts.map((h) => [h.id, h]));
 
@@ -1207,18 +1133,14 @@ router.post("/trigger/bulk", async (req, res) => {
       fetchRemoteResources: Boolean(fetch_remote_resources),
     };
 
-    console.log("=== BULK: Getting profiles ===");
-
     // Get or create profiles for running scan records
     const profilesToUse = [];
     if (profile_type === "all" || profile_type === "openscap") {
-      console.log("=== BULK: Looking for openscap profile ===");
       let oscapProfile = await prisma.compliance_profiles.findFirst({
         where: { type: "openscap" },
         orderBy: { name: "asc" },
       });
       if (!oscapProfile) {
-        console.log("=== BULK: Creating openscap profile ===");
         // Create placeholder profile
         oscapProfile = await prisma.compliance_profiles.create({
           data: {
@@ -1228,17 +1150,14 @@ router.post("/trigger/bulk", async (req, res) => {
           },
         });
       }
-      console.log(`=== BULK: Got openscap profile: ${oscapProfile.id} ===`);
       profilesToUse.push(oscapProfile);
     }
     if (profile_type === "all" || profile_type === "docker-bench") {
-      console.log("=== BULK: Looking for docker-bench profile ===");
       let dockerProfile = await prisma.compliance_profiles.findFirst({
         where: { type: "docker-bench" },
         orderBy: { name: "asc" },
       });
       if (!dockerProfile) {
-        console.log("=== BULK: Creating docker-bench profile ===");
         // Create placeholder profile
         dockerProfile = await prisma.compliance_profiles.create({
           data: {
@@ -1248,28 +1167,21 @@ router.post("/trigger/bulk", async (req, res) => {
           },
         });
       }
-      console.log(`=== BULK: Got docker-bench profile: ${dockerProfile.id} ===`);
       profilesToUse.push(dockerProfile);
     }
 
-    console.log(`=== BULK: profilesToUse count: ${profilesToUse.length} ===`);
     logger.info(`[Compliance] Bulk: Found ${profilesToUse.length} profiles to use: ${profilesToUse.map(p => p.name).join(", ")}`);
 
     // Process each host
-    console.log(`=== BULK: Processing ${hostIds.length} hosts ===`);
     for (const hostId of hostIds) {
-      console.log(`=== BULK: Processing host ${hostId} ===`);
       const host = hostMap.get(hostId);
 
       if (!host) {
-        console.log(`=== BULK: Host ${hostId} not found in map ===`);
         results.failed.push({ hostId, error: "Host not found" });
         continue;
       }
 
-      console.log(`=== BULK: Host ${hostId} found, checking connection ===`);
       if (!agentWs.isConnected(host.api_id)) {
-        console.log(`=== BULK: Host ${hostId} (${host.api_id}) not connected ===`);
         results.failed.push({
           hostId,
           hostName: host.friendly_name || host.hostname,
@@ -1278,18 +1190,13 @@ router.post("/trigger/bulk", async (req, res) => {
         continue;
       }
 
-      console.log(`=== BULK: Host ${hostId} connected, sending scan command ===`);
       const success = agentWs.pushComplianceScan(host.api_id, profile_type, scanOptions);
-      console.log(`=== BULK: pushComplianceScan returned: ${success} ===`);
 
       if (success) {
         // Create "running" scan records for tracking
-        console.log(`=== BULK: Creating running scan records for host ${hostId} ===`);
-        logger.info(`[Compliance] Bulk: Creating ${profilesToUse.length} running scan records for host ${hostId}`);
         for (const profile of profilesToUse) {
           try {
-            console.log(`=== BULK: Creating scan record for profile ${profile.id} ===`);
-            const runningScan = await prisma.compliance_scans.create({
+            await prisma.compliance_scans.create({
               data: {
                 id: uuidv4(),
                 host_id: hostId,
@@ -1306,10 +1213,7 @@ router.post("/trigger/bulk", async (req, res) => {
                 score: null,
               },
             });
-            console.log(`=== BULK: Created running scan ${runningScan.id} ===`);
-            logger.info(`[Compliance] Bulk: Created running scan ${runningScan.id} for profile ${profile.name}`);
           } catch (err) {
-            console.log(`=== BULK: Error creating scan record: ${err.message} ===`);
             logger.warn(`[Compliance] Could not create running scan record: ${err.message}`);
           }
         }
@@ -1319,9 +1223,7 @@ router.post("/trigger/bulk", async (req, res) => {
           hostName: host.friendly_name || host.hostname,
           apiId: host.api_id,
         });
-        console.log(`=== BULK: Host ${hostId} added to triggered list ===`);
       } else {
-        console.log(`=== BULK: Host ${hostId} failed to trigger ===`);
         results.failed.push({
           hostId,
           hostName: host.friendly_name || host.hostname,
@@ -1330,10 +1232,8 @@ router.post("/trigger/bulk", async (req, res) => {
       }
     }
 
-    console.log(`=== BULK: Loop complete. Triggered: ${results.triggered.length}, Failed: ${results.failed.length} ===`);
     const message = `Triggered ${results.triggered.length} of ${hostIds.length} scans`;
     logger.info(`[Compliance] Bulk scan: ${message}`);
-    console.log(`=== BULK: Sending response ===`);
 
     res.json({
       message,
@@ -1633,9 +1533,5 @@ router.get("/trends/:hostId", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch trends" });
   }
 });
-
-// DEBUG: Log registered routes
-console.log("=== COMPLIANCE ROUTES REGISTERED ===");
-console.log("Routes count:", router.stack.length);
 
 module.exports = router;
