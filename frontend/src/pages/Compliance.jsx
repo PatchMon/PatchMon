@@ -172,7 +172,7 @@ const Compliance = () => {
 		);
 	}
 
-	const { summary, recent_scans, worst_hosts, top_failing_rules, top_warning_rules, profile_distribution, severity_breakdown, severity_by_profile_type, docker_bench_by_section, profile_type_stats } = dashboard || {};
+	const { summary, recent_scans, worst_hosts, top_failing_rules, top_warning_rules, profile_distribution, severity_breakdown, severity_by_profile_type, docker_bench_by_section, scan_age_distribution, profile_type_stats } = dashboard || {};
 	const activeScans = activeScansData?.activeScans || [];
 
 	// Get stats for the selected profile type
@@ -1253,6 +1253,73 @@ const Compliance = () => {
 							</div>
 						</div>
 					)}
+
+					{/* Last Scan Age - How fresh is the compliance data */}
+					{scan_age_distribution && (summary?.total_hosts > 0) && (() => {
+						const chartData = [
+							{ name: "Today", count: scan_age_distribution.today, color: "#22c55e" },
+							{ name: "This Week", count: scan_age_distribution.this_week, color: "#84cc16" },
+							{ name: "This Month", count: scan_age_distribution.this_month, color: "#eab308" },
+							{ name: "Older", count: scan_age_distribution.older, color: "#ef4444" },
+						].filter(d => d.count > 0);
+
+						const totalScanned = chartData.reduce((sum, d) => sum + d.count, 0);
+
+						return (
+							<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
+								<h3 className="text-white font-medium mb-1 flex items-center gap-2">
+									<Clock className="h-4 w-4 text-primary-400" />
+									Last Scan Age
+								</h3>
+								<p className="text-xs text-secondary-500 mb-3">How fresh is your compliance data ({totalScanned} hosts)</p>
+								<div className="h-48">
+									<ResponsiveContainer width="100%" height="100%">
+										<BarChart data={chartData} layout="vertical">
+											<XAxis type="number" stroke="#6b7280" fontSize={12} />
+											<YAxis
+												type="category"
+												dataKey="name"
+												stroke="#6b7280"
+												fontSize={11}
+												width={80}
+											/>
+											<Tooltip
+												content={({ active, payload }) => {
+													if (!active || !payload || payload.length === 0) return null;
+													const data = payload[0].payload;
+													return (
+														<div className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 shadow-lg">
+															<p className="text-white font-medium text-sm mb-1">{data.name}</p>
+															<div className="flex items-center gap-2 text-sm">
+																<div className="w-2.5 h-2.5 rounded" style={{ backgroundColor: data.color }} />
+																<span className="text-gray-300">Hosts:</span>
+																<span className="text-white font-medium">{data.count}</span>
+															</div>
+														</div>
+													);
+												}}
+											/>
+											<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+												{chartData.map((entry, index) => (
+													<Cell key={`cell-${index}`} fill={entry.color} />
+												))}
+											</Bar>
+										</BarChart>
+									</ResponsiveContainer>
+								</div>
+								{/* Summary */}
+								<div className="mt-3 pt-3 border-t border-secondary-700 flex justify-center gap-4 text-xs">
+									{chartData.map((item) => (
+										<div key={item.name} className="flex items-center gap-1.5">
+											<div className="w-2.5 h-2.5 rounded" style={{ backgroundColor: item.color }} />
+											<span className="text-secondary-400">{item.name}:</span>
+											<span className="text-white font-medium">{item.count}</span>
+										</div>
+									))}
+								</div>
+							</div>
+						);
+					})()}
 				</div>
 			)}
 

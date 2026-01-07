@@ -684,6 +684,41 @@ router.get("/dashboard", async (req, res) => {
       GROUP BY cp.type
     `;
 
+    // Calculate scan age distribution (how fresh is the compliance data)
+    // Get the most recent scan per host (regardless of profile type)
+    const hostLastScans = new Map();
+    for (const scan of latestScans) {
+      const existing = hostLastScans.get(scan.host_id);
+      if (!existing || new Date(scan.completed_at) > new Date(existing.completed_at)) {
+        hostLastScans.set(scan.host_id, scan);
+      }
+    }
+
+    const now = new Date();
+    const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
+    const oneWeekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+    const oneMonthAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+
+    const scanAgeDistribution = {
+      today: 0,      // Within 24 hours
+      this_week: 0,  // 1-7 days ago
+      this_month: 0, // 7-30 days ago
+      older: 0,      // 30+ days ago
+    };
+
+    for (const scan of hostLastScans.values()) {
+      const scanDate = new Date(scan.completed_at);
+      if (scanDate >= oneDayAgo) {
+        scanAgeDistribution.today++;
+      } else if (scanDate >= oneWeekAgo) {
+        scanAgeDistribution.this_week++;
+      } else if (scanDate >= oneMonthAgo) {
+        scanAgeDistribution.this_month++;
+      } else {
+        scanAgeDistribution.older++;
+      }
+    }
+
     res.json({
       summary: {
         total_hosts: totalHosts,
@@ -740,6 +775,7 @@ router.get("/dashboard", async (req, res) => {
         section: s.section || 'Unknown',
         count: Number(s.count),
       })),
+      scan_age_distribution: scanAgeDistribution,
       profile_type_stats: profileTypeStats.map(p => ({
         type: p.profile_type,
         hosts_scanned: Number(p.hosts_scanned),
