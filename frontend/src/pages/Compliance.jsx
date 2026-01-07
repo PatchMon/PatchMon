@@ -122,6 +122,11 @@ const Compliance = () => {
 		const currentIds = new Set(activeScans.map((s) => s.id));
 		const activeHostIds = new Set(activeScans.map((s) => s.hostId));
 
+		// DEBUG: Log what we received from API
+		console.log("=== FRONTEND: activeScansData update ===");
+		console.log("  realActiveScans:", activeScans.length, activeScans.map(s => ({ id: s.id, hostId: s.hostId, isPending: s.isPending })));
+		console.log("  activeHostIds:", [...activeHostIds]);
+
 		// Find scans that were active before but are now gone (completed)
 		for (const prevId of prevActiveScanIds.current) {
 			if (!currentIds.has(prevId)) {
@@ -133,7 +138,14 @@ const Compliance = () => {
 		}
 
 		// Remove pending scans that now appear as real active scans
-		setPendingScans((prev) => prev.filter((p) => !activeHostIds.has(p.hostId)));
+		setPendingScans((prev) => {
+			const toRemove = prev.filter((p) => activeHostIds.has(p.hostId));
+			const remaining = prev.filter((p) => !activeHostIds.has(p.hostId));
+			console.log("  pendingScans before:", prev.map(p => p.hostId));
+			console.log("  removing (matched in real active):", toRemove.map(p => p.hostId));
+			console.log("  pendingScans after:", remaining.map(p => p.hostId));
+			return remaining;
+		});
 
 		prevActiveScanIds.current = currentIds;
 	}, [activeScansData, queryClient, toast]);
@@ -245,6 +257,14 @@ const Compliance = () => {
 	// Combine real active scans with pending scans for display
 	const realActiveScans = activeScansData?.activeScans || [];
 	const activeScans = [...pendingScans, ...realActiveScans];
+
+	// DEBUG: Log what we're rendering
+	if (activeScans.length > 0) {
+		console.log("=== FRONTEND: Rendering activeScans ===");
+		console.log("  pendingScans count:", pendingScans.length);
+		console.log("  realActiveScans count:", realActiveScans.length);
+		console.log("  combined activeScans:", activeScans.map(s => ({ id: s.id?.substring(0, 8), hostId: s.hostId?.substring(0, 8), isPending: s.isPending })));
+	}
 
 	// Get stats for the selected profile type
 	const openscapStats = profile_type_stats?.find(p => p.type === "openscap");
