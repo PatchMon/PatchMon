@@ -563,6 +563,54 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 										<p className="text-xs text-secondary-400">N/A</p>
 									</div>
 								</div>
+
+								{/* Severity Breakdown Chart */}
+								{scansByType.openscap.severity_breakdown?.length > 0 && (
+									<div className="mb-4 p-3 bg-secondary-700/30 rounded-lg">
+										<p className="text-xs text-secondary-400 mb-2">Failures by Severity</p>
+										<div className="h-24">
+											<ResponsiveContainer width="100%" height="100%">
+												<BarChart
+													data={scansByType.openscap.severity_breakdown
+														.filter(s => s.severity !== 'unknown')
+														.map(s => ({
+															name: s.severity.charAt(0).toUpperCase() + s.severity.slice(1),
+															count: s.count,
+															color: s.severity === 'critical' ? '#ef4444' :
+																s.severity === 'high' ? '#f97316' :
+																s.severity === 'medium' ? '#eab308' : '#22c55e'
+														}))}
+													layout="vertical"
+												>
+													<XAxis type="number" hide />
+													<YAxis type="category" dataKey="name" width={55} tick={{ fontSize: 10, fill: '#9ca3af' }} />
+													<Tooltip
+														content={({ active, payload }) => {
+															if (!active || !payload?.[0]) return null;
+															return (
+																<div className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs">
+																	<span className="text-white">{payload[0].payload.name}: {payload[0].value}</span>
+																</div>
+															);
+														}}
+													/>
+													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+														{scansByType.openscap.severity_breakdown
+															.filter(s => s.severity !== 'unknown')
+															.map((entry, index) => (
+																<Cell key={`cell-${index}`} fill={
+																	entry.severity === 'critical' ? '#ef4444' :
+																	entry.severity === 'high' ? '#f97316' :
+																	entry.severity === 'medium' ? '#eab308' : '#22c55e'
+																} />
+															))}
+													</Bar>
+												</BarChart>
+											</ResponsiveContainer>
+										</div>
+									</div>
+								)}
+
 								<p className="text-xs text-secondary-500 mb-3">
 									Last scan: {new Date(scansByType.openscap.completed_at).toLocaleString()}
 								</p>
@@ -626,6 +674,46 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 										<p className="text-xs text-secondary-400">Info</p>
 									</div>
 								</div>
+
+								{/* Section Breakdown Chart */}
+								{scansByType["docker-bench"].section_breakdown?.length > 0 && (
+									<div className="mb-4 p-3 bg-secondary-700/30 rounded-lg">
+										<p className="text-xs text-secondary-400 mb-2">Warnings by Section</p>
+										<div className="h-24">
+											<ResponsiveContainer width="100%" height="100%">
+												<BarChart
+													data={scansByType["docker-bench"].section_breakdown.slice(0, 4).map((s, i) => ({
+														name: s.section.length > 15 ? `${s.section.slice(0, 12)}...` : s.section,
+														fullName: s.section,
+														count: s.count,
+														color: ['#ef4444', '#f97316', '#eab308', '#84cc16', '#22c55e', '#3b82f6', '#8b5cf6'][i] || '#6b7280'
+													}))}
+													layout="vertical"
+												>
+													<XAxis type="number" hide />
+													<YAxis type="category" dataKey="name" width={70} tick={{ fontSize: 9, fill: '#9ca3af' }} />
+													<Tooltip
+														content={({ active, payload }) => {
+															if (!active || !payload?.[0]) return null;
+															return (
+																<div className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs max-w-[200px]">
+																	<p className="text-white font-medium">{payload[0].payload.fullName}</p>
+																	<p className="text-gray-300">Warnings: {payload[0].value}</p>
+																</div>
+															);
+														}}
+													/>
+													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+														{scansByType["docker-bench"].section_breakdown.slice(0, 4).map((entry, index) => (
+															<Cell key={`cell-${index}`} fill={['#ef4444', '#f97316', '#eab308', '#84cc16', '#22c55e', '#3b82f6', '#8b5cf6'][index] || '#6b7280'} />
+														))}
+													</Bar>
+												</BarChart>
+											</ResponsiveContainer>
+										</div>
+									</div>
+								)}
+
 								<p className="text-xs text-secondary-500 mb-3">
 									Last scan: {new Date(scansByType["docker-bench"].completed_at).toLocaleString()}
 								</p>

@@ -984,6 +984,8 @@ router.get("/scans/:hostId/latest-by-type", async (req, res) => {
 
     // Group by profile type and get the latest for each
     const results = {};
+    const scanIds = [];
+
     for (const scan of scans) {
       const type = scan.compliance_profiles?.type;
       if (!type) continue;
@@ -1002,6 +1004,51 @@ router.get("/scans/:hostId/latest-by-type", async (req, res) => {
           skipped: scan.skipped,
           completed_at: scan.completed_at,
         };
+        scanIds.push(scan.id);
+      }
+    }
+
+    // Get severity breakdown for OpenSCAP scans and section breakdown for Docker Bench
+    if (scanIds.length > 0) {
+      // Severity breakdown for OpenSCAP failures
+      if (results.openscap) {
+        const severityBreakdown = await prisma.$queryRaw`
+          SELECT cru.severity, COUNT(*) as count
+          FROM compliance_results cr
+          JOIN compliance_rules cru ON cr.rule_id = cru.id
+          WHERE cr.scan_id = ${results.openscap.id}
+            AND cr.status = 'fail'
+          GROUP BY cru.severity
+          ORDER BY
+            CASE cru.severity
+              WHEN 'critical' THEN 1
+              WHEN 'high' THEN 2
+              WHEN 'medium' THEN 3
+              WHEN 'low' THEN 4
+              ELSE 5
+            END
+        `;
+        results.openscap.severity_breakdown = severityBreakdown.map(s => ({
+          severity: s.severity || 'unknown',
+          count: Number(s.count),
+        }));
+      }
+
+      // Section breakdown for Docker Bench warnings
+      if (results["docker-bench"]) {
+        const sectionBreakdown = await prisma.$queryRaw`
+          SELECT cru.section, COUNT(*) as count
+          FROM compliance_results cr
+          JOIN compliance_rules cru ON cr.rule_id = cru.id
+          WHERE cr.scan_id = ${results["docker-bench"].id}
+            AND cr.status = 'warn'
+          GROUP BY cru.section
+          ORDER BY cru.section
+        `;
+        results["docker-bench"].section_breakdown = sectionBreakdown.map(s => ({
+          section: s.section || 'Unknown',
+          count: Number(s.count),
+        }));
       }
     }
 

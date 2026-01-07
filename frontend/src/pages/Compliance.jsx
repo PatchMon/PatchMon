@@ -153,7 +153,8 @@ const Compliance = () => {
 			}
 		},
 		onError: (error) => {
-			toast.error(`Bulk scan failed: ${error.message}`);
+			const errorMsg = error.response?.data?.error || error.message;
+			toast.error(`Bulk scan failed: ${errorMsg}`);
 		},
 	});
 
