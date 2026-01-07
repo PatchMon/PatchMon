@@ -1132,6 +1132,8 @@ router.post("/trigger/bulk", async (req, res) => {
       fetch_remote_resources = false,
     } = req.body;
 
+    logger.info(`[Compliance] Bulk trigger received: ${hostIds.length} hosts, profile_type=${profile_type}`);
+
     // Validate hostIds array
     if (!Array.isArray(hostIds) || hostIds.length === 0) {
       return res.status(400).json({ error: "hostIds must be a non-empty array" });
@@ -1209,6 +1211,8 @@ router.post("/trigger/bulk", async (req, res) => {
       }
       profilesToUse.push(dockerProfile);
     }
+
+    logger.info(`[Compliance] Bulk: Found ${profilesToUse.length} profiles to use: ${profilesToUse.map(p => p.name).join(", ")}`);
 
     // Process each host
     for (const hostId of hostIds) {
