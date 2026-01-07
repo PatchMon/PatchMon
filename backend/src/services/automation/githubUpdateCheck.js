@@ -1,5 +1,5 @@
-const fs = require("fs");
-const path = require("path");
+const fs = require("node:fs");
+const path = require("node:path");
 const { prisma } = require("./shared/prisma");
 const logger = require("../../utils/logger");
 const { compareVersions, checkPublicRepo } = require("./shared/utils");
@@ -25,7 +25,8 @@ class GitHubUpdateCheck {
 		try {
 			// Get settings
 			const settings = await prisma.settings.findFirst();
-			const DEFAULT_GITHUB_REPO = "https://github.com/MacJediWizard/PatchMon-Enhanced.git";
+			const DEFAULT_GITHUB_REPO =
+				"https://github.com/MacJediWizard/PatchMon-Enhanced.git";
 			const repoUrl = settings?.githubRepoUrl || DEFAULT_GITHUB_REPO;
 			let owner, repo;
 
@@ -128,10 +129,7 @@ class GitHubUpdateCheck {
 					invalidateCache();
 				}
 			} catch (updateError) {
-				logger.error(
-					"❌ Error updating last check time:",
-					updateError.message,
-				);
+				logger.error("❌ Error updating last check time:", updateError.message);
 			}
 
 			throw error;

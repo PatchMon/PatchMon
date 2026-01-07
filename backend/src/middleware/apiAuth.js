@@ -25,7 +25,7 @@ function parseIPv4(ip) {
 
 	const octets = parts.map((part) => {
 		const num = parseInt(part, 10);
-		if (isNaN(num) || num < 0 || num > 255 || String(num) !== part) {
+		if (Number.isNaN(num) || num < 0 || num > 255 || String(num) !== part) {
 			return -1;
 		}
 		return num;
@@ -41,7 +41,9 @@ function parseIPv4(ip) {
  * @returns {number} 32-bit representation
  */
 function ipToNumber(octets) {
-	return ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+	return (
+		((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0
+	);
 }
 
 /**
@@ -67,7 +69,7 @@ function ipMatchesCIDR(clientIp, allowedRange) {
 
 	// Parse CIDR prefix
 	const prefix = parseInt(cidrParts[1], 10);
-	if (isNaN(prefix) || prefix < 0 || prefix > 32) return false;
+	if (Number.isNaN(prefix) || prefix < 0 || prefix > 32) return false;
 
 	// Calculate subnet mask
 	const mask = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0;
@@ -87,7 +89,11 @@ function ipMatchesCIDR(clientIp, allowedRange) {
  * @returns {boolean} True if IP is allowed
  */
 function isIPAllowed(clientIp, allowedRanges) {
-	if (!clientIp || !Array.isArray(allowedRanges) || allowedRanges.length === 0) {
+	if (
+		!clientIp ||
+		!Array.isArray(allowedRanges) ||
+		allowedRanges.length === 0
+	) {
 		return false;
 	}
 

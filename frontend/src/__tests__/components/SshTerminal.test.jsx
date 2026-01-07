@@ -7,7 +7,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SshTerminal from "../../components/SshTerminal";
 import { AuthContext } from "../../contexts/AuthContext";
-import { SidebarContext } from "../../contexts/SidebarContext";
+import SidebarContext from "../../contexts/SidebarContext";
 
 // Mock xterm
 vi.mock("xterm", () => ({

@@ -45,11 +45,11 @@ async function migrateApiKeys(dryRun = false) {
 
 		// Filter hosts with plaintext keys (not bcrypt hashes)
 		const hostsWithPlaintextKeys = hosts.filter(
-			(host) => !BCRYPT_HASH_REGEX.test(host.api_key)
+			(host) => !BCRYPT_HASH_REGEX.test(host.api_key),
 		);
 
 		console.log(
-			`Found ${hostsWithPlaintextKeys.length} hosts with plaintext API keys`
+			`Found ${hostsWithPlaintextKeys.length} hosts with plaintext API keys`,
 		);
 		console.log("");
 
@@ -68,7 +68,7 @@ async function migrateApiKeys(dryRun = false) {
 
 				if (dryRun) {
 					console.log(
-						`  [DRY RUN] Would hash API key (current length: ${host.api_key.length} chars)`
+						`  [DRY RUN] Would hash API key (current length: ${host.api_key.length} chars)`,
 					);
 					migratedCount++;
 					continue;
@@ -96,13 +96,17 @@ async function migrateApiKeys(dryRun = false) {
 		console.log("Migration Summary");
 		console.log("=".repeat(60));
 		console.log(`Total hosts: ${hosts.length}`);
-		console.log(`Already hashed: ${hosts.length - hostsWithPlaintextKeys.length}`);
+		console.log(
+			`Already hashed: ${hosts.length - hostsWithPlaintextKeys.length}`,
+		);
 		console.log(`Migrated: ${migratedCount}`);
 		console.log(`Errors: ${errorCount}`);
 
 		if (dryRun) {
 			console.log("");
-			console.log("This was a dry run. Run without --dry-run to apply changes.");
+			console.log(
+				"This was a dry run. Run without --dry-run to apply changes.",
+			);
 		}
 
 		return { migrated: migratedCount, total: hosts.length, errors: errorCount };

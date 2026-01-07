@@ -199,7 +199,10 @@ router.get("/compliance-progress/:apiId/stream", async (req, res) => {
 			return res.status(401).json({ error: "Invalid or expired token" });
 		}
 
-		logger.info("[SSE] Client connected for compliance progress, api_id:", apiId);
+		logger.info(
+			"[SSE] Client connected for compliance progress, api_id:",
+			apiId,
+		);
 
 		// Set headers for SSE
 		res.setHeader("Content-Type", "text/event-stream");
@@ -208,7 +211,9 @@ router.get("/compliance-progress/:apiId/stream", async (req, res) => {
 		res.setHeader("X-Accel-Buffering", "no"); // Disable nginx buffering
 
 		// Send initial connection confirmation
-		res.write(`data: ${JSON.stringify({ phase: "connected", message: "Listening for scan progress..." })}\n\n`);
+		res.write(
+			`data: ${JSON.stringify({ phase: "connected", message: "Listening for scan progress..." })}\n\n`,
+		);
 		res.flushHeaders(); // Ensure headers are sent immediately
 
 		// Subscribe to compliance progress updates for this specific api_id
@@ -236,7 +241,10 @@ router.get("/compliance-progress/:apiId/stream", async (req, res) => {
 
 		// Cleanup on client disconnect
 		req.on("close", () => {
-			logger.info("[SSE] Client disconnected for compliance progress, api_id:", apiId);
+			logger.info(
+				"[SSE] Client disconnected for compliance progress, api_id:",
+				apiId,
+			);
 			clearInterval(heartbeat);
 			unsubscribe();
 		});

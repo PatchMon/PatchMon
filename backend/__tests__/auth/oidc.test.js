@@ -94,7 +94,7 @@ describe("OIDC Authentication Service", () => {
 			oidcModule = require("../../src/auth/oidc");
 
 			expect(() => oidcModule.getAuthorizationUrl()).toThrow(
-				"OIDC client not initialized"
+				"OIDC client not initialized",
 			);
 		});
 	});
@@ -104,7 +104,7 @@ describe("OIDC Authentication Service", () => {
 			oidcModule = require("../../src/auth/oidc");
 
 			await expect(
-				oidcModule.handleCallback("code", "verifier", "nonce")
+				oidcModule.handleCallback("code", "verifier", "nonce"),
 			).rejects.toThrow("OIDC client not initialized");
 		});
 	});

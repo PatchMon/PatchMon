@@ -88,22 +88,25 @@ function getProviders() {
  * Call OpenRouter API
  */
 async function callOpenRouter(apiKey, model, messages, options = {}) {
-	const response = await fetch(`${PROVIDERS.openrouter.baseUrl}/chat/completions`, {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"Authorization": `Bearer ${apiKey}`,
-			"HTTP-Referer": "https://patchmon.app",
-			"X-Title": "PatchMon Terminal Assistant",
+	const response = await fetch(
+		`${PROVIDERS.openrouter.baseUrl}/chat/completions`,
+		{
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: `Bearer ${apiKey}`,
+				"HTTP-Referer": "https://patchmon.app",
+				"X-Title": "PatchMon Terminal Assistant",
+			},
+			body: JSON.stringify({
+				model: model || PROVIDERS.openrouter.defaultModel,
+				messages,
+				max_tokens: options.maxTokens || 1024,
+				temperature: options.temperature || 0.7,
+				stream: false,
+			}),
 		},
-		body: JSON.stringify({
-			model: model || PROVIDERS.openrouter.defaultModel,
-			messages,
-			max_tokens: options.maxTokens || 1024,
-			temperature: options.temperature || 0.7,
-			stream: false,
-		}),
-	});
+	);
 
 	if (!response.ok) {
 		const error = await response.text();
@@ -119,8 +122,9 @@ async function callOpenRouter(apiKey, model, messages, options = {}) {
  */
 async function callAnthropic(apiKey, model, messages, options = {}) {
 	// Convert messages format for Anthropic
-	const systemMessage = messages.find(m => m.role === "system")?.content || "";
-	const conversationMessages = messages.filter(m => m.role !== "system");
+	const systemMessage =
+		messages.find((m) => m.role === "system")?.content || "";
+	const conversationMessages = messages.filter((m) => m.role !== "system");
 
 	const response = await fetch(`${PROVIDERS.anthropic.baseUrl}/messages`, {
 		method: "POST",
@@ -154,7 +158,7 @@ async function callOpenAI(apiKey, model, messages, options = {}) {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
-			"Authorization": `Bearer ${apiKey}`,
+			Authorization: `Bearer ${apiKey}`,
 		},
 		body: JSON.stringify({
 			model: model || PROVIDERS.openai.defaultModel,
@@ -181,14 +185,14 @@ async function callGemini(apiKey, model, messages, options = {}) {
 
 	// Convert messages format for Gemini
 	const contents = messages
-		.filter(m => m.role !== "system")
-		.map(m => ({
+		.filter((m) => m.role !== "system")
+		.map((m) => ({
 			role: m.role === "assistant" ? "model" : "user",
 			parts: [{ text: m.content }],
 		}));
 
 	// Add system instruction if present
-	const systemMessage = messages.find(m => m.role === "system")?.content;
+	const systemMessage = messages.find((m) => m.role === "system")?.content;
 
 	const response = await fetch(
 		`${PROVIDERS.gemini.baseUrl}/models/${modelId}:generateContent?key=${apiKey}`,
@@ -199,13 +203,15 @@ async function callGemini(apiKey, model, messages, options = {}) {
 			},
 			body: JSON.stringify({
 				contents,
-				systemInstruction: systemMessage ? { parts: [{ text: systemMessage }] } : undefined,
+				systemInstruction: systemMessage
+					? { parts: [{ text: systemMessage }] }
+					: undefined,
 				generationConfig: {
 					maxOutputTokens: options.maxTokens || 1024,
 					temperature: options.temperature || 0.7,
 				},
 			}),
-		}
+		},
 	);
 
 	if (!response.ok) {
@@ -238,13 +244,12 @@ async function callAI(settings, prompt, options = {}) {
 	}
 
 	// Build messages array
-	const systemPrompt = options.type === "completion"
-		? SYSTEM_PROMPTS.completion
-		: SYSTEM_PROMPTS.assistant;
+	const systemPrompt =
+		options.type === "completion"
+			? SYSTEM_PROMPTS.completion
+			: SYSTEM_PROMPTS.assistant;
 
-	const messages = [
-		{ role: "system", content: systemPrompt },
-	];
+	const messages = [{ role: "system", content: systemPrompt }];
 
 	// Add context if provided
 	if (options.context) {
@@ -323,7 +328,12 @@ Complete this command. Only respond with the remaining text to add, nothing else
  * @param {Array} history - Conversation history
  * @returns {Promise<string>} - AI response
  */
-async function getAssistance(settings, question, terminalContext = "", history = []) {
+async function getAssistance(
+	settings,
+	question,
+	terminalContext = "",
+	history = [],
+) {
 	return callAI(settings, question, {
 		type: "assistant",
 		context: terminalContext,

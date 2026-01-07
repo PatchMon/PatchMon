@@ -142,7 +142,9 @@ function sanitizeDetails(details) {
 
 	const sanitized = {};
 	for (const [key, value] of Object.entries(details)) {
-		if (sensitiveKeys.some(sk => key.toLowerCase().includes(sk.toLowerCase()))) {
+		if (
+			sensitiveKeys.some((sk) => key.toLowerCase().includes(sk.toLowerCase()))
+		) {
 			sanitized[key] = "[REDACTED]";
 		} else if (typeof value === "object" && value !== null) {
 			sanitized[key] = sanitizeDetails(value);
@@ -158,7 +160,7 @@ function sanitizeDetails(details) {
  * Create audit logger middleware for Express routes
  * Extracts common request info and provides a log function
  */
-function auditMiddleware(req, res, next) {
+function auditMiddleware(req, _res, next) {
 	req.audit = async (event, options = {}) => {
 		return logAuditEvent({
 			event,

@@ -125,7 +125,10 @@ class AgentVersionService {
 
 			// Try to find the agent binary in agents/ folder based on server architecture
 			const possiblePaths = [
-				path.join(this.agentsDir, `patchmonenhanced-agent-linux-${serverGoArch}`),
+				path.join(
+					this.agentsDir,
+					`patchmonenhanced-agent-linux-${serverGoArch}`,
+				),
 				path.join(this.agentsDir, "patchmonenhanced-agent-linux-amd64"), // Fallback
 				path.join(this.agentsDir, "patchmon-agent"), // Legacy fallback
 			];

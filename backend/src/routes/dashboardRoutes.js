@@ -19,8 +19,11 @@ function formatBytes(bytes) {
 	if (!bytes || bytes === 0n || bytes === 0) return "0 B";
 	const num = typeof bytes === "bigint" ? Number(bytes) : bytes;
 	const units = ["B", "KB", "MB", "GB", "TB"];
-	const exponent = Math.min(Math.floor(Math.log(num) / Math.log(1024)), units.length - 1);
-	const value = num / Math.pow(1024, exponent);
+	const exponent = Math.min(
+		Math.floor(Math.log(num) / Math.log(1024)),
+		units.length - 1,
+	);
+	const value = num / 1024 ** exponent;
 	return `${value.toFixed(1)} ${units[exponent]}`;
 }
 
@@ -531,7 +534,8 @@ router.get(
 					networks: convertBigInt(networks),
 					stats: {
 						total_containers: containers.length,
-						running_containers: containers.filter((c) => c.state === "running").length,
+						running_containers: containers.filter((c) => c.state === "running")
+							.length,
 						total_images: images.length,
 						total_volumes: volumes.length,
 						total_networks: networks.length,

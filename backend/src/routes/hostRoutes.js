@@ -38,7 +38,11 @@ async function generateBootstrapToken(apiId, apiKey) {
 	const encryptedApiKey = encrypt(apiKey);
 
 	// Store the credentials encrypted in Redis with short TTL
-	const data = JSON.stringify({ apiId, apiKey: encryptedApiKey, createdAt: Date.now() });
+	const data = JSON.stringify({
+		apiId,
+		apiKey: encryptedApiKey,
+		createdAt: Date.now(),
+	});
 	await redis.setex(key, BOOTSTRAP_TOKEN_TTL, data);
 
 	return token;
@@ -68,8 +72,12 @@ async function consumeBootstrapToken(token) {
 			logger.error("Failed to decrypt bootstrap token API key");
 			return null;
 		}
-		return { apiId: parsed.apiId, apiKey: decryptedApiKey, createdAt: parsed.createdAt };
-	} catch (e) {
+		return {
+			apiId: parsed.apiId,
+			apiKey: decryptedApiKey,
+			createdAt: parsed.createdAt,
+		};
+	} catch (_e) {
 		return null;
 	}
 }
@@ -377,9 +385,14 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 					let binaryHash = null;
 					try {
 						const binaryContent = fs.readFileSync(binaryPath);
-						binaryHash = crypto.createHash("sha256").update(binaryContent).digest("hex");
+						binaryHash = crypto
+							.createHash("sha256")
+							.update(binaryContent)
+							.digest("hex");
 					} catch (hashErr) {
-						logger.warn(`Failed to calculate hash for binary ${binaryName}: ${hashErr.message}`);
+						logger.warn(
+							`Failed to calculate hash for binary ${binaryName}: ${hashErr.message}`,
+						);
 					}
 
 					// Return update info, but indicate if auto-update is disabled
@@ -470,7 +483,12 @@ router.post(
 				return res.status(400).json({ errors: errors.array() });
 			}
 
-			const { friendly_name, hostGroupIds, docker_enabled, compliance_enabled } = req.body;
+			const {
+				friendly_name,
+				hostGroupIds,
+				docker_enabled,
+				compliance_enabled,
+			} = req.body;
 
 			// Generate unique API credentials for this host
 			// apiKey is plaintext (shown to admin once), apiKeyHash is stored in DB
@@ -1082,7 +1100,8 @@ router.get("/integrations", validateApiCredentials, async (req, res) => {
 // Receive integration setup status from agent
 router.post("/integration-status", validateApiCredentials, async (req, res) => {
 	try {
-		const { integration, enabled, status, message, components, scanner_info } = req.body;
+		const { integration, enabled, status, message, components, scanner_info } =
+			req.body;
 		const hostId = req.hostRecord.id;
 		const apiId = req.hostRecord.api_id;
 
@@ -1563,10 +1582,10 @@ router.get(
 			const returnAll = req.query.all === "true";
 
 			// Pagination parameters with defaults and limits
-			const page = Math.max(1, parseInt(req.query.page) || 1);
+			const page = Math.max(1, parseInt(req.query.page, 10) || 1);
 			const pageSize = returnAll
 				? undefined
-				: Math.min(Math.max(1, parseInt(req.query.pageSize) || 100), 500);
+				: Math.min(Math.max(1, parseInt(req.query.pageSize, 10) || 100), 500);
 
 			const queryOptions = {
 				select: {
@@ -1865,7 +1884,9 @@ router.patch(
 						data: { auto_update: true },
 					});
 					globalEnabled = true;
-					logger.info("📊 Global auto-update enabled (triggered by host toggle)");
+					logger.info(
+						"📊 Global auto-update enabled (triggered by host toggle)",
+					);
 				}
 			}
 
@@ -1952,7 +1973,7 @@ router.post(
 			logger.error("Force agent update error:", error);
 			res.status(500).json({
 				error: "Failed to queue agent update",
-				details: error.message || "Unknown error occurred"
+				details: error.message || "Unknown error occurred",
 			});
 		}
 	},
@@ -2016,7 +2037,7 @@ router.post(
 			logger.error("Refresh integration status error:", error);
 			res.status(500).json({
 				error: "Failed to refresh integration status",
-				details: error.message || "Unknown error occurred"
+				details: error.message || "Unknown error occurred",
 			});
 		}
 	},
@@ -2080,7 +2101,7 @@ router.post(
 			logger.error("Refresh Docker inventory error:", error);
 			res.status(500).json({
 				error: "Failed to refresh Docker inventory",
-				details: error.message || "Unknown error occurred"
+				details: error.message || "Unknown error occurred",
 			});
 		}
 	},
@@ -2185,16 +2206,16 @@ fetch_credentials() {
         -H "Content-Type: application/json" \\
         -d "{\\"token\\": \\"\${BOOTSTRAP_TOKEN}\\"}" 2>/dev/null)
 
-    if [ -z "\$CREDS" ] || echo "\$CREDS" | grep -q '"error"'; then
+    if [ -z "$CREDS" ] || echo "$CREDS" | grep -q '"error"'; then
         echo "ERROR: Failed to fetch credentials. Bootstrap token may have expired."
         echo "Please request a new installation script."
         exit 1
     fi
 
-    export API_ID=$(echo "\$CREDS" | grep -o '"apiId":"[^"]*"' | cut -d'"' -f4)
-    export API_KEY=$(echo "\$CREDS" | grep -o '"apiKey":"[^"]*"' | cut -d'"' -f4)
+    export API_ID=$(echo "$CREDS" | grep -o '"apiId":"[^"]*"' | cut -d'"' -f4)
+    export API_KEY=$(echo "$CREDS" | grep -o '"apiKey":"[^"]*"' | cut -d'"' -f4)
 
-    if [ -z "\$API_ID" ] || [ -z "\$API_KEY" ]; then
+    if [ -z "$API_ID" ] || [ -z "$API_KEY" ]; then
         echo "ERROR: Invalid credentials received from server."
         exit 1
     fi
@@ -2251,7 +2272,7 @@ router.post("/bootstrap/exchange", async (req, res) => {
 
 // Serve the removal script (public - no authentication required)
 // The script is static and only removes PatchMon files from the system
-router.get("/remove", async (req, res) => {
+router.get("/remove", async (_req, res) => {
 	try {
 		const fs = require("node:fs");
 		const path = require("node:path");
@@ -2605,10 +2626,7 @@ router.patch(
 	authenticateToken,
 	requireManageHosts,
 	[
-		body("ip")
-			.optional()
-			.isIP()
-			.withMessage("IP must be a valid IP address"),
+		body("ip").optional().isIP().withMessage("IP must be a valid IP address"),
 		body("hostname")
 			.optional()
 			.isLength({ max: 255 })
@@ -2674,7 +2692,9 @@ router.patch(
 			});
 		} catch (error) {
 			logger.error("Update host connection error:", error);
-			res.status(500).json({ error: "Failed to update host connection information" });
+			res
+				.status(500)
+				.json({ error: "Failed to update host connection information" });
 		}
 	},
 );
@@ -2931,7 +2951,10 @@ router.post(
 			// Update cache with new state (for quick WebSocket lookups)
 			const now = Date.now();
 			if (!integrationStateCache.has(host.api_id)) {
-				integrationStateCache.set(host.api_id, { integrations: {}, lastAccess: now });
+				integrationStateCache.set(host.api_id, {
+					integrations: {},
+					lastAccess: now,
+				});
 			}
 			const cacheEntry = integrationStateCache.get(host.api_id);
 			cacheEntry.integrations[integrationName] = enabled;

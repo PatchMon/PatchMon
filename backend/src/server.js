@@ -405,7 +405,9 @@ const limiter = rateLimit({
 // Request ID middleware for log tracing
 app.use((req, res, next) => {
 	// Use existing request ID from header or generate new one
-	req.id = req.headers["x-request-id"] || `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+	req.id =
+		req.headers["x-request-id"] ||
+		`req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 	res.setHeader("X-Request-ID", req.id);
 	next();
 });
@@ -476,18 +478,25 @@ app.use(
 			// This safely allows Bull Board to access its own API without allowing arbitrary origins
 			try {
 				const originUrl = new URL(origin);
-				const isLocalhost = originUrl.hostname === "localhost" || originUrl.hostname === "127.0.0.1";
+				const isLocalhost =
+					originUrl.hostname === "localhost" ||
+					originUrl.hostname === "127.0.0.1";
 				const isBackendPort = originUrl.port === "3001";
 				if (isLocalhost && isBackendPort) {
 					return callback(null, true);
 				}
 
 				// Allow requests from same hostname but different port (frontend on 3000, backend on 3001)
-				const corsUrl = new URL(process.env.CORS_ORIGIN || "http://localhost:3000");
-				if (originUrl.hostname === corsUrl.hostname && originUrl.port === "3001") {
+				const corsUrl = new URL(
+					process.env.CORS_ORIGIN || "http://localhost:3000",
+				);
+				if (
+					originUrl.hostname === corsUrl.hostname &&
+					originUrl.port === "3001"
+				) {
 					return callback(null, true);
 				}
-			} catch (e) {
+			} catch (_e) {
 				// Invalid URL, reject
 			}
 

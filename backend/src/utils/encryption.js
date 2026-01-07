@@ -1,5 +1,5 @@
 const crypto = require("node:crypto");
-const os = require("node:os");
+const _os = require("node:os");
 const fs = require("node:fs");
 const path = require("node:path");
 const logger = require("./logger");
@@ -22,20 +22,36 @@ function getEncryptionKey() {
 	} else if (process.env.SESSION_SECRET) {
 		// Derive encryption key from session secret
 		keySource = "SESSION_SECRET env var";
-		key = crypto.createHash("sha256").update(process.env.SESSION_SECRET).digest();
+		key = crypto
+			.createHash("sha256")
+			.update(process.env.SESSION_SECRET)
+			.digest();
 	} else if (process.env.DATABASE_URL) {
 		// Derive encryption key from DATABASE_URL - this is always set and stable
 		// This ensures the key is consistent across container restarts without extra config
 		keySource = "DATABASE_URL derived";
-		key = crypto.createHash("sha256").update(`patchmon-enc-${process.env.DATABASE_URL}`).digest();
+		key = crypto
+			.createHash("sha256")
+			.update(`patchmon-enc-${process.env.DATABASE_URL}`)
+			.digest();
 
 		// SECURITY WARNING: DATABASE_URL should not be used for encryption in production
 		if (process.env.NODE_ENV === "production") {
-			logger.warn("╔══════════════════════════════════════════════════════════════════════════╗");
-			logger.warn("║  SECURITY WARNING: Using DATABASE_URL for encryption key derivation.    ║");
-			logger.warn("║  This is NOT recommended for production environments.                   ║");
-			logger.warn("║  Please set SESSION_SECRET or AI_ENCRYPTION_KEY environment variable.  ║");
-			logger.warn("╚══════════════════════════════════════════════════════════════════════════╝");
+			logger.warn(
+				"╔══════════════════════════════════════════════════════════════════════════╗",
+			);
+			logger.warn(
+				"║  SECURITY WARNING: Using DATABASE_URL for encryption key derivation.    ║",
+			);
+			logger.warn(
+				"║  This is NOT recommended for production environments.                   ║",
+			);
+			logger.warn(
+				"║  Please set SESSION_SECRET or AI_ENCRYPTION_KEY environment variable.  ║",
+			);
+			logger.warn(
+				"╚══════════════════════════════════════════════════════════════════════════╝",
+			);
 		}
 	} else {
 		// Last resort: Try file-based key or hostname fallback
@@ -51,7 +67,9 @@ function getEncryptionKey() {
 					key = Buffer.from(keyHex, "hex");
 					logger.info("Loaded encryption key from persistent file");
 				} else {
-					logger.warn(`Encryption key file exists but has invalid length: ${keyHex.length} (expected 64)`);
+					logger.warn(
+						`Encryption key file exists but has invalid length: ${keyHex.length} (expected 64)`,
+					);
 				}
 			}
 
@@ -61,23 +79,47 @@ function getEncryptionKey() {
 				fs.writeFileSync(keyFilePath, newKey.toString("hex"), { mode: 0o600 });
 				keySource = `new file (${keyFilePath})`;
 				key = newKey;
-				logger.info("Generated and saved new encryption key to persistent file");
+				logger.info(
+					"Generated and saved new encryption key to persistent file",
+				);
 
-				logger.warn("╔══════════════════════════════════════════════════════════════════╗");
-				logger.warn("║  NOTE: Using auto-generated encryption key stored in .encryption_key  ║");
-				logger.warn("║  For production, set SESSION_SECRET or AI_ENCRYPTION_KEY env var.║");
-				logger.warn("╚══════════════════════════════════════════════════════════════════╝");
+				logger.warn(
+					"╔══════════════════════════════════════════════════════════════════╗",
+				);
+				logger.warn(
+					"║  NOTE: Using auto-generated encryption key stored in .encryption_key  ║",
+				);
+				logger.warn(
+					"║  For production, set SESSION_SECRET or AI_ENCRYPTION_KEY env var.║",
+				);
+				logger.warn(
+					"╚══════════════════════════════════════════════════════════════════╝",
+				);
 			}
 		} catch (fileError) {
 			// SECURITY: Do NOT fall back to hostname-based key as it's predictable
 			// Instead, generate an ephemeral key and warn loudly
-			logger.error(`Could not read/write encryption key file: ${fileError.message}`);
-			logger.error("╔══════════════════════════════════════════════════════════════════════════╗");
-			logger.error("║  CRITICAL: Cannot persist encryption key!                                ║");
-			logger.error("║  Using ephemeral key - encrypted data will be LOST on restart.          ║");
-			logger.error("║  Set SESSION_SECRET or AI_ENCRYPTION_KEY in your environment.           ║");
-			logger.error("║  Or ensure the backend directory is writable for key file storage.      ║");
-			logger.error("╚══════════════════════════════════════════════════════════════════════════╝");
+			logger.error(
+				`Could not read/write encryption key file: ${fileError.message}`,
+			);
+			logger.error(
+				"╔══════════════════════════════════════════════════════════════════════════╗",
+			);
+			logger.error(
+				"║  CRITICAL: Cannot persist encryption key!                                ║",
+			);
+			logger.error(
+				"║  Using ephemeral key - encrypted data will be LOST on restart.          ║",
+			);
+			logger.error(
+				"║  Set SESSION_SECRET or AI_ENCRYPTION_KEY in your environment.           ║",
+			);
+			logger.error(
+				"║  Or ensure the backend directory is writable for key file storage.      ║",
+			);
+			logger.error(
+				"╚══════════════════════════════════════════════════════════════════════════╝",
+			);
 
 			// Generate a random ephemeral key (secure but not persistent)
 			keySource = "ephemeral (WARNING: not persistent!)";
@@ -86,8 +128,14 @@ function getEncryptionKey() {
 	}
 
 	// Log key fingerprint (first 8 chars of SHA256 hash) for debugging
-	const keyFingerprint = crypto.createHash("sha256").update(key).digest("hex").substring(0, 8);
-	logger.info(`Encryption key source: ${keySource}, fingerprint: ${keyFingerprint}`);
+	const keyFingerprint = crypto
+		.createHash("sha256")
+		.update(key)
+		.digest("hex")
+		.substring(0, 8);
+	logger.info(
+		`Encryption key source: ${keySource}, fingerprint: ${keyFingerprint}`,
+	);
 
 	return key;
 }
@@ -145,7 +193,7 @@ function decrypt(encryptedText) {
 		decrypted += decipher.final("utf8");
 
 		return decrypted;
-	} catch (error) {
+	} catch (_error) {
 		// Invalid encrypted data or wrong key
 		return null;
 	}
@@ -159,9 +207,11 @@ function decrypt(encryptedText) {
 function isEncrypted(text) {
 	if (!text) return false;
 	const parts = text.split(":");
-	return parts.length === 3 &&
+	return (
+		parts.length === 3 &&
 		parts[0].length === IV_LENGTH * 2 &&
-		parts[1].length === AUTH_TAG_LENGTH * 2;
+		parts[1].length === AUTH_TAG_LENGTH * 2
+	);
 }
 
 /**
@@ -170,7 +220,11 @@ function isEncrypted(text) {
  */
 function getEncryptionStatus() {
 	const keyFilePath = path.join(__dirname, "../../.encryption_key");
-	const keyFingerprint = crypto.createHash("sha256").update(ENCRYPTION_KEY).digest("hex").substring(0, 8);
+	const keyFingerprint = crypto
+		.createHash("sha256")
+		.update(ENCRYPTION_KEY)
+		.digest("hex")
+		.substring(0, 8);
 
 	let source = "unknown";
 	if (process.env.AI_ENCRYPTION_KEY) {
@@ -194,7 +248,8 @@ function getEncryptionStatus() {
 	return {
 		source,
 		fingerprint: keyFingerprint,
-		keyFilePath: source === "file" || source === "hostname_fallback" ? keyFilePath : null,
+		keyFilePath:
+			source === "file" || source === "hostname_fallback" ? keyFilePath : null,
 		keyFileExists: source === "file" ? fs.existsSync(keyFilePath) : null,
 	};
 }

@@ -84,7 +84,13 @@ router.put(
 			} = req.body;
 
 			// Prevent modifying built-in role permissions
-			const builtInRoles = ["superadmin", "admin", "host_manager", "readonly", "user"];
+			const builtInRoles = [
+				"superadmin",
+				"admin",
+				"host_manager",
+				"readonly",
+				"user",
+			];
 			if (builtInRoles.includes(role)) {
 				return res.status(400).json({
 					error: `Cannot modify ${role} role permissions - this is a built-in role`,
@@ -146,7 +152,13 @@ router.delete(
 			const { role } = req.params;
 
 			// Prevent deleting built-in roles
-			const builtInRoles = ["superadmin", "admin", "host_manager", "readonly", "user"];
+			const builtInRoles = [
+				"superadmin",
+				"admin",
+				"host_manager",
+				"readonly",
+				"user",
+			];
 			if (builtInRoles.includes(role)) {
 				return res.status(400).json({
 					error: `Cannot delete ${role} role - this is a built-in role`,

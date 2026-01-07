@@ -317,7 +317,9 @@ class QueueManager {
 						if (ws && ws.readyState === 1) {
 							// WebSocket.OPEN
 							agentWs.pushRefreshIntegrationStatus(api_id);
-							logger.info(`✅ Refresh integration status command sent to agent ${api_id}`);
+							logger.info(
+								`✅ Refresh integration status command sent to agent ${api_id}`,
+							);
 						} else {
 							logger.error(`❌ Agent ${api_id} is not connected`);
 							throw new Error(
@@ -330,7 +332,9 @@ class QueueManager {
 						if (ws && ws.readyState === 1) {
 							// WebSocket.OPEN
 							agentWs.pushDockerInventoryRefresh(api_id);
-							logger.info(`✅ Docker inventory refresh command sent to agent ${api_id}`);
+							logger.info(
+								`✅ Docker inventory refresh command sent to agent ${api_id}`,
+							);
 						} else {
 							logger.error(`❌ Agent ${api_id} is not connected`);
 							throw new Error(
@@ -388,10 +392,7 @@ class QueueManager {
 				logger.error(`❌ Queue '${queueName}' experienced an error:`, error);
 			});
 			queue.on("failed", (job, err) => {
-				logger.error(
-					`❌ Job '${job.id}' in queue '${queueName}' failed:`,
-					err,
-				);
+				logger.error(`❌ Job '${job.id}' in queue '${queueName}' failed:`, err);
 			});
 			queue.on("completed", (job) => {
 				logger.info(`✅ Job '${job.id}' in queue '${queueName}' completed.`);
@@ -594,10 +595,7 @@ class QueueManager {
 			try {
 				await this.queues[queueName].close();
 			} catch (e) {
-				logger.warn(
-					`⚠️ Failed to close queue '${queueName}':`,
-					e?.message || e,
-				);
+				logger.warn(`⚠️ Failed to close queue '${queueName}':`, e?.message || e);
 			}
 			if (this.workers?.[queueName]) {
 				try {

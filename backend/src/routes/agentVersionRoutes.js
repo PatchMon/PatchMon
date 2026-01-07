@@ -172,9 +172,10 @@ router.get(
 			logger.error("❌ Failed to get binary info:", error.message);
 			// SECURITY: Use generic error message in production
 			res.status(404).json({
-				error: process.env.NODE_ENV === "development"
-					? error.message
-					: "Binary not found for specified version and architecture",
+				error:
+					process.env.NODE_ENV === "development"
+						? error.message
+						: "Binary not found for specified version and architecture",
 			});
 		}
 	},

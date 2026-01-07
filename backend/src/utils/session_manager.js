@@ -124,12 +124,9 @@ function generate_device_fingerprint(req) {
 	}
 
 	// Combine all factors into the fingerprint
-	const fingerprintData = [
-		deviceId,
-		userAgent,
-		acceptLanguage,
-		ipSubnet,
-	].join("|");
+	const fingerprintData = [deviceId, userAgent, acceptLanguage, ipSubnet].join(
+		"|",
+	);
 
 	// Hash for consistent storage format
 	return crypto

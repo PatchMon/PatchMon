@@ -137,7 +137,10 @@ async function handleCallback(code, codeVerifier, expectedNonce) {
 	const claims = tokenSet.claims();
 
 	// Debug: Log all claims received from IdP
-	logger.info("OIDC claims received from IdP:", JSON.stringify(claims, null, 2));
+	logger.info(
+		"OIDC claims received from IdP:",
+		JSON.stringify(claims, null, 2),
+	);
 
 	// Validate required claims
 	if (!claims.sub) {
@@ -162,9 +165,7 @@ async function handleCallback(code, codeVerifier, expectedNonce) {
 		sub: claims.sub,
 		email: claims.email,
 		name:
-			claims.name ||
-			claims.preferred_username ||
-			claims.email.split("@")[0],
+			claims.name || claims.preferred_username || claims.email.split("@")[0],
 		givenName: claims.given_name || null,
 		familyName: claims.family_name || null,
 		emailVerified: claims.email_verified || false,
@@ -203,7 +204,11 @@ function getLogoutUrl(postLogoutRedirectUri) {
 
 	const params = new URLSearchParams({
 		client_id: process.env.OIDC_CLIENT_ID,
-		post_logout_redirect_uri: postLogoutRedirectUri || process.env.OIDC_POST_LOGOUT_URI || process.env.FRONTEND_URL || "http://localhost:5173",
+		post_logout_redirect_uri:
+			postLogoutRedirectUri ||
+			process.env.OIDC_POST_LOGOUT_URI ||
+			process.env.FRONTEND_URL ||
+			"http://localhost:5173",
 	});
 
 	return `${endSessionEndpoint}?${params.toString()}`;

@@ -3,8 +3,8 @@
  * Tests the full flow from WebSocket connection to SSH session
  */
 
-const WebSocket = require("ws");
-const jwt = require("jsonwebtoken");
+const _WebSocket = require("ws");
+const _jwt = require("jsonwebtoken");
 const { Client } = require("ssh2");
 
 // Note: These are integration tests that would require:
@@ -16,10 +16,10 @@ const { Client } = require("ssh2");
 // expanded when the test infrastructure is ready.
 
 describe("SSH Terminal Integration Tests", () => {
-	let testServer;
-	let testUser;
-	let testHost;
-	let testToken;
+	let _testServer;
+	let _testUser;
+	let _testHost;
+	let _testToken;
 
 	beforeAll(async () => {
 		// Setup test database

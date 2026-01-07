@@ -4,8 +4,17 @@ const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateToken } = require("../middleware/auth");
 const { requireManageSettings } = require("../middleware/permissions");
-const { encrypt, decrypt, isEncrypted, getEncryptionStatus } = require("../utils/encryption");
-const { getProviders, getCompletion, getAssistance } = require("../services/aiService");
+const {
+	encrypt,
+	decrypt,
+	isEncrypted,
+	getEncryptionStatus,
+} = require("../utils/encryption");
+const {
+	getProviders,
+	getCompletion,
+	getAssistance,
+} = require("../services/aiService");
 const { redis } = require("../services/automation/shared/redis");
 
 const router = express.Router();
@@ -47,7 +56,9 @@ router.get("/status", authenticateToken, async (_req, res) => {
 			const decrypted = decrypt(settings.ai_api_key);
 			apiKeyValid = !!decrypted;
 			if (!decrypted && settings.ai_api_key) {
-				logger.warn("AI API key exists but cannot be decrypted - encryption key may have changed");
+				logger.warn(
+					"AI API key exists but cannot be decrypted - encryption key may have changed",
+				);
 			}
 		}
 
@@ -65,40 +76,46 @@ router.get("/status", authenticateToken, async (_req, res) => {
  * Get encryption debug info (admin only)
  * GET /api/v1/ai/debug
  */
-router.get("/debug", authenticateToken, requireManageSettings, async (_req, res) => {
-	try {
-		const prisma = getPrismaClient();
-		const settings = await prisma.settings.findFirst();
-		const encryptionStatus = getEncryptionStatus();
+router.get(
+	"/debug",
+	authenticateToken,
+	requireManageSettings,
+	async (_req, res) => {
+		try {
+			const prisma = getPrismaClient();
+			const settings = await prisma.settings.findFirst();
+			const encryptionStatus = getEncryptionStatus();
 
-		// Test encryption round-trip
-		const testValue = "test-" + Date.now();
-		const encrypted = encrypt(testValue);
-		const decrypted = decrypt(encrypted);
-		const roundTripOk = decrypted === testValue;
+			// Test encryption round-trip
+			const testValue = `test-${Date.now()}`;
+			const encrypted = encrypt(testValue);
+			const decrypted = decrypt(encrypted);
+			const roundTripOk = decrypted === testValue;
 
-		// Check if existing AI key can be decrypted
-		let existingKeyStatus = "not_set";
-		if (settings?.ai_api_key) {
-			const decryptedKey = decrypt(settings.ai_api_key);
-			existingKeyStatus = decryptedKey ? "valid" : "invalid_cannot_decrypt";
+			// Check if existing AI key can be decrypted
+			let existingKeyStatus = "not_set";
+			if (settings?.ai_api_key) {
+				const decryptedKey = decrypt(settings.ai_api_key);
+				existingKeyStatus = decryptedKey ? "valid" : "invalid_cannot_decrypt";
+			}
+
+			res.json({
+				encryption: encryptionStatus,
+				roundTripTest: roundTripOk ? "passed" : "failed",
+				existingApiKey: existingKeyStatus,
+				recommendation:
+					encryptionStatus.source === "ephemeral"
+						? "CRITICAL: Using ephemeral key - encrypted data will be lost on restart. Set SESSION_SECRET environment variable."
+						: encryptionStatus.source === "file"
+							? "Set SESSION_SECRET environment variable for consistent encryption across restarts"
+							: "Configuration looks good",
+			});
+		} catch (error) {
+			logger.error("Error fetching AI debug info:", error);
+			res.status(500).json({ error: "Failed to fetch debug info" });
 		}
-
-		res.json({
-			encryption: encryptionStatus,
-			roundTripTest: roundTripOk ? "passed" : "failed",
-			existingApiKey: existingKeyStatus,
-			recommendation: encryptionStatus.source === "ephemeral"
-				? "CRITICAL: Using ephemeral key - encrypted data will be lost on restart. Set SESSION_SECRET environment variable."
-				: encryptionStatus.source === "file"
-				? "Set SESSION_SECRET environment variable for consistent encryption across restarts"
-				: "Configuration looks good",
-		});
-	} catch (error) {
-		logger.error("Error fetching AI debug info:", error);
-		res.status(500).json({ error: "Failed to fetch debug info" });
-	}
-});
+	},
+);
 
 /**
  * Get available AI providers and their models
@@ -118,45 +135,52 @@ router.get("/providers", authenticateToken, (_req, res) => {
  * Get AI settings (admin only - includes full configuration)
  * GET /api/v1/ai/settings
  */
-router.get("/settings", authenticateToken, requireManageSettings, async (_req, res) => {
-	try {
-		const prisma = getPrismaClient();
-		const settings = await prisma.settings.findFirst();
+router.get(
+	"/settings",
+	authenticateToken,
+	requireManageSettings,
+	async (_req, res) => {
+		try {
+			const prisma = getPrismaClient();
+			const settings = await prisma.settings.findFirst();
 
-		if (!settings) {
-			return res.json({
-				ai_enabled: false,
-				ai_provider: "openrouter",
-				ai_model: null,
-				ai_api_key_set: false,
-				ai_api_key_invalid: false,
-			});
-		}
-
-		// Check if API key exists and can be decrypted
-		let apiKeyValid = false;
-		let apiKeyInvalid = false;
-		if (settings.ai_api_key) {
-			const decrypted = decrypt(settings.ai_api_key);
-			apiKeyValid = !!decrypted;
-			apiKeyInvalid = !decrypted; // Key exists but can't be decrypted
-			if (apiKeyInvalid) {
-				logger.warn("AI API key cannot be decrypted - SESSION_SECRET or AI_ENCRYPTION_KEY may have changed. Please re-enter the API key.");
+			if (!settings) {
+				return res.json({
+					ai_enabled: false,
+					ai_provider: "openrouter",
+					ai_model: null,
+					ai_api_key_set: false,
+					ai_api_key_invalid: false,
+				});
 			}
-		}
 
-		res.json({
-			ai_enabled: settings.ai_enabled || false,
-			ai_provider: settings.ai_provider || "openrouter",
-			ai_model: settings.ai_model || null,
-			ai_api_key_set: apiKeyValid,
-			ai_api_key_invalid: apiKeyInvalid, // True if key exists but can't be decrypted
-		});
-	} catch (error) {
-		logger.error("Error fetching AI settings:", error);
-		res.status(500).json({ error: "Failed to fetch AI settings" });
-	}
-});
+			// Check if API key exists and can be decrypted
+			let apiKeyValid = false;
+			let apiKeyInvalid = false;
+			if (settings.ai_api_key) {
+				const decrypted = decrypt(settings.ai_api_key);
+				apiKeyValid = !!decrypted;
+				apiKeyInvalid = !decrypted; // Key exists but can't be decrypted
+				if (apiKeyInvalid) {
+					logger.warn(
+						"AI API key cannot be decrypted - SESSION_SECRET or AI_ENCRYPTION_KEY may have changed. Please re-enter the API key.",
+					);
+				}
+			}
+
+			res.json({
+				ai_enabled: settings.ai_enabled || false,
+				ai_provider: settings.ai_provider || "openrouter",
+				ai_model: settings.ai_model || null,
+				ai_api_key_set: apiKeyValid,
+				ai_api_key_invalid: apiKeyInvalid, // True if key exists but can't be decrypted
+			});
+		} catch (error) {
+			logger.error("Error fetching AI settings:", error);
+			res.status(500).json({ error: "Failed to fetch AI settings" });
+		}
+	},
+);
 
 /**
  * Update AI settings
@@ -168,7 +192,9 @@ router.put(
 	requireManageSettings,
 	[
 		body("ai_enabled").optional().isBoolean(),
-		body("ai_provider").optional().isIn(["openrouter", "anthropic", "openai", "gemini"]),
+		body("ai_provider")
+			.optional()
+			.isIn(["openrouter", "anthropic", "openai", "gemini"]),
 		body("ai_model").optional().isString(),
 		body("ai_api_key").optional().isString(),
 	],
@@ -237,39 +263,50 @@ router.put(
 			logger.error("Error updating AI settings:", error);
 			res.status(500).json({ error: "Failed to update AI settings" });
 		}
-	}
+	},
 );
 
 /**
  * Test AI connection
  * POST /api/v1/ai/test
  */
-router.post("/test", authenticateToken, requireManageSettings, async (req, res) => {
-	try {
-		const prisma = getPrismaClient();
-		const settings = await prisma.settings.findFirst();
+router.post(
+	"/test",
+	authenticateToken,
+	requireManageSettings,
+	async (_req, res) => {
+		try {
+			const prisma = getPrismaClient();
+			const settings = await prisma.settings.findFirst();
 
-		if (!settings?.ai_api_key) {
-			return res.status(400).json({ error: "AI API key not configured" });
+			if (!settings?.ai_api_key) {
+				return res.status(400).json({ error: "AI API key not configured" });
+			}
+
+			const response = await getAssistance(
+				settings,
+				"Respond with exactly: 'Connection successful!' - nothing else.",
+				"",
+				[],
+			);
+
+			if (response.toLowerCase().includes("connection successful")) {
+				res.json({ success: true, message: "AI connection test successful" });
+			} else {
+				res.json({
+					success: true,
+					message: "AI responded",
+					response: response.substring(0, 100),
+				});
+			}
+		} catch (error) {
+			logger.error("AI connection test failed:", error);
+			res
+				.status(400)
+				.json({ error: `Connection test failed: ${error.message}` });
 		}
-
-		const response = await getAssistance(
-			settings,
-			"Respond with exactly: 'Connection successful!' - nothing else.",
-			"",
-			[]
-		);
-
-		if (response.toLowerCase().includes("connection successful")) {
-			res.json({ success: true, message: "AI connection test successful" });
-		} else {
-			res.json({ success: true, message: "AI responded", response: response.substring(0, 100) });
-		}
-	} catch (error) {
-		logger.error("AI connection test failed:", error);
-		res.status(400).json({ error: `Connection test failed: ${error.message}` });
-	}
-});
+	},
+);
 
 /**
  * Get AI assistance for terminal
@@ -291,7 +328,9 @@ router.post(
 
 		// Rate limit check
 		if (!(await checkRateLimit(req.user.id))) {
-			return res.status(429).json({ error: "Rate limit exceeded. Please wait a moment." });
+			return res
+				.status(429)
+				.json({ error: "Rate limit exceeded. Please wait a moment." });
 		}
 
 		try {
@@ -311,20 +350,25 @@ router.post(
 			// Sanitize history to prevent injection
 			const sanitizedHistory = (history || [])
 				.slice(-10) // Keep last 10 messages max
-				.filter(m => m.role && m.content)
-				.map(m => ({
+				.filter((m) => m.role && m.content)
+				.map((m) => ({
 					role: m.role === "assistant" ? "assistant" : "user",
 					content: String(m.content).substring(0, 2000),
 				}));
 
-			const response = await getAssistance(settings, question, context, sanitizedHistory);
+			const response = await getAssistance(
+				settings,
+				question,
+				context,
+				sanitizedHistory,
+			);
 
 			res.json({ response });
 		} catch (error) {
 			logger.error("AI assistance error:", error);
 			res.status(500).json({ error: `AI request failed: ${error.message}` });
 		}
-	}
+	},
 );
 
 /**
@@ -370,7 +414,7 @@ router.post(
 			logger.error("AI completion error:", error);
 			res.status(500).json({ error: "Completion request failed" });
 		}
-	}
+	},
 );
 
 module.exports = router;

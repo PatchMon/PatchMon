@@ -17,34 +17,64 @@ const router = express.Router();
  */
 function sanitizeSvg(svgContent) {
 	// Remove script tags and their contents
-	let sanitized = svgContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
+	let sanitized = svgContent.replace(
+		/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,
+		"",
+	);
 
 	// Remove on* event handlers (onclick, onload, onerror, etc.)
 	sanitized = sanitized.replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, "");
 	sanitized = sanitized.replace(/\s+on\w+\s*=\s*[^\s>]+/gi, "");
 
 	// Remove javascript: URLs
-	sanitized = sanitized.replace(/href\s*=\s*["']javascript:[^"']*["']/gi, 'href=""');
-	sanitized = sanitized.replace(/xlink:href\s*=\s*["']javascript:[^"']*["']/gi, 'xlink:href=""');
+	sanitized = sanitized.replace(
+		/href\s*=\s*["']javascript:[^"']*["']/gi,
+		'href=""',
+	);
+	sanitized = sanitized.replace(
+		/xlink:href\s*=\s*["']javascript:[^"']*["']/gi,
+		'xlink:href=""',
+	);
 
 	// Remove data: URLs (can contain JavaScript)
 	sanitized = sanitized.replace(/href\s*=\s*["']data:[^"']*["']/gi, 'href=""');
-	sanitized = sanitized.replace(/xlink:href\s*=\s*["']data:[^"']*["']/gi, 'xlink:href=""');
+	sanitized = sanitized.replace(
+		/xlink:href\s*=\s*["']data:[^"']*["']/gi,
+		'xlink:href=""',
+	);
 
 	// Remove foreign object elements (can embed HTML/JS)
-	sanitized = sanitized.replace(/<foreignObject\b[^<]*(?:(?!<\/foreignObject>)<[^<]*)*<\/foreignObject>/gi, "");
+	sanitized = sanitized.replace(
+		/<foreignObject\b[^<]*(?:(?!<\/foreignObject>)<[^<]*)*<\/foreignObject>/gi,
+		"",
+	);
 
 	// Remove use elements with external references (security risk)
-	sanitized = sanitized.replace(/<use\b[^>]*xlink:href\s*=\s*["']https?:\/\/[^"']*["'][^>]*\/?>/gi, "");
+	sanitized = sanitized.replace(
+		/<use\b[^>]*xlink:href\s*=\s*["']https?:\/\/[^"']*["'][^>]*\/?>/gi,
+		"",
+	);
 
 	// Remove embed, object, iframe elements
 	sanitized = sanitized.replace(/<embed\b[^>]*\/?>/gi, "");
-	sanitized = sanitized.replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, "");
-	sanitized = sanitized.replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, "");
+	sanitized = sanitized.replace(
+		/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi,
+		"",
+	);
+	sanitized = sanitized.replace(
+		/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi,
+		"",
+	);
 
 	// Remove set and animate elements with dangerous attributes
-	sanitized = sanitized.replace(/<set\b[^>]*attributeName\s*=\s*["']on\w+["'][^>]*\/?>/gi, "");
-	sanitized = sanitized.replace(/<animate\b[^>]*attributeName\s*=\s*["']on\w+["'][^>]*\/?>/gi, "");
+	sanitized = sanitized.replace(
+		/<set\b[^>]*attributeName\s*=\s*["']on\w+["'][^>]*\/?>/gi,
+		"",
+	);
+	sanitized = sanitized.replace(
+		/<animate\b[^>]*attributeName\s*=\s*["']on\w+["'][^>]*\/?>/gi,
+		"",
+	);
 
 	return sanitized;
 }
@@ -487,8 +517,13 @@ router.post(
 
 			// SECURITY: Sanitize filename to prevent path traversal
 			// Only allow alphanumeric, underscore, hyphen, and dot
-			const sanitizedFileName = path.basename(fileName_final).replace(/[^a-zA-Z0-9_.-]/g, "_");
-			if (sanitizedFileName !== fileName_final || sanitizedFileName.includes("..")) {
+			const sanitizedFileName = path
+				.basename(fileName_final)
+				.replace(/[^a-zA-Z0-9_.-]/g, "_");
+			if (
+				sanitizedFileName !== fileName_final ||
+				sanitizedFileName.includes("..")
+			) {
 				return res.status(400).json({
 					error: "Invalid filename",
 				});

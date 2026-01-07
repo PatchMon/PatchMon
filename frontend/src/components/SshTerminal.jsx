@@ -104,8 +104,11 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	});
 
 	// Use configured server URL, or derive from current page URL in production
-	const serverUrl = serverUrlData?.server_url ||
-		(import.meta.env.PROD ? `${window.location.protocol}//${window.location.host}` : "http://localhost:3001");
+	const serverUrl =
+		serverUrlData?.server_url ||
+		(import.meta.env.PROD
+			? `${window.location.protocol}//${window.location.host}`
+			: "http://localhost:3001");
 	const getCurlFlags = () => {
 		return settings?.ignore_ssl_self_signed ? "-sk" : "-s";
 	};

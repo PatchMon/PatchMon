@@ -208,11 +208,15 @@ router.post(
 			// Verify password before allowing TFA disable
 			if (!user.password_hash) {
 				return res.status(400).json({
-					error: "Cannot disable TFA for accounts without a password (e.g., OIDC-only accounts)",
+					error:
+						"Cannot disable TFA for accounts without a password (e.g., OIDC-only accounts)",
 				});
 			}
 
-			const isValidPassword = await bcrypt.compare(password, user.password_hash);
+			const isValidPassword = await bcrypt.compare(
+				password,
+				user.password_hash,
+			);
 			if (!isValidPassword) {
 				return res.status(401).json({
 					error: "Invalid password",
@@ -359,7 +363,7 @@ router.post(
 			}
 
 			let verified = false;
-			let usedBackupCode = false;
+			let _usedBackupCode = false;
 
 			// First try to verify as a TOTP token
 			verified = speakeasy.totp.verify({
@@ -371,7 +375,10 @@ router.post(
 
 			// If TOTP fails, try backup codes
 			if (!verified && hashedBackupCodes.length > 0) {
-				const backupResult = await verifyBackupCode(token.toUpperCase(), hashedBackupCodes);
+				const backupResult = await verifyBackupCode(
+					token.toUpperCase(),
+					hashedBackupCodes,
+				);
 				if (backupResult.valid) {
 					// Remove the used backup code
 					hashedBackupCodes.splice(backupResult.index, 1);
@@ -382,7 +389,7 @@ router.post(
 						},
 					});
 					verified = true;
-					usedBackupCode = true;
+					_usedBackupCode = true;
 				}
 			}
 

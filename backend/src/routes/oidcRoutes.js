@@ -162,7 +162,7 @@ router.get("/config", (_req, res) => {
  * GET /api/v1/auth/oidc/login
  * Initiates the OIDC login flow
  */
-router.get("/login", async (req, res) => {
+router.get("/login", async (_req, res) => {
 	try {
 		if (!isOIDCEnabled()) {
 			return res
@@ -211,7 +211,9 @@ router.get("/callback", async (req, res) => {
 		// Check for errors from the IdP
 		if (error) {
 			// Log error details for debugging (error_description provides context)
-			logger.error(`OIDC error from IdP: ${error}${error_description ? ` - ${error_description}` : ""}`);
+			logger.error(
+				`OIDC error from IdP: ${error}${error_description ? ` - ${error_description}` : ""}`,
+			);
 			// Don't expose detailed error messages to users
 			return res.redirect("/login?error=Authentication+failed");
 		}
@@ -246,7 +248,11 @@ router.get("/callback", async (req, res) => {
 		res.clearCookie("oidc_state");
 
 		// Exchange code for tokens and get user info (with nonce validation)
-		const userInfo = await handleCallback(code, session.codeVerifier, session.nonce);
+		const userInfo = await handleCallback(
+			code,
+			session.codeVerifier,
+			session.nonce,
+		);
 
 		// Find existing user by OIDC subject or email
 		let user = await prisma.users.findFirst({
@@ -268,13 +274,13 @@ router.get("/callback", async (req, res) => {
 			if (isFirstUser && userRole === "user") {
 				logger.warn(
 					`WARNING: First OIDC user "${userInfo.email}" is being created with role "${userRole}". ` +
-					`Ensure they are in the correct OIDC groups (OIDC_ADMIN_GROUP or OIDC_SUPERADMIN_GROUP) ` +
-					`to have admin access.`
+						`Ensure they are in the correct OIDC groups (OIDC_ADMIN_GROUP or OIDC_SUPERADMIN_GROUP) ` +
+						`to have admin access.`,
 				);
 			}
 
 			// Generate a unique username from email prefix (keep periods for firstname.lastname format)
-			let baseUsername = userInfo.email
+			const baseUsername = userInfo.email
 				.split("@")[0]
 				.replace(/[^a-zA-Z0-9._-]/g, "") // Keep letters, numbers, periods, underscores, hyphens
 				.substring(0, 32);
@@ -305,7 +311,9 @@ router.get("/callback", async (req, res) => {
 				},
 			});
 
-			logger.info(`Created new OIDC user: ${user.email} with role: ${userRole}${isFirstUser ? " (first user)" : ""}`);
+			logger.info(
+				`Created new OIDC user: ${user.email} with role: ${userRole}${isFirstUser ? " (first user)" : ""}`,
+			);
 
 			// Create default dashboard preferences for the new user
 			await createDefaultDashboardPreferences(user.id, userRole);
@@ -384,7 +392,9 @@ router.get("/callback", async (req, res) => {
 			const newRole = mapGroupsToRole(userInfo.groups);
 			if (newRole !== user.role) {
 				updateData.role = newRole;
-				logger.info(`OIDC role sync: ${user.email} role changed from ${user.role} to ${newRole}`);
+				logger.info(
+					`OIDC role sync: ${user.email} role changed from ${user.role} to ${newRole}`,
+				);
 			}
 		}
 
@@ -459,7 +469,7 @@ router.get("/callback", async (req, res) => {
  * GET /api/v1/auth/oidc/logout
  * Handles OIDC RP-initiated logout
  */
-router.get("/logout", async (req, res) => {
+router.get("/logout", async (_req, res) => {
 	try {
 		if (!isOIDCEnabled()) {
 			return res.redirect("/login");

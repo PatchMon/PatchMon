@@ -29,12 +29,14 @@ const prisma = getPrismaClient();
 
 // SECURITY: Strict rate limiting for password operations (5 requests per 15 minutes per IP)
 const passwordOperationLimiter = rateLimit({
-	windowMs: parseInt(process.env.PASSWORD_RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000, // 15 minutes
+	windowMs:
+		parseInt(process.env.PASSWORD_RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000, // 15 minutes
 	max: parseInt(process.env.PASSWORD_RATE_LIMIT_MAX, 10) || 5, // 5 attempts
 	message: {
 		error: "Too many password operation attempts, please try again later.",
 		retryAfter: Math.ceil(
-			(parseInt(process.env.PASSWORD_RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000) / 1000,
+			(parseInt(process.env.PASSWORD_RATE_LIMIT_WINDOW_MS, 10) ||
+				15 * 60 * 1000) / 1000,
 		),
 	},
 	standardHeaders: true,
@@ -81,14 +83,16 @@ async function verifyBackupCode(code, hashedCodes) {
 const LOCKOUT_PREFIX = "login:lockout:";
 const FAILED_ATTEMPTS_PREFIX = "login:failed:";
 const MAX_FAILED_ATTEMPTS = parseInt(process.env.MAX_LOGIN_ATTEMPTS, 10) || 5;
-const LOCKOUT_DURATION = parseInt(process.env.LOCKOUT_DURATION_MINUTES, 10) || 15; // minutes
+const LOCKOUT_DURATION =
+	parseInt(process.env.LOCKOUT_DURATION_MINUTES, 10) || 15; // minutes
 const FAILED_ATTEMPT_TTL = 60 * 15; // 15 minutes in seconds
 
 // TFA rate limiting configuration (separate from login)
 const TFA_LOCKOUT_PREFIX = "tfa:lockout:";
 const TFA_FAILED_PREFIX = "tfa:failed:";
 const MAX_TFA_ATTEMPTS = parseInt(process.env.MAX_TFA_ATTEMPTS, 10) || 5;
-const TFA_LOCKOUT_DURATION = parseInt(process.env.TFA_LOCKOUT_DURATION_MINUTES, 10) || 30; // minutes
+const TFA_LOCKOUT_DURATION =
+	parseInt(process.env.TFA_LOCKOUT_DURATION_MINUTES, 10) || 30; // minutes
 
 /**
  * Set authentication cookies (httpOnly for XSS protection)
@@ -210,7 +214,11 @@ async function recordFailedTFAAttempt(userId) {
 	// Lock TFA if max attempts exceeded
 	if (attempts >= MAX_TFA_ATTEMPTS) {
 		const lockKey = `${TFA_LOCKOUT_PREFIX}${userId}`;
-		await redis.setex(lockKey, TFA_LOCKOUT_DURATION * 60, Date.now().toString());
+		await redis.setex(
+			lockKey,
+			TFA_LOCKOUT_DURATION * 60,
+			Date.now().toString(),
+		);
 		await redis.del(key);
 		return { attempts, locked: true };
 	}
@@ -236,10 +244,13 @@ async function clearFailedTFAAttempts(userId) {
  * - At least one special character
  */
 const PASSWORD_MIN_LENGTH = parseInt(process.env.PASSWORD_MIN_LENGTH, 10) || 8;
-const PASSWORD_REQUIRE_UPPERCASE = process.env.PASSWORD_REQUIRE_UPPERCASE !== "false";
-const PASSWORD_REQUIRE_LOWERCASE = process.env.PASSWORD_REQUIRE_LOWERCASE !== "false";
+const PASSWORD_REQUIRE_UPPERCASE =
+	process.env.PASSWORD_REQUIRE_UPPERCASE !== "false";
+const PASSWORD_REQUIRE_LOWERCASE =
+	process.env.PASSWORD_REQUIRE_LOWERCASE !== "false";
 const PASSWORD_REQUIRE_NUMBER = process.env.PASSWORD_REQUIRE_NUMBER !== "false";
-const PASSWORD_REQUIRE_SPECIAL = process.env.PASSWORD_REQUIRE_SPECIAL !== "false";
+const PASSWORD_REQUIRE_SPECIAL =
+	process.env.PASSWORD_REQUIRE_SPECIAL !== "false";
 
 /**
  * Validate password complexity
@@ -265,7 +276,10 @@ function validatePasswordComplexity(password) {
 		errors.push("Password must contain at least one number");
 	}
 
-	if (PASSWORD_REQUIRE_SPECIAL && !/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+	if (
+		PASSWORD_REQUIRE_SPECIAL &&
+		!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)
+	) {
 		errors.push("Password must contain at least one special character");
 	}
 
@@ -380,8 +394,7 @@ router.post(
 		body("lastName").isLength({ min: 1 }).withMessage("Last name is required"),
 		body("username").isLength({ min: 1 }).withMessage("Username is required"),
 		body("email").isEmail().withMessage("Valid email is required"),
-		body("password")
-			.custom(passwordComplexityValidator),
+		body("password").custom(passwordComplexityValidator),
 	],
 	async (req, res) => {
 		try {
@@ -400,65 +413,70 @@ router.post(
 
 			// Use transaction to prevent race condition where two requests
 			// could both pass the admin check and create duplicate admins
-			const user = await prisma.$transaction(async (tx) => {
-				// Check if any admin users already exist
-				const adminCount = await tx.users.count({
-					where: { role: "admin" },
+			const user = await prisma
+				.$transaction(async (tx) => {
+					// Check if any admin users already exist
+					const adminCount = await tx.users.count({
+						where: { role: "admin" },
+					});
+
+					if (adminCount > 0) {
+						throw new Error("ADMIN_EXISTS");
+					}
+
+					// Check if username or email already exists (case-insensitive)
+					const existingUser = await tx.users.findFirst({
+						where: {
+							OR: [
+								{ username: { equals: username.trim(), mode: "insensitive" } },
+								{ email: email.trim().toLowerCase() },
+							],
+						},
+					});
+
+					if (existingUser) {
+						throw new Error("USER_EXISTS");
+					}
+
+					// Create admin user within transaction
+					const newUser = await tx.users.create({
+						data: {
+							id: uuidv4(),
+							username: username.trim(),
+							email: email.trim().toLowerCase(),
+							password_hash: passwordHash,
+							first_name: firstName.trim(),
+							last_name: lastName.trim(),
+							role: "admin",
+							is_active: true,
+							created_at: new Date(),
+							updated_at: new Date(),
+						},
+						select: {
+							id: true,
+							username: true,
+							email: true,
+							first_name: true,
+							last_name: true,
+							role: true,
+							created_at: true,
+						},
+					});
+
+					return newUser;
+				})
+				.catch((error) => {
+					if (error.message === "ADMIN_EXISTS") {
+						return {
+							error:
+								"Admin users already exist. This endpoint is only for first-time setup.",
+						};
+					}
+					if (error.message === "USER_EXISTS") {
+						return { error: "Username or email already exists" };
+					}
+					throw error;
 				});
-
-				if (adminCount > 0) {
-					throw new Error("ADMIN_EXISTS");
-				}
-
-				// Check if username or email already exists (case-insensitive)
-				const existingUser = await tx.users.findFirst({
-					where: {
-						OR: [
-							{ username: { equals: username.trim(), mode: "insensitive" } },
-							{ email: email.trim().toLowerCase() },
-						],
-					},
-				});
-
-				if (existingUser) {
-					throw new Error("USER_EXISTS");
-				}
-
-				// Create admin user within transaction
-				const newUser = await tx.users.create({
-					data: {
-						id: uuidv4(),
-						username: username.trim(),
-						email: email.trim().toLowerCase(),
-						password_hash: passwordHash,
-						first_name: firstName.trim(),
-						last_name: lastName.trim(),
-						role: "admin",
-						is_active: true,
-						created_at: new Date(),
-						updated_at: new Date(),
-					},
-					select: {
-						id: true,
-						username: true,
-						email: true,
-						first_name: true,
-						last_name: true,
-						role: true,
-						created_at: true,
-					},
-				});
-
-				return newUser;
-			}).catch((error) => {
-				if (error.message === "ADMIN_EXISTS") {
-					return { error: "Admin users already exist. This endpoint is only for first-time setup." };
-				}
-				if (error.message === "USER_EXISTS") {
-					return { error: "Username or email already exists" };
-				}
-				throw error;
-			});
 
 			// Check if transaction returned an error
 			if (user.error) {
@@ -522,10 +540,10 @@ router.get(
 			const returnAll = req.query.all === "true";
 
 			// Pagination parameters with defaults and limits
-			const page = Math.max(1, parseInt(req.query.page) || 1);
+			const page = Math.max(1, parseInt(req.query.page, 10) || 1);
 			const pageSize = returnAll
 				? undefined
-				: Math.min(Math.max(1, parseInt(req.query.pageSize) || 50), 200);
+				: Math.min(Math.max(1, parseInt(req.query.pageSize, 10) || 50), 200);
 
 			const queryOptions = {
 				select: {
@@ -586,8 +604,7 @@ router.post(
 			.isLength({ min: 3 })
 			.withMessage("Username must be at least 3 characters"),
 		body("email").isEmail().withMessage("Valid email is required"),
-		body("password")
-			.custom(passwordComplexityValidator),
+		body("password").custom(passwordComplexityValidator),
 		body("first_name")
 			.optional()
 			.isLength({ min: 1 })
@@ -601,7 +618,13 @@ router.post(
 			.custom(async (value) => {
 				if (!value) return true; // Optional field
 				// Allow built-in roles even if not in role_permissions table yet
-				const builtInRoles = ["superadmin", "admin", "host_manager", "readonly", "user"];
+				const builtInRoles = [
+					"superadmin",
+					"admin",
+					"host_manager",
+					"readonly",
+					"user",
+				];
 				if (builtInRoles.includes(value)) return true;
 				const rolePermissions = await prisma.role_permissions.findUnique({
 					where: { role: value },
@@ -974,10 +997,7 @@ router.post(
 	passwordOperationLimiter,
 	authenticateToken,
 	requireManageUsers,
-	[
-		body("newPassword")
-			.custom(passwordComplexityValidator),
-	],
+	[body("newPassword").custom(passwordComplexityValidator)],
 	async (req, res) => {
 		try {
 			const { userId } = req.params;
@@ -1082,8 +1102,7 @@ router.post(
 			.isLength({ min: 3 })
 			.withMessage("Username must be at least 3 characters"),
 		body("email").isEmail().withMessage("Valid email is required"),
-		body("password")
-			.custom(passwordComplexityValidator),
+		body("password").custom(passwordComplexityValidator),
 	],
 	async (req, res) => {
 		try {
@@ -1217,9 +1236,10 @@ router.post(
 					details: { remainingMinutes },
 				});
 				return res.status(429).json({
-					error: "Account temporarily locked due to too many failed login attempts",
+					error:
+						"Account temporarily locked due to too many failed login attempts",
 					lockedUntil: remainingMinutes,
-					message: `Please try again in ${remainingMinutes} minute${remainingMinutes !== 1 ? 's' : ''}`,
+					message: `Please try again in ${remainingMinutes} minute${remainingMinutes !== 1 ? "s" : ""}`,
 				});
 			}
 
@@ -1273,7 +1293,9 @@ router.post(
 				// Record failed attempt
 				const result = await recordFailedAttempt(username);
 				await logAuditEvent({
-					event: result.locked ? AUDIT_EVENTS.LOGIN_LOCKED : AUDIT_EVENTS.LOGIN_FAILED,
+					event: result.locked
+						? AUDIT_EVENTS.LOGIN_LOCKED
+						: AUDIT_EVENTS.LOGIN_FAILED,
 					userId: user.id,
 					username: user.username,
 					ipAddress: req.ip,
@@ -1284,7 +1306,8 @@ router.post(
 				});
 				if (result.locked) {
 					return res.status(429).json({
-						error: "Account temporarily locked due to too many failed login attempts",
+						error:
+							"Account temporarily locked due to too many failed login attempts",
 						lockedUntil: LOCKOUT_DURATION,
 						message: `Please try again in ${LOCKOUT_DURATION} minutes`,
 					});
@@ -1506,7 +1529,7 @@ router.post(
 			}
 
 			let verified = false;
-			let usedBackupCode = false;
+			let _usedBackupCode = false;
 
 			// First try to verify as a TOTP token
 			verified = speakeasy.totp.verify({
@@ -1518,7 +1541,10 @@ router.post(
 
 			// If TOTP fails, try backup codes
 			if (!verified && hashedBackupCodes.length > 0) {
-				const backupResult = await verifyBackupCode(token.toUpperCase(), hashedBackupCodes);
+				const backupResult = await verifyBackupCode(
+					token.toUpperCase(),
+					hashedBackupCodes,
+				);
 				if (backupResult.valid) {
 					// Remove the used backup code
 					hashedBackupCodes.splice(backupResult.index, 1);
@@ -1529,7 +1555,7 @@ router.post(
 						},
 					});
 					verified = true;
-					usedBackupCode = true;
+					_usedBackupCode = true;
 				}
 			}
 
@@ -1615,7 +1641,12 @@ router.post(
 			}
 
 			// Set httpOnly cookies for XSS protection
-			setAuthCookies(res, session.access_token, session.refresh_token, remember_me);
+			setAuthCookies(
+				res,
+				session.access_token,
+				session.refresh_token,
+				remember_me,
+			);
 
 			res.json({
 				message: "Login successful",
@@ -1649,7 +1680,7 @@ router.get("/ws-token", authenticateToken, async (req, res) => {
 				purpose: "websocket", // Mark this token as WebSocket-only
 			},
 			process.env.JWT_SECRET,
-			{ expiresIn: "5m" } // Very short-lived - only for establishing WS connection
+			{ expiresIn: "5m" }, // Very short-lived - only for establishing WS connection
 		);
 
 		res.json({ token: wsToken, expiresIn: 300 }); // 300 seconds = 5 minutes
@@ -1906,8 +1937,7 @@ router.put(
 		body("currentPassword")
 			.notEmpty()
 			.withMessage("Current password is required"),
-		body("newPassword")
-			.custom(passwordComplexityValidator),
+		body("newPassword").custom(passwordComplexityValidator),
 	],
 	async (req, res) => {
 		try {
@@ -2006,7 +2036,8 @@ router.post(
 	async (req, res) => {
 		try {
 			// Check for refresh token in cookies first, then body
-			const refresh_token = req.cookies?.refresh_token || req.body.refresh_token;
+			const refresh_token =
+				req.cookies?.refresh_token || req.body.refresh_token;
 
 			if (!refresh_token) {
 				return res.status(400).json({ error: "Refresh token is required" });

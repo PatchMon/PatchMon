@@ -1,6 +1,6 @@
 const express = require("express");
-const fs = require("fs");
-const path = require("path");
+const fs = require("node:fs");
+const path = require("node:path");
 const logger = require("../utils/logger");
 const { authenticateToken } = require("../middleware/auth");
 const { requireManageSettings } = require("../middleware/permissions");
@@ -9,7 +9,8 @@ const { getPrismaClient } = require("../config/prisma");
 const prisma = getPrismaClient();
 
 // Default GitHub repository URL
-const DEFAULT_GITHUB_REPO = "https://github.com/MacJediWizard/PatchMon-Enhanced.git";
+const DEFAULT_GITHUB_REPO =
+	"https://github.com/MacJediWizard/PatchMon-Enhanced.git";
 
 const router = express.Router();
 
@@ -299,7 +300,9 @@ router.get(
 						githubError.message.includes("rate limit") ||
 						githubError.message.includes("API rate limit")
 					) {
-						logger.info("GitHub API rate limited, using current version as fallback");
+						logger.info(
+							"GitHub API rate limited, using current version as fallback",
+						);
 						// Use current version from package.json as fallback instead of hardcoded values
 						latestRelease = {
 							tagName: `v${currentVersion}`,

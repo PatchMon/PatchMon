@@ -2,7 +2,9 @@
  * Unit tests for SSH Terminal WebSocket Service
  */
 
-const { handleSshTerminalUpgrade } = require("../../src/services/sshTerminalWs");
+const {
+	handleSshTerminalUpgrade,
+} = require("../../src/services/sshTerminalWs");
 const jwt = require("jsonwebtoken");
 const WebSocket = require("ws");
 const { Client } = require("ssh2");
@@ -40,7 +42,10 @@ jest.mock("ws", () => {
 });
 
 const { getPrismaClient } = require("../../src/config/prisma");
-const { validate_session, update_session_activity } = require("../../src/utils/session_manager");
+const {
+	validate_session,
+	update_session_activity,
+} = require("../../src/utils/session_manager");
 
 describe("SSH Terminal WebSocket Service", () => {
 	let mockRequest;
@@ -188,13 +193,16 @@ describe("SSH Terminal WebSocket Service", () => {
 			jwt.verify = jest.fn(() => decodedToken);
 
 			mockRequest.url = "/api/v1/ssh-terminal/host-123?token=valid-token";
-			const result = await handleSshTerminalUpgrade(
+			const _result = await handleSshTerminalUpgrade(
 				mockRequest,
 				mockSocket,
 				mockHead,
 				"/api/v1/ssh-terminal/host-123",
 			);
-			expect(validate_session).toHaveBeenCalledWith("session-123", "valid-token");
+			expect(validate_session).toHaveBeenCalledWith(
+				"session-123",
+				"valid-token",
+			);
 			expect(update_session_activity).toHaveBeenCalledWith("session-123");
 		});
 	});
@@ -209,7 +217,8 @@ describe("SSH Terminal WebSocket Service", () => {
 			};
 			jwt.verify = jest.fn(() => decodedToken);
 
-			mockRequest.url = "/api/v1/ssh-terminal/nonexistent-host?token=test-token";
+			mockRequest.url =
+				"/api/v1/ssh-terminal/nonexistent-host?token=test-token";
 			await handleSshTerminalUpgrade(
 				mockRequest,
 				mockSocket,
@@ -227,7 +236,7 @@ describe("SSH Terminal WebSocket Service", () => {
 			jwt.verify = jest.fn(() => decodedToken);
 
 			// Mock WebSocket upgrade callback - this simulates the upgrade happening
-			mockHandleUpgrade.mockImplementation((req, socket, head, callback) => {
+			mockHandleUpgrade.mockImplementation((_req, _socket, _head, callback) => {
 				// Call callback with a mock WebSocket to complete the upgrade
 				const testWs = {
 					readyState: WebSocket.OPEN,
@@ -240,7 +249,7 @@ describe("SSH Terminal WebSocket Service", () => {
 			});
 
 			mockRequest.url = "/api/v1/ssh-terminal/host-123?token=test-token";
-			
+
 			// The function should complete without throwing errors
 			// Note: Host lookup happens inside the WebSocket upgrade flow,
 			// which is fully tested in integration tests. This unit test
@@ -251,14 +260,14 @@ describe("SSH Terminal WebSocket Service", () => {
 				mockHead,
 				"/api/v1/ssh-terminal/host-123",
 			);
-			
+
 			// Function should return true indicating it handled the request
 			expect(result).toBe(true);
 		});
 	});
 
 	describe("WebSocket message handling", () => {
-		let mockWs;
+		let _mockWs;
 		let mockSshClient;
 		let mockSshStream;
 
@@ -280,7 +289,7 @@ describe("SSH Terminal WebSocket Service", () => {
 				},
 			};
 
-			mockWs = {
+			_mockWs = {
 				readyState: WebSocket.OPEN,
 				send: jest.fn(),
 				on: jest.fn(),
@@ -294,7 +303,7 @@ describe("SSH Terminal WebSocket Service", () => {
 			// Note: Full WebSocket message handling with SSH client creation
 			// is better tested in integration tests with a real WebSocket server.
 			// This test verifies the structure is correct.
-			
+
 			const decodedToken = {
 				userId: mockUser.id,
 				sessionId: "session-123",
@@ -311,7 +320,7 @@ describe("SSH Terminal WebSocket Service", () => {
 				}
 			});
 
-			mockSshClient.shell.mockImplementation((options, callback) => {
+			mockSshClient.shell.mockImplementation((_options, callback) => {
 				callback(null, mockSshStream);
 			});
 
@@ -319,7 +328,7 @@ describe("SSH Terminal WebSocket Service", () => {
 			let upgradeWs = null;
 
 			// Mock WebSocket upgrade callback to provide our mock WebSocket
-			mockHandleUpgrade.mockImplementation((req, socket, head, callback) => {
+			mockHandleUpgrade.mockImplementation((_req, _socket, _head, callback) => {
 				upgradeWs = {
 					readyState: WebSocket.OPEN,
 					send: jest.fn(),
@@ -335,7 +344,7 @@ describe("SSH Terminal WebSocket Service", () => {
 			});
 
 			mockRequest.url = "/api/v1/ssh-terminal/host-123?token=test-token";
-			
+
 			// Function should complete successfully
 			await expect(
 				handleSshTerminalUpgrade(
@@ -372,10 +381,11 @@ describe("SSH Terminal WebSocket Service", () => {
 			);
 
 			// Simulate connect message with private key
-			const connectMessage = JSON.stringify({
+			const _connectMessage = JSON.stringify({
 				type: "connect",
 				username: "root",
-				privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\ntest-key\n-----END OPENSSH PRIVATE KEY-----",
+				privateKey:
+					"-----BEGIN OPENSSH PRIVATE KEY-----\ntest-key\n-----END OPENSSH PRIVATE KEY-----",
 				passphrase: "test-passphrase",
 				port: 22,
 				terminal: "xterm-256color",
@@ -498,7 +508,7 @@ describe("SSH Terminal WebSocket Service", () => {
 			let upgradeWs = null;
 
 			// Mock WebSocket upgrade
-			mockHandleUpgrade.mockImplementation((req, socket, head, callback) => {
+			mockHandleUpgrade.mockImplementation((_req, _socket, _head, callback) => {
 				upgradeWs = {
 					readyState: WebSocket.OPEN,
 					send: jest.fn(),
@@ -524,7 +534,7 @@ describe("SSH Terminal WebSocket Service", () => {
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			// Get the message handler and simulate connect message
-			if (upgradeWs && upgradeWs._messageHandler) {
+			if (upgradeWs?._messageHandler) {
 				const connectMessage = JSON.stringify({
 					type: "connect",
 					username: "root",
@@ -558,7 +568,10 @@ describe("SSH Terminal WebSocket Service", () => {
 				"/api/v1/ssh-terminal/host-123",
 			);
 
-			expect(jwt.verify).toHaveBeenCalledWith("query-token", process.env.JWT_SECRET);
+			expect(jwt.verify).toHaveBeenCalledWith(
+				"query-token",
+				process.env.JWT_SECRET,
+			);
 		});
 
 		it("should extract token from Authorization header", async () => {
@@ -577,7 +590,10 @@ describe("SSH Terminal WebSocket Service", () => {
 				"/api/v1/ssh-terminal/host-123",
 			);
 
-			expect(jwt.verify).toHaveBeenCalledWith("header-token", process.env.JWT_SECRET);
+			expect(jwt.verify).toHaveBeenCalledWith(
+				"header-token",
+				process.env.JWT_SECRET,
+			);
 		});
 	});
 });

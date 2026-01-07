@@ -24,7 +24,9 @@ const {
 const { getPrismaClient } = require("../../src/config/prisma");
 const { create_session } = require("../../src/utils/session_manager");
 const { redis } = require("../../src/services/automation/shared/redis");
-const { createDefaultDashboardPreferences } = require("../../src/routes/dashboardPreferencesRoutes");
+const {
+	createDefaultDashboardPreferences,
+} = require("../../src/routes/dashboardPreferencesRoutes");
 const { v4: uuidv4 } = require("uuid");
 const { AUDIT_EVENTS, logAuditEvent } = require("../../src/utils/auditLogger");
 
@@ -50,7 +52,7 @@ function createTestApp() {
 	app.use(express.json());
 
 	// Mock cookie-parser
-	app.use((req, res, next) => {
+	app.use((req, _res, next) => {
 		req.cookies = {};
 		next();
 	});
@@ -146,7 +148,7 @@ describe("OIDC Routes", () => {
 				.expect(302);
 
 			expect(response.headers.location).toBe(
-				"https://idp.example.com/auth?params"
+				"https://idp.example.com/auth?params",
 			);
 		});
 
@@ -156,7 +158,7 @@ describe("OIDC Routes", () => {
 			expect(redis.setex).toHaveBeenCalledWith(
 				expect.stringContaining("oidc:session:"),
 				expect.any(Number),
-				expect.stringContaining("codeVerifier")
+				expect.stringContaining("codeVerifier"),
 			);
 		});
 
@@ -194,7 +196,7 @@ describe("OIDC Routes", () => {
 					codeVerifier: "mock-verifier",
 					nonce: "mock-nonce",
 					createdAt: Date.now(),
-				})
+				}),
 			);
 
 			handleCallback.mockResolvedValue(mockUserInfo);
@@ -325,7 +327,7 @@ describe("OIDC Routes", () => {
 				.query({ code: "auth-code", state: "mock-state" });
 
 			expect(redis.del).toHaveBeenCalledWith(
-				expect.stringContaining("oidc:session:")
+				expect.stringContaining("oidc:session:"),
 			);
 		});
 	});

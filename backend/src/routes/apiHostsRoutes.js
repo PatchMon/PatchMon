@@ -475,7 +475,7 @@ router.get(
 			try {
 				// Try to get live queue stats from Bull/BullMQ if available
 				const { queueManager } = require("../services/automation");
-				if (queueManager && queueManager.getHostJobs) {
+				if (queueManager?.getHostJobs) {
 					const hostQueueData = await queueManager.getHostJobs(
 						host.api_id,
 						Number.parseInt(limit, 10),

@@ -53,8 +53,11 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 	});
 
 	// Use configured server URL, or derive from current page URL in production
-	const serverUrl = serverUrlData?.server_url ||
-		(import.meta.env.PROD ? `${window.location.protocol}//${window.location.host}` : "http://localhost:3001");
+	const serverUrl =
+		serverUrlData?.server_url ||
+		(import.meta.env.PROD
+			? `${window.location.protocol}//${window.location.host}`
+			: "http://localhost:3001");
 
 	// Fetch settings for dynamic curl flags (local to modal)
 	const { data: settings } = useQuery({

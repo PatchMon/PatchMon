@@ -87,7 +87,12 @@ function init(server, prismaClient) {
 
 			// Handle SSH terminal WebSocket connections
 			if (pathname.startsWith("/api/") && pathname.includes("/ssh-terminal/")) {
-				const handled = await handleSshTerminalUpgrade(request, socket, head, pathname);
+				const handled = await handleSshTerminalUpgrade(
+					request,
+					socket,
+					head,
+					pathname,
+				);
 				if (handled) return;
 			}
 
@@ -345,9 +350,15 @@ function pushComplianceScan(apiId, profileType = "all", options = {}) {
 			fetch_remote_resources: options.fetchRemoteResources || false,
 		};
 		safeSend(ws, JSON.stringify(payload));
-		const remediationStatus = options.enableRemediation ? " (with remediation)" : "";
-		const profileInfo = options.profileId ? ` profile=${options.profileId}` : "";
-		logger.info(`[agent-ws] Triggered compliance scan for ${apiId}: ${profileType}${profileInfo}${remediationStatus}`);
+		const remediationStatus = options.enableRemediation
+			? " (with remediation)"
+			: "";
+		const profileInfo = options.profileId
+			? ` profile=${options.profileId}`
+			: "";
+		logger.info(
+			`[agent-ws] Triggered compliance scan for ${apiId}: ${profileType}${profileInfo}${remediationStatus}`,
+		);
 		return true;
 	}
 	return false;
@@ -356,7 +367,9 @@ function pushComplianceScan(apiId, profileType = "all", options = {}) {
 function pushUpgradeSSG(apiId) {
 	logger.info(`[agent-ws] pushUpgradeSSG called for api_id=${apiId}`);
 	const ws = apiIdToSocket.get(apiId);
-	logger.info(`[agent-ws] WebSocket found: ${!!ws}, readyState: ${ws?.readyState}, OPEN=${WebSocket.OPEN}`);
+	logger.info(
+		`[agent-ws] WebSocket found: ${!!ws}, readyState: ${ws?.readyState}, OPEN=${WebSocket.OPEN}`,
+	);
 	if (ws && ws.readyState === WebSocket.OPEN) {
 		const payload = JSON.stringify({ type: "upgrade_ssg" });
 		logger.info(`[agent-ws] Sending payload: ${payload}`);
@@ -369,7 +382,9 @@ function pushUpgradeSSG(apiId) {
 			return false;
 		}
 	}
-	logger.info(`[agent-ws] Cannot send SSG upgrade - WebSocket not ready for ${apiId}`);
+	logger.info(
+		`[agent-ws] Cannot send SSG upgrade - WebSocket not ready for ${apiId}`,
+	);
 	return false;
 }
 
@@ -386,11 +401,13 @@ function pushDockerImageScan(apiId, options = {}) {
 		const scanTarget = options.scanAllImages
 			? "all images"
 			: options.imageName
-			? `image: ${options.imageName}`
-			: options.containerName
-			? `container: ${options.containerName}`
-			: "unknown target";
-		logger.info(`[agent-ws] Triggered Docker image CVE scan for ${apiId}: ${scanTarget}`);
+				? `image: ${options.imageName}`
+				: options.containerName
+					? `container: ${options.containerName}`
+					: "unknown target";
+		logger.info(
+			`[agent-ws] Triggered Docker image CVE scan for ${apiId}: ${scanTarget}`,
+		);
 		return true;
 	}
 	return false;
@@ -520,7 +537,14 @@ function subscribeToConnectionChanges(apiId, callback) {
 
 // Handle compliance scan progress events from agent
 function handleComplianceProgressEvent(apiId, message) {
-	const { phase, profile_name, message: progressMessage, progress, error, timestamp } = message;
+	const {
+		phase,
+		profile_name,
+		message: progressMessage,
+		progress,
+		error,
+		timestamp,
+	} = message;
 
 	logger.info(
 		`[Compliance Progress] ${apiId}: ${phase} - ${progressMessage} (${progress}%)`,
@@ -631,7 +655,9 @@ function pushRemediateRule(apiId, ruleId) {
 			rule_id: ruleId,
 		};
 		safeSend(ws, JSON.stringify(payload));
-		logger.info(`[agent-ws] Triggered single rule remediation for ${apiId}: ${ruleId}`);
+		logger.info(
+			`[agent-ws] Triggered single rule remediation for ${apiId}: ${ruleId}`,
+		);
 		return true;
 	}
 	return false;

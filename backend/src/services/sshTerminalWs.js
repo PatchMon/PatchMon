@@ -6,7 +6,10 @@ const logger = require("../utils/logger");
 const WebSocket = require("ws");
 const { Client } = require("ssh2");
 const jwt = require("jsonwebtoken");
-const { validate_session, update_session_activity } = require("../utils/session_manager");
+const {
+	validate_session,
+	update_session_activity,
+} = require("../utils/session_manager");
 const { getPrismaClient } = require("../config/prisma");
 const { logAuditEvent } = require("../utils/auditLogger");
 const { redis } = require("./automation/shared/redis");
@@ -54,7 +57,7 @@ async function consumeSshTicket(ticket, expectedHostId) {
  * @param {Object} host - The target host
  * @returns {Promise<{allowed: boolean, reason: string}>}
  */
-async function checkSshAuthorization(user, host) {
+async function checkSshAuthorization(user, _host) {
 	// Admin role always has access (backward compatibility)
 	if (user.role === "admin") {
 		return { allowed: true, reason: "admin role" };
@@ -68,7 +71,7 @@ async function checkSshAuthorization(user, host) {
 	if (!rolePermissions) {
 		return {
 			allowed: false,
-			reason: `No permissions defined for role: ${user.role}`
+			reason: `No permissions defined for role: ${user.role}`,
 		};
 	}
 
@@ -77,7 +80,7 @@ async function checkSshAuthorization(user, host) {
 	if (!rolePermissions.can_manage_hosts) {
 		return {
 			allowed: false,
-			reason: "Missing can_manage_hosts permission"
+			reason: "Missing can_manage_hosts permission",
 		};
 	}
 
@@ -91,11 +94,13 @@ async function checkSshAuthorization(user, host) {
 async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 	try {
 		logger.info(`[ssh-terminal] Upgrade request received: ${pathname}`);
-		
+
 		// Parse path: /api/v1/ssh-terminal/{hostId}
 		const parts = pathname.split("/").filter(Boolean);
 		if (parts.length !== 4 || parts[2] !== "ssh-terminal") {
-			logger.info(`[ssh-terminal] Path does not match SSH terminal pattern: ${pathname}`);
+			logger.info(
+				`[ssh-terminal] Path does not match SSH terminal pattern: ${pathname}`,
+			);
 			return false; // Not an SSH terminal connection
 		}
 
@@ -105,7 +110,8 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 		// SECURITY: Prefer one-time tickets over tokens in URLs
 		// Tickets don't expose sensitive data in server logs or browser history
 		const ticket = request.url.match(/[?&]ticket=([^&]+)/)?.[1];
-		const token = request.url.match(/[?&]token=([^&]+)/)?.[1] ||
+		const token =
+			request.url.match(/[?&]token=([^&]+)/)?.[1] ||
 			request.headers.authorization?.replace("Bearer ", "");
 
 		let user;
@@ -113,11 +119,15 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 
 		if (ticket) {
 			// Preferred: Ticket-based authentication (one-time use, not logged in URLs)
-			logger.info(`[ssh-terminal] Using ticket authentication for host ${hostId}`);
+			logger.info(
+				`[ssh-terminal] Using ticket authentication for host ${hostId}`,
+			);
 
 			const ticketResult = await consumeSshTicket(ticket, hostId);
 			if (!ticketResult.valid) {
-				logger.info(`[ssh-terminal] Ticket validation failed for host ${hostId}: ${ticketResult.reason}`);
+				logger.info(
+					`[ssh-terminal] Ticket validation failed for host ${hostId}: ${ticketResult.reason}`,
+				);
 				socket.destroy();
 				return true;
 			}
@@ -125,29 +135,43 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 			// Get user from database using ticket data
 			const dbUser = await prisma.users.findUnique({
 				where: { id: ticketResult.userId },
-				select: { id: true, username: true, email: true, role: true, is_active: true },
+				select: {
+					id: true,
+					username: true,
+					email: true,
+					role: true,
+					is_active: true,
+				},
 			});
 
 			if (!dbUser || !dbUser.is_active) {
-				logger.info(`[ssh-terminal] User not found or inactive for host ${hostId}`);
+				logger.info(
+					`[ssh-terminal] User not found or inactive for host ${hostId}`,
+				);
 				socket.destroy();
 				return true;
 			}
 
 			user = dbUser;
 			sessionId = ticketResult.sessionId;
-			logger.info(`[ssh-terminal] Ticket authenticated user ${user.username} for host ${hostId}`);
-
+			logger.info(
+				`[ssh-terminal] Ticket authenticated user ${user.username} for host ${hostId}`,
+			);
 		} else if (token) {
 			// Legacy: Token-based authentication (less secure - token visible in URLs)
-			logger.info(`[ssh-terminal] Using legacy token authentication for host ${hostId}`);
+			logger.info(
+				`[ssh-terminal] Using legacy token authentication for host ${hostId}`,
+			);
 
 			// Verify token
 			let decoded;
 			try {
 				decoded = jwt.verify(token, process.env.JWT_SECRET);
 			} catch (err) {
-				logger.info(`[ssh-terminal] Token verification failed for host ${hostId}:`, err.message);
+				logger.info(
+					`[ssh-terminal] Token verification failed for host ${hostId}:`,
+					err.message,
+				);
 				socket.destroy();
 				return true;
 			}
@@ -157,14 +181,18 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 			if (decoded.purpose === "websocket") {
 				validation = await validate_session(decoded.sessionId, "");
 				if (!validation.valid) {
-					logger.info(`[ssh-terminal] WS token session validation failed for host ${hostId}`);
+					logger.info(
+						`[ssh-terminal] WS token session validation failed for host ${hostId}`,
+					);
 					socket.destroy();
 					return true;
 				}
 			} else {
 				validation = await validate_session(decoded.sessionId, token);
 				if (!validation.valid) {
-					logger.info(`[ssh-terminal] Session validation failed for host ${hostId}`);
+					logger.info(
+						`[ssh-terminal] Session validation failed for host ${hostId}`,
+					);
 					socket.destroy();
 					return true;
 				}
@@ -172,10 +200,13 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 
 			user = validation.user;
 			sessionId = decoded.sessionId;
-			logger.info(`[ssh-terminal] Token authenticated user ${user.username} for host ${hostId}`);
-
+			logger.info(
+				`[ssh-terminal] Token authenticated user ${user.username} for host ${hostId}`,
+			);
 		} else {
-			logger.info(`[ssh-terminal] No ticket or token provided for host ${hostId}`);
+			logger.info(
+				`[ssh-terminal] No ticket or token provided for host ${hostId}`,
+			);
 			socket.destroy();
 			return true;
 		}
@@ -194,13 +225,17 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 			return true;
 		}
 
-		logger.info(`[ssh-terminal] Host found: ${host.friendly_name || host.hostname} (${host.ip || host.hostname})`);
+		logger.info(
+			`[ssh-terminal] Host found: ${host.friendly_name || host.hostname} (${host.ip || host.hostname})`,
+		);
 
 		// Check user permissions to access SSH terminal for this host
 		const authCheck = await checkSshAuthorization(user, host);
 
 		if (!authCheck.allowed) {
-			logger.info(`[ssh-terminal] Access denied for user ${user.username} to host ${hostId}: ${authCheck.reason}`);
+			logger.info(
+				`[ssh-terminal] Access denied for user ${user.username} to host ${hostId}: ${authCheck.reason}`,
+			);
 
 			// Log the denied access attempt
 			await logAuditEvent({
@@ -212,16 +247,18 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 					hostId: host.id,
 					hostName: host.friendly_name || host.hostname,
 					reason: authCheck.reason,
-					userRole: user.role
+					userRole: user.role,
 				}),
-				success: false
+				success: false,
 			});
 
 			socket.destroy();
 			return true;
 		}
 
-		logger.info(`[ssh-terminal] Access granted for user ${user.username} to host ${hostId}: ${authCheck.reason}`);
+		logger.info(
+			`[ssh-terminal] Access granted for user ${user.username} to host ${hostId}: ${authCheck.reason}`,
+		);
 
 		// Log the successful access
 		await logAuditEvent({
@@ -233,200 +270,244 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 				hostId: host.id,
 				hostName: host.friendly_name || host.hostname,
 				reason: authCheck.reason,
-				userRole: user.role
+				userRole: user.role,
 			}),
-			success: true
+			success: true,
 		});
 
 		// Create WebSocket connection using noServer mode
 		const wss = new WebSocket.Server({ noServer: true });
-		
+
 		try {
 			wss.handleUpgrade(request, socket, head, (ws) => {
-			let sshClient = null;
-			let sshStream = null;
+				let sshClient = null;
+				let sshStream = null;
 
-			logger.info(`[ssh-terminal] User ${user.username} connecting to host ${host.friendly_name} (${host.id})`);
+				logger.info(
+					`[ssh-terminal] User ${user.username} connecting to host ${host.friendly_name} (${host.id})`,
+				);
 
-			ws.on("message", async (message) => {
-				try {
-					const data = JSON.parse(message.toString());
+				ws.on("message", async (message) => {
+					try {
+						const data = JSON.parse(message.toString());
 
-					if (data.type === "connect") {
-						// Initialize SSH connection
-						if (sshClient) {
-							ws.send(JSON.stringify({ type: "error", message: "Already connected" }));
-							return;
-						}
+						if (data.type === "connect") {
+							// Initialize SSH connection
+							if (sshClient) {
+								ws.send(
+									JSON.stringify({
+										type: "error",
+										message: "Already connected",
+									}),
+								);
+								return;
+							}
 
-						sshClient = new Client();
+							sshClient = new Client();
 
-						sshClient.on("ready", () => {
-							logger.info(`[ssh-terminal] SSH connection established to ${host.friendly_name}`);
-							ws.send(JSON.stringify({ type: "connected" }));
+							sshClient.on("ready", () => {
+								logger.info(
+									`[ssh-terminal] SSH connection established to ${host.friendly_name}`,
+								);
+								ws.send(JSON.stringify({ type: "connected" }));
 
-							// Open shell session
-							sshClient.shell(
-								{
-									term: data.terminal || "xterm-256color",
-									cols: data.cols || 80,
-									rows: data.rows || 24,
-								},
-								(err, stream) => {
-									if (err) {
-										ws.send(JSON.stringify({ type: "error", message: err.message }));
-										return;
-									}
-
-									sshStream = stream;
-
-									// Forward SSH output to WebSocket
-									stream.on("data", (chunk) => {
-										if (ws.readyState === WebSocket.OPEN) {
-											ws.send(JSON.stringify({
-												type: "data",
-												data: chunk.toString(),
-											}));
+								// Open shell session
+								sshClient.shell(
+									{
+										term: data.terminal || "xterm-256color",
+										cols: data.cols || 80,
+										rows: data.rows || 24,
+									},
+									(err, stream) => {
+										if (err) {
+											ws.send(
+												JSON.stringify({ type: "error", message: err.message }),
+											);
+											return;
 										}
-									});
 
-									stream.on("close", () => {
-										logger.info(`[ssh-terminal] SSH stream closed for ${host.friendly_name}`);
-										if (ws.readyState === WebSocket.OPEN) {
-											ws.send(JSON.stringify({ type: "closed" }));
-										}
-										if (sshClient) {
-											sshClient.end();
-										}
-									});
+										sshStream = stream;
 
-									stream.stderr.on("data", (chunk) => {
-										if (ws.readyState === WebSocket.OPEN) {
-											ws.send(JSON.stringify({
-												type: "error",
-												message: chunk.toString(),
-											}));
-										}
-									});
-								},
-							);
-						});
+										// Forward SSH output to WebSocket
+										stream.on("data", (chunk) => {
+											if (ws.readyState === WebSocket.OPEN) {
+												ws.send(
+													JSON.stringify({
+														type: "data",
+														data: chunk.toString(),
+													}),
+												);
+											}
+										});
 
-						sshClient.on("error", (err) => {
-							logger.error(`[ssh-terminal] SSH error for ${host.friendly_name}:`, err);
-							logger.error(`[ssh-terminal] SSH error details:`, {
-								message: err.message,
-								code: err.code,
-								level: err.level,
-								stack: err.stack,
+										stream.on("close", () => {
+											logger.info(
+												`[ssh-terminal] SSH stream closed for ${host.friendly_name}`,
+											);
+											if (ws.readyState === WebSocket.OPEN) {
+												ws.send(JSON.stringify({ type: "closed" }));
+											}
+											if (sshClient) {
+												sshClient.end();
+											}
+										});
+
+										stream.stderr.on("data", (chunk) => {
+											if (ws.readyState === WebSocket.OPEN) {
+												ws.send(
+													JSON.stringify({
+														type: "error",
+														message: chunk.toString(),
+													}),
+												);
+											}
+										});
+									},
+								);
 							});
-							if (ws.readyState === WebSocket.OPEN) {
-								ws.send(JSON.stringify({
-									type: "error",
-									message: err.message || "SSH connection error",
-								}));
+
+							sshClient.on("error", (err) => {
+								logger.error(
+									`[ssh-terminal] SSH error for ${host.friendly_name}:`,
+									err,
+								);
+								logger.error(`[ssh-terminal] SSH error details:`, {
+									message: err.message,
+									code: err.code,
+									level: err.level,
+									stack: err.stack,
+								});
+								if (ws.readyState === WebSocket.OPEN) {
+									ws.send(
+										JSON.stringify({
+											type: "error",
+											message: err.message || "SSH connection error",
+										}),
+									);
+								}
+								// Clean up on error
+								sshClient = null;
+								sshStream = null;
+							});
+
+							sshClient.on("close", () => {
+								logger.info(
+									`[ssh-terminal] SSH connection closed for ${host.friendly_name}`,
+								);
+								sshClient = null;
+								sshStream = null;
+							});
+
+							// Connect to SSH server
+							// Use host's IP address and default SSH port
+							// User provides credentials (password or SSH key) via WebSocket message
+							const sshConfig = {
+								host: host.ip || host.hostname,
+								port: data.port || 22,
+								username: data.username || "root",
+								readyTimeout: 20000,
+							};
+
+							// If password provided in connect request
+							if (data.password) {
+								sshConfig.password = data.password;
 							}
-							// Clean up on error
+
+							// If private key provided
+							if (data.privateKey) {
+								sshConfig.privateKey = data.privateKey;
+								if (data.passphrase) {
+									sshConfig.passphrase = data.passphrase;
+								}
+								// When using private key, prefer key auth over password
+								sshConfig.tryKeyboard = false;
+							}
+
+							logger.info(
+								`[ssh-terminal] Connecting to ${sshConfig.host}:${sshConfig.port} as ${sshConfig.username} using ${data.privateKey ? "private key" : "password"} authentication`,
+							);
+							sshClient.connect(sshConfig);
+						} else if (data.type === "input") {
+							// Send input to SSH session
+							if (sshStream?.writable) {
+								sshStream.write(data.data);
+							}
+						} else if (data.type === "resize") {
+							// Resize terminal
+							if (sshStream?.setWindow) {
+								sshStream.setWindow(data.rows || 24, data.cols || 80);
+							}
+						} else if (data.type === "disconnect") {
+							// Disconnect SSH session
+							if (sshClient) {
+								try {
+									sshClient.end();
+								} catch (err) {
+									logger.error(
+										`[ssh-terminal] Error disconnecting SSH client:`,
+										err,
+									);
+								}
+							}
 							sshClient = null;
 							sshStream = null;
-						});
-
-						sshClient.on("close", () => {
-							logger.info(`[ssh-terminal] SSH connection closed for ${host.friendly_name}`);
-							sshClient = null;
-							sshStream = null;
-						});
-
-						// Connect to SSH server
-						// Use host's IP address and default SSH port
-						// User provides credentials (password or SSH key) via WebSocket message
-						const sshConfig = {
-							host: host.ip || host.hostname,
-							port: data.port || 22,
-							username: data.username || "root",
-							readyTimeout: 20000,
-						};
-
-						// If password provided in connect request
-						if (data.password) {
-							sshConfig.password = data.password;
 						}
-
-						// If private key provided
-						if (data.privateKey) {
-							sshConfig.privateKey = data.privateKey;
-							if (data.passphrase) {
-								sshConfig.passphrase = data.passphrase;
-							}
-							// When using private key, prefer key auth over password
-							sshConfig.tryKeyboard = false;
-						}
-
-						logger.info(`[ssh-terminal] Connecting to ${sshConfig.host}:${sshConfig.port} as ${sshConfig.username} using ${data.privateKey ? 'private key' : 'password'} authentication`);
-						sshClient.connect(sshConfig);
-					} else if (data.type === "input") {
-						// Send input to SSH session
-						if (sshStream && sshStream.writable) {
-							sshStream.write(data.data);
-						}
-					} else if (data.type === "resize") {
-						// Resize terminal
-						if (sshStream && sshStream.setWindow) {
-							sshStream.setWindow(data.rows || 24, data.cols || 80);
-						}
-					} else if (data.type === "disconnect") {
-						// Disconnect SSH session
-						if (sshClient) {
-							try {
-								sshClient.end();
-							} catch (err) {
-								logger.error(`[ssh-terminal] Error disconnecting SSH client:`, err);
-							}
-						}
-						sshClient = null;
-						sshStream = null;
-					}
-				} catch (err) {
-					logger.error("[ssh-terminal] Error handling message:", err);
-					if (ws.readyState === WebSocket.OPEN) {
-						ws.send(JSON.stringify({
-							type: "error",
-							message: err.message || "Internal error",
-						}));
-					}
-				}
-			});
-
-			ws.on("close", () => {
-				logger.info(`[ssh-terminal] WebSocket closed for ${host.friendly_name}`);
-				if (sshClient) {
-					try {
-						sshClient.end();
 					} catch (err) {
-						logger.error(`[ssh-terminal] Error closing SSH client:`, err);
+						logger.error("[ssh-terminal] Error handling message:", err);
+						if (ws.readyState === WebSocket.OPEN) {
+							ws.send(
+								JSON.stringify({
+									type: "error",
+									message: err.message || "Internal error",
+								}),
+							);
+						}
 					}
-				}
-				sshClient = null;
-				sshStream = null;
+				});
+
+				ws.on("close", () => {
+					logger.info(
+						`[ssh-terminal] WebSocket closed for ${host.friendly_name}`,
+					);
+					if (sshClient) {
+						try {
+							sshClient.end();
+						} catch (err) {
+							logger.error(`[ssh-terminal] Error closing SSH client:`, err);
+						}
+					}
+					sshClient = null;
+					sshStream = null;
+				});
+
+				ws.on("error", (err) => {
+					logger.error(
+						`[ssh-terminal] WebSocket error for ${host.friendly_name}:`,
+						err,
+					);
+					if (sshClient) {
+						try {
+							sshClient.end();
+						} catch (closeErr) {
+							logger.error(
+								`[ssh-terminal] Error closing SSH client:`,
+								closeErr,
+							);
+						}
+					}
+					sshClient = null;
+					sshStream = null;
+				});
 			});
 
-			ws.on("error", (err) => {
-				logger.error(`[ssh-terminal] WebSocket error for ${host.friendly_name}:`, err);
-				if (sshClient) {
-					try {
-						sshClient.end();
-					} catch (closeErr) {
-						logger.error(`[ssh-terminal] Error closing SSH client:`, closeErr);
-					}
-				}
-				sshClient = null;
-				sshStream = null;
-			});
-		});
-		
-		logger.info(`[ssh-terminal] WebSocket upgrade completed for host ${host.friendly_name}`);
+			logger.info(
+				`[ssh-terminal] WebSocket upgrade completed for host ${host.friendly_name}`,
+			);
 		} catch (upgradeErr) {
-			logger.error(`[ssh-terminal] Failed to handle upgrade for host ${host.friendly_name}:`, upgradeErr);
+			logger.error(
+				`[ssh-terminal] Failed to handle upgrade for host ${host.friendly_name}:`,
+				upgradeErr,
+			);
 			socket.destroy();
 			return true;
 		}
@@ -450,4 +531,3 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 }
 
 module.exports = { handleSshTerminalUpgrade };
-

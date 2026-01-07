@@ -37,7 +37,9 @@ function sanitizeBodyForLogging(body) {
 
 	for (const key of Object.keys(sanitized)) {
 		const lowerKey = key.toLowerCase();
-		if (sensitiveFields.some((field) => lowerKey.includes(field.toLowerCase()))) {
+		if (
+			sensitiveFields.some((field) => lowerKey.includes(field.toLowerCase()))
+		) {
 			sanitized[key] = "[REDACTED]";
 		} else if (typeof sanitized[key] === "object" && sanitized[key] !== null) {
 			sanitized[key] = sanitizeBodyForLogging(sanitized[key]);
@@ -814,7 +816,10 @@ router.post("/collect", async (req, res) => {
 		logger.error("Error collecting Docker data:", error);
 		logger.error("Error stack:", error.stack);
 		// Sanitize request body before logging to prevent credential exposure
-		logger.error("Request body (sanitized):", JSON.stringify(sanitizeBodyForLogging(req.body), null, 2));
+		logger.error(
+			"Request body (sanitized):",
+			JSON.stringify(sanitizeBodyForLogging(req.body), null, 2),
+		);
 		res.status(500).json({
 			error: "Failed to collect Docker data",
 			message: error.message,

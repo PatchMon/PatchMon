@@ -13,31 +13,36 @@ const router = express.Router();
 const BULL_BOARD_TICKET_PREFIX = "bullboard:ticket:";
 const BULL_BOARD_TICKET_TTL = 30; // 30 seconds - very short-lived
 
-router.post("/bullboard-ticket", authenticateToken, requireAdmin, async (req, res) => {
-	try {
-		// Generate a random ticket
-		const ticket = crypto.randomBytes(32).toString("hex");
-		const key = `${BULL_BOARD_TICKET_PREFIX}${ticket}`;
+router.post(
+	"/bullboard-ticket",
+	authenticateToken,
+	requireAdmin,
+	async (req, res) => {
+		try {
+			// Generate a random ticket
+			const ticket = crypto.randomBytes(32).toString("hex");
+			const key = `${BULL_BOARD_TICKET_PREFIX}${ticket}`;
 
-		// Store ticket data in Redis with short TTL
-		const ticketData = JSON.stringify({
-			userId: req.user.id,
-			sessionId: req.session_id,
-			role: req.user.role,
-			createdAt: Date.now(),
-		});
+			// Store ticket data in Redis with short TTL
+			const ticketData = JSON.stringify({
+				userId: req.user.id,
+				sessionId: req.session_id,
+				role: req.user.role,
+				createdAt: Date.now(),
+			});
 
-		await redis.setex(key, BULL_BOARD_TICKET_TTL, ticketData);
+			await redis.setex(key, BULL_BOARD_TICKET_TTL, ticketData);
 
-		res.json({
-			ticket: ticket,
-			expiresIn: BULL_BOARD_TICKET_TTL,
-		});
-	} catch (error) {
-		logger.error("Bull Board ticket generation error:", error);
-		res.status(500).json({ error: "Failed to generate Bull Board ticket" });
-	}
-});
+			res.json({
+				ticket: ticket,
+				expiresIn: BULL_BOARD_TICKET_TTL,
+			});
+		} catch (error) {
+			logger.error("Bull Board ticket generation error:", error);
+			res.status(500).json({ error: "Failed to generate Bull Board ticket" });
+		}
+	},
+);
 
 // Validate and consume Bull Board ticket (exported for use in server.js)
 async function consumeBullBoardTicket(ticket) {
@@ -70,7 +75,7 @@ async function consumeBullBoardTicket(ticket) {
 			sessionId: ticketData.sessionId,
 			role: ticketData.role,
 		};
-	} catch (error) {
+	} catch (_error) {
 		return { valid: false, reason: "Failed to parse ticket data" };
 	}
 }
