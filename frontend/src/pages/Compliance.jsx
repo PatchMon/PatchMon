@@ -463,10 +463,10 @@ const Compliance = () => {
 						<div className="flex-1 h-px bg-secondary-700" />
 					</div>
 
-					{/* Compact Overview Card */}
+					{/* Combined Overview Card */}
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-5">
-						<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-6">
-							{/* Hosts Scanned */}
+						{/* Host Compliance Status Row */}
+						<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-6 mb-6">
 							<div className="text-center">
 								<div className="flex items-center justify-center gap-2 mb-2">
 									<Server className="h-4 w-4 text-secondary-400" />
@@ -475,8 +475,6 @@ const Compliance = () => {
 								<p className="text-3xl font-bold text-white">{filteredSummary.total_hosts || 0}</p>
 								<p className="text-xs text-secondary-500 mt-1">scanned</p>
 							</div>
-
-							{/* Average Score */}
 							<div className="text-center">
 								<div className="flex items-center justify-center gap-2 mb-2">
 									<TrendingUp className="h-4 w-4 text-secondary-400" />
@@ -488,8 +486,6 @@ const Compliance = () => {
 								}`}>{filteredSummary.average_score?.toFixed(1) || 0}%</p>
 								<p className="text-xs text-secondary-500 mt-1">compliance</p>
 							</div>
-
-							{/* Compliant */}
 							<div className="text-center">
 								<div className="flex items-center justify-center gap-2 mb-2">
 									<ShieldCheck className="h-4 w-4 text-green-400" />
@@ -498,8 +494,6 @@ const Compliance = () => {
 								<p className="text-3xl font-bold text-green-400">{summary?.compliant || 0}</p>
 								<p className="text-xs text-secondary-500 mt-1">≥80% score</p>
 							</div>
-
-							{/* Warning */}
 							<div className="text-center">
 								<div className="flex items-center justify-center gap-2 mb-2">
 									<ShieldAlert className="h-4 w-4 text-yellow-400" />
@@ -508,8 +502,6 @@ const Compliance = () => {
 								<p className="text-3xl font-bold text-yellow-400">{summary?.warning || 0}</p>
 								<p className="text-xs text-secondary-500 mt-1">60-80% score</p>
 							</div>
-
-							{/* Critical */}
 							<div className="text-center">
 								<div className="flex items-center justify-center gap-2 mb-2">
 									<ShieldX className="h-4 w-4 text-red-400" />
@@ -518,8 +510,6 @@ const Compliance = () => {
 								<p className="text-3xl font-bold text-red-400">{summary?.critical || 0}</p>
 								<p className="text-xs text-secondary-500 mt-1">&lt;60% score</p>
 							</div>
-
-							{/* Not Scanned */}
 							<div className="text-center">
 								<div className="flex items-center justify-center gap-2 mb-2">
 									<ShieldOff className="h-4 w-4 text-secondary-500" />
@@ -530,154 +520,106 @@ const Compliance = () => {
 							</div>
 						</div>
 
-						{/* Rules Summary Bar */}
-						{summary?.total_rules > 0 && (
-							<div className="mt-6 pt-5 border-t border-secondary-700">
-								<div className="flex items-center justify-between mb-3">
-									<span className="text-sm text-secondary-400">Rules Evaluated</span>
-									<span className="text-sm font-medium text-white">{summary.total_rules?.toLocaleString()}</span>
-								</div>
-								<div className="flex items-center gap-4 text-sm">
-									<div className="flex items-center gap-2">
-										<div className="w-3 h-3 rounded-full bg-green-500" />
-										<span className="text-green-400">{summary.total_passed_rules?.toLocaleString()} passed</span>
-									</div>
-									<div className="flex items-center gap-2">
-										<div className="w-3 h-3 rounded-full bg-red-500" />
-										<span className="text-red-400">{summary.total_failed_rules?.toLocaleString()} failed</span>
-									</div>
-									<div className="flex items-center gap-2 ml-auto">
-										<span className="text-secondary-400">Pass Rate:</span>
-										<span className="font-bold text-white">
-											{((summary.total_passed_rules / summary.total_rules) * 100).toFixed(1)}%
-										</span>
-									</div>
-								</div>
-								{/* Visual progress bar */}
-								<div className="mt-2 h-2 bg-secondary-700 rounded-full overflow-hidden flex">
-									<div
-										className="h-full bg-green-500 transition-all"
-										style={{ width: `${(summary.total_passed_rules / summary.total_rules) * 100}%` }}
-									/>
-									<div
-										className="h-full bg-red-500 transition-all"
-										style={{ width: `${(summary.total_failed_rules / summary.total_rules) * 100}%` }}
-									/>
-								</div>
-							</div>
-						)}
-					</div>
-				</>
-			)}
-
-			{/* ==================== SCAN TYPE BREAKDOWN SECTION ==================== */}
-			{profileTypeFilter === "all" && (openscapStats || dockerBenchStats) && (
-				<>
-					<div className="flex items-center gap-3 pt-4">
-						<div className="flex items-center gap-2">
-							<Shield className="h-5 w-5 text-primary-400" />
-							<h2 className="text-lg font-semibold text-white">Scan Type Breakdown</h2>
-						</div>
-						<div className="flex-1 h-px bg-secondary-700" />
-					</div>
-
-					<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-						{/* OpenSCAP Detail Card */}
-						<div className={`bg-secondary-800 rounded-lg border-2 overflow-hidden ${openscapStats ? "border-green-700/50" : "border-secondary-700 opacity-50"}`}>
-							{/* Header with badge */}
-							<div className="px-4 py-3 bg-green-900/20 border-b border-green-700/30 flex items-center justify-between">
-								<div className="flex items-center gap-2">
-									<span className="px-2 py-1 bg-green-500/20 text-green-400 text-xs font-bold rounded-full border border-green-500/30">
+						{/* Scan Type Breakdown */}
+						<div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-5 border-t border-secondary-700">
+							{/* OpenSCAP Summary */}
+							<div className="bg-green-900/10 rounded-lg p-4 border border-green-700/30">
+								<div className="flex items-center gap-2 mb-3">
+									<span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs font-bold rounded-full border border-green-500/30">
 										OpenSCAP
 									</span>
-									<span className="text-white font-medium">CIS Benchmark</span>
+									<span className="text-secondary-400 text-sm">CIS Benchmark</span>
+									{openscapStats?.average_score != null && (
+										<span className={`ml-auto text-lg font-bold ${
+											openscapStats.average_score >= 80 ? "text-green-400" :
+											openscapStats.average_score >= 60 ? "text-yellow-400" : "text-red-400"
+										}`}>
+											{Math.round(openscapStats.average_score)}%
+										</span>
+									)}
 								</div>
-								{openscapStats?.average_score != null && (
-									<span className={`text-2xl font-bold ${
-										openscapStats.average_score >= 80 ? "text-green-400" :
-										openscapStats.average_score >= 60 ? "text-yellow-400" : "text-red-400"
-									}`}>
-										{Math.round(openscapStats.average_score)}%
-									</span>
+								{openscapStats ? (
+									<>
+										<div className="grid grid-cols-4 gap-2 text-center text-sm">
+											<div>
+												<p className="text-xl font-bold text-white">{openscapStats.hosts_scanned}</p>
+												<p className="text-xs text-secondary-400">Hosts</p>
+											</div>
+											<div>
+												<p className="text-xl font-bold text-green-400">{openscapStats.total_passed?.toLocaleString()}</p>
+												<p className="text-xs text-green-400">Passed</p>
+											</div>
+											<div>
+												<p className="text-xl font-bold text-red-400">{openscapStats.total_failed?.toLocaleString()}</p>
+												<p className="text-xs text-red-400">Failed</p>
+											</div>
+											<div>
+												<p className="text-xl font-bold text-white">{openscapStats.total_rules?.toLocaleString()}</p>
+												<p className="text-xs text-secondary-400">Total</p>
+											</div>
+										</div>
+										{/* Progress bar */}
+										<div className="mt-3 h-1.5 bg-secondary-700 rounded-full overflow-hidden flex">
+											<div className="h-full bg-green-500" style={{ width: `${(openscapStats.total_passed / openscapStats.total_rules) * 100}%` }} />
+											<div className="h-full bg-red-500" style={{ width: `${(openscapStats.total_failed / openscapStats.total_rules) * 100}%` }} />
+										</div>
+									</>
+								) : (
+									<p className="text-secondary-500 text-sm">No OpenSCAP scans yet</p>
 								)}
 							</div>
-							{openscapStats ? (
-								<div className="p-4">
-									<div className="grid grid-cols-4 gap-4 text-center">
-										<div>
-											<p className="text-2xl font-bold text-white">{openscapStats.hosts_scanned}</p>
-											<p className="text-xs text-secondary-400">Hosts</p>
-										</div>
-										<div>
-											<p className="text-2xl font-bold text-white">{openscapStats.total_rules?.toLocaleString()}</p>
-											<p className="text-xs text-secondary-400">Rules</p>
-										</div>
-										<div>
-											<p className="text-2xl font-bold text-green-400">{openscapStats.total_passed?.toLocaleString()}</p>
-											<p className="text-xs text-green-400">Passed</p>
-										</div>
-										<div>
-											<p className="text-2xl font-bold text-red-400">{openscapStats.total_failed?.toLocaleString()}</p>
-											<p className="text-xs text-red-400">Failed</p>
-										</div>
-									</div>
-								</div>
-							) : (
-								<div className="p-4">
-									<p className="text-secondary-500 text-sm text-center">No OpenSCAP scans yet</p>
-								</div>
-							)}
-						</div>
 
-						{/* Docker Bench Detail Card */}
-						<div className={`bg-secondary-800 rounded-lg border-2 overflow-hidden ${dockerBenchStats ? "border-blue-700/50" : "border-secondary-700 opacity-50"}`}>
-							{/* Header with badge */}
-							<div className="px-4 py-3 bg-blue-900/20 border-b border-blue-700/30 flex items-center justify-between">
-								<div className="flex items-center gap-2">
-									<span className="px-2 py-1 bg-blue-500/20 text-blue-400 text-xs font-bold rounded-full border border-blue-500/30">
+							{/* Docker Bench Summary */}
+							<div className="bg-blue-900/10 rounded-lg p-4 border border-blue-700/30">
+								<div className="flex items-center gap-2 mb-3">
+									<span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs font-bold rounded-full border border-blue-500/30">
 										Docker Bench
 									</span>
-									<span className="text-white font-medium">Container Security</span>
+									<span className="text-secondary-400 text-sm">Container Security</span>
+									{dockerBenchStats?.average_score != null && (
+										<span className={`ml-auto text-lg font-bold ${
+											dockerBenchStats.average_score >= 80 ? "text-green-400" :
+											dockerBenchStats.average_score >= 60 ? "text-yellow-400" : "text-red-400"
+										}`}>
+											{Math.round(dockerBenchStats.average_score)}%
+										</span>
+									)}
 								</div>
-								{dockerBenchStats?.average_score != null && (
-									<span className={`text-2xl font-bold ${
-										dockerBenchStats.average_score >= 80 ? "text-green-400" :
-										dockerBenchStats.average_score >= 60 ? "text-yellow-400" : "text-red-400"
-									}`}>
-										{Math.round(dockerBenchStats.average_score)}%
-									</span>
+								{dockerBenchStats ? (
+									<>
+										<div className="grid grid-cols-4 gap-2 text-center text-sm">
+											<div>
+												<p className="text-xl font-bold text-white">{dockerBenchStats.hosts_scanned}</p>
+												<p className="text-xs text-secondary-400">Hosts</p>
+											</div>
+											<div>
+												<p className="text-xl font-bold text-green-400">{dockerBenchStats.total_passed?.toLocaleString()}</p>
+												<p className="text-xs text-green-400">Passed</p>
+											</div>
+											<div>
+												<p className="text-xl font-bold text-yellow-400">{dockerBenchStats.total_warnings?.toLocaleString()}</p>
+												<p className="text-xs text-yellow-400">Warnings</p>
+											</div>
+											<div>
+												<p className="text-xl font-bold text-white">{dockerBenchStats.total_rules?.toLocaleString()}</p>
+												<p className="text-xs text-secondary-400">Total</p>
+											</div>
+										</div>
+										{/* Progress bar */}
+										<div className="mt-3 h-1.5 bg-secondary-700 rounded-full overflow-hidden flex">
+											<div className="h-full bg-green-500" style={{ width: `${(dockerBenchStats.total_passed / dockerBenchStats.total_rules) * 100}%` }} />
+											<div className="h-full bg-yellow-500" style={{ width: `${(dockerBenchStats.total_warnings / dockerBenchStats.total_rules) * 100}%` }} />
+										</div>
+									</>
+								) : (
+									<p className="text-secondary-500 text-sm">No Docker Bench scans yet</p>
 								)}
 							</div>
-							{dockerBenchStats ? (
-								<div className="p-4">
-									<div className="grid grid-cols-4 gap-4 text-center">
-										<div>
-											<p className="text-2xl font-bold text-white">{dockerBenchStats.hosts_scanned}</p>
-											<p className="text-xs text-secondary-400">Hosts</p>
-										</div>
-										<div>
-											<p className="text-2xl font-bold text-white">{dockerBenchStats.total_rules?.toLocaleString()}</p>
-											<p className="text-xs text-secondary-400">Rules</p>
-										</div>
-										<div>
-											<p className="text-2xl font-bold text-green-400">{dockerBenchStats.total_passed?.toLocaleString()}</p>
-											<p className="text-xs text-green-400">Passed</p>
-										</div>
-										<div>
-											<p className="text-2xl font-bold text-yellow-400">{dockerBenchStats.total_warnings?.toLocaleString()}</p>
-											<p className="text-xs text-yellow-400">Warnings</p>
-										</div>
-									</div>
-								</div>
-							) : (
-								<div className="p-4">
-									<p className="text-secondary-500 text-sm text-center">No Docker Bench scans yet</p>
-								</div>
-							)}
 						</div>
 					</div>
 				</>
 			)}
+
 
 			{/* ==================== SPECIFIC SCAN TYPE STATS (OpenSCAP or Docker Bench tabs) ==================== */}
 			{profileTypeFilter !== "all" && filteredSummary && (
@@ -766,14 +708,37 @@ const Compliance = () => {
 					{ name: "Not Scanned", value: summary.unscanned || 0, color: "#6b7280" },
 				].filter(d => d.value > 0);
 
-				// Score ranges for bar chart - all scans
-				const scoreRanges = [
-					{ range: "90-100%", count: filteredScans?.filter(s => s.score >= 90).length || 0, color: "#22c55e" },
-					{ range: "80-89%", count: filteredScans?.filter(s => s.score >= 80 && s.score < 90).length || 0, color: "#84cc16" },
-					{ range: "70-79%", count: filteredScans?.filter(s => s.score >= 70 && s.score < 80).length || 0, color: "#eab308" },
-					{ range: "60-69%", count: filteredScans?.filter(s => s.score >= 60 && s.score < 70).length || 0, color: "#f97316" },
-					{ range: "<60%", count: filteredScans?.filter(s => s.score < 60).length || 0, color: "#ef4444" },
+				// OpenSCAP scans for score distribution
+				const openscapScans = recent_scans?.filter(s => s.compliance_profiles?.type === "openscap") || [];
+				const openscapScoreRanges = [
+					{ range: "90-100%", count: openscapScans.filter(s => s.score >= 90).length, color: "#22c55e" },
+					{ range: "80-89%", count: openscapScans.filter(s => s.score >= 80 && s.score < 90).length, color: "#84cc16" },
+					{ range: "70-79%", count: openscapScans.filter(s => s.score >= 70 && s.score < 80).length, color: "#eab308" },
+					{ range: "60-69%", count: openscapScans.filter(s => s.score >= 60 && s.score < 70).length, color: "#f97316" },
+					{ range: "<60%", count: openscapScans.filter(s => s.score < 60).length, color: "#ef4444" },
 				];
+
+				// Docker Bench scans for score distribution
+				const dockerScans = recent_scans?.filter(s => s.compliance_profiles?.type === "docker-bench") || [];
+				const dockerScoreRanges = [
+					{ range: "90-100%", count: dockerScans.filter(s => s.score >= 90).length, color: "#22c55e" },
+					{ range: "80-89%", count: dockerScans.filter(s => s.score >= 80 && s.score < 90).length, color: "#84cc16" },
+					{ range: "70-79%", count: dockerScans.filter(s => s.score >= 70 && s.score < 80).length, color: "#eab308" },
+					{ range: "60-69%", count: dockerScans.filter(s => s.score >= 60 && s.score < 70).length, color: "#f97316" },
+					{ range: "<60%", count: dockerScans.filter(s => s.score < 60).length, color: "#ef4444" },
+				];
+
+				// OpenSCAP rule breakdown (pass/fail)
+				const openscapRuleData = openscapStats ? [
+					{ name: "Passed", value: openscapStats.total_passed || 0, color: "#22c55e" },
+					{ name: "Failed", value: openscapStats.total_failed || 0, color: "#ef4444" },
+				].filter(d => d.value > 0) : [];
+
+				// Docker Bench rule breakdown (pass/warn)
+				const dockerRuleData = dockerBenchStats ? [
+					{ name: "Passed", value: dockerBenchStats.total_passed || 0, color: "#22c55e" },
+					{ name: "Warnings", value: dockerBenchStats.total_warnings || 0, color: "#eab308" },
+				].filter(d => d.value > 0) : [];
 
 				return (
 					<>
@@ -784,81 +749,208 @@ const Compliance = () => {
 						</div>
 						<div className="flex-1 h-px bg-secondary-700" />
 					</div>
+
+					{/* Host Compliance Distribution */}
+					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
+						<h3 className="text-white font-medium mb-4 flex items-center gap-2">
+							<PieChartIcon className="h-4 w-4 text-primary-400" />
+							Host Compliance Status
+						</h3>
+						<div className="h-48">
+							<ResponsiveContainer width="100%" height="100%">
+								<PieChart>
+									<Pie
+										data={hostDistribution}
+										cx="50%"
+										cy="50%"
+										innerRadius={50}
+										outerRadius={80}
+										dataKey="value"
+										label={({ name, value }) => `${value}`}
+										labelLine={false}
+									>
+										{hostDistribution.map((entry, index) => (
+											<Cell key={`cell-${index}`} fill={entry.color} />
+										))}
+									</Pie>
+									<Tooltip
+										contentStyle={{
+											backgroundColor: "#1f2937",
+											border: "1px solid #374151",
+											borderRadius: "0.5rem",
+										}}
+										formatter={(value, name) => [value, name]}
+									/>
+								</PieChart>
+							</ResponsiveContainer>
+						</div>
+						<div className="flex flex-wrap justify-center gap-4 mt-2">
+							{hostDistribution.map((entry) => (
+								<div key={entry.name} className="flex items-center gap-2 text-sm">
+									<div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color }} />
+									<span className="text-secondary-400">{entry.name}: {entry.value}</span>
+								</div>
+							))}
+						</div>
+					</div>
+
+					{/* Scan Type Analysis - Side by Side */}
 					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-						{/* Host Compliance Distribution - Combined view */}
-						<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
-							<h3 className="text-white font-medium mb-4 flex items-center gap-2">
-								<PieChartIcon className="h-4 w-4 text-primary-400" />
-								Host Compliance Status (All Scan Types)
-							</h3>
-							<div className="h-48">
-								<ResponsiveContainer width="100%" height="100%">
-									<PieChart>
-										<Pie
-											data={hostDistribution}
-											cx="50%"
-											cy="50%"
-											innerRadius={40}
-											outerRadius={70}
-											dataKey="value"
-											label={({ name, value }) => `${value}`}
-											labelLine={false}
-										>
-											{hostDistribution.map((entry, index) => (
-												<Cell key={`cell-${index}`} fill={entry.color} />
-											))}
-										</Pie>
-										<Tooltip
-											contentStyle={{
-												backgroundColor: "#1f2937",
-												border: "1px solid #374151",
-												borderRadius: "0.5rem",
-											}}
-											formatter={(value, name) => [value, name]}
-										/>
-									</PieChart>
-								</ResponsiveContainer>
+						{/* OpenSCAP Analysis */}
+						<div className="bg-secondary-800 rounded-lg border border-green-700/50 overflow-hidden">
+							<div className="px-4 py-3 bg-green-900/20 border-b border-green-700/30 flex items-center gap-2">
+								<span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs font-bold rounded-full border border-green-500/30">
+									OpenSCAP
+								</span>
+								<span className="text-white font-medium text-sm">CIS Benchmark Analysis</span>
 							</div>
-							<div className="flex flex-wrap justify-center gap-4 mt-2">
-								{hostDistribution.map((entry) => (
-									<div key={entry.name} className="flex items-center gap-2 text-sm">
-										<div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color }} />
-										<span className="text-secondary-400">{entry.name}: {entry.value}</span>
+							<div className="p-4">
+								{openscapStats && openscapRuleData.length > 0 ? (
+									<>
+										{/* Rule Distribution Pie */}
+										<div className="h-40">
+											<ResponsiveContainer width="100%" height="100%">
+												<PieChart>
+													<Pie
+														data={openscapRuleData}
+														cx="50%"
+														cy="50%"
+														innerRadius={30}
+														outerRadius={55}
+														dataKey="value"
+														label={({ value }) => value.toLocaleString()}
+														labelLine={false}
+													>
+														{openscapRuleData.map((entry, index) => (
+															<Cell key={`cell-${index}`} fill={entry.color} />
+														))}
+													</Pie>
+													<Tooltip
+														contentStyle={{
+															backgroundColor: "#1f2937",
+															border: "1px solid #374151",
+															borderRadius: "0.5rem",
+														}}
+														formatter={(value, name) => [value.toLocaleString(), name]}
+													/>
+												</PieChart>
+											</ResponsiveContainer>
+										</div>
+										<div className="flex justify-center gap-6 mt-2 text-sm">
+											<div className="flex items-center gap-2">
+												<div className="w-3 h-3 rounded-full bg-green-500" />
+												<span className="text-green-400">Passed: {openscapStats.total_passed?.toLocaleString()}</span>
+											</div>
+											<div className="flex items-center gap-2">
+												<div className="w-3 h-3 rounded-full bg-red-500" />
+												<span className="text-red-400">Failed: {openscapStats.total_failed?.toLocaleString()}</span>
+											</div>
+										</div>
+										{/* Score Distribution */}
+										{openscapScans.length > 0 && (
+											<div className="mt-4 pt-4 border-t border-secondary-700">
+												<p className="text-xs text-secondary-400 mb-2">Score Distribution</p>
+												<div className="h-24">
+													<ResponsiveContainer width="100%" height="100%">
+														<BarChart data={openscapScoreRanges} layout="vertical">
+															<XAxis type="number" stroke="#6b7280" fontSize={10} />
+															<YAxis type="category" dataKey="range" stroke="#6b7280" fontSize={10} width={50} />
+															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+																{openscapScoreRanges.map((entry, index) => (
+																	<Cell key={`cell-${index}`} fill={entry.color} />
+																))}
+															</Bar>
+														</BarChart>
+													</ResponsiveContainer>
+												</div>
+											</div>
+										)}
+									</>
+								) : (
+									<div className="h-40 flex items-center justify-center text-secondary-500">
+										No OpenSCAP data available
 									</div>
-								))}
+								)}
 							</div>
 						</div>
 
-						{/* Recent Scan Score Distribution */}
-						{filteredScans && filteredScans.length > 0 && (
-							<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
-								<h3 className="text-white font-medium mb-4 flex items-center gap-2">
-									<BarChart3 className="h-4 w-4 text-primary-400" />
-									Recent Scans by Score (All Types)
-								</h3>
-								<div className="h-48">
-									<ResponsiveContainer width="100%" height="100%">
-										<BarChart data={scoreRanges} layout="vertical">
-											<XAxis type="number" stroke="#6b7280" fontSize={12} />
-											<YAxis type="category" dataKey="range" stroke="#6b7280" fontSize={12} width={60} />
-											<Tooltip
-												contentStyle={{
-													backgroundColor: "#1f2937",
-													border: "1px solid #374151",
-													borderRadius: "0.5rem",
-												}}
-												formatter={(value) => [value, "Scans"]}
-											/>
-											<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-												{scoreRanges.map((entry, index) => (
-													<Cell key={`cell-${index}`} fill={entry.color} />
-												))}
-											</Bar>
-										</BarChart>
-									</ResponsiveContainer>
-								</div>
+						{/* Docker Bench Analysis */}
+						<div className="bg-secondary-800 rounded-lg border border-blue-700/50 overflow-hidden">
+							<div className="px-4 py-3 bg-blue-900/20 border-b border-blue-700/30 flex items-center gap-2">
+								<span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs font-bold rounded-full border border-blue-500/30">
+									Docker Bench
+								</span>
+								<span className="text-white font-medium text-sm">Container Security Analysis</span>
 							</div>
-						)}
+							<div className="p-4">
+								{dockerBenchStats && dockerRuleData.length > 0 ? (
+									<>
+										{/* Rule Distribution Pie */}
+										<div className="h-40">
+											<ResponsiveContainer width="100%" height="100%">
+												<PieChart>
+													<Pie
+														data={dockerRuleData}
+														cx="50%"
+														cy="50%"
+														innerRadius={30}
+														outerRadius={55}
+														dataKey="value"
+														label={({ value }) => value.toLocaleString()}
+														labelLine={false}
+													>
+														{dockerRuleData.map((entry, index) => (
+															<Cell key={`cell-${index}`} fill={entry.color} />
+														))}
+													</Pie>
+													<Tooltip
+														contentStyle={{
+															backgroundColor: "#1f2937",
+															border: "1px solid #374151",
+															borderRadius: "0.5rem",
+														}}
+														formatter={(value, name) => [value.toLocaleString(), name]}
+													/>
+												</PieChart>
+											</ResponsiveContainer>
+										</div>
+										<div className="flex justify-center gap-6 mt-2 text-sm">
+											<div className="flex items-center gap-2">
+												<div className="w-3 h-3 rounded-full bg-green-500" />
+												<span className="text-green-400">Passed: {dockerBenchStats.total_passed?.toLocaleString()}</span>
+											</div>
+											<div className="flex items-center gap-2">
+												<div className="w-3 h-3 rounded-full bg-yellow-500" />
+												<span className="text-yellow-400">Warnings: {dockerBenchStats.total_warnings?.toLocaleString()}</span>
+											</div>
+										</div>
+										{/* Score Distribution */}
+										{dockerScans.length > 0 && (
+											<div className="mt-4 pt-4 border-t border-secondary-700">
+												<p className="text-xs text-secondary-400 mb-2">Score Distribution</p>
+												<div className="h-24">
+													<ResponsiveContainer width="100%" height="100%">
+														<BarChart data={dockerScoreRanges} layout="vertical">
+															<XAxis type="number" stroke="#6b7280" fontSize={10} />
+															<YAxis type="category" dataKey="range" stroke="#6b7280" fontSize={10} width={50} />
+															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+																{dockerScoreRanges.map((entry, index) => (
+																	<Cell key={`cell-${index}`} fill={entry.color} />
+																))}
+															</Bar>
+														</BarChart>
+													</ResponsiveContainer>
+												</div>
+											</div>
+										)}
+									</>
+								) : (
+									<div className="h-40 flex items-center justify-center text-secondary-500">
+										No Docker Bench data available
+									</div>
+								)}
+							</div>
+						</div>
 					</div>
 					</>
 				);
