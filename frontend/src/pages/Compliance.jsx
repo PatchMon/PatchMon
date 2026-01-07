@@ -548,7 +548,9 @@ const Compliance = () => {
 								className={`rounded-lg p-3 border transition-colors ${
 									scan.isPending
 										? "bg-yellow-900/30 border-yellow-700/50 hover:border-yellow-500"
-										: "bg-secondary-800/50 border-secondary-700 hover:border-blue-600"
+										: scan.profileType === "docker-bench"
+											? "bg-blue-900/20 border-blue-700/50 hover:border-blue-500"
+											: "bg-green-900/20 border-green-700/50 hover:border-green-500"
 								}`}
 							>
 								<div className="flex items-center justify-between mb-2">
@@ -567,9 +569,11 @@ const Compliance = () => {
 									<span className={`px-2 py-0.5 rounded text-xs ${
 										scan.isPending
 											? "bg-yellow-900/50 text-yellow-300"
-											: "bg-blue-900/50 text-blue-300"
+											: scan.profileType === "docker-bench"
+												? "bg-blue-900/50 text-blue-300"
+												: "bg-green-900/50 text-green-300"
 									}`}>
-										{scan.isPending ? "Triggering..." : scan.profileType || "Scanning..."}
+										{scan.isPending ? "Triggering..." : scan.profileType === "docker-bench" ? "Docker Bench" : scan.profileType === "openscap" ? "OpenSCAP" : scan.profileType || "Scanning..."}
 									</span>
 									<span className="text-xs">
 										Started {formatDistanceToNow(new Date(scan.startedAt), { addSuffix: true })}
