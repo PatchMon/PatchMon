@@ -76,10 +76,17 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	// Load cached username when host changes
 	useEffect(() => {
 		if (host?.id) {
-			const cachedUsername = getCachedUsername();
+			// Get cached username directly to avoid dependency issues
+			let cachedUsername = "root";
+			try {
+				const cached = localStorage.getItem(`ssh_username_${host.id}`);
+				cachedUsername = cached || "root";
+			} catch {
+				// localStorage might be disabled
+			}
 			setSshConfig((prev) => ({ ...prev, username: cachedUsername }));
 		}
-	}, [host?.id, getCachedUsername]);
+	}, [host?.id]);
 
 	// Save username to localStorage when it changes (debounced on blur/connect)
 	const saveUsername = (username) => {
