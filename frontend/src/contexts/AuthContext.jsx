@@ -14,7 +14,7 @@ const isDev = import.meta.env.DEV;
 const devLog = (...args) => isDev && console.log(...args);
 const _devError = (...args) => isDev && console.error(...args);
 
-const AuthContext = createContext();
+export const AuthContext = createContext();
 
 export const useAuth = () => {
 	const context = useContext(AuthContext);
