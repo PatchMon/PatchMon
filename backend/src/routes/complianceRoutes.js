@@ -154,6 +154,15 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
           : null;
       }
 
+      // Delete any "running" placeholder scans for this host/profile
+      await prisma.compliance_scans.deleteMany({
+        where: {
+          host_id: host.id,
+          profile_id: profile.id,
+          status: "running",
+        },
+      });
+
       // Create scan record
       const scan = await prisma.compliance_scans.create({
         data: {
@@ -1164,6 +1173,23 @@ router.post("/trigger/bulk", async (req, res) => {
       fetchRemoteResources: Boolean(fetch_remote_resources),
     };
 
+    // Get profiles for creating running scan records
+    const profilesToUse = [];
+    if (profile_type === "all" || profile_type === "openscap") {
+      const oscapProfile = await prisma.compliance_profiles.findFirst({
+        where: { type: "openscap" },
+        orderBy: { name: "asc" },
+      });
+      if (oscapProfile) profilesToUse.push(oscapProfile);
+    }
+    if (profile_type === "all" || profile_type === "docker-bench") {
+      const dockerProfile = await prisma.compliance_profiles.findFirst({
+        where: { type: "docker-bench" },
+        orderBy: { name: "asc" },
+      });
+      if (dockerProfile) profilesToUse.push(dockerProfile);
+    }
+
     // Process each host
     for (const hostId of hostIds) {
       const host = hostMap.get(hostId);
@@ -1185,6 +1211,31 @@ router.post("/trigger/bulk", async (req, res) => {
       const success = agentWs.pushComplianceScan(host.api_id, profile_type, scanOptions);
 
       if (success) {
+        // Create "running" scan records for tracking
+        for (const profile of profilesToUse) {
+          try {
+            await prisma.compliance_scans.create({
+              data: {
+                id: uuidv4(),
+                host_id: hostId,
+                profile_id: profile.id,
+                started_at: new Date(),
+                completed_at: null,
+                status: "running",
+                total_rules: 0,
+                passed: 0,
+                failed: 0,
+                warnings: 0,
+                skipped: 0,
+                not_applicable: 0,
+                score: null,
+              },
+            });
+          } catch (err) {
+            logger.warn(`[Compliance] Could not create running scan record: ${err.message}`);
+          }
+        }
+
         results.triggered.push({
           hostId,
           hostName: host.friendly_name || host.hostname,
@@ -1292,6 +1343,47 @@ router.post("/trigger/:hostId", async (req, res) => {
     const success = agentWs.pushComplianceScan(host.api_id, profile_type, scanOptions);
 
     if (success) {
+      // Create "running" scan records for tracking
+      const profilesToUse = [];
+      if (profile_type === "all" || profile_type === "openscap") {
+        const oscapProfile = await prisma.compliance_profiles.findFirst({
+          where: { type: "openscap" },
+          orderBy: { name: "asc" },
+        });
+        if (oscapProfile) profilesToUse.push(oscapProfile);
+      }
+      if (profile_type === "all" || profile_type === "docker-bench") {
+        const dockerProfile = await prisma.compliance_profiles.findFirst({
+          where: { type: "docker-bench" },
+          orderBy: { name: "asc" },
+        });
+        if (dockerProfile) profilesToUse.push(dockerProfile);
+      }
+
+      for (const profile of profilesToUse) {
+        try {
+          await prisma.compliance_scans.create({
+            data: {
+              id: uuidv4(),
+              host_id: hostId,
+              profile_id: profile.id,
+              started_at: new Date(),
+              completed_at: null,
+              status: "running",
+              total_rules: 0,
+              passed: 0,
+              failed: 0,
+              warnings: 0,
+              skipped: 0,
+              not_applicable: 0,
+              score: null,
+            },
+          });
+        } catch (err) {
+          logger.warn(`[Compliance] Could not create running scan record: ${err.message}`);
+        }
+      }
+
       res.json({
         message: enable_remediation
           ? "Compliance scan with remediation triggered"
