@@ -1149,29 +1149,37 @@ router.post("/trigger/bulk", async (req, res) => {
 
     // Validate hostIds array
     if (!Array.isArray(hostIds) || hostIds.length === 0) {
+      console.log("=== BULK: Failed - empty hostIds array ===");
       return res.status(400).json({ error: "hostIds must be a non-empty array" });
     }
 
     if (hostIds.length > 100) {
+      console.log("=== BULK: Failed - too many hosts ===");
       return res.status(400).json({ error: "Maximum 100 hosts per bulk operation" });
     }
 
     // Validate all UUIDs
     const invalidIds = hostIds.filter((id) => !isValidUUID(id));
     if (invalidIds.length > 0) {
+      console.log(`=== BULK: Failed - invalid UUIDs: ${invalidIds.join(", ")} ===`);
       return res.status(400).json({ error: `Invalid host IDs: ${invalidIds.join(", ")}` });
     }
 
     // Validate profile_type
     if (!VALID_PROFILE_TYPES.includes(profile_type)) {
+      console.log(`=== BULK: Failed - invalid profile_type: ${profile_type} ===`);
       return res.status(400).json({ error: `Invalid profile_type. Must be one of: ${VALID_PROFILE_TYPES.join(", ")}` });
     }
+
+    console.log("=== BULK: Validation passed, fetching hosts ===");
 
     // Get all hosts
     const hosts = await prisma.hosts.findMany({
       where: { id: { in: hostIds } },
       select: { id: true, api_id: true, hostname: true, friendly_name: true },
     });
+
+    console.log(`=== BULK: Found ${hosts.length} hosts in DB ===`);
 
     const hostMap = new Map(hosts.map((h) => [h.id, h]));
     const agentWs = require("../services/agentWs");
@@ -1188,14 +1196,18 @@ router.post("/trigger/bulk", async (req, res) => {
       fetchRemoteResources: Boolean(fetch_remote_resources),
     };
 
+    console.log("=== BULK: Getting profiles ===");
+
     // Get or create profiles for running scan records
     const profilesToUse = [];
     if (profile_type === "all" || profile_type === "openscap") {
+      console.log("=== BULK: Looking for openscap profile ===");
       let oscapProfile = await prisma.compliance_profiles.findFirst({
         where: { type: "openscap" },
         orderBy: { name: "asc" },
       });
       if (!oscapProfile) {
+        console.log("=== BULK: Creating openscap profile ===");
         // Create placeholder profile
         oscapProfile = await prisma.compliance_profiles.create({
           data: {
@@ -1205,14 +1217,17 @@ router.post("/trigger/bulk", async (req, res) => {
           },
         });
       }
+      console.log(`=== BULK: Got openscap profile: ${oscapProfile.id} ===`);
       profilesToUse.push(oscapProfile);
     }
     if (profile_type === "all" || profile_type === "docker-bench") {
+      console.log("=== BULK: Looking for docker-bench profile ===");
       let dockerProfile = await prisma.compliance_profiles.findFirst({
         where: { type: "docker-bench" },
         orderBy: { name: "asc" },
       });
       if (!dockerProfile) {
+        console.log("=== BULK: Creating docker-bench profile ===");
         // Create placeholder profile
         dockerProfile = await prisma.compliance_profiles.create({
           data: {
@@ -1222,21 +1237,28 @@ router.post("/trigger/bulk", async (req, res) => {
           },
         });
       }
+      console.log(`=== BULK: Got docker-bench profile: ${dockerProfile.id} ===`);
       profilesToUse.push(dockerProfile);
     }
 
+    console.log(`=== BULK: profilesToUse count: ${profilesToUse.length} ===`);
     logger.info(`[Compliance] Bulk: Found ${profilesToUse.length} profiles to use: ${profilesToUse.map(p => p.name).join(", ")}`);
 
     // Process each host
+    console.log(`=== BULK: Processing ${hostIds.length} hosts ===`);
     for (const hostId of hostIds) {
+      console.log(`=== BULK: Processing host ${hostId} ===`);
       const host = hostMap.get(hostId);
 
       if (!host) {
+        console.log(`=== BULK: Host ${hostId} not found in map ===`);
         results.failed.push({ hostId, error: "Host not found" });
         continue;
       }
 
+      console.log(`=== BULK: Host ${hostId} found, checking connection ===`);
       if (!agentWs.isConnected(host.api_id)) {
+        console.log(`=== BULK: Host ${hostId} (${host.api_id}) not connected ===`);
         results.failed.push({
           hostId,
           hostName: host.friendly_name || host.hostname,
@@ -1245,13 +1267,17 @@ router.post("/trigger/bulk", async (req, res) => {
         continue;
       }
 
+      console.log(`=== BULK: Host ${hostId} connected, sending scan command ===`);
       const success = agentWs.pushComplianceScan(host.api_id, profile_type, scanOptions);
+      console.log(`=== BULK: pushComplianceScan returned: ${success} ===`);
 
       if (success) {
         // Create "running" scan records for tracking
+        console.log(`=== BULK: Creating running scan records for host ${hostId} ===`);
         logger.info(`[Compliance] Bulk: Creating ${profilesToUse.length} running scan records for host ${hostId}`);
         for (const profile of profilesToUse) {
           try {
+            console.log(`=== BULK: Creating scan record for profile ${profile.id} ===`);
             const runningScan = await prisma.compliance_scans.create({
               data: {
                 id: uuidv4(),
@@ -1269,8 +1295,10 @@ router.post("/trigger/bulk", async (req, res) => {
                 score: null,
               },
             });
+            console.log(`=== BULK: Created running scan ${runningScan.id} ===`);
             logger.info(`[Compliance] Bulk: Created running scan ${runningScan.id} for profile ${profile.name}`);
           } catch (err) {
+            console.log(`=== BULK: Error creating scan record: ${err.message} ===`);
             logger.warn(`[Compliance] Could not create running scan record: ${err.message}`);
           }
         }
@@ -1280,7 +1308,9 @@ router.post("/trigger/bulk", async (req, res) => {
           hostName: host.friendly_name || host.hostname,
           apiId: host.api_id,
         });
+        console.log(`=== BULK: Host ${hostId} added to triggered list ===`);
       } else {
+        console.log(`=== BULK: Host ${hostId} failed to trigger ===`);
         results.failed.push({
           hostId,
           hostName: host.friendly_name || host.hostname,
@@ -1289,8 +1319,10 @@ router.post("/trigger/bulk", async (req, res) => {
       }
     }
 
+    console.log(`=== BULK: Loop complete. Triggered: ${results.triggered.length}, Failed: ${results.failed.length} ===`);
     const message = `Triggered ${results.triggered.length} of ${hostIds.length} scans`;
     logger.info(`[Compliance] Bulk scan: ${message}`);
+    console.log(`=== BULK: Sending response ===`);
 
     res.json({
       message,
