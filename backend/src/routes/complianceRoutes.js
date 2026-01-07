@@ -253,6 +253,10 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
           }
 
           // Create or update result (upsert to handle duplicate rules in same scan)
+          // Debug: log warn status results being stored
+          if (result.status === 'warn') {
+            console.log(`=== DEBUG: Storing WARN result: scan_id=${scan.id}, rule_ref=${ruleRef}, status=${result.status} ===`);
+          }
           await prisma.compliance_results.upsert({
             where: {
               scan_id_rule_id: {
@@ -280,6 +284,15 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
           });
         }
       }
+
+      // Debug: verify what was stored in the scan
+      const storedCounts = await prisma.$queryRaw`
+        SELECT status, COUNT(*)::int as count
+        FROM compliance_results
+        WHERE scan_id = ${scan.id}
+        GROUP BY status
+      `;
+      console.log(`=== DEBUG: Stored results for scan ${scan.id}: ${JSON.stringify(storedCounts)} ===`);
 
       logger.info(`[Compliance] Scan saved for host ${host.friendly_name || host.hostname} (${profile_name}): ${stats.passed}/${stats.total_rules} passed (${score}%)`);
       processedScans.push({ scan_id: scan.id, profile_name, score: scan.score, stats });
@@ -420,6 +433,13 @@ router.get("/dashboard", async (req, res) => {
     // Get top failing rules across all hosts (most recent scan per host) - for OpenSCAP
     const latestScanIds = latestScans.map(s => s.id);
     console.log(`=== latestScans: ${latestScans.length}, latestScanIds: ${latestScanIds.length} ===`);
+
+    // Debug: Show which docker-bench scans are included
+    const dockerBenchScans = latestScans.filter(s => {
+      // Check profile_id to determine type - we need to look this up
+      return true; // Will show all for now
+    });
+    console.log(`=== latestScanIds for aggregation: ${JSON.stringify(latestScanIds.slice(0, 5))}... ===`);
     let topFailingRules = [];
     if (latestScanIds.length > 0) {
       // Use Prisma.join for proper array handling in raw SQL
