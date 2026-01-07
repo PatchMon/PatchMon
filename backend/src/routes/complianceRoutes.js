@@ -1173,21 +1173,41 @@ router.post("/trigger/bulk", async (req, res) => {
       fetchRemoteResources: Boolean(fetch_remote_resources),
     };
 
-    // Get profiles for creating running scan records
+    // Get or create profiles for running scan records
     const profilesToUse = [];
     if (profile_type === "all" || profile_type === "openscap") {
-      const oscapProfile = await prisma.compliance_profiles.findFirst({
+      let oscapProfile = await prisma.compliance_profiles.findFirst({
         where: { type: "openscap" },
         orderBy: { name: "asc" },
       });
-      if (oscapProfile) profilesToUse.push(oscapProfile);
+      if (!oscapProfile) {
+        // Create placeholder profile
+        oscapProfile = await prisma.compliance_profiles.create({
+          data: {
+            id: uuidv4(),
+            name: "OpenSCAP Scan",
+            type: "openscap",
+          },
+        });
+      }
+      profilesToUse.push(oscapProfile);
     }
     if (profile_type === "all" || profile_type === "docker-bench") {
-      const dockerProfile = await prisma.compliance_profiles.findFirst({
+      let dockerProfile = await prisma.compliance_profiles.findFirst({
         where: { type: "docker-bench" },
         orderBy: { name: "asc" },
       });
-      if (dockerProfile) profilesToUse.push(dockerProfile);
+      if (!dockerProfile) {
+        // Create placeholder profile
+        dockerProfile = await prisma.compliance_profiles.create({
+          data: {
+            id: uuidv4(),
+            name: "Docker Bench Security",
+            type: "docker-bench",
+          },
+        });
+      }
+      profilesToUse.push(dockerProfile);
     }
 
     // Process each host
@@ -1212,9 +1232,10 @@ router.post("/trigger/bulk", async (req, res) => {
 
       if (success) {
         // Create "running" scan records for tracking
+        logger.info(`[Compliance] Bulk: Creating ${profilesToUse.length} running scan records for host ${hostId}`);
         for (const profile of profilesToUse) {
           try {
-            await prisma.compliance_scans.create({
+            const runningScan = await prisma.compliance_scans.create({
               data: {
                 id: uuidv4(),
                 host_id: hostId,
@@ -1231,6 +1252,7 @@ router.post("/trigger/bulk", async (req, res) => {
                 score: null,
               },
             });
+            logger.info(`[Compliance] Bulk: Created running scan ${runningScan.id} for profile ${profile.name}`);
           } catch (err) {
             logger.warn(`[Compliance] Could not create running scan record: ${err.message}`);
           }
@@ -1346,23 +1368,43 @@ router.post("/trigger/:hostId", async (req, res) => {
       // Create "running" scan records for tracking
       const profilesToUse = [];
       if (profile_type === "all" || profile_type === "openscap") {
-        const oscapProfile = await prisma.compliance_profiles.findFirst({
+        let oscapProfile = await prisma.compliance_profiles.findFirst({
           where: { type: "openscap" },
           orderBy: { name: "asc" },
         });
-        if (oscapProfile) profilesToUse.push(oscapProfile);
+        if (!oscapProfile) {
+          oscapProfile = await prisma.compliance_profiles.create({
+            data: {
+              id: uuidv4(),
+              name: "OpenSCAP Scan",
+              type: "openscap",
+            },
+          });
+        }
+        profilesToUse.push(oscapProfile);
       }
       if (profile_type === "all" || profile_type === "docker-bench") {
-        const dockerProfile = await prisma.compliance_profiles.findFirst({
+        let dockerProfile = await prisma.compliance_profiles.findFirst({
           where: { type: "docker-bench" },
           orderBy: { name: "asc" },
         });
-        if (dockerProfile) profilesToUse.push(dockerProfile);
+        if (!dockerProfile) {
+          dockerProfile = await prisma.compliance_profiles.create({
+            data: {
+              id: uuidv4(),
+              name: "Docker Bench Security",
+              type: "docker-bench",
+            },
+          });
+        }
+        profilesToUse.push(dockerProfile);
       }
+
+      logger.info(`[Compliance] Creating ${profilesToUse.length} running scan records for host ${hostId}`);
 
       for (const profile of profilesToUse) {
         try {
-          await prisma.compliance_scans.create({
+          const runningScan = await prisma.compliance_scans.create({
             data: {
               id: uuidv4(),
               host_id: hostId,
@@ -1379,6 +1421,7 @@ router.post("/trigger/:hostId", async (req, res) => {
               score: null,
             },
           });
+          logger.info(`[Compliance] Created running scan record: ${runningScan.id} for profile ${profile.name}`);
         } catch (err) {
           logger.warn(`[Compliance] Could not create running scan record: ${err.message}`);
         }
