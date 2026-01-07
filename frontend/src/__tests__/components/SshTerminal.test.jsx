@@ -2,9 +2,9 @@
  * Unit tests for SSH Terminal Component
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SshTerminal from "../../components/SshTerminal";
 import { AuthContext } from "../../contexts/AuthContext";
 import { SidebarContext } from "../../contexts/SidebarContext";
@@ -143,7 +143,9 @@ describe("SshTerminal Component", () => {
 			const keyRadio = screen.getByLabelText(/SSH Key/i);
 			fireEvent.click(keyRadio);
 
-			expect(screen.getByPlaceholderText(/BEGIN OPENSSH PRIVATE KEY/i)).toBeInTheDocument();
+			expect(
+				screen.getByPlaceholderText(/BEGIN OPENSSH PRIVATE KEY/i),
+			).toBeInTheDocument();
 		});
 
 		it("should show passphrase field for key authentication", () => {
@@ -356,9 +358,7 @@ describe("SshTerminal Component", () => {
 
 			const wsInstance = WebSocket.mock.results[0].value;
 			wsInstance._simulateOpen();
-			wsInstance._simulateMessage(
-				JSON.stringify({ type: "connected" }),
-			);
+			wsInstance._simulateMessage(JSON.stringify({ type: "connected" }));
 
 			await waitFor(() => {
 				expect(screen.getByText(/connected/i)).toBeInTheDocument();
@@ -385,16 +385,16 @@ describe("SshTerminal Component", () => {
 
 			const wsInstance = WebSocket.mock.results[0].value;
 			wsInstance._simulateOpen();
-			wsInstance._simulateMessage(
-				JSON.stringify({ type: "connected" }),
-			);
+			wsInstance._simulateMessage(JSON.stringify({ type: "connected" }));
 
 			await waitFor(() => {
 				expect(screen.getByText(/connected/i)).toBeInTheDocument();
 			});
 
 			// Click disconnect
-			const disconnectButton = screen.getByRole("button", { name: /disconnect/i });
+			const disconnectButton = screen.getByRole("button", {
+				name: /disconnect/i,
+			});
 			fireEvent.click(disconnectButton);
 
 			expect(wsInstance.close).toHaveBeenCalled();
@@ -432,9 +432,7 @@ describe("SshTerminal Component", () => {
 
 			const wsInstance = WebSocket.mock.results[0].value;
 			wsInstance._simulateOpen();
-			wsInstance._simulateMessage(
-				JSON.stringify({ type: "connected" }),
-			);
+			wsInstance._simulateMessage(JSON.stringify({ type: "connected" }));
 
 			await waitFor(() => {
 				expect(screen.getByText(/install agent/i)).toBeInTheDocument();

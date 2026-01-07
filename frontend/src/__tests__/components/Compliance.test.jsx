@@ -2,10 +2,10 @@
  * Unit tests for Compliance Dashboard Page
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
 import { BrowserRouter } from "react-router-dom";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import Compliance from "../../pages/Compliance";
 
 // Mock the complianceAPI
@@ -32,14 +32,22 @@ describe("Compliance Dashboard", () => {
 		recent_scans: [
 			{
 				id: "scan-1",
-				host: { id: "host-1", friendly_name: "web-server-01", hostname: "web-server-01.local" },
+				host: {
+					id: "host-1",
+					friendly_name: "web-server-01",
+					hostname: "web-server-01.local",
+				},
 				profile: { name: "CIS Ubuntu 22.04 L1" },
 				score: 85,
 				completed_at: "2024-01-15T10:00:00Z",
 			},
 			{
 				id: "scan-2",
-				host: { id: "host-2", friendly_name: "db-server-01", hostname: "db-server-01.local" },
+				host: {
+					id: "host-2",
+					friendly_name: "db-server-01",
+					hostname: "db-server-01.local",
+				},
 				profile: { name: "CIS Docker" },
 				score: 72,
 				completed_at: "2024-01-14T10:00:00Z",
@@ -48,7 +56,11 @@ describe("Compliance Dashboard", () => {
 		worst_hosts: [
 			{
 				id: "scan-3",
-				host: { id: "host-3", friendly_name: "legacy-server", hostname: "legacy.local" },
+				host: {
+					id: "host-3",
+					friendly_name: "legacy-server",
+					hostname: "legacy.local",
+				},
 				profile: { name: "CIS Ubuntu 20.04 L1" },
 				score: 45,
 			},
@@ -222,7 +234,9 @@ describe("Compliance Dashboard", () => {
 			renderComponent();
 
 			await waitFor(() => {
-				expect(screen.getByText(/No compliance scans yet/i)).toBeInTheDocument();
+				expect(
+					screen.getByText(/No compliance scans yet/i),
+				).toBeInTheDocument();
 			});
 		});
 
@@ -238,19 +252,25 @@ describe("Compliance Dashboard", () => {
 			renderComponent();
 
 			await waitFor(() => {
-				expect(screen.getByText(/No hosts with low compliance scores/i)).toBeInTheDocument();
+				expect(
+					screen.getByText(/No hosts with low compliance scores/i),
+				).toBeInTheDocument();
 			});
 		});
 	});
 
 	describe("Error State", () => {
 		it("should display error message when API call fails", async () => {
-			complianceAPI.getDashboard.mockRejectedValue(new Error("Failed to fetch"));
+			complianceAPI.getDashboard.mockRejectedValue(
+				new Error("Failed to fetch"),
+			);
 
 			renderComponent();
 
 			await waitFor(() => {
-				expect(screen.getByText(/Failed to load compliance dashboard/i)).toBeInTheDocument();
+				expect(
+					screen.getByText(/Failed to load compliance dashboard/i),
+				).toBeInTheDocument();
 			});
 		});
 	});
@@ -263,7 +283,9 @@ describe("Compliance Dashboard", () => {
 
 			await waitFor(() => {
 				const links = screen.getAllByRole("link");
-				const hostLinks = links.filter((link) => link.getAttribute("href")?.includes("/hosts/"));
+				const hostLinks = links.filter((link) =>
+					link.getAttribute("href")?.includes("/hosts/"),
+				);
 				expect(hostLinks.length).toBeGreaterThan(0);
 			});
 		});

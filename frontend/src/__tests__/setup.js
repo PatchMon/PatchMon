@@ -1,5 +1,5 @@
-import { expect, afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
+import { afterEach } from "vitest";
 import "@testing-library/jest-dom";
 
 // Cleanup after each test
@@ -18,7 +18,7 @@ global.WebSocket = class WebSocket {
 		this.onmessage = null;
 	}
 
-	send(data) {
+	send(_data) {
 		if (this.readyState !== WebSocket.OPEN) {
 			throw new Error("WebSocket is not open");
 		}

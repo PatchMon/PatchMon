@@ -125,7 +125,10 @@ const Dashboard = () => {
 			const elementIndex = elements[0].index;
 			const osItem = stats.charts.osDistribution[elementIndex];
 			if (osItem?.name) {
-				navigate(`/hosts?osFilter=${osItem.name.toLowerCase()}&showFilters=true`, { replace: true });
+				navigate(
+					`/hosts?osFilter=${osItem.name.toLowerCase()}&showFilters=true`,
+					{ replace: true },
+				);
 			}
 		}
 	};

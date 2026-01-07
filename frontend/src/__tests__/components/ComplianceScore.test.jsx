@@ -2,8 +2,8 @@
  * Unit tests for ComplianceScore Component
  */
 
-import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 import ComplianceScore from "../../components/compliance/ComplianceScore";
 
 describe("ComplianceScore Component", () => {
@@ -41,13 +41,13 @@ describe("ComplianceScore Component", () => {
 
 	describe("Color Coding - High Score (Compliant)", () => {
 		it("should apply green color for score >= 80", () => {
-			const { container } = render(<ComplianceScore score={80} />);
+			render(<ComplianceScore score={80} />);
 			const scoreElement = screen.getByText("80%");
 			expect(scoreElement.className).toContain("text-green-400");
 		});
 
 		it("should apply green color for score of 90", () => {
-			const { container } = render(<ComplianceScore score={90} />);
+			render(<ComplianceScore score={90} />);
 			const scoreElement = screen.getByText("90%");
 			expect(scoreElement.className).toContain("text-green-400");
 		});

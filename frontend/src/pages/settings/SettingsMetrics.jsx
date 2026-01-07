@@ -128,7 +128,8 @@ const SettingsMetrics = () => {
 							Anonymous Metrics & Telemetry
 						</h2>
 						<p className="text-sm text-secondary-600 dark:text-secondary-400 mt-1">
-							Help us understand PatchMonEnhanced's global usage (100% anonymous)
+							Help us understand PatchMonEnhanced's global usage (100%
+							anonymous)
 						</p>
 					</div>
 				</div>
@@ -196,8 +197,9 @@ const SettingsMetrics = () => {
 								Enable Anonymous Metrics
 							</h3>
 							<p className="text-sm text-secondary-600 dark:text-secondary-400">
-								Share anonymous usage statistics to help us showcase PatchMonEnhanced's
-								global adoption. Data is sent automatically every 24 hours.
+								Share anonymous usage statistics to help us showcase
+								PatchMonEnhanced's global adoption. Data is sent automatically
+								every 24 hours.
 							</p>
 						</div>
 						<button

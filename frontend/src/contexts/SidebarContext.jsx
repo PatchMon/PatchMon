@@ -16,4 +16,3 @@ export const useSidebar = () => {
 };
 
 export default SidebarContext;
-

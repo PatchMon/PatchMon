@@ -516,8 +516,8 @@ const Settings = () => {
 
 			<div className="mb-8">
 				<p className="text-secondary-600 dark:text-secondary-300">
-					Configure your PatchMonEnhanced server settings. These settings will be used
-					in installation scripts and agent communications.
+					Configure your PatchMonEnhanced server settings. These settings will
+					be used in installation scripts and agent communications.
 				</p>
 			</div>
 
@@ -679,8 +679,8 @@ const Settings = () => {
 									</h3>
 								</div>
 								<p className="text-sm text-secondary-500 dark:text-secondary-300 mb-4">
-									Customize your PatchMonEnhanced installation with custom logos and
-									favicon.
+									Customize your PatchMonEnhanced installation with custom logos
+									and favicon.
 								</p>
 
 								<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1041,8 +1041,8 @@ const Settings = () => {
 										</h2>
 									</div>
 									<p className="text-sm text-secondary-500 dark:text-secondary-300">
-										Manage the PatchMonEnhanced agent script file used for installations
-										and updates
+										Manage the PatchMonEnhanced agent script file used for
+										installations and updates
 									</p>
 								</div>
 								<div className="flex items-center gap-2">

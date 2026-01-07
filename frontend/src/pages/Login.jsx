@@ -832,7 +832,9 @@ const Login = () => {
 							/>
 						</div>
 						<h2 className="mt-6 text-center text-3xl font-extrabold text-secondary-900 dark:text-secondary-100">
-							{isSignupMode ? "Create PatchMonEnhanced Account" : "Sign in to PatchMonEnhanced"}
+							{isSignupMode
+								? "Create PatchMonEnhanced Account"
+								: "Sign in to PatchMonEnhanced"}
 						</h2>
 						<p className="mt-2 text-center text-sm text-secondary-600 dark:text-secondary-400">
 							Monitor and manage your Linux package updates
@@ -846,148 +848,148 @@ const Login = () => {
 						>
 							{/* Only show form fields if local auth is not disabled */}
 							{!oidcConfig.disableLocalAuth && (
-							<div className="space-y-4">
-								<div>
-									<label
-										htmlFor={usernameId}
-										className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
-									>
-										{isSignupMode ? "Username" : "Username or Email"}
-									</label>
-									<div className="mt-1 relative">
-										<input
-											id={usernameId}
-											name="username"
-											type="text"
-											required
-											value={formData.username}
-											onChange={handleInputChange}
-											className="appearance-none rounded-md relative block w-full pl-10 pr-3 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
-											placeholder={
-												isSignupMode
-													? "Enter your username"
-													: "Enter your username or email"
-											}
-										/>
-										<div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-20 flex items-center">
-											<User size={20} color="#64748b" strokeWidth={2} />
+								<div className="space-y-4">
+									<div>
+										<label
+											htmlFor={usernameId}
+											className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
+										>
+											{isSignupMode ? "Username" : "Username or Email"}
+										</label>
+										<div className="mt-1 relative">
+											<input
+												id={usernameId}
+												name="username"
+												type="text"
+												required
+												value={formData.username}
+												onChange={handleInputChange}
+												className="appearance-none rounded-md relative block w-full pl-10 pr-3 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
+												placeholder={
+													isSignupMode
+														? "Enter your username"
+														: "Enter your username or email"
+												}
+											/>
+											<div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-20 flex items-center">
+												<User size={20} color="#64748b" strokeWidth={2} />
+											</div>
+										</div>
+									</div>
+
+									{isSignupMode && (
+										<>
+											<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+												<div>
+													<label
+														htmlFor={firstNameId}
+														className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
+													>
+														First Name
+													</label>
+													<div className="mt-1 relative">
+														<div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+															<User className="h-5 w-5 text-secondary-400" />
+														</div>
+														<input
+															id={firstNameId}
+															name="firstName"
+															type="text"
+															required
+															value={formData.firstName}
+															onChange={handleInputChange}
+															className="appearance-none rounded-md relative block w-full pl-10 pr-3 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
+															placeholder="Enter your first name"
+														/>
+													</div>
+												</div>
+												<div>
+													<label
+														htmlFor={lastNameId}
+														className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
+													>
+														Last Name
+													</label>
+													<div className="mt-1 relative">
+														<div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+															<User className="h-5 w-5 text-secondary-400" />
+														</div>
+														<input
+															id={lastNameId}
+															name="lastName"
+															type="text"
+															required
+															value={formData.lastName}
+															onChange={handleInputChange}
+															className="appearance-none rounded-md relative block w-full pl-10 pr-3 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
+															placeholder="Enter your last name"
+														/>
+													</div>
+												</div>
+											</div>
+											<div>
+												<label
+													htmlFor={emailId}
+													className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
+												>
+													Email
+												</label>
+												<div className="mt-1 relative">
+													<input
+														id={emailId}
+														name="email"
+														type="email"
+														required
+														value={formData.email}
+														onChange={handleInputChange}
+														className="appearance-none rounded-md relative block w-full pl-10 pr-3 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
+														placeholder="Enter your email"
+													/>
+													<div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-20 flex items-center">
+														<Mail size={20} color="#64748b" strokeWidth={2} />
+													</div>
+												</div>
+											</div>
+										</>
+									)}
+
+									<div>
+										<label
+											htmlFor={passwordId}
+											className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
+										>
+											Password
+										</label>
+										<div className="mt-1 relative">
+											<input
+												id={passwordId}
+												name="password"
+												type={showPassword ? "text" : "password"}
+												required
+												value={formData.password}
+												onChange={handleInputChange}
+												className="appearance-none rounded-md relative block w-full pl-10 pr-10 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
+												placeholder="Enter your password"
+											/>
+											<div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-20 flex items-center">
+												<Lock size={20} color="#64748b" strokeWidth={2} />
+											</div>
+											<div className="absolute right-3 top-1/2 -translate-y-1/2 z-20 flex items-center">
+												<button
+													type="button"
+													onClick={() => setShowPassword(!showPassword)}
+													className="bg-transparent border-none cursor-pointer p-1 flex items-center justify-center"
+												>
+													{showPassword ? (
+														<EyeOff size={20} color="#64748b" strokeWidth={2} />
+													) : (
+														<Eye size={20} color="#64748b" strokeWidth={2} />
+													)}
+												</button>
+											</div>
 										</div>
 									</div>
 								</div>
-
-								{isSignupMode && (
-									<>
-										<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-											<div>
-												<label
-													htmlFor={firstNameId}
-													className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
-												>
-													First Name
-												</label>
-												<div className="mt-1 relative">
-													<div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-														<User className="h-5 w-5 text-secondary-400" />
-													</div>
-													<input
-														id={firstNameId}
-														name="firstName"
-														type="text"
-														required
-														value={formData.firstName}
-														onChange={handleInputChange}
-														className="appearance-none rounded-md relative block w-full pl-10 pr-3 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
-														placeholder="Enter your first name"
-													/>
-												</div>
-											</div>
-											<div>
-												<label
-													htmlFor={lastNameId}
-													className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
-												>
-													Last Name
-												</label>
-												<div className="mt-1 relative">
-													<div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-														<User className="h-5 w-5 text-secondary-400" />
-													</div>
-													<input
-														id={lastNameId}
-														name="lastName"
-														type="text"
-														required
-														value={formData.lastName}
-														onChange={handleInputChange}
-														className="appearance-none rounded-md relative block w-full pl-10 pr-3 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
-														placeholder="Enter your last name"
-													/>
-												</div>
-											</div>
-										</div>
-										<div>
-											<label
-												htmlFor={emailId}
-												className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
-											>
-												Email
-											</label>
-											<div className="mt-1 relative">
-												<input
-													id={emailId}
-													name="email"
-													type="email"
-													required
-													value={formData.email}
-													onChange={handleInputChange}
-													className="appearance-none rounded-md relative block w-full pl-10 pr-3 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
-													placeholder="Enter your email"
-												/>
-												<div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-20 flex items-center">
-													<Mail size={20} color="#64748b" strokeWidth={2} />
-												</div>
-											</div>
-										</div>
-									</>
-								)}
-
-								<div>
-									<label
-										htmlFor={passwordId}
-										className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
-									>
-										Password
-									</label>
-									<div className="mt-1 relative">
-										<input
-											id={passwordId}
-											name="password"
-											type={showPassword ? "text" : "password"}
-											required
-											value={formData.password}
-											onChange={handleInputChange}
-											className="appearance-none rounded-md relative block w-full pl-10 pr-10 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
-											placeholder="Enter your password"
-										/>
-										<div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-20 flex items-center">
-											<Lock size={20} color="#64748b" strokeWidth={2} />
-										</div>
-										<div className="absolute right-3 top-1/2 -translate-y-1/2 z-20 flex items-center">
-											<button
-												type="button"
-												onClick={() => setShowPassword(!showPassword)}
-												className="bg-transparent border-none cursor-pointer p-1 flex items-center justify-center"
-											>
-												{showPassword ? (
-													<EyeOff size={20} color="#64748b" strokeWidth={2} />
-												) : (
-													<Eye size={20} color="#64748b" strokeWidth={2} />
-												)}
-											</button>
-										</div>
-									</div>
-								</div>
-							</div>
 							)}
 
 							{error && (

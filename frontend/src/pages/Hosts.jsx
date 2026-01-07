@@ -2284,10 +2284,13 @@ const Hosts = () => {
 										Global Auto-Updates Disabled
 									</h3>
 									<p className="mt-2 text-sm text-secondary-600 dark:text-secondary-300">
-										The master auto-update setting is currently <strong>disabled</strong> in Settings → Agent Updates.
+										The master auto-update setting is currently{" "}
+										<strong>disabled</strong> in Settings → Agent Updates.
 									</p>
 									<p className="mt-2 text-sm text-secondary-600 dark:text-secondary-300">
-										Enabling auto-update for <strong>{autoUpdateDialog.hostName}</strong> won't take effect until global auto-updates are enabled.
+										Enabling auto-update for{" "}
+										<strong>{autoUpdateDialog.hostName}</strong> won't take
+										effect until global auto-updates are enabled.
 									</p>
 								</div>
 							</div>
@@ -2295,7 +2298,13 @@ const Hosts = () => {
 						<div className="bg-secondary-50 dark:bg-secondary-700/50 px-6 py-4 flex flex-col sm:flex-row gap-3 sm:justify-end">
 							<button
 								type="button"
-								onClick={() => setAutoUpdateDialog({ show: false, hostId: null, hostName: null })}
+								onClick={() =>
+									setAutoUpdateDialog({
+										show: false,
+										hostId: null,
+										hostName: null,
+									})
+								}
 								className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
 							>
 								Cancel
@@ -2313,7 +2322,9 @@ const Hosts = () => {
 								disabled={enableGlobalAutoUpdateMutation.isPending}
 								className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
 							>
-								{enableGlobalAutoUpdateMutation.isPending ? "Enabling..." : "Enable Both"}
+								{enableGlobalAutoUpdateMutation.isPending
+									? "Enabling..."
+									: "Enable Both"}
 							</button>
 						</div>
 					</div>

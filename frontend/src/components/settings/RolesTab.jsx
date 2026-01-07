@@ -65,7 +65,13 @@ const RolesTab = () => {
 	// Custom roles come after built-in roles, sorted alphabetically
 	const roles = rolesData
 		? [...rolesData].sort((a, b) => {
-				const order = { superadmin: 0, admin: 1, host_manager: 2, user: 3, readonly: 4 };
+				const order = {
+					superadmin: 0,
+					admin: 1,
+					host_manager: 2,
+					user: 3,
+					readonly: 4,
+				};
 				const aOrder = order[a.role] ?? 999;
 				const bOrder = order[b.role] ?? 999;
 				if (aOrder !== bOrder) return aOrder - bOrder;
@@ -151,14 +157,45 @@ const RolesTab = () => {
 								OIDC Role Mapping Enabled
 							</h3>
 							<p className="mt-1 text-sm text-blue-700 dark:text-blue-300">
-								Roles are managed via your Identity Provider (IdP) groups. Configure the following environment variables to map IdP groups to roles:
+								Roles are managed via your Identity Provider (IdP) groups.
+								Configure the following environment variables to map IdP groups
+								to roles:
 							</p>
 							<ul className="mt-2 text-sm text-blue-600 dark:text-blue-400 list-disc list-inside space-y-1">
-								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_SUPERADMIN_GROUP</code> + <code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_ADMIN_GROUP</code> → Super Admin (highest)</li>
-								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_ADMIN_GROUP</code> → Admin</li>
-								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_HOST_MANAGER_GROUP</code> → Host Manager</li>
-								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_USER_GROUP</code> → User (can export data)</li>
-								<li><code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">OIDC_READONLY_GROUP</code> → Readonly (view only, lowest)</li>
+								<li>
+									<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
+										OIDC_SUPERADMIN_GROUP
+									</code>{" "}
+									+{" "}
+									<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
+										OIDC_ADMIN_GROUP
+									</code>{" "}
+									→ Super Admin (highest)
+								</li>
+								<li>
+									<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
+										OIDC_ADMIN_GROUP
+									</code>{" "}
+									→ Admin
+								</li>
+								<li>
+									<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
+										OIDC_HOST_MANAGER_GROUP
+									</code>{" "}
+									→ Host Manager
+								</li>
+								<li>
+									<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
+										OIDC_USER_GROUP
+									</code>{" "}
+									→ User (can export data)
+								</li>
+								<li>
+									<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
+										OIDC_READONLY_GROUP
+									</code>{" "}
+									→ Readonly (view only, lowest)
+								</li>
 							</ul>
 						</div>
 					</div>
@@ -476,10 +513,7 @@ const RolePermissionsCard = ({
 										onChange={(e) =>
 											handlePermissionChange(field.key, e.target.checked)
 										}
-										disabled={
-											!isEditing ||
-											cannotEditPermissions
-										}
+										disabled={!isEditing || cannotEditPermissions}
 										className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 rounded disabled:opacity-50"
 									/>
 								</div>

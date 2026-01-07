@@ -1,47 +1,67 @@
-import { useState, lazy, Suspense, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-	Shield,
-	Play,
-	RefreshCw,
-	CheckCircle,
-	XCircle,
 	AlertTriangle,
-	MinusCircle,
+	BarChart3,
+	BookOpen,
+	Box,
+	CheckCircle,
 	ChevronDown,
 	ChevronLeft,
 	ChevronRight,
-	Settings,
 	Clock,
-	BarChart3,
-	ListChecks,
-	History,
-	Info,
-	Package,
-	Server,
-	Wrench,
-	ToggleLeft,
-	ToggleRight,
-	Download,
-	BookOpen,
-	Search,
 	Container,
-	Box,
+	Download,
 	Folder,
 	FolderOpen,
+	History,
+	Info,
 	Layers,
+	ListChecks,
+	MinusCircle,
+	Package,
+	Play,
+	RefreshCw,
+	Search,
+	Server,
+	Settings,
+	Shield,
+	ToggleLeft,
+	ToggleRight,
+	Wrench,
+	XCircle,
 } from "lucide-react";
+import { lazy, Suspense, useEffect, useState } from "react";
+import {
+	Bar,
+	BarChart,
+	Cell,
+	Pie,
+	PieChart,
+	ResponsiveContainer,
+	Tooltip,
+	XAxis,
+	YAxis,
+} from "recharts";
 import { complianceAPI } from "../../utils/complianceApi";
 import ComplianceScore from "./ComplianceScore";
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 // Lazy load ComplianceTrend to avoid recharts bundling issues
 const ComplianceTrend = lazy(() => import("./ComplianceTrend"));
 
 // Fallback scan profiles (used if agent doesn't provide any)
 const DEFAULT_SCAN_PROFILES = [
-	{ id: "level1_server", name: "CIS Level 1 Server", description: "Basic security hardening for servers", type: "openscap" },
-	{ id: "level2_server", name: "CIS Level 2 Server", description: "Extended security hardening (more restrictive)", type: "openscap" },
+	{
+		id: "level1_server",
+		name: "CIS Level 1 Server",
+		description: "Basic security hardening for servers",
+		type: "openscap",
+	},
+	{
+		id: "level2_server",
+		name: "CIS Level 2 Server",
+		description: "Extended security hardening (more restrictive)",
+		type: "openscap",
+	},
 ];
 
 // Subtab definitions
@@ -53,7 +73,13 @@ const SUBTABS = [
 	{ id: "settings", name: "Settings", icon: Settings },
 ];
 
-const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, dockerEnabled = false }) => {
+const ComplianceTab = ({
+	hostId,
+	apiId,
+	isConnected,
+	complianceEnabled = false,
+	dockerEnabled = false,
+}) => {
 	const [activeSubtab, setActiveSubtab] = useState("overview");
 	const [expandedRules, setExpandedRules] = useState({});
 	const [statusFilter, setStatusFilter] = useState("fail");
@@ -80,7 +106,10 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 			if (saved) {
 				const parsed = JSON.parse(saved);
 				// Check if scan started less than 10 minutes ago
-				if (parsed.startTime && Date.now() - parsed.startTime < 10 * 60 * 1000) {
+				if (
+					parsed.startTime &&
+					Date.now() - parsed.startTime < 10 * 60 * 1000
+				) {
 					return true;
 				}
 				// Clear stale scan state
@@ -96,7 +125,10 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 			const saved = sessionStorage.getItem(scanStateKey);
 			if (saved) {
 				const parsed = JSON.parse(saved);
-				if (parsed.startTime && Date.now() - parsed.startTime < 10 * 60 * 1000) {
+				if (
+					parsed.startTime &&
+					Date.now() - parsed.startTime < 10 * 60 * 1000
+				) {
 					return parsed;
 				}
 			}
@@ -127,15 +159,24 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 	// Get latest scan summary for each profile type (for tab display)
 	const { data: scansByType } = useQuery({
 		queryKey: ["compliance-scans-by-type", hostId],
-		queryFn: () => complianceAPI.getLatestScansByType(hostId).then((res) => res.data),
+		queryFn: () =>
+			complianceAPI.getLatestScansByType(hostId).then((res) => res.data),
 		enabled: !!hostId,
 		staleTime: 30 * 1000,
 		refetchOnWindowFocus: false,
 	});
 
-	const { data: latestScan, isLoading, isFetching, refetch: refetchLatest } = useQuery({
+	const {
+		data: latestScan,
+		isLoading,
+		isFetching,
+		refetch: refetchLatest,
+	} = useQuery({
 		queryKey: ["compliance-latest", hostId, profileTypeFilter],
-		queryFn: () => complianceAPI.getLatestScan(hostId, profileTypeFilter).then((res) => res.data),
+		queryFn: () =>
+			complianceAPI
+				.getLatestScan(hostId, profileTypeFilter)
+				.then((res) => res.data),
 		enabled: !!hostId && profileTypeFilter !== null,
 		staleTime: 30 * 1000, // Consider data fresh for 30 seconds
 		refetchOnWindowFocus: false, // Don't refetch on window focus to avoid flicker
@@ -143,7 +184,8 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 
 	const { data: scanHistory, refetch: refetchHistory } = useQuery({
 		queryKey: ["compliance-history", hostId],
-		queryFn: () => complianceAPI.getHostScans(hostId, { limit: 10 }).then((res) => res.data),
+		queryFn: () =>
+			complianceAPI.getHostScans(hostId, { limit: 10 }).then((res) => res.data),
 		enabled: !!hostId,
 		staleTime: 30 * 1000,
 		refetchOnWindowFocus: false,
@@ -151,19 +193,27 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 	});
 
 	// Get integration status (scanner info, components)
-	const { data: integrationStatus, refetch: refetchStatus, isFetching: isRefreshingStatus } = useQuery({
+	const {
+		data: integrationStatus,
+		refetch: refetchStatus,
+		isFetching: isRefreshingStatus,
+	} = useQuery({
 		queryKey: ["compliance-status", hostId],
-		queryFn: () => complianceAPI.getIntegrationStatus(hostId).then((res) => res.data),
+		queryFn: () =>
+			complianceAPI.getIntegrationStatus(hostId).then((res) => res.data),
 		enabled: !!hostId,
 		refetchInterval: 30000, // Refresh every 30 seconds
 	});
 
 	// Update selected profile when agent profiles are loaded
 	useEffect(() => {
-		const agentProfiles = integrationStatus?.status?.scanner_info?.available_profiles;
+		const agentProfiles =
+			integrationStatus?.status?.scanner_info?.available_profiles;
 		if (agentProfiles?.length > 0) {
 			// If current selection isn't in the agent's available profiles, select the first one
-			const currentInList = agentProfiles.some(p => (p.xccdf_id || p.id) === selectedProfile);
+			const currentInList = agentProfiles.some(
+				(p) => (p.xccdf_id || p.id) === selectedProfile,
+			);
 			if (!currentInList) {
 				const firstProfile = agentProfiles[0];
 				setSelectedProfile(firstProfile.xccdf_id || firstProfile.id);
@@ -209,7 +259,10 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 			return complianceAPI.upgradeSSG(hostId);
 		},
 		onSuccess: () => {
-			setUpdateMessage({ type: "success", text: "SSG update command sent! Security content will be updated shortly." });
+			setUpdateMessage({
+				type: "success",
+				text: "SSG update command sent! Security content will be updated shortly.",
+			});
 			setTimeout(() => {
 				setUpdateMessage(null);
 				refetchStatus();
@@ -217,12 +270,13 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 		},
 		onError: (error) => {
 			console.error("SSG update error:", error);
-			const errorMsg = error.response?.data?.error
-				|| error.message
-				|| "Failed to send SSG update command";
+			const errorMsg =
+				error.response?.data?.error ||
+				error.message ||
+				"Failed to send SSG update command";
 			setUpdateMessage({
 				type: "error",
-				text: errorMsg
+				text: errorMsg,
 			});
 			setTimeout(() => setUpdateMessage(null), 8000);
 		},
@@ -233,7 +287,10 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 	const ssgUpgradeMutation = useMutation({
 		mutationFn: () => complianceAPI.upgradeSSG(hostId),
 		onSuccess: () => {
-			setSSGUpgradeMessage({ type: "success", text: "Upgrading SSG content from GitHub... This may take 10-15 seconds." });
+			setSSGUpgradeMessage({
+				type: "success",
+				text: "Upgrading SSG content from GitHub... This may take 10-15 seconds.",
+			});
 			// First refresh after 8 seconds (download + extract takes ~6-7s)
 			setTimeout(() => {
 				refetchStatus();
@@ -247,7 +304,8 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 		onError: (error) => {
 			setSSGUpgradeMessage({
 				type: "error",
-				text: error.response?.data?.error || "Failed to send SSG upgrade command"
+				text:
+					error.response?.data?.error || "Failed to send SSG upgrade command",
 			});
 			setTimeout(() => setSSGUpgradeMessage(null), 5000);
 		},
@@ -259,13 +317,25 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 		mutationFn: (ruleId) => complianceAPI.remediateRule(hostId, ruleId),
 		onMutate: (ruleId) => {
 			setRemediatingRule(ruleId);
-			setRemediationStatus({ phase: "sending", rule: ruleId, message: "Sending remediation command to agent..." });
+			setRemediationStatus({
+				phase: "sending",
+				rule: ruleId,
+				message: "Sending remediation command to agent...",
+			});
 		},
 		onSuccess: (_, ruleId) => {
-			setRemediationStatus({ phase: "running", rule: ruleId, message: "Agent is applying the fix. This may take a moment..." });
+			setRemediationStatus({
+				phase: "running",
+				rule: ruleId,
+				message: "Agent is applying the fix. This may take a moment...",
+			});
 			// Show running status for a few seconds, then complete
 			setTimeout(() => {
-				setRemediationStatus({ phase: "complete", rule: ruleId, message: "Fix applied! Run a new scan to verify the change." });
+				setRemediationStatus({
+					phase: "complete",
+					rule: ruleId,
+					message: "Fix applied! Run a new scan to verify the change.",
+				});
 				setRemediatingRule(null);
 				// Clear the status and refresh after showing success
 				setTimeout(() => {
@@ -278,7 +348,7 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 			setRemediationStatus({
 				phase: "error",
 				rule: remediatingRule,
-				message: error.response?.data?.error || "Failed to remediate rule"
+				message: error.response?.data?.error || "Failed to remediate rule",
 			});
 			setRemediatingRule(null);
 			setTimeout(() => setRemediationStatus(null), 6000);
@@ -342,7 +412,7 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 		console.log("[Compliance SSE] Connecting for api_id:", apiId);
 		const eventSource = new EventSource(
 			`/api/v1/ws/compliance-progress/${apiId}/stream`,
-			{ withCredentials: true }
+			{ withCredentials: true },
 		);
 
 		eventSource.onmessage = (event) => {
@@ -380,18 +450,25 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 				? " Remediation is enabled - failed rules will be automatically fixed."
 				: "";
 			// Get profile name for display
-			const profileName = availableProfiles.find(p =>
-				(p.xccdf_id || p.id) === variables.profileId
-			)?.name || variables.profileId;
-			setScanMessage({
-				type: "info",
-				text: `Compliance scan started. This may take several minutes...${remediationText}`,
-				startTime: Date.now(),
-				profileName: profileName,
-			}, profileName);
+			const profileName =
+				availableProfiles.find(
+					(p) => (p.xccdf_id || p.id) === variables.profileId,
+				)?.name || variables.profileId;
+			setScanMessage(
+				{
+					type: "info",
+					text: `Compliance scan started. This may take several minutes...${remediationText}`,
+					startTime: Date.now(),
+					profileName: profileName,
+				},
+				profileName,
+			);
 		},
 		onError: (error) => {
-			const errorMsg = error.response?.data?.error || error.message || "Failed to trigger scan";
+			const errorMsg =
+				error.response?.data?.error ||
+				error.message ||
+				"Failed to trigger scan";
 			setScanMessage({ type: "error", text: errorMsg });
 			setTimeout(() => setScanMessage(null), 5000);
 		},
@@ -423,16 +500,19 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 			fail: "bg-red-900/30 text-red-400 border-red-700",
 			warn: "bg-yellow-900/30 text-yellow-400 border-yellow-700",
 			skip: "bg-secondary-700/50 text-secondary-400 border-secondary-600",
-			notapplicable: "bg-secondary-700/50 text-secondary-500 border-secondary-600",
+			notapplicable:
+				"bg-secondary-700/50 text-secondary-500 border-secondary-600",
 		};
 		return styles[status] || styles.skip;
 	};
 
-	const filteredResults = latestScan?.compliance_results?.filter((r) =>
-		statusFilter === "all" ? true : r.status === statusFilter
-	) || latestScan?.results?.filter((r) =>
-		statusFilter === "all" ? true : r.status === statusFilter
-	);
+	const filteredResults =
+		latestScan?.compliance_results?.filter((r) =>
+			statusFilter === "all" ? true : r.status === statusFilter,
+		) ||
+		latestScan?.results?.filter((r) =>
+			statusFilter === "all" ? true : r.status === statusFilter,
+		);
 
 	if (isLoading) {
 		return (
@@ -453,7 +533,8 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						<div className="flex-1">
 							<p className="font-medium">Content Version Mismatch</p>
 							<p className="text-sm text-orange-300/80 mt-1">
-								{scannerInfo.mismatch_warning || "SCAP content may not match your OS version. Results may show many N/A rules."}
+								{scannerInfo.mismatch_warning ||
+									"SCAP content may not match your OS version. Results may show many N/A rules."}
 							</p>
 						</div>
 						<button
@@ -487,7 +568,8 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						<div className="flex items-center gap-4">
 							<div className="text-right">
 								<p className="text-xl font-mono font-bold text-primary-400">
-									{Math.floor(elapsedTime / 60)}:{(elapsedTime % 60).toString().padStart(2, '0')}
+									{Math.floor(elapsedTime / 60)}:
+									{(elapsedTime % 60).toString().padStart(2, "0")}
 								</p>
 								<p className="text-xs text-primary-400/60">elapsed</p>
 							</div>
@@ -510,7 +592,8 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						<div className="flex-1">
 							<p className="font-medium">SSG Content Update Available</p>
 							<p className="text-sm text-yellow-300/80 mt-1">
-								{scannerInfo.ssg_upgrade_message || `Current version ${scannerInfo.ssg_version} is below minimum ${scannerInfo.ssg_min_version}. Update recommended for accurate compliance results.`}
+								{scannerInfo.ssg_upgrade_message ||
+									`Current version ${scannerInfo.ssg_version} is below minimum ${scannerInfo.ssg_min_version}. Update recommended for accurate compliance results.`}
 							</p>
 						</div>
 						<button
@@ -525,241 +608,351 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 			)}
 
 			{/* Scan Results by Type - Show both OpenSCAP and Docker Bench */}
-			{(scansByType?.openscap || scansByType?.["docker-bench"]) ? (
+			{scansByType?.openscap || scansByType?.["docker-bench"] ? (
 				<>
-				<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-					{/* OpenSCAP Card */}
-					<div className={`bg-secondary-800 rounded-lg border ${scansByType?.openscap ? "border-green-700/50" : "border-secondary-700"} p-6`}>
-						<div className="flex items-center gap-3 mb-4">
-							<div className="p-2 rounded-lg bg-green-900/30">
-								<Shield className="h-6 w-6 text-green-400" />
+					<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+						{/* OpenSCAP Card */}
+						<div
+							className={`bg-secondary-800 rounded-lg border ${scansByType?.openscap ? "border-green-700/50" : "border-secondary-700"} p-6`}
+						>
+							<div className="flex items-center gap-3 mb-4">
+								<div className="p-2 rounded-lg bg-green-900/30">
+									<Shield className="h-6 w-6 text-green-400" />
+								</div>
+								<div className="flex-1">
+									<h3 className="text-lg font-semibold text-white">OpenSCAP</h3>
+									<p className="text-xs text-secondary-400">
+										CIS Benchmark Scanning
+									</p>
+								</div>
+								{scansByType?.openscap && (
+									<ComplianceScore
+										score={scansByType.openscap.score}
+										size="md"
+									/>
+								)}
 							</div>
-							<div className="flex-1">
-								<h3 className="text-lg font-semibold text-white">OpenSCAP</h3>
-								<p className="text-xs text-secondary-400">CIS Benchmark Scanning</p>
-							</div>
-							{scansByType?.openscap && (
-								<ComplianceScore score={scansByType.openscap.score} size="md" />
+
+							{scansByType?.openscap ? (
+								<>
+									<div className="grid grid-cols-4 gap-2 mb-4">
+										<div className="bg-secondary-700/50 rounded p-2 text-center">
+											<p className="text-lg font-bold text-white">
+												{scansByType.openscap.total_rules}
+											</p>
+											<p className="text-xs text-secondary-400">Total</p>
+										</div>
+										<div className="bg-green-900/20 rounded p-2 text-center">
+											<p className="text-lg font-bold text-green-400">
+												{scansByType.openscap.passed}
+											</p>
+											<p className="text-xs text-secondary-400">Passed</p>
+										</div>
+										<div className="bg-red-900/20 rounded p-2 text-center">
+											<p className="text-lg font-bold text-red-400">
+												{scansByType.openscap.failed}
+											</p>
+											<p className="text-xs text-secondary-400">Failed</p>
+										</div>
+										<div className="bg-secondary-700/50 rounded p-2 text-center">
+											<p className="text-lg font-bold text-secondary-400">
+												{scansByType.openscap.skipped || 0}
+											</p>
+											<p className="text-xs text-secondary-400">N/A</p>
+										</div>
+									</div>
+
+									{/* Severity Breakdown Chart */}
+									{scansByType.openscap.severity_breakdown?.length > 0 && (
+										<div className="mb-4 p-3 bg-secondary-700/30 rounded-lg">
+											<p className="text-xs text-secondary-400 mb-2">
+												Failures by Severity
+											</p>
+											<div className="h-24">
+												<ResponsiveContainer width="100%" height="100%">
+													<BarChart
+														data={scansByType.openscap.severity_breakdown
+															.filter((s) => s.severity !== "unknown")
+															.map((s) => ({
+																name:
+																	s.severity.charAt(0).toUpperCase() +
+																	s.severity.slice(1),
+																count: s.count,
+																color:
+																	s.severity === "critical"
+																		? "#ef4444"
+																		: s.severity === "high"
+																			? "#f97316"
+																			: s.severity === "medium"
+																				? "#eab308"
+																				: "#22c55e",
+															}))}
+														layout="vertical"
+													>
+														<XAxis type="number" hide />
+														<YAxis
+															type="category"
+															dataKey="name"
+															width={55}
+															tick={{ fontSize: 10, fill: "#9ca3af" }}
+														/>
+														<Tooltip
+															content={({ active, payload }) => {
+																if (!active || !payload?.[0]) return null;
+																return (
+																	<div className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs">
+																		<span className="text-white">
+																			{payload[0].payload.name}:{" "}
+																			{payload[0].value}
+																		</span>
+																	</div>
+																);
+															}}
+														/>
+														<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+															{scansByType.openscap.severity_breakdown
+																.filter((s) => s.severity !== "unknown")
+																.map((entry, index) => (
+																	<Cell
+																		key={`cell-${index}`}
+																		fill={
+																			entry.severity === "critical"
+																				? "#ef4444"
+																				: entry.severity === "high"
+																					? "#f97316"
+																					: entry.severity === "medium"
+																						? "#eab308"
+																						: "#22c55e"
+																		}
+																	/>
+																))}
+														</Bar>
+													</BarChart>
+												</ResponsiveContainer>
+											</div>
+										</div>
+									)}
+
+									<p className="text-xs text-secondary-500 mb-3">
+										Last scan:{" "}
+										{new Date(
+											scansByType.openscap.completed_at,
+										).toLocaleString()}
+									</p>
+									<button
+										onClick={() => {
+											setProfileTypeFilter("openscap");
+											setStatusFilter("fail");
+											setActiveSubtab("results");
+										}}
+										className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-green-600/20 hover:bg-green-600/30 text-green-400 rounded-lg transition-colors text-sm"
+									>
+										<ListChecks className="h-4 w-4" />
+										View Results
+									</button>
+								</>
+							) : (
+								<div className="text-center py-6">
+									<p className="text-secondary-500 text-sm mb-3">
+										No OpenSCAP scan data
+									</p>
+									<button
+										onClick={() => setActiveSubtab("scan")}
+										className="text-xs text-primary-400 hover:text-primary-300"
+									>
+										Run a scan →
+									</button>
+								</div>
 							)}
 						</div>
 
-						{scansByType?.openscap ? (
-							<>
-								<div className="grid grid-cols-4 gap-2 mb-4">
-									<div className="bg-secondary-700/50 rounded p-2 text-center">
-										<p className="text-lg font-bold text-white">{scansByType.openscap.total_rules}</p>
-										<p className="text-xs text-secondary-400">Total</p>
-									</div>
-									<div className="bg-green-900/20 rounded p-2 text-center">
-										<p className="text-lg font-bold text-green-400">{scansByType.openscap.passed}</p>
-										<p className="text-xs text-secondary-400">Passed</p>
-									</div>
-									<div className="bg-red-900/20 rounded p-2 text-center">
-										<p className="text-lg font-bold text-red-400">{scansByType.openscap.failed}</p>
-										<p className="text-xs text-secondary-400">Failed</p>
-									</div>
-									<div className="bg-secondary-700/50 rounded p-2 text-center">
-										<p className="text-lg font-bold text-secondary-400">{scansByType.openscap.skipped || 0}</p>
-										<p className="text-xs text-secondary-400">N/A</p>
-									</div>
+						{/* Docker Bench Card */}
+						<div
+							className={`bg-secondary-800 rounded-lg border ${scansByType?.["docker-bench"] ? "border-blue-700/50" : "border-secondary-700"} p-6`}
+						>
+							<div className="flex items-center gap-3 mb-4">
+								<div className="p-2 rounded-lg bg-blue-900/30">
+									<Container className="h-6 w-6 text-blue-400" />
 								</div>
+								<div className="flex-1">
+									<h3 className="text-lg font-semibold text-white">
+										Docker Bench
+									</h3>
+									<p className="text-xs text-secondary-400">
+										CIS Docker Benchmark
+									</p>
+								</div>
+								{scansByType?.["docker-bench"] && (
+									<ComplianceScore
+										score={scansByType["docker-bench"].score}
+										size="md"
+									/>
+								)}
+							</div>
 
-								{/* Severity Breakdown Chart */}
-								{scansByType.openscap.severity_breakdown?.length > 0 && (
-									<div className="mb-4 p-3 bg-secondary-700/30 rounded-lg">
-										<p className="text-xs text-secondary-400 mb-2">Failures by Severity</p>
-										<div className="h-24">
-											<ResponsiveContainer width="100%" height="100%">
-												<BarChart
-													data={scansByType.openscap.severity_breakdown
-														.filter(s => s.severity !== 'unknown')
-														.map(s => ({
-															name: s.severity.charAt(0).toUpperCase() + s.severity.slice(1),
-															count: s.count,
-															color: s.severity === 'critical' ? '#ef4444' :
-																s.severity === 'high' ? '#f97316' :
-																s.severity === 'medium' ? '#eab308' : '#22c55e'
-														}))}
-													layout="vertical"
-												>
-													<XAxis type="number" hide />
-													<YAxis type="category" dataKey="name" width={55} tick={{ fontSize: 10, fill: '#9ca3af' }} />
-													<Tooltip
-														content={({ active, payload }) => {
-															if (!active || !payload?.[0]) return null;
-															return (
-																<div className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs">
-																	<span className="text-white">{payload[0].payload.name}: {payload[0].value}</span>
-																</div>
-															);
-														}}
-													/>
-													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-														{scansByType.openscap.severity_breakdown
-															.filter(s => s.severity !== 'unknown')
-															.map((entry, index) => (
-																<Cell key={`cell-${index}`} fill={
-																	entry.severity === 'critical' ? '#ef4444' :
-																	entry.severity === 'high' ? '#f97316' :
-																	entry.severity === 'medium' ? '#eab308' : '#22c55e'
-																} />
-															))}
-													</Bar>
-												</BarChart>
-											</ResponsiveContainer>
+							{scansByType?.["docker-bench"] ? (
+								<>
+									<div className="grid grid-cols-4 gap-2 mb-4">
+										<div className="bg-secondary-700/50 rounded p-2 text-center">
+											<p className="text-lg font-bold text-white">
+												{scansByType["docker-bench"].total_rules}
+											</p>
+											<p className="text-xs text-secondary-400">Total</p>
+										</div>
+										<div className="bg-green-900/20 rounded p-2 text-center">
+											<p className="text-lg font-bold text-green-400">
+												{scansByType["docker-bench"].passed}
+											</p>
+											<p className="text-xs text-secondary-400">Passed</p>
+										</div>
+										<div className="bg-yellow-900/20 rounded p-2 text-center">
+											<p className="text-lg font-bold text-yellow-400">
+												{scansByType["docker-bench"].warnings}
+											</p>
+											<p className="text-xs text-secondary-400">Warnings</p>
+										</div>
+										<div className="bg-secondary-700/50 rounded p-2 text-center">
+											<p className="text-lg font-bold text-secondary-400">
+												{scansByType["docker-bench"].skipped || 0}
+											</p>
+											<p className="text-xs text-secondary-400">Info</p>
 										</div>
 									</div>
-								)}
 
-								<p className="text-xs text-secondary-500 mb-3">
-									Last scan: {new Date(scansByType.openscap.completed_at).toLocaleString()}
-								</p>
-								<button
-									onClick={() => {
-										setProfileTypeFilter("openscap");
-										setStatusFilter("fail");
-										setActiveSubtab("results");
-									}}
-									className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-green-600/20 hover:bg-green-600/30 text-green-400 rounded-lg transition-colors text-sm"
-								>
-									<ListChecks className="h-4 w-4" />
-									View Results
-								</button>
-							</>
-						) : (
-							<div className="text-center py-6">
-								<p className="text-secondary-500 text-sm mb-3">No OpenSCAP scan data</p>
-								<button
-									onClick={() => setActiveSubtab("scan")}
-									className="text-xs text-primary-400 hover:text-primary-300"
-								>
-									Run a scan →
-								</button>
-							</div>
-						)}
-					</div>
+									{/* Section Breakdown Chart */}
+									{scansByType["docker-bench"].section_breakdown?.length >
+										0 && (
+										<div className="mb-4 p-3 bg-secondary-700/30 rounded-lg">
+											<p className="text-xs text-secondary-400 mb-2">
+												Warnings by Section
+											</p>
+											<div className="h-24">
+												<ResponsiveContainer width="100%" height="100%">
+													<BarChart
+														data={scansByType["docker-bench"].section_breakdown
+															.slice(0, 4)
+															.map((s, i) => ({
+																name:
+																	s.section.length > 15
+																		? `${s.section.slice(0, 12)}...`
+																		: s.section,
+																fullName: s.section,
+																count: s.count,
+																color:
+																	[
+																		"#ef4444",
+																		"#f97316",
+																		"#eab308",
+																		"#84cc16",
+																		"#22c55e",
+																		"#3b82f6",
+																		"#8b5cf6",
+																	][i] || "#6b7280",
+															}))}
+														layout="vertical"
+													>
+														<XAxis type="number" hide />
+														<YAxis
+															type="category"
+															dataKey="name"
+															width={70}
+															tick={{ fontSize: 9, fill: "#9ca3af" }}
+														/>
+														<Tooltip
+															content={({ active, payload }) => {
+																if (!active || !payload?.[0]) return null;
+																return (
+																	<div className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs max-w-[200px]">
+																		<p className="text-white font-medium">
+																			{payload[0].payload.fullName}
+																		</p>
+																		<p className="text-gray-300">
+																			Warnings: {payload[0].value}
+																		</p>
+																	</div>
+																);
+															}}
+														/>
+														<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+															{scansByType["docker-bench"].section_breakdown
+																.slice(0, 4)
+																.map((entry, index) => (
+																	<Cell
+																		key={`cell-${index}`}
+																		fill={
+																			[
+																				"#ef4444",
+																				"#f97316",
+																				"#eab308",
+																				"#84cc16",
+																				"#22c55e",
+																				"#3b82f6",
+																				"#8b5cf6",
+																			][index] || "#6b7280"
+																		}
+																	/>
+																))}
+														</Bar>
+													</BarChart>
+												</ResponsiveContainer>
+											</div>
+										</div>
+									)}
 
-					{/* Docker Bench Card */}
-					<div className={`bg-secondary-800 rounded-lg border ${scansByType?.["docker-bench"] ? "border-blue-700/50" : "border-secondary-700"} p-6`}>
-						<div className="flex items-center gap-3 mb-4">
-							<div className="p-2 rounded-lg bg-blue-900/30">
-								<Container className="h-6 w-6 text-blue-400" />
-							</div>
-							<div className="flex-1">
-								<h3 className="text-lg font-semibold text-white">Docker Bench</h3>
-								<p className="text-xs text-secondary-400">CIS Docker Benchmark</p>
-							</div>
-							{scansByType?.["docker-bench"] && (
-								<ComplianceScore score={scansByType["docker-bench"].score} size="md" />
+									<p className="text-xs text-secondary-500 mb-3">
+										Last scan:{" "}
+										{new Date(
+											scansByType["docker-bench"].completed_at,
+										).toLocaleString()}
+									</p>
+									<button
+										onClick={() => {
+											setProfileTypeFilter("docker-bench");
+											setStatusFilter("warn");
+											setActiveSubtab("results");
+										}}
+										className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg transition-colors text-sm"
+									>
+										<ListChecks className="h-4 w-4" />
+										View Results
+									</button>
+								</>
+							) : (
+								<div className="text-center py-6">
+									<p className="text-secondary-500 text-sm mb-3">
+										No Docker Bench scan data
+									</p>
+									<button
+										onClick={() => setActiveSubtab("scan")}
+										className="text-xs text-primary-400 hover:text-primary-300"
+									>
+										Run a scan →
+									</button>
+								</div>
 							)}
 						</div>
-
-						{scansByType?.["docker-bench"] ? (
-							<>
-								<div className="grid grid-cols-4 gap-2 mb-4">
-									<div className="bg-secondary-700/50 rounded p-2 text-center">
-										<p className="text-lg font-bold text-white">{scansByType["docker-bench"].total_rules}</p>
-										<p className="text-xs text-secondary-400">Total</p>
-									</div>
-									<div className="bg-green-900/20 rounded p-2 text-center">
-										<p className="text-lg font-bold text-green-400">{scansByType["docker-bench"].passed}</p>
-										<p className="text-xs text-secondary-400">Passed</p>
-									</div>
-									<div className="bg-yellow-900/20 rounded p-2 text-center">
-										<p className="text-lg font-bold text-yellow-400">{scansByType["docker-bench"].warnings}</p>
-										<p className="text-xs text-secondary-400">Warnings</p>
-									</div>
-									<div className="bg-secondary-700/50 rounded p-2 text-center">
-										<p className="text-lg font-bold text-secondary-400">{scansByType["docker-bench"].skipped || 0}</p>
-										<p className="text-xs text-secondary-400">Info</p>
-									</div>
-								</div>
-
-								{/* Section Breakdown Chart */}
-								{scansByType["docker-bench"].section_breakdown?.length > 0 && (
-									<div className="mb-4 p-3 bg-secondary-700/30 rounded-lg">
-										<p className="text-xs text-secondary-400 mb-2">Warnings by Section</p>
-										<div className="h-24">
-											<ResponsiveContainer width="100%" height="100%">
-												<BarChart
-													data={scansByType["docker-bench"].section_breakdown.slice(0, 4).map((s, i) => ({
-														name: s.section.length > 15 ? `${s.section.slice(0, 12)}...` : s.section,
-														fullName: s.section,
-														count: s.count,
-														color: ['#ef4444', '#f97316', '#eab308', '#84cc16', '#22c55e', '#3b82f6', '#8b5cf6'][i] || '#6b7280'
-													}))}
-													layout="vertical"
-												>
-													<XAxis type="number" hide />
-													<YAxis type="category" dataKey="name" width={70} tick={{ fontSize: 9, fill: '#9ca3af' }} />
-													<Tooltip
-														content={({ active, payload }) => {
-															if (!active || !payload?.[0]) return null;
-															return (
-																<div className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs max-w-[200px]">
-																	<p className="text-white font-medium">{payload[0].payload.fullName}</p>
-																	<p className="text-gray-300">Warnings: {payload[0].value}</p>
-																</div>
-															);
-														}}
-													/>
-													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-														{scansByType["docker-bench"].section_breakdown.slice(0, 4).map((entry, index) => (
-															<Cell key={`cell-${index}`} fill={['#ef4444', '#f97316', '#eab308', '#84cc16', '#22c55e', '#3b82f6', '#8b5cf6'][index] || '#6b7280'} />
-														))}
-													</Bar>
-												</BarChart>
-											</ResponsiveContainer>
-										</div>
-									</div>
-								)}
-
-								<p className="text-xs text-secondary-500 mb-3">
-									Last scan: {new Date(scansByType["docker-bench"].completed_at).toLocaleString()}
-								</p>
-								<button
-									onClick={() => {
-										setProfileTypeFilter("docker-bench");
-										setStatusFilter("warn");
-										setActiveSubtab("results");
-									}}
-									className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg transition-colors text-sm"
-								>
-									<ListChecks className="h-4 w-4" />
-									View Results
-								</button>
-							</>
-						) : (
-							<div className="text-center py-6">
-								<p className="text-secondary-500 text-sm mb-3">No Docker Bench scan data</p>
-								<button
-									onClick={() => setActiveSubtab("scan")}
-									className="text-xs text-primary-400 hover:text-primary-300"
-								>
-									Run a scan →
-								</button>
-							</div>
-						)}
 					</div>
-				</div>
 
-				{/* Quick Actions */}
-				<div className="flex justify-center gap-3 mt-4">
-					<button
-						onClick={() => setActiveSubtab("scan")}
-						className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
-					>
-						<Play className="h-4 w-4" />
-						Run New Scan
-					</button>
-				</div>
+					{/* Quick Actions */}
+					<div className="flex justify-center gap-3 mt-4">
+						<button
+							onClick={() => setActiveSubtab("scan")}
+							className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
+						>
+							<Play className="h-4 w-4" />
+							Run New Scan
+						</button>
+					</div>
 				</>
 			) : (
 				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-12 text-center">
 					<Shield className="h-16 w-16 text-secondary-600 mx-auto mb-4" />
-					<h3 className="text-lg font-medium text-white mb-2">No Compliance Scans Yet</h3>
+					<h3 className="text-lg font-medium text-white mb-2">
+						No Compliance Scans Yet
+					</h3>
 					<p className="text-secondary-400 mb-6">
-						Run a security compliance scan to check this host against CIS benchmarks
+						Run a security compliance scan to check this host against CIS
+						benchmarks
 					</p>
 					<button
 						onClick={() => setActiveSubtab("scan")}
@@ -773,7 +966,11 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 
 			{/* Compliance Score Trend */}
 			{(scansByType?.openscap || scansByType?.["docker-bench"]) && (
-				<Suspense fallback={<div className="h-48 bg-secondary-800 rounded-lg border border-secondary-700 animate-pulse" />}>
+				<Suspense
+					fallback={
+						<div className="h-48 bg-secondary-800 rounded-lg border border-secondary-700 animate-pulse" />
+					}
+				>
 					<ComplianceTrend hostId={hostId} />
 				</Suspense>
 			)}
@@ -782,9 +979,10 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 
 	// Get available profiles from agent or use defaults
 	const scannerInfo = integrationStatus?.status?.scanner_info;
-	const availableProfiles = scannerInfo?.available_profiles?.length > 0
-		? scannerInfo.available_profiles
-		: DEFAULT_SCAN_PROFILES;
+	const availableProfiles =
+		scannerInfo?.available_profiles?.length > 0
+			? scannerInfo.available_profiles
+			: DEFAULT_SCAN_PROFILES;
 
 	// Render Run Scan subtab
 	const renderScanTab = () => (
@@ -812,7 +1010,8 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						<div>
 							<p className="font-medium">Content Version Mismatch</p>
 							<p className="text-sm text-orange-300/80">
-								{scannerInfo.mismatch_warning || "SCAP content may not match your OS version. Results may show many N/A rules."}
+								{scannerInfo.mismatch_warning ||
+									"SCAP content may not match your OS version. Results may show many N/A rules."}
 							</p>
 						</div>
 					</div>
@@ -821,16 +1020,24 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 
 			{/* Scan Message */}
 			{scanMessage && (
-				<div className={`p-4 rounded-lg flex items-center gap-3 ${
-					scanMessage.type === "success"
-						? "bg-green-900/50 border border-green-700 text-green-200"
-						: scanMessage.type === "info"
-							? "bg-blue-900/50 border border-blue-700 text-blue-200"
-							: "bg-red-900/50 border border-red-700 text-red-200"
-				}`}>
-					{scanMessage.type === "info" && <RefreshCw className="h-5 w-5 animate-spin flex-shrink-0" />}
-					{scanMessage.type === "success" && <CheckCircle className="h-5 w-5 flex-shrink-0" />}
-					{scanMessage.type === "error" && <XCircle className="h-5 w-5 flex-shrink-0" />}
+				<div
+					className={`p-4 rounded-lg flex items-center gap-3 ${
+						scanMessage.type === "success"
+							? "bg-green-900/50 border border-green-700 text-green-200"
+							: scanMessage.type === "info"
+								? "bg-blue-900/50 border border-blue-700 text-blue-200"
+								: "bg-red-900/50 border border-red-700 text-red-200"
+					}`}
+				>
+					{scanMessage.type === "info" && (
+						<RefreshCw className="h-5 w-5 animate-spin flex-shrink-0" />
+					)}
+					{scanMessage.type === "success" && (
+						<CheckCircle className="h-5 w-5 flex-shrink-0" />
+					)}
+					{scanMessage.type === "error" && (
+						<XCircle className="h-5 w-5 flex-shrink-0" />
+					)}
 					<span>{scanMessage.text}</span>
 				</div>
 			)}
@@ -844,15 +1051,20 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 								<RefreshCw className="h-6 w-6 animate-spin text-primary-400" />
 							</div>
 							<div>
-								<h3 className="text-lg font-medium text-white">Scan In Progress</h3>
+								<h3 className="text-lg font-medium text-white">
+									Scan In Progress
+								</h3>
 								<p className="text-sm text-secondary-400">
-									Running {availableProfiles.find(p => p.id === selectedProfile)?.name || selectedProfile}
+									Running{" "}
+									{availableProfiles.find((p) => p.id === selectedProfile)
+										?.name || selectedProfile}
 								</p>
 							</div>
 						</div>
 						<div className="text-right">
 							<p className="text-2xl font-mono font-bold text-primary-400">
-								{Math.floor(elapsedTime / 60)}:{(elapsedTime % 60).toString().padStart(2, '0')}
+								{Math.floor(elapsedTime / 60)}:
+								{(elapsedTime % 60).toString().padStart(2, "0")}
 							</p>
 							<p className="text-xs text-secondary-500">elapsed</p>
 						</div>
@@ -861,7 +1073,9 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 					<div className="w-full bg-secondary-700 rounded-full h-2 mb-3 overflow-hidden">
 						<div
 							className="bg-gradient-to-r from-primary-600 to-primary-400 h-2 rounded-full transition-all duration-1000"
-							style={{ width: `${scanProgress?.progress || Math.min(95, (elapsedTime / 300) * 100)}%` }}
+							style={{
+								width: `${scanProgress?.progress || Math.min(95, (elapsedTime / 300) * 100)}%`,
+							}}
 						/>
 					</div>
 					{/* Real-time progress message from SSE */}
@@ -873,7 +1087,10 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 							</p>
 							{scanProgress.phase && (
 								<p className="text-xs text-secondary-500">
-									Phase: <span className="capitalize font-medium text-secondary-400">{scanProgress.phase}</span>
+									Phase:{" "}
+									<span className="capitalize font-medium text-secondary-400">
+										{scanProgress.phase}
+									</span>
 								</p>
 							)}
 						</div>
@@ -881,7 +1098,9 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						<p className="text-sm text-secondary-400 flex items-center gap-2">
 							<Clock className="h-4 w-4" />
 							{(() => {
-								const currentProfile = availableProfiles.find(p => (p.xccdf_id || p.id) === selectedProfile);
+								const currentProfile = availableProfiles.find(
+									(p) => (p.xccdf_id || p.id) === selectedProfile,
+								);
 								const isDockerBench = currentProfile?.type === "docker-bench";
 								if (isDockerBench) {
 									return elapsedTime < 60
@@ -904,7 +1123,9 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 					{/* Profile Selection */}
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
 						<div className="flex items-center justify-between mb-4">
-							<h3 className="text-lg font-medium text-white">Select Scan Profile</h3>
+							<h3 className="text-lg font-medium text-white">
+								Select Scan Profile
+							</h3>
 							<span className="text-sm text-secondary-400">
 								{availableProfiles.length} profiles available
 							</span>
@@ -920,17 +1141,46 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 							}, {});
 
 							const categoryLabels = {
-								cis: { name: "CIS Benchmarks", color: "text-green-400", bg: "bg-green-900/30" },
-								stig: { name: "DISA STIG", color: "text-orange-400", bg: "bg-orange-900/30" },
-								"pci-dss": { name: "PCI-DSS", color: "text-purple-400", bg: "bg-purple-900/30" },
-								hipaa: { name: "HIPAA", color: "text-blue-400", bg: "bg-blue-900/30" },
-								anssi: { name: "ANSSI", color: "text-cyan-400", bg: "bg-cyan-900/30" },
-								standard: { name: "Standard", color: "text-yellow-400", bg: "bg-yellow-900/30" },
-								other: { name: "Other Profiles", color: "text-secondary-400", bg: "bg-secondary-700/50" },
+								cis: {
+									name: "CIS Benchmarks",
+									color: "text-green-400",
+									bg: "bg-green-900/30",
+								},
+								stig: {
+									name: "DISA STIG",
+									color: "text-orange-400",
+									bg: "bg-orange-900/30",
+								},
+								"pci-dss": {
+									name: "PCI-DSS",
+									color: "text-purple-400",
+									bg: "bg-purple-900/30",
+								},
+								hipaa: {
+									name: "HIPAA",
+									color: "text-blue-400",
+									bg: "bg-blue-900/30",
+								},
+								anssi: {
+									name: "ANSSI",
+									color: "text-cyan-400",
+									bg: "bg-cyan-900/30",
+								},
+								standard: {
+									name: "Standard",
+									color: "text-yellow-400",
+									bg: "bg-yellow-900/30",
+								},
+								other: {
+									name: "Other Profiles",
+									color: "text-secondary-400",
+									bg: "bg-secondary-700/50",
+								},
 							};
 
 							return Object.entries(grouped).map(([category, profiles]) => {
-								const catInfo = categoryLabels[category] || categoryLabels.other;
+								const catInfo =
+									categoryLabels[category] || categoryLabels.other;
 								return (
 									<div key={category} className="mb-4 last:mb-0">
 										<h4 className={`text-sm font-medium mb-2 ${catInfo.color}`}>
@@ -940,47 +1190,74 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 											{profiles.map((profile) => (
 												<button
 													key={profile.id}
-													onClick={() => setSelectedProfile(profile.xccdf_id || profile.id)}
+													onClick={() =>
+														setSelectedProfile(profile.xccdf_id || profile.id)
+													}
 													className={`flex items-center gap-3 p-3 rounded-lg border transition-all text-left ${
 														selectedProfile === (profile.xccdf_id || profile.id)
 															? "bg-primary-900/30 border-primary-600"
 															: "bg-secondary-700/30 border-secondary-600 hover:border-secondary-500"
 													}`}
 												>
-													<div className={`p-1.5 rounded ${
-														selectedProfile === (profile.xccdf_id || profile.id)
-															? "bg-primary-600/20"
-															: catInfo.bg
-													}`}>
+													<div
+														className={`p-1.5 rounded ${
+															selectedProfile ===
+															(profile.xccdf_id || profile.id)
+																? "bg-primary-600/20"
+																: catInfo.bg
+														}`}
+													>
 														{profile.type === "docker-bench" ? (
-															<Package className={`h-4 w-4 ${
-																selectedProfile === (profile.xccdf_id || profile.id) ? "text-primary-400" : catInfo.color
-															}`} />
+															<Package
+																className={`h-4 w-4 ${
+																	selectedProfile ===
+																	(profile.xccdf_id || profile.id)
+																		? "text-primary-400"
+																		: catInfo.color
+																}`}
+															/>
 														) : (
-															<Shield className={`h-4 w-4 ${
-																selectedProfile === (profile.xccdf_id || profile.id) ? "text-primary-400" : catInfo.color
-															}`} />
+															<Shield
+																className={`h-4 w-4 ${
+																	selectedProfile ===
+																	(profile.xccdf_id || profile.id)
+																		? "text-primary-400"
+																		: catInfo.color
+																}`}
+															/>
 														)}
 													</div>
 													<div className="flex-1 min-w-0">
-														<p className={`font-medium text-sm truncate ${
-															selectedProfile === (profile.xccdf_id || profile.id) ? "text-primary-300" : "text-white"
-														}`}>
+														<p
+															className={`font-medium text-sm truncate ${
+																selectedProfile ===
+																(profile.xccdf_id || profile.id)
+																	? "text-primary-300"
+																	: "text-white"
+															}`}
+														>
 															{profile.name}
 														</p>
 														{profile.description && (
-															<p className="text-xs text-secondary-400 truncate">{profile.description}</p>
+															<p className="text-xs text-secondary-400 truncate">
+																{profile.description}
+															</p>
 														)}
 													</div>
 													<div className="flex items-center gap-2">
-														<span className={`px-2 py-0.5 text-xs rounded ${
-															profile.type === "docker-bench"
-																? "bg-blue-900/30 text-blue-400"
-																: "bg-green-900/30 text-green-400"
-														}`}>
-															{profile.type === "docker-bench" ? "Docker" : "SCAP"}
+														<span
+															className={`px-2 py-0.5 text-xs rounded ${
+																profile.type === "docker-bench"
+																	? "bg-blue-900/30 text-blue-400"
+																	: "bg-green-900/30 text-green-400"
+															}`}
+														>
+															{profile.type === "docker-bench"
+																? "Docker"
+																: "SCAP"}
 														</span>
-														{selectedProfile === (profile.xccdf_id || profile.id) && (
+														{selectedProfile ===
+															(profile.xccdf_id || profile.id) && (
 															<CheckCircle className="h-4 w-4 text-primary-400" />
 														)}
 													</div>
@@ -1004,8 +1281,12 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						<div className="space-y-4">
 							<div className="flex items-center justify-between p-4 bg-secondary-700/30 rounded-lg border border-secondary-600">
 								<div className="flex items-center gap-3">
-									<div className={`p-2 rounded-lg ${enableRemediation ? "bg-orange-600/20" : "bg-secondary-600/50"}`}>
-										<Wrench className={`h-5 w-5 ${enableRemediation ? "text-orange-400" : "text-secondary-400"}`} />
+									<div
+										className={`p-2 rounded-lg ${enableRemediation ? "bg-orange-600/20" : "bg-secondary-600/50"}`}
+									>
+										<Wrench
+											className={`h-5 w-5 ${enableRemediation ? "text-orange-400" : "text-secondary-400"}`}
+										/>
 									</div>
 									<div>
 										<p className="text-white font-medium">Auto-Remediation</p>
@@ -1033,8 +1314,10 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 										<div className="text-sm text-orange-200">
 											<p className="font-medium">Remediation Warning</p>
 											<p className="text-orange-300/80 mt-1">
-												This will automatically modify system configuration to fix failed compliance rules.
-												Review the profile requirements before enabling. Changes may affect system behavior.
+												This will automatically modify system configuration to
+												fix failed compliance rules. Review the profile
+												requirements before enabling. Changes may affect system
+												behavior.
 											</p>
 										</div>
 									</div>
@@ -1045,7 +1328,9 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 
 					{/* Docker Image Options - Only show for oscap-docker profile type */}
 					{(() => {
-						const selectedProfileData = availableProfiles.find(p => (p.xccdf_id || p.id) === selectedProfile);
+						const selectedProfileData = availableProfiles.find(
+							(p) => (p.xccdf_id || p.id) === selectedProfile,
+						);
 						if (selectedProfileData?.type !== "oscap-docker") return null;
 
 						return (
@@ -1055,8 +1340,12 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 										<Container className="h-5 w-5 text-blue-400" />
 									</div>
 									<div>
-										<h3 className="text-lg font-medium text-white">Docker Image Selection</h3>
-										<p className="text-sm text-secondary-400">Choose which Docker images to scan for CVEs</p>
+										<h3 className="text-lg font-medium text-white">
+											Docker Image Selection
+										</h3>
+										<p className="text-sm text-secondary-400">
+											Choose which Docker images to scan for CVEs
+										</p>
 									</div>
 								</div>
 
@@ -1066,12 +1355,18 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 										<div className="flex items-center gap-3">
 											<Box className="h-5 w-5 text-blue-400" />
 											<div>
-												<p className="text-white font-medium">Scan All Images</p>
-												<p className="text-sm text-secondary-400">Scan all Docker images on this host</p>
+												<p className="text-white font-medium">
+													Scan All Images
+												</p>
+												<p className="text-sm text-secondary-400">
+													Scan all Docker images on this host
+												</p>
 											</div>
 										</div>
 										<button
-											onClick={() => setScanAllDockerImages(!scanAllDockerImages)}
+											onClick={() =>
+												setScanAllDockerImages(!scanAllDockerImages)
+											}
 											className="focus:outline-none"
 										>
 											{scanAllDockerImages ? (
@@ -1108,10 +1403,13 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 										<div className="flex items-start gap-2">
 											<Info className="h-4 w-4 text-blue-400 mt-0.5 flex-shrink-0" />
 											<div className="text-sm text-blue-200">
-												<p className="font-medium">About Docker Image CVE Scanning</p>
+												<p className="font-medium">
+													About Docker Image CVE Scanning
+												</p>
 												<p className="text-blue-300/80 mt-1">
-													Uses OpenSCAP to scan Docker images for known vulnerabilities (CVEs).
-													The scan downloads the latest OVAL vulnerability data for the image's OS.
+													Uses OpenSCAP to scan Docker images for known
+													vulnerabilities (CVEs). The scan downloads the latest
+													OVAL vulnerability data for the image's OS.
 												</p>
 											</div>
 										</div>
@@ -1125,9 +1423,14 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
 						<div className="flex flex-col sm:flex-row items-center justify-between gap-4">
 							<div>
-								<h3 className="text-lg font-medium text-white">Ready to Scan</h3>
+								<h3 className="text-lg font-medium text-white">
+									Ready to Scan
+								</h3>
 								<p className="text-sm text-secondary-400">
-									Selected: {availableProfiles.find(p => (p.xccdf_id || p.id) === selectedProfile)?.name || selectedProfile}
+									Selected:{" "}
+									{availableProfiles.find(
+										(p) => (p.xccdf_id || p.id) === selectedProfile,
+									)?.name || selectedProfile}
 									{enableRemediation && (
 										<span className="ml-2 px-2 py-0.5 bg-orange-900/30 text-orange-400 rounded text-xs">
 											+ Remediation
@@ -1138,7 +1441,9 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 							<button
 								onClick={() => {
 									// Find the selected profile to get its type
-									const profile = availableProfiles.find(p => (p.xccdf_id || p.id) === selectedProfile);
+									const profile = availableProfiles.find(
+										(p) => (p.xccdf_id || p.id) === selectedProfile,
+									);
 									const profileType = profile?.type || "openscap"; // Default to openscap for CIS/STIG profiles
 
 									// Build scan options
@@ -1158,11 +1463,16 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 
 									triggerScan.mutate(scanOptions);
 								}}
-								disabled={!isConnected || triggerScan.isPending || (
+								disabled={
+									!isConnected ||
+									triggerScan.isPending ||
 									// Disable if oscap-docker profile but no image specified and not scanning all
-									availableProfiles.find(p => (p.xccdf_id || p.id) === selectedProfile)?.type === "oscap-docker" &&
-									!scanAllDockerImages && !dockerImageName
-								)}
+									(availableProfiles.find(
+										(p) => (p.xccdf_id || p.id) === selectedProfile,
+									)?.type === "oscap-docker" &&
+										!scanAllDockerImages &&
+										!dockerImageName)
+								}
 								className={`flex items-center gap-2 px-6 py-3 ${
 									enableRemediation
 										? "bg-orange-600 hover:bg-orange-700"
@@ -1211,38 +1521,66 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 	// Render Results subtab
 	const renderResults = () => {
 		const results = latestScan?.compliance_results || latestScan?.results || [];
-		const failedResults = results.filter(r => r.status === "fail");
+		const failedResults = results.filter((r) => r.status === "fail");
 		const counts = {
 			fail: failedResults.length,
-			warn: results.filter(r => r.status === "warn").length,
-			pass: results.filter(r => r.status === "pass").length,
-			skipped: results.filter(r => r.status === "skip" || r.status === "notapplicable").length,
+			warn: results.filter((r) => r.status === "warn").length,
+			pass: results.filter((r) => r.status === "pass").length,
+			skipped: results.filter(
+				(r) => r.status === "skip" || r.status === "notapplicable",
+			).length,
 		};
 
 		// Determine if this is a Docker Bench scan
-		const currentProfileType = latestScan?.compliance_profiles?.type || "openscap";
+		const currentProfileType =
+			latestScan?.compliance_profiles?.type || "openscap";
 		const isDockerBenchResults = currentProfileType === "docker-bench";
-
 
 		// Severity counts for failed rules
 		const getSeverity = (result) => {
-			return result.compliance_rules?.severity || result.rule?.severity || result.severity || "unknown";
+			return (
+				result.compliance_rules?.severity ||
+				result.rule?.severity ||
+				result.severity ||
+				"unknown"
+			);
 		};
 		const severityCounts = {
-			critical: failedResults.filter(r => getSeverity(r) === "critical").length,
-			high: failedResults.filter(r => getSeverity(r) === "high").length,
-			medium: failedResults.filter(r => getSeverity(r) === "medium").length,
-			low: failedResults.filter(r => getSeverity(r) === "low").length,
-			unknown: failedResults.filter(r => getSeverity(r) === "unknown").length,
+			critical: failedResults.filter((r) => getSeverity(r) === "critical")
+				.length,
+			high: failedResults.filter((r) => getSeverity(r) === "high").length,
+			medium: failedResults.filter((r) => getSeverity(r) === "medium").length,
+			low: failedResults.filter((r) => getSeverity(r) === "low").length,
+			unknown: failedResults.filter((r) => getSeverity(r) === "unknown").length,
 		};
 
 		// Severity subtabs for Failed tab
 		const severitySubtabs = [
 			{ id: "all", label: "All", count: counts.fail },
-			{ id: "critical", label: "Critical", count: severityCounts.critical, color: "text-red-500" },
-			{ id: "high", label: "High", count: severityCounts.high, color: "text-orange-400" },
-			{ id: "medium", label: "Medium", count: severityCounts.medium, color: "text-yellow-400" },
-			{ id: "low", label: "Low", count: severityCounts.low, color: "text-blue-400" },
+			{
+				id: "critical",
+				label: "Critical",
+				count: severityCounts.critical,
+				color: "text-red-500",
+			},
+			{
+				id: "high",
+				label: "High",
+				count: severityCounts.high,
+				color: "text-orange-400",
+			},
+			{
+				id: "medium",
+				label: "Medium",
+				count: severityCounts.medium,
+				color: "text-yellow-400",
+			},
+			{
+				id: "low",
+				label: "Low",
+				count: severityCounts.low,
+				color: "text-blue-400",
+			},
 		];
 
 		// Profile type tabs configuration - always show both if compliance is enabled
@@ -1278,49 +1616,120 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 		];
 
 		// Results subtabs configuration - labels adapt based on profile type
-		const resultsSubtabs = isDockerBenchResults ? [
-			// Docker Bench uses WARN for issues that need attention (not FAIL)
-			{ id: "warn", label: "Issues (WARN)", count: counts.warn, icon: AlertTriangle, color: "text-yellow-400", bgColor: "bg-yellow-900/20", borderColor: "border-yellow-700" },
-			{ id: "pass", label: "Passed", count: counts.pass, icon: CheckCircle, color: "text-green-400", bgColor: "bg-green-900/20", borderColor: "border-green-700" },
-			{ id: "skipped", label: "Info/Note", count: counts.skipped, icon: MinusCircle, color: "text-secondary-400", bgColor: "bg-secondary-700/50", borderColor: "border-secondary-600" },
-		] : [
-			// OpenSCAP uses standard terminology
-			{ id: "fail", label: "Failed", count: counts.fail, icon: XCircle, color: "text-red-400", bgColor: "bg-red-900/20", borderColor: "border-red-700" },
-			{ id: "warn", label: "Warnings", count: counts.warn, icon: AlertTriangle, color: "text-yellow-400", bgColor: "bg-yellow-900/20", borderColor: "border-yellow-700" },
-			{ id: "pass", label: "Passed", count: counts.pass, icon: CheckCircle, color: "text-green-400", bgColor: "bg-green-900/20", borderColor: "border-green-700" },
-			{ id: "skipped", label: "Skipped/N/A", count: counts.skipped, icon: MinusCircle, color: "text-secondary-400", bgColor: "bg-secondary-700/50", borderColor: "border-secondary-600" },
-		];
+		const resultsSubtabs = isDockerBenchResults
+			? [
+					// Docker Bench uses WARN for issues that need attention (not FAIL)
+					{
+						id: "warn",
+						label: "Issues (WARN)",
+						count: counts.warn,
+						icon: AlertTriangle,
+						color: "text-yellow-400",
+						bgColor: "bg-yellow-900/20",
+						borderColor: "border-yellow-700",
+					},
+					{
+						id: "pass",
+						label: "Passed",
+						count: counts.pass,
+						icon: CheckCircle,
+						color: "text-green-400",
+						bgColor: "bg-green-900/20",
+						borderColor: "border-green-700",
+					},
+					{
+						id: "skipped",
+						label: "Info/Note",
+						count: counts.skipped,
+						icon: MinusCircle,
+						color: "text-secondary-400",
+						bgColor: "bg-secondary-700/50",
+						borderColor: "border-secondary-600",
+					},
+				]
+			: [
+					// OpenSCAP uses standard terminology
+					{
+						id: "fail",
+						label: "Failed",
+						count: counts.fail,
+						icon: XCircle,
+						color: "text-red-400",
+						bgColor: "bg-red-900/20",
+						borderColor: "border-red-700",
+					},
+					{
+						id: "warn",
+						label: "Warnings",
+						count: counts.warn,
+						icon: AlertTriangle,
+						color: "text-yellow-400",
+						bgColor: "bg-yellow-900/20",
+						borderColor: "border-yellow-700",
+					},
+					{
+						id: "pass",
+						label: "Passed",
+						count: counts.pass,
+						icon: CheckCircle,
+						color: "text-green-400",
+						bgColor: "bg-green-900/20",
+						borderColor: "border-green-700",
+					},
+					{
+						id: "skipped",
+						label: "Skipped/N/A",
+						count: counts.skipped,
+						icon: MinusCircle,
+						color: "text-secondary-400",
+						bgColor: "bg-secondary-700/50",
+						borderColor: "border-secondary-600",
+					},
+				];
 
 		// Get title for search matching
 		const getTitle = (result) => {
-			return result.compliance_rules?.title || result.rule?.title || result.title || "";
+			return (
+				result.compliance_rules?.title ||
+				result.rule?.title ||
+				result.title ||
+				""
+			);
 		};
 		const getRuleId = (result) => {
-			return result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_id || "";
+			return (
+				result.compliance_rules?.rule_ref ||
+				result.rule?.rule_ref ||
+				result.rule_id ||
+				""
+			);
 		};
 
 		// Map statusFilter to include both skip and notapplicable for "skipped" tab
 		const getFilteredResults = () => {
 			let filtered;
 			if (statusFilter === "skipped") {
-				filtered = results.filter(r => r.status === "skip" || r.status === "notapplicable");
+				filtered = results.filter(
+					(r) => r.status === "skip" || r.status === "notapplicable",
+				);
 			} else if (statusFilter === "all") {
 				filtered = results;
 			} else {
-				filtered = results.filter(r => r.status === statusFilter);
+				filtered = results.filter((r) => r.status === statusFilter);
 			}
 
 			// Apply severity filter if on Failed tab and not "all"
 			if (statusFilter === "fail" && severityFilter !== "all") {
-				filtered = filtered.filter(r => getSeverity(r) === severityFilter);
+				filtered = filtered.filter((r) => getSeverity(r) === severityFilter);
 			}
 
 			// Apply search filter
 			if (ruleSearch.trim()) {
 				const searchLower = ruleSearch.toLowerCase().trim();
-				filtered = filtered.filter(r =>
-					getTitle(r).toLowerCase().includes(searchLower) ||
-					getRuleId(r).toLowerCase().includes(searchLower)
+				filtered = filtered.filter(
+					(r) =>
+						getTitle(r).toLowerCase().includes(searchLower) ||
+						getRuleId(r).toLowerCase().includes(searchLower),
 				);
 			}
 
@@ -1338,7 +1747,11 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 
 		// Group results by CIS section (e.g., "1.1", "5.2")
 		const getParentSection = (result) => {
-			const section = result.compliance_rules?.section || result.rule?.section || result.section || "";
+			const section =
+				result.compliance_rules?.section ||
+				result.rule?.section ||
+				result.section ||
+				"";
 			// Extract parent section (e.g., "1.1.1.1" -> "1.1", "5.2.3" -> "5.2")
 			const parts = section.split(".");
 			return parts.length >= 2 ? `${parts[0]}.${parts[1]}` : section || "Other";
@@ -1377,908 +1790,1280 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 		};
 
 		return (
-		<div className="space-y-4">
-			{latestScan ? (
-				<>
-					{/* Remediation Status Banner */}
-					{remediationStatus && (
-						<div className={`rounded-lg border p-4 ${
-							remediationStatus.phase === "error"
-								? "bg-red-900/30 border-red-700"
-								: remediationStatus.phase === "complete"
-									? "bg-green-900/30 border-green-700"
-									: "bg-orange-900/30 border-orange-700"
-						}`}>
-							<div className="flex items-center gap-3">
-								{remediationStatus.phase === "sending" && (
-									<div className="h-5 w-5 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
-								)}
-								{remediationStatus.phase === "running" && (
-									<Wrench className="h-5 w-5 text-orange-400 animate-pulse" />
-								)}
-								{remediationStatus.phase === "complete" && (
-									<CheckCircle className="h-5 w-5 text-green-400" />
-								)}
-								{remediationStatus.phase === "error" && (
-									<XCircle className="h-5 w-5 text-red-400" />
-								)}
-								<div className="flex-1">
-									<p className={`font-medium ${
-										remediationStatus.phase === "error"
-											? "text-red-200"
-											: remediationStatus.phase === "complete"
-												? "text-green-200"
-												: "text-orange-200"
-									}`}>
-										{remediationStatus.phase === "sending" && "Sending Fix Command..."}
-										{remediationStatus.phase === "running" && "Applying Fix..."}
-										{remediationStatus.phase === "complete" && "Fix Applied!"}
-										{remediationStatus.phase === "error" && "Fix Failed"}
-									</p>
-									<p className={`text-sm ${
-										remediationStatus.phase === "error"
-											? "text-red-300/80"
-											: remediationStatus.phase === "complete"
-												? "text-green-300/80"
-												: "text-orange-300/80"
-									}`}>
-										{remediationStatus.message}
-									</p>
-								</div>
-							</div>
-						</div>
-					)}
-
-					{/* Profile Type Selection - Click to switch between scan types */}
-					<div className="mb-2">
-						<h3 className="text-sm font-medium text-secondary-400 mb-2">Select Scan Type to View</h3>
-					</div>
-					<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-						{profileTypeTabs.map((tab) => {
-							const Icon = tab.icon;
-							const isActive = profileTypeFilter === tab.id;
-							const isDisabled = !tab.available;
-							const isLoadingThis = isActive && isFetching;
-
-							return (
-								<button
-									key={tab.id}
-									onClick={() => {
-										if (!isDisabled) {
-											setProfileTypeFilter(tab.id);
-											setCurrentPage(1);
-											if (tab.id === "docker-bench") {
-												setStatusFilter("warn");
-											} else {
-												setStatusFilter("fail");
-											}
-										}
-									}}
-									disabled={isDisabled}
-									className={`text-left p-4 rounded-lg border-2 transition-all ${
-										isActive
-											? "bg-primary-900/30 border-primary-500"
-											: isDisabled
-												? "bg-secondary-800/50 border-secondary-700 opacity-50 cursor-not-allowed"
-												: "bg-secondary-800 border-secondary-700 hover:border-secondary-500"
-									}`}
-								>
-									<div className="flex items-center justify-between mb-2">
-										<div className="flex items-center gap-2">
-											{isLoadingThis ? (
-												<RefreshCw className="h-5 w-5 text-primary-400 animate-spin" />
-											) : (
-												<Icon className={`h-5 w-5 ${isActive ? "text-primary-400" : "text-secondary-400"}`} />
-											)}
-											<span className={`font-medium ${isActive ? "text-white" : "text-secondary-200"}`}>
-												{tab.label}
-											</span>
-											{isActive && (
-												<span className="px-2 py-0.5 text-xs bg-primary-600 text-white rounded">
-													Selected
-												</span>
-											)}
-										</div>
-										{tab.available && tab.score != null && (
-											<span className={`text-lg font-bold ${
-												tab.score >= 80 ? "text-green-400" :
-												tab.score >= 60 ? "text-yellow-400" : "text-red-400"
-											}`}>
-												{Math.round(tab.score)}%
-											</span>
-										)}
-									</div>
-									{tab.available ? (
-										<div className="flex items-center gap-4 text-xs text-secondary-400">
-											{tab.id === "docker-bench" ? (
-												<>
-													<span className="text-green-400">{tab.passed} passed</span>
-													<span className="text-yellow-400">{tab.warnings} warnings</span>
-													<span>{tab.total} rules</span>
-												</>
-											) : (
-												<>
-													<span className="text-green-400">{tab.passed} passed</span>
-													<span className="text-red-400">{tab.failed} failed</span>
-													<span>{tab.total} rules</span>
-												</>
-											)}
-										</div>
-									) : (
-										<p className="text-xs text-secondary-500">No scan data available</p>
+			<div className="space-y-4">
+				{latestScan ? (
+					<>
+						{/* Remediation Status Banner */}
+						{remediationStatus && (
+							<div
+								className={`rounded-lg border p-4 ${
+									remediationStatus.phase === "error"
+										? "bg-red-900/30 border-red-700"
+										: remediationStatus.phase === "complete"
+											? "bg-green-900/30 border-green-700"
+											: "bg-orange-900/30 border-orange-700"
+								}`}
+							>
+								<div className="flex items-center gap-3">
+									{remediationStatus.phase === "sending" && (
+										<div className="h-5 w-5 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
 									)}
-									{tab.date && (
-										<p className="text-xs text-secondary-500 mt-1">
-											{new Date(tab.date).toLocaleDateString()}
+									{remediationStatus.phase === "running" && (
+										<Wrench className="h-5 w-5 text-orange-400 animate-pulse" />
+									)}
+									{remediationStatus.phase === "complete" && (
+										<CheckCircle className="h-5 w-5 text-green-400" />
+									)}
+									{remediationStatus.phase === "error" && (
+										<XCircle className="h-5 w-5 text-red-400" />
+									)}
+									<div className="flex-1">
+										<p
+											className={`font-medium ${
+												remediationStatus.phase === "error"
+													? "text-red-200"
+													: remediationStatus.phase === "complete"
+														? "text-green-200"
+														: "text-orange-200"
+											}`}
+										>
+											{remediationStatus.phase === "sending" &&
+												"Sending Fix Command..."}
+											{remediationStatus.phase === "running" &&
+												"Applying Fix..."}
+											{remediationStatus.phase === "complete" && "Fix Applied!"}
+											{remediationStatus.phase === "error" && "Fix Failed"}
 										</p>
-									)}
-								</button>
-							);
-						})}
-					</div>
-
-					{/* Current Scan Header - Shows which scan's results are displayed */}
-					{latestScan && (
-						<div className="flex items-center justify-between px-4 py-3 bg-secondary-800 rounded-lg border border-secondary-700">
-							<div className="flex items-center gap-4">
-								<div className={`p-2 rounded-lg ${isDockerBenchResults ? "bg-blue-900/30" : "bg-green-900/30"}`}>
-									{isDockerBenchResults ? (
-										<Container className="h-5 w-5 text-blue-400" />
-									) : (
-										<Shield className="h-5 w-5 text-green-400" />
-									)}
-								</div>
-								<div>
-									<p className="text-white font-medium">
-										{latestScan.compliance_profiles?.name || (isDockerBenchResults ? "Docker Bench" : "OpenSCAP")}
-									</p>
-									<p className="text-xs text-secondary-400">
-										{new Date(latestScan.completed_at).toLocaleString()} • {latestScan.total_rules} rules evaluated
-									</p>
+										<p
+											className={`text-sm ${
+												remediationStatus.phase === "error"
+													? "text-red-300/80"
+													: remediationStatus.phase === "complete"
+														? "text-green-300/80"
+														: "text-orange-300/80"
+											}`}
+										>
+											{remediationStatus.message}
+										</p>
+									</div>
 								</div>
 							</div>
-							<div className="flex items-center gap-3">
-								<ComplianceScore score={latestScan.score} size="md" />
-								<button
-									onClick={() => {
-										refetchLatest();
-										refetchHistory();
-									}}
-									className="p-2 hover:bg-secondary-700 rounded-lg transition-colors"
-									title="Refresh results"
-								>
-									<RefreshCw className="h-4 w-4 text-secondary-400" />
-								</button>
-							</div>
-						</div>
-					)}
+						)}
 
-					{/* Loading State */}
-					{isFetching && (
-						<div className="flex items-center justify-center py-8 bg-secondary-800 rounded-lg border border-secondary-700 mb-4">
-							<RefreshCw className="h-6 w-6 text-primary-400 animate-spin mr-3" />
-							<span className="text-secondary-400">Loading {profileTypeFilter === "docker-bench" ? "Docker Bench" : "OpenSCAP"} results...</span>
+						{/* Profile Type Selection - Click to switch between scan types */}
+						<div className="mb-2">
+							<h3 className="text-sm font-medium text-secondary-400 mb-2">
+								Select Scan Type to View
+							</h3>
 						</div>
-					)}
-
-					{/* Results Subtabs */}
-					{!isFetching && latestScan && (
-					<div className="bg-secondary-800 rounded-lg border border-secondary-700">
-						<div className="flex border-b border-secondary-700">
-							{resultsSubtabs.map((tab) => {
+						<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+							{profileTypeTabs.map((tab) => {
 								const Icon = tab.icon;
-								const isActive = statusFilter === tab.id;
+								const isActive = profileTypeFilter === tab.id;
+								const isDisabled = !tab.available;
+								const isLoadingThis = isActive && isFetching;
+
 								return (
 									<button
 										key={tab.id}
 										onClick={() => {
-											setStatusFilter(tab.id);
-											setCurrentPage(1); // Reset to first page when changing filter
-											// Reset severity filter when switching tabs
-											if (tab.id !== "fail") {
-												setSeverityFilter("all");
+											if (!isDisabled) {
+												setProfileTypeFilter(tab.id);
+												setCurrentPage(1);
+												if (tab.id === "docker-bench") {
+													setStatusFilter("warn");
+												} else {
+													setStatusFilter("fail");
+												}
 											}
 										}}
-										className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+										disabled={isDisabled}
+										className={`text-left p-4 rounded-lg border-2 transition-all ${
 											isActive
-												? `${tab.color} border-current bg-secondary-700/50`
-												: "text-secondary-400 border-transparent hover:text-secondary-200 hover:bg-secondary-700/30"
+												? "bg-primary-900/30 border-primary-500"
+												: isDisabled
+													? "bg-secondary-800/50 border-secondary-700 opacity-50 cursor-not-allowed"
+													: "bg-secondary-800 border-secondary-700 hover:border-secondary-500"
 										}`}
 									>
-										<Icon className="h-4 w-4" />
-										<span>{tab.label}</span>
-										<span className={`px-2 py-0.5 rounded-full text-xs ${
-											isActive ? tab.bgColor : "bg-secondary-600"
-										}`}>
-											{tab.count}
-										</span>
+										<div className="flex items-center justify-between mb-2">
+											<div className="flex items-center gap-2">
+												{isLoadingThis ? (
+													<RefreshCw className="h-5 w-5 text-primary-400 animate-spin" />
+												) : (
+													<Icon
+														className={`h-5 w-5 ${isActive ? "text-primary-400" : "text-secondary-400"}`}
+													/>
+												)}
+												<span
+													className={`font-medium ${isActive ? "text-white" : "text-secondary-200"}`}
+												>
+													{tab.label}
+												</span>
+												{isActive && (
+													<span className="px-2 py-0.5 text-xs bg-primary-600 text-white rounded">
+														Selected
+													</span>
+												)}
+											</div>
+											{tab.available && tab.score != null && (
+												<span
+													className={`text-lg font-bold ${
+														tab.score >= 80
+															? "text-green-400"
+															: tab.score >= 60
+																? "text-yellow-400"
+																: "text-red-400"
+													}`}
+												>
+													{Math.round(tab.score)}%
+												</span>
+											)}
+										</div>
+										{tab.available ? (
+											<div className="flex items-center gap-4 text-xs text-secondary-400">
+												{tab.id === "docker-bench" ? (
+													<>
+														<span className="text-green-400">
+															{tab.passed} passed
+														</span>
+														<span className="text-yellow-400">
+															{tab.warnings} warnings
+														</span>
+														<span>{tab.total} rules</span>
+													</>
+												) : (
+													<>
+														<span className="text-green-400">
+															{tab.passed} passed
+														</span>
+														<span className="text-red-400">
+															{tab.failed} failed
+														</span>
+														<span>{tab.total} rules</span>
+													</>
+												)}
+											</div>
+										) : (
+											<p className="text-xs text-secondary-500">
+												No scan data available
+											</p>
+										)}
+										{tab.date && (
+											<p className="text-xs text-secondary-500 mt-1">
+												{new Date(tab.date).toLocaleDateString()}
+											</p>
+										)}
 									</button>
 								);
 							})}
 						</div>
 
-						{/* Severity subtabs - only show for Failed tab in OpenSCAP results (Docker Bench doesn't have severity) */}
-						{statusFilter === "fail" && !isDockerBenchResults && (
-							<div className="flex items-center gap-2 px-4 py-2 border-b border-secondary-700 bg-secondary-750">
-								<span className="text-xs text-secondary-400 mr-2">Severity:</span>
-								{severitySubtabs.map((tab) => {
-									const isActive = severityFilter === tab.id;
-									return (
-										<button
-											key={tab.id}
-											onClick={() => { setSeverityFilter(tab.id); setCurrentPage(1); }}
-											className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${
-												isActive
-													? `bg-secondary-600 ${tab.color || "text-white"}`
-													: "text-secondary-400 hover:text-secondary-200 hover:bg-secondary-700"
-											}`}
-										>
-											{tab.label}
-											{tab.count > 0 && (
-												<span className="ml-1 opacity-75">({tab.count})</span>
-											)}
-										</button>
-									);
-								})}
-							</div>
-						)}
-
-						{/* Search bar and grouping toggle */}
-						<div className="px-4 py-2 border-b border-secondary-700">
-							<div className="flex items-center gap-3">
-								<div className="relative flex-1">
-									<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400" />
-									<input
-										type="text"
-										placeholder="Search rules by title or ID..."
-										value={ruleSearch}
-										onChange={(e) => { setRuleSearch(e.target.value); setCurrentPage(1); }}
-										className="w-full pl-10 pr-4 py-2 bg-secondary-700 border border-secondary-600 rounded-lg text-sm text-white placeholder-secondary-400 focus:outline-none focus:border-primary-500"
-									/>
-									{ruleSearch && (
-										<button
-											onClick={() => { setRuleSearch(""); setCurrentPage(1); }}
-											className="absolute right-3 top-1/2 transform -translate-y-1/2 text-secondary-400 hover:text-white"
-										>
-											<XCircle className="h-4 w-4" />
-										</button>
-									)}
-								</div>
-								<button
-									onClick={() => { setGroupBySection(!groupBySection); setCurrentPage(1); setExpandedSections({}); }}
-									className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-										groupBySection
-											? "bg-primary-600 text-white"
-											: "bg-secondary-700 text-secondary-300 hover:bg-secondary-600"
-									}`}
-									title={groupBySection ? "Show flat list" : "Group by CIS section"}
-								>
-									<Layers className="h-4 w-4" />
-									<span className="hidden sm:inline">Group</span>
-								</button>
-							</div>
-						</div>
-
-						{/* Results List with Pagination Info */}
-						{currentFilteredResults && currentFilteredResults.length > 0 && (
-							<div className="px-4 py-2 border-b border-secondary-700 flex items-center justify-between text-xs text-secondary-400">
-								<span>
-									Showing {startIndex + 1}-{Math.min(endIndex, totalResults)} of {totalResults} results
-								</span>
-								{totalPages > 1 && (
-									<span>Page {currentPage} of {totalPages}</span>
-								)}
-							</div>
-						)}
-						{currentFilteredResults && currentFilteredResults.length > 0 ? (
-							<div className="divide-y divide-secondary-700">
-								{/* Grouped View */}
-								{groupBySection && sortedSections.map((section) => (
-									<div key={section} className="bg-secondary-800/50">
-										<button
-											onClick={() => toggleSection(section)}
-											className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary-700/50 transition-colors"
-										>
-											{expandedSections[section] ? (
-												<FolderOpen className="h-5 w-5 text-primary-400" />
-											) : (
-												<Folder className="h-5 w-5 text-secondary-400" />
-											)}
-											<span className="text-white font-medium">Section {section}</span>
-											<span className="px-2 py-0.5 rounded-full text-xs bg-secondary-600 text-secondary-300">
-												{groupedResults[section].length} rules
-											</span>
-											{expandedSections[section] ? (
-												<ChevronDown className="h-4 w-4 text-secondary-400 ml-auto" />
-											) : (
-												<ChevronRight className="h-4 w-4 text-secondary-400 ml-auto" />
-											)}
-										</button>
-										{expandedSections[section] && (
-											<div className="divide-y divide-secondary-700 border-t border-secondary-700">
-												{groupedResults[section].map((result) => (
-													<div key={result.id} className="p-4 pl-8">
-														<button
-															onClick={() => toggleRule(result.id)}
-															className="w-full flex items-center gap-3 text-left"
-														>
-															{expandedRules[result.id] ? (
-																<ChevronDown className="h-4 w-4 text-secondary-400 flex-shrink-0" />
-															) : (
-																<ChevronRight className="h-4 w-4 text-secondary-400 flex-shrink-0" />
-															)}
-															{getStatusIcon(result.status)}
-															<div className="flex-1 min-w-0">
-																<p className="text-white font-medium">
-																	{result.compliance_rules?.title || result.rule?.title || result.title || "Unknown Rule"}
-																</p>
-																<p className="text-xs text-secondary-400">
-																	{(result.compliance_rules?.severity || result.rule?.severity || result.severity) && (
-																		<span className={`capitalize ${
-																			(result.compliance_rules?.severity || result.rule?.severity || result.severity) === "critical" ? "text-red-400" :
-																			(result.compliance_rules?.severity || result.rule?.severity || result.severity) === "high" ? "text-orange-400" :
-																			(result.compliance_rules?.severity || result.rule?.severity || result.severity) === "medium" ? "text-yellow-400" :
-																			"text-secondary-400"
-																		}`}>
-																			{result.compliance_rules?.severity || result.rule?.severity || result.severity}
-																		</span>
-																	)}
-																</p>
-															</div>
-															<span className={`px-2 py-1 rounded text-xs border ${getStatusBadge(result.status)}`}>
-																{result.status}
-															</span>
-														</button>
-
-														{expandedRules[result.id] && (
-															<div className="mt-4 ml-8 space-y-3 text-sm border-l-2 border-secondary-600 pl-4">
-																{(result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_id) && (
-																	<div className="flex items-center gap-2 text-xs">
-																		<span className="text-secondary-500">Rule ID:</span>
-																		<code className="bg-secondary-700 px-2 py-0.5 rounded text-secondary-300 font-mono">
-																			{result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_id}
-																		</code>
-																	</div>
-																)}
-																{(result.compliance_rules?.description || result.rule?.description || result.description) && (
-																	<div>
-																		<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
-																			<Info className="h-3.5 w-3.5" />
-																			Description
-																		</p>
-																		<p className="text-secondary-300">
-																			{result.compliance_rules?.description || result.rule?.description || result.description}
-																		</p>
-																	</div>
-																)}
-																{(result.compliance_rules?.remediation || result.rule?.remediation || result.remediation) && (
-																	<div>
-																		<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
-																			<Wrench className="h-3.5 w-3.5" />
-																			Remediation
-																		</p>
-																		<pre className="text-secondary-300 whitespace-pre-wrap bg-secondary-700/30 rounded p-2 text-xs font-mono overflow-x-auto">
-																			{result.compliance_rules?.remediation || result.rule?.remediation || result.remediation}
-																		</pre>
-																	</div>
-																)}
-															</div>
-														)}
-													</div>
-												))}
-											</div>
+						{/* Current Scan Header - Shows which scan's results are displayed */}
+						{latestScan && (
+							<div className="flex items-center justify-between px-4 py-3 bg-secondary-800 rounded-lg border border-secondary-700">
+								<div className="flex items-center gap-4">
+									<div
+										className={`p-2 rounded-lg ${isDockerBenchResults ? "bg-blue-900/30" : "bg-green-900/30"}`}
+									>
+										{isDockerBenchResults ? (
+											<Container className="h-5 w-5 text-blue-400" />
+										) : (
+											<Shield className="h-5 w-5 text-green-400" />
 										)}
 									</div>
-								))}
-								{/* Flat View */}
-								{!groupBySection && paginatedResults.map((result) => (
-								<div key={result.id} className="p-4">
+									<div>
+										<p className="text-white font-medium">
+											{latestScan.compliance_profiles?.name ||
+												(isDockerBenchResults ? "Docker Bench" : "OpenSCAP")}
+										</p>
+										<p className="text-xs text-secondary-400">
+											{new Date(latestScan.completed_at).toLocaleString()} •{" "}
+											{latestScan.total_rules} rules evaluated
+										</p>
+									</div>
+								</div>
+								<div className="flex items-center gap-3">
+									<ComplianceScore score={latestScan.score} size="md" />
 									<button
-										onClick={() => toggleRule(result.id)}
-										className="w-full flex items-center gap-3 text-left"
+										onClick={() => {
+											refetchLatest();
+											refetchHistory();
+										}}
+										className="p-2 hover:bg-secondary-700 rounded-lg transition-colors"
+										title="Refresh results"
 									>
-										{expandedRules[result.id] ? (
-											<ChevronDown className="h-4 w-4 text-secondary-400 flex-shrink-0" />
-										) : (
-											<ChevronRight className="h-4 w-4 text-secondary-400 flex-shrink-0" />
-										)}
-										{getStatusIcon(result.status)}
-										<div className="flex-1 min-w-0">
-											<p className="text-white font-medium">
-												{result.compliance_rules?.title || result.rule?.title || result.title || "Unknown Rule"}
-											</p>
-											<p className="text-xs text-secondary-400">
-												{(result.compliance_rules?.section || result.rule?.section || result.section) &&
-													`${result.compliance_rules?.section || result.rule?.section || result.section} • `}
-												{(result.compliance_rules?.severity || result.rule?.severity || result.severity) && (
-													<span className={`capitalize ${
-														(result.compliance_rules?.severity || result.rule?.severity || result.severity) === "critical" ? "text-red-400" :
-														(result.compliance_rules?.severity || result.rule?.severity || result.severity) === "high" ? "text-orange-400" :
-														(result.compliance_rules?.severity || result.rule?.severity || result.severity) === "medium" ? "text-yellow-400" :
-														"text-secondary-400"
-													}`}>
-														{result.compliance_rules?.severity || result.rule?.severity || result.severity}
-													</span>
-												)}
-											</p>
-										</div>
-										<span className={`px-2 py-1 rounded text-xs border ${getStatusBadge(result.status)}`}>
-											{result.status}
-										</span>
+										<RefreshCw className="h-4 w-4 text-secondary-400" />
 									</button>
+								</div>
+							</div>
+						)}
 
-									{expandedRules[result.id] && (
-										<div className="mt-4 ml-8 space-y-3 text-sm border-l-2 border-secondary-600 pl-4">
-											{/* Rule ID reference */}
-											{(result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_id) && (
-												<div className="flex items-center gap-2 text-xs">
-													<span className="text-secondary-500">Rule ID:</span>
-													<code className="bg-secondary-700 px-2 py-0.5 rounded text-secondary-300 font-mono">
-														{result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_id}
-													</code>
-												</div>
+						{/* Loading State */}
+						{isFetching && (
+							<div className="flex items-center justify-center py-8 bg-secondary-800 rounded-lg border border-secondary-700 mb-4">
+								<RefreshCw className="h-6 w-6 text-primary-400 animate-spin mr-3" />
+								<span className="text-secondary-400">
+									Loading{" "}
+									{profileTypeFilter === "docker-bench"
+										? "Docker Bench"
+										: "OpenSCAP"}{" "}
+									results...
+								</span>
+							</div>
+						)}
+
+						{/* Results Subtabs */}
+						{!isFetching && latestScan && (
+							<div className="bg-secondary-800 rounded-lg border border-secondary-700">
+								<div className="flex border-b border-secondary-700">
+									{resultsSubtabs.map((tab) => {
+										const Icon = tab.icon;
+										const isActive = statusFilter === tab.id;
+										return (
+											<button
+												key={tab.id}
+												onClick={() => {
+													setStatusFilter(tab.id);
+													setCurrentPage(1); // Reset to first page when changing filter
+													// Reset severity filter when switching tabs
+													if (tab.id !== "fail") {
+														setSeverityFilter("all");
+													}
+												}}
+												className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+													isActive
+														? `${tab.color} border-current bg-secondary-700/50`
+														: "text-secondary-400 border-transparent hover:text-secondary-200 hover:bg-secondary-700/30"
+												}`}
+											>
+												<Icon className="h-4 w-4" />
+												<span>{tab.label}</span>
+												<span
+													className={`px-2 py-0.5 rounded-full text-xs ${
+														isActive ? tab.bgColor : "bg-secondary-600"
+													}`}
+												>
+													{tab.count}
+												</span>
+											</button>
+										);
+									})}
+								</div>
+
+								{/* Severity subtabs - only show for Failed tab in OpenSCAP results (Docker Bench doesn't have severity) */}
+								{statusFilter === "fail" && !isDockerBenchResults && (
+									<div className="flex items-center gap-2 px-4 py-2 border-b border-secondary-700 bg-secondary-750">
+										<span className="text-xs text-secondary-400 mr-2">
+											Severity:
+										</span>
+										{severitySubtabs.map((tab) => {
+											const isActive = severityFilter === tab.id;
+											return (
+												<button
+													key={tab.id}
+													onClick={() => {
+														setSeverityFilter(tab.id);
+														setCurrentPage(1);
+													}}
+													className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${
+														isActive
+															? `bg-secondary-600 ${tab.color || "text-white"}`
+															: "text-secondary-400 hover:text-secondary-200 hover:bg-secondary-700"
+													}`}
+												>
+													{tab.label}
+													{tab.count > 0 && (
+														<span className="ml-1 opacity-75">
+															({tab.count})
+														</span>
+													)}
+												</button>
+											);
+										})}
+									</div>
+								)}
+
+								{/* Search bar and grouping toggle */}
+								<div className="px-4 py-2 border-b border-secondary-700">
+									<div className="flex items-center gap-3">
+										<div className="relative flex-1">
+											<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400" />
+											<input
+												type="text"
+												placeholder="Search rules by title or ID..."
+												value={ruleSearch}
+												onChange={(e) => {
+													setRuleSearch(e.target.value);
+													setCurrentPage(1);
+												}}
+												className="w-full pl-10 pr-4 py-2 bg-secondary-700 border border-secondary-600 rounded-lg text-sm text-white placeholder-secondary-400 focus:outline-none focus:border-primary-500"
+											/>
+											{ruleSearch && (
+												<button
+													onClick={() => {
+														setRuleSearch("");
+														setCurrentPage(1);
+													}}
+													className="absolute right-3 top-1/2 transform -translate-y-1/2 text-secondary-400 hover:text-white"
+												>
+													<XCircle className="h-4 w-4" />
+												</button>
 											)}
-											{(result.compliance_rules?.description || result.rule?.description || result.description) && (
-												<div>
-													<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
-														<Info className="h-3.5 w-3.5" />
-														Description
-													</p>
-													<p className="text-secondary-300">
-														{result.compliance_rules?.description || result.rule?.description || result.description}
-													</p>
-												</div>
+										</div>
+										<button
+											onClick={() => {
+												setGroupBySection(!groupBySection);
+												setCurrentPage(1);
+												setExpandedSections({});
+											}}
+											className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+												groupBySection
+													? "bg-primary-600 text-white"
+													: "bg-secondary-700 text-secondary-300 hover:bg-secondary-600"
+											}`}
+											title={
+												groupBySection
+													? "Show flat list"
+													: "Group by CIS section"
+											}
+										>
+											<Layers className="h-4 w-4" />
+											<span className="hidden sm:inline">Group</span>
+										</button>
+									</div>
+								</div>
+
+								{/* Results List with Pagination Info */}
+								{currentFilteredResults &&
+									currentFilteredResults.length > 0 && (
+										<div className="px-4 py-2 border-b border-secondary-700 flex items-center justify-between text-xs text-secondary-400">
+											<span>
+												Showing {startIndex + 1}-
+												{Math.min(endIndex, totalResults)} of {totalResults}{" "}
+												results
+											</span>
+											{totalPages > 1 && (
+												<span>
+													Page {currentPage} of {totalPages}
+												</span>
 											)}
+										</div>
+									)}
+								{currentFilteredResults && currentFilteredResults.length > 0 ? (
+									<div className="divide-y divide-secondary-700">
+										{/* Grouped View */}
+										{groupBySection &&
+											sortedSections.map((section) => (
+												<div key={section} className="bg-secondary-800/50">
+													<button
+														onClick={() => toggleSection(section)}
+														className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary-700/50 transition-colors"
+													>
+														{expandedSections[section] ? (
+															<FolderOpen className="h-5 w-5 text-primary-400" />
+														) : (
+															<Folder className="h-5 w-5 text-secondary-400" />
+														)}
+														<span className="text-white font-medium">
+															Section {section}
+														</span>
+														<span className="px-2 py-0.5 rounded-full text-xs bg-secondary-600 text-secondary-300">
+															{groupedResults[section].length} rules
+														</span>
+														{expandedSections[section] ? (
+															<ChevronDown className="h-4 w-4 text-secondary-400 ml-auto" />
+														) : (
+															<ChevronRight className="h-4 w-4 text-secondary-400 ml-auto" />
+														)}
+													</button>
+													{expandedSections[section] && (
+														<div className="divide-y divide-secondary-700 border-t border-secondary-700">
+															{groupedResults[section].map((result) => (
+																<div key={result.id} className="p-4 pl-8">
+																	<button
+																		onClick={() => toggleRule(result.id)}
+																		className="w-full flex items-center gap-3 text-left"
+																	>
+																		{expandedRules[result.id] ? (
+																			<ChevronDown className="h-4 w-4 text-secondary-400 flex-shrink-0" />
+																		) : (
+																			<ChevronRight className="h-4 w-4 text-secondary-400 flex-shrink-0" />
+																		)}
+																		{getStatusIcon(result.status)}
+																		<div className="flex-1 min-w-0">
+																			<p className="text-white font-medium">
+																				{result.compliance_rules?.title ||
+																					result.rule?.title ||
+																					result.title ||
+																					"Unknown Rule"}
+																			</p>
+																			<p className="text-xs text-secondary-400">
+																				{(result.compliance_rules?.severity ||
+																					result.rule?.severity ||
+																					result.severity) && (
+																					<span
+																						className={`capitalize ${
+																							(
+																								result.compliance_rules
+																									?.severity ||
+																									result.rule?.severity ||
+																									result.severity
+																							) === "critical"
+																								? "text-red-400"
+																								: (result.compliance_rules
+																											?.severity ||
+																											result.rule?.severity ||
+																											result.severity) ===
+																										"high"
+																									? "text-orange-400"
+																									: (result.compliance_rules
+																												?.severity ||
+																												result.rule?.severity ||
+																												result.severity) ===
+																											"medium"
+																										? "text-yellow-400"
+																										: "text-secondary-400"
+																						}`}
+																					>
+																						{result.compliance_rules
+																							?.severity ||
+																							result.rule?.severity ||
+																							result.severity}
+																					</span>
+																				)}
+																			</p>
+																		</div>
+																		<span
+																			className={`px-2 py-1 rounded text-xs border ${getStatusBadge(result.status)}`}
+																		>
+																			{result.status}
+																		</span>
+																	</button>
 
-											{/* WHY THIS FAILED/WARNED - Clear explanation for failed/warn rules */}
-											{(result.status === "fail" || result.status === "warn") && (
-												<div className={`${result.status === "warn" ? "bg-yellow-900/20 border-yellow-800/50" : "bg-red-900/20 border-red-800/50"} border rounded-lg p-3`}>
-													<p className={`${result.status === "warn" ? "text-yellow-400" : "text-red-400"} font-medium mb-2 flex items-center gap-1`}>
-														<XCircle className="h-3.5 w-3.5" />
-														{result.status === "warn" ? "Why This Warning" : "Why This Failed"}
-													</p>
-													<div className={`${result.status === "warn" ? "text-yellow-200/90" : "text-red-200/90"} text-sm space-y-2`}>
-														{(() => {
-															// Check all possible locations for metadata (nested or direct from agent)
-															const title = result.compliance_rules?.title || result.rule?.title || result.title || "";
-															const description = result.compliance_rules?.description || result.rule?.description || result.description || "";
-															const rationale = result.compliance_rules?.rationale || result.rule?.rationale || result.rationale || "";
-
-															// If we have a specific finding from the scan, show it first
-															if (result.finding) {
-																return <p>{result.finding}</p>;
-															}
-
-															// If we have actual vs expected, show detailed comparison
-															if (result.actual) {
-																return (
-																	<>
-																		<p>The check found a non-compliant value:</p>
-																		<div className="mt-2 grid grid-cols-1 gap-2">
-																			<div className="bg-red-800/30 rounded p-2">
-																				<span className="text-red-300 text-xs font-medium">Current setting:</span>
-																				<code className="block mt-1 text-red-200 break-all">{result.actual}</code>
-																			</div>
-																			{result.expected && (
-																				<div className="bg-green-800/30 rounded p-2">
-																					<span className="text-green-300 text-xs font-medium">Required setting:</span>
-																					<code className="block mt-1 text-green-200 break-all">{result.expected}</code>
+																	{expandedRules[result.id] && (
+																		<div className="mt-4 ml-8 space-y-3 text-sm border-l-2 border-secondary-600 pl-4">
+																			{(result.compliance_rules?.rule_ref ||
+																				result.rule?.rule_ref ||
+																				result.rule_id) && (
+																				<div className="flex items-center gap-2 text-xs">
+																					<span className="text-secondary-500">
+																						Rule ID:
+																					</span>
+																					<code className="bg-secondary-700 px-2 py-0.5 rounded text-secondary-300 font-mono">
+																						{result.compliance_rules
+																							?.rule_ref ||
+																							result.rule?.rule_ref ||
+																							result.rule_id}
+																					</code>
+																				</div>
+																			)}
+																			{(result.compliance_rules?.description ||
+																				result.rule?.description ||
+																				result.description) && (
+																				<div>
+																					<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+																						<Info className="h-3.5 w-3.5" />
+																						Description
+																					</p>
+																					<p className="text-secondary-300">
+																						{result.compliance_rules
+																							?.description ||
+																							result.rule?.description ||
+																							result.description}
+																					</p>
+																				</div>
+																			)}
+																			{(result.compliance_rules?.remediation ||
+																				result.rule?.remediation ||
+																				result.remediation) && (
+																				<div>
+																					<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+																						<Wrench className="h-3.5 w-3.5" />
+																						Remediation
+																					</p>
+																					<pre className="text-secondary-300 whitespace-pre-wrap bg-secondary-700/30 rounded p-2 text-xs font-mono overflow-x-auto">
+																						{result.compliance_rules
+																							?.remediation ||
+																							result.rule?.remediation ||
+																							result.remediation}
+																					</pre>
 																				</div>
 																			)}
 																		</div>
-																	</>
-																);
-															}
-
-															// PRIORITY: Use actual description from benchmark if available
-															// This is the real explanation from SSG/CIS, not a generic pattern match
-															if (description && description.length > 10) {
-																// Clean up the description - remove extra whitespace
-																const cleanDesc = description.replace(/\s+/g, ' ').trim();
-																return (
-																	<>
-																		<p className="leading-relaxed">{cleanDesc}</p>
-																		{rationale && rationale.length > 10 && (
-																			<p className="mt-2 text-red-300/70 text-xs italic">
-																				<strong>Security Impact:</strong> {rationale.replace(/\s+/g, ' ').trim().substring(0, 200)}{rationale.length > 200 ? "..." : ""}
-																			</p>
-																		)}
-																	</>
-																);
-															}
-
-															// Fallback: Generate explanation from title if no description
-															// Parse "Ensure X is Y" pattern
-															const ensureMatch = title.match(/^Ensure\s+(.+?)\s+(?:is|are)\s+(.+)$/i);
-															if (ensureMatch) {
-																const [, subject, expectedState] = ensureMatch;
-																return (
-																	<>
-																		<p>This rule requires that <strong>{subject}</strong> is <strong>{expectedState}</strong>.</p>
-																		<p className="mt-1 text-red-300/80">The current system configuration does not meet this requirement.</p>
-																	</>
-																);
-															}
-
-															// Parse "Install X" pattern
-															const installMatch = title.match(/^Install\s+(.+)$/i);
-															if (installMatch) {
-																return (
-																	<>
-																		<p>The package <strong>{installMatch[1]}</strong> must be installed but is not present on this system.</p>
-																	</>
-																);
-															}
-
-															// Final fallback
-															return (
-																<>
-																	<p>The system does not meet the requirement: <strong>{title || "this security check"}</strong></p>
-																	<p className="mt-1 text-red-300/80">See the remediation steps below for how to fix this.</p>
-																</>
-															);
-														})()}
-													</div>
-												</div>
-											)}
-
-											{/* Rationale - explains WHY this rule matters */}
-											{(result.compliance_rules?.rationale || result.rule?.rationale || result.rationale) && (
-												<div>
-													<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
-														<BookOpen className="h-3.5 w-3.5" />
-														Why This Matters
-													</p>
-													<p className="text-secondary-300 text-sm leading-relaxed">
-														{result.compliance_rules?.rationale || result.rule?.rationale || result.rationale}
-													</p>
-												</div>
-											)}
-											{/* Show actual vs expected for clearer understanding */}
-											{(result.actual || result.expected) && (
-												<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-													{result.actual && (
-														<div className="bg-secondary-700/50 rounded p-2">
-															<p className="text-secondary-400 text-xs font-medium mb-1">Current Value</p>
-															<code className="text-red-300 text-xs break-all">{result.actual}</code>
-														</div>
-													)}
-													{result.expected && (
-														<div className="bg-secondary-700/50 rounded p-2">
-															<p className="text-secondary-400 text-xs font-medium mb-1">Required Value</p>
-															<code className="text-green-300 text-xs break-all">{result.expected}</code>
+																	)}
+																</div>
+															))}
 														</div>
 													)}
 												</div>
-											)}
-
-											{/* WHAT THE FIX DOES - Explanation before remediation */}
-											{(result.status === "fail" || result.status === "warn") && (result.compliance_rules?.remediation || result.rule?.remediation || result.remediation) && (
-												<div className="bg-orange-900/20 border border-orange-800/50 rounded-lg p-3">
-													<p className="text-orange-400 font-medium mb-2 flex items-center gap-1">
-														<Wrench className="h-3.5 w-3.5" />
-														What the Fix Does
-													</p>
-													<div className="text-orange-200/90 text-sm space-y-2">
-														<p>
-															{(() => {
-																const remediation = result.compliance_rules?.remediation || result.rule?.remediation || result.remediation || "";
-																const title = result.compliance_rules?.title || result.rule?.title || "";
-																// Generate a user-friendly description based on the rule
-																if (remediation.includes("sysctl") || remediation.includes("/proc/sys")) {
-																	return "This fix will modify kernel parameters to enable the required security setting. Changes are applied immediately and persist across reboots.";
-																} else if (remediation.includes("chmod") || remediation.includes("chown")) {
-																	return "This fix will update file permissions or ownership to meet the required security standard. This restricts unauthorized access to sensitive files.";
-																} else if (remediation.includes("apt") || remediation.includes("yum") || remediation.includes("dnf")) {
-																	return "This fix will install, update, or remove packages as needed to meet the security requirement.";
-																} else if (remediation.includes("systemctl") || remediation.includes("service")) {
-																	return "This fix will enable, disable, or configure a system service to meet the security requirement.";
-																} else if (remediation.includes("/etc/ssh")) {
-																	return "This fix will update SSH daemon configuration to harden remote access security.";
-																} else if (remediation.includes("audit") || remediation.includes("auditd")) {
-																	return "This fix will configure audit logging to track security-relevant system events.";
-																} else if (remediation.includes("pam") || remediation.includes("/etc/pam")) {
-																	return "This fix will configure authentication modules to enforce stronger access controls.";
-																} else if (title.toLowerCase().includes("password")) {
-																	return "This fix will update password policy settings to require stronger passwords or enforce better credential management.";
-																} else if (title.toLowerCase().includes("firewall") || remediation.includes("iptables") || remediation.includes("nftables")) {
-																	return "This fix will configure firewall rules to restrict network access and improve security.";
-																} else {
-																	return "This fix will apply the recommended configuration change to bring your system into compliance with the security benchmark.";
-																}
-															})()}
-														</p>
-													</div>
-												</div>
-											)}
-
-											{(result.compliance_rules?.remediation || result.rule?.remediation || result.remediation) && (
-												<div>
-													<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
-														<Wrench className="h-3.5 w-3.5" />
-														Remediation Steps
-													</p>
-													<pre className="text-secondary-300 whitespace-pre-wrap bg-secondary-700/30 rounded p-2 text-xs font-mono overflow-x-auto">
-														{result.compliance_rules?.remediation || result.rule?.remediation || result.remediation}
-													</pre>
-												</div>
-											)}
-											{/* Fix This Rule button - only for failed rules */}
-											{result.status === "fail" && isConnected && (
-												<div className="mt-4 pt-3 border-t border-secondary-600">
-													<button
-														onClick={(e) => {
-															e.stopPropagation();
-															// Use rule_ref (XCCDF rule ID like xccdf_org.ssgproject...) not rule_id (database UUID)
-															const ruleRef = result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_ref;
-															console.log("[Compliance] Remediate click:", { ruleRef, compliance_rules: result.compliance_rules, result });
-															if (ruleRef) {
-																remediateRuleMutation.mutate(ruleRef);
-															} else {
-																console.error("[Compliance] No rule_ref found for remediation");
-															}
-														}}
-														disabled={remediatingRule === (result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_ref || result.rule_id) || remediateRuleMutation.isPending}
-														className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-															remediatingRule === (result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_ref || result.rule_id)
-																? "bg-orange-600/50 text-orange-200 cursor-wait"
-																: "bg-orange-600 hover:bg-orange-500 text-white"
-														}`}
-													>
-														{remediatingRule === (result.compliance_rules?.rule_ref || result.rule?.rule_ref || result.rule_ref || result.rule_id) ? (
-															<>
-																<RefreshCw className="h-4 w-4 animate-spin" />
-																Fixing...
-															</>
-														) : (
-															<>
-																<Wrench className="h-4 w-4" />
-																Fix This Rule
-															</>
-														)}
-													</button>
-													<p className="text-xs text-secondary-500 mt-1">
-														Attempts to automatically remediate this specific rule
-													</p>
-												</div>
-											)}
-										</div>
-									)}
-								</div>
-							))}
-							{/* Pagination Controls */}
-							{totalPages > 1 && (
-								<div className="px-4 py-3 border-t border-secondary-700 flex items-center justify-between">
-									<div className="flex items-center gap-2">
-										<button
-											onClick={() => setCurrentPage(1)}
-											disabled={currentPage === 1}
-											className="px-2 py-1 text-xs rounded bg-secondary-700 text-secondary-300 hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
-										>
-											First
-										</button>
-										<button
-											onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-											disabled={currentPage === 1}
-											className="p-1.5 rounded bg-secondary-700 text-secondary-300 hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
-										>
-											<ChevronLeft className="h-4 w-4" />
-										</button>
-									</div>
-									<div className="flex items-center gap-1">
-										{/* Show page numbers with ellipsis for large page counts */}
-										{Array.from({ length: totalPages }, (_, i) => i + 1)
-											.filter(page => {
-												// Show first, last, current, and pages near current
-												if (page === 1 || page === totalPages) return true;
-												if (Math.abs(page - currentPage) <= 1) return true;
-												return false;
-											})
-											.map((page, index, filteredPages) => (
-												<>
-													{index > 0 && filteredPages[index - 1] !== page - 1 && (
-														<span key={`ellipsis-${page}`} className="px-1 text-secondary-500">...</span>
-													)}
-													<button
-														key={page}
-														onClick={() => setCurrentPage(page)}
-														className={`px-3 py-1 text-sm rounded ${
-															currentPage === page
-																? "bg-primary-600 text-white"
-																: "bg-secondary-700 text-secondary-300 hover:bg-secondary-600"
-														}`}
-													>
-														{page}
-													</button>
-												</>
 											))}
+										{/* Flat View */}
+										{!groupBySection &&
+											paginatedResults.map((result) => (
+												<div key={result.id} className="p-4">
+													<button
+														onClick={() => toggleRule(result.id)}
+														className="w-full flex items-center gap-3 text-left"
+													>
+														{expandedRules[result.id] ? (
+															<ChevronDown className="h-4 w-4 text-secondary-400 flex-shrink-0" />
+														) : (
+															<ChevronRight className="h-4 w-4 text-secondary-400 flex-shrink-0" />
+														)}
+														{getStatusIcon(result.status)}
+														<div className="flex-1 min-w-0">
+															<p className="text-white font-medium">
+																{result.compliance_rules?.title ||
+																	result.rule?.title ||
+																	result.title ||
+																	"Unknown Rule"}
+															</p>
+															<p className="text-xs text-secondary-400">
+																{(result.compliance_rules?.section ||
+																	result.rule?.section ||
+																	result.section) &&
+																	`${result.compliance_rules?.section || result.rule?.section || result.section} • `}
+																{(result.compliance_rules?.severity ||
+																	result.rule?.severity ||
+																	result.severity) && (
+																	<span
+																		className={`capitalize ${
+																			(
+																				result.compliance_rules?.severity ||
+																					result.rule?.severity ||
+																					result.severity
+																			) === "critical"
+																				? "text-red-400"
+																				: (result.compliance_rules?.severity ||
+																							result.rule?.severity ||
+																							result.severity) === "high"
+																					? "text-orange-400"
+																					: (result.compliance_rules
+																								?.severity ||
+																								result.rule?.severity ||
+																								result.severity) === "medium"
+																						? "text-yellow-400"
+																						: "text-secondary-400"
+																		}`}
+																	>
+																		{result.compliance_rules?.severity ||
+																			result.rule?.severity ||
+																			result.severity}
+																	</span>
+																)}
+															</p>
+														</div>
+														<span
+															className={`px-2 py-1 rounded text-xs border ${getStatusBadge(result.status)}`}
+														>
+															{result.status}
+														</span>
+													</button>
+
+													{expandedRules[result.id] && (
+														<div className="mt-4 ml-8 space-y-3 text-sm border-l-2 border-secondary-600 pl-4">
+															{/* Rule ID reference */}
+															{(result.compliance_rules?.rule_ref ||
+																result.rule?.rule_ref ||
+																result.rule_id) && (
+																<div className="flex items-center gap-2 text-xs">
+																	<span className="text-secondary-500">
+																		Rule ID:
+																	</span>
+																	<code className="bg-secondary-700 px-2 py-0.5 rounded text-secondary-300 font-mono">
+																		{result.compliance_rules?.rule_ref ||
+																			result.rule?.rule_ref ||
+																			result.rule_id}
+																	</code>
+																</div>
+															)}
+															{(result.compliance_rules?.description ||
+																result.rule?.description ||
+																result.description) && (
+																<div>
+																	<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+																		<Info className="h-3.5 w-3.5" />
+																		Description
+																	</p>
+																	<p className="text-secondary-300">
+																		{result.compliance_rules?.description ||
+																			result.rule?.description ||
+																			result.description}
+																	</p>
+																</div>
+															)}
+
+															{/* WHY THIS FAILED/WARNED - Clear explanation for failed/warn rules */}
+															{(result.status === "fail" ||
+																result.status === "warn") && (
+																<div
+																	className={`${result.status === "warn" ? "bg-yellow-900/20 border-yellow-800/50" : "bg-red-900/20 border-red-800/50"} border rounded-lg p-3`}
+																>
+																	<p
+																		className={`${result.status === "warn" ? "text-yellow-400" : "text-red-400"} font-medium mb-2 flex items-center gap-1`}
+																	>
+																		<XCircle className="h-3.5 w-3.5" />
+																		{result.status === "warn"
+																			? "Why This Warning"
+																			: "Why This Failed"}
+																	</p>
+																	<div
+																		className={`${result.status === "warn" ? "text-yellow-200/90" : "text-red-200/90"} text-sm space-y-2`}
+																	>
+																		{(() => {
+																			// Check all possible locations for metadata (nested or direct from agent)
+																			const title =
+																				result.compliance_rules?.title ||
+																				result.rule?.title ||
+																				result.title ||
+																				"";
+																			const description =
+																				result.compliance_rules?.description ||
+																				result.rule?.description ||
+																				result.description ||
+																				"";
+																			const rationale =
+																				result.compliance_rules?.rationale ||
+																				result.rule?.rationale ||
+																				result.rationale ||
+																				"";
+
+																			// If we have a specific finding from the scan, show it first
+																			if (result.finding) {
+																				return <p>{result.finding}</p>;
+																			}
+
+																			// If we have actual vs expected, show detailed comparison
+																			if (result.actual) {
+																				return (
+																					<>
+																						<p>
+																							The check found a non-compliant
+																							value:
+																						</p>
+																						<div className="mt-2 grid grid-cols-1 gap-2">
+																							<div className="bg-red-800/30 rounded p-2">
+																								<span className="text-red-300 text-xs font-medium">
+																									Current setting:
+																								</span>
+																								<code className="block mt-1 text-red-200 break-all">
+																									{result.actual}
+																								</code>
+																							</div>
+																							{result.expected && (
+																								<div className="bg-green-800/30 rounded p-2">
+																									<span className="text-green-300 text-xs font-medium">
+																										Required setting:
+																									</span>
+																									<code className="block mt-1 text-green-200 break-all">
+																										{result.expected}
+																									</code>
+																								</div>
+																							)}
+																						</div>
+																					</>
+																				);
+																			}
+
+																			// PRIORITY: Use actual description from benchmark if available
+																			// This is the real explanation from SSG/CIS, not a generic pattern match
+																			if (
+																				description &&
+																				description.length > 10
+																			) {
+																				// Clean up the description - remove extra whitespace
+																				const cleanDesc = description
+																					.replace(/\s+/g, " ")
+																					.trim();
+																				return (
+																					<>
+																						<p className="leading-relaxed">
+																							{cleanDesc}
+																						</p>
+																						{rationale &&
+																							rationale.length > 10 && (
+																								<p className="mt-2 text-red-300/70 text-xs italic">
+																									<strong>
+																										Security Impact:
+																									</strong>{" "}
+																									{rationale
+																										.replace(/\s+/g, " ")
+																										.trim()
+																										.substring(0, 200)}
+																									{rationale.length > 200
+																										? "..."
+																										: ""}
+																								</p>
+																							)}
+																					</>
+																				);
+																			}
+
+																			// Fallback: Generate explanation from title if no description
+																			// Parse "Ensure X is Y" pattern
+																			const ensureMatch = title.match(
+																				/^Ensure\s+(.+?)\s+(?:is|are)\s+(.+)$/i,
+																			);
+																			if (ensureMatch) {
+																				const [, subject, expectedState] =
+																					ensureMatch;
+																				return (
+																					<>
+																						<p>
+																							This rule requires that{" "}
+																							<strong>{subject}</strong> is{" "}
+																							<strong>{expectedState}</strong>.
+																						</p>
+																						<p className="mt-1 text-red-300/80">
+																							The current system configuration
+																							does not meet this requirement.
+																						</p>
+																					</>
+																				);
+																			}
+
+																			// Parse "Install X" pattern
+																			const installMatch =
+																				title.match(/^Install\s+(.+)$/i);
+																			if (installMatch) {
+																				return (
+																					<>
+																						<p>
+																							The package{" "}
+																							<strong>{installMatch[1]}</strong>{" "}
+																							must be installed but is not
+																							present on this system.
+																						</p>
+																					</>
+																				);
+																			}
+
+																			// Final fallback
+																			return (
+																				<>
+																					<p>
+																						The system does not meet the
+																						requirement:{" "}
+																						<strong>
+																							{title || "this security check"}
+																						</strong>
+																					</p>
+																					<p className="mt-1 text-red-300/80">
+																						See the remediation steps below for
+																						how to fix this.
+																					</p>
+																				</>
+																			);
+																		})()}
+																	</div>
+																</div>
+															)}
+
+															{/* Rationale - explains WHY this rule matters */}
+															{(result.compliance_rules?.rationale ||
+																result.rule?.rationale ||
+																result.rationale) && (
+																<div>
+																	<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+																		<BookOpen className="h-3.5 w-3.5" />
+																		Why This Matters
+																	</p>
+																	<p className="text-secondary-300 text-sm leading-relaxed">
+																		{result.compliance_rules?.rationale ||
+																			result.rule?.rationale ||
+																			result.rationale}
+																	</p>
+																</div>
+															)}
+															{/* Show actual vs expected for clearer understanding */}
+															{(result.actual || result.expected) && (
+																<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+																	{result.actual && (
+																		<div className="bg-secondary-700/50 rounded p-2">
+																			<p className="text-secondary-400 text-xs font-medium mb-1">
+																				Current Value
+																			</p>
+																			<code className="text-red-300 text-xs break-all">
+																				{result.actual}
+																			</code>
+																		</div>
+																	)}
+																	{result.expected && (
+																		<div className="bg-secondary-700/50 rounded p-2">
+																			<p className="text-secondary-400 text-xs font-medium mb-1">
+																				Required Value
+																			</p>
+																			<code className="text-green-300 text-xs break-all">
+																				{result.expected}
+																			</code>
+																		</div>
+																	)}
+																</div>
+															)}
+
+															{/* WHAT THE FIX DOES - Explanation before remediation */}
+															{(result.status === "fail" ||
+																result.status === "warn") &&
+																(result.compliance_rules?.remediation ||
+																	result.rule?.remediation ||
+																	result.remediation) && (
+																	<div className="bg-orange-900/20 border border-orange-800/50 rounded-lg p-3">
+																		<p className="text-orange-400 font-medium mb-2 flex items-center gap-1">
+																			<Wrench className="h-3.5 w-3.5" />
+																			What the Fix Does
+																		</p>
+																		<div className="text-orange-200/90 text-sm space-y-2">
+																			<p>
+																				{(() => {
+																					const remediation =
+																						result.compliance_rules
+																							?.remediation ||
+																						result.rule?.remediation ||
+																						result.remediation ||
+																						"";
+																					const title =
+																						result.compliance_rules?.title ||
+																						result.rule?.title ||
+																						"";
+																					// Generate a user-friendly description based on the rule
+																					if (
+																						remediation.includes("sysctl") ||
+																						remediation.includes("/proc/sys")
+																					) {
+																						return "This fix will modify kernel parameters to enable the required security setting. Changes are applied immediately and persist across reboots.";
+																					} else if (
+																						remediation.includes("chmod") ||
+																						remediation.includes("chown")
+																					) {
+																						return "This fix will update file permissions or ownership to meet the required security standard. This restricts unauthorized access to sensitive files.";
+																					} else if (
+																						remediation.includes("apt") ||
+																						remediation.includes("yum") ||
+																						remediation.includes("dnf")
+																					) {
+																						return "This fix will install, update, or remove packages as needed to meet the security requirement.";
+																					} else if (
+																						remediation.includes("systemctl") ||
+																						remediation.includes("service")
+																					) {
+																						return "This fix will enable, disable, or configure a system service to meet the security requirement.";
+																					} else if (
+																						remediation.includes("/etc/ssh")
+																					) {
+																						return "This fix will update SSH daemon configuration to harden remote access security.";
+																					} else if (
+																						remediation.includes("audit") ||
+																						remediation.includes("auditd")
+																					) {
+																						return "This fix will configure audit logging to track security-relevant system events.";
+																					} else if (
+																						remediation.includes("pam") ||
+																						remediation.includes("/etc/pam")
+																					) {
+																						return "This fix will configure authentication modules to enforce stronger access controls.";
+																					} else if (
+																						title
+																							.toLowerCase()
+																							.includes("password")
+																					) {
+																						return "This fix will update password policy settings to require stronger passwords or enforce better credential management.";
+																					} else if (
+																						title
+																							.toLowerCase()
+																							.includes("firewall") ||
+																						remediation.includes("iptables") ||
+																						remediation.includes("nftables")
+																					) {
+																						return "This fix will configure firewall rules to restrict network access and improve security.";
+																					} else {
+																						return "This fix will apply the recommended configuration change to bring your system into compliance with the security benchmark.";
+																					}
+																				})()}
+																			</p>
+																		</div>
+																	</div>
+																)}
+
+															{(result.compliance_rules?.remediation ||
+																result.rule?.remediation ||
+																result.remediation) && (
+																<div>
+																	<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+																		<Wrench className="h-3.5 w-3.5" />
+																		Remediation Steps
+																	</p>
+																	<pre className="text-secondary-300 whitespace-pre-wrap bg-secondary-700/30 rounded p-2 text-xs font-mono overflow-x-auto">
+																		{result.compliance_rules?.remediation ||
+																			result.rule?.remediation ||
+																			result.remediation}
+																	</pre>
+																</div>
+															)}
+															{/* Fix This Rule button - only for failed rules */}
+															{result.status === "fail" && isConnected && (
+																<div className="mt-4 pt-3 border-t border-secondary-600">
+																	<button
+																		onClick={(e) => {
+																			e.stopPropagation();
+																			// Use rule_ref (XCCDF rule ID like xccdf_org.ssgproject...) not rule_id (database UUID)
+																			const ruleRef =
+																				result.compliance_rules?.rule_ref ||
+																				result.rule?.rule_ref ||
+																				result.rule_ref;
+																			console.log(
+																				"[Compliance] Remediate click:",
+																				{
+																					ruleRef,
+																					compliance_rules:
+																						result.compliance_rules,
+																					result,
+																				},
+																			);
+																			if (ruleRef) {
+																				remediateRuleMutation.mutate(ruleRef);
+																			} else {
+																				console.error(
+																					"[Compliance] No rule_ref found for remediation",
+																				);
+																			}
+																		}}
+																		disabled={
+																			remediatingRule ===
+																				(result.compliance_rules?.rule_ref ||
+																					result.rule?.rule_ref ||
+																					result.rule_ref ||
+																					result.rule_id) ||
+																			remediateRuleMutation.isPending
+																		}
+																		className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+																			remediatingRule ===
+																			(
+																				result.compliance_rules?.rule_ref ||
+																					result.rule?.rule_ref ||
+																					result.rule_ref ||
+																					result.rule_id
+																			)
+																				? "bg-orange-600/50 text-orange-200 cursor-wait"
+																				: "bg-orange-600 hover:bg-orange-500 text-white"
+																		}`}
+																	>
+																		{remediatingRule ===
+																		(result.compliance_rules?.rule_ref ||
+																			result.rule?.rule_ref ||
+																			result.rule_ref ||
+																			result.rule_id) ? (
+																			<>
+																				<RefreshCw className="h-4 w-4 animate-spin" />
+																				Fixing...
+																			</>
+																		) : (
+																			<>
+																				<Wrench className="h-4 w-4" />
+																				Fix This Rule
+																			</>
+																		)}
+																	</button>
+																	<p className="text-xs text-secondary-500 mt-1">
+																		Attempts to automatically remediate this
+																		specific rule
+																	</p>
+																</div>
+															)}
+														</div>
+													)}
+												</div>
+											))}
+										{/* Pagination Controls */}
+										{totalPages > 1 && (
+											<div className="px-4 py-3 border-t border-secondary-700 flex items-center justify-between">
+												<div className="flex items-center gap-2">
+													<button
+														onClick={() => setCurrentPage(1)}
+														disabled={currentPage === 1}
+														className="px-2 py-1 text-xs rounded bg-secondary-700 text-secondary-300 hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+													>
+														First
+													</button>
+													<button
+														onClick={() =>
+															setCurrentPage((p) => Math.max(1, p - 1))
+														}
+														disabled={currentPage === 1}
+														className="p-1.5 rounded bg-secondary-700 text-secondary-300 hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+													>
+														<ChevronLeft className="h-4 w-4" />
+													</button>
+												</div>
+												<div className="flex items-center gap-1">
+													{/* Show page numbers with ellipsis for large page counts */}
+													{Array.from({ length: totalPages }, (_, i) => i + 1)
+														.filter((page) => {
+															// Show first, last, current, and pages near current
+															if (page === 1 || page === totalPages)
+																return true;
+															if (Math.abs(page - currentPage) <= 1)
+																return true;
+															return false;
+														})
+														.map((page, index, filteredPages) => (
+															<>
+																{index > 0 &&
+																	filteredPages[index - 1] !== page - 1 && (
+																		<span
+																			key={`ellipsis-${page}`}
+																			className="px-1 text-secondary-500"
+																		>
+																			...
+																		</span>
+																	)}
+																<button
+																	key={page}
+																	onClick={() => setCurrentPage(page)}
+																	className={`px-3 py-1 text-sm rounded ${
+																		currentPage === page
+																			? "bg-primary-600 text-white"
+																			: "bg-secondary-700 text-secondary-300 hover:bg-secondary-600"
+																	}`}
+																>
+																	{page}
+																</button>
+															</>
+														))}
+												</div>
+												<div className="flex items-center gap-2">
+													<button
+														onClick={() =>
+															setCurrentPage((p) => Math.min(totalPages, p + 1))
+														}
+														disabled={currentPage === totalPages}
+														className="p-1.5 rounded bg-secondary-700 text-secondary-300 hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+													>
+														<ChevronRight className="h-4 w-4" />
+													</button>
+													<button
+														onClick={() => setCurrentPage(totalPages)}
+														disabled={currentPage === totalPages}
+														className="px-2 py-1 text-xs rounded bg-secondary-700 text-secondary-300 hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+													>
+														Last
+													</button>
+												</div>
+											</div>
+										)}
 									</div>
-									<div className="flex items-center gap-2">
-										<button
-											onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-											disabled={currentPage === totalPages}
-											className="p-1.5 rounded bg-secondary-700 text-secondary-300 hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
-										>
-											<ChevronRight className="h-4 w-4" />
-										</button>
-										<button
-											onClick={() => setCurrentPage(totalPages)}
-											disabled={currentPage === totalPages}
-											className="px-2 py-1 text-xs rounded bg-secondary-700 text-secondary-300 hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
-										>
-											Last
-										</button>
+								) : (
+									<div className="p-8 text-center">
+										<p className="text-secondary-400">
+											No {statusFilter !== "all" ? statusFilter : ""} results
+											found
+										</p>
 									</div>
-								</div>
-							)}
-						</div>
-					) : (
-						<div className="p-8 text-center">
-							<p className="text-secondary-400">No {statusFilter !== "all" ? statusFilter : ""} results found</p>
-						</div>
-					)}
+								)}
+							</div>
+						)}
+					</>
+				) : (
+					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-12 text-center">
+						<ListChecks className="h-12 w-12 text-secondary-600 mx-auto mb-4" />
+						<h3 className="text-lg font-medium text-white mb-2">
+							No Results Yet
+						</h3>
+						<p className="text-secondary-400 mb-4">
+							Run a compliance scan to see detailed results
+						</p>
+						<button
+							onClick={() => setActiveSubtab("scan")}
+							className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
+						>
+							<Play className="h-4 w-4" />
+							Run Scan
+						</button>
 					</div>
-					)}
-				</>
-			) : (
-				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-12 text-center">
-					<ListChecks className="h-12 w-12 text-secondary-600 mx-auto mb-4" />
-					<h3 className="text-lg font-medium text-white mb-2">No Results Yet</h3>
-					<p className="text-secondary-400 mb-4">Run a compliance scan to see detailed results</p>
-					<button
-						onClick={() => setActiveSubtab("scan")}
-						className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
-					>
-						<Play className="h-4 w-4" />
-						Run Scan
-					</button>
-				</div>
-			)}
-		</div>
+				)}
+			</div>
 		);
 	};
 
 	// Render History subtab
 	const renderHistory = () => {
 		// Group scans by profile type for better display
-		const groupedByType = scanHistory?.scans?.reduce((acc, scan) => {
-			const type = scan.compliance_profiles?.type || "unknown";
-			if (!acc[type]) acc[type] = [];
-			acc[type].push(scan);
-			return acc;
-		}, {}) || {};
+		const groupedByType =
+			scanHistory?.scans?.reduce((acc, scan) => {
+				const type = scan.compliance_profiles?.type || "unknown";
+				if (!acc[type]) acc[type] = [];
+				acc[type].push(scan);
+				return acc;
+			}, {}) || {};
 
 		const typeLabels = {
 			openscap: { name: "OpenSCAP", color: "bg-green-600", icon: Shield },
-			"docker-bench": { name: "Docker Bench", color: "bg-blue-600", icon: Container },
+			"docker-bench": {
+				name: "Docker Bench",
+				color: "bg-blue-600",
+				icon: Container,
+			},
 			unknown: { name: "Other", color: "bg-secondary-600", icon: Shield },
 		};
 
 		return (
-		<div className="space-y-4">
-			{/* Summary Cards by Type */}
-			{Object.keys(groupedByType).length > 0 && (
-				<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-					{Object.entries(groupedByType).map(([type, scans]) => {
-						const typeInfo = typeLabels[type] || typeLabels.unknown;
-						const latestScan = scans[0];
-						const Icon = typeInfo.icon;
-						return (
-							<div key={type} className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
-								<div className="flex items-center gap-3 mb-3">
-									<div className={`p-2 rounded-lg ${typeInfo.color}`}>
-										<Icon className="h-5 w-5 text-white" />
+			<div className="space-y-4">
+				{/* Summary Cards by Type */}
+				{Object.keys(groupedByType).length > 0 && (
+					<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+						{Object.entries(groupedByType).map(([type, scans]) => {
+							const typeInfo = typeLabels[type] || typeLabels.unknown;
+							const latestScan = scans[0];
+							const Icon = typeInfo.icon;
+							return (
+								<div
+									key={type}
+									className="bg-secondary-800 rounded-lg border border-secondary-700 p-4"
+								>
+									<div className="flex items-center gap-3 mb-3">
+										<div className={`p-2 rounded-lg ${typeInfo.color}`}>
+											<Icon className="h-5 w-5 text-white" />
+										</div>
+										<div>
+											<h4 className="text-white font-medium">
+												{typeInfo.name}
+											</h4>
+											<p className="text-xs text-secondary-400">
+												{scans.length} scan{scans.length !== 1 ? "s" : ""}
+											</p>
+										</div>
 									</div>
-									<div>
-										<h4 className="text-white font-medium">{typeInfo.name}</h4>
-										<p className="text-xs text-secondary-400">{scans.length} scan{scans.length !== 1 ? "s" : ""}</p>
-									</div>
+									{latestScan && (
+										<div className="flex items-center justify-between">
+											<ComplianceScore score={latestScan.score} size="sm" />
+											<div className="text-right text-sm">
+												<div className="flex items-center gap-2">
+													<span className="text-green-400">
+														{latestScan.passed} passed
+													</span>
+													{type === "docker-bench" ? (
+														<span className="text-yellow-400">
+															{latestScan.warnings} warn
+														</span>
+													) : (
+														<span className="text-red-400">
+															{latestScan.failed} failed
+														</span>
+													)}
+												</div>
+												<p className="text-xs text-secondary-500">
+													{new Date(
+														latestScan.completed_at,
+													).toLocaleDateString()}
+												</p>
+											</div>
+										</div>
+									)}
 								</div>
-								{latestScan && (
+							);
+						})}
+					</div>
+				)}
+
+				{/* Full History List */}
+				{scanHistory?.scans && scanHistory.scans.length > 0 ? (
+					<div className="bg-secondary-800 rounded-lg border border-secondary-700 divide-y divide-secondary-700">
+						{scanHistory.scans.map((scan, index) => {
+							const type = scan.compliance_profiles?.type || "unknown";
+							const typeInfo = typeLabels[type] || typeLabels.unknown;
+							const isDockerBench = type === "docker-bench";
+							// Find if this is the latest scan for its type
+							const isLatestOfType = groupedByType[type]?.[0]?.id === scan.id;
+
+							return (
+								<div
+									key={scan.id}
+									className={`p-4 ${isLatestOfType ? "bg-primary-900/10" : ""}`}
+								>
 									<div className="flex items-center justify-between">
-										<ComplianceScore score={latestScan.score} size="sm" />
-										<div className="text-right text-sm">
-											<div className="flex items-center gap-2">
-												<span className="text-green-400">{latestScan.passed} passed</span>
-												{type === "docker-bench" ? (
-													<span className="text-yellow-400">{latestScan.warnings} warn</span>
+										<div className="flex items-center gap-4">
+											<ComplianceScore score={scan.score} size="sm" />
+											<div>
+												<div className="flex items-center gap-2 flex-wrap">
+													<span
+														className={`px-2 py-0.5 text-xs ${typeInfo.color} text-white rounded`}
+													>
+														{typeInfo.name}
+													</span>
+													<p className="text-white font-medium">
+														{scan.compliance_profiles?.name ||
+															"Compliance Scan"}
+													</p>
+													{isLatestOfType && (
+														<span className="px-2 py-0.5 text-xs bg-primary-600/30 text-primary-300 rounded">
+															Latest
+														</span>
+													)}
+												</div>
+												<p className="text-sm text-secondary-400">
+													{new Date(scan.completed_at).toLocaleString()}
+												</p>
+											</div>
+										</div>
+										<div className="text-right">
+											<div className="flex items-center gap-3 text-sm">
+												<span className="text-green-400">
+													{scan.passed} passed
+												</span>
+												{isDockerBench ? (
+													<span className="text-yellow-400">
+														{scan.warnings} warn
+													</span>
 												) : (
-													<span className="text-red-400">{latestScan.failed} failed</span>
+													<span className="text-red-400">
+														{scan.failed} failed
+													</span>
 												)}
 											</div>
 											<p className="text-xs text-secondary-500">
-												{new Date(latestScan.completed_at).toLocaleDateString()}
+												{scan.total_rules} total rules
 											</p>
 										</div>
 									</div>
-								)}
-							</div>
-						);
-					})}
-				</div>
-			)}
-
-			{/* Full History List */}
-			{scanHistory?.scans && scanHistory.scans.length > 0 ? (
-				<div className="bg-secondary-800 rounded-lg border border-secondary-700 divide-y divide-secondary-700">
-					{scanHistory.scans.map((scan, index) => {
-						const type = scan.compliance_profiles?.type || "unknown";
-						const typeInfo = typeLabels[type] || typeLabels.unknown;
-						const isDockerBench = type === "docker-bench";
-						// Find if this is the latest scan for its type
-						const isLatestOfType = groupedByType[type]?.[0]?.id === scan.id;
-
-						return (
-						<div
-							key={scan.id}
-							className={`p-4 ${isLatestOfType ? "bg-primary-900/10" : ""}`}
+									{scan.error_message && (
+										<div className="mt-2 p-2 bg-red-900/20 border border-red-800 rounded text-sm text-red-300">
+											{scan.error_message}
+										</div>
+									)}
+								</div>
+							);
+						})}
+					</div>
+				) : (
+					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-12 text-center">
+						<History className="h-12 w-12 text-secondary-600 mx-auto mb-4" />
+						<h3 className="text-lg font-medium text-white mb-2">
+							No Scan History
+						</h3>
+						<p className="text-secondary-400 mb-4">
+							Previous scans will appear here
+						</p>
+						<button
+							onClick={() => setActiveSubtab("scan")}
+							className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
 						>
-							<div className="flex items-center justify-between">
-								<div className="flex items-center gap-4">
-									<ComplianceScore score={scan.score} size="sm" />
-									<div>
-										<div className="flex items-center gap-2 flex-wrap">
-											<span className={`px-2 py-0.5 text-xs ${typeInfo.color} text-white rounded`}>
-												{typeInfo.name}
-											</span>
-											<p className="text-white font-medium">
-												{scan.compliance_profiles?.name || "Compliance Scan"}
-											</p>
-											{isLatestOfType && (
-												<span className="px-2 py-0.5 text-xs bg-primary-600/30 text-primary-300 rounded">
-													Latest
-												</span>
-											)}
-										</div>
-										<p className="text-sm text-secondary-400">
-											{new Date(scan.completed_at).toLocaleString()}
-										</p>
-									</div>
-								</div>
-								<div className="text-right">
-									<div className="flex items-center gap-3 text-sm">
-										<span className="text-green-400">{scan.passed} passed</span>
-										{isDockerBench ? (
-											<span className="text-yellow-400">{scan.warnings} warn</span>
-										) : (
-											<span className="text-red-400">{scan.failed} failed</span>
-										)}
-									</div>
-									<p className="text-xs text-secondary-500">
-										{scan.total_rules} total rules
-									</p>
-								</div>
-							</div>
-							{scan.error_message && (
-								<div className="mt-2 p-2 bg-red-900/20 border border-red-800 rounded text-sm text-red-300">
-									{scan.error_message}
-								</div>
-							)}
-						</div>
-					)})}
-				</div>
-			) : (
-				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-12 text-center">
-					<History className="h-12 w-12 text-secondary-600 mx-auto mb-4" />
-					<h3 className="text-lg font-medium text-white mb-2">No Scan History</h3>
-					<p className="text-secondary-400 mb-4">Previous scans will appear here</p>
-					<button
-						onClick={() => setActiveSubtab("scan")}
-						className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
-					>
-						<Play className="h-4 w-4" />
-						Run First Scan
-					</button>
-				</div>
-			)}
+							<Play className="h-4 w-4" />
+							Run First Scan
+						</button>
+					</div>
+				)}
 
-			{/* Trend Chart */}
-			{scanHistory?.scans && scanHistory.scans.length > 1 && (
-				<Suspense fallback={<div className="h-48 bg-secondary-800 rounded-lg border border-secondary-700 animate-pulse" />}>
-					<ComplianceTrend hostId={hostId} />
-				</Suspense>
-			)}
-		</div>
+				{/* Trend Chart */}
+				{scanHistory?.scans && scanHistory.scans.length > 1 && (
+					<Suspense
+						fallback={
+							<div className="h-48 bg-secondary-800 rounded-lg border border-secondary-700 animate-pulse" />
+						}
+					>
+						<ComplianceTrend hostId={hostId} />
+					</Suspense>
+				)}
+			</div>
 		);
 	};
 
@@ -2289,14 +3074,25 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 		const info = status?.scanner_info;
 
 		// Detect mismatches between enabled integrations and available services
-		const openscapAvailable = components.openscap === "ready" || info?.openscap_available || info?.openscap_version;
-		const dockerBenchAvailable = components["docker-bench"] === "ready" || info?.docker_bench_available;
-		const oscapDockerAvailable = components["oscap-docker"] === "ready" || info?.oscap_docker_available;
+		const openscapAvailable =
+			components.openscap === "ready" ||
+			info?.openscap_available ||
+			info?.openscap_version;
+		const dockerBenchAvailable =
+			components["docker-bench"] === "ready" || info?.docker_bench_available;
+		const oscapDockerAvailable =
+			components["oscap-docker"] === "ready" || info?.oscap_docker_available;
 
 		// Mismatch: compliance enabled but scanner not available
-		const complianceMismatch = complianceEnabled && status && !openscapAvailable;
+		const complianceMismatch =
+			complianceEnabled && status && !openscapAvailable;
 		// Mismatch: docker enabled but docker-bench not available (only if compliance is also enabled)
-		const dockerMismatch = dockerEnabled && complianceEnabled && status && !dockerBenchAvailable && components["docker-bench"] !== "unavailable";
+		const dockerMismatch =
+			dockerEnabled &&
+			complianceEnabled &&
+			status &&
+			!dockerBenchAvailable &&
+			components["docker-bench"] !== "unavailable";
 
 		return (
 			<div className="space-y-6">
@@ -2306,15 +3102,20 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						<div className="flex items-start gap-3">
 							<AlertTriangle className="h-5 w-5 text-red-400 flex-shrink-0 mt-0.5" />
 							<div>
-								<h4 className="font-medium text-red-300">Compliance Enabled but Scanner Unavailable</h4>
+								<h4 className="font-medium text-red-300">
+									Compliance Enabled but Scanner Unavailable
+								</h4>
 								<p className="text-sm text-red-200/80 mt-1">
-									Compliance integration is enabled for this host, but OpenSCAP is not installed or available on the agent.
-									The agent will attempt to install it automatically, or you can manually install it:
+									Compliance integration is enabled for this host, but OpenSCAP
+									is not installed or available on the agent. The agent will
+									attempt to install it automatically, or you can manually
+									install it:
 								</p>
 								<code className="block mt-2 p-2 bg-red-900/50 rounded text-xs text-red-200 font-mono">
-									# Debian/Ubuntu: apt install openscap-scanner scap-security-guide
-									<br />
-									# RHEL/CentOS: yum install openscap-scanner scap-security-guide
+									# Debian/Ubuntu: apt install openscap-scanner
+									scap-security-guide
+									<br /># RHEL/CentOS: yum install openscap-scanner
+									scap-security-guide
 								</code>
 							</div>
 						</div>
@@ -2326,10 +3127,13 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						<div className="flex items-start gap-3">
 							<AlertTriangle className="h-5 w-5 text-yellow-400 flex-shrink-0 mt-0.5" />
 							<div>
-								<h4 className="font-medium text-yellow-300">Docker Integration Enabled but Docker Bench Unavailable</h4>
+								<h4 className="font-medium text-yellow-300">
+									Docker Integration Enabled but Docker Bench Unavailable
+								</h4>
 								<p className="text-sm text-yellow-200/80 mt-1">
-									Docker integration is enabled, but Docker Bench for Security is not available.
-									Ensure Docker is installed and running on the agent host.
+									Docker integration is enabled, but Docker Bench for Security
+									is not available. Ensure Docker is installed and running on
+									the agent host.
 								</p>
 							</div>
 						</div>
@@ -2342,11 +3146,14 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						<div className="flex items-start gap-3">
 							<Info className="h-5 w-5 text-blue-400 flex-shrink-0 mt-0.5" />
 							<div>
-								<h4 className="font-medium text-blue-300">Waiting for Agent Status Report</h4>
+								<h4 className="font-medium text-blue-300">
+									Waiting for Agent Status Report
+								</h4>
 								<p className="text-sm text-blue-200/80 mt-1">
-									Compliance is enabled but the agent hasn't reported its scanner status yet.
-									The agent reports status on startup and periodically (default every 30 minutes).
-									Try refreshing or wait for the next check-in.
+									Compliance is enabled but the agent hasn't reported its
+									scanner status yet. The agent reports status on startup and
+									periodically (default every 30 minutes). Try refreshing or
+									wait for the next check-in.
 								</p>
 							</div>
 						</div>
@@ -2362,11 +3169,23 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						</h3>
 						<button
 							onClick={() => refetchStatus()}
-							disabled={isRefreshingStatus || ssgUpgradeMutation.isPending || ssgUpgradeMessage}
-							className={`p-2 hover:bg-secondary-700 rounded-lg transition-colors ${(isRefreshingStatus || ssgUpgradeMutation.isPending || ssgUpgradeMessage) ? "cursor-wait" : ""}`}
-							title={(isRefreshingStatus || ssgUpgradeMutation.isPending || ssgUpgradeMessage) ? "Refreshing..." : "Refresh status"}
+							disabled={
+								isRefreshingStatus ||
+								ssgUpgradeMutation.isPending ||
+								ssgUpgradeMessage
+							}
+							className={`p-2 hover:bg-secondary-700 rounded-lg transition-colors ${isRefreshingStatus || ssgUpgradeMutation.isPending || ssgUpgradeMessage ? "cursor-wait" : ""}`}
+							title={
+								isRefreshingStatus ||
+								ssgUpgradeMutation.isPending ||
+								ssgUpgradeMessage
+									? "Refreshing..."
+									: "Refresh status"
+							}
 						>
-							<RefreshCw className={`h-4 w-4 ${(isRefreshingStatus || ssgUpgradeMutation.isPending || ssgUpgradeMessage) ? "text-primary-400 animate-spin" : "text-secondary-400"}`} />
+							<RefreshCw
+								className={`h-4 w-4 ${isRefreshingStatus || ssgUpgradeMutation.isPending || ssgUpgradeMessage ? "text-primary-400 animate-spin" : "text-secondary-400"}`}
+							/>
 						</button>
 					</div>
 
@@ -2384,9 +3203,13 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 									<MinusCircle className="h-5 w-5 text-secondary-400" />
 								)}
 								<div className="flex-1">
-									<p className="text-white font-medium capitalize">{status.status || "Unknown"}</p>
+									<p className="text-white font-medium capitalize">
+										{status.status || "Unknown"}
+									</p>
 									{status.message && (
-										<p className="text-sm text-secondary-400">{status.message}</p>
+										<p className="text-sm text-secondary-400">
+											{status.message}
+										</p>
 									)}
 								</div>
 							</div>
@@ -2396,7 +3219,9 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 								<div className="p-3 bg-orange-900/30 border border-orange-700 rounded-lg">
 									<div className="flex items-center gap-2 text-orange-300">
 										<AlertTriangle className="h-4 w-4" />
-										<span className="font-medium">Content Version Mismatch</span>
+										<span className="font-medium">
+											Content Version Mismatch
+										</span>
 									</div>
 									<p className="text-sm text-orange-200/80 mt-1">
 										{info.mismatch_warning}
@@ -2414,19 +3239,31 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 										</div>
 										<div>
 											<p className="text-white font-medium">OpenSCAP Scanner</p>
-											<p className="text-xs text-secondary-400">CIS Benchmark Scanning</p>
+											<p className="text-xs text-secondary-400">
+												CIS Benchmark Scanning
+											</p>
 										</div>
 									</div>
 									<div className="space-y-2 text-sm">
 										<div className="flex justify-between">
 											<span className="text-secondary-400">Status</span>
-											<span className={`capitalize ${
-												(components.openscap === "ready" || info?.openscap_available || info?.openscap_version) ? "text-green-400" :
-												components.openscap === "installing" ? "text-blue-400" :
-												components.openscap === "error" ? "text-red-400" :
-												"text-secondary-400"
-											}`}>
-												{components.openscap || (info?.openscap_available || info?.openscap_version ? "Ready" : "Not installed")}
+											<span
+												className={`capitalize ${
+													components.openscap === "ready" ||
+													info?.openscap_available ||
+													info?.openscap_version
+														? "text-green-400"
+														: components.openscap === "installing"
+															? "text-blue-400"
+															: components.openscap === "error"
+																? "text-red-400"
+																: "text-secondary-400"
+												}`}
+											>
+												{components.openscap ||
+													(info?.openscap_available || info?.openscap_version
+														? "Ready"
+														: "Not installed")}
 											</span>
 										</div>
 										<div className="flex justify-between">
@@ -2436,29 +3273,39 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 											</span>
 										</div>
 										<div className="flex justify-between">
-											<span className="text-secondary-400">Content Package</span>
+											<span className="text-secondary-400">
+												Content Package
+											</span>
 											<span className="text-secondary-300 font-mono text-xs">
 												{info?.content_package || "N/A"}
 											</span>
 										</div>
 										<div className="flex justify-between">
 											<span className="text-secondary-400">Content File</span>
-											<span className="text-secondary-300 font-mono text-xs truncate max-w-[180px]" title={info?.content_file}>
+											<span
+												className="text-secondary-300 font-mono text-xs truncate max-w-[180px]"
+												title={info?.content_file}
+											>
 												{info?.content_file || "N/A"}
 											</span>
 										</div>
 										{info?.ssg_version && (
 											<div className="flex justify-between">
 												<span className="text-secondary-400">SSG Version</span>
-												<span className={`font-mono text-xs ${info?.ssg_needs_upgrade ? "text-yellow-400" : "text-secondary-300"}`}>
-													{info.ssg_version}{info?.ssg_needs_upgrade && ` (min: ${info.ssg_min_version})`}
+												<span
+													className={`font-mono text-xs ${info?.ssg_needs_upgrade ? "text-yellow-400" : "text-secondary-300"}`}
+												>
+													{info.ssg_version}
+													{info?.ssg_needs_upgrade &&
+														` (min: ${info.ssg_min_version})`}
 												</span>
 											</div>
 										)}
 										{info?.ssg_needs_upgrade && (
 											<div className="mt-3 p-2 bg-yellow-600/20 border border-yellow-600/40 rounded-lg">
 												<p className="text-yellow-400 text-xs mb-2">
-													{info.ssg_upgrade_message || "SSG content upgrade recommended"}
+													{info.ssg_upgrade_message ||
+														"SSG content upgrade recommended"}
 												</p>
 												<button
 													onClick={() => ssgUpgradeMutation.mutate()}
@@ -2480,11 +3327,13 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 											</div>
 										)}
 										{ssgUpgradeMessage && (
-											<div className={`mt-2 p-2 rounded text-xs ${
-												ssgUpgradeMessage.type === "success"
-													? "bg-green-600/20 text-green-400 border border-green-600/40"
-													: "bg-red-600/20 text-red-400 border border-red-600/40"
-											}`}>
+											<div
+												className={`mt-2 p-2 rounded text-xs ${
+													ssgUpgradeMessage.type === "success"
+														? "bg-green-600/20 text-green-400 border border-green-600/40"
+														: "bg-red-600/20 text-red-400 border border-red-600/40"
+												}`}
+											>
 												{ssgUpgradeMessage.text}
 											</div>
 										)}
@@ -2498,8 +3347,12 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 											<Server className="h-5 w-5 text-green-400" />
 										</div>
 										<div>
-											<p className="text-white font-medium">System Information</p>
-											<p className="text-xs text-secondary-400">Detected OS Details</p>
+											<p className="text-white font-medium">
+												System Information
+											</p>
+											<p className="text-xs text-secondary-400">
+												Detected OS Details
+											</p>
 										</div>
 									</div>
 									<div className="space-y-2 text-sm">
@@ -2532,71 +3385,102 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 										</div>
 										<div>
 											<p className="text-white font-medium">Docker Bench</p>
-											<p className="text-xs text-secondary-400">CIS Docker Benchmark</p>
+											<p className="text-xs text-secondary-400">
+												CIS Docker Benchmark
+											</p>
 										</div>
 									</div>
 									<div className="space-y-2 text-sm">
 										<div className="flex justify-between">
 											<span className="text-secondary-400">Status</span>
-											<span className={`capitalize ${
-												components["docker-bench"] === "ready" ? "text-green-400" :
-												components["docker-bench"] === "installing" ? "text-blue-400" :
-												components["docker-bench"] === "unavailable" ? "text-secondary-500" :
-												components["docker-bench"] === "error" ? "text-red-400" :
-												"text-secondary-400"
-											}`}>
+											<span
+												className={`capitalize ${
+													components["docker-bench"] === "ready"
+														? "text-green-400"
+														: components["docker-bench"] === "installing"
+															? "text-blue-400"
+															: components["docker-bench"] === "unavailable"
+																? "text-secondary-500"
+																: components["docker-bench"] === "error"
+																	? "text-red-400"
+																	: "text-secondary-400"
+												}`}
+											>
 												{components["docker-bench"] || "Not configured"}
 											</span>
 										</div>
 										<div className="flex justify-between">
 											<span className="text-secondary-400">Available</span>
-											<span className={info?.docker_bench_available ? "text-green-400" : "text-secondary-500"}>
+											<span
+												className={
+													info?.docker_bench_available
+														? "text-green-400"
+														: "text-secondary-500"
+												}
+											>
 												{info?.docker_bench_available ? "Yes" : "No"}
 											</span>
 										</div>
 										<div className="flex justify-between">
 											<span className="text-secondary-400">Requirement</span>
-											<span className="text-secondary-300 text-xs">Docker Integration enabled</span>
+											<span className="text-secondary-300 text-xs">
+												Docker Integration enabled
+											</span>
 										</div>
 									</div>
 								</div>
 
 								{/* oscap-docker Component - Only show when available or potentially available (not on Ubuntu/Debian) */}
 								{components["oscap-docker"] !== "unavailable" && (
-								<div className="bg-secondary-700/30 rounded-lg p-4 border border-secondary-600">
-									<div className="flex items-center gap-3 mb-4">
-										<div className="p-2 bg-orange-600/20 rounded-lg">
-											<Package className="h-5 w-5 text-orange-400" />
+									<div className="bg-secondary-700/30 rounded-lg p-4 border border-secondary-600">
+										<div className="flex items-center gap-3 mb-4">
+											<div className="p-2 bg-orange-600/20 rounded-lg">
+												<Package className="h-5 w-5 text-orange-400" />
+											</div>
+											<div>
+												<p className="text-white font-medium">oscap-docker</p>
+												<p className="text-xs text-secondary-400">
+													Docker Image CVE Scanning
+												</p>
+											</div>
 										</div>
-										<div>
-											<p className="text-white font-medium">oscap-docker</p>
-											<p className="text-xs text-secondary-400">Docker Image CVE Scanning</p>
+										<div className="space-y-2 text-sm">
+											<div className="flex justify-between">
+												<span className="text-secondary-400">Status</span>
+												<span
+													className={`capitalize ${
+														components["oscap-docker"] === "ready"
+															? "text-green-400"
+															: components["oscap-docker"] === "installing"
+																? "text-blue-400"
+																: components["oscap-docker"] === "error"
+																	? "text-red-400"
+																	: "text-secondary-400"
+													}`}
+												>
+													{components["oscap-docker"] || "Not configured"}
+												</span>
+											</div>
+											<div className="flex justify-between">
+												<span className="text-secondary-400">Available</span>
+												<span
+													className={
+														info?.oscap_docker_available
+															? "text-green-400"
+															: "text-secondary-500"
+													}
+												>
+													{info?.oscap_docker_available ? "Yes" : "No"}
+												</span>
+											</div>
+											<div className="flex justify-between">
+												<span className="text-secondary-400">Requirement</span>
+												<span className="text-secondary-300 text-xs">
+													Docker + Compliance enabled
+												</span>
+											</div>
 										</div>
 									</div>
-									<div className="space-y-2 text-sm">
-										<div className="flex justify-between">
-											<span className="text-secondary-400">Status</span>
-											<span className={`capitalize ${
-												components["oscap-docker"] === "ready" ? "text-green-400" :
-												components["oscap-docker"] === "installing" ? "text-blue-400" :
-												components["oscap-docker"] === "error" ? "text-red-400" :
-												"text-secondary-400"
-											}`}>
-												{components["oscap-docker"] || "Not configured"}
-											</span>
-										</div>
-										<div className="flex justify-between">
-											<span className="text-secondary-400">Available</span>
-											<span className={info?.oscap_docker_available ? "text-green-400" : "text-secondary-500"}>
-												{info?.oscap_docker_available ? "Yes" : "No"}
-											</span>
-										</div>
-										<div className="flex justify-between">
-											<span className="text-secondary-400">Requirement</span>
-											<span className="text-secondary-300 text-xs">Docker + Compliance enabled</span>
-										</div>
-									</div>
-								</div>
 								)}
 
 								{/* Available Profiles */}
@@ -2606,28 +3490,41 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 											<ListChecks className="h-5 w-5 text-purple-400" />
 										</div>
 										<div>
-											<p className="text-white font-medium">Available Profiles</p>
-											<p className="text-xs text-secondary-400">Scan options from agent</p>
+											<p className="text-white font-medium">
+												Available Profiles
+											</p>
+											<p className="text-xs text-secondary-400">
+												Scan options from agent
+											</p>
 										</div>
 									</div>
 									<div className="space-y-2">
 										{info?.available_profiles?.length > 0 ? (
 											info.available_profiles.map((profile, idx) => (
-												<div key={idx} className="flex items-center justify-between text-sm">
-													<span className="text-secondary-300">{profile.name}</span>
-													<span className={`px-2 py-0.5 text-xs rounded ${
-														profile.type === "docker-bench"
-															? "bg-blue-900/30 text-blue-400"
-															: profile.type === "oscap-docker"
-															? "bg-orange-900/30 text-orange-400"
-															: "bg-green-900/30 text-green-400"
-													}`}>
+												<div
+													key={idx}
+													className="flex items-center justify-between text-sm"
+												>
+													<span className="text-secondary-300">
+														{profile.name}
+													</span>
+													<span
+														className={`px-2 py-0.5 text-xs rounded ${
+															profile.type === "docker-bench"
+																? "bg-blue-900/30 text-blue-400"
+																: profile.type === "oscap-docker"
+																	? "bg-orange-900/30 text-orange-400"
+																	: "bg-green-900/30 text-green-400"
+														}`}
+													>
 														{profile.type}
 													</span>
 												</div>
 											))
 										) : (
-											<p className="text-secondary-500 text-sm">No profiles available</p>
+											<p className="text-secondary-500 text-sm">
+												No profiles available
+											</p>
 										)}
 									</div>
 								</div>
@@ -2659,22 +3556,25 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 					</h3>
 					<div className="space-y-4 text-sm text-secondary-300">
 						<p>
-							PatchMonEnhanced uses industry-standard compliance scanning tools to evaluate your
-							systems against security benchmarks.
+							PatchMonEnhanced uses industry-standard compliance scanning tools
+							to evaluate your systems against security benchmarks.
 						</p>
 						<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 							<div className="p-3 bg-secondary-700/30 rounded-lg">
 								<p className="text-white font-medium mb-1">OpenSCAP (oscap)</p>
 								<p className="text-secondary-400 text-xs">
 									Scans against CIS Benchmarks for Linux distributions.
-									Evaluates system configuration, file permissions, and security settings.
+									Evaluates system configuration, file permissions, and security
+									settings.
 								</p>
 							</div>
 							<div className="p-3 bg-secondary-700/30 rounded-lg">
-								<p className="text-white font-medium mb-1">Docker Bench for Security</p>
+								<p className="text-white font-medium mb-1">
+									Docker Bench for Security
+								</p>
 								<p className="text-secondary-400 text-xs">
-									Checks Docker host and container configurations against
-									CIS Docker Benchmark recommendations.
+									Checks Docker host and container configurations against CIS
+									Docker Benchmark recommendations.
 								</p>
 							</div>
 						</div>
@@ -2690,14 +3590,17 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 					<div className="space-y-4">
 						<p className="text-sm text-secondary-300">
 							Download the latest SCAP Security Guide (SSG) content from GitHub.
-							This updates compliance rules, benchmarks, and remediation scripts.
+							This updates compliance rules, benchmarks, and remediation
+							scripts.
 						</p>
 						{updateMessage && (
-							<div className={`p-3 rounded-lg ${
-								updateMessage.type === "success"
-									? "bg-green-900/30 border border-green-700 text-green-300"
-									: "bg-red-900/30 border border-red-700 text-red-300"
-							}`}>
+							<div
+								className={`p-3 rounded-lg ${
+									updateMessage.type === "success"
+										? "bg-green-900/30 border border-green-700 text-green-300"
+										: "bg-red-900/30 border border-red-700 text-red-300"
+								}`}
+							>
 								{updateMessage.text}
 							</div>
 						)}
@@ -2708,8 +3611,8 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 								!isConnected
 									? "bg-secondary-700 text-secondary-500 cursor-not-allowed"
 									: ssgUpdateMutation.isPending
-									? "bg-primary-600/50 text-white cursor-wait"
-									: "bg-primary-600 hover:bg-primary-500 text-white"
+										? "bg-primary-600/50 text-white cursor-wait"
+										: "bg-primary-600 hover:bg-primary-500 text-white"
 							}`}
 						>
 							{ssgUpdateMutation.isPending ? (
@@ -2717,10 +3620,14 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 							) : (
 								<Download className="h-4 w-4" />
 							)}
-							{ssgUpdateMutation.isPending ? "Updating Security Content..." : "Update SSG Content"}
+							{ssgUpdateMutation.isPending
+								? "Updating Security Content..."
+								: "Update SSG Content"}
 						</button>
 						{!isConnected && (
-							<p className="text-xs text-secondary-500">Agent must be connected to update security content</p>
+							<p className="text-xs text-secondary-500">
+								Agent must be connected to update security content
+							</p>
 						)}
 					</div>
 				</div>
@@ -2733,29 +3640,52 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 					</h3>
 					<div className="space-y-4">
 						<div className="p-4 bg-green-900/20 border border-green-800/50 rounded-lg">
-							<h4 className="text-green-400 font-medium mb-2">Level 1 - Essential Security</h4>
+							<h4 className="text-green-400 font-medium mb-2">
+								Level 1 - Essential Security
+							</h4>
 							<ul className="text-sm text-green-200/80 space-y-1 list-disc list-inside">
-								<li>Practical security measures with minimal service disruption</li>
+								<li>
+									Practical security measures with minimal service disruption
+								</li>
 								<li>Suitable for most production environments</li>
-								<li>Covers essential hardening: password policies, file permissions, network settings</li>
+								<li>
+									Covers essential hardening: password policies, file
+									permissions, network settings
+								</li>
 								<li>Recommended as baseline for all systems</li>
 							</ul>
 						</div>
 						<div className="p-4 bg-orange-900/20 border border-orange-800/50 rounded-lg">
-							<h4 className="text-orange-400 font-medium mb-2">Level 2 - Defense in Depth</h4>
+							<h4 className="text-orange-400 font-medium mb-2">
+								Level 2 - Defense in Depth
+							</h4>
 							<ul className="text-sm text-orange-200/80 space-y-1 list-disc list-inside">
 								<li>Extended security for high-security environments</li>
 								<li>May impact functionality - test before applying</li>
-								<li>Includes stricter controls: audit logging, kernel hardening, additional restrictions</li>
+								<li>
+									Includes stricter controls: audit logging, kernel hardening,
+									additional restrictions
+								</li>
 								<li>Recommended for systems handling sensitive data</li>
 							</ul>
 						</div>
 						<div className="p-4 bg-purple-900/20 border border-purple-800/50 rounded-lg">
-							<h4 className="text-purple-400 font-medium mb-2">Other Profiles (STIG, PCI-DSS, HIPAA)</h4>
+							<h4 className="text-purple-400 font-medium mb-2">
+								Other Profiles (STIG, PCI-DSS, HIPAA)
+							</h4>
 							<ul className="text-sm text-purple-200/80 space-y-1 list-disc list-inside">
-								<li><strong>STIG:</strong> DoD Security Technical Implementation Guides</li>
-								<li><strong>PCI-DSS:</strong> Payment Card Industry Data Security Standard</li>
-								<li><strong>HIPAA:</strong> Health Insurance Portability and Accountability Act</li>
+								<li>
+									<strong>STIG:</strong> DoD Security Technical Implementation
+									Guides
+								</li>
+								<li>
+									<strong>PCI-DSS:</strong> Payment Card Industry Data Security
+									Standard
+								</li>
+								<li>
+									<strong>HIPAA:</strong> Health Insurance Portability and
+									Accountability Act
+								</li>
 								<li>These profiles target specific compliance requirements</li>
 							</ul>
 						</div>
@@ -2769,9 +3699,16 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 						Troubleshooting
 					</h4>
 					<ul className="text-sm text-yellow-200/80 space-y-1 list-disc list-inside">
-						<li>If scans show all "N/A" results, the SCAP content may not match your OS version</li>
-						<li>Try disabling and re-enabling compliance to upgrade packages</li>
-						<li>Docker Bench requires Docker integration to be enabled first</li>
+						<li>
+							If scans show all "N/A" results, the SCAP content may not match
+							your OS version
+						</li>
+						<li>
+							Try disabling and re-enabling compliance to upgrade packages
+						</li>
+						<li>
+							Docker Bench requires Docker integration to be enabled first
+						</li>
 					</ul>
 				</div>
 
@@ -2783,17 +3720,29 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 					</h4>
 					<div className="text-sm text-blue-200/80 space-y-2">
 						<p>
-							<strong>CIS/STIG content for Ubuntu 24.04</strong> is available in SCAP Security Guide v0.1.76+.
-							If you see "content mismatch" warnings, your ssg-base package needs updating.
+							<strong>CIS/STIG content for Ubuntu 24.04</strong> is available in
+							SCAP Security Guide v0.1.76+. If you see "content mismatch"
+							warnings, your ssg-base package needs updating.
 						</p>
 						<p>Options for Ubuntu 24.04 compliance:</p>
 						<ul className="list-disc list-inside ml-2 space-y-1">
-							<li><strong>Update ssg-base package</strong> to v0.1.76 or higher</li>
-							<li><strong>Canonical's Ubuntu Security Guide (USG)</strong> - Official CIS hardening with Ubuntu Pro</li>
-							<li><strong>OVAL Vulnerability Scanning</strong> - Free CVE content from Canonical</li>
+							<li>
+								<strong>Update ssg-base package</strong> to v0.1.76 or higher
+							</li>
+							<li>
+								<strong>Canonical's Ubuntu Security Guide (USG)</strong> -
+								Official CIS hardening with Ubuntu Pro
+							</li>
+							<li>
+								<strong>OVAL Vulnerability Scanning</strong> - Free CVE content
+								from Canonical
+							</li>
 						</ul>
 						<p className="mt-2 text-xs text-blue-300/70">
-							Note: USG provides <code className="bg-blue-800/50 px-1 rounded">usg audit</code> and <code className="bg-blue-800/50 px-1 rounded">usg fix</code> commands for CIS Level 1/2 hardening.
+							Note: USG provides{" "}
+							<code className="bg-blue-800/50 px-1 rounded">usg audit</code> and{" "}
+							<code className="bg-blue-800/50 px-1 rounded">usg fix</code>{" "}
+							commands for CIS Level 1/2 hardening.
 						</p>
 					</div>
 				</div>
@@ -2806,7 +3755,9 @@ const ComplianceTab = ({ hostId, apiId, isConnected, complianceEnabled = false, 
 			{/* Header */}
 			<div className="flex items-center gap-3">
 				<Shield className="h-6 w-6 text-primary-400" />
-				<h2 className="text-xl font-semibold text-white">Security Compliance</h2>
+				<h2 className="text-xl font-semibold text-white">
+					Security Compliance
+				</h2>
 			</div>
 
 			{/* Subtab Navigation */}

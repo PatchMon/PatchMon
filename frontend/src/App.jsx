@@ -11,8 +11,8 @@ import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ColorThemeProvider } from "./contexts/ColorThemeContext";
 import { SettingsProvider } from "./contexts/SettingsContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
-import { UpdateNotificationProvider } from "./contexts/UpdateNotificationContext";
 import { ToastProvider } from "./contexts/ToastContext";
+import { UpdateNotificationProvider } from "./contexts/UpdateNotificationContext";
 
 // Lazy load pages
 const Dashboard = lazy(() => import("./pages/Dashboard"));

@@ -62,7 +62,8 @@ class ErrorBoundary extends Component {
 						</h1>
 
 						<p className="text-secondary-600 dark:text-secondary-300 mb-6">
-							An unexpected error occurred. Our team has been notified and is working on a fix.
+							An unexpected error occurred. Our team has been notified and is
+							working on a fix.
 						</p>
 
 						{process.env.NODE_ENV === "development" && this.state.error && (

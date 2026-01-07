@@ -47,9 +47,9 @@ import {
 } from "../utils/api";
 import { complianceAPI } from "../utils/complianceApi";
 import { OSIcon } from "../utils/osIcons.jsx";
+import AgentQueueTab from "./hostdetail/AgentQueueTab";
 import CredentialsModal from "./hostdetail/CredentialsModal";
 import DeleteConfirmationModal from "./hostdetail/DeleteConfirmationModal";
-import AgentQueueTab from "./hostdetail/AgentQueueTab";
 
 const HostDetail = () => {
 	const { hostId } = useParams();
@@ -69,8 +69,14 @@ const HostDetail = () => {
 	const [notesMessage, setNotesMessage] = useState({ text: "", type: "" });
 	const [updateMessage, setUpdateMessage] = useState({ text: "", jobId: "" });
 	const [reportMessage, setReportMessage] = useState({ text: "", jobId: "" });
-	const [integrationRefreshMessage, setIntegrationRefreshMessage] = useState({ text: "", isError: false });
-	const [dockerRefreshMessage, setDockerRefreshMessage] = useState({ text: "", isError: false });
+	const [integrationRefreshMessage, setIntegrationRefreshMessage] = useState({
+		text: "",
+		isError: false,
+	});
+	const [dockerRefreshMessage, setDockerRefreshMessage] = useState({
+		text: "",
+		isError: false,
+	});
 	const [showAllReports, setShowAllReports] = useState(false);
 
 	// State for auto-update confirmation dialog
@@ -98,7 +104,9 @@ const HostDetail = () => {
 				callback();
 			}
 			// Remove from tracking array
-			timeoutRefs.current = timeoutRefs.current.filter((id) => id !== timeoutId);
+			timeoutRefs.current = timeoutRefs.current.filter(
+				(id) => id !== timeoutId,
+			);
 		}, delay);
 		timeoutRefs.current.push(timeoutId);
 		return timeoutId;
@@ -176,7 +184,11 @@ const HostDetail = () => {
 	// Fetch latest compliance scan for quick view (only if compliance might be enabled)
 	const { data: complianceLatest, isLoading: isLoadingCompliance } = useQuery({
 		queryKey: ["compliance-latest-quickview", hostId],
-		queryFn: () => complianceAPI.getLatestScan(hostId).then((res) => res.data).catch(() => null),
+		queryFn: () =>
+			complianceAPI
+				.getLatestScan(hostId)
+				.then((res) => res.data)
+				.catch(() => null),
 		staleTime: 2 * 60 * 1000, // 2 minutes
 		refetchOnWindowFocus: false,
 		enabled: !!hostId,
@@ -292,14 +304,18 @@ const HostDetail = () => {
 			}
 		},
 		onError: (error) => {
-			const errorMsg = error.response?.data?.error || "Failed to send update command";
+			const errorMsg =
+				error.response?.data?.error || "Failed to send update command";
 			const details = error.response?.data?.details;
 			setUpdateMessage({
 				text: details ? `${errorMsg}: ${details}` : errorMsg,
 				jobId: "",
 				isError: true,
 			});
-			safeSetTimeout(() => setUpdateMessage({ text: "", jobId: "", isError: false }), 5000);
+			safeSetTimeout(
+				() => setUpdateMessage({ text: "", jobId: "", isError: false }),
+				5000,
+			);
 		},
 	});
 
@@ -342,14 +358,21 @@ const HostDetail = () => {
 				refetchIntegrations();
 				queryClient.invalidateQueries(["compliance-setup-status", hostId]);
 			}, 2000);
-			safeSetTimeout(() => setIntegrationRefreshMessage({ text: "", isError: false }), 5000);
+			safeSetTimeout(
+				() => setIntegrationRefreshMessage({ text: "", isError: false }),
+				5000,
+			);
 		},
 		onError: (error) => {
 			setIntegrationRefreshMessage({
-				text: error.response?.data?.error || "Failed to refresh integration status",
+				text:
+					error.response?.data?.error || "Failed to refresh integration status",
 				isError: true,
 			});
-			safeSetTimeout(() => setIntegrationRefreshMessage({ text: "", isError: false }), 5000);
+			safeSetTimeout(
+				() => setIntegrationRefreshMessage({ text: "", isError: false }),
+				5000,
+			);
 		},
 	});
 
@@ -367,14 +390,20 @@ const HostDetail = () => {
 				refetchDocker();
 				queryClient.invalidateQueries(["docker", "host", hostId]);
 			}, 3000);
-			safeSetTimeout(() => setDockerRefreshMessage({ text: "", isError: false }), 5000);
+			safeSetTimeout(
+				() => setDockerRefreshMessage({ text: "", isError: false }),
+				5000,
+			);
 		},
 		onError: (error) => {
 			setDockerRefreshMessage({
 				text: error.response?.data?.error || "Failed to refresh Docker data",
 				isError: true,
 			});
-			safeSetTimeout(() => setDockerRefreshMessage({ text: "", isError: false }), 5000);
+			safeSetTimeout(
+				() => setDockerRefreshMessage({ text: "", isError: false }),
+				5000,
+			);
 		},
 	});
 
@@ -443,26 +472,26 @@ const HostDetail = () => {
 	});
 
 	// Poll for compliance setup status when compliance is enabled
-	const {
-		data: complianceSetupStatus,
-		refetch: refetchComplianceStatus,
-	} = useQuery({
-		queryKey: ["compliance-setup-status", hostId],
-		queryFn: () =>
-			adminHostsAPI.getIntegrationSetupStatus(hostId, "compliance").then((res) => res.data),
-		staleTime: 5 * 1000, // 5 seconds
-		refetchInterval: (query) => {
-			// Poll every 2 seconds while status is "installing" or "removing"
-			const status = query.state?.data?.status?.status;
-			if (status === "installing" || status === "removing") {
-				return 2000; // Poll faster during installation
-			}
-			return false; // Stop polling when done
-		},
-		refetchOnWindowFocus: false,
-		// Always enable for hosts - we need to catch status updates
-		enabled: !!hostId,
-	});
+	const { data: complianceSetupStatus, refetch: refetchComplianceStatus } =
+		useQuery({
+			queryKey: ["compliance-setup-status", hostId],
+			queryFn: () =>
+				adminHostsAPI
+					.getIntegrationSetupStatus(hostId, "compliance")
+					.then((res) => res.data),
+			staleTime: 5 * 1000, // 5 seconds
+			refetchInterval: (query) => {
+				// Poll every 2 seconds while status is "installing" or "removing"
+				const status = query.state?.data?.status?.status;
+				if (status === "installing" || status === "removing") {
+					return 2000; // Poll faster during installation
+				}
+				return false; // Stop polling when done
+			},
+			refetchOnWindowFocus: false,
+			// Always enable for hosts - we need to catch status updates
+			enabled: !!hostId,
+		});
 
 	// Fetch Docker data for this host
 	const {
@@ -472,10 +501,14 @@ const HostDetail = () => {
 	} = useQuery({
 		queryKey: ["docker", "host", hostId],
 		queryFn: () =>
-			dashboardAPI.getHostDetail(hostId, { include: "docker" }).then((res) => res.data?.docker),
+			dashboardAPI
+				.getHostDetail(hostId, { include: "docker" })
+				.then((res) => res.data?.docker),
 		staleTime: 30 * 1000,
 		refetchOnWindowFocus: false,
-		enabled: !!hostId && (activeTab === "docker" || integrationsData?.data?.integrations?.docker),
+		enabled:
+			!!hostId &&
+			(activeTab === "docker" || integrationsData?.data?.integrations?.docker),
 	});
 
 	// Refetch integrations when WebSocket status changes (e.g., after agent restart)
@@ -522,7 +555,7 @@ const HostDetail = () => {
 			if (data.data.integration === "compliance") {
 				// Poll multiple times to catch status updates (installation takes ~4-10s)
 				const pollTimes = [500, 2000, 4000, 6000, 8000, 10000, 15000];
-				pollTimes.forEach(delay => {
+				pollTimes.forEach((delay) => {
 					safeSetTimeout(() => refetchComplianceStatus(), delay);
 				});
 			}
@@ -531,7 +564,10 @@ const HostDetail = () => {
 			// On error, refetch to get the actual state
 			refetchIntegrations();
 			// Log error for debugging
-			console.error("Failed to toggle integration:", error.response?.data?.error || error.message);
+			console.error(
+				"Failed to toggle integration:",
+				error.response?.data?.error || error.message,
+			);
 		},
 	});
 
@@ -924,7 +960,8 @@ const HostDetail = () => {
 										</p>
 									</div>
 									<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-0.5">
-										{complianceLatest.compliance_profiles?.name || "Security Profile"}
+										{complianceLatest.compliance_profiles?.name ||
+											"Security Profile"}
 										{complianceLatest.completed_at && (
 											<span className="ml-2">
 												• {formatRelativeTime(complianceLatest.completed_at)}
@@ -936,15 +973,21 @@ const HostDetail = () => {
 							<div className="flex items-center gap-4 text-sm">
 								<div className="flex items-center gap-1.5">
 									<CheckCircle className="h-4 w-4 text-green-500" />
-									<span className="text-secondary-700 dark:text-secondary-300">{complianceLatest.passed || 0}</span>
+									<span className="text-secondary-700 dark:text-secondary-300">
+										{complianceLatest.passed || 0}
+									</span>
 								</div>
 								<div className="flex items-center gap-1.5">
 									<X className="h-4 w-4 text-red-500" />
-									<span className="text-secondary-700 dark:text-secondary-300">{complianceLatest.failed || 0}</span>
+									<span className="text-secondary-700 dark:text-secondary-300">
+										{complianceLatest.failed || 0}
+									</span>
 								</div>
 								<div className="flex items-center gap-1.5">
 									<AlertTriangle className="h-4 w-4 text-yellow-500" />
-									<span className="text-secondary-700 dark:text-secondary-300">{complianceLatest.warnings || 0}</span>
+									<span className="text-secondary-700 dark:text-secondary-300">
+										{complianceLatest.warnings || 0}
+									</span>
 								</div>
 							</div>
 						</div>
@@ -1978,7 +2021,10 @@ const HostDetail = () => {
 											}}
 											placeholder="No IP set (click to add)"
 											validate={(value) => {
-												if (value.trim() && !/^(\d{1,3}\.){3}\d{1,3}$/.test(value.trim())) {
+												if (
+													value.trim() &&
+													!/^(\d{1,3}\.){3}\d{1,3}$/.test(value.trim())
+												) {
 													return "Invalid IP address format";
 												}
 												return null;
@@ -1997,7 +2043,9 @@ const HostDetail = () => {
 												if (!newHostname.trim()) {
 													updateConnectionMutation.mutate({ hostname: null });
 												} else {
-													updateConnectionMutation.mutate({ hostname: newHostname.trim() });
+													updateConnectionMutation.mutate({
+														hostname: newHostname.trim(),
+													});
 												}
 											}}
 											placeholder="No hostname set (click to add)"
@@ -2141,7 +2189,6 @@ const HostDetail = () => {
 											</p>
 										)}
 									</div>
-
 								</div>
 							</div>
 						)}
@@ -2938,7 +2985,9 @@ const HostDetail = () => {
 								<div className="flex items-center justify-between">
 									<div className="flex items-center gap-2">
 										{integrationRefreshMessage.text && (
-											<span className={`text-sm ${integrationRefreshMessage.isError ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+											<span
+												className={`text-sm ${integrationRefreshMessage.isError ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}
+											>
 												{integrationRefreshMessage.text}
 											</span>
 										)}
@@ -2946,12 +2995,23 @@ const HostDetail = () => {
 									<button
 										type="button"
 										onClick={() => refreshIntegrationStatusMutation.mutate()}
-										disabled={refreshIntegrationStatusMutation.isPending || !wsStatus?.connected}
-										title={wsStatus?.connected ? "Refresh integration status from agent" : "Agent is not connected"}
+										disabled={
+											refreshIntegrationStatusMutation.isPending ||
+											!wsStatus?.connected
+										}
+										title={
+											wsStatus?.connected
+												? "Refresh integration status from agent"
+												: "Agent is not connected"
+										}
 										className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-secondary-100 dark:bg-secondary-700 hover:bg-secondary-200 dark:hover:bg-secondary-600 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
 									>
-										<RefreshCw className={`h-4 w-4 ${refreshIntegrationStatusMutation.isPending ? 'animate-spin' : ''}`} />
-										{refreshIntegrationStatusMutation.isPending ? 'Refreshing...' : 'Refresh Status'}
+										<RefreshCw
+											className={`h-4 w-4 ${refreshIntegrationStatusMutation.isPending ? "animate-spin" : ""}`}
+										/>
+										{refreshIntegrationStatusMutation.isPending
+											? "Refreshing..."
+											: "Refresh Status"}
 									</button>
 								</div>
 								{isLoadingIntegrations ? (
@@ -3049,7 +3109,8 @@ const HostDetail = () => {
 														<h4 className="text-sm font-medium text-secondary-900 dark:text-white">
 															Compliance Scanning
 														</h4>
-														{integrationsData?.data?.integrations?.compliance ? (
+														{integrationsData?.data?.integrations
+															?.compliance ? (
 															<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
 																Enabled
 															</span>
@@ -3061,14 +3122,21 @@ const HostDetail = () => {
 													</div>
 													<p className="text-xs text-secondary-600 dark:text-secondary-300 mb-2">
 														Run CIS benchmark compliance scans using OpenSCAP.
-														Provides security posture assessment and remediation recommendations.
+														Provides security posture assessment and remediation
+														recommendations.
 													</p>
 
 													{/* Setup Status Display - hide when status is "disabled" */}
-													{((complianceSetupStatus?.status?.status && complianceSetupStatus?.status?.status !== "disabled") || (!complianceSetupStatus?.status?.status && integrationsData?.data?.integrations?.compliance)) && (
+													{((complianceSetupStatus?.status?.status &&
+														complianceSetupStatus?.status?.status !==
+															"disabled") ||
+														(!complianceSetupStatus?.status?.status &&
+															integrationsData?.data?.integrations
+																?.compliance)) && (
 														<div className="mt-3 p-3 rounded-lg border bg-secondary-100 dark:bg-secondary-800 border-secondary-300 dark:border-secondary-600">
 															{/* Installing State */}
-															{complianceSetupStatus?.status?.status === "installing" && (
+															{complianceSetupStatus?.status?.status ===
+																"installing" && (
 																<div className="space-y-2">
 																	<div className="flex items-center gap-2">
 																		<RefreshCw className="h-4 w-4 animate-spin text-primary-600 dark:text-primary-400" />
@@ -3077,39 +3145,56 @@ const HostDetail = () => {
 																		</span>
 																	</div>
 																	<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-1.5">
-																		<div className="bg-primary-600 h-1.5 rounded-full animate-pulse" style={{ width: "60%" }} />
+																		<div
+																			className="bg-primary-600 h-1.5 rounded-full animate-pulse"
+																			style={{ width: "60%" }}
+																		/>
 																	</div>
 																	<p className="text-xs text-secondary-600 dark:text-secondary-400">
-																		{complianceSetupStatus.status.message || "Installing OpenSCAP packages and security content..."}
+																		{complianceSetupStatus.status.message ||
+																			"Installing OpenSCAP packages and security content..."}
 																	</p>
 																	{complianceSetupStatus.status.components && (
 																		<div className="flex flex-wrap gap-2 mt-2">
-																			{Object.entries(complianceSetupStatus.status.components)
-																				.filter(([, status]) => status !== "unavailable")
+																			{Object.entries(
+																				complianceSetupStatus.status.components,
+																			)
+																				.filter(
+																					([, status]) =>
+																						status !== "unavailable",
+																				)
 																				.map(([name, status]) => (
-																				<span
-																					key={name}
-																					className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
-																						status === "ready"
-																							? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
-																							: status === "failed"
-																								? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
-																								: "bg-secondary-200 text-secondary-600 dark:bg-secondary-600 dark:text-secondary-300"
-																					}`}
-																				>
-																					{status === "ready" && <CheckCircle2 className="h-3 w-3" />}
-																					{status === "failed" && <AlertCircle className="h-3 w-3" />}
-																					{status !== "ready" && status !== "failed" && <Clock className="h-3 w-3" />}
-																					{name}
-																				</span>
-																			))}
+																					<span
+																						key={name}
+																						className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
+																							status === "ready"
+																								? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
+																								: status === "failed"
+																									? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
+																									: "bg-secondary-200 text-secondary-600 dark:bg-secondary-600 dark:text-secondary-300"
+																						}`}
+																					>
+																						{status === "ready" && (
+																							<CheckCircle2 className="h-3 w-3" />
+																						)}
+																						{status === "failed" && (
+																							<AlertCircle className="h-3 w-3" />
+																						)}
+																						{status !== "ready" &&
+																							status !== "failed" && (
+																								<Clock className="h-3 w-3" />
+																							)}
+																						{name}
+																					</span>
+																				))}
 																		</div>
 																	)}
 																</div>
 															)}
 
 															{/* Removing State */}
-															{complianceSetupStatus?.status?.status === "removing" && (
+															{complianceSetupStatus?.status?.status ===
+																"removing" && (
 																<div className="space-y-2">
 																	<div className="flex items-center gap-2">
 																		<RefreshCw className="h-4 w-4 animate-spin text-warning-600 dark:text-warning-400" />
@@ -3118,16 +3203,21 @@ const HostDetail = () => {
 																		</span>
 																	</div>
 																	<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-1.5">
-																		<div className="bg-warning-500 h-1.5 rounded-full animate-pulse" style={{ width: "40%" }} />
+																		<div
+																			className="bg-warning-500 h-1.5 rounded-full animate-pulse"
+																			style={{ width: "40%" }}
+																		/>
 																	</div>
 																	<p className="text-xs text-secondary-600 dark:text-secondary-400">
-																		{complianceSetupStatus.status.message || "Removing OpenSCAP packages..."}
+																		{complianceSetupStatus.status.message ||
+																			"Removing OpenSCAP packages..."}
 																	</p>
 																</div>
 															)}
 
 															{/* Ready State */}
-															{complianceSetupStatus?.status?.status === "ready" && (
+															{complianceSetupStatus?.status?.status ===
+																"ready" && (
 																<div className="flex items-center gap-2">
 																	<CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
 																	<span className="text-sm font-medium text-green-700 dark:text-green-300">
@@ -3135,24 +3225,30 @@ const HostDetail = () => {
 																	</span>
 																	{complianceSetupStatus.status.components && (
 																		<div className="flex gap-1 ml-2">
-																			{Object.entries(complianceSetupStatus.status.components)
-																				.filter(([, status]) => status !== "unavailable")
+																			{Object.entries(
+																				complianceSetupStatus.status.components,
+																			)
+																				.filter(
+																					([, status]) =>
+																						status !== "unavailable",
+																				)
 																				.map(([name, status]) => (
-																				<span
-																					key={name}
-																					className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
-																				>
-																					<CheckCircle2 className="h-3 w-3" />
-																					{name}
-																				</span>
-																			))}
+																					<span
+																						key={name}
+																						className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
+																					>
+																						<CheckCircle2 className="h-3 w-3" />
+																						{name}
+																					</span>
+																				))}
 																		</div>
 																	)}
 																</div>
 															)}
 
 															{/* Partial State */}
-															{complianceSetupStatus?.status?.status === "partial" && (
+															{complianceSetupStatus?.status?.status ===
+																"partial" && (
 																<div className="space-y-2">
 																	<div className="flex items-center gap-2">
 																		<AlertTriangle className="h-4 w-4 text-warning-600 dark:text-warning-400" />
@@ -3161,32 +3257,43 @@ const HostDetail = () => {
 																		</span>
 																	</div>
 																	<p className="text-xs text-secondary-600 dark:text-secondary-400">
-																		{complianceSetupStatus.status.message || "Some components failed to install"}
+																		{complianceSetupStatus.status.message ||
+																			"Some components failed to install"}
 																	</p>
 																	{complianceSetupStatus.status.components && (
 																		<div className="flex flex-wrap gap-2">
-																			{Object.entries(complianceSetupStatus.status.components)
-																				.filter(([, status]) => status !== "unavailable")
+																			{Object.entries(
+																				complianceSetupStatus.status.components,
+																			)
+																				.filter(
+																					([, status]) =>
+																						status !== "unavailable",
+																				)
 																				.map(([name, status]) => (
-																				<span
-																					key={name}
-																					className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
-																						status === "ready"
-																							? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
-																							: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
-																					}`}
-																				>
-																					{status === "ready" ? <CheckCircle2 className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
-																					{name}
-																				</span>
-																			))}
+																					<span
+																						key={name}
+																						className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
+																							status === "ready"
+																								? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
+																								: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
+																						}`}
+																					>
+																						{status === "ready" ? (
+																							<CheckCircle2 className="h-3 w-3" />
+																						) : (
+																							<AlertCircle className="h-3 w-3" />
+																						)}
+																						{name}
+																					</span>
+																				))}
 																		</div>
 																	)}
 																</div>
 															)}
 
 															{/* Error State */}
-															{complianceSetupStatus?.status?.status === "error" && (
+															{complianceSetupStatus?.status?.status ===
+																"error" && (
 																<div className="space-y-2">
 																	<div className="flex items-center gap-2">
 																		<AlertCircle className="h-4 w-4 text-danger-600 dark:text-danger-400" />
@@ -3195,20 +3302,23 @@ const HostDetail = () => {
 																		</span>
 																	</div>
 																	<p className="text-xs text-danger-600 dark:text-danger-400">
-																		{complianceSetupStatus?.status?.message || "Setup failed - check agent logs"}
+																		{complianceSetupStatus?.status?.message ||
+																			"Setup failed - check agent logs"}
 																	</p>
 																</div>
 															)}
 
 															{/* Fallback: Compliance enabled but no status in cache - assume ready */}
-															{!complianceSetupStatus?.status?.status && integrationsData?.data?.integrations?.compliance && (
-																<div className="flex items-center gap-2">
-																	<CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
-																	<span className="text-sm font-medium text-green-700 dark:text-green-300">
-																		Compliance Tools Ready
-																	</span>
-																</div>
-															)}
+															{!complianceSetupStatus?.status?.status &&
+																integrationsData?.data?.integrations
+																	?.compliance && (
+																	<div className="flex items-center gap-2">
+																		<CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+																		<span className="text-sm font-medium text-green-700 dark:text-green-300">
+																			Compliance Tools Ready
+																		</span>
+																	</div>
+																)}
 														</div>
 													)}
 												</div>
@@ -3219,23 +3329,29 @@ const HostDetail = () => {
 															toggleIntegrationMutation.mutate({
 																integrationName: "compliance",
 																enabled:
-																	!integrationsData?.data?.integrations?.compliance,
+																	!integrationsData?.data?.integrations
+																		?.compliance,
 															})
 														}
 														disabled={
 															toggleIntegrationMutation.isPending ||
 															!wsStatus?.connected ||
-															complianceSetupStatus?.status?.status === "installing" ||
-															complianceSetupStatus?.status?.status === "removing"
+															complianceSetupStatus?.status?.status ===
+																"installing" ||
+															complianceSetupStatus?.status?.status ===
+																"removing"
 														}
 														title={
 															!wsStatus?.connected
 																? "Agent is not connected"
-																: complianceSetupStatus?.status?.status === "installing"
+																: complianceSetupStatus?.status?.status ===
+																		"installing"
 																	? "Installation in progress..."
-																	: complianceSetupStatus?.status?.status === "removing"
+																	: complianceSetupStatus?.status?.status ===
+																			"removing"
 																		? "Removal in progress..."
-																		: integrationsData?.data?.integrations?.compliance
+																		: integrationsData?.data?.integrations
+																					?.compliance
 																			? "Disable compliance scanning"
 																			: "Enable compliance scanning"
 														}
@@ -3246,8 +3362,10 @@ const HostDetail = () => {
 														} ${
 															toggleIntegrationMutation.isPending ||
 															!integrationsData?.data?.connected ||
-															complianceSetupStatus?.status?.status === "installing" ||
-															complianceSetupStatus?.status?.status === "removing"
+															complianceSetupStatus?.status?.status ===
+																"installing" ||
+															complianceSetupStatus?.status?.status ===
+																"removing"
 																? "opacity-50 cursor-not-allowed"
 																: ""
 														}`}
@@ -3269,7 +3387,6 @@ const HostDetail = () => {
 												</p>
 											)}
 										</div>
-
 									</div>
 								)}
 							</div>
@@ -3295,7 +3412,9 @@ const HostDetail = () => {
 										<div className="flex items-center justify-between mb-4">
 											<div className="flex items-center gap-2">
 												{dockerRefreshMessage.text && (
-													<span className={`text-sm ${dockerRefreshMessage.isError ? "text-red-600" : "text-green-600"}`}>
+													<span
+														className={`text-sm ${dockerRefreshMessage.isError ? "text-red-600" : "text-green-600"}`}
+													>
 														{dockerRefreshMessage.text}
 													</span>
 												)}
@@ -3306,7 +3425,9 @@ const HostDetail = () => {
 												className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-900/20 hover:bg-primary-100 dark:hover:bg-primary-900/30 rounded-lg border border-primary-200 dark:border-primary-800 transition-colors disabled:opacity-50"
 												title="Refresh Docker data from agent"
 											>
-												<RefreshCw className={`h-4 w-4 ${refreshDockerMutation.isPending ? "animate-spin" : ""}`} />
+												<RefreshCw
+													className={`h-4 w-4 ${refreshDockerMutation.isPending ? "animate-spin" : ""}`}
+												/>
 												Refresh
 											</button>
 										</div>
@@ -3315,8 +3436,9 @@ const HostDetail = () => {
 										{(() => {
 											// Calculate stacks from container labels
 											const stacks = new Set();
-											dockerData.containers?.forEach(c => {
-												const project = c.labels?.["com.docker.compose.project"];
+											dockerData.containers?.forEach((c) => {
+												const project =
+													c.labels?.["com.docker.compose.project"];
 												if (project) stacks.add(project);
 											});
 											const stackCount = stacks.size;
@@ -3326,25 +3448,35 @@ const HostDetail = () => {
 													<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
 														<div className="flex items-center gap-2 mb-1">
 															<div className="w-2 h-2 rounded-full bg-green-500" />
-															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Running</span>
+															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
+																Running
+															</span>
 														</div>
 														<p className="text-xl font-bold text-secondary-900 dark:text-white">
-															{dockerData.containers?.filter(c => c.state === "running").length || 0}
+															{dockerData.containers?.filter(
+																(c) => c.state === "running",
+															).length || 0}
 														</p>
 													</div>
 													<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
 														<div className="flex items-center gap-2 mb-1">
 															<div className="w-2 h-2 rounded-full bg-red-500" />
-															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Stopped</span>
+															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
+																Stopped
+															</span>
 														</div>
 														<p className="text-xl font-bold text-secondary-900 dark:text-white">
-															{dockerData.containers?.filter(c => c.state !== "running").length || 0}
+															{dockerData.containers?.filter(
+																(c) => c.state !== "running",
+															).length || 0}
 														</p>
 													</div>
 													<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
 														<div className="flex items-center gap-2 mb-1">
 															<Server className="w-3 h-3 text-orange-500" />
-															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Stacks</span>
+															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
+																Stacks
+															</span>
 														</div>
 														<p className="text-xl font-bold text-secondary-900 dark:text-white">
 															{stackCount}
@@ -3353,7 +3485,9 @@ const HostDetail = () => {
 													<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
 														<div className="flex items-center gap-2 mb-1">
 															<Package className="w-3 h-3 text-blue-500" />
-															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Images</span>
+															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
+																Images
+															</span>
 														</div>
 														<p className="text-xl font-bold text-secondary-900 dark:text-white">
 															{dockerData.images?.length || 0}
@@ -3362,7 +3496,9 @@ const HostDetail = () => {
 													<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
 														<div className="flex items-center gap-2 mb-1">
 															<HardDrive className="w-3 h-3 text-purple-500" />
-															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">Volumes</span>
+															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
+																Volumes
+															</span>
 														</div>
 														<p className="text-xl font-bold text-secondary-900 dark:text-white">
 															{dockerData.volumes?.length || 0}
@@ -3376,8 +3512,9 @@ const HostDetail = () => {
 										{(() => {
 											// Calculate stacks for tab count
 											const stacksSet = new Set();
-											dockerData.containers?.forEach(c => {
-												const project = c.labels?.["com.docker.compose.project"];
+											dockerData.containers?.forEach((c) => {
+												const project =
+													c.labels?.["com.docker.compose.project"];
 												if (project) stacksSet.add(project);
 											});
 											const stackCount = stacksSet.size;
@@ -3423,7 +3560,9 @@ const HostDetail = () => {
 													>
 														Running
 														<span className="px-1.5 py-0.5 text-xs rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
-															{dockerData.containers?.filter(c => c.state === "running").length || 0}
+															{dockerData.containers?.filter(
+																(c) => c.state === "running",
+															).length || 0}
 														</span>
 													</button>
 													<button
@@ -3466,8 +3605,9 @@ const HostDetail = () => {
 													const stacksMap = new Map();
 													const standaloneContainers = [];
 
-													dockerData.containers?.forEach(container => {
-														const project = container.labels?.["com.docker.compose.project"];
+													dockerData.containers?.forEach((container) => {
+														const project =
+															container.labels?.["com.docker.compose.project"];
 														if (project) {
 															if (!stacksMap.has(project)) {
 																stacksMap.set(project, []);
@@ -3478,7 +3618,9 @@ const HostDetail = () => {
 														}
 													});
 
-													const stacks = Array.from(stacksMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+													const stacks = Array.from(stacksMap.entries()).sort(
+														(a, b) => a[0].localeCompare(b[0]),
+													);
 
 													if (stacks.length === 0) {
 														return (
@@ -3488,7 +3630,8 @@ const HostDetail = () => {
 																	No Docker Compose stacks found
 																</p>
 																<p className="text-xs text-secondary-400 mt-1">
-																	Containers started with docker-compose will appear here
+																	Containers started with docker-compose will
+																	appear here
 																</p>
 															</div>
 														);
@@ -3497,53 +3640,74 @@ const HostDetail = () => {
 													return (
 														<div className="space-y-4">
 															{stacks.map(([stackName, containers]) => {
-																const runningCount = containers.filter(c => c.state === "running").length;
+																const runningCount = containers.filter(
+																	(c) => c.state === "running",
+																).length;
 																const totalCount = containers.length;
 																const allRunning = runningCount === totalCount;
 
 																return (
-																	<div key={stackName} className="bg-secondary-50 dark:bg-secondary-700/30 rounded-lg border border-secondary-200 dark:border-secondary-600 overflow-hidden">
+																	<div
+																		key={stackName}
+																		className="bg-secondary-50 dark:bg-secondary-700/30 rounded-lg border border-secondary-200 dark:border-secondary-600 overflow-hidden"
+																	>
 																		{/* Stack Header */}
 																		<div className="px-4 py-3 bg-secondary-100 dark:bg-secondary-700/50 border-b border-secondary-200 dark:border-secondary-600">
 																			<div className="flex items-center justify-between">
 																				<div className="flex items-center gap-3">
-																					<div className={`w-3 h-3 rounded-full ${allRunning ? "bg-green-500" : "bg-yellow-500"}`} />
+																					<div
+																						className={`w-3 h-3 rounded-full ${allRunning ? "bg-green-500" : "bg-yellow-500"}`}
+																					/>
 																					<h4 className="font-medium text-secondary-900 dark:text-white">
 																						{stackName}
 																					</h4>
 																				</div>
-																				<span className={`text-xs px-2 py-1 rounded-full ${
-																					allRunning
-																						? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
-																						: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400"
-																				}`}>
+																				<span
+																					className={`text-xs px-2 py-1 rounded-full ${
+																						allRunning
+																							? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+																							: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400"
+																					}`}
+																				>
 																					{runningCount}/{totalCount} running
 																				</span>
 																			</div>
 																		</div>
 																		{/* Stack Containers */}
 																		<div className="divide-y divide-secondary-200 dark:divide-secondary-600">
-																			{containers.map(container => (
-																				<div key={container.id} className="px-4 py-2 flex items-center justify-between hover:bg-secondary-100 dark:hover:bg-secondary-700/50">
+																			{containers.map((container) => (
+																				<div
+																					key={container.id}
+																					className="px-4 py-2 flex items-center justify-between hover:bg-secondary-100 dark:hover:bg-secondary-700/50"
+																				>
 																					<div className="flex items-center gap-3">
-																						<span className={`w-2 h-2 rounded-full ${
-																							container.state === "running" ? "bg-green-500" :
-																							container.state === "exited" ? "bg-red-500" : "bg-yellow-500"
-																						}`} />
+																						<span
+																							className={`w-2 h-2 rounded-full ${
+																								container.state === "running"
+																									? "bg-green-500"
+																									: container.state === "exited"
+																										? "bg-red-500"
+																										: "bg-yellow-500"
+																							}`}
+																						/>
 																						<div>
 																							<p className="text-sm font-medium text-secondary-900 dark:text-white">
-																								{container.labels?.["com.docker.compose.service"] || container.name}
+																								{container.labels?.[
+																									"com.docker.compose.service"
+																								] || container.name}
 																							</p>
 																							<p className="text-xs text-secondary-500 dark:text-secondary-400 font-mono">
 																								{container.image}
 																							</p>
 																						</div>
 																					</div>
-																					<span className={`text-xs px-2 py-0.5 rounded ${
-																						container.state === "running"
-																							? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
-																							: "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
-																					}`}>
+																					<span
+																						className={`text-xs px-2 py-0.5 rounded ${
+																							container.state === "running"
+																								? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+																								: "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+																						}`}
+																					>
 																						{container.state}
 																					</span>
 																				</div>
@@ -3557,19 +3721,32 @@ const HostDetail = () => {
 															{standaloneContainers.length > 0 && (
 																<div className="mt-4 pt-4 border-t border-secondary-200 dark:border-secondary-600">
 																	<h4 className="text-sm font-medium text-secondary-600 dark:text-secondary-400 mb-3">
-																		Standalone Containers ({standaloneContainers.length})
+																		Standalone Containers (
+																		{standaloneContainers.length})
 																	</h4>
 																	<div className="space-y-2">
-																		{standaloneContainers.map(container => (
-																			<div key={container.id} className="flex items-center justify-between px-3 py-2 bg-secondary-100 dark:bg-secondary-700/30 rounded-lg">
+																		{standaloneContainers.map((container) => (
+																			<div
+																				key={container.id}
+																				className="flex items-center justify-between px-3 py-2 bg-secondary-100 dark:bg-secondary-700/30 rounded-lg"
+																			>
 																				<div className="flex items-center gap-2">
-																					<span className={`w-2 h-2 rounded-full ${
-																						container.state === "running" ? "bg-green-500" :
-																						container.state === "exited" ? "bg-red-500" : "bg-yellow-500"
-																					}`} />
-																					<span className="text-sm text-secondary-900 dark:text-white">{container.name}</span>
+																					<span
+																						className={`w-2 h-2 rounded-full ${
+																							container.state === "running"
+																								? "bg-green-500"
+																								: container.state === "exited"
+																									? "bg-red-500"
+																									: "bg-yellow-500"
+																						}`}
+																					/>
+																					<span className="text-sm text-secondary-900 dark:text-white">
+																						{container.name}
+																					</span>
 																				</div>
-																				<span className="text-xs text-secondary-500 dark:text-secondary-400 font-mono">{container.image}</span>
+																				<span className="text-xs text-secondary-500 dark:text-secondary-400 font-mono">
+																					{container.image}
+																				</span>
 																			</div>
 																		))}
 																	</div>
@@ -3597,47 +3774,72 @@ const HostDetail = () => {
 																	<th className="pb-2 font-medium">Name</th>
 																	<th className="pb-2 font-medium">Image</th>
 																	<th className="pb-2 font-medium">Ports</th>
-																	<th className="pb-2 font-medium text-right">Uptime</th>
+																	<th className="pb-2 font-medium text-right">
+																		Uptime
+																	</th>
 																</tr>
 															</thead>
 															<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
 																{dockerData.containers?.map((container) => (
-																	<tr key={container.id} className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50">
+																	<tr
+																		key={container.id}
+																		className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+																	>
 																		<td className="py-2">
-																			<span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
-																				container.state === "running"
-																					? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
-																					: container.state === "exited"
-																						? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
-																						: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400"
-																			}`}>
-																				<span className={`w-1.5 h-1.5 rounded-full ${
-																					container.state === "running" ? "bg-green-500" :
-																					container.state === "exited" ? "bg-red-500" : "bg-yellow-500"
-																				}`} />
+																			<span
+																				className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+																					container.state === "running"
+																						? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+																						: container.state === "exited"
+																							? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+																							: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400"
+																				}`}
+																			>
+																				<span
+																					className={`w-1.5 h-1.5 rounded-full ${
+																						container.state === "running"
+																							? "bg-green-500"
+																							: container.state === "exited"
+																								? "bg-red-500"
+																								: "bg-yellow-500"
+																					}`}
+																				/>
 																				{container.state}
 																			</span>
 																		</td>
 																		<td className="py-2 font-medium text-secondary-900 dark:text-white">
 																			{container.name}
 																		</td>
-																		<td className="py-2 font-mono text-xs text-secondary-600 dark:text-secondary-300 max-w-[200px] truncate" title={container.image}>
+																		<td
+																			className="py-2 font-mono text-xs text-secondary-600 dark:text-secondary-300 max-w-[200px] truncate"
+																			title={container.image}
+																		>
 																			{container.image}
 																		</td>
 																		<td className="py-2 text-xs text-secondary-500 dark:text-secondary-400">
 																			{container.ports?.length > 0 ? (
 																				<div className="flex flex-wrap gap-1">
-																					{container.ports.slice(0, 2).map((port, idx) => (
-																						<span key={idx} className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs">
-																							{port.PublicPort || port.PrivatePort}
-																						</span>
-																					))}
+																					{container.ports
+																						.slice(0, 2)
+																						.map((port, idx) => (
+																							<span
+																								key={idx}
+																								className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs"
+																							>
+																								{port.PublicPort ||
+																									port.PrivatePort}
+																							</span>
+																						))}
 																					{container.ports.length > 2 && (
-																						<span className="text-secondary-400">+{container.ports.length - 2}</span>
+																						<span className="text-secondary-400">
+																							+{container.ports.length - 2}
+																						</span>
 																					)}
 																				</div>
 																			) : (
-																				<span className="text-secondary-400">-</span>
+																				<span className="text-secondary-400">
+																					-
+																				</span>
 																			)}
 																		</td>
 																		<td className="py-2 text-xs text-secondary-500 dark:text-secondary-400 text-right">
@@ -3655,7 +3857,9 @@ const HostDetail = () => {
 										{/* Running Sub-tab */}
 										{dockerSubTab === "running" && (
 											<div className="space-y-2">
-												{dockerData.containers?.filter((c) => c.state === "running").length === 0 ? (
+												{dockerData.containers?.filter(
+													(c) => c.state === "running",
+												).length === 0 ? (
 													<p className="text-secondary-500 dark:text-secondary-400 text-center py-4">
 														No running containers
 													</p>
@@ -3688,11 +3892,19 @@ const HostDetail = () => {
 																	</div>
 																	{container.ports?.length > 0 && (
 																		<div className="mt-3 pt-3 border-t border-secondary-200 dark:border-secondary-600">
-																			<p className="text-xs text-secondary-500 dark:text-secondary-400 mb-1.5">Ports</p>
+																			<p className="text-xs text-secondary-500 dark:text-secondary-400 mb-1.5">
+																				Ports
+																			</p>
 																			<div className="flex flex-wrap gap-1.5">
 																				{container.ports.map((port, idx) => (
-																					<span key={idx} className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs font-mono">
-																						{port.PublicPort ? `${port.PublicPort}:${port.PrivatePort}` : port.PrivatePort}/{port.Type || 'tcp'}
+																					<span
+																						key={idx}
+																						className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs font-mono"
+																					>
+																						{port.PublicPort
+																							? `${port.PublicPort}:${port.PrivatePort}`
+																							: port.PrivatePort}
+																						/{port.Type || "tcp"}
 																					</span>
 																				))}
 																			</div>
@@ -3717,16 +3929,26 @@ const HostDetail = () => {
 														<table className="w-full text-sm">
 															<thead>
 																<tr className="text-left text-xs text-secondary-500 dark:text-secondary-400 border-b border-secondary-200 dark:border-secondary-600">
-																	<th className="pb-2 font-medium">Repository</th>
+																	<th className="pb-2 font-medium">
+																		Repository
+																	</th>
 																	<th className="pb-2 font-medium">Tag</th>
 																	<th className="pb-2 font-medium">ID</th>
-																	<th className="pb-2 font-medium text-right">Size</th>
+																	<th className="pb-2 font-medium text-right">
+																		Size
+																	</th>
 																</tr>
 															</thead>
 															<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
 																{dockerData.images?.map((image) => (
-																	<tr key={image.id} className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50">
-																		<td className="py-2 font-mono text-secondary-900 dark:text-white max-w-[200px] truncate" title={image.repository}>
+																	<tr
+																		key={image.id}
+																		className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+																	>
+																		<td
+																			className="py-2 font-mono text-secondary-900 dark:text-white max-w-[200px] truncate"
+																			title={image.repository}
+																		>
 																			{image.repository || "<none>"}
 																		</td>
 																		<td className="py-2">
@@ -3763,13 +3985,21 @@ const HostDetail = () => {
 																<tr className="text-left text-xs text-secondary-500 dark:text-secondary-400 border-b border-secondary-200 dark:border-secondary-600">
 																	<th className="pb-2 font-medium">Name</th>
 																	<th className="pb-2 font-medium">Driver</th>
-																	<th className="pb-2 font-medium">Mount Point</th>
+																	<th className="pb-2 font-medium">
+																		Mount Point
+																	</th>
 																</tr>
 															</thead>
 															<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
 																{dockerData.volumes?.map((volume) => (
-																	<tr key={volume.name} className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50">
-																		<td className="py-2 font-mono text-secondary-900 dark:text-white max-w-[200px] truncate" title={volume.name}>
+																	<tr
+																		key={volume.name}
+																		className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+																	>
+																		<td
+																			className="py-2 font-mono text-secondary-900 dark:text-white max-w-[200px] truncate"
+																			title={volume.name}
+																		>
 																			{volume.name}
 																		</td>
 																		<td className="py-2">
@@ -3777,7 +4007,10 @@ const HostDetail = () => {
 																				{volume.driver || "local"}
 																			</span>
 																		</td>
-																		<td className="py-2 text-xs font-mono text-secondary-500 dark:text-secondary-400 max-w-[300px] truncate" title={volume.mountpoint}>
+																		<td
+																			className="py-2 text-xs font-mono text-secondary-500 dark:text-secondary-400 max-w-[300px] truncate"
+																			title={volume.mountpoint}
+																		>
 																			{volume.mountpoint || "-"}
 																		</td>
 																	</tr>
@@ -3842,10 +4075,13 @@ const HostDetail = () => {
 										Global Auto-Updates Disabled
 									</h3>
 									<p className="mt-2 text-sm text-secondary-600 dark:text-secondary-300">
-										The master auto-update setting is currently <strong>disabled</strong> in Settings → Agent Updates.
+										The master auto-update setting is currently{" "}
+										<strong>disabled</strong> in Settings → Agent Updates.
 									</p>
 									<p className="mt-2 text-sm text-secondary-600 dark:text-secondary-300">
-										Enabling auto-update for <strong>{host?.friendly_name || host?.hostname}</strong> won't take effect until global auto-updates are enabled.
+										Enabling auto-update for{" "}
+										<strong>{host?.friendly_name || host?.hostname}</strong>{" "}
+										won't take effect until global auto-updates are enabled.
 									</p>
 								</div>
 							</div>
@@ -3871,13 +4107,14 @@ const HostDetail = () => {
 								disabled={enableGlobalAutoUpdateMutation.isPending}
 								className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
 							>
-								{enableGlobalAutoUpdateMutation.isPending ? "Enabling..." : "Enable Both"}
+								{enableGlobalAutoUpdateMutation.isPending
+									? "Enabling..."
+									: "Enable Both"}
 							</button>
 						</div>
 					</div>
 				</div>
 			)}
-
 		</div>
 	);
 };

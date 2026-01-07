@@ -12,8 +12,8 @@ import {
 	Zap,
 } from "lucide-react";
 import { useState } from "react";
-import api from "../utils/api";
 import { useAuth } from "../contexts/AuthContext";
+import api from "../utils/api";
 
 const Automation = () => {
 	const { user } = useAuth();

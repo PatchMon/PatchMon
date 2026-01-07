@@ -387,7 +387,9 @@ const AgentUpdatesTab = () => {
 					<button
 						type="button"
 						id={autoUpdateId}
-						onClick={() => handleInputChange("autoUpdate", !formData.autoUpdate)}
+						onClick={() =>
+							handleInputChange("autoUpdate", !formData.autoUpdate)
+						}
 						className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
 							formData.autoUpdate
 								? "bg-primary-600 dark:bg-primary-500"
@@ -417,15 +419,20 @@ const AgentUpdatesTab = () => {
 							</span>
 						</div>
 						<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
-							When enabled, curl commands in agent scripts will use the -k flag to
-							ignore SSL certificate validation errors. Use with caution on
+							When enabled, curl commands in agent scripts will use the -k flag
+							to ignore SSL certificate validation errors. Use with caution on
 							production systems as this reduces security.
 						</p>
 					</div>
 					<button
 						type="button"
 						id={ignoreSslId}
-						onClick={() => handleInputChange("ignoreSslSelfSigned", !formData.ignoreSslSelfSigned)}
+						onClick={() =>
+							handleInputChange(
+								"ignoreSslSelfSigned",
+								!formData.ignoreSslSelfSigned,
+							)
+						}
 						className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
 							formData.ignoreSslSelfSigned
 								? "bg-warning-500 dark:bg-warning-600"
@@ -489,7 +496,9 @@ const AgentUpdatesTab = () => {
 							Agent Uninstall Command
 						</h3>
 						<div className="mt-2 text-sm text-red-700 dark:text-red-300">
-							<p className="mb-3">To completely remove PatchMonEnhanced from a host:</p>
+							<p className="mb-3">
+								To completely remove PatchMonEnhanced from a host:
+							</p>
 
 							{/* Agent Removal Script - Standard */}
 							<div className="mb-3">

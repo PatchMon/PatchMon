@@ -266,9 +266,9 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 										</h2>
 										<div className="space-y-4 text-sm text-secondary-600 dark:text-secondary-300 leading-relaxed">
 											<p>
-												PatchMonEnhanced wouldn't be what it is today without the
-												incredible support the community has shown over the last
-												3 months.
+												PatchMonEnhanced wouldn't be what it is today without
+												the incredible support the community has shown over the
+												last 3 months.
 											</p>
 											<p>
 												Your feedback and dedication on Discord has been keeping

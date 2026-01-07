@@ -1,8 +1,18 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	AlertTriangle,
+	Bot,
+	Check,
+	Eye,
+	EyeOff,
+	Loader2,
+	RefreshCw,
+	Sparkles,
+	X,
+} from "lucide-react";
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Bot, Check, Eye, EyeOff, Loader2, RefreshCw, Sparkles, X } from "lucide-react";
-import { aiAPI } from "../../utils/api";
 import SettingsLayout from "../../components/SettingsLayout";
+import { aiAPI } from "../../utils/api";
 
 const AiSettings = () => {
 	const queryClient = useQueryClient();
@@ -70,7 +80,9 @@ const AiSettings = () => {
 		}
 	};
 
-	const selectedProvider = providers.find((p) => p.id === settings?.ai_provider);
+	const selectedProvider = providers.find(
+		(p) => p.id === settings?.ai_provider,
+	);
 
 	if (settingsLoading) {
 		return (
@@ -110,11 +122,16 @@ const AiSettings = () => {
 									API Key Needs to be Re-entered
 								</h3>
 								<p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
-									Your AI API key was encrypted with a different secret and cannot be decrypted.
-									This can happen if <code className="bg-amber-100 dark:bg-amber-900 px-1 rounded">SESSION_SECRET</code> was changed or not set consistently.
+									Your AI API key was encrypted with a different secret and
+									cannot be decrypted. This can happen if{" "}
+									<code className="bg-amber-100 dark:bg-amber-900 px-1 rounded">
+										SESSION_SECRET
+									</code>{" "}
+									was changed or not set consistently.
 								</p>
 								<p className="text-sm text-amber-600 dark:text-amber-400 mt-2">
-									Please re-enter your API key below to restore AI functionality.
+									Please re-enter your API key below to restore AI
+									functionality.
 								</p>
 							</div>
 						</div>
@@ -201,7 +218,9 @@ const AiSettings = () => {
 							</label>
 							<select
 								id="ai-model"
-								value={settings?.ai_model || selectedProvider?.defaultModel || ""}
+								value={
+									settings?.ai_model || selectedProvider?.defaultModel || ""
+								}
 								onChange={handleModelChange}
 								disabled={updateMutation.isPending}
 								className="w-full px-3 py-2 bg-white dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500"

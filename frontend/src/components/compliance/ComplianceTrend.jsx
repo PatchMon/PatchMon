@@ -1,11 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import {
+	Legend,
+	Line,
+	LineChart,
+	ResponsiveContainer,
+	Tooltip,
+	XAxis,
+	YAxis,
+} from "recharts";
 import { complianceAPI } from "../../utils/complianceApi";
 
 const ComplianceTrend = ({ hostId, days = 30 }) => {
 	const { data: trends } = useQuery({
 		queryKey: ["compliance-trends", hostId, days],
-		queryFn: () => complianceAPI.getTrends(hostId, days).then((res) => res.data),
+		queryFn: () =>
+			complianceAPI.getTrends(hostId, days).then((res) => res.data),
 		enabled: !!hostId,
 	});
 
@@ -14,8 +23,12 @@ const ComplianceTrend = ({ hostId, days = 30 }) => {
 	}
 
 	// Check if we have both profile types
-	const hasOpenSCAP = trends.some((t) => t.compliance_profiles?.type === "openscap");
-	const hasDockerBench = trends.some((t) => t.compliance_profiles?.type === "docker-bench");
+	const hasOpenSCAP = trends.some(
+		(t) => t.compliance_profiles?.type === "openscap",
+	);
+	const hasDockerBench = trends.some(
+		(t) => t.compliance_profiles?.type === "docker-bench",
+	);
 
 	// Group data by date and profile type
 	const dateMap = new Map();
@@ -45,18 +58,21 @@ const ComplianceTrend = ({ hostId, days = 30 }) => {
 		return (
 			<div className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 shadow-lg">
 				<p className="text-gray-400 text-sm mb-1">{label}</p>
-				{payload.map((entry, index) => (
-					entry.value != null && (
-						<div key={index} className="flex items-center gap-2 text-sm">
-							<div
-								className="w-2.5 h-2.5 rounded-full"
-								style={{ backgroundColor: entry.color }}
-							/>
-							<span className="text-gray-300">{entry.name}:</span>
-							<span className="text-white font-medium">{entry.value.toFixed(1)}%</span>
-						</div>
-					)
-				))}
+				{payload.map(
+					(entry, index) =>
+						entry.value != null && (
+							<div key={index} className="flex items-center gap-2 text-sm">
+								<div
+									className="w-2.5 h-2.5 rounded-full"
+									style={{ backgroundColor: entry.color }}
+								/>
+								<span className="text-gray-300">{entry.name}:</span>
+								<span className="text-white font-medium">
+									{entry.value.toFixed(1)}%
+								</span>
+							</div>
+						),
+				)}
 			</div>
 		);
 	};
@@ -106,7 +122,9 @@ const ComplianceTrend = ({ hostId, days = 30 }) => {
 						{(hasOpenSCAP || hasDockerBench) && (
 							<Legend
 								wrapperStyle={{ paddingTop: "10px" }}
-								formatter={(value) => <span className="text-gray-300 text-sm">{value}</span>}
+								formatter={(value) => (
+									<span className="text-gray-300 text-sm">{value}</span>
+								)}
 							/>
 						)}
 					</LineChart>

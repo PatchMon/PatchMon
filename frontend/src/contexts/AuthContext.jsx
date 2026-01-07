@@ -47,7 +47,10 @@ export const AuthProvider = ({ children }) => {
 					Authorization: `Bearer ${authToken}`,
 				};
 			}
-			const response = await fetch("/api/v1/permissions/user-permissions", fetchOptions);
+			const response = await fetch(
+				"/api/v1/permissions/user-permissions",
+				fetchOptions,
+			);
 
 			if (response.ok) {
 				const data = await response.json();
@@ -162,11 +165,14 @@ export const AuthProvider = ({ children }) => {
 				// Store user info for session recovery (token stored in httpOnly cookie by server)
 				// Note: Token is NOT stored in localStorage to prevent XSS attacks
 				// The httpOnly cookie set by the server is used for authentication
-				localStorage.setItem("user", JSON.stringify({
-					...data.user,
-					accepted_release_notes_versions:
-						data.user.accepted_release_notes_versions || [],
-				}));
+				localStorage.setItem(
+					"user",
+					JSON.stringify({
+						...data.user,
+						accepted_release_notes_versions:
+							data.user.accepted_release_notes_versions || [],
+					}),
+				);
 
 				// Fetch user permissions after successful login
 				const userPermissions = await fetchPermissions(data.token);
@@ -484,7 +490,9 @@ export const AuthProvider = ({ children }) => {
 				// If OIDC is enabled with auto-create users, bypass the welcome page
 				// The first user will be created via OIDC JIT provisioning as admin
 				if (!data.hasAdminUsers && data.oidc?.canBypassWelcome) {
-					console.log("No admin users, but OIDC can handle first user - bypassing welcome page");
+					console.log(
+						"No admin users, but OIDC can handle first user - bypassing welcome page",
+					);
 					setNeedsFirstTimeSetup(false);
 				} else {
 					setNeedsFirstTimeSetup(!data.hasAdminUsers);

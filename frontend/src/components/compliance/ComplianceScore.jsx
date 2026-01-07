@@ -1,4 +1,9 @@
-import { ShieldCheck, ShieldAlert, ShieldX, ShieldQuestion } from "lucide-react";
+import {
+	ShieldAlert,
+	ShieldCheck,
+	ShieldQuestion,
+	ShieldX,
+} from "lucide-react";
 
 const ComplianceScore = ({ score, size = "md" }) => {
 	const getScoreColor = (score) => {

@@ -1,4 +1,3 @@
-import { useState, useId } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	AlertTriangle,
@@ -9,6 +8,7 @@ import {
 	RotateCcw,
 	X,
 } from "lucide-react";
+import { useId, useState } from "react";
 import { adminHostsAPI, settingsAPI } from "../../utils/api";
 
 const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
@@ -23,9 +23,13 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 
 	// Use plaintext API key if available (from host creation or regeneration), otherwise the stored key is a hash
 	// Priority: regenerated > navigation state > stored (which is a hash)
-	const effectiveApiKey = regeneratedCredentials?.apiKey || plaintextApiKey || host.api_key;
+	const effectiveApiKey =
+		regeneratedCredentials?.apiKey || plaintextApiKey || host.api_key;
 	const effectiveApiId = regeneratedCredentials?.apiId || host.api_id;
-	const isApiKeyHash = !regeneratedCredentials && !plaintextApiKey && host.api_key?.startsWith("$2");
+	const isApiKeyHash =
+		!regeneratedCredentials &&
+		!plaintextApiKey &&
+		host.api_key?.startsWith("$2");
 
 	const handleRegenerateCredentials = async () => {
 		setIsRegenerating(true);
@@ -65,7 +69,8 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 	const getInstallUrl = () => `${serverUrl}/api/v1/hosts/install`;
 
 	// Helper function to build the shell command suffix (sudo sh with optional --force)
-	const getShellCommand = () => forceInstall ? "sudo sh -s -- --force" : "sudo sh";
+	const getShellCommand = () =>
+		forceInstall ? "sudo sh -s -- --force" : "sudo sh";
 
 	const copyToClipboard = async (text) => {
 		try {
@@ -222,7 +227,8 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 													API Key Not Available
 												</p>
 												<p className="text-xs text-warning-700 dark:text-warning-300 mt-1">
-													The plaintext API key is only shown once when the host is created.
+													The plaintext API key is only shown once when the host
+													is created.
 												</p>
 											</div>
 										</div>
@@ -232,7 +238,9 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 											disabled={isRegenerating}
 											className="btn-outline flex items-center gap-1 text-xs whitespace-nowrap"
 										>
-											<RotateCcw className={`h-3 w-3 ${isRegenerating ? "animate-spin" : ""}`} />
+											<RotateCcw
+												className={`h-3 w-3 ${isRegenerating ? "animate-spin" : ""}`}
+											/>
 											{isRegenerating ? "Regenerating..." : "Regenerate"}
 										</button>
 									</div>
@@ -242,7 +250,11 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 							<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 								<input
 									type="text"
-									value={isApiKeyHash ? "API key not available - click Regenerate above" : `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`}
+									value={
+										isApiKeyHash
+											? "API key not available - click Regenerate above"
+											: `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`
+									}
 									readOnly
 									disabled={isApiKeyHash}
 									className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-primary-300 dark:border-primary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
@@ -308,7 +320,8 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 									{isApiKeyHash && (
 										<div className="mb-2 p-2 bg-warning-50 dark:bg-warning-900/20 border border-warning-200 dark:border-warning-700 rounded-lg">
 											<p className="text-xs text-warning-700 dark:text-warning-300">
-												The stored key is a hash. Regenerate credentials to get a new plaintext key.
+												The stored key is a hash. Regenerate credentials to get
+												a new plaintext key.
 											</p>
 										</div>
 									)}
@@ -316,7 +329,9 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 										<input
 											id={apiKeyInputId}
 											type={showApiKey ? "text" : "password"}
-											value={isApiKeyHash ? "(hashed - not usable)" : effectiveApiKey}
+											value={
+												isApiKeyHash ? "(hashed - not usable)" : effectiveApiKey
+											}
 											readOnly
 											disabled={isApiKeyHash}
 											className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-secondary-300 dark:border-secondary-600 bg-secondary-50 dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
