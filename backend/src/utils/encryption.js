@@ -28,6 +28,15 @@ function getEncryptionKey() {
 		// This ensures the key is consistent across container restarts without extra config
 		keySource = "DATABASE_URL derived";
 		key = crypto.createHash("sha256").update(`patchmon-enc-${process.env.DATABASE_URL}`).digest();
+
+		// SECURITY WARNING: DATABASE_URL should not be used for encryption in production
+		if (process.env.NODE_ENV === "production") {
+			logger.warn("╔══════════════════════════════════════════════════════════════════════════╗");
+			logger.warn("║  SECURITY WARNING: Using DATABASE_URL for encryption key derivation.    ║");
+			logger.warn("║  This is NOT recommended for production environments.                   ║");
+			logger.warn("║  Please set SESSION_SECRET or AI_ENCRYPTION_KEY environment variable.  ║");
+			logger.warn("╚══════════════════════════════════════════════════════════════════════════╝");
+		}
 	} else {
 		// Last resort: Try file-based key or hostname fallback
 		const keyFilePath = path.join(__dirname, "../../.encryption_key");

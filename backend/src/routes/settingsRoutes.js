@@ -8,6 +8,46 @@ const { getSettings, updateSettings } = require("../services/settingsService");
 const { verifyApiKey } = require("../utils/apiKeyUtils");
 
 const router = express.Router();
+
+/**
+ * Sanitize SVG content to remove potentially dangerous elements
+ * Removes: script tags, event handlers, external references, data URIs
+ * @param {string} svgContent - Raw SVG content
+ * @returns {string} - Sanitized SVG content
+ */
+function sanitizeSvg(svgContent) {
+	// Remove script tags and their contents
+	let sanitized = svgContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
+
+	// Remove on* event handlers (onclick, onload, onerror, etc.)
+	sanitized = sanitized.replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, "");
+	sanitized = sanitized.replace(/\s+on\w+\s*=\s*[^\s>]+/gi, "");
+
+	// Remove javascript: URLs
+	sanitized = sanitized.replace(/href\s*=\s*["']javascript:[^"']*["']/gi, 'href=""');
+	sanitized = sanitized.replace(/xlink:href\s*=\s*["']javascript:[^"']*["']/gi, 'xlink:href=""');
+
+	// Remove data: URLs (can contain JavaScript)
+	sanitized = sanitized.replace(/href\s*=\s*["']data:[^"']*["']/gi, 'href=""');
+	sanitized = sanitized.replace(/xlink:href\s*=\s*["']data:[^"']*["']/gi, 'xlink:href=""');
+
+	// Remove foreign object elements (can embed HTML/JS)
+	sanitized = sanitized.replace(/<foreignObject\b[^<]*(?:(?!<\/foreignObject>)<[^<]*)*<\/foreignObject>/gi, "");
+
+	// Remove use elements with external references (security risk)
+	sanitized = sanitized.replace(/<use\b[^>]*xlink:href\s*=\s*["']https?:\/\/[^"']*["'][^>]*\/?>/gi, "");
+
+	// Remove embed, object, iframe elements
+	sanitized = sanitized.replace(/<embed\b[^>]*\/?>/gi, "");
+	sanitized = sanitized.replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, "");
+	sanitized = sanitized.replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, "");
+
+	// Remove set and animate elements with dangerous attributes
+	sanitized = sanitized.replace(/<set\b[^>]*attributeName\s*=\s*["']on\w+["'][^>]*\/?>/gi, "");
+	sanitized = sanitized.replace(/<animate\b[^>]*attributeName\s*=\s*["']on\w+["'][^>]*\/?>/gi, "");
+
+	return sanitized;
+}
 const prisma = getPrismaClient();
 
 const { queueManager, QUEUE_NAMES } = require("../services/automation");
@@ -473,6 +513,14 @@ router.post(
 				if (error.code !== "ENOENT") {
 					logger.warn("Failed to create backup:", error.message);
 				}
+			}
+
+			// Sanitize SVG content to prevent XSS attacks
+			if (isSvg) {
+				const svgContent = fileBuffer.toString("utf8");
+				const sanitizedSvg = sanitizeSvg(svgContent);
+				fileBuffer = Buffer.from(sanitizedSvg, "utf8");
+				logger.info("SVG content sanitized for security");
 			}
 
 			// Write new logo file
