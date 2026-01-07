@@ -843,6 +843,12 @@ router.get("/scans/active", async (req, res) => {
       },
     });
 
+    // Debug: log what we found
+    if (activeScans.length > 0) {
+      console.log(`=== ACTIVE SCANS: Found ${activeScans.length} running scans ===`);
+      activeScans.forEach(s => console.log(`  - ${s.id} status=${s.status} host=${s.host_id}`));
+    }
+
     // Add connection status for each host
     const scansWithStatus = activeScans.map((scan) => {
       const connected = agentWs.isConnected(scan.hosts?.api_id);
