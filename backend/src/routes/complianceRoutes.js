@@ -1123,6 +1123,8 @@ router.get("/results/:scanId", async (req, res) => {
  * NOTE: This route MUST be defined before /trigger/:hostId to prevent "bulk" being matched as a hostId
  */
 router.post("/trigger/bulk", async (req, res) => {
+  console.log("=== BULK TRIGGER ROUTE HIT ===");
+  console.log("Request body:", JSON.stringify(req.body));
   try {
     const {
       hostIds = [],
@@ -1132,6 +1134,7 @@ router.post("/trigger/bulk", async (req, res) => {
       fetch_remote_resources = false,
     } = req.body;
 
+    console.log(`=== Bulk trigger: ${hostIds.length} hosts, profile_type=${profile_type} ===`);
     logger.info(`[Compliance] Bulk trigger received: ${hostIds.length} hosts, profile_type=${profile_type}`);
 
     // Validate hostIds array
