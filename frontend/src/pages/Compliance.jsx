@@ -32,6 +32,54 @@ import ComplianceScore from "../components/compliance/ComplianceScore";
 import { formatDistanceToNow } from "date-fns";
 import { useToast } from "../contexts/ToastContext";
 
+// Custom tooltip component for consistent styling across all charts
+const CustomTooltip = ({ active, payload, label, type }) => {
+	if (!active || !payload || payload.length === 0) return null;
+
+	const getTitle = () => {
+		if (type === "hostStatus") return `${label} Hosts`;
+		if (type === "severity") return `${label} Severity`;
+		if (type === "scoreRange") return `Score: ${label}`;
+		if (type === "profile") return label;
+		return label;
+	};
+
+	return (
+		<div className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 shadow-lg">
+			<p className="text-white font-medium text-sm mb-1">{getTitle()}</p>
+			<div className="space-y-1">
+				{payload.map((entry, index) => {
+					let name = entry.name;
+					let color = entry.color;
+
+					// Format the name for better readability
+					if (name === "openscap") {
+						name = "OpenSCAP";
+						color = "#22c55e";
+					} else if (name === "dockerBench") {
+						name = "Docker Bench";
+						color = "#3b82f6";
+					} else if (name === "count") {
+						name = "Scans";
+					} else if (name === "host_count") {
+						name = "Hosts";
+					}
+
+					return (
+						<div key={index} className="flex items-center justify-between gap-4 text-sm">
+							<div className="flex items-center gap-2">
+								<div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: color }} />
+								<span className="text-gray-300">{name}</span>
+							</div>
+							<span className="text-white font-medium">{entry.value?.toLocaleString()}</span>
+						</div>
+					);
+				})}
+			</div>
+		</div>
+	);
+};
+
 const Compliance = () => {
 	const queryClient = useQueryClient();
 	const toast = useToast();
@@ -793,17 +841,7 @@ const Compliance = () => {
 											<BarChart data={chartData} layout="vertical">
 												<XAxis type="number" stroke="#6b7280" fontSize={12} />
 												<YAxis type="category" dataKey="name" stroke="#6b7280" fontSize={12} width={70} />
-												<Tooltip
-													contentStyle={{
-														backgroundColor: "#1f2937",
-														border: "1px solid #374151",
-														borderRadius: "0.5rem",
-													}}
-													formatter={(value, name) => [
-														value,
-														name === "openscap" ? "OpenSCAP" : "Docker Bench"
-													]}
-												/>
+												<Tooltip content={<CustomTooltip type="hostStatus" />} />
 												<Bar dataKey="openscap" stackId="a" fill="#22c55e" name="openscap" radius={[0, 0, 0, 0]} />
 												<Bar dataKey="dockerBench" stackId="a" fill="#3b82f6" name="dockerBench" radius={[0, 4, 4, 0]} />
 											</BarChart>
@@ -875,14 +913,7 @@ const Compliance = () => {
 															<Cell key={`cell-${index}`} fill={entry.color} />
 														))}
 													</Pie>
-													<Tooltip
-														contentStyle={{
-															backgroundColor: "#1f2937",
-															border: "1px solid #374151",
-															borderRadius: "0.5rem",
-														}}
-														formatter={(value, name) => [value.toLocaleString(), name]}
-													/>
+													<Tooltip content={<CustomTooltip type="ruleStatus" />} />
 												</PieChart>
 											</ResponsiveContainer>
 										</div>
@@ -905,6 +936,7 @@ const Compliance = () => {
 														<BarChart data={openscapScoreRanges} layout="vertical">
 															<XAxis type="number" stroke="#6b7280" fontSize={10} />
 															<YAxis type="category" dataKey="range" stroke="#6b7280" fontSize={10} width={50} />
+															<Tooltip content={<CustomTooltip type="scoreRange" />} />
 															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
 																{openscapScoreRanges.map((entry, index) => (
 																	<Cell key={`cell-${index}`} fill={entry.color} />
@@ -953,14 +985,7 @@ const Compliance = () => {
 															<Cell key={`cell-${index}`} fill={entry.color} />
 														))}
 													</Pie>
-													<Tooltip
-														contentStyle={{
-															backgroundColor: "#1f2937",
-															border: "1px solid #374151",
-															borderRadius: "0.5rem",
-														}}
-														formatter={(value, name) => [value.toLocaleString(), name]}
-													/>
+													<Tooltip content={<CustomTooltip type="ruleStatus" />} />
 												</PieChart>
 											</ResponsiveContainer>
 										</div>
@@ -983,6 +1008,7 @@ const Compliance = () => {
 														<BarChart data={dockerScoreRanges} layout="vertical">
 															<XAxis type="number" stroke="#6b7280" fontSize={10} />
 															<YAxis type="category" dataKey="range" stroke="#6b7280" fontSize={10} width={50} />
+															<Tooltip content={<CustomTooltip type="scoreRange" />} />
 															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
 																{dockerScoreRanges.map((entry, index) => (
 																	<Cell key={`cell-${index}`} fill={entry.color} />
@@ -1032,14 +1058,7 @@ const Compliance = () => {
 								<BarChart data={scoreRanges} layout="vertical">
 									<XAxis type="number" stroke="#6b7280" fontSize={12} />
 									<YAxis type="category" dataKey="range" stroke="#6b7280" fontSize={12} width={60} />
-									<Tooltip
-										contentStyle={{
-											backgroundColor: "#1f2937",
-											border: "1px solid #374151",
-											borderRadius: "0.5rem",
-										}}
-										formatter={(value) => [value, "Scans"]}
-									/>
+									<Tooltip content={<CustomTooltip type="scoreRange" />} />
 									<Bar dataKey="count" radius={[0, 4, 4, 0]}>
 										{scoreRanges.map((entry, index) => (
 											<Cell key={`cell-${index}`} fill={entry.color} />
@@ -1096,17 +1115,7 @@ const Compliance = () => {
 										<BarChart data={chartData} layout="vertical">
 											<XAxis type="number" stroke="#6b7280" fontSize={12} />
 											<YAxis type="category" dataKey="name" stroke="#6b7280" fontSize={12} width={70} />
-											<Tooltip
-												contentStyle={{
-													backgroundColor: "#1f2937",
-													border: "1px solid #374151",
-													borderRadius: "0.5rem",
-												}}
-												formatter={(value, name) => [
-													value.toLocaleString(),
-													name === "openscap" ? "OpenSCAP" : "Docker Bench"
-												]}
-											/>
+											<Tooltip content={<CustomTooltip type="severity" />} />
 											<Bar dataKey="openscap" stackId="a" fill="#22c55e" name="openscap" radius={[0, 0, 0, 0]} />
 											<Bar dataKey="dockerBench" stackId="a" fill="#3b82f6" name="dockerBench" radius={[0, 4, 4, 0]} />
 										</BarChart>
@@ -1164,14 +1173,7 @@ const Compliance = () => {
 											width={140}
 											tickFormatter={(value) => value.length > 20 ? value.slice(0, 20) + "..." : value}
 										/>
-										<Tooltip
-											contentStyle={{
-												backgroundColor: "#1f2937",
-												border: "1px solid #374151",
-												borderRadius: "0.5rem",
-											}}
-											formatter={(value) => [value, "Hosts"]}
-										/>
+										<Tooltip content={<CustomTooltip type="profile" />} />
 										<Bar dataKey="host_count" fill="#6366f1" radius={[0, 4, 4, 0]} />
 									</BarChart>
 								</ResponsiveContainer>
