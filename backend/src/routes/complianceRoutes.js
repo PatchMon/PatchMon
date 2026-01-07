@@ -1109,97 +1109,9 @@ router.get("/results/:scanId", async (req, res) => {
 });
 
 /**
- * POST /api/v1/compliance/trigger/:hostId
- * Trigger an on-demand compliance scan
- */
-router.post("/trigger/:hostId", async (req, res) => {
-  try {
-    const { hostId } = req.params;
-    const {
-      profile_type = "all",
-      profile_id = null,
-      enable_remediation = false,
-      fetch_remote_resources = false,
-      image_name = null,
-      scan_all_images = false,
-    } = req.body;
-
-    // Validate hostId
-    if (!isValidUUID(hostId)) {
-      return res.status(400).json({ error: "Invalid host ID format" });
-    }
-
-    // Validate profile_type
-    if (!VALID_PROFILE_TYPES.includes(profile_type)) {
-      return res.status(400).json({ error: `Invalid profile_type. Must be one of: ${VALID_PROFILE_TYPES.join(", ")}` });
-    }
-
-    const host = await prisma.hosts.findUnique({
-      where: { id: hostId },
-    });
-
-    if (!host) {
-      return res.status(404).json({ error: "Host not found" });
-    }
-
-    // Use agentWs service to send compliance scan trigger
-    const agentWs = require("../services/agentWs");
-
-    if (!agentWs.isConnected(host.api_id)) {
-      return res.status(400).json({ error: "Host is not connected" });
-    }
-
-    // Build scan options
-    const scanOptions = {
-      profileId: profile_id,
-      enableRemediation: Boolean(enable_remediation),
-      fetchRemoteResources: Boolean(fetch_remote_resources),
-    };
-
-    // Handle Docker image CVE scanning separately
-    if (profile_type === "oscap-docker") {
-      const dockerScanOptions = {
-        imageName: image_name || null,
-        scanAllImages: Boolean(scan_all_images),
-      };
-      const success = agentWs.pushDockerImageScan(host.api_id, dockerScanOptions);
-      if (success) {
-        return res.json({
-          message: "Docker image CVE scan triggered",
-          host_id: hostId,
-          profile_type,
-          scan_all_images: Boolean(scan_all_images),
-          image_name: image_name || null,
-        });
-      } else {
-        return res.status(400).json({ error: "Failed to send Docker image scan trigger" });
-      }
-    }
-
-    // Use the dedicated pushComplianceScan function with options
-    const success = agentWs.pushComplianceScan(host.api_id, profile_type, scanOptions);
-
-    if (success) {
-      res.json({
-        message: enable_remediation
-          ? "Compliance scan with remediation triggered"
-          : "Compliance scan triggered",
-        host_id: hostId,
-        profile_type,
-        enable_remediation,
-      });
-    } else {
-      res.status(400).json({ error: "Failed to send scan trigger" });
-    }
-  } catch (error) {
-    logger.error("[Compliance] Error triggering scan:", error);
-    res.status(500).json({ error: "Failed to trigger scan" });
-  }
-});
-
-/**
  * POST /api/v1/compliance/trigger/bulk
  * Trigger compliance scans on multiple hosts at once
+ * NOTE: This route MUST be defined before /trigger/:hostId to prevent "bulk" being matched as a hostId
  */
 router.post("/trigger/bulk", async (req, res) => {
   try {
@@ -1305,6 +1217,95 @@ router.post("/trigger/bulk", async (req, res) => {
   } catch (error) {
     logger.error("[Compliance] Error triggering bulk scan:", error);
     res.status(500).json({ error: "Failed to trigger bulk scan" });
+  }
+});
+
+/**
+ * POST /api/v1/compliance/trigger/:hostId
+ * Trigger an on-demand compliance scan
+ */
+router.post("/trigger/:hostId", async (req, res) => {
+  try {
+    const { hostId } = req.params;
+    const {
+      profile_type = "all",
+      profile_id = null,
+      enable_remediation = false,
+      fetch_remote_resources = false,
+      image_name = null,
+      scan_all_images = false,
+    } = req.body;
+
+    // Validate hostId
+    if (!isValidUUID(hostId)) {
+      return res.status(400).json({ error: "Invalid host ID format" });
+    }
+
+    // Validate profile_type
+    if (!VALID_PROFILE_TYPES.includes(profile_type)) {
+      return res.status(400).json({ error: `Invalid profile_type. Must be one of: ${VALID_PROFILE_TYPES.join(", ")}` });
+    }
+
+    const host = await prisma.hosts.findUnique({
+      where: { id: hostId },
+    });
+
+    if (!host) {
+      return res.status(404).json({ error: "Host not found" });
+    }
+
+    // Use agentWs service to send compliance scan trigger
+    const agentWs = require("../services/agentWs");
+
+    if (!agentWs.isConnected(host.api_id)) {
+      return res.status(400).json({ error: "Host is not connected" });
+    }
+
+    // Build scan options
+    const scanOptions = {
+      profileId: profile_id,
+      enableRemediation: Boolean(enable_remediation),
+      fetchRemoteResources: Boolean(fetch_remote_resources),
+    };
+
+    // Handle Docker image CVE scanning separately
+    if (profile_type === "oscap-docker") {
+      const dockerScanOptions = {
+        imageName: image_name || null,
+        scanAllImages: Boolean(scan_all_images),
+      };
+      const success = agentWs.pushDockerImageScan(host.api_id, dockerScanOptions);
+      if (success) {
+        return res.json({
+          message: "Docker image CVE scan triggered",
+          host_id: hostId,
+          profile_type,
+          scan_all_images: Boolean(scan_all_images),
+          image_name: image_name || null,
+        });
+      } else {
+        return res.status(400).json({ error: "Failed to send Docker image scan trigger" });
+      }
+    }
+
+    // Use the dedicated pushComplianceScan function with options
+    const success = agentWs.pushComplianceScan(host.api_id, profile_type, scanOptions);
+
+    if (success) {
+      res.json({
+        message: enable_remediation
+          ? "Compliance scan with remediation triggered"
+          : "Compliance scan triggered",
+        host_id: hostId,
+        profile_type,
+        enable_remediation,
+      });
+    } else {
+      res.status(400).json({ error: "Failed to send scan trigger" });
+    }
+  } catch (error) {
+    logger.error("[Compliance] Error triggering scan:", error);
+    res.status(500).json({ error: "Failed to trigger scan" });
   }
 });
 
