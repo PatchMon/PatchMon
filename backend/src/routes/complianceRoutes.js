@@ -158,13 +158,15 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
       }
 
       // Delete any "running" placeholder scans for this host/profile
-      await prisma.compliance_scans.deleteMany({
+      console.log(`=== DELETE RUNNING: host_id=${host.id}, profile_id=${profile.id} ===`);
+      const deleteResult = await prisma.compliance_scans.deleteMany({
         where: {
           host_id: host.id,
           profile_id: profile.id,
           status: "running",
         },
       });
+      console.log(`=== DELETE RUNNING: Deleted ${deleteResult.count} records ===`);
 
       // Create scan record
       const scan = await prisma.compliance_scans.create({
