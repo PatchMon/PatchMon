@@ -157,12 +157,20 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
           : null;
       }
 
-      // Delete any "running" placeholder scans for this host/profile
-      console.log(`=== DELETE RUNNING: host_id=${host.id}, profile_id=${profile.id} ===`);
+      // Delete any "running" placeholder scans for this host matching this profile type
+      // We match by profile type because bulk trigger creates running scans with first profile of type,
+      // but actual scan results may use a different profile name (same type, different profile_id)
+      const matchingProfiles = await prisma.compliance_profiles.findMany({
+        where: { type: profile_type },
+        select: { id: true },
+      });
+      const matchingProfileIds = matchingProfiles.map(p => p.id);
+      console.log(`=== DELETE RUNNING: host_id=${host.id}, profile_type=${profile_type}, matching ${matchingProfileIds.length} profile(s) ===`);
+
       const deleteResult = await prisma.compliance_scans.deleteMany({
         where: {
           host_id: host.id,
-          profile_id: profile.id,
+          profile_id: { in: matchingProfileIds },
           status: "running",
         },
       });
