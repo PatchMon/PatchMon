@@ -10,6 +10,7 @@ const { Prisma } = require("@prisma/client");
 const { authenticateToken } = require("../middleware/auth");
 const { v4: uuidv4, validate: uuidValidate } = require("uuid");
 const { verifyApiKey } = require("../utils/apiKeyUtils");
+const agentWs = require("../services/agentWs");
 
 const prisma = getPrismaClient();
 
@@ -848,9 +849,9 @@ router.get("/scans/active", async (req, res) => {
       },
     });
 
-    // Debug: log what we found
+    // Debug: always log scan count
+    console.log(`=== ACTIVE SCANS: Found ${activeScans.length} running scans ===`);
     if (activeScans.length > 0) {
-      console.log(`=== ACTIVE SCANS: Found ${activeScans.length} running scans ===`);
       activeScans.forEach(s => console.log(`  - ${s.id} status=${s.status} host=${s.host_id}`));
     }
 
@@ -1193,7 +1194,6 @@ router.post("/trigger/bulk", async (req, res) => {
     console.log(`=== BULK: Found ${hosts.length} hosts in DB ===`);
 
     const hostMap = new Map(hosts.map((h) => [h.id, h]));
-    const agentWs = require("../services/agentWs");
 
     const results = {
       triggered: [],
@@ -1388,8 +1388,6 @@ router.post("/trigger/:hostId", async (req, res) => {
     }
 
     // Use agentWs service to send compliance scan trigger
-    const agentWs = require("../services/agentWs");
-
     if (!agentWs.isConnected(host.api_id)) {
       return res.status(400).json({ error: "Host is not connected" });
     }
@@ -1526,8 +1524,6 @@ router.post("/upgrade-ssg/:hostId", async (req, res) => {
     }
 
     // Use agentWs service to send SSG upgrade command
-    const agentWs = require("../services/agentWs");
-
     if (!agentWs.isConnected(host.api_id)) {
       return res.status(400).json({ error: "Host is not connected" });
     }
@@ -1576,8 +1572,6 @@ router.post("/remediate/:hostId", async (req, res) => {
     }
 
     // Use agentWs service to send remediation command
-    const agentWs = require("../services/agentWs");
-
     if (!agentWs.isConnected(host.api_id)) {
       return res.status(400).json({ error: "Host is not connected" });
     }
