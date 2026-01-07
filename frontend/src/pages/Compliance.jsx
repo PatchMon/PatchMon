@@ -91,6 +91,7 @@ const Compliance = () => {
 		enableRemediation: false,
 	});
 	const [bulkScanResult, setBulkScanResult] = useState(null);
+	const [pendingScans, setPendingScans] = useState([]); // Hosts where scan was triggered but not yet in database
 	const prevActiveScanIds = useRef(new Set());
 	const [profileTypeFilter, setProfileTypeFilter] = useState("all"); // "all", "openscap", "docker-bench"
 
@@ -119,6 +120,7 @@ const Compliance = () => {
 	useEffect(() => {
 		const activeScans = activeScansData?.activeScans || [];
 		const currentIds = new Set(activeScans.map((s) => s.id));
+		const activeHostIds = new Set(activeScans.map((s) => s.hostId));
 
 		// Find scans that were active before but are now gone (completed)
 		for (const prevId of prevActiveScanIds.current) {
@@ -130,8 +132,28 @@ const Compliance = () => {
 			}
 		}
 
+		// Remove pending scans that now appear as real active scans
+		setPendingScans((prev) => prev.filter((p) => !activeHostIds.has(p.hostId)));
+
 		prevActiveScanIds.current = currentIds;
 	}, [activeScansData, queryClient, toast]);
+
+	// Clear stale pending scans after 60 seconds
+	useEffect(() => {
+		if (pendingScans.length === 0) return;
+
+		const interval = setInterval(() => {
+			const now = new Date().getTime();
+			setPendingScans((prev) =>
+				prev.filter((p) => {
+					const age = now - new Date(p.startedAt).getTime();
+					return age < 60000; // Remove after 60 seconds
+				})
+			);
+		}, 5000); // Check every 5 seconds
+
+		return () => clearInterval(interval);
+	}, [pendingScans.length]);
 
 	// Bulk scan mutation
 	const bulkScanMutation = useMutation({
@@ -140,6 +162,21 @@ const Compliance = () => {
 			setBulkScanResult(response.data);
 			queryClient.invalidateQueries(["compliance-active-scans"]);
 			const { success, failed } = response.data.summary || {};
+
+			// Track triggered hosts as pending scans for immediate UI feedback
+			if (response.data.triggered?.length > 0) {
+				const newPending = response.data.triggered.map((t) => ({
+					id: `pending-${t.hostId}`,
+					hostId: t.hostId,
+					hostName: t.hostName,
+					profileType: response.data.profile_type,
+					startedAt: new Date().toISOString(),
+					isPending: true,
+					connected: true,
+				}));
+				setPendingScans((prev) => [...prev, ...newPending]);
+			}
+
 			if (failed === 0) {
 				toast.success(`Started ${success} compliance scan(s)`);
 				// Auto-close modal after 3 seconds if all succeeded
@@ -175,7 +212,10 @@ const Compliance = () => {
 	}
 
 	const { summary, recent_scans, worst_hosts, top_failing_rules, top_warning_rules, profile_distribution, severity_breakdown, severity_by_profile_type, docker_bench_by_section, scan_age_distribution, profile_type_stats } = dashboard || {};
-	const activeScans = activeScansData?.activeScans || [];
+
+	// Combine real active scans with pending scans for display
+	const realActiveScans = activeScansData?.activeScans || [];
+	const activeScans = [...pendingScans, ...realActiveScans];
 
 	// Get stats for the selected profile type
 	const openscapStats = profile_type_stats?.find(p => p.type === "openscap");
@@ -476,21 +516,31 @@ const Compliance = () => {
 							<Link
 								key={scan.id}
 								to={`/hosts/${scan.hostId}`}
-								className="bg-secondary-800/50 rounded-lg p-3 border border-secondary-700 hover:border-blue-600 transition-colors"
+								className={`rounded-lg p-3 border transition-colors ${
+									scan.isPending
+										? "bg-yellow-900/30 border-yellow-700/50 hover:border-yellow-500"
+										: "bg-secondary-800/50 border-secondary-700 hover:border-blue-600"
+								}`}
 							>
 								<div className="flex items-center justify-between mb-2">
 									<span className="font-medium text-white truncate">
 										{scan.hostName}
 									</span>
-									{scan.connected ? (
+									{scan.isPending ? (
+										<Clock className="h-4 w-4 text-yellow-400 animate-pulse" title="Triggering..." />
+									) : scan.connected ? (
 										<Wifi className="h-4 w-4 text-green-400" title="Connected" />
 									) : (
 										<WifiOff className="h-4 w-4 text-red-400" title="Disconnected" />
 									)}
 								</div>
 								<div className="flex items-center gap-2 text-sm text-secondary-400">
-									<span className="px-2 py-0.5 bg-blue-900/50 text-blue-300 rounded text-xs">
-										{scan.profileType || "Scanning..."}
+									<span className={`px-2 py-0.5 rounded text-xs ${
+										scan.isPending
+											? "bg-yellow-900/50 text-yellow-300"
+											: "bg-blue-900/50 text-blue-300"
+									}`}>
+										{scan.isPending ? "Triggering..." : scan.profileType || "Scanning..."}
 									</span>
 									<span className="text-xs">
 										Started {formatDistanceToNow(new Date(scan.startedAt), { addSuffix: true })}
