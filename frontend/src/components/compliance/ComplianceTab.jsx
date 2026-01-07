@@ -429,10 +429,38 @@ const ComplianceTab = ({
 				console.log("[Compliance SSE] Progress:", data);
 				setScanProgress(data);
 
-				// If scan completed or failed, update UI
+				// If scan completed or failed, update UI immediately
 				if (data.phase === "completed" || data.phase === "failed") {
-					// Give a moment for the message to be displayed, then clear progress
-					setTimeout(() => setScanProgress(null), 5000);
+					// Set scan as no longer in progress
+					setScanInProgress(false);
+
+					// Show appropriate message
+					if (data.phase === "completed") {
+						setScanMessage({
+							type: "success",
+							text: data.message || "Scan completed!",
+						});
+					} else {
+						setScanMessage({
+							type: "error",
+							text: data.error || data.message || "Scan failed",
+						});
+					}
+
+					// Refetch data to get the latest results
+					refetchLatest();
+					refetchHistory();
+
+					// Auto-switch to results tab on completion
+					if (data.phase === "completed") {
+						setActiveSubtab("results");
+					}
+
+					// Clear messages after delay
+					setTimeout(() => {
+						setScanProgress(null);
+						setScanMessage(null);
+					}, 10000);
 				}
 			} catch (err) {
 				console.warn("[Compliance SSE] Failed to parse event:", err);
