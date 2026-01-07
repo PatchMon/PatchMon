@@ -1,6 +1,6 @@
 {
 	"name": "patchmon-backend",
-	"version": "1.7.49",
+	"version": "1.7.50",
 	"description": "Backend API for Linux Patch Monitoring System",
 	"license": "AGPL-3.0",
 	"main": "src/server.js",

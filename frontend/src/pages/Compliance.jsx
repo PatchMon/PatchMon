@@ -1033,44 +1033,363 @@ const Compliance = () => {
 				);
 			})()}
 
-			{/* Charts Section - For specific scan types */}
-			{profileTypeFilter !== "all" && filteredScans && filteredScans.length > 0 && (() => {
-				// Score ranges for bar chart - filtered scans
-				const scoreRanges = [
-					{ range: "90-100%", count: filteredScans.filter(s => s.score >= 90).length, color: "#22c55e" },
-					{ range: "80-89%", count: filteredScans.filter(s => s.score >= 80 && s.score < 90).length, color: "#84cc16" },
-					{ range: "70-79%", count: filteredScans.filter(s => s.score >= 70 && s.score < 80).length, color: "#eab308" },
-					{ range: "60-69%", count: filteredScans.filter(s => s.score >= 60 && s.score < 70).length, color: "#f97316" },
-					{ range: "<60%", count: filteredScans.filter(s => s.score < 60).length, color: "#ef4444" },
-				];
-
-				return (
-					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
-						<h3 className="text-white font-medium mb-4 flex items-center gap-2">
-							{profileTypeFilter === "openscap" ? (
-								<Server className="h-4 w-4 text-green-400" />
-							) : (
-								<Container className="h-4 w-4 text-blue-400" />
-							)}
-							{getFilterDisplayName()} - Score Distribution
-						</h3>
-						<div className="h-48">
-							<ResponsiveContainer width="100%" height="100%">
-								<BarChart data={scoreRanges} layout="vertical">
-									<XAxis type="number" stroke="#6b7280" fontSize={12} />
-									<YAxis type="category" dataKey="range" stroke="#6b7280" fontSize={12} width={60} />
-									<Tooltip content={<CustomTooltip type="scoreRange" />} />
-									<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-										{scoreRanges.map((entry, index) => (
-											<Cell key={`cell-${index}`} fill={entry.color} />
-										))}
-									</Bar>
-								</BarChart>
-							</ResponsiveContainer>
+			{/* ==================== OpenSCAP Tab Analysis ==================== */}
+			{profileTypeFilter === "openscap" && filteredSummary && (
+				<>
+					<div className="flex items-center gap-3 pt-4">
+						<div className="flex items-center gap-2">
+							<PieChartIcon className="h-5 w-5 text-green-400" />
+							<h2 className="text-lg font-semibold text-white">OpenSCAP Analysis</h2>
 						</div>
+						<div className="flex-1 h-px bg-green-700/50" />
 					</div>
-				);
-			})()}
+
+					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+						{/* Rule Pass/Fail Breakdown */}
+						{openscapStats && (
+							<div className="bg-secondary-800 rounded-lg border border-green-700/50 p-4">
+								<h3 className="text-white font-medium mb-1 flex items-center gap-2">
+									<CheckCircle className="h-4 w-4 text-green-400" />
+									Rule Results
+								</h3>
+								<p className="text-xs text-secondary-500 mb-3">{(openscapStats.total_passed + openscapStats.total_failed).toLocaleString()} rules evaluated</p>
+								<div className="h-40">
+									<ResponsiveContainer width="100%" height="100%">
+										<PieChart>
+											<Pie
+												data={[
+													{ name: "Passed", value: openscapStats.total_passed || 0, color: "#22c55e" },
+													{ name: "Failed", value: openscapStats.total_failed || 0, color: "#ef4444" },
+												].filter(d => d.value > 0)}
+												cx="50%"
+												cy="50%"
+												innerRadius={35}
+												outerRadius={60}
+												dataKey="value"
+												label={({ name, value }) => `${value.toLocaleString()}`}
+												labelLine={false}
+											>
+												<Cell fill="#22c55e" />
+												<Cell fill="#ef4444" />
+											</Pie>
+											<Tooltip content={<CustomTooltip type="ruleStatus" />} />
+										</PieChart>
+									</ResponsiveContainer>
+								</div>
+								<div className="flex justify-center gap-6 mt-2 text-sm">
+									<div className="flex items-center gap-2">
+										<div className="w-3 h-3 rounded-full bg-green-500" />
+										<span className="text-green-400">Passed: {openscapStats.total_passed?.toLocaleString()}</span>
+									</div>
+									<div className="flex items-center gap-2">
+										<div className="w-3 h-3 rounded-full bg-red-500" />
+										<span className="text-red-400">Failed: {openscapStats.total_failed?.toLocaleString()}</span>
+									</div>
+								</div>
+							</div>
+						)}
+
+						{/* Failures by Severity */}
+						{severity_by_profile_type && severity_by_profile_type.filter(s => s.profile_type === 'openscap').length > 0 && (() => {
+							const openscapSeverity = severity_by_profile_type.filter(s => s.profile_type === 'openscap');
+							const totalFailures = openscapSeverity.reduce((sum, s) => sum + s.count, 0);
+							const severityOrder = ['critical', 'high', 'medium', 'low'];
+							const severityColors = { critical: "#ef4444", high: "#f97316", medium: "#eab308", low: "#22c55e" };
+							const chartData = severityOrder
+								.map(sev => {
+									const count = openscapSeverity.find(s => s.severity === sev)?.count || 0;
+									if (count === 0) return null;
+									return { name: sev.charAt(0).toUpperCase() + sev.slice(1), count, color: severityColors[sev] };
+								})
+								.filter(Boolean);
+
+							return (
+								<div className="bg-secondary-800 rounded-lg border border-green-700/50 p-4">
+									<h3 className="text-white font-medium mb-1 flex items-center gap-2">
+										<AlertTriangle className="h-4 w-4 text-red-400" />
+										Failures by Severity
+									</h3>
+									<p className="text-xs text-secondary-500 mb-3">{totalFailures.toLocaleString()} total failures</p>
+									<div className="h-40">
+										<ResponsiveContainer width="100%" height="100%">
+											<BarChart data={chartData} layout="vertical">
+												<XAxis type="number" stroke="#6b7280" fontSize={12} />
+												<YAxis type="category" dataKey="name" stroke="#6b7280" fontSize={12} width={70} />
+												<Tooltip content={<CustomTooltip type="severity" />} />
+												<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+													{chartData.map((entry, index) => (
+														<Cell key={`cell-${index}`} fill={entry.color} />
+													))}
+												</Bar>
+											</BarChart>
+										</ResponsiveContainer>
+									</div>
+								</div>
+							);
+						})()}
+
+						{/* Score Distribution */}
+						{filteredScans && filteredScans.length > 0 && (() => {
+							const scoreRanges = [
+								{ range: "90-100%", count: filteredScans.filter(s => s.score >= 90).length, color: "#22c55e" },
+								{ range: "80-89%", count: filteredScans.filter(s => s.score >= 80 && s.score < 90).length, color: "#84cc16" },
+								{ range: "70-79%", count: filteredScans.filter(s => s.score >= 70 && s.score < 80).length, color: "#eab308" },
+								{ range: "60-69%", count: filteredScans.filter(s => s.score >= 60 && s.score < 70).length, color: "#f97316" },
+								{ range: "<60%", count: filteredScans.filter(s => s.score < 60).length, color: "#ef4444" },
+							];
+							return (
+								<div className="bg-secondary-800 rounded-lg border border-green-700/50 p-4">
+									<h3 className="text-white font-medium mb-1 flex items-center gap-2">
+										<BarChart3 className="h-4 w-4 text-green-400" />
+										Score Distribution
+									</h3>
+									<p className="text-xs text-secondary-500 mb-3">{filteredScans.length} scans</p>
+									<div className="h-40">
+										<ResponsiveContainer width="100%" height="100%">
+											<BarChart data={scoreRanges} layout="vertical">
+												<XAxis type="number" stroke="#6b7280" fontSize={12} />
+												<YAxis type="category" dataKey="range" stroke="#6b7280" fontSize={12} width={60} />
+												<Tooltip content={<CustomTooltip type="scoreRange" />} />
+												<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+													{scoreRanges.map((entry, index) => (
+														<Cell key={`cell-${index}`} fill={entry.color} />
+													))}
+												</Bar>
+											</BarChart>
+										</ResponsiveContainer>
+									</div>
+								</div>
+							);
+						})()}
+
+						{/* Last Scan Age - OpenSCAP only */}
+						{scan_age_distribution && (() => {
+							const chartData = [
+								{ name: "Today", count: scan_age_distribution.today?.openscap || 0, color: "#22c55e" },
+								{ name: "This Week", count: scan_age_distribution.this_week?.openscap || 0, color: "#84cc16" },
+								{ name: "This Month", count: scan_age_distribution.this_month?.openscap || 0, color: "#eab308" },
+								{ name: "Older", count: scan_age_distribution.older?.openscap || 0, color: "#ef4444" },
+							].filter(d => d.count > 0);
+							const totalScans = chartData.reduce((sum, d) => sum + d.count, 0);
+
+							if (totalScans === 0) return null;
+
+							return (
+								<div className="bg-secondary-800 rounded-lg border border-green-700/50 p-4">
+									<h3 className="text-white font-medium mb-1 flex items-center gap-2">
+										<Clock className="h-4 w-4 text-green-400" />
+										Scan Freshness
+									</h3>
+									<p className="text-xs text-secondary-500 mb-3">{totalScans} OpenSCAP scans</p>
+									<div className="h-40">
+										<ResponsiveContainer width="100%" height="100%">
+											<BarChart data={chartData} layout="vertical">
+												<XAxis type="number" stroke="#6b7280" fontSize={12} />
+												<YAxis type="category" dataKey="name" stroke="#6b7280" fontSize={11} width={80} />
+												<Tooltip content={<CustomTooltip type="scanAge" />} />
+												<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+													{chartData.map((entry, index) => (
+														<Cell key={`cell-${index}`} fill={entry.color} />
+													))}
+												</Bar>
+											</BarChart>
+										</ResponsiveContainer>
+									</div>
+								</div>
+							);
+						})()}
+					</div>
+				</>
+			)}
+
+			{/* ==================== Docker Bench Tab Analysis ==================== */}
+			{profileTypeFilter === "docker-bench" && filteredSummary && (
+				<>
+					<div className="flex items-center gap-3 pt-4">
+						<div className="flex items-center gap-2">
+							<PieChartIcon className="h-5 w-5 text-blue-400" />
+							<h2 className="text-lg font-semibold text-white">Docker Bench Analysis</h2>
+						</div>
+						<div className="flex-1 h-px bg-blue-700/50" />
+					</div>
+
+					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+						{/* Rule Pass/Warn Breakdown */}
+						{dockerBenchStats && (
+							<div className="bg-secondary-800 rounded-lg border border-blue-700/50 p-4">
+								<h3 className="text-white font-medium mb-1 flex items-center gap-2">
+									<CheckCircle className="h-4 w-4 text-blue-400" />
+									Rule Results
+								</h3>
+								<p className="text-xs text-secondary-500 mb-3">{(dockerBenchStats.total_passed + dockerBenchStats.total_warnings).toLocaleString()} rules evaluated</p>
+								<div className="h-40">
+									<ResponsiveContainer width="100%" height="100%">
+										<PieChart>
+											<Pie
+												data={[
+													{ name: "Passed", value: dockerBenchStats.total_passed || 0, color: "#22c55e" },
+													{ name: "Warnings", value: dockerBenchStats.total_warnings || 0, color: "#eab308" },
+												].filter(d => d.value > 0)}
+												cx="50%"
+												cy="50%"
+												innerRadius={35}
+												outerRadius={60}
+												dataKey="value"
+												label={({ name, value }) => `${value.toLocaleString()}`}
+												labelLine={false}
+											>
+												<Cell fill="#22c55e" />
+												<Cell fill="#eab308" />
+											</Pie>
+											<Tooltip content={<CustomTooltip type="ruleStatus" />} />
+										</PieChart>
+									</ResponsiveContainer>
+								</div>
+								<div className="flex justify-center gap-6 mt-2 text-sm">
+									<div className="flex items-center gap-2">
+										<div className="w-3 h-3 rounded-full bg-green-500" />
+										<span className="text-green-400">Passed: {dockerBenchStats.total_passed?.toLocaleString()}</span>
+									</div>
+									<div className="flex items-center gap-2">
+										<div className="w-3 h-3 rounded-full bg-yellow-500" />
+										<span className="text-yellow-400">Warnings: {dockerBenchStats.total_warnings?.toLocaleString()}</span>
+									</div>
+								</div>
+							</div>
+						)}
+
+						{/* Warnings by Section */}
+						{docker_bench_by_section && docker_bench_by_section.length > 0 && (() => {
+							const totalWarnings = docker_bench_by_section.reduce((sum, s) => sum + s.count, 0);
+							const sectionColors = {
+								"Host Configuration": "#ef4444",
+								"Docker Daemon Configuration": "#f97316",
+								"Docker Daemon Configuration Files": "#eab308",
+								"Container Images and Build File": "#84cc16",
+								"Container Runtime": "#22c55e",
+								"Docker Security Operations": "#3b82f6",
+								"Docker Swarm Configuration": "#8b5cf6",
+							};
+							const chartData = docker_bench_by_section.map(s => ({
+								name: s.section,
+								shortName: s.section.length > 20 ? `${s.section.slice(0, 17)}...` : s.section,
+								count: s.count,
+								color: sectionColors[s.section] || "#6b7280",
+							}));
+
+							return (
+								<div className="bg-secondary-800 rounded-lg border border-blue-700/50 p-4">
+									<h3 className="text-white font-medium mb-1 flex items-center gap-2">
+										<Container className="h-4 w-4 text-yellow-400" />
+										Warnings by Section
+									</h3>
+									<p className="text-xs text-secondary-500 mb-3">{totalWarnings.toLocaleString()} total warnings</p>
+									<div className="h-40">
+										<ResponsiveContainer width="100%" height="100%">
+											<BarChart data={chartData} layout="vertical">
+												<XAxis type="number" stroke="#6b7280" fontSize={12} />
+												<YAxis type="category" dataKey="shortName" stroke="#6b7280" fontSize={10} width={85} />
+												<Tooltip
+													content={({ active, payload }) => {
+														if (!active || !payload || payload.length === 0) return null;
+														const data = payload[0].payload;
+														return (
+															<div className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 shadow-lg max-w-xs">
+																<p className="text-white font-medium text-sm mb-1">{data.name}</p>
+																<div className="flex items-center gap-2 text-sm">
+																	<div className="w-2.5 h-2.5 rounded" style={{ backgroundColor: data.color }} />
+																	<span className="text-gray-300">Warnings:</span>
+																	<span className="text-white font-medium">{data.count.toLocaleString()}</span>
+																</div>
+															</div>
+														);
+													}}
+												/>
+												<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+													{chartData.map((entry, index) => (
+														<Cell key={`cell-${index}`} fill={entry.color} />
+													))}
+												</Bar>
+											</BarChart>
+										</ResponsiveContainer>
+									</div>
+								</div>
+							);
+						})()}
+
+						{/* Score Distribution */}
+						{filteredScans && filteredScans.length > 0 && (() => {
+							const scoreRanges = [
+								{ range: "90-100%", count: filteredScans.filter(s => s.score >= 90).length, color: "#22c55e" },
+								{ range: "80-89%", count: filteredScans.filter(s => s.score >= 80 && s.score < 90).length, color: "#84cc16" },
+								{ range: "70-79%", count: filteredScans.filter(s => s.score >= 70 && s.score < 80).length, color: "#eab308" },
+								{ range: "60-69%", count: filteredScans.filter(s => s.score >= 60 && s.score < 70).length, color: "#f97316" },
+								{ range: "<60%", count: filteredScans.filter(s => s.score < 60).length, color: "#ef4444" },
+							];
+							return (
+								<div className="bg-secondary-800 rounded-lg border border-blue-700/50 p-4">
+									<h3 className="text-white font-medium mb-1 flex items-center gap-2">
+										<BarChart3 className="h-4 w-4 text-blue-400" />
+										Score Distribution
+									</h3>
+									<p className="text-xs text-secondary-500 mb-3">{filteredScans.length} scans</p>
+									<div className="h-40">
+										<ResponsiveContainer width="100%" height="100%">
+											<BarChart data={scoreRanges} layout="vertical">
+												<XAxis type="number" stroke="#6b7280" fontSize={12} />
+												<YAxis type="category" dataKey="range" stroke="#6b7280" fontSize={12} width={60} />
+												<Tooltip content={<CustomTooltip type="scoreRange" />} />
+												<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+													{scoreRanges.map((entry, index) => (
+														<Cell key={`cell-${index}`} fill={entry.color} />
+													))}
+												</Bar>
+											</BarChart>
+										</ResponsiveContainer>
+									</div>
+								</div>
+							);
+						})()}
+
+						{/* Last Scan Age - Docker Bench only */}
+						{scan_age_distribution && (() => {
+							const chartData = [
+								{ name: "Today", count: scan_age_distribution.today?.["docker-bench"] || 0, color: "#22c55e" },
+								{ name: "This Week", count: scan_age_distribution.this_week?.["docker-bench"] || 0, color: "#84cc16" },
+								{ name: "This Month", count: scan_age_distribution.this_month?.["docker-bench"] || 0, color: "#eab308" },
+								{ name: "Older", count: scan_age_distribution.older?.["docker-bench"] || 0, color: "#ef4444" },
+							].filter(d => d.count > 0);
+							const totalScans = chartData.reduce((sum, d) => sum + d.count, 0);
+
+							if (totalScans === 0) return null;
+
+							return (
+								<div className="bg-secondary-800 rounded-lg border border-blue-700/50 p-4">
+									<h3 className="text-white font-medium mb-1 flex items-center gap-2">
+										<Clock className="h-4 w-4 text-blue-400" />
+										Scan Freshness
+									</h3>
+									<p className="text-xs text-secondary-500 mb-3">{totalScans} Docker Bench scans</p>
+									<div className="h-40">
+										<ResponsiveContainer width="100%" height="100%">
+											<BarChart data={chartData} layout="vertical">
+												<XAxis type="number" stroke="#6b7280" fontSize={12} />
+												<YAxis type="category" dataKey="name" stroke="#6b7280" fontSize={11} width={80} />
+												<Tooltip content={<CustomTooltip type="scanAge" />} />
+												<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+													{chartData.map((entry, index) => (
+														<Cell key={`cell-${index}`} fill={entry.color} />
+													))}
+												</Bar>
+											</BarChart>
+										</ResponsiveContainer>
+									</div>
+								</div>
+							);
+						})()}
+					</div>
+				</>
+			)}
 
 			{/* Additional Charts - Severity (OpenSCAP), Section (Docker Bench) & Profile Distribution - Only for "All Scans" tab */}
 			{profileTypeFilter === "all" && ((severity_by_profile_type && severity_by_profile_type.length > 0) || (docker_bench_by_section && docker_bench_by_section.length > 0) || (profile_distribution && profile_distribution.length > 0)) && (
