@@ -72,7 +72,7 @@ const Packages = () => {
 					const savedCol = savedConfig.find((col) => col.id === defaultCol.id);
 					return savedCol ? { ...defaultCol, ...savedCol } : defaultCol;
 				});
-			} catch (e) {
+			} catch (_e) {
 				localStorage.removeItem("packages-column-config");
 			}
 		}

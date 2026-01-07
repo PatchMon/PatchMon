@@ -79,7 +79,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 			const cachedUsername = getCachedUsername();
 			setSshConfig((prev) => ({ ...prev, username: cachedUsername }));
 		}
-	}, [host?.id]);
+	}, [host?.id, getCachedUsername]);
 
 	// Save username to localStorage when it changes (debounced on blur/connect)
 	const saveUsername = (username) => {
@@ -204,7 +204,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	);
 
 	// Accept command suggestion
-	const acceptSuggestion = useCallback(() => {
+	const _acceptSuggestion = useCallback(() => {
 		if (commandSuggestion && wsRef.current?.readyState === WebSocket.OPEN) {
 			wsRef.current.send(
 				JSON.stringify({
@@ -229,7 +229,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	}, [commandSuggestion, currentInput, aiEnabled, getCommandCompletion]);
 
 	// Clear suggestion
-	const clearSuggestion = useCallback(() => {
+	const _clearSuggestion = useCallback(() => {
 		setCommandSuggestion("");
 	}, []);
 
@@ -299,7 +299,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 			wsRef.current.send(
 				JSON.stringify({
 					type: "input",
-					data: command + "\r",
+					data: `${command}\r`,
 				}),
 			);
 			setShowInstallCommands(false);
@@ -405,7 +405,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 			window.removeEventListener("resize", handleResize);
 			term.dispose();
 		};
-	}, [isOpen, isConnected]);
+	}, [isOpen, isConnected, embedded, isConnecting]);
 
 	// Resize terminal when AI panel opens/closes
 	useEffect(() => {
@@ -427,7 +427,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 			}, 350); // Match CSS transition duration
 			return () => clearTimeout(resizeTimeout);
 		}
-	}, [aiPanelOpen, isConnected]);
+	}, [isConnected]);
 
 	// Connect to SSH via WebSocket
 	const connectSsh = async () => {
@@ -534,7 +534,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 						console.log("[SSH Terminal] Connect message sent");
 					} catch (err) {
 						console.error("[SSH Terminal] Error sending connect message:", err);
-						setError("Failed to send connection request: " + err.message);
+						setError(`Failed to send connection request: ${err.message}`);
 					}
 				} else {
 					console.error(
@@ -830,7 +830,8 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 		commandSuggestion,
 		aiEnabled,
 		handleInputChange,
-		getCommandCompletion,
+		getCommandCompletion, // Reset idle timeout on input
+		resetIdleTimeout,
 	]);
 
 	// Set up idle timeout when connected, reset on terminal data
@@ -858,15 +859,15 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 				clearTimeout(idleWarningTimeoutRef.current);
 			}
 		};
-	}, [isConnected]);
+	}, [isConnected, resetIdleTimeout]);
 
 	// Reset timeout when receiving terminal data
 	useEffect(() => {
 		if (!isConnected || !terminalInstanceRef.current) return;
 
-		const term = terminalInstanceRef.current;
+		const _term = terminalInstanceRef.current;
 		// Monitor for any terminal activity to reset timeout
-		const handleActivity = () => {
+		const _handleActivity = () => {
 			resetIdleTimeout();
 		};
 
@@ -877,7 +878,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 		return () => {
 			// Cleanup if needed
 		};
-	}, [isConnected]);
+	}, [isConnected, resetIdleTimeout]);
 
 	// Collapse sidebar when SSH terminal opens (only in modal mode), restore when it closes
 	useEffect(() => {
@@ -1135,7 +1136,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 											autoComplete="username"
 											className="w-full px-3 py-2 text-sm bg-secondary-700 border border-secondary-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
 											placeholder="root"
-											tabIndex={1}
+											tabIndex="0"
 										/>
 									</div>
 									<div className="flex-1">
@@ -1155,7 +1156,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 											}}
 											className="w-full px-3 py-2 text-sm bg-secondary-700 border border-secondary-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
 											placeholder="Password"
-											tabIndex={2}
+											tabIndex="0"
 										/>
 									</div>
 									<div className="w-20">
@@ -1173,7 +1174,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 											}
 											className="w-full px-2 py-2 text-sm bg-secondary-700 border border-secondary-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
 											placeholder="22"
-											tabIndex={3}
+											tabIndex="0"
 										/>
 									</div>
 									<button
@@ -1181,7 +1182,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 										onClick={connectSsh}
 										disabled={!sshConfig.username || !sshConfig.password}
 										className="px-4 py-2 text-sm bg-primary-600 hover:bg-primary-700 text-white font-medium rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap shadow-sm hover:shadow disabled:shadow-none"
-										tabIndex={4}
+										tabIndex="0"
 									>
 										Connect
 									</button>
@@ -1205,7 +1206,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 											autoComplete="username"
 											className="w-full px-3 py-2 text-sm bg-secondary-700 border border-secondary-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
 											placeholder="root"
-											tabIndex={1}
+											tabIndex="0"
 										/>
 									</div>
 									<div className="w-20">
@@ -1223,7 +1224,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 											}
 											className="w-full px-2 py-2 text-sm bg-secondary-700 border border-secondary-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
 											placeholder="22"
-											tabIndex={4}
+											tabIndex="0"
 										/>
 									</div>
 								</div>
@@ -1247,7 +1248,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 											className="w-full px-3 py-2 text-sm bg-secondary-700 border border-secondary-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-primary-500 font-mono resize-none"
 											placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
 											rows={4}
-											tabIndex={2}
+											tabIndex="0"
 										/>
 										<div className="mt-1 space-y-0.5">
 											<p className="text-xs text-secondary-400">
@@ -1281,7 +1282,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 											}}
 											className="w-full px-3 py-2 text-sm bg-secondary-700 border border-secondary-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
 											placeholder="Passphrase (optional)"
-											tabIndex={3}
+											tabIndex="0"
 										/>
 									</div>
 								</>
@@ -1294,7 +1295,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 									onClick={connectSsh}
 									disabled={!sshConfig.username || !sshConfig.privateKey}
 									className="w-full px-4 py-2 text-sm bg-primary-600 hover:bg-primary-700 text-white font-medium rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow disabled:shadow-none"
-									tabIndex={5}
+									tabIndex="0"
 								>
 									Connect
 								</button>

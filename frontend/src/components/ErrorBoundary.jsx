@@ -82,12 +82,14 @@ class ErrorBoundary extends Component {
 
 						<div className="flex flex-col sm:flex-row gap-3 justify-center">
 							<button
+								type="button"
 								onClick={this.handleReload}
 								className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 transition-colors font-medium"
 							>
 								Reload Page
 							</button>
 							<button
+								type="button"
 								onClick={this.handleGoHome}
 								className="px-4 py-2 bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-200 rounded-md hover:bg-secondary-300 dark:hover:bg-secondary-500 transition-colors font-medium"
 							>

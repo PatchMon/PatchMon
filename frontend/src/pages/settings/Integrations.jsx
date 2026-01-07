@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import SettingsLayout from "../../components/SettingsLayout";
-import api, { formatDate } from "../../utils/api";
+import api from "../../utils/api";
 
 const Integrations = () => {
 	// Generate unique IDs for form elements

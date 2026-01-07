@@ -56,7 +56,7 @@ const Layout = ({ children }) => {
 		const saved = localStorage.getItem("sidebarCollapsed");
 		return saved ? JSON.parse(saved) : false;
 	});
-	const [githubStars, setGithubStars] = useState(null);
+	const [_githubStars, _setGithubStars] = useState(null);
 	const [_userMenuOpen, setUserMenuOpen] = useState(false);
 	const [socialMediaStats, setSocialMediaStats] = useState({
 		github_stars: null,

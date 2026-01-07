@@ -1,10 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-	Activity,
 	ArrowDown,
 	ArrowUp,
 	ArrowUpDown,
-	CheckCircle,
 	Clock,
 	Play,
 	Settings,

@@ -3,11 +3,9 @@ import { formatDistanceToNow } from "date-fns";
 import {
 	AlertTriangle,
 	BarChart3,
-	Check,
 	CheckCircle,
 	Clock,
 	Container,
-	List,
 	PieChart as PieChartIcon,
 	Play,
 	RefreshCw,
@@ -18,11 +16,9 @@ import {
 	ShieldOff,
 	ShieldX,
 	TrendingDown,
-	TrendingUp,
 	Wifi,
 	WifiOff,
 	X,
-	XCircle,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -30,7 +26,6 @@ import {
 	Bar,
 	BarChart,
 	Cell,
-	Legend,
 	Pie,
 	PieChart,
 	ResponsiveContainer,
@@ -199,7 +194,7 @@ const Compliance = () => {
 		if (pendingScans.length === 0) return;
 
 		const interval = setInterval(() => {
-			const now = new Date().getTime();
+			const now = Date.now();
 			setPendingScans((prev) =>
 				prev.filter((p) => {
 					const age = now - new Date(p.startedAt).getTime();
@@ -275,7 +270,7 @@ const Compliance = () => {
 		top_failing_rules,
 		top_warning_rules,
 		profile_distribution,
-		severity_breakdown,
+		_severity_breakdown,
 		severity_by_profile_type,
 		docker_bench_by_section,
 		scan_age_distribution,
@@ -1082,7 +1077,7 @@ const Compliance = () => {
 				(summary.total_hosts > 0 || summary.unscanned > 0) &&
 				(() => {
 					// Use HOST-LEVEL counts (based on worst score per host)
-					const hostDistribution = [
+					const _hostDistribution = [
 						{
 							name: "Compliant Hosts",
 							value: summary.hosts_compliant || 0,
@@ -1611,7 +1606,7 @@ const Compliance = () => {
 												innerRadius={35}
 												outerRadius={60}
 												dataKey="value"
-												label={({ name, value }) => `${value.toLocaleString()}`}
+												label={({ value }) => `${value.toLocaleString()}`}
 												labelLine={false}
 											>
 												<Cell fill="#22c55e" />
@@ -1896,7 +1891,7 @@ const Compliance = () => {
 												innerRadius={35}
 												outerRadius={60}
 												dataKey="value"
-												label={({ name, value }) => `${value.toLocaleString()}`}
+												label={({ value }) => `${value.toLocaleString()}`}
 												labelLine={false}
 											>
 												<Cell fill="#22c55e" />

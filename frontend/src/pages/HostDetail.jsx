@@ -8,14 +8,10 @@ import {
 	CheckCircle,
 	CheckCircle2,
 	Clock,
-	Clock3,
 	Container,
-	Copy,
 	Cpu,
 	Database,
 	Download,
-	Eye,
-	EyeOff,
 	HardDrive,
 	Key,
 	MemoryStick,
@@ -30,7 +26,7 @@ import {
 	Wifi,
 	X,
 } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import ComplianceTab from "../components/compliance/ComplianceTab";
 import InlineEdit from "../components/InlineEdit";
@@ -182,7 +178,7 @@ const HostDetail = () => {
 	});
 
 	// Fetch latest compliance scan for quick view (only if compliance might be enabled)
-	const { data: complianceLatest, isLoading: isLoadingCompliance } = useQuery({
+	const { data: complianceLatest, isLoading: _isLoadingCompliance } = useQuery({
 		queryKey: ["compliance-latest-quickview", hostId],
 		queryFn: () =>
 			complianceAPI
@@ -3232,7 +3228,7 @@ const HostDetail = () => {
 																					([, status]) =>
 																						status !== "unavailable",
 																				)
-																				.map(([name, status]) => (
+																				.map(([name, _status]) => (
 																					<span
 																						key={name}
 																						className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"

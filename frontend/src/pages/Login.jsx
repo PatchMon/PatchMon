@@ -61,7 +61,7 @@ const Login = () => {
 	const [showGithubVersionOnLogin, setShowGithubVersionOnLogin] =
 		useState(true);
 	const [latestRelease, setLatestRelease] = useState(null);
-	const [githubStars, setGithubStars] = useState(null);
+	const [_githubStars, setGithubStars] = useState(null);
 	const [oidcConfig, setOidcConfig] = useState({
 		enabled: false,
 		buttonText: "Login with SSO",
@@ -276,7 +276,7 @@ const Login = () => {
 				if (cachedRelease && isMounted) {
 					try {
 						setLatestRelease(JSON.parse(cachedRelease));
-					} catch (e) {
+					} catch (_e) {
 						localStorage.removeItem("githubLatestRelease");
 					}
 				}
@@ -314,7 +314,7 @@ const Login = () => {
 									: prev.linkedin_followers,
 						}));
 					}
-				} catch (statsError) {
+				} catch (_statsError) {
 					// Silently fail - social media stats are optional
 				}
 
@@ -1042,9 +1042,9 @@ const Login = () => {
 									)}
 
 									<button
-										onClick={() =>
-											(window.location.href = "/api/v1/auth/oidc/login")
-										}
+										onClick={() => {
+											window.location.href = "/api/v1/auth/oidc/login";
+										}}
 										className={`${oidcConfig.disableLocalAuth ? "" : "mt-4"} w-full flex justify-center py-2 px-4 border border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-800 hover:bg-secondary-50 dark:hover:bg-secondary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500`}
 										type="button"
 									>

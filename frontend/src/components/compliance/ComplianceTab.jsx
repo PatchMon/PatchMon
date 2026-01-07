@@ -35,8 +35,6 @@ import {
 	Bar,
 	BarChart,
 	Cell,
-	Pie,
-	PieChart,
 	ResponsiveContainer,
 	Tooltip,
 	XAxis,
@@ -96,7 +94,7 @@ const ComplianceTab = ({
 	const [expandedSections, setExpandedSections] = useState({}); // Track which sections are expanded
 	const [profileTypeFilter, setProfileTypeFilter] = useState(null); // Filter by profile type (null = show latest overall)
 	const resultsPerPage = 25; // Number of results per page
-	const queryClient = useQueryClient();
+	const _queryClient = useQueryClient();
 
 	// Persist scan state in sessionStorage to survive tab switches
 	const scanStateKey = `compliance-scan-${hostId}`;
@@ -115,7 +113,7 @@ const ComplianceTab = ({
 				// Clear stale scan state
 				sessionStorage.removeItem(scanStateKey);
 			}
-		} catch (e) {
+		} catch (_e) {
 			// Ignore parsing errors
 		}
 		return false;
@@ -132,7 +130,7 @@ const ComplianceTab = ({
 					return parsed;
 				}
 			}
-		} catch (e) {
+		} catch (_e) {
 			// Ignore parsing errors
 		}
 		return null;
@@ -147,7 +145,7 @@ const ComplianceTab = ({
 	};
 	const setScanMessage = (msg, profile = null) => {
 		setScanMessageState(msg);
-		if (msg && msg.startTime) {
+		if (msg?.startTime) {
 			const toSave = { ...msg };
 			if (profile) toSave.profileName = profile;
 			sessionStorage.setItem(scanStateKey, JSON.stringify(toSave));
@@ -219,7 +217,10 @@ const ComplianceTab = ({
 				setSelectedProfile(firstProfile.xccdf_id || firstProfile.id);
 			}
 		}
-	}, [integrationStatus?.status?.scanner_info?.available_profiles]);
+	}, [
+		integrationStatus?.status?.scanner_info?.available_profiles,
+		selectedProfile,
+	]);
 
 	// Auto-switch status filter based on profile type when viewing results
 	// Docker Bench uses "warn" for issues, OpenSCAP uses "fail"
@@ -228,7 +229,7 @@ const ComplianceTab = ({
 		if (profileType === "docker-bench" && statusFilter === "fail") {
 			setStatusFilter("warn");
 		}
-	}, [latestScan?.compliance_profiles?.type]);
+	}, [latestScan?.compliance_profiles?.type, statusFilter]);
 
 	// Auto-select the first available profile type when scan data loads
 	useEffect(() => {
@@ -247,7 +248,7 @@ const ComplianceTab = ({
 				setStatusFilter("warn");
 			}
 		}
-	}, [scansByType, latestScan?.compliance_profiles?.type]);
+	}, [scansByType, latestScan?.compliance_profiles?.type, profileTypeFilter]);
 
 	// SSG content update mutation
 	const [updateMessage, setUpdateMessage] = useState(null);
@@ -399,7 +400,14 @@ const ComplianceTab = ({
 			}, 10000); // Poll every 10 seconds instead of 5 to reduce load
 		}
 		return () => clearInterval(pollInterval);
-	}, [scanInProgress, scanMessage?.startTime, refetchLatest, refetchHistory]);
+	}, [
+		scanInProgress,
+		scanMessage?.startTime,
+		refetchLatest,
+		refetchHistory,
+		setScanInProgress,
+		setScanMessage,
+	]);
 
 	// SSE connection for real-time compliance scan progress
 	useEffect(() => {
@@ -506,7 +514,7 @@ const ComplianceTab = ({
 		return styles[status] || styles.skip;
 	};
 
-	const filteredResults =
+	const _filteredResults =
 		latestScan?.compliance_results?.filter((r) =>
 			statusFilter === "all" ? true : r.status === statusFilter,
 		) ||
@@ -876,7 +884,7 @@ const ComplianceTab = ({
 														<Bar dataKey="count" radius={[0, 4, 4, 0]}>
 															{scansByType["docker-bench"].section_breakdown
 																.slice(0, 4)
-																.map((entry, index) => (
+																.map((_entry, index) => (
 																	<Cell
 																		key={`cell-${index}`}
 																		fill={
@@ -2528,14 +2536,12 @@ const ComplianceTab = ({
 																				title.match(/^Install\s+(.+)$/i);
 																			if (installMatch) {
 																				return (
-																					<>
-																						<p>
-																							The package{" "}
-																							<strong>{installMatch[1]}</strong>{" "}
-																							must be installed but is not
-																							present on this system.
-																						</p>
-																					</>
+																					<p>
+																						The package{" "}
+																						<strong>{installMatch[1]}</strong>{" "}
+																						must be installed but is not present
+																						on this system.
+																					</p>
 																				);
 																			}
 
@@ -2968,7 +2974,7 @@ const ComplianceTab = ({
 				{/* Full History List */}
 				{scanHistory?.scans && scanHistory.scans.length > 0 ? (
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700 divide-y divide-secondary-700">
-						{scanHistory.scans.map((scan, index) => {
+						{scanHistory.scans.map((scan, _index) => {
 							const type = scan.compliance_profiles?.type || "unknown";
 							const typeInfo = typeLabels[type] || typeLabels.unknown;
 							const isDockerBench = type === "docker-bench";
@@ -3080,7 +3086,7 @@ const ComplianceTab = ({
 			info?.openscap_version;
 		const dockerBenchAvailable =
 			components["docker-bench"] === "ready" || info?.docker_bench_available;
-		const oscapDockerAvailable =
+		const _oscapDockerAvailable =
 			components["oscap-docker"] === "ready" || info?.oscap_docker_available;
 
 		// Mismatch: compliance enabled but scanner not available

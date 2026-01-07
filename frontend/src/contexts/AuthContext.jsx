@@ -12,7 +12,7 @@ import { isCorsError } from "../utils/api";
 // Development-only logging to prevent error details exposure in production
 const isDev = import.meta.env.DEV;
 const devLog = (...args) => isDev && console.log(...args);
-const devError = (...args) => isDev && console.error(...args);
+const _devError = (...args) => isDev && console.error(...args);
 
 const AuthContext = createContext();
 

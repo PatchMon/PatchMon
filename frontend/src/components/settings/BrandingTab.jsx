@@ -55,13 +55,13 @@ const BrandingTab = () => {
 			}
 			return data;
 		},
-		onSuccess: async (data, variables) => {
+		onSuccess: async (_data, variables) => {
 			// Invalidate and refetch settings to get updated timestamp
 			queryClient.invalidateQueries(["settings"]);
 			// Wait for refetch to complete before closing modal
 			try {
 				await queryClient.refetchQueries(["settings"]);
-			} catch (error) {
+			} catch (_error) {
 				// Continue anyway - settings will update on next render
 			}
 			setLogoUploadState((prev) => ({
