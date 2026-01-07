@@ -41,6 +41,7 @@ const CustomTooltip = ({ active, payload, label, type }) => {
 		if (type === "severity") return `${label} Severity`;
 		if (type === "scoreRange") return `Score: ${label}`;
 		if (type === "profile") return label;
+		if (type === "scanAge") return `${label}`;
 		return label;
 	};
 
@@ -1254,16 +1255,36 @@ const Compliance = () => {
 						</div>
 					)}
 
-					{/* Last Scan Age - How fresh is the compliance data */}
+					{/* Last Scan Age - How fresh is the compliance data by scan type */}
 					{scan_age_distribution && (summary?.total_hosts > 0) && (() => {
 						const chartData = [
-							{ name: "Today", count: scan_age_distribution.today, color: "#22c55e" },
-							{ name: "This Week", count: scan_age_distribution.this_week, color: "#84cc16" },
-							{ name: "This Month", count: scan_age_distribution.this_month, color: "#eab308" },
-							{ name: "Older", count: scan_age_distribution.older, color: "#ef4444" },
-						].filter(d => d.count > 0);
+							{
+								name: "Today",
+								openscap: scan_age_distribution.today?.openscap || 0,
+								dockerBench: scan_age_distribution.today?.["docker-bench"] || 0,
+								total: (scan_age_distribution.today?.openscap || 0) + (scan_age_distribution.today?.["docker-bench"] || 0),
+							},
+							{
+								name: "This Week",
+								openscap: scan_age_distribution.this_week?.openscap || 0,
+								dockerBench: scan_age_distribution.this_week?.["docker-bench"] || 0,
+								total: (scan_age_distribution.this_week?.openscap || 0) + (scan_age_distribution.this_week?.["docker-bench"] || 0),
+							},
+							{
+								name: "This Month",
+								openscap: scan_age_distribution.this_month?.openscap || 0,
+								dockerBench: scan_age_distribution.this_month?.["docker-bench"] || 0,
+								total: (scan_age_distribution.this_month?.openscap || 0) + (scan_age_distribution.this_month?.["docker-bench"] || 0),
+							},
+							{
+								name: "Older",
+								openscap: scan_age_distribution.older?.openscap || 0,
+								dockerBench: scan_age_distribution.older?.["docker-bench"] || 0,
+								total: (scan_age_distribution.older?.openscap || 0) + (scan_age_distribution.older?.["docker-bench"] || 0),
+							},
+						].filter(d => d.total > 0);
 
-						const totalScanned = chartData.reduce((sum, d) => sum + d.count, 0);
+						const totalScans = chartData.reduce((sum, d) => sum + d.total, 0);
 
 						return (
 							<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
@@ -1271,8 +1292,8 @@ const Compliance = () => {
 									<Clock className="h-4 w-4 text-primary-400" />
 									Last Scan Age
 								</h3>
-								<p className="text-xs text-secondary-500 mb-3">How fresh is your compliance data ({totalScanned} hosts)</p>
-								<div className="h-48">
+								<p className="text-xs text-secondary-500 mb-3">How fresh is your compliance data ({totalScans} scans)</p>
+								<div className="h-40">
 									<ResponsiveContainer width="100%" height="100%">
 										<BarChart data={chartData} layout="vertical">
 											<XAxis type="number" stroke="#6b7280" fontSize={12} />
@@ -1283,37 +1304,37 @@ const Compliance = () => {
 												fontSize={11}
 												width={80}
 											/>
-											<Tooltip
-												content={({ active, payload }) => {
-													if (!active || !payload || payload.length === 0) return null;
-													const data = payload[0].payload;
-													return (
-														<div className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 shadow-lg">
-															<p className="text-white font-medium text-sm mb-1">{data.name}</p>
-															<div className="flex items-center gap-2 text-sm">
-																<div className="w-2.5 h-2.5 rounded" style={{ backgroundColor: data.color }} />
-																<span className="text-gray-300">Hosts:</span>
-																<span className="text-white font-medium">{data.count}</span>
-															</div>
-														</div>
-													);
-												}}
-											/>
-											<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-												{chartData.map((entry, index) => (
-													<Cell key={`cell-${index}`} fill={entry.color} />
-												))}
-											</Bar>
+											<Tooltip content={<CustomTooltip type="scanAge" />} />
+											<Bar dataKey="openscap" stackId="a" fill="#22c55e" name="openscap" radius={[0, 0, 0, 0]} />
+											<Bar dataKey="dockerBench" stackId="a" fill="#3b82f6" name="dockerBench" radius={[0, 4, 4, 0]} />
 										</BarChart>
 									</ResponsiveContainer>
 								</div>
+								{/* Legend */}
+								<div className="flex justify-center gap-6 mt-2">
+									<div className="flex items-center gap-2 text-sm">
+										<div className="w-3 h-3 rounded bg-green-500" />
+										<span className="text-green-400">OpenSCAP</span>
+									</div>
+									<div className="flex items-center gap-2 text-sm">
+										<div className="w-3 h-3 rounded bg-blue-500" />
+										<span className="text-blue-400">Docker Bench</span>
+									</div>
+								</div>
 								{/* Summary */}
-								<div className="mt-3 pt-3 border-t border-secondary-700 flex justify-center gap-4 text-xs">
+								<div className="mt-3 pt-3 border-t border-secondary-700 grid grid-cols-2 md:grid-cols-4 gap-2 text-center text-xs">
 									{chartData.map((item) => (
-										<div key={item.name} className="flex items-center gap-1.5">
-											<div className="w-2.5 h-2.5 rounded" style={{ backgroundColor: item.color }} />
-											<span className="text-secondary-400">{item.name}:</span>
-											<span className="text-white font-medium">{item.count}</span>
+										<div key={item.name} className="space-y-1">
+											<p className={`font-medium ${
+												item.name === "Today" ? "text-green-400" :
+												item.name === "This Week" ? "text-lime-400" :
+												item.name === "This Month" ? "text-yellow-400" : "text-red-400"
+											}`}>{item.name}: {item.total}</p>
+											<p className="text-secondary-500">
+												{item.openscap > 0 && <span className="text-green-400">{item.openscap} OS</span>}
+												{item.openscap > 0 && item.dockerBench > 0 && " / "}
+												{item.dockerBench > 0 && <span className="text-blue-400">{item.dockerBench} DB</span>}
+											</p>
 										</div>
 									))}
 								</div>

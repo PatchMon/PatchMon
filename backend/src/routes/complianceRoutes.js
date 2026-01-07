@@ -685,37 +685,43 @@ router.get("/dashboard", async (req, res) => {
     `;
 
     // Calculate scan age distribution (how fresh is the compliance data)
-    // Get the most recent scan per host (regardless of profile type)
-    const hostLastScans = new Map();
-    for (const scan of latestScans) {
-      const existing = hostLastScans.get(scan.host_id);
-      if (!existing || new Date(scan.completed_at) > new Date(existing.completed_at)) {
-        hostLastScans.set(scan.host_id, scan);
-      }
-    }
-
+    // Track by profile type (OpenSCAP vs Docker Bench)
     const now = new Date();
     const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
     const oneWeekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
     const oneMonthAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
 
     const scanAgeDistribution = {
-      today: 0,      // Within 24 hours
-      this_week: 0,  // 1-7 days ago
-      this_month: 0, // 7-30 days ago
-      older: 0,      // 30+ days ago
+      today: { openscap: 0, "docker-bench": 0 },
+      this_week: { openscap: 0, "docker-bench": 0 },
+      this_month: { openscap: 0, "docker-bench": 0 },
+      older: { openscap: 0, "docker-bench": 0 },
     };
 
-    for (const scan of hostLastScans.values()) {
+    // Get the most recent scan per host per profile type
+    const hostLastScansByType = new Map(); // key: `${host_id}:${profile_type}`
+    for (const scan of latestScans) {
+      const profileType = profileTypes[scan.profile_id] || 'unknown';
+      const key = `${scan.host_id}:${profileType}`;
+      const existing = hostLastScansByType.get(key);
+      if (!existing || new Date(scan.completed_at) > new Date(existing.completed_at)) {
+        hostLastScansByType.set(key, { ...scan, profileType });
+      }
+    }
+
+    for (const scan of hostLastScansByType.values()) {
       const scanDate = new Date(scan.completed_at);
+      const type = scan.profileType;
+      if (type !== 'openscap' && type !== 'docker-bench') continue;
+
       if (scanDate >= oneDayAgo) {
-        scanAgeDistribution.today++;
+        scanAgeDistribution.today[type]++;
       } else if (scanDate >= oneWeekAgo) {
-        scanAgeDistribution.this_week++;
+        scanAgeDistribution.this_week[type]++;
       } else if (scanDate >= oneMonthAgo) {
-        scanAgeDistribution.this_month++;
+        scanAgeDistribution.this_month[type]++;
       } else {
-        scanAgeDistribution.older++;
+        scanAgeDistribution.older[type]++;
       }
     }
 
