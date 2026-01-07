@@ -1,6 +1,9 @@
 const express = require("express");
 const logger = require("../utils/logger");
 const router = express.Router();
+
+// DEBUG: Log when this module loads
+console.log("=== COMPLIANCE ROUTES MODULE LOADED ===");
 const rateLimit = require("express-rate-limit");
 const { getPrismaClient } = require("../config/prisma");
 const { Prisma } = require("@prisma/client");
@@ -1117,6 +1120,13 @@ router.get("/results/:scanId", async (req, res) => {
   }
 });
 
+// DEBUG: Log all requests to /trigger/* paths
+router.use("/trigger", (req, res, next) => {
+  console.log(`=== TRIGGER PATH HIT: ${req.method} ${req.path} ===`);
+  console.log("Full URL:", req.originalUrl);
+  next();
+});
+
 /**
  * POST /api/v1/compliance/trigger/bulk
  * Trigger compliance scans on multiple hosts at once
@@ -1586,5 +1596,9 @@ router.get("/trends/:hostId", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch trends" });
   }
 });
+
+// DEBUG: Log registered routes
+console.log("=== COMPLIANCE ROUTES REGISTERED ===");
+console.log("Routes count:", router.stack.length);
 
 module.exports = router;
