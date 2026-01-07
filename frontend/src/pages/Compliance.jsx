@@ -138,6 +138,35 @@ const Compliance = () => {
 		prevActiveScanIds.current = currentIds;
 	}, [activeScansData, queryClient, toast]);
 
+	// Check if pending scans have completed (scan records appear in dashboard)
+	useEffect(() => {
+		if (pendingScans.length === 0 || !dashboard?.recent_scans) return;
+
+		const recentScans = dashboard.recent_scans || [];
+		const completedPending = [];
+
+		for (const pending of pendingScans) {
+			const pendingStart = new Date(pending.startedAt).getTime();
+			const hasCompletedScan = recentScans.some((scan) => {
+				const scanComplete = new Date(scan.completed_at).getTime();
+				return scan.host_id === pending.hostId && scanComplete > pendingStart;
+			});
+			if (hasCompletedScan) {
+				completedPending.push(pending.hostId);
+			}
+		}
+
+		if (completedPending.length > 0) {
+			setPendingScans((prev) => prev.filter((p) => !completedPending.includes(p.hostId)));
+			if (completedPending.length === 1) {
+				const completed = pendingScans.find((p) => p.hostId === completedPending[0]);
+				toast.success(`Scan completed for ${completed?.hostName || "host"}`);
+			} else {
+				toast.success(`${completedPending.length} scans completed`);
+			}
+		}
+	}, [dashboard?.recent_scans, pendingScans, toast]);
+
 	// Clear stale pending scans after 60 seconds
 	useEffect(() => {
 		if (pendingScans.length === 0) return;
