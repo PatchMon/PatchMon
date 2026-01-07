@@ -407,17 +407,48 @@ router.get("/dashboard", async (req, res) => {
     // A host is compliant only if ALL its scans are >=80%
     // A host is critical if ANY of its scans are <60%
     // A host is warning if its worst score is 60-80%
-    const hostWorstScores = new Map();
+    // Also track which scan type caused the worst score
+
+    // First, get profile types for each scan
+    const profileTypes = {};
+    const profileTypeQuery = await prisma.compliance_profiles.findMany({
+      select: { id: true, type: true }
+    });
+    for (const p of profileTypeQuery) {
+      profileTypes[p.id] = p.type;
+    }
+
+    // Track worst score and which scan type caused it per host
+    const hostWorstScores = new Map(); // host_id -> { score, scanType }
     for (const scan of latestScans) {
-      const currentWorst = hostWorstScores.get(scan.host_id);
       const scanScore = Number(scan.score) || 0;
-      if (currentWorst === undefined || scanScore < currentWorst) {
-        hostWorstScores.set(scan.host_id, scanScore);
+      const scanType = profileTypes[scan.profile_id] || 'unknown';
+      const current = hostWorstScores.get(scan.host_id);
+      if (!current || scanScore < current.score) {
+        hostWorstScores.set(scan.host_id, { score: scanScore, scanType });
       }
     }
-    const hosts_compliant = [...hostWorstScores.values()].filter(s => s >= 80).length;
-    const hosts_warning = [...hostWorstScores.values()].filter(s => s >= 60 && s < 80).length;
-    const hosts_critical = [...hostWorstScores.values()].filter(s => s < 60).length;
+
+    // Count hosts by status
+    const hosts_compliant = [...hostWorstScores.values()].filter(h => h.score >= 80).length;
+    const hosts_warning = [...hostWorstScores.values()].filter(h => h.score >= 60 && h.score < 80).length;
+    const hosts_critical = [...hostWorstScores.values()].filter(h => h.score < 60).length;
+
+    // Count hosts by status AND scan type that caused it
+    const hostStatusByScanType = {
+      compliant: { openscap: 0, "docker-bench": 0 },
+      warning: { openscap: 0, "docker-bench": 0 },
+      critical: { openscap: 0, "docker-bench": 0 },
+    };
+    for (const h of hostWorstScores.values()) {
+      let status = 'compliant';
+      if (h.score < 60) status = 'critical';
+      else if (h.score < 80) status = 'warning';
+
+      if (hostStatusByScanType[status][h.scanType] !== undefined) {
+        hostStatusByScanType[status][h.scanType]++;
+      }
+    }
 
     // For backwards compatibility, keep the old field names as scan counts
     const compliant = scans_compliant;
@@ -616,6 +647,8 @@ router.get("/dashboard", async (req, res) => {
         hosts_warning,
         hosts_critical,
         unscanned,
+        // Host status breakdown by scan type (which scan type caused the status)
+        host_status_by_scan_type: hostStatusByScanType,
         // Scan-level counts (for backwards compatibility)
         compliant,
         warning,

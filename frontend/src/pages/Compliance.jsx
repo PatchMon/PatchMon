@@ -754,49 +754,94 @@ const Compliance = () => {
 						<div className="flex-1 h-px bg-secondary-700" />
 					</div>
 
-					{/* Host Compliance Distribution */}
+					{/* Host Compliance Distribution with Scan Type Breakdown */}
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
 						<h3 className="text-white font-medium mb-1 flex items-center gap-2">
 							<PieChartIcon className="h-4 w-4 text-primary-400" />
 							Host Compliance Status
 						</h3>
-						<p className="text-xs text-secondary-500 mb-3">Unique hosts by worst score (combines all scan types)</p>
-						<div className="h-48">
-							<ResponsiveContainer width="100%" height="100%">
-								<PieChart>
-									<Pie
-										data={hostDistribution}
-										cx="50%"
-										cy="50%"
-										innerRadius={50}
-										outerRadius={80}
-										dataKey="value"
-										label={({ name, value }) => `${value}`}
-										labelLine={false}
-									>
-										{hostDistribution.map((entry, index) => (
-											<Cell key={`cell-${index}`} fill={entry.color} />
+						<p className="text-xs text-secondary-500 mb-3">Unique hosts by worst score - showing which scan type caused the status</p>
+
+						{/* Stacked Bar Chart showing scan type breakdown */}
+						{(() => {
+							const statusData = summary.host_status_by_scan_type || {};
+							const chartData = [
+								{
+									name: "Compliant",
+									openscap: statusData.compliant?.openscap || 0,
+									dockerBench: statusData.compliant?.["docker-bench"] || 0,
+									total: summary.hosts_compliant || 0,
+								},
+								{
+									name: "Warning",
+									openscap: statusData.warning?.openscap || 0,
+									dockerBench: statusData.warning?.["docker-bench"] || 0,
+									total: summary.hosts_warning || 0,
+								},
+								{
+									name: "Critical",
+									openscap: statusData.critical?.openscap || 0,
+									dockerBench: statusData.critical?.["docker-bench"] || 0,
+									total: summary.hosts_critical || 0,
+								},
+							].filter(d => d.total > 0);
+
+							return chartData.length > 0 ? (
+								<>
+									<div className="h-48">
+										<ResponsiveContainer width="100%" height="100%">
+											<BarChart data={chartData} layout="vertical">
+												<XAxis type="number" stroke="#6b7280" fontSize={12} />
+												<YAxis type="category" dataKey="name" stroke="#6b7280" fontSize={12} width={70} />
+												<Tooltip
+													contentStyle={{
+														backgroundColor: "#1f2937",
+														border: "1px solid #374151",
+														borderRadius: "0.5rem",
+													}}
+													formatter={(value, name) => [
+														value,
+														name === "openscap" ? "OpenSCAP" : "Docker Bench"
+													]}
+												/>
+												<Bar dataKey="openscap" stackId="a" fill="#22c55e" name="openscap" radius={[0, 0, 0, 0]} />
+												<Bar dataKey="dockerBench" stackId="a" fill="#3b82f6" name="dockerBench" radius={[0, 4, 4, 0]} />
+											</BarChart>
+										</ResponsiveContainer>
+									</div>
+									<div className="flex justify-center gap-6 mt-2">
+										<div className="flex items-center gap-2 text-sm">
+											<div className="w-3 h-3 rounded bg-green-500" />
+											<span className="text-green-400">OpenSCAP</span>
+										</div>
+										<div className="flex items-center gap-2 text-sm">
+											<div className="w-3 h-3 rounded bg-blue-500" />
+											<span className="text-blue-400">Docker Bench</span>
+										</div>
+									</div>
+									{/* Detailed breakdown */}
+									<div className="mt-4 pt-3 border-t border-secondary-700 grid grid-cols-3 gap-2 text-center text-xs">
+										{chartData.map((status) => (
+											<div key={status.name} className="space-y-1">
+												<p className={`font-medium ${
+													status.name === "Compliant" ? "text-green-400" :
+													status.name === "Warning" ? "text-yellow-400" : "text-red-400"
+												}`}>{status.name}</p>
+												<p className="text-secondary-400">
+													{status.openscap > 0 && <span className="text-green-400">{status.openscap} OpenSCAP</span>}
+													{status.openscap > 0 && status.dockerBench > 0 && " + "}
+													{status.dockerBench > 0 && <span className="text-blue-400">{status.dockerBench} Docker</span>}
+												</p>
+											</div>
 										))}
-									</Pie>
-									<Tooltip
-										contentStyle={{
-											backgroundColor: "#1f2937",
-											border: "1px solid #374151",
-											borderRadius: "0.5rem",
-										}}
-										formatter={(value, name) => [value, name]}
-									/>
-								</PieChart>
-							</ResponsiveContainer>
-						</div>
-						<div className="flex flex-wrap justify-center gap-4 mt-2">
-							{hostDistribution.map((entry) => (
-								<div key={entry.name} className="flex items-center gap-2 text-sm">
-									<div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color }} />
-									<span className="text-secondary-400">{entry.name}: {entry.value}</span>
+									</div>
+								</>
+							) : (
+								<div className="h-48 flex items-center justify-center text-secondary-500">
+									No host status data available
 								</div>
-							))}
-						</div>
+							);
+						})()}
 					</div>
 
 					{/* Scan Type Analysis - Side by Side */}
