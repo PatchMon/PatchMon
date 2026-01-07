@@ -596,10 +596,11 @@ router.get("/dashboard", async (req, res) => {
     `;
 
     // Get severity breakdown from latest scans (with profile type for breakdown)
+    // Include both 'fail' (OpenSCAP) and 'warn' (Docker Bench) statuses
     let severityBreakdown = [];
     let severityByProfileType = [];
     if (latestScanIds.length > 0) {
-      // Overall severity breakdown
+      // Overall severity breakdown - include fail AND warn
       severityBreakdown = await prisma.$queryRaw`
         SELECT
           cru.severity,
@@ -607,7 +608,7 @@ router.get("/dashboard", async (req, res) => {
         FROM compliance_results cr
         JOIN compliance_rules cru ON cr.rule_id = cru.id
         WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
-          AND cr.status = 'fail'
+          AND cr.status IN ('fail', 'warn')
         GROUP BY cru.severity
         ORDER BY
           CASE cru.severity
@@ -620,6 +621,7 @@ router.get("/dashboard", async (req, res) => {
       `;
 
       // Severity breakdown by profile type (for stacked chart)
+      // Include fail AND warn to capture both OpenSCAP failures and Docker Bench warnings
       severityByProfileType = await prisma.$queryRaw`
         SELECT
           cru.severity,
@@ -630,7 +632,7 @@ router.get("/dashboard", async (req, res) => {
         JOIN compliance_scans cs ON cr.scan_id = cs.id
         JOIN compliance_profiles cp ON cs.profile_id = cp.id
         WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
-          AND cr.status = 'fail'
+          AND cr.status IN ('fail', 'warn')
         GROUP BY cru.severity, cp.type
         ORDER BY
           CASE cru.severity

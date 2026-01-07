@@ -1088,9 +1088,9 @@ const Compliance = () => {
 							<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
 								<h3 className="text-white font-medium mb-1 flex items-center gap-2">
 									<AlertTriangle className="h-4 w-4 text-primary-400" />
-									Rule Failures by Severity
+									Rule Issues by Severity
 								</h3>
-								<p className="text-xs text-secondary-500 mb-3">{totalFailures.toLocaleString()} total rule failures - showing scan type breakdown</p>
+								<p className="text-xs text-secondary-500 mb-3">{totalFailures.toLocaleString()} total issues (failures + warnings) - by scan type</p>
 								<div className="h-48">
 									<ResponsiveContainer width="100%" height="100%">
 										<BarChart data={chartData} layout="vertical">
