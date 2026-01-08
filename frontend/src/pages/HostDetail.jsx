@@ -3422,7 +3422,9 @@ const HostDetail = () => {
 																</span>
 															</div>
 															<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-1">
-																When enabled, compliance scans only run when triggered from the UI, not during scheduled reports
+																When enabled, compliance scans only run when
+																triggered from the UI, not during scheduled
+																reports
 															</p>
 														</div>
 														<div className="flex-shrink-0">
@@ -3430,7 +3432,7 @@ const HostDetail = () => {
 																type="button"
 																onClick={() =>
 																	toggleComplianceOnDemandOnlyMutation.mutate(
-																		!integrationsData?.compliance_on_demand_only
+																		!integrationsData?.compliance_on_demand_only,
 																	)
 																}
 																disabled={

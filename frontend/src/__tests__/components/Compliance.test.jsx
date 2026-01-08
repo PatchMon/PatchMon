@@ -31,8 +31,8 @@ vi.mock("../../utils/api", () => ({
 	},
 }));
 
-import { complianceAPI } from "../../utils/complianceApi";
 import { adminHostsAPI } from "../../utils/api";
+import { complianceAPI } from "../../utils/complianceApi";
 
 describe("Compliance Dashboard", () => {
 	let queryClient;
