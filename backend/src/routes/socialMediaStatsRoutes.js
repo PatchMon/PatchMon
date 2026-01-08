@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const {
 	socialMediaStatsCache,
 } = require("../services/automation/socialMediaStats");
@@ -17,7 +18,7 @@ router.get("/", async (_req, res) => {
 			last_updated: socialMediaStatsCache.last_updated,
 		});
 	} catch (error) {
-		console.error("Error fetching social media stats:", error);
+		logger.error("Error fetching social media stats:", error);
 		res.status(500).json({
 			error: "Failed to fetch social media statistics",
 		});

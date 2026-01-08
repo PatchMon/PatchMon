@@ -1,4 +1,5 @@
 const { prisma } = require("./shared/prisma");
+const logger = require("../../utils/logger");
 
 /**
  * Orphaned Repository Cleanup Automation
@@ -15,7 +16,7 @@ class OrphanedRepoCleanup {
 	 */
 	async process(_job) {
 		const startTime = Date.now();
-		console.log("🧹 Starting orphaned repository cleanup...");
+		logger.info("🧹 Starting orphaned repository cleanup...");
 
 		try {
 			// Find repositories with 0 hosts
@@ -49,11 +50,11 @@ class OrphanedRepoCleanup {
 						name: repo.name,
 						url: repo.url,
 					});
-					console.log(
+					logger.info(
 						`🗑️ Deleted orphaned repository: ${repo.name} (${repo.url})`,
 					);
 				} catch (deleteError) {
-					console.error(
+					logger.error(
 						`❌ Failed to delete repository ${repo.id}:`,
 						deleteError.message,
 					);
@@ -61,7 +62,7 @@ class OrphanedRepoCleanup {
 			}
 
 			const executionTime = Date.now() - startTime;
-			console.log(
+			logger.info(
 				`✅ Orphaned repository cleanup completed in ${executionTime}ms - Deleted ${deletedCount} repositories`,
 			);
 
@@ -73,7 +74,7 @@ class OrphanedRepoCleanup {
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			console.error(
+			logger.error(
 				`❌ Orphaned repository cleanup failed after ${executionTime}ms:`,
 				error.message,
 			);
@@ -93,7 +94,7 @@ class OrphanedRepoCleanup {
 				jobId: "orphaned-repo-cleanup-recurring",
 			},
 		);
-		console.log("✅ Orphaned repository cleanup scheduled");
+		logger.info("✅ Orphaned repository cleanup scheduled");
 		return job;
 	}
 
@@ -106,7 +107,7 @@ class OrphanedRepoCleanup {
 			{},
 			{ priority: 1 },
 		);
-		console.log("✅ Manual orphaned repository cleanup triggered");
+		logger.info("✅ Manual orphaned repository cleanup triggered");
 		return job;
 	}
 }

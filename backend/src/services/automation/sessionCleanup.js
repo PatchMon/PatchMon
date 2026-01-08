@@ -1,4 +1,5 @@
 const { prisma } = require("./shared/prisma");
+const logger = require("../../utils/logger");
 
 /**
  * Session Cleanup Automation
@@ -15,7 +16,7 @@ class SessionCleanup {
 	 */
 	async process(_job) {
 		const startTime = Date.now();
-		console.log("🧹 Starting session cleanup...");
+		logger.info("🧹 Starting session cleanup...");
 
 		try {
 			const result = await prisma.user_sessions.deleteMany({
@@ -25,7 +26,7 @@ class SessionCleanup {
 			});
 
 			const executionTime = Date.now() - startTime;
-			console.log(
+			logger.info(
 				`✅ Session cleanup completed in ${executionTime}ms - Cleaned up ${result.count} expired sessions`,
 			);
 
@@ -36,7 +37,7 @@ class SessionCleanup {
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			console.error(
+			logger.error(
 				`❌ Session cleanup failed after ${executionTime}ms:`,
 				error.message,
 			);
@@ -56,7 +57,7 @@ class SessionCleanup {
 				jobId: "session-cleanup-recurring",
 			},
 		);
-		console.log("✅ Session cleanup scheduled");
+		logger.info("✅ Session cleanup scheduled");
 		return job;
 	}
 
@@ -69,7 +70,7 @@ class SessionCleanup {
 			{},
 			{ priority: 1 },
 		);
-		console.log("✅ Manual session cleanup triggered");
+		logger.info("✅ Manual session cleanup triggered");
 		return job;
 	}
 }

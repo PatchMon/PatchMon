@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateApiToken } = require("../middleware/apiAuth");
 
@@ -128,7 +129,7 @@ router.get("/stats", authenticateApiToken("gethomepage"), async (_req, res) => {
 
 		res.json(stats);
 	} catch (error) {
-		console.error("Error fetching homepage stats:", error);
+		logger.error("Error fetching homepage stats:", error);
 		res.status(500).json({ error: "Failed to fetch statistics" });
 	}
 });

@@ -35,7 +35,7 @@ NC='\033[0m' # No Color
 
 # Global variables
 SCRIPT_VERSION="self-hosting-install.sh v1.3.3-selfhost-2025-11-07"
-DEFAULT_GITHUB_REPO="https://github.com/PatchMon/PatchMon.git"
+DEFAULT_GITHUB_REPO="https://github.com/MacJediWizard/PatchMon-Enhanced.git"
 FQDN=""
 CUSTOM_FQDN=""
 EMAIL=""
@@ -1440,14 +1440,7 @@ server {
 
 # HTTPS server block
 server {
-$listen_line
-EOF
-        # Add http2_line only if it's not empty (for newer versions)
-        if [ -n "$http2_line" ]; then
-            echo "$http2_line" >> "$config_file"
-        fi
-        
-        cat >> "$config_file" << EOF
+    listen 443 ssl http2;
     server_name $fqdn;
     
     # SSL Configuration
@@ -1870,7 +1863,7 @@ create_agent_version() {
     
     # Make agent binaries executable
     if [ -d "$APP_DIR/agents" ]; then
-        chmod +x "$APP_DIR/agents/patchmon-agent-linux-"* 2>/dev/null || true
+        chmod +x "$APP_DIR/agents/patchmonenhanced-agent-linux-"* 2>/dev/null || true
         print_status "Agent binaries made executable"
     fi
 
@@ -3074,7 +3067,7 @@ update_installation() {
         
         # Initialize git repository
         git init
-        git remote add origin https://github.com/PatchMon/PatchMon.git
+        git remote add origin https://github.com/MacJediWizard/PatchMon-Enhanced.git
         
         # Fetch all branches
         git fetch origin
@@ -3208,7 +3201,7 @@ update_installation() {
     
     # Make agent binaries executable
     if [ -d "$instance_dir/agents" ]; then
-        chmod +x "$instance_dir/agents/patchmon-agent-linux-"* 2>/dev/null || true
+        chmod +x "$instance_dir/agents/patchmonenhanced-agent-linux-"* 2>/dev/null || true
         print_status "Agent binaries made executable"
     fi
     

@@ -1,4 +1,5 @@
 const axios = require("axios");
+const logger = require("../../utils/logger");
 const { prisma } = require("./shared/prisma");
 const { updateSettings } = require("../../services/settingsService");
 
@@ -20,7 +21,7 @@ class MetricsReporting {
 	 */
 	async process(_job, silent = false) {
 		const startTime = Date.now();
-		if (!silent) console.log("📊 Starting metrics reporting...");
+		if (!silent) logger.info("📊 Starting metrics reporting...");
 
 		try {
 			// Fetch fresh settings directly from database (bypass cache)
@@ -30,13 +31,13 @@ class MetricsReporting {
 
 			// Check if metrics are enabled
 			if (settings.metrics_enabled !== true) {
-				if (!silent) console.log("📊 Metrics reporting is disabled");
+				if (!silent) logger.info("📊 Metrics reporting is disabled");
 				return { success: false, reason: "disabled" };
 			}
 
 			// Check if we have an anonymous ID
 			if (!settings.metrics_anonymous_id) {
-				if (!silent) console.log("📊 No anonymous ID found, skipping metrics");
+				if (!silent) logger.info("📊 No anonymous ID found, skipping metrics");
 				return { success: false, reason: "no_id" };
 			}
 
@@ -55,7 +56,7 @@ class MetricsReporting {
 			};
 
 			if (!silent)
-				console.log(
+				logger.info(
 					`📊 Sending metrics: ${hostCount} hosts, version ${version}`,
 				);
 
@@ -79,7 +80,7 @@ class MetricsReporting {
 
 				const executionTime = Date.now() - startTime;
 				if (!silent)
-					console.log(
+					logger.info(
 						`✅ Metrics sent successfully in ${executionTime}ms:`,
 						response.data,
 					);
@@ -94,7 +95,7 @@ class MetricsReporting {
 			} catch (apiError) {
 				const executionTime = Date.now() - startTime;
 				if (!silent)
-					console.error(
+					logger.error(
 						`❌ Failed to send metrics to API after ${executionTime}ms:`,
 						apiError.message,
 					);
@@ -108,7 +109,7 @@ class MetricsReporting {
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			if (!silent)
-				console.error(
+				logger.error(
 					`❌ Error in metrics reporting after ${executionTime}ms:`,
 					error.message,
 				);
@@ -137,7 +138,7 @@ class MetricsReporting {
 				jobId: "metrics-reporting-recurring",
 			},
 		);
-		console.log("✅ Metrics reporting scheduled (daily at 2 AM)");
+		logger.info("✅ Metrics reporting scheduled (daily at 2 AM)");
 		return job;
 	}
 
@@ -150,7 +151,7 @@ class MetricsReporting {
 			{},
 			{ priority: 1 },
 		);
-		console.log("✅ Manual metrics reporting triggered");
+		logger.info("✅ Manual metrics reporting triggered");
 		return job;
 	}
 

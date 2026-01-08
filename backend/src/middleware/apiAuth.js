@@ -1,7 +1,107 @@
 const { getPrismaClient } = require("../config/prisma");
+const logger = require("../utils/logger");
 const bcrypt = require("bcryptjs");
 
 const prisma = getPrismaClient();
+
+/**
+ * Parse an IP address into its numeric components
+ * Handles both IPv4 and IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
+ * @param {string} ip - IP address string
+ * @returns {number[]|null} Array of 4 octets or null if invalid
+ */
+function parseIPv4(ip) {
+	if (!ip || typeof ip !== "string") return null;
+
+	// Handle IPv4-mapped IPv6 addresses (::ffff:192.168.1.1)
+	let ipv4 = ip;
+	if (ip.startsWith("::ffff:")) {
+		ipv4 = ip.substring(7);
+	}
+
+	// Validate IPv4 format
+	const parts = ipv4.split(".");
+	if (parts.length !== 4) return null;
+
+	const octets = parts.map((part) => {
+		const num = parseInt(part, 10);
+		if (Number.isNaN(num) || num < 0 || num > 255 || String(num) !== part) {
+			return -1;
+		}
+		return num;
+	});
+
+	if (octets.some((o) => o === -1)) return null;
+	return octets;
+}
+
+/**
+ * Convert IP octets to a 32-bit number
+ * @param {number[]} octets - Array of 4 octets
+ * @returns {number} 32-bit representation
+ */
+function ipToNumber(octets) {
+	return (
+		((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0
+	);
+}
+
+/**
+ * Check if an IP address matches a CIDR range or exact IP
+ * @param {string} clientIp - The client's IP address
+ * @param {string} allowedRange - CIDR notation (e.g., "10.0.0.0/24") or exact IP
+ * @returns {boolean} True if IP matches the range
+ */
+function ipMatchesCIDR(clientIp, allowedRange) {
+	const clientOctets = parseIPv4(clientIp);
+	if (!clientOctets) return false;
+
+	// Check if it's a CIDR range or exact IP
+	const cidrParts = allowedRange.split("/");
+	const rangeIp = cidrParts[0];
+	const rangeOctets = parseIPv4(rangeIp);
+	if (!rangeOctets) return false;
+
+	// If no CIDR prefix, do exact match
+	if (cidrParts.length === 1) {
+		return clientOctets.every((octet, i) => octet === rangeOctets[i]);
+	}
+
+	// Parse CIDR prefix
+	const prefix = parseInt(cidrParts[1], 10);
+	if (Number.isNaN(prefix) || prefix < 0 || prefix > 32) return false;
+
+	// Calculate subnet mask
+	const mask = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0;
+
+	// Compare masked addresses
+	const clientNum = ipToNumber(clientOctets);
+	const rangeNum = ipToNumber(rangeOctets);
+
+	return (clientNum & mask) === (rangeNum & mask);
+}
+
+/**
+ * Validate if a client IP is allowed by any of the whitelist entries
+ * Supports exact IP matches and CIDR notation
+ * @param {string} clientIp - The client's IP address
+ * @param {string[]} allowedRanges - Array of allowed IPs or CIDR ranges
+ * @returns {boolean} True if IP is allowed
+ */
+function isIPAllowed(clientIp, allowedRanges) {
+	if (
+		!clientIp ||
+		!Array.isArray(allowedRanges) ||
+		allowedRanges.length === 0
+	) {
+		return false;
+	}
+
+	return allowedRanges.some((range) => {
+		if (!range || typeof range !== "string") return false;
+		return ipMatchesCIDR(clientIp, range.trim());
+	});
+}
 
 /**
  * Middleware factory to authenticate API tokens using Basic Auth
@@ -45,7 +145,8 @@ const authenticateApiToken = (integrationType) => {
 			});
 
 			if (!token) {
-				console.log(`API key not found: ${apiKey}`);
+				// Don't log the actual API key for security
+				logger.info("API key authentication failed: key not found");
 				return res.status(401).json({ error: "Invalid API key" });
 			}
 
@@ -72,23 +173,15 @@ const authenticateApiToken = (integrationType) => {
 
 			// Check IP restrictions if any
 			if (token.allowed_ip_ranges && token.allowed_ip_ranges.length > 0) {
-				const clientIp = req.ip || req.connection.remoteAddress;
-				const forwardedFor = req.headers["x-forwarded-for"];
-				const realIp = req.headers["x-real-ip"];
+				// SECURITY: Use req.ip which respects the Express trust proxy setting
+				// This prevents IP spoofing via X-Forwarded-For when trust proxy is not configured
+				// Configure TRUST_PROXY environment variable in server.js when behind a reverse proxy
+				const clientIp = req.ip || req.connection?.remoteAddress;
 
-				// Get the actual client IP (considering proxies)
-				const actualClientIp = forwardedFor
-					? forwardedFor.split(",")[0].trim()
-					: realIp || clientIp;
-
-				const isAllowedIp = token.allowed_ip_ranges.some((range) => {
-					// Simple IP range check (can be enhanced for CIDR support)
-					return actualClientIp.startsWith(range) || actualClientIp === range;
-				});
-
-				if (!isAllowedIp) {
-					console.log(
-						`IP validation failed. Client IP: ${actualClientIp}, Allowed ranges: ${token.allowed_ip_ranges.join(", ")}`,
+				// Use proper CIDR validation
+				if (!isIPAllowed(clientIp, token.allowed_ip_ranges)) {
+					logger.info(
+						`IP validation failed. Client IP: ${clientIp}, Allowed ranges: ${token.allowed_ip_ranges.join(", ")}`,
 					);
 					return res.status(403).json({ error: "IP address not allowed" });
 				}
@@ -104,7 +197,7 @@ const authenticateApiToken = (integrationType) => {
 			req.apiToken = token;
 			next();
 		} catch (error) {
-			console.error("API key authentication error:", error);
+			logger.error("API key authentication error:", error);
 			res.status(500).json({ error: "Authentication failed" });
 		}
 	};

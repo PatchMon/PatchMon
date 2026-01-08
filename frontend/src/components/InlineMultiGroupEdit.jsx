@@ -134,17 +134,6 @@ const InlineMultiGroupEdit = ({
 		});
 	};
 
-	const _displayValue = useMemo(() => {
-		if (!value || value.length === 0) {
-			return "Ungrouped";
-		}
-		if (value.length === 1) {
-			const option = options.find((opt) => opt.id === value[0]);
-			return option ? option.name : "Unknown Group";
-		}
-		return `${value.length} groups`;
-	}, [value, options]);
-
 	const displayGroups = useMemo(() => {
 		if (!value || value.length === 0) {
 			return [];

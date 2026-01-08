@@ -1,4 +1,5 @@
 const { prisma } = require("./shared/prisma");
+const logger = require("../../utils/logger");
 const https = require("node:https");
 const { v4: uuidv4 } = require("uuid");
 
@@ -12,6 +13,56 @@ class DockerImageUpdateCheck {
 		this.queueName = "docker-image-update-check";
 		// Cache tokens to avoid requesting new ones for each image
 		this.tokenCache = new Map();
+		// SECURITY: Allowlist of trusted container registries to prevent SSRF attacks
+		// Only these registries will be contacted for update checks
+		this.trustedRegistries = new Set([
+			"registry-1.docker.io", // Docker Hub
+			"docker.io",
+			"ghcr.io", // GitHub Container Registry
+			"gcr.io", // Google Container Registry
+			"quay.io", // Red Hat Quay
+			"mcr.microsoft.com", // Microsoft Container Registry
+			"public.ecr.aws", // AWS Public ECR
+			"registry.k8s.io", // Kubernetes registry
+			"docker.elastic.co", // Elastic
+			"nvcr.io", // NVIDIA
+		]);
+	}
+
+	/**
+	 * Check if a registry hostname is trusted
+	 * @param {string} registry - The registry hostname to check
+	 * @returns {boolean} True if the registry is trusted
+	 */
+	isRegistryTrusted(registry) {
+		// Normalize registry name
+		const normalizedRegistry = registry.toLowerCase().trim();
+
+		// Check exact match
+		if (this.trustedRegistries.has(normalizedRegistry)) {
+			return true;
+		}
+
+		// Check if it's a subdomain of a trusted registry (e.g., us.gcr.io, europe-west1-docker.pkg.dev)
+		for (const trusted of this.trustedRegistries) {
+			if (normalizedRegistry.endsWith(`.${trusted}`)) {
+				return true;
+			}
+		}
+
+		// Allow Google Artifact Registry regions
+		if (/^[a-z0-9-]+-docker\.pkg\.dev$/.test(normalizedRegistry)) {
+			return true;
+		}
+
+		// Allow AWS ECR private registries (account-id.dkr.ecr.region.amazonaws.com)
+		if (
+			/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com$/.test(normalizedRegistry)
+		) {
+			return true;
+		}
+
+		return false;
 	}
 
 	/**
@@ -135,6 +186,14 @@ class DockerImageUpdateCheck {
 	 */
 	async getRemoteDigest(imageName, tag = "latest") {
 		const registryInfo = this.parseImageName(imageName);
+
+		// SECURITY: Validate registry is trusted to prevent SSRF attacks
+		if (!this.isRegistryTrusted(registryInfo.registry)) {
+			throw new Error(
+				`Untrusted registry: ${registryInfo.registry}. Only images from trusted registries can be checked for updates.`,
+			);
+		}
+
 		const manifestPath = `/v2/${registryInfo.repository}/manifests/${tag}`;
 
 		const options = {
@@ -241,7 +300,7 @@ class DockerImageUpdateCheck {
 	 */
 	async process(_job) {
 		const startTime = Date.now();
-		console.log("🐳 Starting Docker image update check...");
+		logger.info("🐳 Starting Docker image update check...");
 
 		// Clear token cache at start of each run
 		this.tokenCache.clear();
@@ -260,7 +319,7 @@ class DockerImageUpdateCheck {
 				},
 			});
 
-			console.log(`📦 Found ${images.length} images to check for updates`);
+			logger.info(`📦 Found ${images.length} images to check for updates`);
 
 			let checkedCount = 0;
 			let updateCount = 0;
@@ -296,7 +355,7 @@ class DockerImageUpdateCheck {
 
 							// Compare digests
 							if (localDigest !== remoteDigest) {
-								console.log(
+								logger.info(
 									`🔄 Update found: ${image.repository}:${image.tag} (local: ${localDigest.substring(0, 12)}..., remote: ${remoteDigest.substring(0, 12)}...)`,
 								);
 
@@ -363,7 +422,7 @@ class DockerImageUpdateCheck {
 							errorCount++;
 							const errorMsg = `Error checking ${image.repository}:${image.tag}: ${error.message}`;
 							errors.push(errorMsg);
-							console.error(`❌ ${errorMsg}`);
+							logger.error(`❌ ${errorMsg}`);
 
 							// Still update last_checked even on error
 							try {
@@ -382,7 +441,7 @@ class DockerImageUpdateCheck {
 
 				// Log batch progress
 				if (i + batchSize < images.length) {
-					console.log(
+					logger.info(
 						`⏳ Processed ${Math.min(i + batchSize, images.length)}/${images.length} images...`,
 					);
 				}
@@ -394,7 +453,7 @@ class DockerImageUpdateCheck {
 			}
 
 			const executionTime = Date.now() - startTime;
-			console.log(
+			logger.info(
 				`✅ Docker image update check completed in ${executionTime}ms - Checked: ${checkedCount}, Updates: ${updateCount}, Errors: ${errorCount}`,
 			);
 
@@ -408,7 +467,7 @@ class DockerImageUpdateCheck {
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			console.error(
+			logger.error(
 				`❌ Docker image update check failed after ${executionTime}ms:`,
 				error.message,
 			);
@@ -428,7 +487,7 @@ class DockerImageUpdateCheck {
 				jobId: "docker-image-update-check-recurring",
 			},
 		);
-		console.log("✅ Docker image update check scheduled");
+		logger.info("✅ Docker image update check scheduled");
 		return job;
 	}
 
@@ -441,7 +500,7 @@ class DockerImageUpdateCheck {
 			{},
 			{ priority: 1 },
 		);
-		console.log("✅ Manual Docker image update check triggered");
+		logger.info("✅ Manual Docker image update check triggered");
 		return job;
 	}
 }

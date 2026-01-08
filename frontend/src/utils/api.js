@@ -3,22 +3,21 @@ import axios from "axios";
 const API_BASE_URL = import.meta.env.VITE_API_URL || "/api/v1";
 
 // Create axios instance with default config
+// Uses httpOnly cookies for authentication (credentials: include)
 const api = axios.create({
 	baseURL: API_BASE_URL,
 	timeout: 10000, // 10 seconds
 	headers: {
 		"Content-Type": "application/json",
 	},
+	withCredentials: true, // Send cookies with requests for httpOnly token auth
 });
 
 // Request interceptor
 api.interceptors.request.use(
 	(config) => {
-		// Add auth token if available
-		const token = localStorage.getItem("token");
-		if (token) {
-			config.headers.Authorization = `Bearer ${token}`;
-		}
+		// Authentication is handled via httpOnly cookies (withCredentials: true)
+		// No need to add Authorization header - server reads from cookies
 
 		// Add device ID for TFA remember-me functionality
 		// This uniquely identifies the browser profile (normal vs incognito)
@@ -60,8 +59,8 @@ api.interceptors.response.use(
 			const isTfaError = error.config?.url?.includes("/verify-tfa");
 
 			if (currentPath !== "/login" && !isTfaError) {
-				// Handle unauthorized
-				localStorage.removeItem("token");
+				// Handle unauthorized - clear user state and redirect
+				// Note: Token is in httpOnly cookie (server clears on logout)
 				localStorage.removeItem("user");
 				window.location.href = "/login";
 			}
@@ -122,11 +121,15 @@ export const adminHostsAPI = {
 	toggleAutoUpdate: (hostId, autoUpdate) =>
 		api.patch(`/hosts/${hostId}/auto-update`, { auto_update: autoUpdate }),
 	forceAgentUpdate: (hostId) => api.post(`/hosts/${hostId}/force-agent-update`),
+	refreshIntegrationStatus: (hostId) =>
+		api.post(`/hosts/${hostId}/refresh-integration-status`),
 	fetchReport: (hostId) => api.post(`/hosts/${hostId}/fetch-report`),
 	updateFriendlyName: (hostId, friendlyName) =>
 		api.patch(`/hosts/${hostId}/friendly-name`, {
 			friendly_name: friendlyName,
 		}),
+	updateConnection: (hostId, connectionInfo) =>
+		api.patch(`/hosts/${hostId}/connection`, connectionInfo),
 	updateNotes: (hostId, notes) =>
 		api.patch(`/hosts/${hostId}/notes`, {
 			notes: notes,
@@ -135,6 +138,13 @@ export const adminHostsAPI = {
 	toggleIntegration: (hostId, integrationName, enabled) =>
 		api.post(`/hosts/${hostId}/integrations/${integrationName}/toggle`, {
 			enabled,
+		}),
+	getIntegrationSetupStatus: (hostId, integrationName) =>
+		api.get(`/hosts/${hostId}/integrations/${integrationName}/status`),
+	refreshDocker: (hostId) => api.post(`/hosts/${hostId}/refresh-docker`),
+	setComplianceOnDemandOnly: (hostId, onDemandOnly) =>
+		api.post(`/hosts/${hostId}/compliance/on-demand-only`, {
+			on_demand_only: onDemandOnly,
 		}),
 };
 
@@ -402,6 +412,17 @@ export const formatRelativeTime = (date) => {
 // Search API
 export const searchAPI = {
 	global: (query) => api.get("/search", { params: { q: query } }),
+};
+
+// AI Terminal Assistant API
+export const aiAPI = {
+	getStatus: () => api.get("/ai/status"), // Available to all authenticated users
+	getProviders: () => api.get("/ai/providers"),
+	getSettings: () => api.get("/ai/settings"), // Admin only
+	updateSettings: (data) => api.put("/ai/settings", data),
+	testConnection: () => api.post("/ai/test"),
+	assist: (data) => api.post("/ai/assist", data),
+	complete: (data) => api.post("/ai/complete", data),
 };
 
 export default api;

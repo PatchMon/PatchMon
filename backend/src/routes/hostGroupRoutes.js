@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { body, validationResult } = require("express-validator");
 const { getPrismaClient } = require("../config/prisma");
 const { randomUUID } = require("node:crypto");
@@ -34,7 +35,7 @@ router.get("/", authenticateToken, async (_req, res) => {
 
 		res.json(transformedGroups);
 	} catch (error) {
-		console.error("Error fetching host groups:", error);
+		logger.error("Error fetching host groups:", error);
 		res.status(500).json({ error: "Failed to fetch host groups" });
 	}
 });
@@ -73,7 +74,7 @@ router.get("/:id", authenticateToken, async (req, res) => {
 
 		res.json(hostGroup);
 	} catch (error) {
-		console.error("Error fetching host group:", error);
+		logger.error("Error fetching host group:", error);
 		res.status(500).json({ error: "Failed to fetch host group" });
 	}
 });
@@ -123,7 +124,7 @@ router.post(
 
 			res.status(201).json(hostGroup);
 		} catch (error) {
-			console.error("Error creating host group:", error);
+			logger.error("Error creating host group:", error);
 			res.status(500).json({ error: "Failed to create host group" });
 		}
 	},
@@ -187,7 +188,7 @@ router.put(
 
 			res.json(hostGroup);
 		} catch (error) {
-			console.error("Error updating host group:", error);
+			logger.error("Error updating host group:", error);
 			res.status(500).json({ error: "Failed to update host group" });
 		}
 	},
@@ -231,7 +232,7 @@ router.delete(
 
 			res.json({ message: "Host group deleted successfully" });
 		} catch (error) {
-			console.error("Error deleting host group:", error);
+			logger.error("Error deleting host group:", error);
 			res.status(500).json({ error: "Failed to delete host group" });
 		}
 	},
@@ -269,7 +270,7 @@ router.get("/:id/hosts", authenticateToken, async (req, res) => {
 
 		res.json(hosts);
 	} catch (error) {
-		console.error("Error fetching hosts in group:", error);
+		logger.error("Error fetching hosts in group:", error);
 		res.status(500).json({ error: "Failed to fetch hosts in group" });
 	}
 });

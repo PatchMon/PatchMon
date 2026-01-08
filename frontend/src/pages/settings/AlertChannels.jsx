@@ -10,7 +10,7 @@ const AlertChannels = () => {
 						Alert Channels
 					</h1>
 					<p className="mt-1 text-sm text-secondary-600 dark:text-secondary-400">
-						Configure how PatchMon sends notifications and alerts
+						Configure how PatchMonEnhanced sends notifications and alerts
 					</p>
 				</div>
 			</div>

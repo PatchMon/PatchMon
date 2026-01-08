@@ -9,7 +9,12 @@ import { flushSync } from "react-dom";
 import { AUTH_PHASES, isAuthPhase } from "../constants/authPhases";
 import { isCorsError } from "../utils/api";
 
-const AuthContext = createContext();
+// Development-only logging to prevent error details exposure in production
+const isDev = import.meta.env.DEV;
+const devLog = (...args) => isDev && console.log(...args);
+const _devError = (...args) => isDev && console.error(...args);
+
+export const AuthContext = createContext();
 
 export const useAuth = () => {
 	const context = useContext(AuthContext);
@@ -33,11 +38,19 @@ export const AuthProvider = ({ children }) => {
 	const fetchPermissions = useCallback(async (authToken) => {
 		try {
 			setPermissionsLoading(true);
-			const response = await fetch("/api/v1/permissions/user-permissions", {
-				headers: {
+			const fetchOptions = {
+				credentials: "include", // Include cookies for httpOnly token
+			};
+			// Add Authorization header if token provided (backward compatibility)
+			if (authToken) {
+				fetchOptions.headers = {
 					Authorization: `Bearer ${authToken}`,
-				},
-			});
+				};
+			}
+			const response = await fetch(
+				"/api/v1/permissions/user-permissions",
+				fetchOptions,
+			);
 
 			if (response.ok) {
 				const data = await response.json();
@@ -56,42 +69,50 @@ export const AuthProvider = ({ children }) => {
 	}, []);
 
 	const refreshPermissions = useCallback(async () => {
-		if (token) {
-			const updatedPermissions = await fetchPermissions(token);
-			return updatedPermissions;
-		}
-		return null;
+		// Use token from state or rely on cookies
+		const updatedPermissions = await fetchPermissions(token);
+		return updatedPermissions;
 	}, [token, fetchPermissions]);
 
-	// Initialize auth state from localStorage
+	// Initialize auth state - validate session via API (cookies) or localStorage
 	useEffect(() => {
-		const storedToken = localStorage.getItem("token");
-		const storedUser = localStorage.getItem("user");
+		const abortController = new AbortController();
 
-		if (storedToken && storedUser) {
+		const validateSession = async () => {
 			try {
-				setToken(storedToken);
-				const parsedUser = JSON.parse(storedUser);
-				setUser({
-					...parsedUser,
-					accepted_release_notes_versions:
-						parsedUser.accepted_release_notes_versions || [],
+				// First, try to validate via API using httpOnly cookies
+				const response = await fetch("/api/v1/auth/profile", {
+					credentials: "include",
+					signal: abortController.signal,
 				});
-				// Fetch permissions from backend
-				fetchPermissions(storedToken);
-				// User is authenticated, skip setup check
-				setAuthPhase(AUTH_PHASES.READY);
+
+				if (response.ok) {
+					const data = await response.json();
+					if (!abortController.signal.aborted) {
+						setUser(data.user);
+						// Fetch permissions
+						await fetchPermissions();
+						setAuthPhase(AUTH_PHASES.READY);
+					}
+					return;
+				}
 			} catch (error) {
-				console.error("Error parsing stored user data:", error);
-				localStorage.removeItem("token");
-				localStorage.removeItem("user");
-				// Move to setup check phase
-				setAuthPhase(AUTH_PHASES.CHECKING_SETUP);
+				if (error.name === "AbortError") return;
+				devLog("Cookie-based auth failed:", error.message);
 			}
-		} else {
-			// No stored auth, check if setup is needed
+
+			if (abortController.signal.aborted) return;
+
+			// Clean up any stale token from localStorage (security measure)
+			localStorage.removeItem("token");
+
+			// No valid session, check if setup is needed
 			setAuthPhase(AUTH_PHASES.CHECKING_SETUP);
-		}
+		};
+
+		validateSession();
+
+		return () => abortController.abort();
 	}, [fetchPermissions]);
 
 	const login = async (username, password) => {
@@ -120,6 +141,7 @@ export const AuthProvider = ({ children }) => {
 					"Content-Type": "application/json",
 					"X-Device-ID": deviceId,
 				},
+				credentials: "include", // Include cookies for httpOnly token
 				body: JSON.stringify({ username, password }),
 			});
 
@@ -132,13 +154,17 @@ export const AuthProvider = ({ children }) => {
 				}
 
 				// Regular successful login
+				// Note: httpOnly cookies are set by the server for secure auth
+				// localStorage is used for backward compatibility and UI state only
 				setToken(data.token);
 				setUser({
 					...data.user,
 					accepted_release_notes_versions:
 						data.user.accepted_release_notes_versions || [],
 				});
-				localStorage.setItem("token", data.token);
+				// Store user info for session recovery (token stored in httpOnly cookie by server)
+				// Note: Token is NOT stored in localStorage to prevent XSS attacks
+				// The httpOnly cookie set by the server is used for authentication
 				localStorage.setItem(
 					"user",
 					JSON.stringify({
@@ -160,7 +186,7 @@ export const AuthProvider = ({ children }) => {
 				return { success: true };
 			} else {
 				// Handle HTTP error responses (like 500 CORS errors)
-				console.log("HTTP error response:", response.status, data);
+				devLog("HTTP error response:", response.status, data);
 
 				// Check if this is a CORS error based on the response data
 				if (
@@ -178,9 +204,9 @@ export const AuthProvider = ({ children }) => {
 				return { success: false, error: data.error || "Login failed" };
 			}
 		} catch (error) {
-			console.log("Login error:", error);
-			console.log("Error response:", error.response);
-			console.log("Error message:", error.message);
+			devLog("Login error:", error);
+			devLog("Error response:", error.response);
+			devLog("Error message:", error.message);
 
 			// Check for CORS/network errors first
 			if (isCorsError(error)) {
@@ -209,15 +235,15 @@ export const AuthProvider = ({ children }) => {
 
 	const logout = async () => {
 		try {
-			if (token) {
-				await fetch("/api/v1/auth/logout", {
-					method: "POST",
-					headers: {
-						Authorization: `Bearer ${token}`,
-						"Content-Type": "application/json",
-					},
-				});
-			}
+			// Logout via API - server will clear httpOnly cookies
+			await fetch("/api/v1/auth/logout", {
+				method: "POST",
+				credentials: "include", // Include cookies for auth
+				headers: {
+					...(token ? { Authorization: `Bearer ${token}` } : {}),
+					"Content-Type": "application/json",
+				},
+			});
 		} catch (error) {
 			console.error("Logout error:", error);
 		} finally {
@@ -270,7 +296,7 @@ export const AuthProvider = ({ children }) => {
 				return { success: true, user: data.user };
 			} else {
 				// Handle HTTP error responses (like 500 CORS errors)
-				console.log("HTTP error response:", response.status, data);
+				devLog("HTTP error response:", response.status, data);
 
 				// Check if this is a CORS error based on the response data
 				if (
@@ -330,7 +356,7 @@ export const AuthProvider = ({ children }) => {
 				return { success: true };
 			} else {
 				// Handle HTTP error responses (like 500 CORS errors)
-				console.log("HTTP error response:", response.status, data);
+				devLog("HTTP error response:", response.status, data);
 
 				// Check if this is a CORS error based on the response data
 				if (
@@ -378,12 +404,17 @@ export const AuthProvider = ({ children }) => {
 
 	const acceptReleaseNotes = async (version) => {
 		try {
+			const headers = {
+				"Content-Type": "application/json",
+			};
+			// Only add Authorization header if token exists (not OIDC)
+			if (token) {
+				headers.Authorization = `Bearer ${token}`;
+			}
 			const response = await fetch("/api/v1/release-notes-acceptance/accept", {
 				method: "POST",
-				headers: {
-					Authorization: `Bearer ${token}`,
-					"Content-Type": "application/json",
-				},
+				headers,
+				credentials: "include", // Include cookies for OIDC users
 				body: JSON.stringify({ version }),
 			});
 
@@ -443,6 +474,7 @@ export const AuthProvider = ({ children }) => {
 	const canManageSettings = () => hasPermission("can_manage_settings");
 
 	// Check if any admin users exist (for first-time setup)
+	// Also checks if OIDC is configured to bypass the welcome page
 	const checkAdminUsersExist = useCallback(async () => {
 		try {
 			const response = await fetch("/api/v1/auth/check-admin-users", {
@@ -454,7 +486,18 @@ export const AuthProvider = ({ children }) => {
 
 			if (response.ok) {
 				const data = await response.json();
-				setNeedsFirstTimeSetup(!data.hasAdminUsers);
+
+				// If OIDC is enabled with auto-create users, bypass the welcome page
+				// The first user will be created via OIDC JIT provisioning as admin
+				if (!data.hasAdminUsers && data.oidc?.canBypassWelcome) {
+					console.log(
+						"No admin users, but OIDC can handle first user - bypassing welcome page",
+					);
+					setNeedsFirstTimeSetup(false);
+				} else {
+					setNeedsFirstTimeSetup(!data.hasAdminUsers);
+				}
+
 				setAuthPhase(AUTH_PHASES.READY); // Setup check complete, move to ready phase
 			} else {
 				// If endpoint doesn't exist or fails, assume setup is needed
@@ -489,8 +532,7 @@ export const AuthProvider = ({ children }) => {
 			setAuthPhase(AUTH_PHASES.READY);
 		});
 
-		// Store in localStorage after state is updated
-		localStorage.setItem("token", authToken);
+		// Store user in localStorage (for session recovery)
 		localStorage.setItem(
 			"user",
 			JSON.stringify({
@@ -500,16 +542,23 @@ export const AuthProvider = ({ children }) => {
 			}),
 		);
 
-		// Fetch permissions immediately for the new authenticated user
+		// Token is NOT stored in localStorage to prevent XSS attacks
+		// All auth now uses httpOnly cookies set by the server
+		// Remove any stale token from localStorage
+		localStorage.removeItem("token");
+
+		// Fetch permissions - works with cookies if token is null
 		fetchPermissions(authToken);
 	};
 
 	// Computed loading state based on phase and permissions state
 	const isLoading = !isAuthPhase.ready(authPhase) || permissionsLoading;
 
-	// Function to check authentication status (maintains API compatibility)
+	// Function to check authentication status
+	// With httpOnly cookie auth, we check for user presence (server validates via cookies)
 	const isAuthenticated = () => {
-		return !!(user && token && isAuthPhase.ready(authPhase));
+		// User presence indicates valid session (token is in httpOnly cookie)
+		return !!(user && isAuthPhase.ready(authPhase));
 	};
 
 	const value = {

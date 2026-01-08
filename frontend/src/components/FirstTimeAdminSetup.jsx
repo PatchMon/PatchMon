@@ -4,6 +4,11 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { isCorsError } from "../utils/api";
 
+// Development-only logging
+const isDev = import.meta.env.DEV;
+const devLog = (...args) => isDev && console.log(...args);
+const devError = (...args) => isDev && console.error(...args);
+
 const FirstTimeAdminSetup = () => {
 	const { login, setAuthState } = useAuth();
 	const navigate = useNavigate();
@@ -113,7 +118,7 @@ const FirstTimeAdminSetup = () => {
 						try {
 							await login(formData.username.trim(), formData.password);
 						} catch (error) {
-							console.error("Auto-login failed:", error);
+							devError("Auto-login failed:", error);
 							setError(
 								"Account created but auto-login failed. Please login manually.",
 							);
@@ -123,7 +128,7 @@ const FirstTimeAdminSetup = () => {
 				}
 			} else {
 				// Handle HTTP error responses (like 500 CORS errors)
-				console.log("HTTP error response:", response.status, data);
+				devLog("HTTP error response:", response.status, data);
 
 				// Check if this is a CORS error based on the response data
 				if (
@@ -139,7 +144,7 @@ const FirstTimeAdminSetup = () => {
 				}
 			}
 		} catch (error) {
-			console.error("Setup error:", error);
+			devError("Setup error:", error);
 			// Check for CORS/network errors first
 			if (isCorsError(error)) {
 				setError(
@@ -197,7 +202,7 @@ const FirstTimeAdminSetup = () => {
 							</div>
 						</div>
 						<h1 className="text-2xl font-bold text-secondary-900 dark:text-white mb-2">
-							Welcome to PatchMon
+							Welcome to PatchMonEnhanced
 						</h1>
 						<p className="text-secondary-600 dark:text-secondary-300">
 							Let's set up your admin account to get started

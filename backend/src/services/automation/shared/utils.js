@@ -1,4 +1,5 @@
 // Common utilities for automation jobs
+const logger = require("../../../utils/logger");
 const path = require("node:path");
 const fs = require("node:fs");
 
@@ -46,7 +47,7 @@ async function checkPublicRepo(owner, repo) {
 				currentVersion = packageJson.version;
 			}
 		} catch (packageError) {
-			console.warn(
+			logger.warn(
 				"Could not read version from package.json for User-Agent:",
 				packageError.message,
 			);
@@ -66,7 +67,7 @@ async function checkPublicRepo(owner, repo) {
 				errorText.includes("rate limit") ||
 				errorText.includes("API rate limit")
 			) {
-				console.log("⚠️ GitHub API rate limit exceeded, skipping update check");
+				logger.info("⚠️ GitHub API rate limit exceeded, skipping update check");
 				return null;
 			}
 			throw new Error(
@@ -77,7 +78,7 @@ async function checkPublicRepo(owner, repo) {
 		const releaseData = await response.json();
 		return releaseData.tag_name.replace("v", "");
 	} catch (error) {
-		console.error("GitHub API error:", error.message);
+		logger.error("GitHub API error:", error.message);
 		throw error;
 	}
 }

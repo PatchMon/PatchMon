@@ -1,4 +1,5 @@
 const { prisma } = require("./shared/prisma");
+const logger = require("../../utils/logger");
 const { v4: uuidv4 } = require("uuid");
 
 /**
@@ -17,7 +18,7 @@ class SystemStatistics {
 	 */
 	async process(_job) {
 		const startTime = Date.now();
-		console.log("📊 Starting system statistics collection...");
+		logger.info("📊 Starting system statistics collection...");
 
 		try {
 			// Calculate unique package counts across all hosts
@@ -84,7 +85,7 @@ class SystemStatistics {
 			});
 
 			const executionTime = Date.now() - startTime;
-			console.log(
+			logger.info(
 				`✅ System statistics collection completed in ${executionTime}ms - Unique packages: ${uniquePackagesCount}, Security: ${uniqueSecurityCount}, Total hosts: ${totalHosts}`,
 			);
 
@@ -99,7 +100,7 @@ class SystemStatistics {
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			console.error(
+			logger.error(
 				`❌ System statistics collection failed after ${executionTime}ms:`,
 				error.message,
 			);
@@ -119,7 +120,7 @@ class SystemStatistics {
 				jobId: "system-statistics-recurring",
 			},
 		);
-		console.log("✅ System statistics collection scheduled (every 30 minutes)");
+		logger.info("✅ System statistics collection scheduled (every 30 minutes)");
 		return job;
 	}
 
@@ -132,7 +133,7 @@ class SystemStatistics {
 			{},
 			{ priority: 1 },
 		);
-		console.log("✅ Manual system statistics collection triggered");
+		logger.info("✅ Manual system statistics collection triggered");
 		return job;
 	}
 }

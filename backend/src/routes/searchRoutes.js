@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const router = express.Router();
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateToken } = require("../middleware/auth");
@@ -42,7 +43,7 @@ router.get("/", authenticateToken, async (req, res) => {
 
 			// If no specific permissions found, default to admin permissions
 			if (!userPermissions) {
-				console.warn(
+				logger.warn(
 					`No permissions found for role: ${req.user.role}, defaulting to admin access`,
 				);
 				userPermissions = {
@@ -52,7 +53,7 @@ router.get("/", authenticateToken, async (req, res) => {
 				};
 			}
 		} catch (permError) {
-			console.error("Error fetching permissions:", permError);
+			logger.error("Error fetching permissions:", permError);
 			// Default to restrictive permissions on error
 			userPermissions = {
 				can_view_hosts: false,
@@ -102,7 +103,7 @@ router.get("/", authenticateToken, async (req, res) => {
 					type: "host",
 				}));
 			} catch (error) {
-				console.error("Error searching hosts:", error);
+				logger.error("Error searching hosts:", error);
 			}
 		}
 
@@ -141,7 +142,7 @@ router.get("/", authenticateToken, async (req, res) => {
 					type: "package",
 				}));
 			} catch (error) {
-				console.error("Error searching packages:", error);
+				logger.error("Error searching packages:", error);
 			}
 		}
 
@@ -188,7 +189,7 @@ router.get("/", authenticateToken, async (req, res) => {
 					type: "repository",
 				}));
 			} catch (error) {
-				console.error("Error searching repositories:", error);
+				logger.error("Error searching repositories:", error);
 			}
 		}
 
@@ -232,13 +233,13 @@ router.get("/", authenticateToken, async (req, res) => {
 					type: "user",
 				}));
 			} catch (error) {
-				console.error("Error searching users:", error);
+				logger.error("Error searching users:", error);
 			}
 		}
 
 		res.json(results);
 	} catch (error) {
-		console.error("Global search error:", error);
+		logger.error("Global search error:", error);
 		res.status(500).json({
 			error: "Failed to perform search",
 			message: error.message,

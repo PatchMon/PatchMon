@@ -1,5 +1,9 @@
+const fs = require("node:fs");
+const path = require("node:path");
 const { prisma } = require("./shared/prisma");
+const logger = require("../../utils/logger");
 const { compareVersions, checkPublicRepo } = require("./shared/utils");
+const { invalidateCache } = require("../settingsService");
 
 /**
  * GitHub Update Check Automation
@@ -16,12 +20,13 @@ class GitHubUpdateCheck {
 	 */
 	async process(_job) {
 		const startTime = Date.now();
-		console.log("🔍 Starting GitHub update check...");
+		logger.info("🔍 Starting GitHub update check...");
 
 		try {
 			// Get settings
 			const settings = await prisma.settings.findFirst();
-			const DEFAULT_GITHUB_REPO = "https://github.com/PatchMon/PatchMon.git";
+			const DEFAULT_GITHUB_REPO =
+				"https://github.com/MacJediWizard/PatchMon-Enhanced.git";
 			const repoUrl = settings?.githubRepoUrl || DEFAULT_GITHUB_REPO;
 			let owner, repo;
 
@@ -51,15 +56,17 @@ class GitHubUpdateCheck {
 				throw new Error("Could not determine latest version");
 			}
 
-			// Read version from package.json
+			// Read version from package.json (using fs to avoid require cache)
 			let currentVersion = null;
 			try {
-				const packageJson = require("../../../package.json");
+				const packagePath = path.join(__dirname, "../../../package.json");
+				const packageContent = fs.readFileSync(packagePath, "utf8");
+				const packageJson = JSON.parse(packageContent);
 				if (packageJson?.version) {
 					currentVersion = packageJson.version;
 				}
 			} catch (packageError) {
-				console.error(
+				logger.error(
 					"Could not read version from package.json:",
 					packageError.message,
 				);
@@ -85,8 +92,11 @@ class GitHubUpdateCheck {
 				},
 			});
 
+			// Invalidate settings cache so frontend gets fresh data
+			invalidateCache();
+
 			const executionTime = Date.now() - startTime;
-			console.log(
+			logger.info(
 				`✅ GitHub update check completed in ${executionTime}ms - Current: ${currentVersion}, Latest: ${latestVersion}, Update Available: ${isUpdateAvailable}`,
 			);
 
@@ -99,7 +109,7 @@ class GitHubUpdateCheck {
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			console.error(
+			logger.error(
 				`❌ GitHub update check failed after ${executionTime}ms:`,
 				error.message,
 			);
@@ -115,12 +125,11 @@ class GitHubUpdateCheck {
 							update_available: false,
 						},
 					});
+					// Invalidate settings cache
+					invalidateCache();
 				}
 			} catch (updateError) {
-				console.error(
-					"❌ Error updating last check time:",
-					updateError.message,
-				);
+				logger.error("❌ Error updating last check time:", updateError.message);
 			}
 
 			throw error;
@@ -139,7 +148,7 @@ class GitHubUpdateCheck {
 				jobId: "github-update-check-recurring",
 			},
 		);
-		console.log("✅ GitHub update check scheduled");
+		logger.info("✅ GitHub update check scheduled");
 		return job;
 	}
 
@@ -152,7 +161,7 @@ class GitHubUpdateCheck {
 			{},
 			{ priority: 1 },
 		);
-		console.log("✅ Manual GitHub update check triggered");
+		logger.info("✅ Manual GitHub update check triggered");
 		return job;
 	}
 }

@@ -54,8 +54,8 @@ version_greater() {
 update_agents() {
     local backup_agent="/app/agents_backup/patchmon-agent.sh"
     local current_agent="/app/agents/patchmon-agent.sh"
-    local backup_binary="/app/agents_backup/patchmon-agent-linux-amd64"
-    local current_binary="/app/agents/patchmon-agent-linux-amd64"
+    local backup_binary="/app/agents_backup/patchmonenhanced-agent-linux-amd64"
+    local current_binary="/app/agents/patchmonenhanced-agent-linux-amd64"
     
     # Check if agents directory exists
     if [ ! -d "/app/agents" ]; then
@@ -118,7 +118,7 @@ update_agents() {
             
             # Backup binary if it exists
             if [ -f "$current_binary" ]; then
-                cp "$current_binary" "/app/agents/backups/patchmon-agent-linux-amd64.${backup_timestamp}" 2>/dev/null || true
+                cp "$current_binary" "/app/agents/backups/patchmonenhanced-agent-linux-amd64.${backup_timestamp}" 2>/dev/null || true
                 log "Previous binary backed up"
             fi
         fi
@@ -127,7 +127,7 @@ update_agents() {
         cp -r /app/agents_backup/* /app/agents/
         
         # Make agent binaries executable
-        chmod +x /app/agents/patchmon-agent-linux-* 2>/dev/null || true
+        chmod +x /app/agents/patchmonenhanced-agent-linux-* 2>/dev/null || true
         
         # Verify update
         local new_binary_version=$(get_binary_version "$current_binary")
@@ -143,15 +143,19 @@ update_agents() {
 log "PatchMon Backend Container Starting..."
 log "Environment: ${NODE_ENV:-production}"
 
+# Add workspace node_modules to PATH for workspace binaries and set NODE_PATH for module resolution
+export PATH="/app/node_modules/.bin:$PATH"
+export NODE_PATH="/app/node_modules:/app/backend/node_modules:$NODE_PATH"
+
 # Update agents (version-aware)
 update_agents
 
 log "Running database migrations..."
-npx prisma migrate deploy
+cd /app/backend && npx --package=prisma@6.1.0 prisma migrate deploy
 
 log "Starting application..."
 if [ "${NODE_ENV}" = "development" ]; then
-    exec npm run dev
+    cd /app && exec npm run --workspace=backend dev
 else
-    exec npm start
+    cd /app && exec npm run --workspace=backend start
 fi

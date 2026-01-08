@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateToken } = require("../middleware/auth");
 const {
@@ -16,15 +17,20 @@ router.get(
 	requireManageUsers,
 	async (_req, res) => {
 		try {
-			const permissions = await prisma.role_permissions.findMany({
-				orderBy: {
-					role: "asc",
-				},
+			const permissions = await prisma.role_permissions.findMany();
+
+			// Sort roles: superadmin first, then admin, then user, then others alphabetically
+			const roleOrder = { superadmin: 0, admin: 1, user: 2 };
+			permissions.sort((a, b) => {
+				const aOrder = roleOrder[a.role] ?? 999;
+				const bOrder = roleOrder[b.role] ?? 999;
+				if (aOrder !== bOrder) return aOrder - bOrder;
+				return a.role.localeCompare(b.role);
 			});
 
 			res.json(permissions);
 		} catch (error) {
-			console.error("Get role permissions error:", error);
+			logger.error("Get role permissions error:", error);
 			res.status(500).json({ error: "Failed to fetch role permissions" });
 		}
 	},
@@ -49,7 +55,7 @@ router.get(
 
 			res.json(permissions);
 		} catch (error) {
-			console.error("Get role permission error:", error);
+			logger.error("Get role permission error:", error);
 			res.status(500).json({ error: "Failed to fetch role permission" });
 		}
 	},
@@ -71,13 +77,21 @@ router.put(
 				can_manage_packages,
 				can_view_users,
 				can_manage_users,
+				can_manage_superusers,
 				can_view_reports,
 				can_export_data,
 				can_manage_settings,
 			} = req.body;
 
-			// Prevent modifying admin and user role permissions (built-in roles)
-			if (role === "admin" || role === "user") {
+			// Prevent modifying built-in role permissions
+			const builtInRoles = [
+				"superadmin",
+				"admin",
+				"host_manager",
+				"readonly",
+				"user",
+			];
+			if (builtInRoles.includes(role)) {
 				return res.status(400).json({
 					error: `Cannot modify ${role} role permissions - this is a built-in role`,
 				});
@@ -93,6 +107,7 @@ router.put(
 					can_manage_packages: can_manage_packages,
 					can_view_users: can_view_users,
 					can_manage_users: can_manage_users,
+					can_manage_superusers: can_manage_superusers,
 					can_view_reports: can_view_reports,
 					can_export_data: can_export_data,
 					can_manage_settings: can_manage_settings,
@@ -108,6 +123,7 @@ router.put(
 					can_manage_packages: can_manage_packages,
 					can_view_users: can_view_users,
 					can_manage_users: can_manage_users,
+					can_manage_superusers: can_manage_superusers,
 					can_view_reports: can_view_reports,
 					can_export_data: can_export_data,
 					can_manage_settings: can_manage_settings,
@@ -120,7 +136,7 @@ router.put(
 				permissions,
 			});
 		} catch (error) {
-			console.error("Update role permissions error:", error);
+			logger.error("Update role permissions error:", error);
 			res.status(500).json({ error: "Failed to update role permissions" });
 		}
 	},
@@ -135,8 +151,15 @@ router.delete(
 		try {
 			const { role } = req.params;
 
-			// Prevent deleting admin and user roles (built-in roles)
-			if (role === "admin" || role === "user") {
+			// Prevent deleting built-in roles
+			const builtInRoles = [
+				"superadmin",
+				"admin",
+				"host_manager",
+				"readonly",
+				"user",
+			];
+			if (builtInRoles.includes(role)) {
 				return res.status(400).json({
 					error: `Cannot delete ${role} role - this is a built-in role`,
 				});
@@ -161,7 +184,7 @@ router.delete(
 				message: `Role "${role}" deleted successfully`,
 			});
 		} catch (error) {
-			console.error("Delete role error:", error);
+			logger.error("Delete role error:", error);
 			res.status(500).json({ error: "Failed to delete role" });
 		}
 	},
@@ -195,7 +218,7 @@ router.get("/user-permissions", authenticateToken, async (req, res) => {
 
 		res.json(permissions);
 	} catch (error) {
-		console.error("Get user permissions error:", error);
+		logger.error("Get user permissions error:", error);
 		res.status(500).json({ error: "Failed to fetch user permissions" });
 	}
 });

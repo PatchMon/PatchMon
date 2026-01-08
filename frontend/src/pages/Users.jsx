@@ -29,7 +29,7 @@ const Users = () => {
 		error,
 	} = useQuery({
 		queryKey: ["users"],
-		queryFn: () => adminUsersAPI.list().then((res) => res.data),
+		queryFn: () => adminUsersAPI.list().then((res) => res.data.data),
 	});
 
 	// Fetch available roles
@@ -139,9 +139,17 @@ const Users = () => {
 								<div className="px-4 py-4 flex items-center justify-between">
 									<div className="flex items-center">
 										<div className="flex-shrink-0">
-											<div className="h-10 w-10 rounded-full bg-primary-100 flex items-center justify-center">
-												<User className="h-5 w-5 text-primary-600" />
-											</div>
+											{user.avatar_url ? (
+												<img
+													src={user.avatar_url}
+													alt={user.username}
+													className="h-10 w-10 rounded-full object-cover"
+												/>
+											) : (
+												<div className="h-10 w-10 rounded-full bg-primary-100 flex items-center justify-center">
+													<User className="h-5 w-5 text-primary-600" />
+												</div>
+											)}
 										</div>
 										<div className="ml-4">
 											<div className="flex items-center">
@@ -155,18 +163,22 @@ const Users = () => {
 												)}
 												<span
 													className={`ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-														user.role === "admin"
-															? "bg-primary-100 text-primary-800"
-															: user.role === "host_manager"
-																? "bg-green-100 text-green-800"
-																: user.role === "readonly"
-																	? "bg-yellow-100 text-yellow-800"
-																	: "bg-secondary-100 text-secondary-800"
+														user.role === "superadmin"
+															? "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+															: user.role === "admin"
+																? "bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200"
+																: user.role === "host_manager"
+																	? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+																	: user.role === "readonly"
+																		? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+																		: "bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
 													}`}
 												>
 													<Shield className="h-3 w-3 mr-1" />
-													{user.role.charAt(0).toUpperCase() +
-														user.role.slice(1).replace("_", " ")}
+													{user.role === "superadmin"
+														? "Super Admin"
+														: user.role.charAt(0).toUpperCase() +
+															user.role.slice(1).replace("_", " ")}
 												</span>
 												{user.is_active ? (
 													<CheckCircle className="ml-2 h-4 w-4 text-green-500" />

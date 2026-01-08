@@ -1,12 +1,39 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
 const speakeasy = require("speakeasy");
 const QRCode = require("qrcode");
+const bcrypt = require("bcryptjs");
 const { authenticateToken } = require("../middleware/auth");
 const { body, validationResult } = require("express-validator");
 
 const router = express.Router();
 const prisma = getPrismaClient();
+
+/**
+ * Hash backup codes for secure storage
+ * @param {string[]} codes - Plain text backup codes
+ * @returns {Promise<string[]>} - Hashed backup codes
+ */
+async function hashBackupCodes(codes) {
+	return Promise.all(codes.map((code) => bcrypt.hash(code, 10)));
+}
+
+/**
+ * Verify a backup code against stored hashes
+ * @param {string} code - Plain text code to verify
+ * @param {string[]} hashedCodes - Array of hashed codes
+ * @returns {Promise<{valid: boolean, index: number}>} - Whether valid and which index matched
+ */
+async function verifyBackupCode(code, hashedCodes) {
+	for (let i = 0; i < hashedCodes.length; i++) {
+		const match = await bcrypt.compare(code, hashedCodes[i]);
+		if (match) {
+			return { valid: true, index: i };
+		}
+	}
+	return { valid: false, index: -1 };
+}
 
 // Generate TFA secret and QR code
 router.get("/setup", authenticateToken, async (req, res) => {
@@ -47,7 +74,7 @@ router.get("/setup", authenticateToken, async (req, res) => {
 			manualEntryKey: secret.base32,
 		});
 	} catch (error) {
-		console.error("TFA setup error:", error);
+		logger.error("TFA setup error:", error);
 		res
 			.status(500)
 			.json({ error: "Failed to setup two-factor authentication" });
@@ -121,21 +148,25 @@ router.post(
 				Math.random().toString(36).substring(2, 8).toUpperCase(),
 			);
 
-			// Enable TFA and store backup codes
+			// Hash backup codes for secure storage
+			const hashedBackupCodes = await hashBackupCodes(backupCodes);
+
+			// Enable TFA and store hashed backup codes
 			await prisma.users.update({
 				where: { id: userId },
 				data: {
 					tfa_enabled: true,
-					tfa_backup_codes: JSON.stringify(backupCodes),
+					tfa_backup_codes: JSON.stringify(hashedBackupCodes),
 				},
 			});
 
+			// Return plain text codes to user (only time they'll see them)
 			res.json({
 				message: "Two-factor authentication has been enabled successfully",
 				backupCodes: backupCodes,
 			});
 		} catch (error) {
-			console.error("TFA verification error:", error);
+			logger.error("TFA verification error:", error);
 			res
 				.status(500)
 				.json({ error: "Failed to verify two-factor authentication setup" });
@@ -159,7 +190,7 @@ router.post(
 				return res.status(400).json({ errors: errors.array() });
 			}
 
-			const { password: _password } = req.body;
+			const { password } = req.body;
 			const userId = req.user.id;
 
 			// Verify password
@@ -174,8 +205,23 @@ router.post(
 				});
 			}
 
-			// FIXME: In a real implementation, you would verify the password hash here
-			// For now, we'll skip password verification for simplicity
+			// Verify password before allowing TFA disable
+			if (!user.password_hash) {
+				return res.status(400).json({
+					error:
+						"Cannot disable TFA for accounts without a password (e.g., OIDC-only accounts)",
+				});
+			}
+
+			const isValidPassword = await bcrypt.compare(
+				password,
+				user.password_hash,
+			);
+			if (!isValidPassword) {
+				return res.status(401).json({
+					error: "Invalid password",
+				});
+			}
 
 			// Disable TFA
 			await prisma.users.update({
@@ -191,7 +237,7 @@ router.post(
 				message: "Two-factor authentication has been disabled successfully",
 			});
 		} catch (error) {
-			console.error("TFA disable error:", error);
+			logger.error("TFA disable error:", error);
 			res
 				.status(500)
 				.json({ error: "Failed to disable two-factor authentication" });
@@ -218,7 +264,7 @@ router.get("/status", authenticateToken, async (req, res) => {
 			hasBackupCodes: !!user.tfa_backup_codes,
 		});
 	} catch (error) {
-		console.error("TFA status error:", error);
+		logger.error("TFA status error:", error);
 		res.status(500).json({ error: "Failed to get TFA status" });
 	}
 });
@@ -245,20 +291,24 @@ router.post("/regenerate-backup-codes", authenticateToken, async (req, res) => {
 			Math.random().toString(36).substring(2, 8).toUpperCase(),
 		);
 
-		// Update backup codes
+		// Hash backup codes for secure storage
+		const hashedBackupCodes = await hashBackupCodes(backupCodes);
+
+		// Update with hashed backup codes
 		await prisma.users.update({
 			where: { id: userId },
 			data: {
-				tfa_backup_codes: JSON.stringify(backupCodes),
+				tfa_backup_codes: JSON.stringify(hashedBackupCodes),
 			},
 		});
 
+		// Return plain text codes to user (only time they'll see them)
 		res.json({
 			message: "Backup codes have been regenerated successfully",
 			backupCodes: backupCodes,
 		});
 	} catch (error) {
-		console.error("TFA backup codes regeneration error:", error);
+		logger.error("TFA backup codes regeneration error:", error);
 		res.status(500).json({ error: "Failed to regenerate backup codes" });
 	}
 });
@@ -301,32 +351,46 @@ router.post(
 				});
 			}
 
-			// Check if it's a backup code
-			const backupCodes = user.tfa_backup_codes
-				? JSON.parse(user.tfa_backup_codes)
-				: [];
-			const isBackupCode = backupCodes.includes(token);
+			// Parse stored hashed backup codes
+			let hashedBackupCodes = [];
+			if (user.tfa_backup_codes) {
+				try {
+					hashedBackupCodes = JSON.parse(user.tfa_backup_codes);
+				} catch (parseError) {
+					logger.error("Failed to parse TFA backup codes:", parseError.message);
+					hashedBackupCodes = [];
+				}
+			}
 
 			let verified = false;
+			let _usedBackupCode = false;
 
-			if (isBackupCode) {
-				// Remove the used backup code
-				const updatedBackupCodes = backupCodes.filter((code) => code !== token);
-				await prisma.users.update({
-					where: { id: user.id },
-					data: {
-						tfa_backup_codes: JSON.stringify(updatedBackupCodes),
-					},
-				});
-				verified = true;
-			} else {
-				// Verify TOTP token
-				verified = speakeasy.totp.verify({
-					secret: user.tfa_secret,
-					encoding: "base32",
-					token: token,
-					window: 2,
-				});
+			// First try to verify as a TOTP token
+			verified = speakeasy.totp.verify({
+				secret: user.tfa_secret,
+				encoding: "base32",
+				token: token,
+				window: 2,
+			});
+
+			// If TOTP fails, try backup codes
+			if (!verified && hashedBackupCodes.length > 0) {
+				const backupResult = await verifyBackupCode(
+					token.toUpperCase(),
+					hashedBackupCodes,
+				);
+				if (backupResult.valid) {
+					// Remove the used backup code
+					hashedBackupCodes.splice(backupResult.index, 1);
+					await prisma.users.update({
+						where: { id: user.id },
+						data: {
+							tfa_backup_codes: JSON.stringify(hashedBackupCodes),
+						},
+					});
+					verified = true;
+					_usedBackupCode = true;
+				}
 			}
 
 			if (!verified) {
@@ -340,7 +404,7 @@ router.post(
 				userId: user.id,
 			});
 		} catch (error) {
-			console.error("TFA verification error:", error);
+			logger.error("TFA verification error:", error);
 			res
 				.status(500)
 				.json({ error: "Failed to verify two-factor authentication" });

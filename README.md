@@ -1,4 +1,4 @@
-# PatchMon - Linux Patch Monitoring made Simple
+# PatchMonEnhanced - Linux Patch Monitoring made Simple
 
 [![Website](https://img.shields.io/badge/Website-patchmon.net-blue?style=for-the-badge)](https://patchmon.net)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-blue?style=for-the-badge&logo=discord)](https://patchmon.net/discord)
@@ -12,7 +12,7 @@
 
 ## Purpose
 
-PatchMon provides centralized patch management across diverse server environments. Agents communicate outbound-only to the PatchMon server, eliminating inbound ports on monitored hosts while delivering comprehensive visibility and safe automation.
+PatchMonEnhanced provides centralized patch management across diverse server environments. Agents communicate outbound-only to the PatchMonEnhanced server, eliminating inbound ports on monitored hosts while delivering comprehensive visibility and safe automation.
 
 ![Dashboard Screenshot](https://raw.githubusercontent.com/PatchMon/PatchMon/main/dashboard.jpeg)
 
@@ -49,6 +49,22 @@ PatchMon provides centralized patch management across diverse server environment
 - Rate limiting for general, auth, and agent endpoints
 - Outbound‑only agent model reduces attack surface
 
+### Security Compliance
+- **OpenSCAP** - CIS Benchmarks for Linux hosts (Ubuntu, Debian, RHEL, CentOS, Rocky)
+- **Docker Bench for Security** - CIS Docker Benchmark for container security
+- Automated scheduled scans (configurable interval)
+- On-demand scan triggering from dashboard
+- Compliance score tracking over time
+- Detailed rule-level results with remediation guidance
+- Dashboard with fleet-wide compliance overview
+
+See [Security Compliance Installation Guide](docs/security-compliance/INSTALLATION.md) for setup instructions.
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `COMPLIANCE_SCAN_INTERVAL` | `86400` | Seconds between scheduled scans |
+| `COMPLIANCE_ENABLED` | `true` | Enable/disable compliance feature |
+
 ### Deployment & Operations
 - Docker installation & One‑line self‑host installer (Ubuntu/Debian)
 - systemd service for backend lifecycle
@@ -57,9 +73,9 @@ PatchMon provides centralized patch management across diverse server environment
 
 ## Getting Started
 
-### PatchMon Cloud (coming soon)
+### PatchMonEnhanced Cloud (coming soon)
 
-Managed, zero-maintenance PatchMon hosting. Stay tuned.
+Managed, zero-maintenance PatchMonEnhanced hosting. Stay tuned.
 
 ### Self-hosted Installation
 
@@ -119,16 +135,16 @@ After installation:
 - See all useful info in `deployment-info.txt`
 
 ## Forcing updates after host package changes
-Should you perform a manual package update on your host and wish to see the results reflected in PatchMon quicker than the usual scheduled update, you can trigger the process manually by running:
+Should you perform a manual package update on your host and wish to see the results reflected in PatchMonEnhanced quicker than the usual scheduled update, you can trigger the process manually by running:
 ```bash
 /usr/local/bin/patchmon-agent.sh update
 ```
 
-This will send the results immediately to PatchMon.
+This will send the results immediately to PatchMonEnhanced.
 
 ## Communication Model
 
-- Outbound-only agents: servers initiate communication to PatchMon
+- Outbound-only agents: servers initiate communication to PatchMonEnhanced
 - No inbound connections required on monitored servers
 - Secure server-side API with JWT authentication and rate limiting
 
@@ -237,7 +253,7 @@ We welcome contributions from the community! Here's how you can get involved:
 
 ## 🏢 Enterprise & Custom Solutions
 
-### PatchMon Cloud
+### PatchMonEnhanced Cloud
 - **Fully Managed**: We handle all infrastructure and maintenance
 - **Scalable**: Grows with your organization
 - **Secure**: Enterprise-grade security and compliance
@@ -247,7 +263,7 @@ We welcome contributions from the community! Here's how you can get involved:
 - **API Development**: Custom endpoints for your specific needs
 - **Third-Party Integrations**: Connect with your existing tools
 - **Custom Dashboards**: Tailored reporting and visualization
-- **White-Label Solutions**: Brand PatchMon as your own
+- **White-Label Solutions**: Brand PatchMonEnhanced as your own
 
 ### Enterprise Deployment
 - **On-Premises**: Deploy in your own data center
@@ -275,7 +291,7 @@ We welcome contributions from the community! Here's how you can get involved:
   
 
 ### Contributors
-Thank you to all our contributors who help make PatchMon better every day!
+Thank you to all our contributors who help make PatchMonEnhanced better every day!
 
 
 ## 🔗 Links
@@ -290,7 +306,7 @@ Thank you to all our contributors who help make PatchMon better every day!
 
 <div align="center">
 
-**Made with ❤️ by the PatchMon Team**
+**Made with ❤️ by the PatchMonEnhanced Team**
 
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-blue?style=for-the-badge&logo=discord)](https://patchmon.net/discord)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-black?style=for-the-badge&logo=github)](https://github.com/PatchMon/PatchMon)

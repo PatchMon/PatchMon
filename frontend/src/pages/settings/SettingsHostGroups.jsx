@@ -76,11 +76,6 @@ const SettingsHostGroups = () => {
 		updateMutation.mutate({ id: selectedGroup.id, data });
 	};
 
-	const _handleDeleteClick = (group) => {
-		setGroupToDelete(group);
-		setShowDeleteModal(true);
-	};
-
 	const handleDeleteConfirm = () => {
 		deleteMutation.mutate(groupToDelete.id);
 	};

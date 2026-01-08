@@ -1,6 +1,7 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
-const moment = require("moment");
+const { subMinutes, subDays, isBefore } = require("date-fns");
 const { authenticateToken } = require("../middleware/auth");
 const {
 	requireViewDashboard,
@@ -12,6 +13,19 @@ const { queueManager } = require("../services/automation");
 
 const router = express.Router();
 const prisma = getPrismaClient();
+
+// Helper function to format bytes to human-readable string
+function formatBytes(bytes) {
+	if (!bytes || bytes === 0n || bytes === 0) return "0 B";
+	const num = typeof bytes === "bigint" ? Number(bytes) : bytes;
+	const units = ["B", "KB", "MB", "GB", "TB"];
+	const exponent = Math.min(
+		Math.floor(Math.log(num) / Math.log(1024)),
+		units.length - 1,
+	);
+	const value = num / 1024 ** exponent;
+	return `${value.toFixed(1)} ${units[exponent]}`;
+}
 
 // Get dashboard statistics
 router.get(
@@ -29,9 +43,7 @@ router.get(
 			// Calculate the threshold based on the actual update interval
 			// Use 2x the update interval as the threshold for "errored" hosts
 			const thresholdMinutes = updateIntervalMinutes * 2;
-			const thresholdTime = moment(now)
-				.subtract(thresholdMinutes, "minutes")
-				.toDate();
+			const thresholdTime = subMinutes(now, thresholdMinutes);
 
 			// Get all statistics in parallel for better performance
 			const [
@@ -100,9 +112,7 @@ router.get(
 					where: {
 						status: "active",
 						last_update: {
-							lt: moment(now)
-								.subtract(updateIntervalMinutes * 3, "minutes")
-								.toDate(),
+							lt: subMinutes(now, updateIntervalMinutes * 3),
 						},
 					},
 				}),
@@ -137,7 +147,7 @@ router.get(
 					by: ["timestamp"],
 					where: {
 						timestamp: {
-							gte: moment(now).subtract(7, "days").toDate(),
+							gte: subDays(now, 7),
 						},
 					},
 					_count: {
@@ -196,7 +206,7 @@ router.get(
 				lastUpdated: now.toISOString(),
 			});
 		} catch (error) {
-			console.error("Error fetching dashboard stats:", error);
+			logger.error("Error fetching dashboard stats:", error);
 			res.status(500).json({ error: "Failed to fetch dashboard statistics" });
 		}
 	},
@@ -227,6 +237,9 @@ router.get("/hosts", authenticateToken, requireViewHosts, async (_req, res) => {
 				notes: true,
 				api_id: true,
 				needs_reboot: true,
+				docker_enabled: true,
+				compliance_enabled: true,
+				compliance_on_demand_only: true,
 				host_group_memberships: {
 					include: {
 						host_groups: {
@@ -295,8 +308,9 @@ router.get("/hosts", authenticateToken, requireViewHosts, async (_req, res) => {
 			const totalPackagesCount = totalCountMap.get(host.id) || 0;
 
 			// Calculate effective status based on reporting interval
-			const isStale = moment(host.last_update).isBefore(
-				moment().subtract(thresholdMinutes, "minutes"),
+			const isStale = isBefore(
+				new Date(host.last_update),
+				subMinutes(new Date(), thresholdMinutes),
 			);
 			let effectiveStatus = host.status;
 
@@ -317,7 +331,7 @@ router.get("/hosts", authenticateToken, requireViewHosts, async (_req, res) => {
 
 		res.json(hostsWithUpdateInfo);
 	} catch (error) {
-		console.error("Error fetching hosts:", error);
+		logger.error("Error fetching hosts:", error);
 		res.status(500).json({ error: "Failed to fetch hosts" });
 	}
 });
@@ -384,7 +398,7 @@ router.get(
 
 			res.json(packagesWithHostInfo);
 		} catch (error) {
-			console.error("Error fetching packages:", error);
+			logger.error("Error fetching packages:", error);
 			res.status(500).json({ error: "Failed to fetch packages" });
 		}
 	},
@@ -401,6 +415,7 @@ router.get(
 
 			const limit = parseInt(req.query.limit, 10) || 10;
 			const offset = parseInt(req.query.offset, 10) || 0;
+			const include = req.query.include; // Optional: "docker" to include Docker data
 
 			const [host, totalHistoryCount] = await Promise.all([
 				prisma.hosts.findUnique({
@@ -461,9 +476,77 @@ router.get(
 				},
 			};
 
+			// Include Docker data if requested
+			if (include === "docker") {
+				const [containers, images, volumes, networks] = await Promise.all([
+					prisma.docker_containers.findMany({
+						where: { host_id: hostId },
+						orderBy: { name: "asc" },
+					}),
+					prisma.docker_images.findMany({
+						where: {
+							docker_containers: {
+								some: { host_id: hostId },
+							},
+						},
+						distinct: ["id"],
+					}),
+					prisma.docker_volumes.findMany({
+						where: { host_id: hostId },
+						orderBy: { name: "asc" },
+					}),
+					prisma.docker_networks.findMany({
+						where: { host_id: hostId },
+						orderBy: { name: "asc" },
+					}),
+				]);
+
+				// Convert BigInt to string for JSON serialization
+				const convertBigInt = (obj) => {
+					if (obj === null || obj === undefined) return obj;
+					if (typeof obj === "bigint") return obj.toString();
+					if (Array.isArray(obj)) return obj.map(convertBigInt);
+					if (typeof obj === "object") {
+						const result = {};
+						for (const key of Object.keys(obj)) {
+							result[key] = convertBigInt(obj[key]);
+						}
+						return result;
+					}
+					return obj;
+				};
+
+				// Transform containers to include combined image field for frontend
+				const transformedContainers = containers.map((c) => ({
+					...c,
+					image: c.image_tag ? `${c.image_name}:${c.image_tag}` : c.image_name,
+				}));
+
+				// Transform images to include size field for frontend
+				const transformedImages = images.map((img) => ({
+					...img,
+					size: img.size_bytes ? formatBytes(img.size_bytes) : null,
+				}));
+
+				hostWithStats.docker = {
+					containers: convertBigInt(transformedContainers),
+					images: convertBigInt(transformedImages),
+					volumes: convertBigInt(volumes),
+					networks: convertBigInt(networks),
+					stats: {
+						total_containers: containers.length,
+						running_containers: containers.filter((c) => c.state === "running")
+							.length,
+						total_images: images.length,
+						total_volumes: volumes.length,
+						total_networks: networks.length,
+					},
+				};
+			}
+
 			res.json(hostWithStats);
 		} catch (error) {
-			console.error("Error fetching host details:", error);
+			logger.error("Error fetching host details:", error);
 			res.status(500).json({ error: "Failed to fetch host details" });
 		}
 	},
@@ -505,7 +588,7 @@ router.get(
 				},
 			});
 		} catch (error) {
-			console.error("Error fetching host queue status:", error);
+			logger.error("Error fetching host queue status:", error);
 			res.status(500).json({
 				success: false,
 				error: "Failed to fetch host queue status",
@@ -531,9 +614,12 @@ router.get(
 					id: true,
 					username: true,
 					email: true,
+					first_name: true,
+					last_name: true,
 					role: true,
 					last_login: true,
 					created_at: true,
+					avatar_url: true,
 				},
 				orderBy: [{ last_login: "desc" }, { created_at: "desc" }],
 				take: 5,
@@ -541,7 +627,7 @@ router.get(
 
 			res.json(users);
 		} catch (error) {
-			console.error("Error fetching recent users:", error);
+			logger.error("Error fetching recent users:", error);
 			res.status(500).json({ error: "Failed to fetch recent users" });
 		}
 	},
@@ -570,7 +656,7 @@ router.get(
 
 			res.json(hosts);
 		} catch (error) {
-			console.error("Error fetching recent collection:", error);
+			logger.error("Error fetching recent collection:", error);
 			res.status(500).json({ error: "Failed to fetch recent collection" });
 		}
 	},
@@ -1073,7 +1159,7 @@ router.get(
 				},
 			});
 		} catch (error) {
-			console.error("Error fetching package trends:", error);
+			logger.error("Error fetching package trends:", error);
 			res.status(500).json({ error: "Failed to fetch package trends" });
 		}
 	},
@@ -1102,10 +1188,10 @@ router.get(
 			const endTime = new Date(targetDateTime);
 			endTime.setHours(endTime.getHours() + parseInt(hours, 10));
 
-			console.log(
+			logger.info(
 				`Analyzing package spike around ${targetDateTime.toISOString()}`,
 			);
-			console.log(
+			logger.info(
 				`Time range: ${startTime.toISOString()} to ${endTime.toISOString()}`,
 			);
 
@@ -1417,7 +1503,7 @@ router.get(
 				],
 			});
 		} catch (error) {
-			console.error("Error analyzing package spike:", error);
+			logger.error("Error analyzing package spike:", error);
 			res.status(500).json({ error: "Failed to analyze package spike" });
 		}
 	},

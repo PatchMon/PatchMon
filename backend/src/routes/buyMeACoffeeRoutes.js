@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const axios = require("axios");
 const { authenticateToken } = require("../middleware/auth");
 
@@ -186,7 +187,7 @@ router.get("/supporter-count", authenticateToken, async (_req, res) => {
 
 		res.json({ count: supporterCount, cached: false });
 	} catch (error) {
-		console.error("Error fetching Buy Me a Coffee supporter count:", error);
+		logger.error("Error fetching Buy Me a Coffee supporter count:", error);
 
 		// Return cached value if available
 		if (supporterCountCache.count !== null) {

@@ -12,7 +12,12 @@
 		"enabled": true
 	},
 	"linter": {
-		"enabled": true
+		"enabled": true,
+		"rules": {
+			"style": {
+				"useConst": "warn"
+			}
+		}
 	},
 	"assist": {
 		"enabled": true

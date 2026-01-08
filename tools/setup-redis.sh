@@ -15,7 +15,14 @@ NC='\033[0m' # No Color
 # Default Redis connection details
 REDIS_HOST=${REDIS_HOST:-"localhost"}
 REDIS_PORT=${REDIS_PORT:-6379}
-REDIS_ADMIN_PASSWORD=${REDIS_ADMIN_PASSWORD:-"YOURREDISPASSHERE"}
+
+# Validate REDIS_ADMIN_PASSWORD is set (no insecure defaults)
+if [ -z "$REDIS_ADMIN_PASSWORD" ]; then
+    echo -e "${RED}❌ ERROR: REDIS_ADMIN_PASSWORD environment variable is required${NC}"
+    echo "Please set REDIS_ADMIN_PASSWORD before running this script:"
+    echo "  export REDIS_ADMIN_PASSWORD='your-secure-password'"
+    exit 1
+fi
 
 echo -e "${BLUE}🔧 PatchMon Redis Setup${NC}"
 echo "=================================="

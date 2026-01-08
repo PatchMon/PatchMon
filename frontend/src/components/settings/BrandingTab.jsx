@@ -45,8 +45,8 @@ const BrandingTab = () => {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
-					Authorization: `Bearer ${localStorage.getItem("token")}`,
 				},
+				credentials: "include",
 				body: JSON.stringify({ logoType, fileContent, fileName }),
 			});
 			const data = await res.json();
@@ -55,13 +55,13 @@ const BrandingTab = () => {
 			}
 			return data;
 		},
-		onSuccess: async (data, variables) => {
+		onSuccess: async (_data, variables) => {
 			// Invalidate and refetch settings to get updated timestamp
 			queryClient.invalidateQueries(["settings"]);
 			// Wait for refetch to complete before closing modal
 			try {
 				await queryClient.refetchQueries(["settings"]);
-			} catch (error) {
+			} catch (_error) {
 				// Continue anyway - settings will update on next render
 			}
 			setLogoUploadState((prev) => ({
@@ -89,8 +89,8 @@ const BrandingTab = () => {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
-					Authorization: `Bearer ${localStorage.getItem("token")}`,
 				},
+				credentials: "include",
 				body: JSON.stringify({ logoType }),
 			}).then((res) => res.json()),
 		onSuccess: () => {
@@ -138,8 +138,8 @@ const BrandingTab = () => {
 					</h2>
 				</div>
 				<p className="text-sm text-secondary-500 dark:text-secondary-300 mb-6">
-					Customize your PatchMon installation with custom logos and favicon.
-					These will be displayed throughout the application.
+					Customize your PatchMonEnhanced installation with custom logos and
+					favicon. These will be displayed throughout the application.
 				</p>
 			</div>
 

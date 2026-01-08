@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const fs = require("node:fs").promises;
 const path = require("node:path");
 const { authenticateToken } = require("../middleware/auth");
@@ -11,7 +12,7 @@ function getCurrentVersion() {
 		const packageJson = require("../../package.json");
 		return packageJson?.version || "unknown";
 	} catch (error) {
-		console.error("Could not read version from package.json:", error);
+		logger.error("Could not read version from package.json:", error);
 		return "unknown";
 	}
 }
@@ -42,7 +43,7 @@ router.get("/:version", authenticateToken, async (req, res) => {
 			});
 		}
 	} catch (error) {
-		console.error("Error fetching release notes:", error);
+		logger.error("Error fetching release notes:", error);
 		res.status(500).json({ error: "Failed to fetch release notes" });
 	}
 });
@@ -73,7 +74,7 @@ router.get("/current", authenticateToken, async (_req, res) => {
 			});
 		}
 	} catch (error) {
-		console.error("Error fetching current release notes:", error);
+		logger.error("Error fetching current release notes:", error);
 		res.status(500).json({ error: "Failed to fetch release notes" });
 	}
 });
@@ -96,7 +97,7 @@ router.get("/", authenticateToken, async (_req, res) => {
 
 		res.json({ versions });
 	} catch (error) {
-		console.error("Error listing release notes:", error);
+		logger.error("Error listing release notes:", error);
 		res.status(500).json({ error: "Failed to list release notes" });
 	}
 });

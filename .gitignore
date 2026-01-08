@@ -121,6 +121,11 @@ frontend/.vite/
 
 # Agent specific
 agents/*.log
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
 
 # SSL certificates
 *.pem
@@ -156,3 +161,7 @@ install-server.*
 notify-clients-upgrade.sh
 debug-agent.sh
 docker/compose_dev_*
+
+# Conductor agent prompts (keep local, not public)
+docs/conductor-prompts/
+.encryption_key

@@ -1,5 +1,17 @@
 const IORedis = require("ioredis");
 
+// Build TLS configuration if enabled
+function getTlsConfig() {
+	if (process.env.REDIS_TLS !== "true") {
+		return undefined;
+	}
+	return {
+		rejectUnauthorized: process.env.REDIS_TLS_VERIFY !== "false",
+		// Optional: Custom CA certificate
+		ca: process.env.REDIS_TLS_CA ? process.env.REDIS_TLS_CA : undefined,
+	};
+}
+
 // Redis connection configuration with connection pooling
 const redisConnection = {
 	host: process.env.REDIS_HOST || "localhost",
@@ -7,6 +19,8 @@ const redisConnection = {
 	password: process.env.REDIS_PASSWORD || undefined,
 	username: process.env.REDIS_USER || undefined,
 	db: parseInt(process.env.REDIS_DB, 10) || 0,
+	// TLS configuration (set REDIS_TLS=true to enable)
+	tls: getTlsConfig(),
 	// Connection pooling settings
 	lazyConnect: true,
 	keepAlive: 30000,
