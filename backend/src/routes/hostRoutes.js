@@ -2792,6 +2792,7 @@ router.get(
 					friendly_name: true,
 					docker_enabled: true,
 					compliance_enabled: true,
+					compliance_on_demand_only: true,
 				},
 			});
 
@@ -2816,6 +2817,7 @@ router.get(
 
 			res.json({
 				success: true,
+				compliance_on_demand_only: host.compliance_on_demand_only ?? true,
 				data: {
 					integrations,
 					connected,
