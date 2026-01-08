@@ -335,6 +335,28 @@ function pushIntegrationToggle(apiId, integrationName, enabled) {
 	}
 }
 
+function pushSetComplianceOnDemandOnly(apiId, onDemandOnly) {
+	const ws = apiIdToSocket.get(apiId);
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		safeSend(
+			ws,
+			JSON.stringify({
+				type: "set_compliance_on_demand_only",
+				on_demand_only: onDemandOnly,
+			}),
+		);
+		logger.info(
+			`📤 Pushed compliance on-demand-only setting to agent ${apiId}: ${onDemandOnly}`,
+		);
+		return true;
+	} else {
+		logger.info(
+			`⚠️ Agent ${apiId} not connected, cannot push compliance on-demand-only setting`,
+		);
+		return false;
+	}
+}
+
 function getConnectionByApiId(apiId) {
 	return apiIdToSocket.get(apiId);
 }
@@ -672,6 +694,7 @@ module.exports = {
 	pushRefreshIntegrationStatus,
 	pushDockerInventoryRefresh,
 	pushIntegrationToggle,
+	pushSetComplianceOnDemandOnly,
 	pushUpdateNotification,
 	pushUpdateNotificationToAll,
 	pushComplianceScan,

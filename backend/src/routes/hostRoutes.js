@@ -11,7 +11,7 @@ const {
 	requireManageSettings,
 } = require("../middleware/permissions");
 const { queueManager, QUEUE_NAMES } = require("../services/automation");
-const { pushIntegrationToggle, isConnected } = require("../services/agentWs");
+const { pushIntegrationToggle, pushSetComplianceOnDemandOnly, isConnected } = require("../services/agentWs");
 const { compareVersions } = require("../services/automation/shared/utils");
 const { redis } = require("../services/automation/shared/redis");
 const { verifyApiKey } = require("../utils/apiKeyUtils");
@@ -1074,6 +1074,7 @@ router.get("/integrations", validateApiCredentials, async (req, res) => {
 				id: true,
 				docker_enabled: true,
 				compliance_enabled: true,
+				compliance_on_demand_only: true,
 			},
 		});
 
@@ -1090,6 +1091,7 @@ router.get("/integrations", validateApiCredentials, async (req, res) => {
 		res.json({
 			success: true,
 			integrations: integrations,
+			compliance_on_demand_only: host.compliance_on_demand_only ?? false,
 		});
 	} catch (error) {
 		logger.error("Get integration status error:", error);
@@ -2976,6 +2978,83 @@ router.post(
 		} catch (error) {
 			logger.error("Toggle integration error:", error);
 			res.status(500).json({ error: "Failed to toggle integration" });
+		}
+	},
+);
+
+// Set compliance on-demand-only mode for a host
+router.post(
+	"/:hostId/compliance/on-demand-only",
+	authenticateToken,
+	requireManageHosts,
+	[body("on_demand_only").isBoolean().withMessage("on_demand_only must be a boolean")],
+	async (req, res) => {
+		try {
+			const errors = validationResult(req);
+			if (!errors.isEmpty()) {
+				return res.status(400).json({ errors: errors.array() });
+			}
+
+			const { hostId } = req.params;
+			const { on_demand_only } = req.body;
+
+			// Get host to verify it exists
+			const host = await prisma.hosts.findUnique({
+				where: { id: hostId },
+				select: {
+					id: true,
+					api_id: true,
+					friendly_name: true,
+				},
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			// Check if agent is connected
+			if (!isConnected(host.api_id)) {
+				return res.status(503).json({
+					error: "Agent is not connected",
+					message:
+						"The agent must be connected via WebSocket to change compliance settings",
+				});
+			}
+
+			// Send WebSocket message to agent
+			const success = pushSetComplianceOnDemandOnly(
+				host.api_id,
+				on_demand_only,
+			);
+
+			if (!success) {
+				return res.status(503).json({
+					error: "Failed to send compliance setting",
+					message: "Agent connection may have been lost",
+				});
+			}
+
+			// Persist setting to database
+			await prisma.hosts.update({
+				where: { id: hostId },
+				data: { compliance_on_demand_only: on_demand_only },
+			});
+
+			res.json({
+				success: true,
+				message: `Compliance on-demand-only mode ${on_demand_only ? "enabled" : "disabled"} successfully`,
+				data: {
+					on_demand_only,
+					host: {
+						id: host.id,
+						friendlyName: host.friendly_name,
+						apiId: host.api_id,
+					},
+				},
+			});
+		} catch (error) {
+			logger.error("Set compliance on-demand-only error:", error);
+			res.status(500).json({ error: "Failed to set compliance on-demand-only mode" });
 		}
 	},
 );

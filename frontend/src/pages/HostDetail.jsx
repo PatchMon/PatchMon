@@ -567,6 +567,37 @@ const HostDetail = () => {
 		},
 	});
 
+	// Toggle compliance on-demand-only mode mutation
+	const toggleComplianceOnDemandOnlyMutation = useMutation({
+		mutationFn: (onDemandOnly) =>
+			adminHostsAPI
+				.setComplianceOnDemandOnly(hostId, onDemandOnly)
+				.then((res) => res.data),
+		onSuccess: (data) => {
+			// Update the cache with the new state
+			queryClient.setQueryData(["host-integrations", hostId], (oldData) => {
+				if (!oldData) return oldData;
+				return {
+					...oldData,
+					data: {
+						...oldData.data,
+						compliance_on_demand_only: data.data.on_demand_only,
+					},
+				};
+			});
+			// Also invalidate to ensure we get fresh data
+			queryClient.invalidateQueries(["host-integrations", hostId]);
+		},
+		onError: (error) => {
+			// On error, refetch to get the actual state
+			refetchIntegrations();
+			console.error(
+				"Failed to toggle compliance on-demand-only:",
+				error.response?.data?.error || error.message,
+			);
+		},
+	});
+
 	const handleDeleteHost = async () => {
 		if (
 			window.confirm(
@@ -3381,6 +3412,63 @@ const HostDetail = () => {
 													Agent must be connected via WebSocket to toggle
 													integrations
 												</p>
+											)}
+
+											{/* On-demand only toggle - only shown when compliance is enabled */}
+											{integrationsData?.data?.integrations?.compliance && (
+												<div className="mt-4 pt-4 border-t border-secondary-200 dark:border-secondary-700">
+													<div className="flex items-center justify-between">
+														<div className="flex-1 min-w-0 pr-4">
+															<div className="flex items-center gap-2">
+																<span className="text-sm font-medium text-secondary-900 dark:text-secondary-100">
+																	On-Demand Only
+																</span>
+															</div>
+															<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-1">
+																When enabled, compliance scans only run when triggered from the UI, not during scheduled reports
+															</p>
+														</div>
+														<div className="flex-shrink-0">
+															<button
+																type="button"
+																onClick={() =>
+																	toggleComplianceOnDemandOnlyMutation.mutate(
+																		!integrationsData?.data?.compliance_on_demand_only
+																	)
+																}
+																disabled={
+																	toggleComplianceOnDemandOnlyMutation.isPending ||
+																	!wsStatus?.connected
+																}
+																title={
+																	!wsStatus?.connected
+																		? "Agent is not connected"
+																		: integrationsData?.data?.compliance_on_demand_only
+																			? "Disable on-demand only mode"
+																			: "Enable on-demand only mode"
+																}
+																className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+																	integrationsData?.data?.compliance_on_demand_only
+																		? "bg-primary-600 dark:bg-primary-500"
+																		: "bg-secondary-200 dark:bg-secondary-600"
+																} ${
+																	toggleComplianceOnDemandOnlyMutation.isPending ||
+																	!wsStatus?.connected
+																		? "opacity-50 cursor-not-allowed"
+																		: ""
+																}`}
+															>
+																<span
+																	className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+																		integrationsData?.data?.compliance_on_demand_only
+																			? "translate-x-5"
+																			: "translate-x-1"
+																	}`}
+																/>
+															</button>
+														</div>
+													</div>
+												</div>
 											)}
 										</div>
 									</div>

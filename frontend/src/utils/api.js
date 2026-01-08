@@ -142,6 +142,10 @@ export const adminHostsAPI = {
 	getIntegrationSetupStatus: (hostId, integrationName) =>
 		api.get(`/hosts/${hostId}/integrations/${integrationName}/status`),
 	refreshDocker: (hostId) => api.post(`/hosts/${hostId}/refresh-docker`),
+	setComplianceOnDemandOnly: (hostId, onDemandOnly) =>
+		api.post(`/hosts/${hostId}/compliance/on-demand-only`, {
+			on_demand_only: onDemandOnly,
+		}),
 };
 
 // Host Groups API
