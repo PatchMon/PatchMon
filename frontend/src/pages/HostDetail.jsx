@@ -579,10 +579,7 @@ const HostDetail = () => {
 				if (!oldData) return oldData;
 				return {
 					...oldData,
-					data: {
-						...oldData.data,
-						compliance_on_demand_only: data.data.on_demand_only,
-					},
+					compliance_on_demand_only: data.data.on_demand_only,
 				};
 			});
 			// Also invalidate to ensure we get fresh data
@@ -3433,7 +3430,7 @@ const HostDetail = () => {
 																type="button"
 																onClick={() =>
 																	toggleComplianceOnDemandOnlyMutation.mutate(
-																		!integrationsData?.data?.compliance_on_demand_only
+																		!integrationsData?.compliance_on_demand_only
 																	)
 																}
 																disabled={
@@ -3443,12 +3440,12 @@ const HostDetail = () => {
 																title={
 																	!wsStatus?.connected
 																		? "Agent is not connected"
-																		: integrationsData?.data?.compliance_on_demand_only
+																		: integrationsData?.compliance_on_demand_only
 																			? "Disable on-demand only mode"
 																			: "Enable on-demand only mode"
 																}
 																className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
-																	integrationsData?.data?.compliance_on_demand_only
+																	integrationsData?.compliance_on_demand_only
 																		? "bg-primary-600 dark:bg-primary-500"
 																		: "bg-secondary-200 dark:bg-secondary-600"
 																} ${
@@ -3460,7 +3457,7 @@ const HostDetail = () => {
 															>
 																<span
 																	className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-																		integrationsData?.data?.compliance_on_demand_only
+																		integrationsData?.compliance_on_demand_only
 																			? "translate-x-5"
 																			: "translate-x-1"
 																	}`}
