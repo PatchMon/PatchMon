@@ -118,7 +118,7 @@ model hosts {
   reboot_reason            String?
   docker_enabled           Boolean                  @default(false)
   compliance_enabled       Boolean                  @default(false)
-  compliance_on_demand_only Boolean                 @default(false)
+  compliance_on_demand_only Boolean                 @default(true)
   host_packages            host_packages[]
   host_repositories        host_repositories[]
   host_group_memberships   host_group_memberships[]
