@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import {
 	AlertCircle,
 	ArrowLeft,
@@ -12,17 +13,25 @@ import {
 	Star,
 	User,
 } from "lucide-react";
-
 import { useEffect, useId, useRef, useState } from "react";
-import { FaReddit, FaYoutube } from "react-icons/fa";
+import { FaLinkedin, FaYoutube } from "react-icons/fa";
 
 import { useNavigate } from "react-router-dom";
 import DiscordIcon from "../components/DiscordIcon";
 import { useAuth } from "../contexts/AuthContext";
 import { useColorTheme } from "../contexts/ColorThemeContext";
-import { authAPI, isCorsError } from "../utils/api";
+import { authAPI, isCorsError, settingsAPI } from "../utils/api";
 
 const Login = () => {
+	// Helper function to format numbers in k format (e.g., 1704 -> 1.8k)
+	const formatNumber = (num) => {
+		if (num >= 1000) {
+			const rounded = Math.ceil((num / 1000) * 10) / 10; // Round up to 1 decimal place
+			return `${rounded.toFixed(1)}K`;
+		}
+		return num.toString();
+	};
+
 	const usernameId = useId();
 	const firstNameId = useId();
 	const lastNameId = useId();
@@ -49,12 +58,26 @@ const Login = () => {
 	const [requiresTfa, setRequiresTfa] = useState(false);
 	const [tfaUsername, setTfaUsername] = useState("");
 	const [signupEnabled, setSignupEnabled] = useState(false);
+	const [showGithubVersionOnLogin, setShowGithubVersionOnLogin] =
+		useState(true);
 	const [latestRelease, setLatestRelease] = useState(null);
-	const [githubStars, setGithubStars] = useState(null);
+	const [socialMediaStats, setSocialMediaStats] = useState({
+		github_stars: null,
+		discord_members: null,
+		buymeacoffee_supporters: null,
+		youtube_subscribers: null,
+		linkedin_followers: null,
+	});
 	const canvasRef = useRef(null);
 	const { themeConfig } = useColorTheme();
 
 	const navigate = useNavigate();
+
+	// Fetch settings for favicon
+	const { data: settings } = useQuery({
+		queryKey: ["settings"],
+		queryFn: () => settingsAPI.get().then((res) => res.data),
+	});
 
 	// Generate clean radial gradient background with subtle triangular accents
 	useEffect(() => {
@@ -151,64 +174,79 @@ const Login = () => {
 		return () => window.removeEventListener("resize", handleResize);
 	}, [themeConfig]);
 
-	// Check if signup is enabled
+	// Check login settings (signup enabled and show github version)
 	useEffect(() => {
-		const checkSignupEnabled = async () => {
+		const checkLoginSettings = async () => {
 			try {
-				const response = await fetch("/api/v1/auth/signup-enabled");
+				const response = await fetch("/api/v1/settings/login-settings");
 				if (response.ok) {
 					const data = await response.json();
-					setSignupEnabled(data.signupEnabled);
+					setSignupEnabled(data.signup_enabled || false);
+					setShowGithubVersionOnLogin(
+						data.show_github_version_on_login !== false,
+					);
 				}
 			} catch (error) {
-				console.error("Failed to check signup status:", error);
+				console.error("Failed to check login settings:", error);
 				// Default to disabled on error for security
 				setSignupEnabled(false);
+				setShowGithubVersionOnLogin(true); // Default to showing on error
 			}
 		};
-		checkSignupEnabled();
+		checkLoginSettings();
 	}, []);
 
-	// Fetch latest release and stars from GitHub
+	// Fetch latest release and social media stats
 	useEffect(() => {
-		const fetchGitHubData = async () => {
+		// Only fetch if the setting allows it
+		if (!showGithubVersionOnLogin) {
+			return;
+		}
+
+		const fetchData = async () => {
 			try {
-				// Try to get cached data first
+				// Try to get cached release data first
 				const cachedRelease = localStorage.getItem("githubLatestRelease");
-				const cachedStars = localStorage.getItem("githubStarsCount");
 				const cacheTime = localStorage.getItem("githubReleaseCacheTime");
 				const now = Date.now();
 
-				// Load cached data immediately
+				// Load cached release data immediately
 				if (cachedRelease) {
 					setLatestRelease(JSON.parse(cachedRelease));
 				}
-				if (cachedStars) {
-					setGithubStars(parseInt(cachedStars, 10));
+
+				// Fetch social media stats from cache
+				const statsResponse = await fetch("/api/v1/social-media-stats");
+				if (statsResponse.ok) {
+					const statsData = await statsResponse.json();
+					// Only update stats that are not null - preserve existing values if fetch failed
+					setSocialMediaStats((prev) => ({
+						github_stars:
+							statsData.github_stars !== null
+								? statsData.github_stars
+								: prev.github_stars,
+						discord_members:
+							statsData.discord_members !== null
+								? statsData.discord_members
+								: prev.discord_members,
+						buymeacoffee_supporters:
+							statsData.buymeacoffee_supporters !== null
+								? statsData.buymeacoffee_supporters
+								: prev.buymeacoffee_supporters,
+						youtube_subscribers:
+							statsData.youtube_subscribers !== null
+								? statsData.youtube_subscribers
+								: prev.youtube_subscribers,
+						linkedin_followers:
+							statsData.linkedin_followers !== null
+								? statsData.linkedin_followers
+								: prev.linkedin_followers,
+					}));
 				}
 
 				// Use cache if less than 1 hour old
 				if (cacheTime && now - parseInt(cacheTime, 10) < 3600000) {
 					return;
-				}
-
-				// Fetch repository info (includes star count)
-				const repoResponse = await fetch(
-					"https://api.github.com/repos/PatchMon/PatchMon",
-					{
-						headers: {
-							Accept: "application/vnd.github.v3+json",
-						},
-					},
-				);
-
-				if (repoResponse.ok) {
-					const repoData = await repoResponse.json();
-					setGithubStars(repoData.stargazers_count);
-					localStorage.setItem(
-						"githubStarsCount",
-						repoData.stargazers_count.toString(),
-					);
 				}
 
 				// Fetch latest release
@@ -260,8 +298,8 @@ const Login = () => {
 			}
 		};
 
-		fetchGitHubData();
-	}, []); // Run once on mount
+		fetchData();
+	}, [showGithubVersionOnLogin]); // Run once on mount
 
 	const handleSubmit = async (e) => {
 		e.preventDefault();
@@ -449,216 +487,245 @@ const Login = () => {
 			<canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
 			<div className="absolute inset-0 bg-gradient-to-br from-black/40 to-black/60" />
 
-			{/* Left side - Info Panel (hidden on mobile) */}
-			<div className="hidden lg:flex lg:w-1/2 xl:w-3/5 relative z-10">
-				<div className="flex flex-col justify-between text-white p-12 h-full w-full">
-					<div className="flex-1 flex flex-col justify-center items-start max-w-xl mx-auto">
-						<div className="space-y-6">
-							<div>
-								<img
-									src="/assets/logo_dark.png"
-									alt="PatchMon"
-									className="h-16 mb-4"
-								/>
-								<p className="text-sm text-blue-200 font-medium tracking-wide uppercase">
-									Linux Patch Monitoring
-								</p>
-							</div>
+			{/* Left side - Info Panel (hidden on mobile or when GitHub version is disabled) */}
+			{showGithubVersionOnLogin && (
+				<div className="hidden lg:flex lg:w-1/2 xl:w-3/5 relative z-10">
+					<div className="flex flex-col justify-between text-white p-12 h-full w-full">
+						<div className="flex-1 flex flex-col justify-center items-start max-w-xl mx-auto">
+							<div className="space-y-6">
+								<div>
+									<img
+										src="/assets/logo_dark.png"
+										alt="PatchMon"
+										className="h-16 mb-4"
+									/>
+									<p className="text-sm text-blue-200 font-medium tracking-wide uppercase">
+										Linux Patch Monitoring
+									</p>
+								</div>
 
-							{latestRelease ? (
-								<div className="space-y-4 bg-black/20 backdrop-blur-sm rounded-lg p-6 border border-white/10">
-									<div className="flex items-center gap-3">
-										<div className="flex items-center gap-2">
-											<div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-											<span className="text-green-300 text-sm font-semibold">
-												Latest Release
+								{showGithubVersionOnLogin && latestRelease ? (
+									<div className="space-y-4 bg-black/20 backdrop-blur-sm rounded-lg p-6 border border-white/10">
+										<div className="flex items-center gap-3">
+											<div className="flex items-center gap-2">
+												<div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+												<span className="text-green-300 text-sm font-semibold">
+													Latest Release
+												</span>
+											</div>
+											<span className="text-2xl font-bold text-white">
+												{latestRelease.version}
 											</span>
 										</div>
-										<span className="text-2xl font-bold text-white">
-											{latestRelease.version}
-										</span>
-									</div>
 
-									{latestRelease.name && (
-										<h3 className="text-lg font-semibold text-white">
-											{latestRelease.name}
-										</h3>
-									)}
+										{latestRelease.name && (
+											<h3 className="text-lg font-semibold text-white">
+												{latestRelease.name}
+											</h3>
+										)}
 
-									<div className="flex items-center gap-2 text-sm text-gray-300">
-										<svg
-											className="w-4 h-4"
-											fill="none"
-											stroke="currentColor"
-											viewBox="0 0 24 24"
-											aria-label="Release date"
+										<div className="flex items-center gap-2 text-sm text-gray-300">
+											<svg
+												className="w-4 h-4"
+												fill="none"
+												stroke="currentColor"
+												viewBox="0 0 24 24"
+												aria-label="Release date"
+											>
+												<title>Release date</title>
+												<path
+													strokeLinecap="round"
+													strokeLinejoin="round"
+													strokeWidth={2}
+													d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+												/>
+											</svg>
+											<span>Released {latestRelease.publishedAt}</span>
+										</div>
+
+										{latestRelease.body && (
+											<p className="text-sm text-gray-300 leading-relaxed line-clamp-3">
+												{latestRelease.body}
+											</p>
+										)}
+
+										<a
+											href="https://github.com/PatchMon/PatchMon/releases/latest"
+											target="_blank"
+											rel="noopener noreferrer"
+											className="inline-flex items-center gap-2 text-sm text-blue-300 hover:text-blue-200 transition-colors font-medium"
 										>
-											<title>Release date</title>
-											<path
-												strokeLinecap="round"
-												strokeLinejoin="round"
-												strokeWidth={2}
-												d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-											/>
-										</svg>
-										<span>Released {latestRelease.publishedAt}</span>
+											View Release Notes
+											<svg
+												className="w-4 h-4"
+												fill="none"
+												stroke="currentColor"
+												viewBox="0 0 24 24"
+												aria-label="External link"
+											>
+												<title>External link</title>
+												<path
+													strokeLinecap="round"
+													strokeLinejoin="round"
+													strokeWidth={2}
+													d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+												/>
+											</svg>
+										</a>
 									</div>
+								) : showGithubVersionOnLogin ? (
+									<div className="space-y-4 bg-black/20 backdrop-blur-sm rounded-lg p-6 border border-white/10">
+										<div className="animate-pulse space-y-3">
+											<div className="h-6 bg-white/20 rounded w-3/4" />
+											<div className="h-4 bg-white/20 rounded w-1/2" />
+											<div className="h-4 bg-white/20 rounded w-full" />
+										</div>
+									</div>
+								) : null}
+							</div>
+						</div>
 
-									{latestRelease.body && (
-										<p className="text-sm text-gray-300 leading-relaxed line-clamp-3">
-											{latestRelease.body}
-										</p>
-									)}
-
+						{/* Social Links Footer */}
+						<div className="max-w-xl mx-auto w-full">
+							<div className="border-t border-white/10 pt-6">
+								<p className="text-sm text-gray-400 mb-4">Connect with us</p>
+								<div className="flex flex-wrap items-center gap-2">
+									{/* GitHub */}
 									<a
-										href="https://github.com/PatchMon/PatchMon/releases/latest"
+										href="https://github.com/PatchMon/PatchMon"
 										target="_blank"
 										rel="noopener noreferrer"
-										className="inline-flex items-center gap-2 text-sm text-blue-300 hover:text-blue-200 transition-colors font-medium"
+										className="flex items-center justify-center gap-1.5 px-3 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
+										title="GitHub Repository"
 									>
-										View Release Notes
-										<svg
-											className="w-4 h-4"
-											fill="none"
-											stroke="currentColor"
-											viewBox="0 0 24 24"
-											aria-label="External link"
-										>
-											<title>External link</title>
-											<path
-												strokeLinecap="round"
-												strokeLinejoin="round"
-												strokeWidth={2}
-												d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-											/>
-										</svg>
+										<Github className="h-5 w-5 text-white" />
+										{socialMediaStats.github_stars !== null && (
+											<div className="flex items-center gap-1">
+												<Star className="h-3.5 w-3.5 fill-current text-yellow-400" />
+												<span className="text-sm font-medium text-white">
+													{formatNumber(socialMediaStats.github_stars)}
+												</span>
+											</div>
+										)}
+									</a>
+
+									{/* Discord */}
+									<a
+										href="https://patchmon.net/discord"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center gap-1.5 px-3 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
+										title="Discord Community"
+									>
+										<DiscordIcon className="h-5 w-5 text-white" />
+										{socialMediaStats.discord_members !== null && (
+											<span className="text-sm font-medium text-white">
+												{socialMediaStats.discord_members}
+											</span>
+										)}
+									</a>
+
+									{/* LinkedIn */}
+									<a
+										href="https://linkedin.com/company/patchmon"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center gap-1.5 px-3 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
+										title="LinkedIn Company Page"
+									>
+										<FaLinkedin className="h-5 w-5 text-[#0077B5]" />
+										{socialMediaStats.linkedin_followers !== null && (
+											<span className="text-sm font-medium text-white">
+												{socialMediaStats.linkedin_followers}
+											</span>
+										)}
+									</a>
+
+									{/* YouTube */}
+									<a
+										href="https://youtube.com/@patchmonTV"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center gap-1.5 px-3 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
+										title="YouTube Channel"
+									>
+										<FaYoutube className="h-5 w-5 text-[#FF0000]" />
+										{socialMediaStats.youtube_subscribers !== null && (
+											<span className="text-sm font-medium text-white">
+												{socialMediaStats.youtube_subscribers}
+											</span>
+										)}
+									</a>
+
+									{/* Roadmap */}
+									<a
+										href="https://github.com/orgs/PatchMon/projects/2/views/1"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
+										title="Roadmap"
+									>
+										<Route className="h-5 w-5 text-white" />
+									</a>
+
+									{/* Documentation */}
+									<a
+										href="https://docs.patchmon.net"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
+										title="Documentation"
+									>
+										<BookOpen className="h-5 w-5 text-white" />
+									</a>
+
+									{/* Website */}
+									<a
+										href="https://patchmon.net"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
+										title="Visit patchmon.net"
+									>
+										<Globe className="h-5 w-5 text-white" />
 									</a>
 								</div>
-							) : (
-								<div className="space-y-4 bg-black/20 backdrop-blur-sm rounded-lg p-6 border border-white/10">
-									<div className="animate-pulse space-y-3">
-										<div className="h-6 bg-white/20 rounded w-3/4" />
-										<div className="h-4 bg-white/20 rounded w-1/2" />
-										<div className="h-4 bg-white/20 rounded w-full" />
-									</div>
-								</div>
-							)}
-						</div>
-					</div>
-
-					{/* Social Links Footer */}
-					<div className="max-w-xl mx-auto w-full">
-						<div className="border-t border-white/10 pt-6">
-							<p className="text-sm text-gray-400 mb-4">Connect with us</p>
-							<div className="flex flex-wrap items-center gap-2">
-								{/* GitHub */}
-								<a
-									href="https://github.com/PatchMon/PatchMon"
-									target="_blank"
-									rel="noopener noreferrer"
-									className="flex items-center justify-center gap-1.5 px-3 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
-									title="GitHub Repository"
-								>
-									<Github className="h-5 w-5 text-white" />
-									{githubStars !== null && (
-										<div className="flex items-center gap-1">
-											<Star className="h-3.5 w-3.5 fill-current text-yellow-400" />
-											<span className="text-sm font-medium text-white">
-												{githubStars}
-											</span>
-										</div>
-									)}
-								</a>
-
-								{/* Roadmap */}
-								<a
-									href="https://github.com/orgs/PatchMon/projects/2/views/1"
-									target="_blank"
-									rel="noopener noreferrer"
-									className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
-									title="Roadmap"
-								>
-									<Route className="h-5 w-5 text-white" />
-								</a>
-
-								{/* Docs */}
-								<a
-									href="https://docs.patchmon.net"
-									target="_blank"
-									rel="noopener noreferrer"
-									className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
-									title="Documentation"
-								>
-									<BookOpen className="h-5 w-5 text-white" />
-								</a>
-
-								{/* Discord */}
-								<a
-									href="https://patchmon.net/discord"
-									target="_blank"
-									rel="noopener noreferrer"
-									className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
-									title="Discord Community"
-								>
-									<DiscordIcon className="h-5 w-5 text-white" />
-								</a>
-
-								{/* Email */}
-								<a
-									href="mailto:support@patchmon.net"
-									className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
-									title="Email Support"
-								>
-									<Mail className="h-5 w-5 text-white" />
-								</a>
-
-								{/* YouTube */}
-								<a
-									href="https://youtube.com/@patchmonTV"
-									target="_blank"
-									rel="noopener noreferrer"
-									className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
-									title="YouTube Channel"
-								>
-									<FaYoutube className="h-5 w-5 text-white" />
-								</a>
-
-								{/* Reddit */}
-								<a
-									href="https://www.reddit.com/r/patchmon"
-									target="_blank"
-									rel="noopener noreferrer"
-									className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
-									title="Reddit Community"
-								>
-									<FaReddit className="h-5 w-5 text-white" />
-								</a>
-
-								{/* Website */}
-								<a
-									href="https://patchmon.net"
-									target="_blank"
-									rel="noopener noreferrer"
-									className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
-									title="Visit patchmon.net"
-								>
-									<Globe className="h-5 w-5 text-white" />
-								</a>
 							</div>
 						</div>
 					</div>
 				</div>
-			</div>
+			)}
 
 			{/* Right side - Login Form */}
-			<div className="flex-1 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8 relative z-10">
+			<div
+				className={`${showGithubVersionOnLogin ? "flex-1" : "w-full"} flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8 relative z-10`}
+			>
 				<div className="max-w-md w-full space-y-8 bg-white dark:bg-secondary-900 rounded-2xl shadow-2xl p-8 lg:p-10">
 					<div>
 						<div className="mx-auto h-16 w-16 flex items-center justify-center">
 							<img
-								src="/assets/favicon.svg"
+								src={
+									settings?.favicon
+										? `${(() => {
+												const parts = settings.favicon.split("/");
+												const filename = parts.pop();
+												const directory = parts.join("/");
+												const encodedPath = directory
+													? `${directory}/${encodeURIComponent(filename)}`
+													: encodeURIComponent(filename);
+												return `${encodedPath}?v=${
+													settings?.updated_at
+														? new Date(settings.updated_at).getTime()
+														: Date.now()
+												}`;
+											})()}`
+										: "/assets/favicon.svg"
+								}
 								alt="PatchMon Logo"
 								className="h-16 w-16"
+								onError={(e) => {
+									e.target.src = "/assets/favicon.svg";
+								}}
 							/>
 						</div>
 						<h2 className="mt-6 text-center text-3xl font-extrabold text-secondary-900 dark:text-secondary-100">
@@ -869,9 +936,20 @@ const Login = () => {
 							<div className="text-center">
 								<div className="mx-auto h-16 w-16 flex items-center justify-center">
 									<img
-										src="/assets/favicon.svg"
+										src={
+											settings?.favicon
+												? `${settings.favicon}?v=${
+														settings?.updated_at
+															? new Date(settings.updated_at).getTime()
+															: Date.now()
+													}`
+												: "/assets/favicon.svg"
+										}
 										alt="PatchMon Logo"
 										className="h-16 w-16"
+										onError={(e) => {
+											e.target.src = "/assets/favicon.svg";
+										}}
 									/>
 								</div>
 								<h3 className="mt-4 text-lg font-medium text-secondary-900 dark:text-secondary-100">

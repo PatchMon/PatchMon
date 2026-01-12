@@ -496,7 +496,10 @@ const HostDetail = () => {
 								{getStatusText(isStale, host.stats.outdated_packages > 0)}
 							</div>
 							{host.needs_reboot && (
-								<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+								<span
+									className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
+									title={host.reboot_reason || "Reboot required"}
+								>
 									<RotateCcw className="h-3 w-3" />
 									Reboot Required
 								</span>
@@ -842,53 +845,30 @@ const HostDetail = () => {
 					</div>
 
 					{/* Network Card */}
-					{(host.ip ||
-						host.gateway_ip ||
-						host.dns_servers ||
-						host.network_interfaces) && (
+					{(host.dns_servers || host.network_interfaces) && (
 						<div className="card p-4">
 							<h3 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4 flex items-center gap-2">
 								<Wifi className="h-5 w-5 text-primary-600" />
 								Network
 							</h3>
-							<div className="space-y-3">
-								{host.ip && (
-									<div>
-										<p className="text-xs text-secondary-500 dark:text-secondary-300">
-											IP Address
-										</p>
-										<p className="font-medium text-secondary-900 dark:text-white font-mono text-sm">
-											{host.ip}
-										</p>
-									</div>
-								)}
-
-								{host.gateway_ip && (
-									<div>
-										<p className="text-xs text-secondary-500 dark:text-secondary-300">
-											Gateway IP
-										</p>
-										<p className="font-medium text-secondary-900 dark:text-white font-mono text-sm">
-											{host.gateway_ip}
-										</p>
-									</div>
-								)}
-
+							<div className="space-y-4">
 								{host.dns_servers &&
 									Array.isArray(host.dns_servers) &&
 									host.dns_servers.length > 0 && (
 										<div>
-											<p className="text-xs text-secondary-500 dark:text-secondary-300">
+											<p className="text-xs text-secondary-500 dark:text-secondary-300 mb-2">
 												DNS Servers
 											</p>
 											<div className="space-y-1">
 												{host.dns_servers.map((dns) => (
-													<p
+													<div
 														key={dns}
-														className="font-medium text-secondary-900 dark:text-white font-mono text-sm"
+														className="bg-secondary-50 dark:bg-secondary-700 p-2 rounded border border-secondary-200 dark:border-secondary-600"
 													>
-														{dns}
-													</p>
+														<p className="font-medium text-secondary-900 dark:text-white font-mono text-sm">
+															{dns}
+														</p>
+													</div>
 												))}
 											</div>
 										</div>
@@ -898,17 +878,125 @@ const HostDetail = () => {
 									Array.isArray(host.network_interfaces) &&
 									host.network_interfaces.length > 0 && (
 										<div>
-											<p className="text-xs text-secondary-500 dark:text-secondary-300">
+											<p className="text-xs text-secondary-500 dark:text-secondary-300 mb-3">
 												Network Interfaces
 											</p>
-											<div className="space-y-1">
+											<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 												{host.network_interfaces.map((iface) => (
-													<p
+													<div
 														key={iface.name}
-														className="font-medium text-secondary-900 dark:text-white text-sm"
+														className="border border-secondary-200 dark:border-secondary-700 rounded-lg p-3 bg-secondary-50 dark:bg-secondary-900/50"
 													>
-														{iface.name}
-													</p>
+														{/* Interface Header */}
+														<div className="flex items-center justify-between mb-3">
+															<div className="flex items-center gap-2">
+																<p className="font-semibold text-secondary-900 dark:text-white text-sm">
+																	{iface.name}
+																</p>
+																{iface.type && (
+																	<span className="text-xs text-secondary-500 dark:text-secondary-400 bg-secondary-200 dark:bg-secondary-700 px-2 py-0.5 rounded">
+																		{iface.type}
+																	</span>
+																)}
+																{iface.status && (
+																	<span
+																		className={`text-xs font-medium px-2 py-0.5 rounded ${
+																			iface.status === "up"
+																				? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+																				: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+																		}`}
+																	>
+																		{iface.status === "up" ? "UP" : "DOWN"}
+																	</span>
+																)}
+															</div>
+														</div>
+
+														{/* Interface Details */}
+														<div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs mb-3">
+															{iface.macAddress && (
+																<div>
+																	<p className="text-secondary-500 dark:text-secondary-400 mb-0.5">
+																		MAC Address
+																	</p>
+																	<p className="font-mono text-secondary-900 dark:text-white">
+																		{iface.macAddress}
+																	</p>
+																</div>
+															)}
+															{iface.mtu && (
+																<div>
+																	<p className="text-secondary-500 dark:text-secondary-400 mb-0.5">
+																		MTU
+																	</p>
+																	<p className="text-secondary-900 dark:text-white">
+																		{iface.mtu}
+																	</p>
+																</div>
+															)}
+															{iface.linkSpeed && iface.linkSpeed > 0 && (
+																<div>
+																	<p className="text-secondary-500 dark:text-secondary-400 mb-0.5">
+																		Link Speed
+																	</p>
+																	<p className="text-secondary-900 dark:text-white">
+																		{iface.linkSpeed} Mbps
+																		{iface.duplex &&
+																			` (${iface.duplex} duplex)`}
+																	</p>
+																</div>
+															)}
+														</div>
+
+														{/* Addresses */}
+														{iface.addresses &&
+															Array.isArray(iface.addresses) &&
+															iface.addresses.length > 0 && (
+																<div className="space-y-2 pt-2 border-t border-secondary-200 dark:border-secondary-700">
+																	<p className="text-xs font-medium text-secondary-500 dark:text-secondary-400 mb-2">
+																		IP Addresses
+																	</p>
+																	<div className="space-y-2">
+																		{iface.addresses.map((addr, idx) => (
+																			<div
+																				key={`${addr.address}-${addr.family}-${idx}`}
+																				className="bg-white dark:bg-secondary-800 rounded p-2 border border-secondary-200 dark:border-secondary-700"
+																			>
+																				<div className="flex items-center gap-2 mb-1">
+																					<span
+																						className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
+																							addr.family === "inet6"
+																								? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+																								: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+																						}`}
+																					>
+																						{addr.family === "inet6"
+																							? "inet6"
+																							: "inet"}
+																					</span>
+																					<span className="font-mono text-sm font-semibold text-secondary-900 dark:text-white">
+																						{addr.address}
+																						{addr.netmask && (
+																							<span className="text-secondary-500 dark:text-secondary-400 ml-1">
+																								{addr.netmask}
+																							</span>
+																						)}
+																					</span>
+																				</div>
+																				{addr.gateway && (
+																					<div className="text-xs text-secondary-600 dark:text-secondary-400 ml-1">
+																						Gateway:{" "}
+																						<span className="font-mono">
+																							{addr.gateway}
+																						</span>
+																					</div>
+																				)}
+																			</div>
+																		))}
+																	</div>
+																</div>
+															)}
+													</div>
 												))}
 											</div>
 										</div>
@@ -1099,7 +1187,7 @@ const HostDetail = () => {
 														<HardDrive className="h-4 w-4 text-primary-600 dark:text-primary-400" />
 														Disk Usage
 													</h5>
-													<div className="space-y-3">
+													<div className="space-y-3 max-h-80 overflow-y-auto pr-2">
 														{host.disk_details.map((disk, index) => (
 															<div
 																key={disk.name || `disk-${index}`}
@@ -1689,74 +1777,161 @@ const HostDetail = () => {
 
 						{/* Network Information */}
 						{activeTab === "network" &&
-							(host.ip ||
-								host.gateway_ip ||
-								host.dns_servers ||
-								host.network_interfaces) && (
-								<div className="space-y-4">
-									<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-										{host.ip && (
+							(host.dns_servers || host.network_interfaces) && (
+								<div className="space-y-6">
+									{/* DNS Servers */}
+									{host.dns_servers &&
+										Array.isArray(host.dns_servers) &&
+										host.dns_servers.length > 0 && (
 											<div>
-												<p className="text-xs text-secondary-500 dark:text-secondary-300">
-													IP Address
-												</p>
-												<p className="font-medium text-secondary-900 dark:text-white font-mono text-sm">
-													{host.ip}
-												</p>
-											</div>
-										)}
-
-										{host.gateway_ip && (
-											<div>
-												<p className="text-xs text-secondary-500 dark:text-secondary-300">
-													Gateway IP
-												</p>
-												<p className="font-medium text-secondary-900 dark:text-white font-mono text-sm">
-													{host.gateway_ip}
-												</p>
-											</div>
-										)}
-
-										{host.dns_servers &&
-											Array.isArray(host.dns_servers) &&
-											host.dns_servers.length > 0 && (
-												<div>
-													<p className="text-xs text-secondary-500 dark:text-secondary-300">
-														DNS Servers
-													</p>
-													<div className="space-y-1">
-														{host.dns_servers.map((dns) => (
-															<p
-																key={dns}
-																className="font-medium text-secondary-900 dark:text-white font-mono text-sm"
-															>
+												<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-3 flex items-center gap-2">
+													<Wifi className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+													DNS Servers
+												</h4>
+												<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+													{host.dns_servers.map((dns) => (
+														<div
+															key={dns}
+															className="bg-secondary-50 dark:bg-secondary-700 p-3 rounded-lg border border-secondary-200 dark:border-secondary-600"
+														>
+															<p className="font-mono text-sm font-medium text-secondary-900 dark:text-white">
 																{dns}
 															</p>
-														))}
-													</div>
+														</div>
+													))}
 												</div>
-											)}
+											</div>
+										)}
 
-										{host.network_interfaces &&
-											Array.isArray(host.network_interfaces) &&
-											host.network_interfaces.length > 0 && (
-												<div>
-													<p className="text-xs text-secondary-500 dark:text-secondary-300">
-														Network Interfaces
-													</p>
-													<div className="space-y-1">
-														{host.network_interfaces.map((iface) => (
-															<p
-																key={iface.name}
-																className="font-medium text-secondary-900 dark:text-white text-sm"
-															>
-																{iface.name}
-															</p>
-														))}
-													</div>
+									{/* Network Interfaces */}
+									{host.network_interfaces &&
+										Array.isArray(host.network_interfaces) &&
+										host.network_interfaces.length > 0 && (
+											<div>
+												<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-4 flex items-center gap-2">
+													<Wifi className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+													Network Interfaces
+												</h4>
+												<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+													{host.network_interfaces.map((iface) => (
+														<div
+															key={iface.name}
+															className="border border-secondary-200 dark:border-secondary-700 rounded-lg p-4 bg-secondary-50 dark:bg-secondary-900/50"
+														>
+															{/* Interface Header */}
+															<div className="flex items-center justify-between mb-3">
+																<div className="flex items-center gap-2">
+																	<p className="font-semibold text-secondary-900 dark:text-white text-sm">
+																		{iface.name}
+																	</p>
+																	{iface.type && (
+																		<span className="text-xs text-secondary-500 dark:text-secondary-400 bg-secondary-200 dark:bg-secondary-700 px-2 py-0.5 rounded">
+																			{iface.type}
+																		</span>
+																	)}
+																	{iface.status && (
+																		<span
+																			className={`text-xs font-medium px-2 py-0.5 rounded ${
+																				iface.status === "up"
+																					? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+																					: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+																			}`}
+																		>
+																			{iface.status === "up" ? "UP" : "DOWN"}
+																		</span>
+																	)}
+																</div>
+															</div>
+
+															{/* Interface Details */}
+															<div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs mb-3">
+																{iface.macAddress && (
+																	<div>
+																		<p className="text-secondary-500 dark:text-secondary-400 mb-0.5">
+																			MAC Address
+																		</p>
+																		<p className="font-mono text-secondary-900 dark:text-white">
+																			{iface.macAddress}
+																		</p>
+																	</div>
+																)}
+																{iface.mtu && (
+																	<div>
+																		<p className="text-secondary-500 dark:text-secondary-400 mb-0.5">
+																			MTU
+																		</p>
+																		<p className="text-secondary-900 dark:text-white">
+																			{iface.mtu}
+																		</p>
+																	</div>
+																)}
+																{iface.linkSpeed && iface.linkSpeed > 0 && (
+																	<div>
+																		<p className="text-secondary-500 dark:text-secondary-400 mb-0.5">
+																			Link Speed
+																		</p>
+																		<p className="text-secondary-900 dark:text-white">
+																			{iface.linkSpeed} Mbps
+																			{iface.duplex &&
+																				` (${iface.duplex} duplex)`}
+																		</p>
+																	</div>
+																)}
+															</div>
+
+															{/* Addresses */}
+															{iface.addresses &&
+																Array.isArray(iface.addresses) &&
+																iface.addresses.length > 0 && (
+																	<div className="space-y-2 pt-3 border-t border-secondary-200 dark:border-secondary-700">
+																		<p className="text-xs font-medium text-secondary-500 dark:text-secondary-400 mb-2">
+																			IP Addresses
+																		</p>
+																		<div className="space-y-2">
+																			{iface.addresses.map((addr, idx) => (
+																				<div
+																					key={`${addr.address}-${addr.family}-${idx}`}
+																					className="bg-white dark:bg-secondary-800 rounded p-2 border border-secondary-200 dark:border-secondary-700"
+																				>
+																					<div className="flex items-center gap-2 mb-1">
+																						<span
+																							className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
+																								addr.family === "inet6"
+																									? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+																									: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+																							}`}
+																						>
+																							{addr.family === "inet6"
+																								? "inet6"
+																								: "inet"}
+																						</span>
+																						<span className="font-mono text-sm font-semibold text-secondary-900 dark:text-white">
+																							{addr.address}
+																							{addr.netmask && (
+																								<span className="text-secondary-500 dark:text-secondary-400 ml-1">
+																									{addr.netmask}
+																								</span>
+																							)}
+																						</span>
+																					</div>
+																					{addr.gateway && (
+																						<div className="text-xs text-secondary-600 dark:text-secondary-400 ml-1">
+																							Gateway:{" "}
+																							<span className="font-mono">
+																								{addr.gateway}
+																							</span>
+																						</div>
+																					)}
+																				</div>
+																			))}
+																		</div>
+																	</div>
+																)}
+														</div>
+													))}
 												</div>
-											)}
-									</div>
+											</div>
+										)}
 								</div>
 							)}
 
@@ -1966,7 +2141,7 @@ const HostDetail = () => {
 														<HardDrive className="h-4 w-4 text-primary-600 dark:text-primary-400" />
 														Disk Usage
 													</h5>
-													<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+													<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-80 overflow-y-auto pr-2">
 														{host.disk_details.map((disk, index) => (
 															<div
 																key={disk.name || `disk-${index}`}

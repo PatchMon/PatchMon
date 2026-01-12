@@ -138,7 +138,10 @@ router.post(
 			// Check if username or email already exists
 			const existingUser = await prisma.users.findFirst({
 				where: {
-					OR: [{ username: username.trim() }, { email: email.trim() }],
+					OR: [
+						{ username: { equals: username.trim(), mode: "insensitive" } },
+						{ email: email.trim().toLowerCase() },
+					],
 				},
 			});
 
@@ -156,7 +159,7 @@ router.post(
 				data: {
 					id: uuidv4(),
 					username: username.trim(),
-					email: email.trim(),
+					email: email.trim().toLowerCase(),
 					password_hash: passwordHash,
 					first_name: firstName.trim(),
 					last_name: lastName.trim(),
@@ -308,7 +311,10 @@ router.post(
 			// Check if user already exists
 			const existingUser = await prisma.users.findFirst({
 				where: {
-					OR: [{ username }, { email }],
+					OR: [
+						{ username: { equals: username, mode: "insensitive" } },
+						{ email: email.trim().toLowerCase() },
+					],
 				},
 			});
 
@@ -326,7 +332,7 @@ router.post(
 				data: {
 					id: uuidv4(),
 					username,
-					email,
+					email: email.trim().toLowerCase(),
 					password_hash: passwordHash,
 					first_name: first_name || null,
 					last_name: last_name || null,
@@ -408,8 +414,9 @@ router.put(
 				req.body;
 			const updateData = {};
 
-			if (username) updateData.username = username;
-			if (email) updateData.email = email;
+			// Handle all fields consistently - trim and update if provided
+			if (username) updateData.username = username.trim();
+			if (email) updateData.email = email.trim().toLowerCase();
 			if (first_name !== undefined) updateData.first_name = first_name || null;
 			if (last_name !== undefined) updateData.last_name = last_name || null;
 			if (role) updateData.role = role;
@@ -432,8 +439,17 @@ router.put(
 							{ id: { not: userId } },
 							{
 								OR: [
-									...(username ? [{ username }] : []),
-									...(email ? [{ email }] : []),
+									...(username
+										? [
+												{
+													username: {
+														equals: username.trim(),
+														mode: "insensitive",
+													},
+												},
+											]
+										: []),
+									...(email ? [{ email: email.trim().toLowerCase() }] : []),
 								],
 							},
 						],
@@ -668,7 +684,10 @@ router.post(
 			// Check if user already exists
 			const existingUser = await prisma.users.findFirst({
 				where: {
-					OR: [{ username }, { email }],
+					OR: [
+						{ username: { equals: username, mode: "insensitive" } },
+						{ email: email.trim().toLowerCase() },
+					],
 				},
 			});
 
@@ -690,7 +709,7 @@ router.post(
 				data: {
 					id: uuidv4(),
 					username,
-					email,
+					email: email.trim().toLowerCase(),
 					password_hash: passwordHash,
 					first_name: firstName.trim(),
 					last_name: lastName.trim(),
@@ -755,7 +774,10 @@ router.post(
 			// Find user by username or email
 			const user = await prisma.users.findFirst({
 				where: {
-					OR: [{ username }, { email: username }],
+					OR: [
+						{ username: { equals: username, mode: "insensitive" } },
+						{ email: username.toLowerCase() },
+					],
 					is_active: true,
 				},
 				select: {
@@ -844,6 +866,22 @@ router.post(
 				req,
 			);
 
+			// Get accepted release notes versions
+			let acceptedVersions = [];
+			try {
+				acceptedVersions = await prisma.release_notes_acceptances.findMany({
+					where: { user_id: user.id },
+					select: { version: true },
+				});
+			} catch (error) {
+				// If table doesn't exist yet or Prisma client not regenerated, use empty array
+				console.warn(
+					"Could not fetch release notes acceptances:",
+					error.message,
+				);
+				acceptedVersions = [];
+			}
+
 			res.json({
 				message: "Login successful",
 				token: session.access_token,
@@ -863,6 +901,9 @@ router.post(
 					// Include user preferences so they're available immediately after login
 					theme_preference: user.theme_preference,
 					color_theme: user.color_theme,
+					accepted_release_notes_versions: acceptedVersions.map(
+						(a) => a.version,
+					),
 				},
 			});
 		} catch (error) {
@@ -900,7 +941,10 @@ router.post(
 			// Find user
 			const user = await prisma.users.findFirst({
 				where: {
-					OR: [{ username }, { email: username }],
+					OR: [
+						{ username: { equals: username, mode: "insensitive" } },
+						{ email: username.toLowerCase() },
+					],
 					is_active: true,
 					tfa_enabled: true,
 				},
@@ -986,13 +1030,34 @@ router.post(
 				req,
 			);
 
+			// Get accepted release notes versions
+			let acceptedVersions = [];
+			try {
+				acceptedVersions = await prisma.release_notes_acceptances.findMany({
+					where: { user_id: user.id },
+					select: { version: true },
+				});
+			} catch (error) {
+				// If table doesn't exist yet or Prisma client not regenerated, use empty array
+				console.warn(
+					"Could not fetch release notes acceptances:",
+					error.message,
+				);
+				acceptedVersions = [];
+			}
+
 			res.json({
 				message: "Login successful",
 				token: session.access_token,
 				refresh_token: session.refresh_token,
 				expires_at: session.expires_at,
 				tfa_bypass_until: session.tfa_bypass_until,
-				user: updatedUser,
+				user: {
+					...updatedUser,
+					accepted_release_notes_versions: acceptedVersions.map(
+						(a) => a.version,
+					),
+				},
 			});
 		} catch (error) {
 			console.error("TFA verification error:", error);
@@ -1060,7 +1125,7 @@ router.put(
 
 			// Handle all fields consistently - trim and update if provided
 			if (username) updateData.username = username.trim();
-			if (email) updateData.email = email.trim();
+			if (email) updateData.email = email.trim().toLowerCase();
 			if (first_name !== undefined) {
 				// Allow null or empty string to clear the field, otherwise trim
 				updateData.first_name =
@@ -1084,8 +1149,17 @@ router.put(
 							{ id: { not: req.user.id } },
 							{
 								OR: [
-									...(username ? [{ username }] : []),
-									...(email ? [{ email }] : []),
+									...(username
+										? [
+												{
+													username: {
+														equals: username.trim(),
+														mode: "insensitive",
+													},
+												},
+											]
+										: []),
+									...(email ? [{ email: email.trim().toLowerCase() }] : []),
 								],
 							},
 						],

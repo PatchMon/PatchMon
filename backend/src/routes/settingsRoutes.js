@@ -134,6 +134,10 @@ router.put(
 			.optional()
 			.isLength({ min: 1 })
 			.withMessage("Favicon path must be a non-empty string"),
+		body("showGithubVersionOnLogin")
+			.optional()
+			.isBoolean()
+			.withMessage("Show GitHub version on login must be a boolean"),
 	],
 	async (req, res) => {
 		try {
@@ -159,6 +163,7 @@ router.put(
 				logoLight,
 				favicon,
 				colorTheme,
+				showGithubVersionOnLogin,
 			} = req.body;
 
 			// Get current settings to check for update interval changes
@@ -191,6 +196,8 @@ router.put(
 			if (logoLight !== undefined) updateData.logo_light = logoLight;
 			if (favicon !== undefined) updateData.favicon = favicon;
 			if (colorTheme !== undefined) updateData.color_theme = colorTheme;
+			if (showGithubVersionOnLogin !== undefined)
+				updateData.show_github_version_on_login = showGithubVersionOnLogin;
 
 			const updatedSettings = await updateSettings(
 				currentSettings.id,
@@ -251,6 +258,21 @@ router.get("/server-url", async (_req, res) => {
 	} catch (error) {
 		console.error("Server URL fetch error:", error);
 		res.status(500).json({ error: "Failed to fetch server URL" });
+	}
+});
+
+// Get login settings for public use (used by login screen)
+router.get("/login-settings", async (_req, res) => {
+	try {
+		const settings = await getSettings();
+		res.json({
+			show_github_version_on_login:
+				settings.show_github_version_on_login !== false,
+			signup_enabled: settings.signup_enabled || false,
+		});
+	} catch (error) {
+		console.error("Failed to fetch login settings:", error);
+		res.status(500).json({ error: "Failed to fetch login settings" });
 	}
 });
 
@@ -332,13 +354,28 @@ router.post(
 			const _crypto = require("node:crypto");
 
 			// Create assets directory if it doesn't exist
+			// In Docker: use ASSETS_DIR environment variable (mounted volume)
 			// In development: save to public/assets (served by Vite)
-			// In production: save to dist/assets (served by built app)
-			const isDevelopment = process.env.NODE_ENV !== "production";
-			const assetsDir = isDevelopment
-				? path.join(__dirname, "../../../frontend/public/assets")
-				: path.join(__dirname, "../../../frontend/dist/assets");
+			// In production (non-Docker): save to public/assets (build copies to dist/)
+			const assetsDir = process.env.ASSETS_DIR
+				? path.resolve(process.env.ASSETS_DIR)
+				: path.resolve(__dirname, "../../../frontend/public/assets");
+
+			console.log(`📁 Assets directory: ${assetsDir}`);
+
 			await fs.mkdir(assetsDir, { recursive: true });
+
+			// Verify directory exists
+			const dirExists = await fs
+				.access(assetsDir)
+				.then(() => true)
+				.catch(() => false);
+
+			if (!dirExists) {
+				throw new Error(
+					`Failed to create or access assets directory: ${assetsDir}`,
+				);
+			}
 
 			// Determine file extension and path
 			let fileExtension;
@@ -364,7 +401,8 @@ router.post(
 				fileName_final = fileName || `logo_${logoType}${fileExtension}`;
 			}
 
-			const filePath = path.join(assetsDir, fileName_final);
+			const filePath = path.resolve(assetsDir, fileName_final);
+			console.log(`📄 Full file path: ${filePath}`);
 
 			// Handle base64 data URLs
 			let fileBuffer;
@@ -390,6 +428,17 @@ router.post(
 
 			// Write new logo file
 			await fs.writeFile(filePath, fileBuffer);
+			console.log(`✅ Logo file written to: ${filePath}`);
+
+			// Verify file was written
+			const fileExists = await fs
+				.access(filePath)
+				.then(() => true)
+				.catch(() => false);
+
+			if (!fileExists) {
+				throw new Error(`Failed to verify file was written: ${filePath}`);
+			}
 
 			// Update settings with new logo path
 			const settings = await getSettings();
@@ -404,7 +453,10 @@ router.post(
 				updateData.favicon = logoPath;
 			}
 
-			await updateSettings(settings.id, updateData);
+			const updatedSettings = await updateSettings(settings.id, updateData);
+			console.log(
+				`✅ Settings updated with new ${logoType} logo path: ${logoPath}`,
+			);
 
 			// Get file stats
 			const stats = await fs.stat(filePath);
@@ -415,10 +467,15 @@ router.post(
 				path: logoPath,
 				size: stats.size,
 				sizeFormatted: `${(stats.size / 1024).toFixed(1)} KB`,
+				timestamp: updatedSettings.updated_at.getTime(), // Include timestamp for cache busting
 			});
 		} catch (error) {
 			console.error("Upload logo error:", error);
-			res.status(500).json({ error: "Failed to upload logo" });
+			res.status(500).json({
+				error: "Failed to upload logo",
+				details: error.message || "Unknown error",
+				stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
+			});
 		}
 	},
 );

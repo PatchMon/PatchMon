@@ -10,6 +10,7 @@ import {
 	Eye as EyeIcon,
 	EyeOff as EyeOffIcon,
 	GripVertical,
+	Info,
 	Package,
 	RefreshCw,
 	Search,
@@ -29,6 +30,7 @@ const Packages = () => {
 	const [sortField, setSortField] = useState("name");
 	const [sortDirection, setSortDirection] = useState("asc");
 	const [showColumnSettings, setShowColumnSettings] = useState(false);
+	const [descriptionModal, setDescriptionModal] = useState(null); // { packageName, description }
 	const [currentPage, setCurrentPage] = useState(1);
 	const [pageSize, setPageSize] = useState(() => {
 		const saved = localStorage.getItem("packages-page-size");
@@ -168,12 +170,17 @@ const Packages = () => {
 	}, [packagesResponse]);
 
 	// Fetch dashboard stats for card counts (consistent with homepage)
-	const { data: dashboardStats } = useQuery({
+	const { data: dashboardStats, refetch: refetchDashboardStats } = useQuery({
 		queryKey: ["dashboardStats"],
 		queryFn: () => dashboardAPI.getStats().then((res) => res.data),
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
+
+	// Handle refresh - refetch all related data
+	const handleRefresh = async () => {
+		await Promise.all([refetch(), refetchDashboardStats()]);
+	};
 
 	// Fetch hosts data to get total packages count
 	const { data: hosts } = useQuery({
@@ -363,28 +370,41 @@ const Packages = () => {
 		switch (column.id) {
 			case "name":
 				return (
-					<button
-						type="button"
-						onClick={() => navigate(`/packages/${pkg.id}`)}
-						className="flex items-center text-left hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded p-2 -m-2 transition-colors group w-full"
-					>
-						<Package className="h-5 w-5 text-secondary-400 mr-3 flex-shrink-0" />
-						<div className="flex-1">
-							<div className="text-sm font-medium text-secondary-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400">
-								{pkg.name}
+					<div className="flex items-center text-left w-full">
+						<button
+							type="button"
+							onClick={() => navigate(`/packages/${pkg.id}`)}
+							className="flex items-center text-left hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded p-2 -m-2 transition-colors group flex-1"
+						>
+							<Package className="h-5 w-5 text-secondary-400 mr-3 flex-shrink-0" />
+							<div className="flex-1">
+								<div className="text-sm font-medium text-secondary-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400">
+									{pkg.name}
+								</div>
+								{pkg.category && (
+									<div className="text-xs text-secondary-400 dark:text-secondary-400">
+										Category: {pkg.category}
+									</div>
+								)}
 							</div>
-							{pkg.description && (
-								<div className="text-sm text-secondary-500 dark:text-secondary-300 max-w-md truncate">
-									{pkg.description}
-								</div>
-							)}
-							{pkg.category && (
-								<div className="text-xs text-secondary-400 dark:text-secondary-400">
-									Category: {pkg.category}
-								</div>
-							)}
-						</div>
-					</button>
+						</button>
+						{pkg.description && (
+							<button
+								type="button"
+								onClick={(e) => {
+									e.stopPropagation();
+									setDescriptionModal({
+										packageName: pkg.name,
+										description: pkg.description,
+									});
+								}}
+								className="ml-1 flex-shrink-0 p-1 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded transition-colors"
+								title="View description"
+							>
+								<Info className="h-4 w-4 text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-300" />
+							</button>
+						)}
+					</div>
 				);
 			case "packageHosts": {
 				// Show total number of hosts where this package is installed
@@ -526,17 +546,17 @@ const Packages = () => {
 					<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
 						Packages
 					</h1>
-					<p className="text-sm text-secondary-600 dark:text-secondary-400 mt-1">
+					<p className="text-sm text-secondary-600 dark:text-white mt-1">
 						Manage package updates and security patches
 					</p>
 				</div>
 				<div className="flex items-center gap-3">
 					<button
 						type="button"
-						onClick={() => refetch()}
+						onClick={handleRefresh}
 						disabled={isFetching}
 						className="btn-outline flex items-center gap-2"
-						title="Refresh packages data"
+						title="Refresh packages and statistics data"
 					>
 						<RefreshCw
 							className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`}
@@ -755,18 +775,36 @@ const Packages = () => {
 									{paginatedPackages.map((pkg) => (
 										<div key={pkg.id} className="card p-4 space-y-3">
 											{/* Package Name */}
-											<button
-												type="button"
-												onClick={() => navigate(`/packages/${pkg.id}`)}
-												className="text-left w-full"
-											>
-												<div className="flex items-center gap-3">
-													<Package className="h-5 w-5 text-secondary-400 flex-shrink-0" />
-													<div className="text-base font-semibold text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400">
-														{pkg.name}
+											<div className="flex items-center gap-2">
+												<button
+													type="button"
+													onClick={() => navigate(`/packages/${pkg.id}`)}
+													className="text-left flex-1"
+												>
+													<div className="flex items-center gap-3">
+														<Package className="h-5 w-5 text-secondary-400 flex-shrink-0" />
+														<div className="text-base font-semibold text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400">
+															{pkg.name}
+														</div>
 													</div>
-												</div>
-											</button>
+												</button>
+												{pkg.description && (
+													<button
+														type="button"
+														onClick={(e) => {
+															e.stopPropagation();
+															setDescriptionModal({
+																packageName: pkg.name,
+																description: pkg.description,
+															});
+														}}
+														className="flex-shrink-0 p-1 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded transition-colors"
+														title="View description"
+													>
+														<Info className="h-4 w-4 text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-300" />
+													</button>
+												)}
+											</div>
 
 											{/* Status and Hosts on same line */}
 											<div className="flex items-center justify-between gap-2">
@@ -951,6 +989,48 @@ const Packages = () => {
 					onReorder={reorderColumns}
 					onReset={resetColumns}
 				/>
+			)}
+
+			{/* Description Modal */}
+			{descriptionModal && (
+				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+					<button
+						type="button"
+						onClick={() => setDescriptionModal(null)}
+						className="fixed inset-0 cursor-default"
+						aria-label="Close modal"
+					/>
+					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-lg w-full mx-4 relative z-10">
+						<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
+							<div className="flex items-center justify-between">
+								<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+									{descriptionModal.packageName}
+								</h3>
+								<button
+									type="button"
+									onClick={() => setDescriptionModal(null)}
+									className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+								>
+									<X className="h-5 w-5" />
+								</button>
+							</div>
+						</div>
+						<div className="px-6 py-4">
+							<p className="text-sm text-secondary-700 dark:text-secondary-300 whitespace-pre-wrap">
+								{descriptionModal.description}
+							</p>
+						</div>
+						<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex justify-end">
+							<button
+								type="button"
+								onClick={() => setDescriptionModal(null)}
+								className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700"
+							>
+								Close
+							</button>
+						</div>
+					</div>
+				</div>
 			)}
 		</div>
 	);

@@ -112,6 +112,8 @@ model hosts {
   system_uptime           String?
   notes                   String?
   needs_reboot            Boolean?                  @default(false)
+  reboot_reason           String?
+  docker_enabled          Boolean                   @default(false)
   host_packages           host_packages[]
   host_repositories       host_repositories[]
   host_group_memberships  host_group_memberships[]
@@ -200,6 +202,7 @@ model settings {
   metrics_enabled        Boolean   @default(true)
   metrics_anonymous_id   String?
   metrics_last_sent      DateTime?
+  show_github_version_on_login Boolean @default(true)
 }
 
 model update_history {
@@ -250,6 +253,7 @@ model users {
   auto_enrollment_tokens auto_enrollment_tokens[]
   notification_channels  notification_channels[]
   notification_rules     notification_rules[]
+  release_notes_acceptances release_notes_acceptances[]
 }
 
 model user_sessions {
@@ -520,4 +524,14 @@ model notification_history {
   @@index([channel_id])
   @@index([status])
   @@index([event_type])
+model release_notes_acceptances {
+  id         String   @id @default(uuid())
+  user_id    String
+  version    String
+  accepted_at DateTime @default(now())
+  users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, version])
+  @@index([user_id])
+  @@index([version])
 }

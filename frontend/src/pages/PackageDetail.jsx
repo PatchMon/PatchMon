@@ -5,6 +5,7 @@ import {
 	Calendar,
 	ChevronRight,
 	Download,
+	Info,
 	Package,
 	RefreshCw,
 	RotateCcw,
@@ -256,6 +257,22 @@ const PackageDetail = () => {
 				</div>
 			</div>
 
+			{/* Description */}
+			<div className="card p-4">
+				<h4 className="text-sm font-medium text-secondary-600 dark:text-secondary-400 mb-3 flex items-center gap-2">
+					Description
+					<div className="relative group">
+						<Info className="dark:text-white" />
+						<div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block w-max max-w-xs px-2 py-1 bg-gray-900 text-white text-xs rounded shadow-lg z-[100]">
+							The description was pulled directly from the host package manager.
+						</div>
+					</div>
+				</h4>
+				<p className="text-sm text-secondary-600 dark:text-secondary-400 dark:text-white">
+					{pkg.description || "No description available."}
+				</p>
+			</div>
+
 			{/* Hosts List */}
 			<div className="card">
 				<div className="px-4 sm:px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
@@ -369,7 +386,10 @@ const PackageDetail = () => {
 											</div>
 											<div className="flex flex-col gap-2 items-end">
 												{host.needsReboot && (
-													<span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+													<span
+														className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
+														title={host.rebootReason || "Reboot required"}
+													>
 														<RotateCcw className="h-3 w-3" />
 														Reboot Required
 													</span>
@@ -450,7 +470,10 @@ const PackageDetail = () => {
 												</td>
 												<td className="px-6 py-4 whitespace-nowrap">
 													{host.needsReboot ? (
-														<span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+														<span
+															className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
+															title={host.rebootReason || "Reboot required"}
+														>
 															<RotateCcw className="h-3 w-3" />
 															Required
 														</span>

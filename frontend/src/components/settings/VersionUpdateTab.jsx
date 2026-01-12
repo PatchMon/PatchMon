@@ -1,3 +1,4 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	AlertCircle,
 	CheckCircle,
@@ -8,9 +9,30 @@ import {
 	GitCommit,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { versionAPI } from "../../utils/api";
+import { settingsAPI, versionAPI } from "../../utils/api";
 
 const VersionUpdateTab = () => {
+	const queryClient = useQueryClient();
+
+	// Fetch current settings
+	const { data: settings, isLoading: settingsLoading } = useQuery({
+		queryKey: ["settings"],
+		queryFn: () => settingsAPI.get().then((res) => res.data),
+	});
+
+	// Update settings mutation
+	const updateSettingsMutation = useMutation({
+		mutationFn: (data) => {
+			return settingsAPI.update(data).then((res) => res.data);
+		},
+		onSuccess: () => {
+			queryClient.invalidateQueries(["settings"]);
+		},
+		onError: (error) => {
+			console.error("Failed to update settings:", error);
+		},
+	});
+
 	// Version checking state
 	const [versionInfo, setVersionInfo] = useState({
 		currentVersion: null,
@@ -100,6 +122,50 @@ const VersionUpdateTab = () => {
 						</span>
 					)}
 				</p>
+
+				{/* Toggle for showing GitHub version on login */}
+				<div className="bg-white dark:bg-secondary-800 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600 mb-6">
+					<div className="flex items-center justify-between">
+						<div className="flex-1">
+							<label
+								htmlFor="show-github-version-toggle"
+								className="text-sm font-medium text-secondary-900 dark:text-white cursor-pointer"
+							>
+								Show GitHub Version / Release Notes on Login Screen
+							</label>
+							<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-1">
+								When enabled, the login screen will display the latest GitHub
+								release version and release notes information.
+							</p>
+						</div>
+						<button
+							type="button"
+							id="show-github-version-toggle"
+							onClick={() => {
+								const newValue = !settings?.show_github_version_on_login;
+								updateSettingsMutation.mutate({
+									showGithubVersionOnLogin: newValue,
+								});
+							}}
+							disabled={settingsLoading || updateSettingsMutation.isPending}
+							className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+								settings?.show_github_version_on_login !== false
+									? "bg-primary-600"
+									: "bg-secondary-300 dark:bg-secondary-600"
+							} ${settingsLoading || updateSettingsMutation.isPending ? "opacity-50 cursor-not-allowed" : ""}`}
+							role="switch"
+							aria-checked={settings?.show_github_version_on_login !== false}
+						>
+							<span
+								className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+									settings?.show_github_version_on_login !== false
+										? "translate-x-5"
+										: "translate-x-0"
+								}`}
+							/>
+						</button>
+					</div>
+				</div>
 
 				<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 					{/* My Version */}

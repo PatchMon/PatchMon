@@ -14,6 +14,7 @@ const DockerInventoryCleanup = require("./dockerInventoryCleanup");
 const DockerImageUpdateCheck = require("./dockerImageUpdateCheck");
 const MetricsReporting = require("./metricsReporting");
 const SystemStatistics = require("./systemStatistics");
+const SocialMediaStats = require("./socialMediaStats");
 
 // Queue names
 const QUEUE_NAMES = {
@@ -25,6 +26,7 @@ const QUEUE_NAMES = {
 	DOCKER_IMAGE_UPDATE_CHECK: "docker-image-update-check",
 	METRICS_REPORTING: "metrics-reporting",
 	SYSTEM_STATISTICS: "system-statistics",
+	SOCIAL_MEDIA_STATS: "social-media-stats",
 	AGENT_COMMANDS: "agent-commands",
 };
 
@@ -109,6 +111,9 @@ class QueueManager {
 			this,
 		);
 		this.automations[QUEUE_NAMES.SYSTEM_STATISTICS] = new SystemStatistics(
+			this,
+		);
+		this.automations[QUEUE_NAMES.SOCIAL_MEDIA_STATS] = new SocialMediaStats(
 			this,
 		);
 
@@ -205,6 +210,15 @@ class QueueManager {
 			workerOptions,
 		);
 
+		// Social Media Stats Worker
+		this.workers[QUEUE_NAMES.SOCIAL_MEDIA_STATS] = new Worker(
+			QUEUE_NAMES.SOCIAL_MEDIA_STATS,
+			this.automations[QUEUE_NAMES.SOCIAL_MEDIA_STATS].process.bind(
+				this.automations[QUEUE_NAMES.SOCIAL_MEDIA_STATS],
+			),
+			workerOptions,
+		);
+
 		// Agent Commands Worker
 		this.workers[QUEUE_NAMES.AGENT_COMMANDS] = new Worker(
 			QUEUE_NAMES.AGENT_COMMANDS,
@@ -250,6 +264,40 @@ class QueueManager {
 						const { update_interval } = job.data;
 						agentWs.pushSettingsUpdate(api_id, update_interval);
 					} else if (type === "update_agent") {
+						// Check if bypass_settings flag is set (for true force updates)
+						const bypassSettings = job.data.bypass_settings === true;
+
+						if (!bypassSettings) {
+							// Check general server auto_update setting
+							const settings = await prisma.settings.findFirst();
+							if (!settings || !settings.auto_update) {
+								console.log(
+									`⚠️ Auto-update is disabled in server settings, skipping update_agent command for agent ${api_id}`,
+								);
+								throw new Error("Auto-update is disabled in server settings");
+							}
+
+							// Check per-host auto_update setting
+							const host = await prisma.hosts.findUnique({
+								where: { api_id: api_id },
+								select: { auto_update: true },
+							});
+
+							if (!host) {
+								console.log(
+									`⚠️ Host not found for agent ${api_id}, skipping update_agent command`,
+								);
+								throw new Error("Host not found");
+							}
+
+							if (!host.auto_update) {
+								console.log(
+									`⚠️ Auto-update is disabled for host ${api_id}, skipping update_agent command`,
+								);
+								throw new Error("Auto-update is disabled for this host");
+							}
+						}
+
 						// Force agent to update by sending WebSocket command
 						const ws = agentWs.getConnectionByApiId(api_id);
 						if (ws && ws.readyState === 1) {
@@ -338,6 +386,7 @@ class QueueManager {
 		await this.automations[QUEUE_NAMES.DOCKER_IMAGE_UPDATE_CHECK].schedule();
 		await this.automations[QUEUE_NAMES.METRICS_REPORTING].schedule();
 		await this.automations[QUEUE_NAMES.SYSTEM_STATISTICS].schedule();
+		await this.automations[QUEUE_NAMES.SOCIAL_MEDIA_STATS].schedule();
 	}
 
 	/**
@@ -379,6 +428,10 @@ class QueueManager {
 
 	async triggerMetricsReporting() {
 		return this.automations[QUEUE_NAMES.METRICS_REPORTING].triggerManual();
+	}
+
+	async triggerSocialMediaStats() {
+		return this.automations[QUEUE_NAMES.SOCIAL_MEDIA_STATS].triggerManual();
 	}
 
 	/**

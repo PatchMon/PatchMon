@@ -75,6 +75,10 @@ const apiHostsRoutes = require("./routes/apiHostsRoutes");
 const notificationChannelRoutes = require("./routes/notificationChannelRoutes");
 const notificationRuleRoutes = require("./routes/notificationRuleRoutes");
 const notificationHistoryRoutes = require("./routes/notificationHistoryRoutes");
+const releaseNotesRoutes = require("./routes/releaseNotesRoutes");
+const releaseNotesAcceptanceRoutes = require("./routes/releaseNotesAcceptanceRoutes");
+const buyMeACoffeeRoutes = require("./routes/buyMeACoffeeRoutes");
+const socialMediaStatsRoutes = require("./routes/socialMediaStatsRoutes");
 const { initSettings } = require("./services/settingsService");
 const { queueManager } = require("./services/automation");
 const { authenticateToken, requireAdmin } = require("./middleware/auth");
@@ -385,7 +389,7 @@ app.use(
 		credentials: true,
 		// Additional CORS options for better cookie handling
 		optionsSuccessStatus: 200,
-		methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+		methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 		allowedHeaders: [
 			"Content-Type",
 			"Authorization",
@@ -488,6 +492,13 @@ app.use(`/api/${apiVersion}/api`, authLimiter, apiHostsRoutes);
 app.use(`/api/${apiVersion}/notifications/channels`, notificationChannelRoutes);
 app.use(`/api/${apiVersion}/notifications/rules`, notificationRuleRoutes);
 app.use(`/api/${apiVersion}/notifications/history`, notificationHistoryRoutes);
+app.use(`/api/${apiVersion}/release-notes`, releaseNotesRoutes);
+app.use(
+	`/api/${apiVersion}/release-notes-acceptance`,
+	releaseNotesAcceptanceRoutes,
+);
+app.use(`/api/${apiVersion}/buy-me-a-coffee`, buyMeACoffeeRoutes);
+app.use(`/api/${apiVersion}/social-media-stats`, socialMediaStatsRoutes);
 
 // Bull Board - will be populated after queue manager initializes
 let bullBoardRouter = null;
@@ -896,6 +907,9 @@ async function startServer() {
 
 		// Schedule recurring jobs
 		await queueManager.scheduleAllJobs();
+
+		// Trigger social media stats collection on boot
+		await queueManager.triggerSocialMediaStats();
 
 		// Set up Bull Board for queue monitoring
 		const serverAdapter = new ExpressAdapter();

@@ -5,6 +5,7 @@ import {
 	Edit,
 	Key,
 	Mail,
+	Save,
 	Shield,
 	Trash2,
 	User,
@@ -12,7 +13,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
-import { adminUsersAPI, permissionsAPI } from "../../utils/api";
+import { adminUsersAPI, permissionsAPI, settingsAPI } from "../../utils/api";
 
 const UsersTab = () => {
 	const [showAddModal, setShowAddModal] = useState(false);
@@ -20,6 +21,13 @@ const UsersTab = () => {
 	const [resetPasswordUser, setResetPasswordUser] = useState(null);
 	const queryClient = useQueryClient();
 	const { user: currentUser } = useAuth();
+	const signupEnabledId = useId();
+	const defaultRoleId = useId();
+	const [signupFormData, setSignupFormData] = useState({
+		signupEnabled: false,
+		defaultUserRole: "user",
+	});
+	const [isSignupDirty, setIsSignupDirty] = useState(false);
 
 	// Listen for the header button event to open add modal
 	useEffect(() => {
@@ -40,10 +48,27 @@ const UsersTab = () => {
 	});
 
 	// Fetch available roles
-	const { data: roles } = useQuery({
+	const { data: roles, isLoading: rolesLoading } = useQuery({
 		queryKey: ["rolePermissions"],
 		queryFn: () => permissionsAPI.getRoles().then((res) => res.data),
 	});
+
+	// Fetch current settings for user registration
+	const { data: settings, isLoading: settingsLoading } = useQuery({
+		queryKey: ["settings"],
+		queryFn: () => settingsAPI.get().then((res) => res.data),
+	});
+
+	// Update signup form data when settings are loaded
+	useEffect(() => {
+		if (settings) {
+			setSignupFormData({
+				signupEnabled: settings.signup_enabled === true,
+				defaultUserRole: settings.default_user_role || "user",
+			});
+			setIsSignupDirty(false);
+		}
+	}, [settings]);
 
 	// Delete user mutation
 	const deleteUserMutation = useMutation({
@@ -71,6 +96,32 @@ const UsersTab = () => {
 			setResetPasswordUser(null);
 		},
 	});
+
+	// Update settings mutation for user registration
+	const updateSignupSettingsMutation = useMutation({
+		mutationFn: (data) => {
+			return settingsAPI.update(data).then((res) => res.data);
+		},
+		onSuccess: () => {
+			queryClient.invalidateQueries(["settings"]);
+			setIsSignupDirty(false);
+		},
+	});
+
+	const handleSignupInputChange = (field, value) => {
+		setSignupFormData((prev) => ({
+			...prev,
+			[field]: value,
+		}));
+		setIsSignupDirty(true);
+	};
+
+	const handleSignupSave = () => {
+		updateSignupSettingsMutation.mutate({
+			signupEnabled: signupFormData.signupEnabled,
+			defaultUserRole: signupFormData.defaultUserRole,
+		});
+	};
 
 	const handleDeleteUser = async (userId, username) => {
 		if (
@@ -474,6 +525,138 @@ const UsersTab = () => {
 					isLoading={resetPasswordMutation.isPending}
 				/>
 			)}
+
+			{/* User Registration Settings */}
+			<div className="bg-white dark:bg-secondary-800 shadow overflow-hidden sm:rounded-lg">
+				<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
+					<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+						User Registration Settings
+					</h3>
+				</div>
+				<div className="px-6 py-4 space-y-4">
+					{/* User Signup Setting */}
+					<div>
+						<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2">
+							<div className="flex items-center gap-2">
+								<input
+									id={signupEnabledId}
+									type="checkbox"
+									checked={signupFormData.signupEnabled}
+									onChange={(e) =>
+										handleSignupInputChange("signupEnabled", e.target.checked)
+									}
+									className="rounded border-secondary-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
+									disabled={settingsLoading}
+								/>
+								<label htmlFor={signupEnabledId}>
+									Enable User Self-Registration
+								</label>
+							</div>
+						</label>
+
+						{/* Default User Role Dropdown */}
+						{signupFormData.signupEnabled && (
+							<div className="mt-3 ml-6">
+								<label
+									htmlFor={defaultRoleId}
+									className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2"
+								>
+									Default Role for New Users
+								</label>
+								<select
+									id={defaultRoleId}
+									value={signupFormData.defaultUserRole}
+									onChange={(e) =>
+										handleSignupInputChange("defaultUserRole", e.target.value)
+									}
+									className="w-full max-w-xs border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+									disabled={rolesLoading}
+								>
+									{rolesLoading ? (
+										<option>Loading roles...</option>
+									) : roles && Array.isArray(roles) ? (
+										roles.map((role) => (
+											<option key={role.role} value={role.role}>
+												{role.role.charAt(0).toUpperCase() + role.role.slice(1)}
+											</option>
+										))
+									) : (
+										<option value="user">User</option>
+									)}
+								</select>
+								<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+									New users will be assigned this role when they register.
+								</p>
+							</div>
+						)}
+
+						<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
+							When enabled, users can create their own accounts through the
+							signup page. When disabled, only administrators can create user
+							accounts.
+						</p>
+					</div>
+
+					{/* Security Notice */}
+					<div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-md p-4">
+						<div className="flex">
+							<Shield className="h-5 w-5 text-blue-400 dark:text-blue-300" />
+							<div className="ml-3">
+								<h3 className="text-sm font-medium text-blue-800 dark:text-blue-200">
+									Security Notice
+								</h3>
+								<p className="mt-1 text-sm text-blue-700 dark:text-blue-300">
+									When enabling user self-registration, exercise caution on
+									internal networks. Consider restricting access to trusted
+									networks only and ensure proper role assignments to prevent
+									unauthorized access to sensitive systems.
+								</p>
+							</div>
+						</div>
+					</div>
+
+					{/* Save Button */}
+					<div className="flex justify-end">
+						<button
+							type="button"
+							onClick={handleSignupSave}
+							disabled={
+								!isSignupDirty || updateSignupSettingsMutation.isPending
+							}
+							className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white ${
+								!isSignupDirty || updateSignupSettingsMutation.isPending
+									? "bg-secondary-400 cursor-not-allowed"
+									: "bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+							}`}
+						>
+							{updateSignupSettingsMutation.isPending ? (
+								<>
+									<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+									Saving...
+								</>
+							) : (
+								<>
+									<Save className="h-4 w-4 mr-2" />
+									Save Settings
+								</>
+							)}
+						</button>
+					</div>
+
+					{updateSignupSettingsMutation.isSuccess && (
+						<div className="bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded-md p-4">
+							<div className="flex">
+								<CheckCircle className="h-5 w-5 text-green-400 dark:text-green-300" />
+								<div className="ml-3">
+									<p className="text-sm text-green-700 dark:text-green-300">
+										Settings saved successfully!
+									</p>
+								</div>
+							</div>
+						</div>
+					)}
+				</div>
+			</div>
 		</div>
 	);
 };

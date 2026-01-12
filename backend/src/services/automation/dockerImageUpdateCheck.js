@@ -1,6 +1,5 @@
 const { prisma } = require("./shared/prisma");
 const https = require("node:https");
-const http = require("node:http");
 const { v4: uuidv4 } = require("uuid");
 
 /**
@@ -11,82 +10,35 @@ class DockerImageUpdateCheck {
 	constructor(queueManager) {
 		this.queueManager = queueManager;
 		this.queueName = "docker-image-update-check";
+		// Cache tokens to avoid requesting new ones for each image
+		this.tokenCache = new Map();
 	}
 
 	/**
-	 * Get remote digest from Docker registry using HEAD request
-	 * Supports Docker Hub, GHCR, and other OCI-compliant registries
+	 * Make an HTTPS request and return a promise
 	 */
-	async getRemoteDigest(imageName, tag = "latest") {
+	httpsRequest(options) {
 		return new Promise((resolve, reject) => {
-			// Parse image name to determine registry
-			const registryInfo = this.parseImageName(imageName);
-
-			// Construct manifest URL
-			const manifestPath = `/v2/${registryInfo.repository}/manifests/${tag}`;
-			const options = {
-				hostname: registryInfo.registry,
-				path: manifestPath,
-				method: "HEAD",
-				headers: {
-					Accept:
-						"application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json",
-					"User-Agent": "PatchMon/1.0",
-				},
-			};
-
-			// Add authentication token for Docker Hub if needed
-			if (
-				registryInfo.registry === "registry-1.docker.io" &&
-				registryInfo.isPublic
-			) {
-				// For anonymous public images, we may need to get an auth token first
-				// For now, try without auth (works for public images)
-			}
-
-			// Choose HTTP or HTTPS
-			const client = registryInfo.isSecure ? https : http;
+			const client = https;
 
 			const req = client.request(options, (res) => {
-				if (res.statusCode === 401 || res.statusCode === 403) {
-					// Authentication required - skip for now (would need to implement auth)
-					return reject(
-						new Error(`Authentication required for ${imageName}:${tag}`),
-					);
-				}
-
-				if (res.statusCode !== 200) {
-					return reject(
-						new Error(
-							`Registry returned status ${res.statusCode} for ${imageName}:${tag}`,
-						),
-					);
-				}
-
-				// Get digest from Docker-Content-Digest header
-				const digest = res.headers["docker-content-digest"];
-				if (!digest) {
-					return reject(
-						new Error(
-							`No Docker-Content-Digest header for ${imageName}:${tag}`,
-						),
-					);
-				}
-
-				// Clean up digest (remove sha256: prefix if present)
-				const cleanDigest = digest.startsWith("sha256:")
-					? digest.substring(7)
-					: digest;
-				resolve(cleanDigest);
+				let data = "";
+				res.on("data", (chunk) => {
+					data += chunk;
+				});
+				res.on("end", () => {
+					resolve({
+						statusCode: res.statusCode,
+						headers: res.headers,
+						body: data,
+					});
+				});
 			});
 
-			req.on("error", (error) => {
-				reject(error);
-			});
-
-			req.setTimeout(10000, () => {
+			req.on("error", reject);
+			req.setTimeout(15000, () => {
 				req.destroy();
-				reject(new Error(`Timeout getting digest for ${imageName}:${tag}`));
+				reject(new Error("Request timeout"));
 			});
 
 			req.end();
@@ -94,41 +46,194 @@ class DockerImageUpdateCheck {
 	}
 
 	/**
-	 * Parse image name to extract registry, repository, and determine if secure
+	 * Parse WWW-Authenticate header to extract token endpoint details
+	 * Format: Bearer realm="https://auth.docker.io/token",service="registry.docker.io",scope="repository:library/nginx:pull"
+	 */
+	parseWwwAuthenticate(header) {
+		if (!header || !header.startsWith("Bearer ")) {
+			return null;
+		}
+
+		const params = {};
+		const regex = /(\w+)="([^"]+)"/g;
+		let match;
+		while (true) {
+			match = regex.exec(header);
+			if (match === null) break;
+			params[match[1]] = match[2];
+		}
+
+		return params;
+	}
+
+	/**
+	 * Get authentication token for a registry
+	 * Supports Docker Hub, GHCR, and other OCI-compliant registries
+	 */
+	async getAuthToken(registry, repository, wwwAuthHeader) {
+		const cacheKey = `${registry}/${repository}`;
+
+		// Check cache first (tokens are typically valid for 5+ minutes)
+		const cached = this.tokenCache.get(cacheKey);
+		if (cached && cached.expiresAt > Date.now()) {
+			return cached.token;
+		}
+
+		const authParams = this.parseWwwAuthenticate(wwwAuthHeader);
+		if (!authParams || !authParams.realm) {
+			throw new Error(`Cannot parse WWW-Authenticate header: ${wwwAuthHeader}`);
+		}
+
+		// Build token request URL
+		const tokenUrl = new URL(authParams.realm);
+		if (authParams.service) {
+			tokenUrl.searchParams.set("service", authParams.service);
+		}
+		if (authParams.scope) {
+			tokenUrl.searchParams.set("scope", authParams.scope);
+		}
+
+		const options = {
+			hostname: tokenUrl.hostname,
+			port: tokenUrl.port || 443,
+			path: tokenUrl.pathname + tokenUrl.search,
+			method: "GET",
+			headers: {
+				"User-Agent": "PatchMon/1.0",
+			},
+		};
+
+		const response = await this.httpsRequest(options);
+
+		if (response.statusCode !== 200) {
+			throw new Error(
+				`Token request failed with status ${response.statusCode}`,
+			);
+		}
+
+		const tokenData = JSON.parse(response.body);
+		const token = tokenData.token || tokenData.access_token;
+
+		if (!token) {
+			throw new Error("No token in authentication response");
+		}
+
+		// Cache the token (default 5 minute expiry if not specified)
+		const expiresIn = tokenData.expires_in || 300;
+		this.tokenCache.set(cacheKey, {
+			token,
+			expiresAt: Date.now() + expiresIn * 1000 - 30000, // 30 second buffer
+		});
+
+		return token;
+	}
+
+	/**
+	 * Get remote digest from Docker registry using HEAD request
+	 * Supports Docker Hub, GHCR, and other OCI-compliant registries
+	 * Handles authentication automatically via OAuth2 bearer tokens
+	 */
+	async getRemoteDigest(imageName, tag = "latest") {
+		const registryInfo = this.parseImageName(imageName);
+		const manifestPath = `/v2/${registryInfo.repository}/manifests/${tag}`;
+
+		const options = {
+			hostname: registryInfo.registry,
+			port: 443,
+			path: manifestPath,
+			method: "HEAD",
+			headers: {
+				Accept: [
+					"application/vnd.docker.distribution.manifest.v2+json",
+					"application/vnd.docker.distribution.manifest.list.v2+json",
+					"application/vnd.oci.image.manifest.v1+json",
+					"application/vnd.oci.image.index.v1+json",
+				].join(", "),
+				"User-Agent": "PatchMon/1.0",
+			},
+		};
+
+		// First attempt without auth
+		let response = await this.httpsRequest(options);
+
+		// If we get 401, get a token and retry
+		if (response.statusCode === 401) {
+			const wwwAuth = response.headers["www-authenticate"];
+			if (!wwwAuth) {
+				throw new Error(
+					`401 received but no WWW-Authenticate header for ${imageName}:${tag}`,
+				);
+			}
+
+			const token = await this.getAuthToken(
+				registryInfo.registry,
+				registryInfo.repository,
+				wwwAuth,
+			);
+
+			// Retry with token
+			options.headers.Authorization = `Bearer ${token}`;
+			response = await this.httpsRequest(options);
+		}
+
+		if (response.statusCode === 401 || response.statusCode === 403) {
+			throw new Error(
+				`Authentication failed for ${imageName}:${tag} (status ${response.statusCode})`,
+			);
+		}
+
+		if (response.statusCode !== 200) {
+			throw new Error(
+				`Registry returned status ${response.statusCode} for ${imageName}:${tag}`,
+			);
+		}
+
+		// Get digest from Docker-Content-Digest header
+		const digest = response.headers["docker-content-digest"];
+		if (!digest) {
+			throw new Error(
+				`No Docker-Content-Digest header for ${imageName}:${tag}`,
+			);
+		}
+
+		// Clean up digest (remove sha256: prefix if present)
+		return digest.startsWith("sha256:") ? digest.substring(7) : digest;
+	}
+
+	/**
+	 * Parse image name to extract registry and repository
 	 */
 	parseImageName(imageName) {
+		// Remove docker.io/ prefix if present (normalize)
+		if (imageName.startsWith("docker.io/")) {
+			imageName = imageName.substring(10);
+		}
+
 		let registry = "registry-1.docker.io";
 		let repository = imageName;
-		const isSecure = true;
-		let isPublic = true;
 
 		// Handle explicit registries (ghcr.io, quay.io, etc.)
 		if (imageName.includes("/")) {
 			const parts = imageName.split("/");
 			const firstPart = parts[0];
 
-			// Check for known registries
-			if (firstPart.includes(".") || firstPart === "localhost") {
+			// Check if first part looks like a registry (contains . or : or is localhost)
+			if (
+				firstPart.includes(".") ||
+				firstPart.includes(":") ||
+				firstPart === "localhost"
+			) {
 				registry = firstPart;
 				repository = parts.slice(1).join("/");
-				isPublic = false; // Assume private registries need auth for now
-			} else {
-				// Docker Hub - registry-1.docker.io
-				repository = imageName;
 			}
 		}
 
-		// Docker Hub official images (no namespace)
-		if (!repository.includes("/")) {
+		// Docker Hub official images need library/ prefix
+		if (registry === "registry-1.docker.io" && !repository.includes("/")) {
 			repository = `library/${repository}`;
 		}
 
-		return {
-			registry,
-			repository,
-			isSecure,
-			isPublic,
-		};
+		return { registry, repository };
 	}
 
 	/**
@@ -137,6 +242,9 @@ class DockerImageUpdateCheck {
 	async process(_job) {
 		const startTime = Date.now();
 		console.log("🐳 Starting Docker image update check...");
+
+		// Clear token cache at start of each run
+		this.tokenCache.clear();
 
 		try {
 			// Get all Docker images that have a digest
