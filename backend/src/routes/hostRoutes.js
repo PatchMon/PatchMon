@@ -233,6 +233,9 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 			const execAsync = promisify(exec);
 
 			const binaryName = `patchmon-agent-linux-${architecture}`;
+			if (binaryName.includes('..')) {
+				return res.status(400).json({ error: "Invalid architecture specified" });
+			}
 			const binaryPath = path.join(__dirname, "../../../agents", binaryName);
 
 			if (fs.existsSync(binaryPath)) {
