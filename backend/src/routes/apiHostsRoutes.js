@@ -15,6 +15,16 @@ const isUUID = (str) => {
 };
 
 // GET /api/v1/api/hosts - List hosts with IP and groups
+/* #swagger.tags = ['Scoped API - Hosts'] */
+/* #swagger.summary = 'List hosts with IP and groups' */
+/* #swagger.description = 'Retrieve a list of all hosts with their IP addresses and associated host groups. Requires Basic Auth with scoped credentials (host:get permission).' */
+/* #swagger.security = [{ "basicAuth": [] }] */
+/* #swagger.parameters['hostgroup'] = {
+    in: 'query',
+    type: 'string',
+    description: 'Filter by host group name(s) or UUID(s). Comma-separated for multiple groups.',
+    required: false
+} */
 router.get(
 	"/hosts",
 	authenticateApiToken("api"),

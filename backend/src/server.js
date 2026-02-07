@@ -555,9 +555,10 @@ app.get("/health", (_req, res) => {
 // API routes
 const apiVersion = process.env.API_VERSION || "v1";
 
-// Swagger
+// Swagger - Protected with authentication
 app.use(
 	`/api/${apiVersion}/api-docs`,
+	authenticateToken,
 	swaggerUi.serve,
 	swaggerUi.setup(swaggerDocument),
 );

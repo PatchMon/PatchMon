@@ -775,15 +775,26 @@ const Integrations = () => {
 												Programmatic access to PatchMon data with granular
 												scope-based permissions.
 											</p>
-											<a
-												href="https://docs.patchmon.net/books/patchmon-application-documentation/page/integration-api-documentation"
-												target="_blank"
-												rel="noopener noreferrer"
-												className="inline-flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg text-sm transition-colors"
-											>
-												<BookOpen className="h-4 w-4" />
-												View Guide
-											</a>
+											<div className="flex flex-wrap gap-2">
+												<a
+													href="https://docs.patchmon.net/books/patchmon-application-documentation/page/integration-api-documentation"
+													target="_blank"
+													rel="noopener noreferrer"
+													className="inline-flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg text-sm transition-colors"
+												>
+													<BookOpen className="h-4 w-4" />
+													View Guide
+												</a>
+												<a
+													href="/api/v1/api-docs"
+													target="_blank"
+													rel="noopener noreferrer"
+													className="inline-flex items-center gap-2 px-3 py-2 bg-secondary-600 hover:bg-secondary-700 dark:bg-secondary-500 dark:hover:bg-secondary-600 text-white rounded-lg text-sm transition-colors"
+												>
+													<BookOpen className="h-4 w-4" />
+													Swagger documentation
+												</a>
+											</div>
 										</div>
 									</div>
 								</div>

@@ -126,7 +126,7 @@ router.get("/", authenticateToken, requireManageSettings, async (_req, res) => {
 	try {
 		const settings = await getSettings();
 		if (process.env.ENABLE_LOGGING === "true") {
-			logger.info("Returning settings:", settings);
+			logger.info("Returning settings");
 		}
 		res.json(settings);
 	} catch (error) {
@@ -283,7 +283,9 @@ router.put(
 				updateData,
 			);
 
-			logger.info("Settings updated successfully:", updatedSettings);
+			if (process.env.ENABLE_LOGGING === "true") {
+				logger.info("Settings updated successfully");
+			}
 
 			// If update interval changed, enqueue persistent jobs for agents
 			if (

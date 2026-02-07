@@ -2,16 +2,35 @@
 	"swagger": "2.0",
 	"info": {
 		"version": "1.0.0",
-		"title": "REST API",
-		"description": ""
+		"title": "PatchMon REST API",
+		"description": "PatchMon API documentation. For scoped credentials API documentation, see: https://docs.patchmon.net/books/patchmon-application-documentation/page/integration-api-documentation"
 	},
 	"host": "localhost:3000",
-	"basePath": "/",
-	"schemes": ["http"],
+	"basePath": "/api/v1",
+	"schemes": ["http", "https"],
+	"securityDefinitions": {
+		"basicAuth": {
+			"type": "basic",
+			"description": "Basic Authentication using API credentials (token_key:token_secret). Used for scoped API endpoints under /api/v1/api/*"
+		},
+		"bearerAuth": {
+			"type": "apiKey",
+			"name": "Authorization",
+			"in": "header",
+			"description": "JWT Bearer token authentication. Format: 'Bearer <token>'. Used for dashboard endpoints."
+		}
+	},
 	"paths": {
 		"/health": {
 			"get": {
 				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
 				"responses": {
 					"200": {
 						"description": "OK"
@@ -19,9 +38,16 @@
 				}
 			}
 		},
-		"/api/auth/check-admin-users": {
+		"/auth/check-admin-users": {
 			"get": {
 				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
 				"responses": {
 					"200": {
 						"description": "OK"
@@ -32,10 +58,15 @@
 				}
 			}
 		},
-		"/api/auth/setup-admin": {
+		"/auth/setup-admin": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "body",
 						"in": "body",
@@ -62,6 +93,9 @@
 					}
 				],
 				"responses": {
+					"200": {
+						"description": "OK"
+					},
 					"201": {
 						"description": "Created"
 					},
@@ -74,10 +108,30 @@
 				}
 			}
 		},
-		"/api/auth/admin/users": {
+		"/auth/admin/users": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "all",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "page",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "pageSize",
+						"in": "query",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -99,6 +153,11 @@
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -133,6 +192,9 @@
 					}
 				],
 				"responses": {
+					"200": {
+						"description": "OK"
+					},
 					"201": {
 						"description": "Created"
 					},
@@ -151,7 +213,7 @@
 				}
 			}
 		},
-		"/api/auth/admin/users/{userId}": {
+		"/auth/admin/users/{userId}": {
 			"put": {
 				"description": "",
 				"parameters": [
@@ -159,6 +221,11 @@
 						"name": "userId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -204,6 +271,9 @@
 					"401": {
 						"description": "Unauthorized"
 					},
+					"403": {
+						"description": "Forbidden"
+					},
 					"404": {
 						"description": "Not Found"
 					},
@@ -225,6 +295,11 @@
 						"type": "string"
 					},
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
@@ -240,6 +315,9 @@
 					"401": {
 						"description": "Unauthorized"
 					},
+					"403": {
+						"description": "Forbidden"
+					},
 					"404": {
 						"description": "Not Found"
 					},
@@ -249,7 +327,7 @@
 				}
 			}
 		},
-		"/api/auth/admin/users/{userId}/reset-password": {
+		"/auth/admin/users/{userId}/reset-password": {
 			"post": {
 				"description": "",
 				"parameters": [
@@ -257,6 +335,11 @@
 						"name": "userId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -287,6 +370,9 @@
 					"401": {
 						"description": "Unauthorized"
 					},
+					"403": {
+						"description": "Forbidden"
+					},
 					"404": {
 						"description": "Not Found"
 					},
@@ -296,9 +382,16 @@
 				}
 			}
 		},
-		"/api/auth/signup-enabled": {
+		"/auth/signup-enabled": {
 			"get": {
 				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
 				"responses": {
 					"200": {
 						"description": "OK"
@@ -309,10 +402,15 @@
 				}
 			}
 		},
-		"/api/auth/signup": {
+		"/auth/signup": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "body",
 						"in": "body",
@@ -339,6 +437,9 @@
 					}
 				],
 				"responses": {
+					"200": {
+						"description": "OK"
+					},
 					"201": {
 						"description": "Created"
 					},
@@ -357,10 +458,15 @@
 				}
 			}
 		},
-		"/api/auth/login": {
+		"/auth/login": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "body",
 						"in": "body",
@@ -387,16 +493,27 @@
 					"401": {
 						"description": "Unauthorized"
 					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"429": {
+						"description": "Too Many Requests"
+					},
 					"500": {
 						"description": "Internal Server Error"
 					}
 				}
 			}
 		},
-		"/api/auth/verify-tfa": {
+		"/auth/verify-tfa": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "body",
 						"in": "body",
@@ -426,16 +543,95 @@
 					"401": {
 						"description": "Unauthorized"
 					},
+					"429": {
+						"description": "Too Many Requests"
+					},
 					"500": {
 						"description": "Internal Server Error"
 					}
 				}
 			}
 		},
-		"/api/auth/profile": {
+		"/auth/ws-token": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/ssh-ticket": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"hostId": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/profile": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -457,6 +653,11 @@
 			"put": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -503,10 +704,15 @@
 				}
 			}
 		},
-		"/api/auth/change-password": {
+		"/auth/change-password": {
 			"put": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -544,10 +750,15 @@
 				}
 			}
 		},
-		"/api/auth/logout": {
+		"/auth/logout": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -567,10 +778,15 @@
 				}
 			}
 		},
-		"/api/auth/logout-all": {
+		"/auth/logout-all": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -590,10 +806,15 @@
 				}
 			}
 		},
-		"/api/auth/refresh-token": {
+		"/auth/refresh-token": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "body",
 						"in": "body",
@@ -623,10 +844,15 @@
 				}
 			}
 		},
-		"/api/auth/sessions": {
+		"/auth/sessions": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -649,6 +875,11 @@
 				"description": "",
 				"parameters": [
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
@@ -667,7 +898,7 @@
 				}
 			}
 		},
-		"/api/auth/sessions/{session_id}": {
+		"/auth/sessions/{session_id}": {
 			"delete": {
 				"description": "",
 				"parameters": [
@@ -675,6 +906,11 @@
 						"name": "session_id",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -702,11 +938,112 @@
 				}
 			}
 		},
-		"/api/hosts/agent/download": {
+		"/auth/oidc/config": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					}
+				}
+			}
+		},
+		"/auth/oidc/login": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"400": {
+						"description": "Bad Request"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/oidc/callback": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-forwarded-proto",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "code",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "state",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "error",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "error_description",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"400": {
+						"description": "Bad Request"
+					}
+				}
+			}
+		},
+		"/auth/oidc/logout": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"default": {
+						"description": ""
+					}
+				}
+			}
+		},
+		"/hosts/agent/download": {
 			"get": {
 				"description": "",
 				"produces": ["text/plain"],
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "x-api-id",
 						"in": "header",
@@ -744,10 +1081,15 @@
 				}
 			}
 		},
-		"/api/hosts/agent/version": {
+		"/hosts/agent/version": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "arch",
 						"in": "query",
@@ -762,28 +1104,46 @@
 						"name": "currentVersion",
 						"in": "query",
 						"type": "string"
+					},
+					{
+						"name": "x-api-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-key",
+						"in": "header",
+						"type": "string"
 					}
 				],
 				"responses": {
 					"200": {
 						"description": "OK"
 					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
 					"404": {
 						"description": "Not Found"
 					},
 					"500": {
 						"description": "Internal Server Error"
-					},
-					"503": {
-						"description": "Service Unavailable"
 					}
 				}
 			}
 		},
-		"/api/hosts/create": {
+		"/hosts/create": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -799,6 +1159,12 @@
 									"example": "any"
 								},
 								"hostGroupIds": {
+									"example": "any"
+								},
+								"docker_enabled": {
+									"example": "any"
+								},
+								"compliance_enabled": {
 									"example": "any"
 								}
 							}
@@ -821,9 +1187,16 @@
 				}
 			}
 		},
-		"/api/hosts/register": {
+		"/hosts/register": {
 			"post": {
 				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
 				"responses": {
 					"400": {
 						"description": "Bad Request"
@@ -831,10 +1204,15 @@
 				}
 			}
 		},
-		"/api/hosts/update": {
+		"/hosts/update": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "x-api-id",
 						"in": "header",
@@ -899,6 +1277,9 @@
 								"kernelVersion": {
 									"example": "any"
 								},
+								"installedKernelVersion": {
+									"example": "any"
+								},
 								"selinuxStatus": {
 									"example": "any"
 								},
@@ -906,6 +1287,12 @@
 									"example": "any"
 								},
 								"loadAverage": {
+									"example": "any"
+								},
+								"needsReboot": {
+									"example": "any"
+								},
+								"rebootReason": {
 									"example": "any"
 								},
 								"packages": {
@@ -940,10 +1327,15 @@
 				}
 			}
 		},
-		"/api/hosts/info": {
+		"/hosts/info": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "x-api-id",
 						"in": "header",
@@ -968,10 +1360,114 @@
 				}
 			}
 		},
-		"/api/hosts/ping": {
+		"/hosts/integrations": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-key",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/integration-status": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-key",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"integration": {
+									"example": "any"
+								},
+								"enabled": {
+									"example": "any"
+								},
+								"status": {
+									"example": "any"
+								},
+								"message": {
+									"example": "any"
+								},
+								"components": {
+									"example": "any"
+								},
+								"scanner_info": {
+									"example": "any"
+								},
+								"req": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/ping": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "x-api-id",
 						"in": "header",
@@ -1011,7 +1507,7 @@
 				}
 			}
 		},
-		"/api/hosts/{hostId}/regenerate-credentials": {
+		"/hosts/{hostId}/regenerate-credentials": {
 			"post": {
 				"description": "",
 				"parameters": [
@@ -1019,6 +1515,11 @@
 						"name": "hostId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -1043,10 +1544,15 @@
 				}
 			}
 		},
-		"/api/hosts/bulk/groups": {
+		"/hosts/bulk/groups": {
 			"put": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -1084,7 +1590,7 @@
 				}
 			}
 		},
-		"/api/hosts/{hostId}/groups": {
+		"/hosts/{hostId}/groups": {
 			"put": {
 				"description": "",
 				"parameters": [
@@ -1092,6 +1598,11 @@
 						"name": "hostId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -1131,7 +1642,7 @@
 				}
 			}
 		},
-		"/api/hosts/{hostId}/group": {
+		"/hosts/{hostId}/group": {
 			"put": {
 				"description": "",
 				"parameters": [
@@ -1139,6 +1650,11 @@
 						"name": "hostId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -1178,10 +1694,30 @@
 				}
 			}
 		},
-		"/api/hosts/admin/list": {
+		"/hosts/admin/list": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "all",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "page",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "pageSize",
+						"in": "query",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -1201,10 +1737,15 @@
 				}
 			}
 		},
-		"/api/hosts/bulk": {
+		"/hosts/bulk": {
 			"delete": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -1242,7 +1783,7 @@
 				}
 			}
 		},
-		"/api/hosts/{hostId}": {
+		"/hosts/{hostId}": {
 			"delete": {
 				"description": "",
 				"parameters": [
@@ -1250,6 +1791,11 @@
 						"name": "hostId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -1277,7 +1823,7 @@
 				}
 			}
 		},
-		"/api/hosts/{hostId}/fetch-report": {
+		"/hosts/{hostId}/fetch-report": {
 			"post": {
 				"description": "",
 				"parameters": [
@@ -1285,6 +1831,11 @@
 						"name": "hostId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -1309,7 +1860,7 @@
 				}
 			}
 		},
-		"/api/hosts/{hostId}/auto-update": {
+		"/hosts/{hostId}/auto-update": {
 			"patch": {
 				"description": "",
 				"parameters": [
@@ -1317,6 +1868,11 @@
 						"name": "hostId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -1353,7 +1909,7 @@
 				}
 			}
 		},
-		"/api/hosts/{hostId}/force-agent-update": {
+		"/hosts/{hostId}/force-agent-update": {
 			"post": {
 				"description": "",
 				"parameters": [
@@ -1361,6 +1917,11 @@
 						"name": "hostId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -1385,11 +1946,90 @@
 				}
 			}
 		},
-		"/api/hosts/install": {
+		"/hosts/{hostId}/refresh-integration-status": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/refresh-docker": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/install": {
 			"get": {
 				"description": "",
 				"produces": ["text/plain"],
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "x-api-id",
 						"in": "header",
@@ -1427,17 +2067,12 @@
 				}
 			}
 		},
-		"/api/hosts/check-machine-id": {
+		"/hosts/bootstrap/exchange": {
 			"post": {
 				"description": "",
 				"parameters": [
 					{
-						"name": "x-api-id",
-						"in": "header",
-						"type": "string"
-					},
-					{
-						"name": "x-api-key",
+						"name": "x-request-id",
 						"in": "header",
 						"type": "string"
 					},
@@ -1447,10 +2082,7 @@
 						"schema": {
 							"type": "object",
 							"properties": {
-								"machine_id": {
-									"example": "any"
-								},
-								"req": {
+								"token": {
 									"example": "any"
 								}
 							}
@@ -1473,10 +2105,17 @@
 				}
 			}
 		},
-		"/api/hosts/remove": {
+		"/hosts/remove": {
 			"get": {
 				"description": "",
 				"produces": ["text/plain"],
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
 				"responses": {
 					"200": {
 						"description": "OK"
@@ -1490,10 +2129,15 @@
 				}
 			}
 		},
-		"/api/hosts/agent/info": {
+		"/hosts/agent/info": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -1513,10 +2157,15 @@
 				}
 			}
 		},
-		"/api/hosts/agent/upload": {
+		"/hosts/agent/upload": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -1551,10 +2200,15 @@
 				}
 			}
 		},
-		"/api/hosts/agent/timestamp": {
+		"/hosts/agent/timestamp": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "x-api-id",
 						"in": "header",
@@ -1579,10 +2233,15 @@
 				}
 			}
 		},
-		"/api/hosts/settings": {
+		"/hosts/settings": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "x-api-id",
 						"in": "header",
@@ -1607,7 +2266,7 @@
 				}
 			}
 		},
-		"/api/hosts/{hostId}/friendly-name": {
+		"/hosts/{hostId}/friendly-name": {
 			"patch": {
 				"description": "",
 				"parameters": [
@@ -1615,6 +2274,11 @@
 						"name": "hostId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -1654,7 +2318,7 @@
 				}
 			}
 		},
-		"/api/hosts/{hostId}/notes": {
+		"/hosts/{hostId}/connection": {
 			"patch": {
 				"description": "",
 				"parameters": [
@@ -1662,6 +2326,66 @@
 						"name": "hostId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"ip": {
+									"example": "any"
+								},
+								"hostname": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/notes": {
+			"patch": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -1701,7 +2425,7 @@
 				}
 			}
 		},
-		"/api/hosts/{hostId}/integrations": {
+		"/hosts/{hostId}/integrations": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -1709,6 +2433,11 @@
 						"name": "hostId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -1733,7 +2462,50 @@
 				}
 			}
 		},
-		"/api/hosts/{hostId}/integrations/{integrationName}/toggle": {
+		"/hosts/{hostId}/integrations/{integrationName}/status": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "integrationName",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/integrations/{integrationName}/toggle": {
 			"post": {
 				"description": "",
 				"parameters": [
@@ -1747,6 +2519,11 @@
 						"name": "integrationName",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -1789,10 +2566,125 @@
 				}
 			}
 		},
-		"/api/host-groups/": {
+		"/hosts/{hostId}/integrations/compliance/mode": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"mode": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					},
+					"503": {
+						"description": "Service Unavailable"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/compliance/on-demand-only": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"on_demand_only": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					},
+					"503": {
+						"description": "Service Unavailable"
+					}
+				}
+			}
+		},
+		"/host-groups/": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -1814,6 +2706,11 @@
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -1854,7 +2751,7 @@
 				}
 			}
 		},
-		"/api/host-groups/{id}": {
+		"/host-groups/{id}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -1862,6 +2759,11 @@
 						"name": "id",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -1892,6 +2794,11 @@
 						"name": "id",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -1946,6 +2853,11 @@
 						"type": "string"
 					},
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
@@ -1967,7 +2879,7 @@
 				}
 			}
 		},
-		"/api/host-groups/{id}/hosts": {
+		"/host-groups/{id}/hosts": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -1975,6 +2887,11 @@
 						"name": "id",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -1996,10 +2913,15 @@
 				}
 			}
 		},
-		"/api/packages/": {
+		"/packages/": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "page",
 						"in": "query",
@@ -2046,7 +2968,7 @@
 				}
 			}
 		},
-		"/api/packages/{packageId}": {
+		"/packages/{packageId}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -2054,6 +2976,11 @@
 						"name": "packageId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					}
 				],
@@ -2070,7 +2997,7 @@
 				}
 			}
 		},
-		"/api/packages/{packageId}/hosts": {
+		"/packages/{packageId}/hosts": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -2078,6 +3005,11 @@
 						"name": "packageId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -2116,10 +3048,15 @@
 				}
 			}
 		},
-		"/api/dashboard/stats": {
+		"/dashboard/stats": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -2139,10 +3076,15 @@
 				}
 			}
 		},
-		"/api/dashboard/hosts": {
+		"/dashboard/hosts": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -2162,10 +3104,15 @@
 				}
 			}
 		},
-		"/api/dashboard/packages": {
+		"/dashboard/packages": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -2185,7 +3132,7 @@
 				}
 			}
 		},
-		"/api/dashboard/hosts/{hostId}": {
+		"/dashboard/hosts/{hostId}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -2193,6 +3140,11 @@
 						"name": "hostId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -2206,6 +3158,11 @@
 						"type": "string"
 					},
 					{
+						"name": "include",
+						"in": "query",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
@@ -2227,7 +3184,7 @@
 				}
 			}
 		},
-		"/api/dashboard/hosts/{hostId}/queue": {
+		"/dashboard/hosts/{hostId}/queue": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -2235,6 +3192,11 @@
 						"name": "hostId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -2264,10 +3226,15 @@
 				}
 			}
 		},
-		"/api/dashboard/recent-users": {
+		"/dashboard/recent-users": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -2287,10 +3254,15 @@
 				}
 			}
 		},
-		"/api/dashboard/recent-collection": {
+		"/dashboard/recent-collection": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -2310,10 +3282,15 @@
 				}
 			}
 		},
-		"/api/dashboard/package-trends": {
+		"/dashboard/package-trends": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "days",
 						"in": "query",
@@ -2343,10 +3320,15 @@
 				}
 			}
 		},
-		"/api/dashboard/package-spike-analysis": {
+		"/dashboard/package-spike-analysis": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "hostId",
 						"in": "query",
@@ -2407,10 +3389,15 @@
 				}
 			}
 		},
-		"/api/permissions/roles": {
+		"/permissions/roles": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -2430,7 +3417,7 @@
 				}
 			}
 		},
-		"/api/permissions/roles/{role}": {
+		"/permissions/roles/{role}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -2438,6 +3425,11 @@
 						"name": "role",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -2471,6 +3463,11 @@
 						"type": "string"
 					},
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
@@ -2500,6 +3497,9 @@
 									"example": "any"
 								},
 								"can_manage_users": {
+									"example": "any"
+								},
+								"can_manage_superusers": {
 									"example": "any"
 								},
 								"can_view_reports": {
@@ -2540,6 +3540,11 @@
 						"type": "string"
 					},
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
@@ -2561,10 +3566,15 @@
 				}
 			}
 		},
-		"/api/permissions/user-permissions": {
+		"/permissions/user-permissions": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -2584,241 +3594,15 @@
 				}
 			}
 		},
-		"/api/settings/": {
+		"/repositories/": {
 			"get": {
 				"description": "",
 				"parameters": [
 					{
-						"name": "authorization",
-						"in": "header",
-						"type": "string"
-					}
-				],
-				"responses": {
-					"200": {
-						"description": "OK"
-					},
-					"401": {
-						"description": "Unauthorized"
-					},
-					"500": {
-						"description": "Internal Server Error"
-					}
-				}
-			},
-			"put": {
-				"description": "",
-				"parameters": [
-					{
-						"name": "authorization",
+						"name": "x-request-id",
 						"in": "header",
 						"type": "string"
 					},
-					{
-						"name": "body",
-						"in": "body",
-						"schema": {
-							"type": "object",
-							"properties": {
-								"serverProtocol": {
-									"example": "any"
-								},
-								"serverHost": {
-									"example": "any"
-								},
-								"serverPort": {
-									"example": "any"
-								},
-								"updateInterval": {
-									"example": "any"
-								},
-								"autoUpdate": {
-									"example": "any"
-								},
-								"ignoreSslSelfSigned": {
-									"example": "any"
-								},
-								"signupEnabled": {
-									"example": "any"
-								},
-								"defaultUserRole": {
-									"example": "any"
-								},
-								"githubRepoUrl": {
-									"example": "any"
-								},
-								"repositoryType": {
-									"example": "any"
-								},
-								"sshKeyPath": {
-									"example": "any"
-								},
-								"logoDark": {
-									"example": "any"
-								},
-								"logoLight": {
-									"example": "any"
-								},
-								"favicon": {
-									"example": "any"
-								},
-								"colorTheme": {
-									"example": "any"
-								}
-							}
-						}
-					}
-				],
-				"responses": {
-					"200": {
-						"description": "OK"
-					},
-					"400": {
-						"description": "Bad Request"
-					},
-					"401": {
-						"description": "Unauthorized"
-					},
-					"500": {
-						"description": "Internal Server Error"
-					}
-				}
-			}
-		},
-		"/api/settings/server-url": {
-			"get": {
-				"description": "",
-				"responses": {
-					"200": {
-						"description": "OK"
-					},
-					"500": {
-						"description": "Internal Server Error"
-					}
-				}
-			}
-		},
-		"/api/settings/update-interval": {
-			"get": {
-				"description": "",
-				"parameters": [
-					{
-						"name": "x-api-id",
-						"in": "header",
-						"type": "string"
-					},
-					{
-						"name": "x-api-key",
-						"in": "header",
-						"type": "string"
-					}
-				],
-				"responses": {
-					"200": {
-						"description": "OK"
-					},
-					"401": {
-						"description": "Unauthorized"
-					}
-				}
-			}
-		},
-		"/api/settings/auto-update": {
-			"get": {
-				"description": "",
-				"responses": {
-					"200": {
-						"description": "OK"
-					}
-				}
-			}
-		},
-		"/api/settings/logos/upload": {
-			"post": {
-				"description": "",
-				"parameters": [
-					{
-						"name": "authorization",
-						"in": "header",
-						"type": "string"
-					},
-					{
-						"name": "body",
-						"in": "body",
-						"schema": {
-							"type": "object",
-							"properties": {
-								"logoType": {
-									"example": "any"
-								},
-								"fileContent": {
-									"example": "any"
-								},
-								"fileName": {
-									"example": "any"
-								}
-							}
-						}
-					}
-				],
-				"responses": {
-					"200": {
-						"description": "OK"
-					},
-					"400": {
-						"description": "Bad Request"
-					},
-					"401": {
-						"description": "Unauthorized"
-					},
-					"500": {
-						"description": "Internal Server Error"
-					}
-				}
-			}
-		},
-		"/api/settings/logos/reset": {
-			"post": {
-				"description": "",
-				"parameters": [
-					{
-						"name": "authorization",
-						"in": "header",
-						"type": "string"
-					},
-					{
-						"name": "body",
-						"in": "body",
-						"schema": {
-							"type": "object",
-							"properties": {
-								"logoType": {
-									"example": "any"
-								}
-							}
-						}
-					}
-				],
-				"responses": {
-					"200": {
-						"description": "OK"
-					},
-					"400": {
-						"description": "Bad Request"
-					},
-					"401": {
-						"description": "Unauthorized"
-					},
-					"500": {
-						"description": "Internal Server Error"
-					}
-				}
-			}
-		},
-		"/api/repositories/": {
-			"get": {
-				"description": "",
-				"parameters": [
 					{
 						"name": "authorization",
 						"in": "header",
@@ -2838,7 +3622,7 @@
 				}
 			}
 		},
-		"/api/repositories/host/{hostId}": {
+		"/repositories/host/{hostId}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -2849,6 +3633,11 @@
 						"type": "string"
 					},
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
@@ -2867,7 +3656,7 @@
 				}
 			}
 		},
-		"/api/repositories/{repositoryId}": {
+		"/repositories/{repositoryId}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -2875,6 +3664,11 @@
 						"name": "repositoryId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -2905,6 +3699,11 @@
 						"name": "repositoryId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -2959,6 +3758,11 @@
 						"type": "string"
 					},
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
@@ -2983,7 +3787,7 @@
 				}
 			}
 		},
-		"/api/repositories/host/{hostId}/repository/{repositoryId}": {
+		"/repositories/host/{hostId}/repository/{repositoryId}": {
 			"patch": {
 				"description": "",
 				"parameters": [
@@ -2997,6 +3801,11 @@
 						"name": "repositoryId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -3033,10 +3842,15 @@
 				}
 			}
 		},
-		"/api/repositories/stats/summary": {
+		"/repositories/stats/summary": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -3056,33 +3870,15 @@
 				}
 			}
 		},
-		"/api/repositories/cleanup/orphaned": {
+		"/repositories/cleanup/orphaned": {
 			"delete": {
 				"description": "",
 				"parameters": [
 					{
-						"name": "authorization",
+						"name": "x-request-id",
 						"in": "header",
 						"type": "string"
-					}
-				],
-				"responses": {
-					"200": {
-						"description": "OK"
 					},
-					"401": {
-						"description": "Unauthorized"
-					},
-					"500": {
-						"description": "Internal Server Error"
-					}
-				}
-			}
-		},
-		"/api/version/current": {
-			"get": {
-				"description": "",
-				"parameters": [
 					{
 						"name": "authorization",
 						"in": "header",
@@ -3102,10 +3898,43 @@
 				}
 			}
 		},
-		"/api/version/test-ssh-key": {
+		"/version/current": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/version/test-ssh-key": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -3125,10 +3954,15 @@
 				}
 			}
 		},
-		"/api/version/check-updates": {
+		"/version/check-updates": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -3151,10 +3985,15 @@
 				}
 			}
 		},
-		"/api/tfa/setup": {
+		"/tfa/setup": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -3177,10 +4016,15 @@
 				}
 			}
 		},
-		"/api/tfa/verify-setup": {
+		"/tfa/verify-setup": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -3215,10 +4059,15 @@
 				}
 			}
 		},
-		"/api/tfa/disable": {
+		"/tfa/disable": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -3253,10 +4102,15 @@
 				}
 			}
 		},
-		"/api/tfa/status": {
+		"/tfa/status": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -3276,10 +4130,15 @@
 				}
 			}
 		},
-		"/api/tfa/regenerate-backup-codes": {
+		"/tfa/regenerate-backup-codes": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -3302,10 +4161,15 @@
 				}
 			}
 		},
-		"/api/tfa/verify": {
+		"/tfa/verify": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "body",
 						"in": "body",
@@ -3335,10 +4199,15 @@
 				}
 			}
 		},
-		"/api/search/": {
+		"/search/": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "q",
 						"in": "query",
@@ -3363,14 +4232,31 @@
 				}
 			}
 		},
-		"/api/auto-enrollment/tokens": {
+		"/auto-enrollment/tokens": {
 			"post": {
 				"description": "",
 				"parameters": [
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"scopes": {
+									"example": "any"
+								}
+							}
+						}
 					}
 				],
 				"responses": {
@@ -3392,6 +4278,11 @@
 				"description": "",
 				"parameters": [
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
@@ -3410,7 +4301,7 @@
 				}
 			}
 		},
-		"/api/auto-enrollment/tokens/{tokenId}": {
+		"/auto-enrollment/tokens/{tokenId}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -3418,6 +4309,11 @@
 						"name": "tokenId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -3451,6 +4347,11 @@
 						"type": "string"
 					},
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
@@ -3461,6 +4362,9 @@
 						"schema": {
 							"type": "object",
 							"properties": {
+								"token_name": {
+									"example": "any"
+								},
 								"is_active": {
 									"example": "any"
 								},
@@ -3471,6 +4375,12 @@
 									"example": "any"
 								},
 								"expires_at": {
+									"example": "any"
+								},
+								"default_host_group_id": {
+									"example": "any"
+								},
+								"scopes": {
 									"example": "any"
 								}
 							}
@@ -3487,6 +4397,9 @@
 					"401": {
 						"description": "Unauthorized"
 					},
+					"404": {
+						"description": "Not Found"
+					},
 					"500": {
 						"description": "Internal Server Error"
 					}
@@ -3499,6 +4412,11 @@
 						"name": "tokenId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -3523,11 +4441,16 @@
 				}
 			}
 		},
-		"/api/auto-enrollment/proxmox-lxc": {
+		"/auto-enrollment/script": {
 			"get": {
 				"description": "",
 				"produces": ["text/plain"],
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "token_key",
 						"in": "query",
@@ -3535,6 +4458,11 @@
 					},
 					{
 						"name": "token_secret",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "type",
 						"in": "query",
 						"type": "string"
 					},
@@ -3548,6 +4476,9 @@
 					"200": {
 						"description": "OK"
 					},
+					"400": {
+						"description": "Bad Request"
+					},
 					"401": {
 						"description": "Unauthorized"
 					},
@@ -3560,10 +4491,15 @@
 				}
 			}
 		},
-		"/api/auto-enrollment/enroll": {
+		"/auto-enrollment/enroll": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "x-auto-enrollment-key",
 						"in": "header",
@@ -3603,9 +4539,6 @@
 					"403": {
 						"description": "Forbidden"
 					},
-					"409": {
-						"description": "Conflict"
-					},
 					"429": {
 						"description": "Too Many Requests"
 					},
@@ -3615,10 +4548,15 @@
 				}
 			}
 		},
-		"/api/auto-enrollment/enroll/bulk": {
+		"/auto-enrollment/enroll/bulk": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "x-auto-enrollment-key",
 						"in": "header",
@@ -3664,22 +4602,17 @@
 				}
 			}
 		},
-		"/api/gethomepage/stats": {
+		"/gethomepage/stats": {
 			"get": {
 				"description": "",
 				"parameters": [
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
-						"in": "header",
-						"type": "string"
-					},
-					{
-						"name": "x-forwarded-for",
-						"in": "header",
-						"type": "string"
-					},
-					{
-						"name": "x-real-ip",
 						"in": "header",
 						"type": "string"
 					}
@@ -3700,22 +4633,17 @@
 				}
 			}
 		},
-		"/api/gethomepage/health": {
+		"/gethomepage/health": {
 			"get": {
 				"description": "",
 				"parameters": [
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
-						"in": "header",
-						"type": "string"
-					},
-					{
-						"name": "x-forwarded-for",
-						"in": "header",
-						"type": "string"
-					},
-					{
-						"name": "x-real-ip",
 						"in": "header",
 						"type": "string"
 					}
@@ -3736,10 +4664,46 @@
 				}
 			}
 		},
-		"/api/automation/stats": {
+		"/automation/bullboard-ticket": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/automation/stats": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -3759,7 +4723,7 @@
 				}
 			}
 		},
-		"/api/automation/stats/{queueName}": {
+		"/automation/stats/{queueName}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -3767,6 +4731,11 @@
 						"name": "queueName",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -3791,7 +4760,7 @@
 				}
 			}
 		},
-		"/api/automation/jobs/{queueName}": {
+		"/automation/jobs/{queueName}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -3799,6 +4768,11 @@
 						"name": "queueName",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -3828,10 +4802,15 @@
 				}
 			}
 		},
-		"/api/automation/trigger/github-update": {
+		"/automation/trigger/github-update": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -3851,10 +4830,15 @@
 				}
 			}
 		},
-		"/api/automation/trigger/session-cleanup": {
+		"/automation/trigger/session-cleanup": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -3874,10 +4858,15 @@
 				}
 			}
 		},
-		"/api/automation/trigger/agent-collection": {
+		"/automation/trigger/agent-collection": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -3897,10 +4886,15 @@
 				}
 			}
 		},
-		"/api/automation/trigger/orphaned-repo-cleanup": {
+		"/automation/trigger/orphaned-repo-cleanup": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -3920,10 +4914,15 @@
 				}
 			}
 		},
-		"/api/automation/trigger/orphaned-package-cleanup": {
+		"/automation/trigger/orphaned-package-cleanup": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -3943,10 +4942,15 @@
 				}
 			}
 		},
-		"/api/automation/trigger/docker-inventory-cleanup": {
+		"/automation/trigger/docker-inventory-cleanup": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -3966,10 +4970,15 @@
 				}
 			}
 		},
-		"/api/automation/trigger/system-statistics": {
+		"/automation/trigger/system-statistics": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -3989,33 +4998,15 @@
 				}
 			}
 		},
-		"/api/automation/health": {
+		"/automation/health": {
 			"get": {
 				"description": "",
 				"parameters": [
 					{
-						"name": "authorization",
+						"name": "x-request-id",
 						"in": "header",
 						"type": "string"
-					}
-				],
-				"responses": {
-					"200": {
-						"description": "OK"
 					},
-					"401": {
-						"description": "Unauthorized"
-					},
-					"500": {
-						"description": "Internal Server Error"
-					}
-				}
-			}
-		},
-		"/api/automation/overview": {
-			"get": {
-				"description": "",
-				"parameters": [
 					{
 						"name": "authorization",
 						"in": "header",
@@ -4035,10 +5026,15 @@
 				}
 			}
 		},
-		"/api/docker/dashboard": {
+		"/automation/overview": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -4058,10 +5054,43 @@
 				}
 			}
 		},
-		"/api/docker/containers": {
+		"/docker/dashboard": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/docker/containers": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "status",
 						"in": "query",
@@ -4111,7 +5140,7 @@
 				}
 			}
 		},
-		"/api/docker/containers/{id}": {
+		"/docker/containers/{id}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -4119,6 +5148,11 @@
 						"name": "id",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -4152,6 +5186,11 @@
 						"type": "string"
 					},
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
@@ -4173,10 +5212,15 @@
 				}
 			}
 		},
-		"/api/docker/images": {
+		"/docker/images": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "source",
 						"in": "query",
@@ -4216,7 +5260,7 @@
 				}
 			}
 		},
-		"/api/docker/images/{id}": {
+		"/docker/images/{id}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -4224,6 +5268,11 @@
 						"name": "id",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -4257,6 +5306,11 @@
 						"type": "string"
 					},
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
@@ -4281,10 +5335,15 @@
 				}
 			}
 		},
-		"/api/docker/hosts": {
+		"/docker/hosts": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "page",
 						"in": "query",
@@ -4314,7 +5373,7 @@
 				}
 			}
 		},
-		"/api/docker/hosts/{id}": {
+		"/docker/hosts/{id}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -4322,6 +5381,11 @@
 						"name": "id",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -4346,10 +5410,15 @@
 				}
 			}
 		},
-		"/api/docker/updates": {
+		"/docker/updates": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "page",
 						"in": "query",
@@ -4384,10 +5453,15 @@
 				}
 			}
 		},
-		"/api/docker/collect": {
+		"/docker/collect": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "body",
 						"in": "body",
@@ -4426,68 +5500,15 @@
 				}
 			}
 		},
-		"/api/docker/../integrations/docker": {
-			"post": {
-				"description": "",
-				"parameters": [
-					{
-						"name": "x-api-id",
-						"in": "header",
-						"type": "string"
-					},
-					{
-						"name": "x-api-key",
-						"in": "header",
-						"type": "string"
-					},
-					{
-						"name": "body",
-						"in": "body",
-						"schema": {
-							"type": "object",
-							"properties": {
-								"containers": {
-									"example": "any"
-								},
-								"images": {
-									"example": "any"
-								},
-								"updates": {
-									"example": "any"
-								},
-								"daemon_info": {
-									"example": "any"
-								},
-								"hostname": {
-									"example": "any"
-								},
-								"machine_id": {
-									"example": "any"
-								},
-								"agent_version": {
-									"example": "any"
-								}
-							}
-						}
-					}
-				],
-				"responses": {
-					"200": {
-						"description": "OK"
-					},
-					"401": {
-						"description": "Unauthorized"
-					},
-					"500": {
-						"description": "Internal Server Error"
-					}
-				}
-			}
-		},
-		"/api/docker/volumes": {
+		"/docker/volumes": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "driver",
 						"in": "query",
@@ -4527,7 +5548,7 @@
 				}
 			}
 		},
-		"/api/docker/volumes/{id}": {
+		"/docker/volumes/{id}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -4535,6 +5556,11 @@
 						"name": "id",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -4568,6 +5594,11 @@
 						"type": "string"
 					},
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
@@ -4589,10 +5620,15 @@
 				}
 			}
 		},
-		"/api/docker/networks": {
+		"/docker/networks": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "driver",
 						"in": "query",
@@ -4632,7 +5668,7 @@
 				}
 			}
 		},
-		"/api/docker/networks/{id}": {
+		"/docker/networks/{id}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -4640,6 +5676,11 @@
 						"name": "id",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -4673,6 +5714,11 @@
 						"type": "string"
 					},
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
@@ -4694,10 +5740,17 @@
 				}
 			}
 		},
-		"/api/docker/agent": {
+		"/docker/agent": {
 			"get": {
 				"description": "",
 				"produces": ["text/x-shellscript"],
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
 				"responses": {
 					"200": {
 						"description": "OK"
@@ -4711,10 +5764,15 @@
 				}
 			}
 		},
-		"/api/integrations/docker": {
+		"/integrations/docker": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "x-api-id",
 						"in": "header",
@@ -4775,10 +5833,15 @@
 				}
 			}
 		},
-		"/api/ws/status": {
+		"/ws/status": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "apiIds",
 						"in": "query",
@@ -4803,7 +5866,7 @@
 				}
 			}
 		},
-		"/api/ws/status/{apiId}": {
+		"/ws/status/{apiId}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -4811,6 +5874,11 @@
 						"name": "apiId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -4832,7 +5900,7 @@
 				}
 			}
 		},
-		"/api/ws/status/{apiId}/stream": {
+		"/ws/status/{apiId}/stream": {
 			"get": {
 				"description": "",
 				"produces": ["text/event-stream"],
@@ -4841,6 +5909,11 @@
 						"name": "apiId",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -4864,11 +5937,53 @@
 				}
 			}
 		},
-		"/api/agent/test-github": {
+		"/ws/compliance-progress/{apiId}/stream": {
+			"get": {
+				"description": "",
+				"produces": ["text/event-stream"],
+				"parameters": [
+					{
+						"name": "apiId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "token",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/agent/test-github": {
 			"get": {
 				"description": "",
 				"parameters": [
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
@@ -4890,11 +6005,16 @@
 				}
 			}
 		},
-		"/api/agent/version": {
+		"/agent/version": {
 			"get": {
 				"description": "",
 				"parameters": [
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
@@ -4913,10 +6033,15 @@
 				}
 			}
 		},
-		"/api/agent/version/refresh": {
+		"/agent/version/refresh": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -4939,10 +6064,15 @@
 				}
 			}
 		},
-		"/api/agent/version/download": {
+		"/agent/version/download": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -4965,10 +6095,15 @@
 				}
 			}
 		},
-		"/api/agent/version/check": {
+		"/agent/version/check": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -4991,11 +6126,16 @@
 				}
 			}
 		},
-		"/api/agent/versions": {
+		"/agent/versions": {
 			"get": {
 				"description": "",
 				"parameters": [
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
@@ -5014,7 +6154,7 @@
 				}
 			}
 		},
-		"/api/agent/binary/{version}/{architecture}": {
+		"/agent/binary/{version}/{architecture}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -5028,6 +6168,11 @@
 						"name": "architecture",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -5052,7 +6197,7 @@
 				}
 			}
 		},
-		"/api/agent/download/{version}/{architecture}": {
+		"/agent/download/{version}/{architecture}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -5066,6 +6211,11 @@
 						"name": "architecture",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					},
 					{
@@ -5087,7 +6237,7 @@
 				}
 			}
 		},
-		"/api/agent/latest/{architecture}": {
+		"/agent/latest/{architecture}": {
 			"get": {
 				"description": "",
 				"parameters": [
@@ -5095,6 +6245,11 @@
 						"name": "architecture",
 						"in": "path",
 						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
 						"type": "string"
 					}
 				],
@@ -5114,7 +6269,7 @@
 				}
 			}
 		},
-		"/api/agent/notify-update/{apiId}": {
+		"/agent/notify-update/{apiId}": {
 			"post": {
 				"description": "",
 				"parameters": [
@@ -5125,38 +6280,29 @@
 						"type": "string"
 					},
 					{
-						"name": "authorization",
+						"name": "x-request-id",
 						"in": "header",
 						"type": "string"
-					}
-				],
-				"responses": {
-					"200": {
-						"description": "OK"
 					},
-					"400": {
-						"description": "Bad Request"
-					},
-					"401": {
-						"description": "Unauthorized"
-					},
-					"403": {
-						"description": "Forbidden"
-					},
-					"500": {
-						"description": "Internal Server Error"
-					}
-				}
-			}
-		},
-		"/api/agent/notify-update-all": {
-			"post": {
-				"description": "",
-				"parameters": [
 					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"version": {
+									"example": "any"
+								},
+								"force": {
+									"example": "any"
+								}
+							}
+						}
 					}
 				],
 				"responses": {
@@ -5178,7 +6324,56 @@
 				}
 			}
 		},
-		"/api/agent/check-update/{apiId}": {
+		"/agent/notify-update-all": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"version": {
+									"example": "any"
+								},
+								"force": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/agent/check-update/{apiId}": {
 			"post": {
 				"description": "",
 				"parameters": [
@@ -5189,9 +6384,29 @@
 						"type": "string"
 					},
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"version": {
+									"example": "any"
+								},
+								"force": {
+									"example": "any"
+								}
+							}
+						}
 					}
 				],
 				"responses": {
@@ -5213,14 +6428,31 @@
 				}
 			}
 		},
-		"/api/agent/push-updates-all": {
+		"/agent/push-updates-all": {
 			"post": {
 				"description": "",
 				"parameters": [
 					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
 						"name": "authorization",
 						"in": "header",
 						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"force": {
+									"example": "any"
+								}
+							}
+						}
 					}
 				],
 				"responses": {
@@ -5239,10 +6471,15 @@
 				}
 			}
 		},
-		"/api/agent/report-version": {
+		"/agent/report-version": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -5280,10 +6517,15 @@
 				}
 			}
 		},
-		"/api/metrics/": {
+		"/metrics/": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -5305,6 +6547,11 @@
 			"put": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -5339,10 +6586,15 @@
 				}
 			}
 		},
-		"/api/metrics/regenerate-id": {
+		"/metrics/regenerate-id": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -5362,10 +6614,15 @@
 				}
 			}
 		},
-		"/api/metrics/send-now": {
+		"/metrics/send-now": {
 			"post": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -5388,10 +6645,15 @@
 				}
 			}
 		},
-		"/api/user/preferences/": {
+		"/user/preferences/": {
 			"get": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -5416,6 +6678,11 @@
 			"patch": {
 				"description": "",
 				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
 					{
 						"name": "authorization",
 						"in": "header",
@@ -5446,6 +6713,1410 @@
 					},
 					"401": {
 						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "hostgroup",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/stats": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/info": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/network": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/system": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/package_reports": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/agent_queue": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/notes": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/integrations": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/release-notes/{version}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "version",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/release-notes/current": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/release-notes/": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/buy-me-a-coffee/supporter-count": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/scans": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-key",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"scans": {
+									"example": "any"
+								},
+								"profile_name": {
+									"example": "any"
+								},
+								"profile_type": {
+									"example": "any"
+								},
+								"results": {
+									"example": "any"
+								},
+								"started_at": {
+									"example": "any"
+								},
+								"completed_at": {
+									"example": "any"
+								},
+								"status": {
+									"example": "any"
+								},
+								"score": {
+									"example": "any"
+								},
+								"total_rules": {
+									"example": "any"
+								},
+								"passed": {
+									"example": "any"
+								},
+								"failed": {
+									"example": "any"
+								},
+								"warnings": {
+									"example": "any"
+								},
+								"skipped": {
+									"example": "any"
+								},
+								"not_applicable": {
+									"example": "any"
+								},
+								"error": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/profiles": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/dashboard": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/scans/active": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/scans/{hostId}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "offset",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/scans/{hostId}/latest": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "profile_type",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/scans/{hostId}/latest-by-type": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/results/{scanId}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "scanId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "status",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "severity",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/trigger/bulk": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"hostIds": {
+									"example": "any"
+								},
+								"profile_type": {
+									"example": "any"
+								},
+								"profile_id": {
+									"example": "any"
+								},
+								"enable_remediation": {
+									"example": "any"
+								},
+								"fetch_remote_resources": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/trigger/{hostId}": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"profile_type": {
+									"example": "any"
+								},
+								"profile_id": {
+									"example": "any"
+								},
+								"enable_remediation": {
+									"example": "any"
+								},
+								"fetch_remote_resources": {
+									"example": "any"
+								},
+								"image_name": {
+									"example": "any"
+								},
+								"scan_all_images": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/upgrade-ssg/{hostId}": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/remediate/{hostId}": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"rule_id": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/trends/{hostId}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "days",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/social-media-stats/": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ai/status": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ai/debug": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ai/providers": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ai/settings": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"put": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"ai_enabled": {
+									"example": "any"
+								},
+								"ai_provider": {
+									"example": "any"
+								},
+								"ai_model": {
+									"example": "any"
+								},
+								"ai_api_key": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ai/test": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ai/assist": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"question": {
+									"example": "any"
+								},
+								"context": {
+									"example": "any"
+								},
+								"history": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"429": {
+						"description": "Too Many Requests"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ai/complete": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"input": {
+									"example": "any"
+								},
+								"context": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"429": {
+						"description": "Too Many Requests"
 					},
 					"500": {
 						"description": "Internal Server Error"

@@ -681,12 +681,33 @@ class SocialMediaStats {
 	 * Schedule recurring social media stats collection (daily at midnight)
 	 */
 	async schedule() {
-		const job = await this.queueManager.queues[this.queueName].add(
+		const queue = this.queueManager.queues[this.queueName];
+		const jobId = "social-media-stats-recurring";
+
+		// Remove any existing repeatable jobs with the same jobId to prevent duplicates
+		try {
+			const repeatableJobs = await queue.getRepeatableJobs();
+			for (const repeatableJob of repeatableJobs) {
+				if (repeatableJob.id === jobId) {
+					await queue.removeRepeatableByKey(repeatableJob.key);
+					logger.info(
+						`🔄 Removed existing repeatable job: ${repeatableJob.id}`,
+					);
+				}
+			}
+		} catch (error) {
+			logger.warn(
+				"Error checking for existing repeatable jobs:",
+				error.message,
+			);
+		}
+
+		const job = await queue.add(
 			"social-media-stats",
 			{},
 			{
 				repeat: { cron: "0 0 * * *" }, // Daily at midnight
-				jobId: "social-media-stats-recurring",
+				jobId: jobId,
 			},
 		);
 		logger.info("✅ Social media stats collection scheduled");
