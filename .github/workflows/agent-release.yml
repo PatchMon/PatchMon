@@ -1,0 +1,54 @@
+name: Agent Release
+
+on:
+  release:
+    types: [published]
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build and Upload Agent Binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: 'amd64'
+          - goos: linux
+            goarch: 'arm64'
+          - goos: linux
+            goarch: 'arm'
+          - goos: linux
+            goarch: '386'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'agent-source-code/go.mod'
+
+      - name: Download dependencies
+        working-directory: agent-source-code
+        run: go mod download
+
+      - name: Build binary
+        working-directory: agent-source-code
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          OUTPUT_NAME="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
+          go build -ldflags="-s -w -X patchmon-agent/internal/version.Version=${{ github.event.release.tag_name }}" -o "${OUTPUT_NAME}" ./cmd/patchmon-agent
+          
+      - name: Upload binary to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: agent-source-code/patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+

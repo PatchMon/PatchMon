@@ -26,3 +26,87 @@ jobs:
 
       - name: Run Biome
         run: biome ci .
+
+  agent-test:
+    name: Agent Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'agent-source-code/go.mod'
+
+      - name: Download dependencies
+        working-directory: agent-source-code
+        run: go mod download
+
+      - name: Run tests
+        working-directory: agent-source-code
+        run: go test -v -race -coverprofile=coverage.out ./...
+
+      - name: Generate coverage report
+        working-directory: agent-source-code
+        run: go tool cover -html=coverage.out -o coverage.html
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-coverage-report
+          path: agent-source-code/coverage.html
+
+  agent-lint:
+    name: Agent Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'agent-source-code/go.mod'
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          working-directory: agent-source-code
+
+  agent-build:
+    name: Agent Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'agent-source-code/go.mod'
+
+      - name: Download dependencies
+        working-directory: agent-source-code
+        run: go mod download
+
+      - name: Build for all architectures
+        working-directory: agent-source-code
+        run: |
+          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o patchmon-agent-linux-amd64 ./cmd/patchmon-agent
+          GOOS=linux GOARCH=386 go build -ldflags="-s -w" -o patchmon-agent-linux-386 ./cmd/patchmon-agent
+          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o patchmon-agent-linux-arm64 ./cmd/patchmon-agent
+          GOOS=linux GOARCH=arm go build -ldflags="-s -w" -o patchmon-agent-linux-arm ./cmd/patchmon-agent
+
+      - name: Verify binaries
+        working-directory: agent-source-code
+        run: |
+          ls -lh patchmon-agent-linux-*
+          file patchmon-agent-linux-*

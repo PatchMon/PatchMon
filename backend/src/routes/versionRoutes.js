@@ -9,8 +9,7 @@ const { getPrismaClient } = require("../config/prisma");
 const prisma = getPrismaClient();
 
 // Default GitHub repository URL
-const DEFAULT_GITHUB_REPO =
-	"https://github.com/MacJediWizard/PatchMon-Enhanced.git";
+const DEFAULT_GITHUB_REPO = "https://github.com/PatchMon/PatchMon.git";
 
 const router = express.Router();
 

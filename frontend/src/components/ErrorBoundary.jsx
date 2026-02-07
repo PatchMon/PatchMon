@@ -1,3 +1,4 @@
+import { Check, Copy } from "lucide-react";
 import { Component } from "react";
 
 /**
@@ -8,7 +9,12 @@ import { Component } from "react";
 class ErrorBoundary extends Component {
 	constructor(props) {
 		super(props);
-		this.state = { hasError: false, error: null, errorInfo: null };
+		this.state = {
+			hasError: false,
+			error: null,
+			errorInfo: null,
+			copied: false,
+		};
 	}
 
 	static getDerivedStateFromError(error) {
@@ -35,48 +41,87 @@ class ErrorBoundary extends Component {
 		window.location.href = "/";
 	};
 
+	handleCopyError = async () => {
+		const errorText = `${this.state.error?.toString() || ""}\n\n${this.state.errorInfo?.componentStack || ""}`;
+		try {
+			await navigator.clipboard.writeText(errorText);
+			this.setState({ copied: true });
+			setTimeout(() => {
+				this.setState({ copied: false });
+			}, 2000);
+		} catch (err) {
+			console.error("Failed to copy error:", err);
+		}
+	};
+
 	render() {
 		if (this.state.hasError) {
+			const isDevelopment = process.env.NODE_ENV === "development";
+			const errorText = `${this.state.error?.toString() || ""}\n\n${this.state.errorInfo?.componentStack || ""}`;
+
 			// Custom fallback UI
 			return (
 				<div className="min-h-screen bg-gradient-to-br from-red-50 to-secondary-50 dark:from-secondary-900 dark:to-secondary-800 flex items-center justify-center p-4">
-					<div className="max-w-md w-full bg-white dark:bg-secondary-800 rounded-lg shadow-lg p-8 text-center">
-						<div className="mb-6">
-							<svg
-								className="w-16 h-16 text-red-500 mx-auto"
-								fill="none"
-								stroke="currentColor"
-								viewBox="0 0 24 24"
-							>
-								<path
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									strokeWidth={2}
-									d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-								/>
-							</svg>
+					<div
+						className={`${isDevelopment ? "max-w-6xl" : "max-w-md"} w-full bg-white dark:bg-secondary-800 rounded-lg shadow-lg p-8 ${isDevelopment ? "text-left" : "text-center"}`}
+					>
+						<div className={`mb-6 ${isDevelopment ? "" : "text-center"}`}>
+							<div className={isDevelopment ? "flex items-center gap-4" : ""}>
+								<svg
+									className={`w-16 h-16 text-red-500 ${isDevelopment ? "" : "mx-auto"}`}
+									fill="none"
+									stroke="currentColor"
+									viewBox="0 0 24 24"
+								>
+									<path
+										strokeLinecap="round"
+										strokeLinejoin="round"
+										strokeWidth={2}
+										d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+									/>
+								</svg>
+								<div>
+									<h1 className="text-2xl font-bold text-secondary-900 dark:text-white mb-2">
+										Something went wrong
+									</h1>
+									<p className="text-secondary-600 dark:text-secondary-300">
+										An unexpected error occurred. Our team has been notified and
+										is working on a fix.
+									</p>
+								</div>
+							</div>
 						</div>
 
-						<h1 className="text-2xl font-bold text-secondary-900 dark:text-white mb-2">
-							Something went wrong
-						</h1>
-
-						<p className="text-secondary-600 dark:text-secondary-300 mb-6">
-							An unexpected error occurred. Our team has been notified and is
-							working on a fix.
-						</p>
-
-						{process.env.NODE_ENV === "development" && this.state.error && (
-							<div className="mb-6 text-left">
-								<details className="bg-secondary-100 dark:bg-secondary-700 rounded-md p-3">
-									<summary className="cursor-pointer text-sm font-medium text-secondary-700 dark:text-secondary-300">
-										Error Details (Development Only)
-									</summary>
-									<pre className="mt-2 text-xs text-red-600 dark:text-red-400 overflow-auto max-h-40">
-										{this.state.error.toString()}
-										{this.state.errorInfo?.componentStack}
+						{isDevelopment && this.state.error && (
+							<div className="mb-6">
+								<div className="bg-secondary-100 dark:bg-secondary-700 rounded-md p-4">
+									<div className="flex items-center justify-between mb-3">
+										<h2 className="text-lg font-semibold text-secondary-900 dark:text-white">
+											Error Details (Development Only)
+										</h2>
+										<button
+											type="button"
+											onClick={this.handleCopyError}
+											className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-secondary-600 text-secondary-700 dark:text-secondary-200 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-500 transition-colors font-medium text-sm"
+											title="Copy error to clipboard"
+										>
+											{this.state.copied ? (
+												<>
+													<Check className="h-4 w-4" />
+													Copied!
+												</>
+											) : (
+												<>
+													<Copy className="h-4 w-4" />
+													Copy
+												</>
+											)}
+										</button>
+									</div>
+									<pre className="text-sm text-red-600 dark:text-red-400 overflow-auto max-h-[70vh] p-4 bg-white dark:bg-secondary-800 rounded border border-secondary-200 dark:border-secondary-600 whitespace-pre-wrap break-words">
+										{errorText}
 									</pre>
-								</details>
+								</div>
 							</div>
 						)}
 

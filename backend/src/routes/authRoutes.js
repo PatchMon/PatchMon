@@ -100,13 +100,38 @@ const TFA_LOCKOUT_DURATION =
  * @param {string} accessToken - JWT access token
  * @param {string} refreshToken - JWT refresh token
  * @param {boolean} rememberMe - Whether to use extended expiration
+ * @param {Request} req - Express request object (optional, for checking HTTPS)
  */
-function setAuthCookies(res, accessToken, refreshToken, rememberMe = false) {
+function setAuthCookies(
+	res,
+	accessToken,
+	refreshToken,
+	rememberMe = false,
+	req = null,
+) {
+	// Check if we're actually using HTTPS (not just NODE_ENV)
+	// This allows cookies to work in development even if NODE_ENV=production
+	const isSecure = req
+		? req.secure || req.headers["x-forwarded-proto"] === "https"
+		: false;
 	const isProduction = process.env.NODE_ENV === "production";
+
+	// Only use secure cookies if actually using HTTPS
+	// This fixes the issue where NODE_ENV=production but using HTTP in dev
+	const useSecureCookies = isSecure && isProduction;
+
+	// Use 'lax' for sameSite in development to allow cookies across subdomains
+	// 'strict' is more secure but can cause issues with local development setups
+	const sameSiteValue = isProduction ? "strict" : "lax";
+
+	logger.info(
+		`Setting cookies - Secure: ${useSecureCookies}, SameSite: ${sameSiteValue}, IsHTTPS: ${isSecure}, NODE_ENV: ${process.env.NODE_ENV}`,
+	);
+
 	const cookieOptions = {
 		httpOnly: true,
-		secure: isProduction,
-		sameSite: "strict",
+		secure: useSecureCookies,
+		sameSite: sameSiteValue,
 		path: "/",
 	};
 
@@ -492,7 +517,13 @@ router.post(
 			const session = await create_session(user.id, ip_address, user_agent);
 
 			// Set httpOnly cookies for XSS protection
-			setAuthCookies(res, session.access_token, session.refresh_token, false);
+			setAuthCookies(
+				res,
+				session.access_token,
+				session.refresh_token,
+				false,
+				req,
+			);
 
 			res.status(201).json({
 				message: "Admin user created successfully",
@@ -1208,8 +1239,23 @@ router.post(
 	],
 	async (req, res) => {
 		try {
+			logger.info("=== LOGIN ATTEMPT START ===");
+			logger.info(`Login attempt for username: ${req.body.username}`);
+			logger.info(`IP Address: ${req.ip}`);
+			logger.info(`User Agent: ${req.get("user-agent")}`);
+
 			// Check if local auth is disabled via OIDC
-			if (process.env.OIDC_DISABLE_LOCAL_AUTH === "true") {
+			// Only disable if OIDC is actually enabled and working
+			const { isLocalAuthDisabled } = require("../auth/oidc");
+			const localAuthDisabled = isLocalAuthDisabled();
+			logger.info(`OIDC check - isLocalAuthDisabled(): ${localAuthDisabled}`);
+			logger.info(`OIDC_ENABLED: ${process.env.OIDC_ENABLED}`);
+			logger.info(
+				`OIDC_DISABLE_LOCAL_AUTH: ${process.env.OIDC_DISABLE_LOCAL_AUTH}`,
+			);
+
+			if (localAuthDisabled) {
+				logger.warn("Login blocked: Local authentication is disabled via OIDC");
 				return res.status(403).json({
 					error: "Local authentication is disabled. Please use SSO.",
 				});
@@ -1217,13 +1263,18 @@ router.post(
 
 			const errors = validationResult(req);
 			if (!errors.isEmpty()) {
+				logger.warn("Login validation errors:", errors.array());
 				return res.status(400).json({ errors: errors.array() });
 			}
 
 			const { username, password } = req.body;
+			logger.info(`Processing login for username: ${username}`);
 
 			// Check if account is locked due to too many failed attempts
 			const lockStatus = await isAccountLocked(username);
+			logger.info(
+				`Account lock status: ${lockStatus.locked ? "LOCKED" : "NOT LOCKED"}`,
+			);
 			if (lockStatus.locked) {
 				const remainingMinutes = Math.ceil(lockStatus.remainingTime / 60);
 				await logAuditEvent({
@@ -1270,6 +1321,7 @@ router.post(
 			});
 
 			if (!user) {
+				logger.warn(`User not found: ${username}`);
 				// Record failed attempt even if user doesn't exist (prevents username enumeration timing attacks)
 				await recordFailedAttempt(username);
 				await logAuditEvent({
@@ -1284,12 +1336,43 @@ router.post(
 				return res.status(401).json({ error: "Invalid credentials" });
 			}
 
+			logger.info(`User found: ${user.username} (ID: ${user.id})`);
+			logger.info(`User active: ${user.is_active}`);
+			logger.info(`User has password_hash: ${!!user.password_hash}`);
+			logger.info(`User OIDC-only: ${!user.password_hash}`);
+
+			// Check if user is OIDC-only (no password_hash)
+			if (!user.password_hash) {
+				logger.warn(
+					`Login blocked: User ${user.username} is OIDC-only (no password_hash)`,
+				);
+				await logAuditEvent({
+					event: AUDIT_EVENTS.LOGIN_FAILED,
+					userId: user.id,
+					username: user.username,
+					ipAddress: req.ip,
+					userAgent: req.get("user-agent"),
+					requestId: req.id,
+					success: false,
+					details: { reason: "oidc_only_user" },
+				});
+				return res.status(403).json({
+					error:
+						"This account uses SSO authentication. Please use the SSO login option.",
+				});
+			}
+
 			// Verify password
+			logger.info("Verifying password...");
 			const isValidPassword = await bcrypt.compare(
 				password,
 				user.password_hash,
 			);
+			logger.info(
+				`Password verification result: ${isValidPassword ? "VALID" : "INVALID"}`,
+			);
 			if (!isValidPassword) {
+				logger.warn(`Invalid password for user: ${user.username}`);
 				// Record failed attempt
 				const result = await recordFailedAttempt(username);
 				await logAuditEvent({
@@ -1320,9 +1403,11 @@ router.post(
 			}
 
 			// Clear failed attempts on successful password verification
+			logger.info("Password verified successfully, clearing failed attempts");
 			await clearFailedAttempts(username);
 
 			// Check if TFA is enabled
+			logger.info(`TFA enabled for user: ${user.tfa_enabled}`);
 			if (user.tfa_enabled) {
 				// Get device fingerprint from X-Device-ID header
 				const device_fingerprint = generate_device_fingerprint(req);
@@ -1369,6 +1454,7 @@ router.post(
 			});
 
 			// Create session with access and refresh tokens
+			logger.info("Creating session for user...");
 			const ip_address = req.ip || req.connection.remoteAddress;
 			const user_agent = req.get("user-agent");
 			const session = await create_session(
@@ -1377,6 +1463,9 @@ router.post(
 				user_agent,
 				false,
 				req,
+			);
+			logger.info(
+				`Session created successfully. Session ID: ${session.session_id || "N/A"}`,
 			);
 
 			// Audit log successful login
@@ -1408,7 +1497,13 @@ router.post(
 			}
 
 			// Set httpOnly cookies for XSS protection
-			setAuthCookies(res, session.access_token, session.refresh_token, false);
+			setAuthCookies(
+				res,
+				session.access_token,
+				session.refresh_token,
+				false,
+				req,
+			);
 
 			res.json({
 				message: "Login successful",
@@ -1435,7 +1530,10 @@ router.post(
 				},
 			});
 		} catch (error) {
-			logger.error("Login error:", error.message);
+			logger.error("=== LOGIN ERROR ===");
+			logger.error(`Error message: ${error.message}`);
+			logger.error(`Error stack: ${error.stack}`);
+			logger.error("Full error:", error);
 			res.status(500).json({ error: "Login failed" });
 		}
 	},
@@ -1646,6 +1744,7 @@ router.post(
 				session.access_token,
 				session.refresh_token,
 				remember_me,
+				req,
 			);
 
 			res.json({
@@ -1770,7 +1869,6 @@ router.get("/profile", authenticateToken, async (req, res) => {
 			});
 			acceptedVersions = acceptances.map((a) => a.version);
 		}
-
 		res.json({
 			user: {
 				...req.user,

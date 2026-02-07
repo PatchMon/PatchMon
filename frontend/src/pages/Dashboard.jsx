@@ -1595,7 +1595,7 @@ const Dashboard = () => {
 						Welcome back, {user?.first_name || user?.username || "User"} 👋
 					</h1>
 					<p className="text-sm text-secondary-600 dark:text-white/80 mt-1">
-						Overview of your PatchMonEnhanced infrastructure
+						Overview of your PatchMon infrastructure
 					</p>
 				</div>
 				<div className="flex items-center gap-3">

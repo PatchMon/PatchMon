@@ -128,8 +128,7 @@ const SettingsMetrics = () => {
 							Anonymous Metrics & Telemetry
 						</h2>
 						<p className="text-sm text-secondary-600 dark:text-secondary-400 mt-1">
-							Help us understand PatchMonEnhanced's global usage (100%
-							anonymous)
+							Help us understand PatchMon's global usage (100% anonymous)
 						</p>
 					</div>
 				</div>
@@ -161,7 +160,7 @@ const SettingsMetrics = () => {
 									<CheckCircle className="h-4 w-4 mr-2 mt-0.5 flex-shrink-0" />
 									<span>
 										<strong>Purpose:</strong> Display a live counter on our
-										website showing global PatchMonEnhanced adoption
+										website showing global PatchMon adoption
 									</span>
 								</p>
 								<p className="flex items-start">
@@ -197,9 +196,8 @@ const SettingsMetrics = () => {
 								Enable Anonymous Metrics
 							</h3>
 							<p className="text-sm text-secondary-600 dark:text-secondary-400">
-								Share anonymous usage statistics to help us showcase
-								PatchMonEnhanced's global adoption. Data is sent automatically
-								every 24 hours.
+								Share anonymous usage statistics to help us showcase PatchMon's
+								global adoption. Data is sent automatically every 24 hours.
 							</p>
 						</div>
 						<button
@@ -231,7 +229,7 @@ const SettingsMetrics = () => {
 								<>
 									<CheckCircle className="h-4 w-4 text-green-500 mr-2" />
 									<span className="text-green-700 dark:text-green-400">
-										Metrics enabled - Thank you for supporting PatchMonEnhanced!
+										Metrics enabled - Thank you for supporting PatchMon!
 									</span>
 								</>
 							) : (

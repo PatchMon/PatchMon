@@ -161,6 +161,12 @@ router.put(
 			.optional()
 			.isBoolean()
 			.withMessage("Auto update must be a boolean"),
+		body("defaultComplianceMode")
+			.optional()
+			.isIn(["disabled", "on-demand", "enabled"])
+			.withMessage(
+				"Default compliance mode must be one of: disabled, on-demand, enabled",
+			),
 		body("ignoreSslSelfSigned")
 			.optional()
 			.isBoolean()
@@ -223,6 +229,7 @@ router.put(
 				serverPort,
 				updateInterval,
 				autoUpdate,
+				defaultComplianceMode,
 				ignoreSslSelfSigned,
 				signupEnabled,
 				defaultUserRole,
@@ -251,6 +258,8 @@ router.put(
 				updateData.update_interval = normalizeUpdateInterval(updateInterval);
 			}
 			if (autoUpdate !== undefined) updateData.auto_update = autoUpdate;
+			if (defaultComplianceMode !== undefined)
+				updateData.default_compliance_mode = defaultComplianceMode;
 			if (ignoreSslSelfSigned !== undefined)
 				updateData.ignore_ssl_self_signed = ignoreSslSelfSigned;
 			if (signupEnabled !== undefined)

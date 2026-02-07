@@ -13,13 +13,15 @@ const {
 const { queueManager, QUEUE_NAMES } = require("../services/automation");
 const {
 	pushIntegrationToggle,
-	pushSetComplianceOnDemandOnly,
+	pushSetComplianceMode,
+	pushSetComplianceOnDemandOnly, // Legacy - kept for backward compatibility
 	isConnected,
 } = require("../services/agentWs");
 const { compareVersions } = require("../services/automation/shared/utils");
 const { redis } = require("../services/automation/shared/redis");
 const { verifyApiKey } = require("../utils/apiKeyUtils");
 const { encrypt, decrypt } = require("../utils/encryption");
+const { getSettings } = require("../services/settingsService");
 
 const router = express.Router();
 const prisma = getPrismaClient();
@@ -215,7 +217,7 @@ router.get("/agent/download", async (req, res) => {
 				});
 			}
 
-			const binaryName = `patchmonenhanced-agent-linux-${architecture}`;
+			const binaryName = `patchmon-agent-linux-${architecture}`;
 			const binaryPath = path.join(__dirname, "../../../agents", binaryName);
 
 			if (!fs.existsSync(binaryPath)) {
@@ -322,7 +324,7 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 			const { promisify } = require("node:util");
 			const execFileAsync = promisify(execFile);
 
-			const binaryName = `patchmonenhanced-agent-linux-${architecture}`;
+			const binaryName = `patchmon-agent-linux-${architecture}`;
 			if (binaryName.includes("..")) {
 				return res
 					.status(400)
@@ -516,6 +518,24 @@ router.post(
 				}
 			}
 
+			// Get global settings for default compliance mode
+			const settings = await getSettings();
+			const defaultComplianceMode =
+				settings.default_compliance_mode || "on-demand";
+
+			// Determine compliance settings based on provided value or global default
+			let finalComplianceEnabled;
+			let finalComplianceOnDemandOnly;
+			if (compliance_enabled !== undefined) {
+				// If explicitly provided, use it (legacy boolean behavior)
+				finalComplianceEnabled = compliance_enabled;
+				finalComplianceOnDemandOnly = !compliance_enabled; // If enabled but not specified, default to on-demand
+			} else {
+				// Use global default
+				finalComplianceEnabled = defaultComplianceMode !== "disabled";
+				finalComplianceOnDemandOnly = defaultComplianceMode === "on-demand";
+			}
+
 			// Create new host with API credentials - system info will be populated when agent connects
 			// Store the hashed API key for security (plaintext is shown to admin only once)
 			const host = await prisma.hosts.create({
@@ -531,7 +551,8 @@ router.post(
 					api_key: apiKeyHash, // Store hash, not plaintext
 					status: "pending", // Will change to 'active' when agent connects
 					docker_enabled: docker_enabled ?? false, // Set integration state if provided
-					compliance_enabled: compliance_enabled ?? false, // Set compliance integration state if provided
+					compliance_enabled: finalComplianceEnabled,
+					compliance_on_demand_only: finalComplianceOnDemandOnly,
 					updated_at: new Date(),
 					// Create host group memberships if hostGroupIds are provided
 					host_group_memberships:
@@ -1091,6 +1112,12 @@ router.get("/integrations", validateApiCredentials, async (req, res) => {
 			return res.status(404).json({ error: "Host not found" });
 		}
 
+		// Calculate compliance mode from database fields
+		let complianceMode = "disabled";
+		if (host.compliance_enabled) {
+			complianceMode = host.compliance_on_demand_only ? "on-demand" : "enabled";
+		}
+
 		// Return integration states from database (source of truth)
 		const integrations = {
 			docker: host.docker_enabled ?? false,
@@ -1100,7 +1127,8 @@ router.get("/integrations", validateApiCredentials, async (req, res) => {
 		res.json({
 			success: true,
 			integrations: integrations,
-			compliance_on_demand_only: host.compliance_on_demand_only ?? false,
+			compliance_mode: complianceMode,
+			compliance_on_demand_only: host.compliance_on_demand_only ?? false, // Legacy - kept for backward compatibility
 		});
 	} catch (error) {
 		logger.error("Get integration status error:", error);
@@ -2824,12 +2852,22 @@ router.get(
 				compliance: host.compliance_enabled ?? cachedState.compliance ?? false,
 			};
 
+			// Calculate compliance mode from database fields
+			let complianceMode = "disabled";
+			if (host.compliance_enabled) {
+				complianceMode = host.compliance_on_demand_only
+					? "on-demand"
+					: "enabled";
+			}
+
 			res.json({
 				success: true,
-				compliance_on_demand_only: host.compliance_on_demand_only ?? true,
+				compliance_mode: complianceMode,
+				compliance_on_demand_only: host.compliance_on_demand_only ?? true, // Legacy - kept for backward compatibility
 				data: {
 					integrations,
 					connected,
+					compliance_mode: complianceMode, // Also include in data for easy access
 					host: {
 						id: host.id,
 						friendlyName: host.friendly_name,
@@ -2934,7 +2972,43 @@ router.post(
 				});
 			}
 
-			// Send WebSocket message to agent
+			// Special handling for compliance - use three-state mode
+			if (integrationName === "compliance") {
+				// Convert boolean to mode: true = "enabled", false = "disabled"
+				const mode = enabled ? "enabled" : "disabled";
+				const success = pushSetComplianceMode(host.api_id, mode);
+
+				if (!success) {
+					return res.status(503).json({
+						error: "Failed to send compliance mode",
+						message: "Agent connection may have been lost",
+					});
+				}
+
+				// Persist to database
+				await prisma.hosts.update({
+					where: { id: hostId },
+					data: { compliance_enabled: enabled },
+				});
+
+				res.json({
+					success: true,
+					message: `Compliance ${enabled ? "enabled" : "disabled"} successfully`,
+					data: {
+						integration: integrationName,
+						enabled,
+						mode: mode,
+						host: {
+							id: host.id,
+							friendlyName: host.friendly_name,
+							apiId: host.api_id,
+						},
+					},
+				});
+				return;
+			}
+
+			// For other integrations (docker, etc.), use standard toggle
 			const success = pushIntegrationToggle(
 				host.api_id,
 				integrationName,
@@ -2953,11 +3027,6 @@ router.post(
 				await prisma.hosts.update({
 					where: { id: hostId },
 					data: { docker_enabled: enabled },
-				});
-			} else if (integrationName === "compliance") {
-				await prisma.hosts.update({
-					where: { id: hostId },
-					data: { compliance_enabled: enabled },
 				});
 			}
 
@@ -2993,15 +3062,15 @@ router.post(
 	},
 );
 
-// Set compliance on-demand-only mode for a host
+// Set compliance mode for a host (three-state: disabled, on-demand, enabled)
 router.post(
-	"/:hostId/compliance/on-demand-only",
+	"/:hostId/integrations/compliance/mode",
 	authenticateToken,
 	requireManageHosts,
 	[
-		body("on_demand_only")
-			.isBoolean()
-			.withMessage("on_demand_only must be a boolean"),
+		body("mode")
+			.isIn(["disabled", "on-demand", "enabled"])
+			.withMessage("mode must be one of: disabled, on-demand, enabled"),
 	],
 	async (req, res) => {
 		try {
@@ -3011,7 +3080,7 @@ router.post(
 			}
 
 			const { hostId } = req.params;
-			const { on_demand_only } = req.body;
+			const { mode } = req.body;
 
 			// Get host to verify it exists
 			const host = await prisma.hosts.findUnique({
@@ -3037,10 +3106,95 @@ router.post(
 			}
 
 			// Send WebSocket message to agent
-			const success = pushSetComplianceOnDemandOnly(
-				host.api_id,
-				on_demand_only,
-			);
+			const success = pushSetComplianceMode(host.api_id, mode);
+
+			if (!success) {
+				return res.status(503).json({
+					error: "Failed to send compliance mode",
+					message: "Agent connection may have been lost",
+				});
+			}
+
+			// Persist setting to database
+			// Map mode to database fields
+			const complianceEnabled = mode !== "disabled";
+			const complianceOnDemandOnly = mode === "on-demand";
+
+			await prisma.hosts.update({
+				where: { id: hostId },
+				data: {
+					compliance_enabled: complianceEnabled,
+					compliance_on_demand_only: complianceOnDemandOnly,
+				},
+			});
+
+			res.json({
+				success: true,
+				message: `Compliance mode set to ${mode} successfully`,
+				data: {
+					mode,
+					host: {
+						id: host.id,
+						friendlyName: host.friendly_name,
+						apiId: host.api_id,
+					},
+				},
+			});
+		} catch (error) {
+			logger.error("Set compliance mode error:", error);
+			res.status(500).json({ error: "Failed to set compliance mode" });
+		}
+	},
+);
+
+// Legacy endpoint for backward compatibility (deprecated - use /mode endpoint instead)
+router.post(
+	"/:hostId/compliance/on-demand-only",
+	authenticateToken,
+	requireManageHosts,
+	[
+		body("on_demand_only")
+			.isBoolean()
+			.withMessage("on_demand_only must be a boolean"),
+	],
+	async (req, res) => {
+		try {
+			const errors = validationResult(req);
+			if (!errors.isEmpty()) {
+				return res.status(400).json({ errors: errors.array() });
+			}
+
+			const { hostId } = req.params;
+			const { on_demand_only } = req.body;
+
+			// Convert to new mode format
+			const mode = on_demand_only ? "on-demand" : "enabled";
+
+			// Get host to verify it exists
+			const host = await prisma.hosts.findUnique({
+				where: { id: hostId },
+				select: {
+					id: true,
+					api_id: true,
+					friendly_name: true,
+				},
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			// Check if agent is connected
+			if (!isConnected(host.api_id)) {
+				return res.status(503).json({
+					error: "Agent is not connected",
+					message:
+						"The agent must be connected via WebSocket to change compliance settings",
+				});
+			}
+
+			// Send WebSocket message to agent using new format
+			const success = pushSetComplianceMode(host.api_id, mode);
 
 			if (!success) {
 				return res.status(503).json({
@@ -3052,7 +3206,10 @@ router.post(
 			// Persist setting to database
 			await prisma.hosts.update({
 				where: { id: hostId },
-				data: { compliance_on_demand_only: on_demand_only },
+				data: {
+					compliance_enabled: !on_demand_only, // enabled if not on-demand
+					compliance_on_demand_only: on_demand_only,
+				},
 			});
 
 			res.json({
@@ -3060,6 +3217,7 @@ router.post(
 				message: `Compliance on-demand-only mode ${on_demand_only ? "enabled" : "disabled"} successfully`,
 				data: {
 					on_demand_only,
+					mode: mode, // Include new mode format in response
 					host: {
 						id: host.id,
 						friendlyName: host.friendly_name,

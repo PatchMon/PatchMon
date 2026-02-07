@@ -25,8 +25,7 @@ class GitHubUpdateCheck {
 		try {
 			// Get settings
 			const settings = await prisma.settings.findFirst();
-			const DEFAULT_GITHUB_REPO =
-				"https://github.com/MacJediWizard/PatchMon-Enhanced.git";
+			const DEFAULT_GITHUB_REPO = "https://github.com/PatchMon/PatchMon.git";
 			const repoUrl = settings?.githubRepoUrl || DEFAULT_GITHUB_REPO;
 			let owner, repo;
 

@@ -7,6 +7,7 @@ const { body, validationResult } = require("express-validator");
 const { authenticateToken } = require("../middleware/auth");
 const { requireManageSettings } = require("../middleware/permissions");
 const { v4: uuidv4 } = require("uuid");
+const { getSettings } = require("../services/settingsService");
 
 const router = express.Router();
 const prisma = getPrismaClient();
@@ -794,6 +795,15 @@ router.post(
 			const api_key = crypto.randomBytes(32).toString("hex");
 			const api_key_hash = await bcrypt.hash(api_key, 10);
 
+			// Get global settings for default compliance mode
+			const settings = await getSettings();
+			const defaultComplianceMode =
+				settings.default_compliance_mode || "on-demand";
+
+			// Apply global default compliance mode
+			const complianceEnabled = defaultComplianceMode !== "disabled";
+			const complianceOnDemandOnly = defaultComplianceMode === "on-demand";
+
 			// Create host (no duplicate check - using config.yml checking instead)
 			const host = await prisma.hosts.create({
 				data: {
@@ -805,6 +815,8 @@ router.post(
 					api_id: api_id,
 					api_key: api_key_hash,
 					status: "pending",
+					compliance_enabled: complianceEnabled,
+					compliance_on_demand_only: complianceOnDemandOnly,
 					notes: `Auto-enrolled via ${req.auto_enrollment_token.token_name} on ${new Date().toISOString()}`,
 					updated_at: new Date(),
 				},

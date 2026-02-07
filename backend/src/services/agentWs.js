@@ -335,26 +335,40 @@ function pushIntegrationToggle(apiId, integrationName, enabled) {
 	}
 }
 
-function pushSetComplianceOnDemandOnly(apiId, onDemandOnly) {
+function pushSetComplianceMode(apiId, mode) {
 	const ws = apiIdToSocket.get(apiId);
 	if (ws && ws.readyState === WebSocket.OPEN) {
+		// Validate mode
+		const validModes = ["disabled", "on-demand", "enabled"];
+		if (!validModes.includes(mode)) {
+			logger.error(
+				`❌ Invalid compliance mode: ${mode}. Must be one of: ${validModes.join(", ")}`,
+			);
+			return false;
+		}
+
 		safeSend(
 			ws,
 			JSON.stringify({
-				type: "set_compliance_on_demand_only",
-				on_demand_only: onDemandOnly,
+				type: "set_compliance_mode",
+				mode: mode,
 			}),
 		);
-		logger.info(
-			`📤 Pushed compliance on-demand-only setting to agent ${apiId}: ${onDemandOnly}`,
-		);
+		logger.info(`📤 Pushed compliance mode to agent ${apiId}: ${mode}`);
 		return true;
 	} else {
 		logger.info(
-			`⚠️ Agent ${apiId} not connected, cannot push compliance on-demand-only setting`,
+			`⚠️ Agent ${apiId} not connected, cannot push compliance mode setting`,
 		);
 		return false;
 	}
+}
+
+// Legacy function for backward compatibility (deprecated - use pushSetComplianceMode instead)
+function pushSetComplianceOnDemandOnly(apiId, onDemandOnly) {
+	// Convert boolean to mode
+	const mode = onDemandOnly ? "on-demand" : "enabled";
+	return pushSetComplianceMode(apiId, mode);
 }
 
 function getConnectionByApiId(apiId) {
@@ -694,7 +708,8 @@ module.exports = {
 	pushRefreshIntegrationStatus,
 	pushDockerInventoryRefresh,
 	pushIntegrationToggle,
-	pushSetComplianceOnDemandOnly,
+	pushSetComplianceMode,
+	pushSetComplianceOnDemandOnly, // Legacy - use pushSetComplianceMode instead
 	pushUpdateNotification,
 	pushUpdateNotificationToAll,
 	pushComplianceScan,

@@ -33,7 +33,6 @@ const authenticateToken = async (req, res, next) => {
 
 		// Validate session and check inactivity timeout
 		const validation = await validate_session(decoded.sessionId, token);
-
 		if (!validation.valid) {
 			const error_messages = {
 				"Session not found": "Session not found",

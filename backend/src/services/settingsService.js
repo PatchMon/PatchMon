@@ -43,6 +43,7 @@ async function createSettingsFromEnvironment() {
 			server_port: port,
 			update_interval: 60,
 			auto_update: false,
+			default_compliance_mode: "on-demand",
 			signup_enabled: false,
 			ignore_ssl_self_signed: false,
 			updated_at: new Date(),

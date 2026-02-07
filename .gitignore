@@ -127,6 +127,30 @@ __pycache__/
 .Python
 *.so
 
+# Go/Agent source code specific
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Code coverage profiles and other test artifacts
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Agent source code build directory
+agent-source-code/build/
+agent-source-code/dist/
+
 # SSL certificates
 *.pem
 *.key

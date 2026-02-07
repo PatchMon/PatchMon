@@ -35,7 +35,7 @@ NC='\033[0m' # No Color
 
 # Global variables
 SCRIPT_VERSION="self-hosting-install.sh v1.3.3-selfhost-2025-11-07"
-DEFAULT_GITHUB_REPO="https://github.com/MacJediWizard/PatchMon-Enhanced.git"
+DEFAULT_GITHUB_REPO="https://github.com/PatchMon/PatchMon.git"
 FQDN=""
 CUSTOM_FQDN=""
 EMAIL=""
@@ -1863,7 +1863,7 @@ create_agent_version() {
     
     # Make agent binaries executable
     if [ -d "$APP_DIR/agents" ]; then
-        chmod +x "$APP_DIR/agents/patchmonenhanced-agent-linux-"* 2>/dev/null || true
+        chmod +x "$APP_DIR/agents/patchmon-agent-linux-"* 2>/dev/null || true
         print_status "Agent binaries made executable"
     fi
 
@@ -3067,7 +3067,7 @@ update_installation() {
         
         # Initialize git repository
         git init
-        git remote add origin https://github.com/MacJediWizard/PatchMon-Enhanced.git
+        git remote add origin https://github.com/PatchMon/PatchMon.git
         
         # Fetch all branches
         git fetch origin
@@ -3201,7 +3201,7 @@ update_installation() {
     
     # Make agent binaries executable
     if [ -d "$instance_dir/agents" ]; then
-        chmod +x "$instance_dir/agents/patchmonenhanced-agent-linux-"* 2>/dev/null || true
+        chmod +x "$instance_dir/agents/patchmon-agent-linux-"* 2>/dev/null || true
         print_status "Agent binaries made executable"
     fi
     

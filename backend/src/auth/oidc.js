@@ -67,9 +67,12 @@ function isOIDCEnabled() {
 
 /**
  * Check if local authentication is disabled
+ * Local auth should only be disabled if OIDC is enabled and working
  */
 function isLocalAuthDisabled() {
-	return process.env.OIDC_DISABLE_LOCAL_AUTH === "true";
+	// Only disable local auth if OIDC is enabled AND the flag is set
+	// This prevents disabling local auth when OIDC is misconfigured
+	return process.env.OIDC_DISABLE_LOCAL_AUTH === "true" && isOIDCEnabled();
 }
 
 /**

@@ -1,7 +1,7 @@
 {
 	"name": "patchmon-frontend",
 	"private": true,
-	"version": "1.7.78",
+	"version": "1.4.0",
 	"license": "AGPL-3.0",
 	"type": "module",
 	"scripts": {
@@ -17,7 +17,6 @@
 		"@dnd-kit/core": "6.3.1",
 		"@dnd-kit/sortable": "10.0.0",
 		"@dnd-kit/utilities": "3.2.2",
-		"@rollup/rollup-darwin-arm64": "4.54.0",
 		"@tanstack/react-query": "5.87.4",
 		"axios": "^1.13.2",
 		"chart.js": "4.4.7",

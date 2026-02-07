@@ -528,14 +528,21 @@ app.use(
 );
 
 // Request logging - only if logging is enabled
+// In dev mode, suppress all request logging to reduce terminal noise
+// Set PM_LOG_REQUESTS_IN_DEV=true to enable request logging in dev mode
 if (process.env.ENABLE_LOGGING === "true") {
 	app.use((req, _, next) => {
-		// Log health check requests at debug level to reduce log spam
-		if (req.path === "/health") {
-			logger.debug(`${req.method} ${req.path} - ${req.ip}`);
-		} else {
-			logger.info(`${req.method} ${req.path} - ${req.ip}`);
+		const isDev = process.env.NODE_ENV !== "production";
+		const logRequestsInDev = process.env.PM_LOG_REQUESTS_IN_DEV === "true";
+
+		// Skip all request logging in dev mode unless explicitly enabled
+		if (isDev && !logRequestsInDev) {
+			next();
+			return;
 		}
+
+		// Log requests in production or when explicitly enabled in dev
+		logger.info(`${req.method} ${req.path} - ${req.ip}`);
 		next();
 	});
 }
@@ -691,7 +698,6 @@ app.use(`/bullboard`, async (req, res, next) => {
 		sameSite: "strict",
 	});
 
-	console.log("Bull Board - Authentication successful via ticket, cookie set");
 	return next();
 });
 

@@ -27,7 +27,7 @@ const crypto = require("node:crypto");
 class AgentVersionService {
 	constructor() {
 		this.githubApiUrl =
-			"https://api.github.com/repos/MacJediWizard/PatchMonEnhanced-agent/releases";
+			"https://api.github.com/repos/PatchMon/PatchMon-agent/releases";
 		this.agentsDir = path.resolve(__dirname, "../../../agents");
 		this.supportedArchitectures = [
 			"linux-amd64",
@@ -49,7 +49,7 @@ class AgentVersionService {
 			logger.info("🔍 Testing GitHub API connectivity...");
 			try {
 				const testResponse = await axios.get(
-					"https://api.github.com/repos/MacJediWizard/PatchMonEnhanced-agent/releases",
+					"https://api.github.com/repos/PatchMon/PatchMon-agent/releases",
 					{
 						timeout: 5000,
 						headers: {
@@ -125,11 +125,8 @@ class AgentVersionService {
 
 			// Try to find the agent binary in agents/ folder based on server architecture
 			const possiblePaths = [
-				path.join(
-					this.agentsDir,
-					`patchmonenhanced-agent-linux-${serverGoArch}`,
-				),
-				path.join(this.agentsDir, "patchmonenhanced-agent-linux-amd64"), // Fallback
+				path.join(this.agentsDir, `patchmon-agent-linux-${serverGoArch}`),
+				path.join(this.agentsDir, "patchmon-agent-linux-amd64"), // Fallback
 				path.join(this.agentsDir, "patchmon-agent"), // Legacy fallback
 			];
 
@@ -277,7 +274,7 @@ class AgentVersionService {
 			);
 
 			for (const arch of this.supportedArchitectures) {
-				const assetName = `patchmonenhanced-agent-${arch}`;
+				const assetName = `patchmon-agent-linux-${arch}`;
 				const asset = release.assets.find((a) => a.name === assetName);
 
 				if (!asset) {
@@ -340,7 +337,7 @@ class AgentVersionService {
 				throw new Error(`Release ${version} not found`);
 			}
 
-			const assetName = `patchmonenhanced-agent-linux-${architecture}`;
+			const assetName = `patchmon-agent-linux-${architecture}`;
 			const asset = release.assets.find((a) => a.name === assetName);
 
 			if (!asset) {
@@ -382,7 +379,7 @@ class AgentVersionService {
 	}
 
 	async getBinaryPath(version, architecture) {
-		const binaryName = `patchmonenhanced-agent-${architecture}`;
+		const binaryName = `patchmon-agent-linux-${architecture}`;
 		const binaryPath = path.join(this.agentsDir, binaryName);
 
 		try {
@@ -402,7 +399,7 @@ class AgentVersionService {
 			res.setHeader("Content-Type", "application/octet-stream");
 			res.setHeader(
 				"Content-Disposition",
-				`attachment; filename="patchmonenhanced-agent-linux-${architecture}"`,
+				`attachment; filename="patchmon-agent-linux-${architecture}"`,
 			);
 			res.setHeader("Content-Length", stats.size);
 
@@ -426,7 +423,7 @@ class AgentVersionService {
 				res.setHeader("Content-Type", "application/octet-stream");
 				res.setHeader(
 					"Content-Disposition",
-					`attachment; filename="patchmonenhanced-agent-linux-${architecture}"`,
+					`attachment; filename="patchmon-agent-linux-${architecture}"`,
 				);
 				res.setHeader("Content-Length", stats.size);
 				res.setHeader("Cache-Control", "public, max-age=3600");

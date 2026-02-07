@@ -33,7 +33,12 @@ import { useAuth } from "../contexts/AuthContext";
 import { useColorTheme } from "../contexts/ColorThemeContext";
 import SidebarContext from "../contexts/SidebarContext";
 import { useUpdateNotification } from "../contexts/UpdateNotificationContext";
-import { dashboardAPI, settingsAPI, versionAPI } from "../utils/api";
+import {
+	adminHostsAPI,
+	dashboardAPI,
+	settingsAPI,
+	versionAPI,
+} from "../utils/api";
 import DiscordIcon from "./DiscordIcon";
 import GlobalSearch from "./GlobalSearch";
 import Logo from "./Logo";
@@ -112,6 +117,78 @@ const Layout = ({ children }) => {
 		staleTime: 300000, // Consider data stale after 5 minutes
 	});
 
+	// Fetch hosts for connection status (only if user can view hosts)
+	// Use dashboardAPI.getHosts() to match Hosts.jsx page and ensure api_id is included
+	const { data: hosts } = useQuery({
+		queryKey: ["hosts", "sidebar"],
+		queryFn: () => dashboardAPI.getHosts().then((res) => res.data),
+		enabled: canViewHosts(),
+		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
+		refetchOnWindowFocus: false,
+	});
+
+	// Track WebSocket status for hosts
+	const [wsStatusMap, setWsStatusMap] = useState({});
+
+	// Fetch WebSocket status for hosts
+	useEffect(() => {
+		if (!hosts || !Array.isArray(hosts) || hosts.length === 0) return;
+
+		// Fetch initial WebSocket status for all hosts
+		const fetchInitialStatus = async () => {
+			const apiIds = hosts
+				.filter((host) => host.api_id)
+				.map((host) => host.api_id);
+
+			if (apiIds.length === 0) return;
+
+			try {
+				const response = await fetch(
+					`/api/v1/ws/status?apiIds=${apiIds.join(",")}`,
+					{
+						credentials: "include",
+					},
+				);
+				if (response.ok) {
+					const result = await response.json();
+					setWsStatusMap(result.data);
+				}
+			} catch (_error) {
+				// Silently handle errors
+			}
+		};
+
+		fetchInitialStatus();
+
+		// Poll every 10 seconds for status updates
+		const pollInterval = setInterval(() => {
+			const apiIds = hosts
+				.filter((host) => host.api_id)
+				.map((host) => host.api_id);
+
+			if (apiIds.length === 0) return;
+
+			fetch(`/api/v1/ws/status?apiIds=${apiIds.join(",")}`, {
+				credentials: "include",
+			})
+				.then((response) => response.json())
+				.then((result) => {
+					if (result.success && result.data) {
+						setWsStatusMap(result.data);
+					} else if (result.data) {
+						setWsStatusMap(result.data);
+					}
+				})
+				.catch(() => {
+					// Silently handle errors
+				});
+		}, 10000);
+
+		return () => {
+			clearInterval(pollInterval);
+		};
+	}, [hosts]);
+
 	// Check for new release notes when user or version changes
 	useEffect(() => {
 		if (!user || !versionInfo?.version) return;
@@ -171,55 +248,72 @@ const Layout = ({ children }) => {
 				});
 			}
 
-			// Add Automation item (available to all users with inventory access)
-			inventoryItems.push({
-				name: "Automation",
-				href: "/automation",
-				icon: RefreshCw,
-			});
+			if (inventoryItems.length > 0) {
+				nav.push({
+					section: "INVENTORY",
+					items: inventoryItems,
+				});
+			}
+		}
+
+		// Integrations section
+		if (canViewHosts() || canViewPackages() || canViewReports()) {
+			const integrationsItems = [];
 
 			// Add Compliance item (available to all users with inventory access)
-			inventoryItems.push({
+			integrationsItems.push({
 				name: "Compliance",
 				href: "/compliance",
 				icon: Shield,
 			});
 
 			if (canViewReports()) {
-				inventoryItems.push(
-					{
-						name: "Docker",
-						href: "/docker",
-						icon: Container,
-						beta: true,
-					},
-					{
-						name: "Services",
-						href: "/services",
-						icon: Activity,
-						comingSoon: true,
-					},
-					{
-						name: "Reporting",
-						href: "/reporting",
-						icon: BarChart3,
-						comingSoon: true,
-					},
-				);
+				integrationsItems.push({
+					name: "Docker",
+					href: "/docker",
+					icon: Container,
+					beta: true,
+				});
 			}
 
-			// Add Pro-Action item (available to all users with inventory access)
-			inventoryItems.push({
-				name: "Pro-Action",
-				href: "/pro-action",
-				icon: Zap,
-				comingSoon: true,
+			if (integrationsItems.length > 0) {
+				nav.push({
+					section: "INTEGRATIONS",
+					items: integrationsItems,
+				});
+			}
+		}
+
+		// Server section
+		if (canViewHosts() || canViewPackages() || canViewReports()) {
+			const serverItems = [];
+
+			// Add Automation item (available to all users with inventory access)
+			serverItems.push({
+				name: "Automation",
+				href: "/automation",
+				icon: RefreshCw,
 			});
 
-			if (inventoryItems.length > 0) {
+			if (
+				canManageSettings() ||
+				canViewUsers() ||
+				canManageUsers() ||
+				canViewReports() ||
+				canExportData()
+			) {
+				serverItems.push({
+					name: "Settings",
+					href: "/settings/users",
+					icon: Settings,
+					showUpgradeIcon: updateAvailable,
+				});
+			}
+
+			if (serverItems.length > 0) {
 				nav.push({
-					section: "Inventory",
-					items: inventoryItems,
+					section: "SERVER",
+					items: serverItems,
 				});
 			}
 		}
@@ -227,38 +321,7 @@ const Layout = ({ children }) => {
 		return nav;
 	};
 
-	// Build settings navigation separately (for bottom placement)
-	const buildSettingsNavigation = () => {
-		const settingsNav = [];
-
-		// Settings section - consolidated all settings into one page
-		if (
-			canManageSettings() ||
-			canViewUsers() ||
-			canManageUsers() ||
-			canViewReports() ||
-			canExportData()
-		) {
-			const settingsItems = [];
-
-			settingsItems.push({
-				name: "Settings",
-				href: "/settings/users",
-				icon: Settings,
-				showUpgradeIcon: updateAvailable,
-			});
-
-			settingsNav.push({
-				section: "Settings",
-				items: settingsItems,
-			});
-		}
-
-		return settingsNav;
-	};
-
 	const navigation = buildNavigation();
-	const settingsNavigation = buildSettingsNavigation();
 
 	const isActive = (path) => location.pathname === path;
 
@@ -279,14 +342,14 @@ const Layout = ({ children }) => {
 		if (path === "/users") return "Users";
 		if (path === "/permissions") return "Permissions";
 		if (path === "/settings") return "Settings";
-		if (path === "/options") return "PatchMonEnhanced Options";
+		if (path === "/options") return "PatchMon Options";
 		if (path === "/audit-log") return "Audit Log";
 		if (path === "/settings/profile") return "My Profile";
 		if (path.startsWith("/hosts/")) return "Host Details";
 		if (path.startsWith("/packages/")) return "Package Details";
 		if (path.startsWith("/settings/")) return "Settings";
 
-		return "PatchMonEnhanced";
+		return "PatchMon";
 	};
 
 	const handleLogout = async () => {
@@ -607,12 +670,12 @@ const Layout = ({ children }) => {
 						</div>
 						<div className="flex flex-shrink-0 items-center justify-center px-4">
 							<Link to="/" className="flex items-center">
-								<Logo className="h-10 w-auto" alt="PatchMonEnhanced Logo" />
+								<Logo className="h-10 w-auto" alt="PatchMon Logo" />
 							</Link>
 						</div>
 						<nav className="mt-8 flex-1 space-y-6 px-2">
 							{/* Show message for users with very limited permissions */}
-							{navigation.length === 0 && settingsNavigation.length === 0 && (
+							{navigation.length === 0 && (
 								<div className="px-2 py-4 text-center">
 									<div className="text-sm text-secondary-500 dark:text-white/70">
 										<p className="mb-2">Limited access</p>
@@ -739,42 +802,6 @@ const Layout = ({ children }) => {
 								return null;
 							})}
 
-							{/* Settings Section - Mobile */}
-							{settingsNavigation.map((item) => {
-								if (item.section) {
-									// Settings section (no heading)
-									return (
-										<div key={item.section}>
-											<div className="space-y-1">
-												{item.items
-													.filter((subItem) => !subItem.comingSoon)
-													.map((subItem) => (
-														<Link
-															key={subItem.name}
-															to={subItem.href}
-															className={`group flex items-center px-2 py-2 text-sm font-medium rounded-md ${
-																isActive(subItem.href)
-																	? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
-																	: "text-secondary-600 dark:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700 hover:text-secondary-900 dark:hover:text-white"
-															}`}
-															onClick={() => setSidebarOpen(false)}
-														>
-															<subItem.icon className="mr-3 h-5 w-5" />
-															<span className="flex items-center gap-2">
-																{subItem.name}
-																{subItem.showUpgradeIcon && (
-																	<UpgradeNotificationIcon className="h-3 w-3" />
-																)}
-															</span>
-														</Link>
-													))}
-											</div>
-										</div>
-									);
-								}
-								return null;
-							})}
-
 							{/* Mobile Logout Section */}
 							<div className="mt-8 pt-4 border-t border-secondary-200 dark:border-secondary-700">
 								<div className="px-2 space-y-1">
@@ -834,9 +861,9 @@ const Layout = ({ children }) => {
 
 				{/* Desktop sidebar */}
 				<div
-					className={`hidden lg:fixed lg:inset-y-0 lg:top-0 lg:bottom-0 z-[100] lg:flex lg:flex-col transition-all duration-300 ${
+					className={`hidden lg:fixed lg:inset-y-0 z-[100] lg:flex lg:flex-col transition-all duration-300 relative ${
 						sidebarCollapsed ? "lg:w-16" : "lg:w-64"
-					} bg-white dark:bg-transparent overflow-hidden`}
+					} bg-white dark:bg-transparent`}
 				>
 					{/* Collapse/Expand button on border */}
 					<button
@@ -858,13 +885,15 @@ const Layout = ({ children }) => {
 					</button>
 
 					<div
-						className={`flex flex-col h-full border-r border-secondary-200 dark:border-white/10 bg-white ${
-							sidebarCollapsed ? "px-2 shadow-lg" : "px-6"
+						className={`flex grow flex-col gap-y-5 border-r border-secondary-200 dark:border-white/10 bg-white ${
+							sidebarCollapsed ? "px-2 shadow-lg" : "px-2"
 						}`}
 						style={{
 							backgroundColor: "var(--sidebar-bg, white)",
 							backdropFilter: "var(--sidebar-blur, none)",
 							WebkitBackdropFilter: "var(--sidebar-blur, none)",
+							overflowY: "auto",
+							overflowX: "visible",
 						}}
 					>
 						<div
@@ -892,7 +921,7 @@ const Layout = ({ children }) => {
 													})()}`
 												: "/assets/favicon.svg"
 										}
-										alt="PatchMonEnhanced"
+										alt="PatchMon"
 										className="h-12 w-12 object-contain"
 										onError={(e) => {
 											e.target.src = "/assets/favicon.svg";
@@ -901,12 +930,12 @@ const Layout = ({ children }) => {
 								</Link>
 							) : (
 								<Link to="/" className="flex items-center">
-									<Logo className="h-10 w-auto" alt="PatchMonEnhanced Logo" />
+									<Logo className="h-10 w-auto" alt="PatchMon Logo" />
 								</Link>
 							)}
 						</div>
-						<nav className="flex-1 flex flex-col overflow-y-auto overflow-x-hidden py-4 min-h-0">
-							<ul className="flex flex-1 flex-col gap-y-6">
+						<nav className="flex-1 flex flex-col overflow-y-auto overflow-x-hidden min-h-0">
+							<ul className="flex flex-1 flex-col space-y-2">
 								{/* Show message for users with very limited permissions */}
 								{navigation.length === 0 && settingsNavigation.length === 0 && (
 									<li className="px-2 py-4 text-center">
@@ -922,17 +951,14 @@ const Layout = ({ children }) => {
 									if (item.name) {
 										// Single item (Dashboard)
 										return (
-											<li
-												key={item.name}
-												className={sidebarCollapsed ? "" : "-mx-2"}
-											>
+											<li key={item.name} className="mb-4">
 												<Link
 													to={item.href}
-													className={`group flex gap-x-3 rounded-md text-sm leading-6 font-semibold transition-all duration-200 ${
+													className={`group flex items-center gap-x-3 rounded-lg text-sm leading-6 font-medium transition-all duration-200 min-h-[44px] ${
 														isActive(item.href)
-															? "bg-primary-50 dark:bg-primary-600 text-primary-700 dark:text-white"
+															? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
 															: "text-secondary-700 dark:text-secondary-200 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
-													} ${sidebarCollapsed ? "justify-center p-2" : "p-2"}`}
+													} ${sidebarCollapsed ? "justify-center px-2 py-2" : "px-2 py-3"}`}
 													title={sidebarCollapsed ? item.name : ""}
 												>
 													<item.icon
@@ -945,36 +971,221 @@ const Layout = ({ children }) => {
 											</li>
 										);
 									} else if (item.section) {
+										// Special handling for LINKS section
+										if (item.section === "LINKS") {
+											return (
+												<li key={item.section} className="mt-4">
+													{!sidebarCollapsed && (
+														<h3 className="text-xs font-semibold text-secondary-500 dark:text-secondary-300 uppercase tracking-wider mb-2">
+															{item.section}
+														</h3>
+													)}
+													{!sidebarCollapsed ? (
+														<div className="flex items-center justify-center gap-2">
+															{item.items.map((linkItem) => (
+																<a
+																	key={linkItem.name}
+																	href={linkItem.href}
+																	target={
+																		linkItem.href.startsWith("http")
+																			? "_blank"
+																			: undefined
+																	}
+																	rel={
+																		linkItem.href.startsWith("http")
+																			? "noopener noreferrer"
+																			: undefined
+																	}
+																	className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+																	title={linkItem.name}
+																>
+																	<linkItem.icon className="h-5 w-5" />
+																</a>
+															))}
+														</div>
+													) : (
+														<div className="flex flex-col items-center gap-1">
+															{item.items.map((linkItem) => (
+																<a
+																	key={linkItem.name}
+																	href={linkItem.href}
+																	target={
+																		linkItem.href.startsWith("http")
+																			? "_blank"
+																			: undefined
+																	}
+																	rel={
+																		linkItem.href.startsWith("http")
+																			? "noopener noreferrer"
+																			: undefined
+																	}
+																	className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+																	title={linkItem.name}
+																>
+																	<linkItem.icon className="h-5 w-5" />
+																</a>
+															))}
+														</div>
+													)}
+												</li>
+											);
+										}
 										// Section with items
 										return (
-											<li key={item.section}>
+											<li key={item.section} className="mt-4">
 												{!sidebarCollapsed && (
 													<h3 className="text-xs font-semibold text-secondary-500 dark:text-secondary-300 uppercase tracking-wider mb-2">
 														{item.section}
 													</h3>
 												)}
-												<ul
-													className={`space-y-1 ${sidebarCollapsed ? "" : "-mx-2"}`}
-												>
-													{item.items.map((subItem) => (
-														<li key={subItem.name}>
-															{subItem.name === "Hosts" && canManageHosts() ? (
-																// Special handling for Hosts item with integrated + button
-																<div className="flex items-center gap-1">
+												<ul className="space-y-0.1">
+													{item.items.map((subItem, index) => {
+														const isLastItem = index === item.items.length - 1;
+														const shouldAddSpacing =
+															isLastItem &&
+															(item.section === "INVENTORY" ||
+																item.section === "INTEGRATIONS");
+														return (
+															<li
+																key={subItem.name}
+																className={shouldAddSpacing ? "mb-4" : ""}
+															>
+																{subItem.name === "Hosts" &&
+																canManageHosts() ? (
+																	// Special handling for Hosts item with integrated + button
+																	<div className="flex items-center gap-1">
+																		<Link
+																			to={subItem.href}
+																			className={`group flex items-center gap-x-3 rounded-lg text-sm leading-6 font-medium transition-all duration-200 flex-1 min-h-[44px] ${
+																				isActive(subItem.href)
+																					? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
+																					: "text-secondary-700 dark:text-secondary-200 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
+																			} ${sidebarCollapsed ? "justify-center px-2 py-2" : "px-2 py-3"}`}
+																			title={
+																				sidebarCollapsed ? subItem.name : ""
+																			}
+																		>
+																			<subItem.icon
+																				className={`h-5 w-5 shrink-0 ${sidebarCollapsed ? "mx-auto" : ""}`}
+																			/>
+																			{!sidebarCollapsed && (
+																				<span className="truncate flex items-center gap-2 flex-1">
+																					{subItem.name}
+																					{subItem.name === "Hosts" &&
+																						hosts &&
+																						Array.isArray(hosts) &&
+																						hosts.length > 0 && (
+																							<div className="ml-2 flex items-center gap-1">
+																								{(() => {
+																									// Use the exact same logic as Hosts.jsx page
+																									const connectedCount =
+																										hosts?.filter(
+																											(h) =>
+																												wsStatusMap[h.api_id]
+																													?.connected === true,
+																										).length || 0;
+																									const offlineCount =
+																										hosts?.filter(
+																											(h) =>
+																												wsStatusMap[h.api_id]
+																													?.connected !== true,
+																										).length || 0;
+
+																									// If we have WebSocket data, show connected/disconnected badges
+																									// Otherwise show total count as fallback
+																									if (
+																										Object.keys(wsStatusMap)
+																											.length > 0
+																									) {
+																										return (
+																											<>
+																												{connectedCount > 0 && (
+																													<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-200">
+																														{connectedCount}
+																													</span>
+																												)}
+																												{offlineCount > 0 && (
+																													<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200">
+																														{offlineCount}
+																													</span>
+																												)}
+																											</>
+																										);
+																									}
+
+																									// Fallback: show total count if WebSocket status not available yet
+																									return (
+																										<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700 dark:bg-secondary-600 dark:text-secondary-200">
+																											{hosts?.length || 0}
+																										</span>
+																									);
+																								})()}
+																							</div>
+																						)}
+																					{/* {subItem.name === "Packages" &&
+																				stats?.cards?.totalOutdatedPackages !==
+																					undefined && (
+																					<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
+																						{stats.cards.totalOutdatedPackages}
+																					</span>
+																				)} */}
+																					{/* {subItem.name === "Repos" &&
+																				stats?.cards?.totalRepos !==
+																					undefined && (
+																					<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
+																						{stats.cards.totalRepos}
+																					</span>
+																				)} */}
+																				</span>
+																			)}
+																			{!sidebarCollapsed && (
+																				<button
+																					type="button"
+																					onClick={(e) => {
+																						e.preventDefault();
+																						handleAddHost();
+																					}}
+																					className="ml-auto flex items-center justify-center w-5 h-5 rounded-full border-2 border-current opacity-60 hover:opacity-100 transition-all duration-200 self-center"
+																					title="Add Host"
+																				>
+																					<Plus className="h-3 w-3" />
+																				</button>
+																			)}
+																		</Link>
+																	</div>
+																) : (
+																	// Standard navigation item
 																	<Link
 																		to={subItem.href}
-																		className={`group flex gap-x-3 rounded-md text-sm leading-6 font-medium transition-all duration-200 flex-1 ${
+																		className={`group flex items-center gap-x-3 rounded-lg text-sm leading-6 font-medium transition-all duration-200 min-h-[44px] ${
 																			isActive(subItem.href)
-																				? "bg-primary-50 dark:bg-primary-600 text-primary-700 dark:text-white"
+																				? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
 																				: "text-secondary-700 dark:text-secondary-200 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
-																		} ${sidebarCollapsed ? "justify-center p-2" : "p-2"}`}
+																		} ${sidebarCollapsed ? "justify-center px-2 py-2 relative" : "px-2 py-3"} ${
+																			subItem.comingSoon
+																				? "opacity-50 cursor-not-allowed"
+																				: ""
+																		}`}
 																		title={sidebarCollapsed ? subItem.name : ""}
+																		onClick={
+																			subItem.comingSoon
+																				? (e) => e.preventDefault()
+																				: undefined
+																		}
 																	>
-																		<subItem.icon
-																			className={`h-5 w-5 shrink-0 ${sidebarCollapsed ? "mx-auto" : ""}`}
-																		/>
+																		<div
+																			className={`flex items-center ${sidebarCollapsed ? "justify-center" : ""}`}
+																		>
+																			<subItem.icon
+																				className={`h-5 w-5 shrink-0 ${sidebarCollapsed ? "mx-auto" : ""}`}
+																			/>
+																			{sidebarCollapsed &&
+																				subItem.showUpgradeIcon && (
+																					<UpgradeNotificationIcon className="h-3 w-3 absolute -top-1 -right-1" />
+																				)}
+																		</div>
 																		{!sidebarCollapsed && (
-																			<span className="truncate flex items-center gap-2 flex-1">
+																			<span className="truncate flex items-center gap-2">
 																				{subItem.name}
 																				{subItem.name === "Hosts" &&
 																					stats?.cards?.totalHosts !==
@@ -984,115 +1195,44 @@ const Layout = ({ children }) => {
 																						</span>
 																					)}
 																				{/* {subItem.name === "Packages" &&
-																				stats?.cards?.totalOutdatedPackages !==
-																					undefined && (
-																					<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
-																						{stats.cards.totalOutdatedPackages}
-																					</span>
-																				)} */}
-																				{/* {subItem.name === "Repos" &&
-																				stats?.cards?.totalRepos !==
-																					undefined && (
-																					<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
-																						{stats.cards.totalRepos}
-																					</span>
-																				)} */}
-																			</span>
-																		)}
-																		{!sidebarCollapsed && (
-																			<button
-																				type="button"
-																				onClick={(e) => {
-																					e.preventDefault();
-																					handleAddHost();
-																				}}
-																				className="ml-auto flex items-center justify-center w-5 h-5 rounded-full border-2 border-current opacity-60 hover:opacity-100 transition-all duration-200 self-center"
-																				title="Add Host"
-																			>
-																				<Plus className="h-3 w-3" />
-																			</button>
-																		)}
-																	</Link>
-																</div>
-															) : (
-																// Standard navigation item
-																<Link
-																	to={subItem.href}
-																	className={`group flex gap-x-3 rounded-md text-sm leading-6 font-medium transition-all duration-200 ${
-																		isActive(subItem.href)
-																			? "bg-primary-50 dark:bg-primary-600 text-primary-700 dark:text-white"
-																			: "text-secondary-700 dark:text-secondary-200 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
-																	} ${sidebarCollapsed ? "justify-center p-2 relative" : "p-2"} ${
-																		subItem.comingSoon
-																			? "opacity-50 cursor-not-allowed"
-																			: ""
-																	}`}
-																	title={sidebarCollapsed ? subItem.name : ""}
-																	onClick={
-																		subItem.comingSoon
-																			? (e) => e.preventDefault()
-																			: undefined
-																	}
-																>
-																	<div
-																		className={`flex items-center ${sidebarCollapsed ? "justify-center" : ""}`}
-																	>
-																		<subItem.icon
-																			className={`h-5 w-5 shrink-0 ${sidebarCollapsed ? "mx-auto" : ""}`}
-																		/>
-																		{sidebarCollapsed &&
-																			subItem.showUpgradeIcon && (
-																				<UpgradeNotificationIcon className="h-3 w-3 absolute -top-1 -right-1" />
-																			)}
-																	</div>
-																	{!sidebarCollapsed && (
-																		<span className="truncate flex items-center gap-2">
-																			{subItem.name}
-																			{subItem.name === "Hosts" &&
-																				stats?.cards?.totalHosts !==
-																					undefined && (
-																					<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
-																						{stats.cards.totalHosts}
-																					</span>
-																				)}
-																			{/* {subItem.name === "Packages" &&
 																			stats?.cards?.totalOutdatedPackages !==
 																				undefined && (
 																				<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
 																					{stats.cards.totalOutdatedPackages}
 																				</span>
 																			)} */}
-																			{/* {subItem.name === "Repos" &&
+																				{/* {subItem.name === "Repos" &&
 																			stats?.cards?.totalRepos !==
 																				undefined && (
 																				<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
 																					{stats.cards.totalRepos}
 																				</span>
 																			)} */}
-																			{subItem.comingSoon && (
-																				<span className="text-xs bg-secondary-100 text-secondary-600 px-1.5 py-0.5 rounded">
-																					Soon
-																				</span>
-																			)}
-																			{subItem.beta && (
-																				<span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-200 px-1.5 py-0.5 rounded font-medium">
-																					Beta
-																				</span>
-																			)}
-																			{subItem.new && (
-																				<span className="text-xs bg-green-100 dark:bg-green-900 text-green-600 dark:text-green-200 px-1.5 py-0.5 rounded font-medium">
-																					New
-																				</span>
-																			)}
-																			{subItem.showUpgradeIcon && (
-																				<UpgradeNotificationIcon className="h-3 w-3" />
-																			)}
-																		</span>
-																	)}
-																</Link>
-															)}
-														</li>
-													))}
+																				{subItem.comingSoon && (
+																					<span className="text-xs bg-secondary-100 text-secondary-600 px-1.5 py-0.5 rounded">
+																						Soon
+																					</span>
+																				)}
+																				{subItem.beta && (
+																					<span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-200 px-1.5 py-0.5 rounded font-medium">
+																						Beta
+																					</span>
+																				)}
+																				{subItem.new && (
+																					<span className="text-xs bg-green-100 dark:bg-green-900 text-green-600 dark:text-green-200 px-1.5 py-0.5 rounded font-medium">
+																						New
+																					</span>
+																				)}
+																				{subItem.showUpgradeIcon && (
+																					<UpgradeNotificationIcon className="h-3 w-3" />
+																				)}
+																			</span>
+																		)}
+																	</Link>
+																)}
+															</li>
+														);
+													})}
 												</ul>
 											</li>
 										);
@@ -1100,113 +1240,98 @@ const Layout = ({ children }) => {
 									return null;
 								})}
 							</ul>
-
-							{/* Settings Section - Bottom of Navigation */}
-							{settingsNavigation.length > 0 && (
-								<ul className="gap-y-6">
-									{settingsNavigation.map((item) => {
-										if (item.section) {
-											// Settings section (no heading)
-											return (
-												<li key={item.section}>
-													<ul
-														className={`space-y-1 ${sidebarCollapsed ? "" : "-mx-2"}`}
-													>
-														{item.items.map((subItem) => (
-															<li key={subItem.name}>
-																<Link
-																	to={subItem.href}
-																	className={`group flex gap-x-3 rounded-md text-sm leading-6 font-medium transition-all duration-200 ${
-																		isActive(subItem.href)
-																			? "bg-primary-50 dark:bg-primary-600 text-primary-700 dark:text-white"
-																			: "text-secondary-700 dark:text-secondary-200 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
-																	} ${sidebarCollapsed ? "justify-center p-2 relative" : "p-2"}`}
-																	title={sidebarCollapsed ? subItem.name : ""}
-																>
-																	<div
-																		className={`flex items-center ${sidebarCollapsed ? "justify-center" : ""}`}
-																	>
-																		<subItem.icon
-																			className={`h-5 w-5 shrink-0 ${sidebarCollapsed ? "mx-auto" : ""}`}
-																		/>
-																		{sidebarCollapsed &&
-																			subItem.showUpgradeIcon && (
-																				<UpgradeNotificationIcon className="h-3 w-3 absolute -top-1 -right-1" />
-																			)}
-																	</div>
-																	{!sidebarCollapsed && (
-																		<span className="truncate flex items-center gap-2">
-																			{subItem.name}
-																			{subItem.showUpgradeIcon && (
-																				<UpgradeNotificationIcon className="h-3 w-3" />
-																			)}
-																		</span>
-																	)}
-																</Link>
-															</li>
-														))}
-													</ul>
-												</li>
-											);
-										}
-										return null;
-									})}
-								</ul>
-							)}
-
-							{/* External Links Section - Roadmap, Documentation, Email, Website */}
-							{!sidebarCollapsed && (
-								<div className="border-t border-secondary-200 dark:border-secondary-600 pt-4 mt-4">
-									<div className="flex items-center justify-center gap-2">
-										{/* Roadmap */}
-										<a
-											href="https://github.com/orgs/PatchMon/projects/2/views/1"
-											target="_blank"
-											rel="noopener noreferrer"
-											className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
-											title="Roadmap"
-										>
-											<Route className="h-5 w-5" />
-										</a>
-										{/* Documentation */}
-										<a
-											href="https://docs.patchmon.net"
-											target="_blank"
-											rel="noopener noreferrer"
-											className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
-											title="Documentation"
-										>
-											<BookOpen className="h-5 w-5" />
-										</a>
-										{/* Email */}
-										<a
-											href="mailto:support@patchmon.net"
-											className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
-											title="Email Support"
-										>
-											<Mail className="h-5 w-5" />
-										</a>
-										{/* Website */}
-										<a
-											href="https://patchmon.net"
-											target="_blank"
-											rel="noopener noreferrer"
-											className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
-											title="Website"
-										>
-											<Globe className="h-5 w-5" />
-										</a>
-									</div>
-								</div>
-							)}
 						</nav>
 
+						{/* LINKS Section - Bottom of Navigation */}
+						<div className="flex-shrink-0 pt-1 pb-2 px-2">
+							{!sidebarCollapsed && (
+								<h3 className="text-xs font-semibold text-secondary-500 dark:text-secondary-300 uppercase tracking-wider mb-2">
+									LINKS
+								</h3>
+							)}
+							{!sidebarCollapsed ? (
+								<div className="flex items-center justify-center gap-2">
+									<a
+										href="https://github.com/orgs/PatchMon/projects/2/views/1"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+										title="Roadmap"
+									>
+										<Route className="h-5 w-5" />
+									</a>
+									<a
+										href="https://docs.patchmon.net"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+										title="Documentation"
+									>
+										<BookOpen className="h-5 w-5" />
+									</a>
+									<a
+										href="mailto:support@patchmon.net"
+										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+										title="Email Support"
+									>
+										<Mail className="h-5 w-5" />
+									</a>
+									<a
+										href="https://patchmon.net"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+										title="Website"
+									>
+										<Globe className="h-5 w-5" />
+									</a>
+								</div>
+							) : (
+								<div className="flex flex-col items-center gap-1">
+									<a
+										href="https://github.com/orgs/PatchMon/projects/2/views/1"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+										title="Roadmap"
+									>
+										<Route className="h-5 w-5" />
+									</a>
+									<a
+										href="https://docs.patchmon.net"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+										title="Documentation"
+									>
+										<BookOpen className="h-5 w-5" />
+									</a>
+									<a
+										href="mailto:support@patchmon.net"
+										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+										title="Email Support"
+									>
+										<Mail className="h-5 w-5" />
+									</a>
+									<a
+										href="https://patchmon.net"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+										title="Website"
+									>
+										<Globe className="h-5 w-5" />
+									</a>
+								</div>
+							)}
+						</div>
+
 						{/* Profile Section - Bottom of Sidebar */}
-						<div className="border-t border-secondary-200 dark:border-secondary-600 flex-shrink-0 pt-3 pb-4">
+						<div className="flex-shrink-0 pt-0 pb-1 px-2">
 							{!sidebarCollapsed ? (
 								<div>
 									{/* User Info with Sign Out - Username is clickable */}
-									<div className="flex items-center justify-between -mx-2 py-2">
+									<div className="flex items-center justify-between py-1">
 										<Link
 											to="/settings/profile"
 											className={`flex-1 min-w-0 rounded-md p-2 transition-all duration-200 ${
@@ -1262,7 +1387,7 @@ const Layout = ({ children }) => {
 										<button
 											type="button"
 											onClick={handleLogout}
-											className="ml-2 p-1.5 text-secondary-400 hover:text-secondary-600 hover:bg-secondary-100 rounded transition-colors"
+											className="ml-2 p-2 text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-md transition-colors"
 											title="Sign out"
 										>
 											<LogOut className="h-4 w-4" />
@@ -1270,7 +1395,7 @@ const Layout = ({ children }) => {
 									</div>
 									{/* Updated info */}
 									{stats && (
-										<div className="px-2 py-1 border-t border-secondary-200 dark:border-secondary-700">
+										<div className="pt-1">
 											<div className="flex items-center gap-x-1 text-xs text-secondary-500 dark:text-white/70">
 												<Clock className="h-3 w-3 flex-shrink-0" />
 												<span className="truncate">
@@ -1360,7 +1485,11 @@ const Layout = ({ children }) => {
 				>
 					{/* Top bar */}
 					<div
-						className="sticky top-0 z-[90] flex h-16 shrink-0 items-center gap-x-2 sm:gap-x-4 border-b border-secondary-200 dark:border-white/10 bg-white px-3 sm:px-4 sm:px-6 lg:px-8 shadow-sm"
+						className={`fixed top-0 z-[90] flex h-16 shrink-0 items-center gap-x-2 sm:gap-x-4 border-b border-secondary-200 dark:border-white/10 bg-white px-3 sm:px-4 sm:px-6 lg:px-8 shadow-sm transition-all duration-300 ${
+							sidebarCollapsed
+								? "lg:left-16 lg:right-0"
+								: "lg:left-64 lg:right-0"
+						} left-0 right-0`}
 						style={{
 							backgroundColor: "var(--topbar-bg, white)",
 							backdropFilter: "var(--topbar-blur, none)",
@@ -1443,7 +1572,7 @@ const Layout = ({ children }) => {
 												<div className="p-2 space-y-1">
 													{/* GitHub */}
 													<a
-														href="https://github.com/MacJediWizard/PatchMon-Enhanced"
+														href="https://github.com/PatchMon/PatchMon"
 														target="_blank"
 														rel="noopener noreferrer"
 														className="flex items-center gap-3 px-3 py-3 bg-gray-50 dark:bg-gray-800 text-secondary-600 dark:text-secondary-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors min-h-[44px]"
@@ -1560,7 +1689,7 @@ const Layout = ({ children }) => {
 								<div className="hidden md:flex items-center gap-1">
 									{/* 1) GitHub */}
 									<a
-										href="https://github.com/MacJediWizard/PatchMon-Enhanced"
+										href="https://github.com/PatchMon/PatchMon"
 										target="_blank"
 										rel="noopener noreferrer"
 										className="flex items-center justify-center gap-1.5 w-auto px-2.5 h-10 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-secondary-300 hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm group relative"
@@ -1675,7 +1804,7 @@ const Layout = ({ children }) => {
 						</div>
 					</div>
 
-					<main className="flex-1 py-6 bg-secondary-50 dark:bg-transparent">
+					<main className="flex-1 py-6 bg-secondary-50 dark:bg-transparent pt-24">
 						<div className="px-4 sm:px-6 lg:px-8">{children}</div>
 					</main>
 				</div>

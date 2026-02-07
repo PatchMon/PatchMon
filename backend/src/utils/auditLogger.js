@@ -182,6 +182,7 @@ async function storeAuditLog(auditEntry) {
 		const prisma = getPrismaClient();
 		await prisma.audit_logs.create({
 			data: {
+				id: require("crypto").randomUUID(),
 				event: auditEntry.event,
 				user_id: auditEntry.userId,
 				target_user_id: auditEntry.targetUserId,
@@ -194,7 +195,10 @@ async function storeAuditLog(auditEntry) {
 			},
 		});
 	} catch (error) {
+		// Silently fail audit logging - don't break the application if audit table is missing
+		// This is important for backward compatibility and graceful degradation
 		logger.error("Failed to store audit log:", error.message);
+		// Don't throw - audit logging should never break core functionality
 	}
 }
 

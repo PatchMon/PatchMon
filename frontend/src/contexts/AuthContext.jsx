@@ -80,14 +80,23 @@ export const AuthProvider = ({ children }) => {
 
 		const validateSession = async () => {
 			try {
+				console.log("🔐 [AUTH] Validating session via /api/v1/auth/profile");
 				// First, try to validate via API using httpOnly cookies
 				const response = await fetch("/api/v1/auth/profile", {
 					credentials: "include",
 					signal: abortController.signal,
 				});
 
+				console.log(
+					"🔐 [AUTH] Profile validation response status:",
+					response.status,
+				);
 				if (response.ok) {
 					const data = await response.json();
+					console.log(
+						"🔐 [AUTH] Profile validation successful, user:",
+						data.user?.username,
+					);
 					if (!abortController.signal.aborted) {
 						setUser(data.user);
 						// Fetch permissions
@@ -95,9 +104,17 @@ export const AuthProvider = ({ children }) => {
 						setAuthPhase(AUTH_PHASES.READY);
 					}
 					return;
+				} else {
+					const errorData = await response.json().catch(() => ({}));
+					console.error(
+						"🔐 [AUTH] Profile validation failed:",
+						response.status,
+						errorData,
+					);
 				}
 			} catch (error) {
 				if (error.name === "AbortError") return;
+				console.error("🔐 [AUTH] Profile validation exception:", error);
 				devLog("Cookie-based auth failed:", error.message);
 			}
 
@@ -117,6 +134,8 @@ export const AuthProvider = ({ children }) => {
 
 	const login = async (username, password) => {
 		try {
+			console.log("🔐 [AUTH] Login attempt started for:", username);
+
 			// Get or generate device ID for TFA remember-me
 			let deviceId = localStorage.getItem("device_id");
 			if (!deviceId) {
@@ -135,6 +154,7 @@ export const AuthProvider = ({ children }) => {
 				localStorage.setItem("device_id", deviceId);
 			}
 
+			console.log("🔐 [AUTH] Sending login request to /api/v1/auth/login");
 			const response = await fetch("/api/v1/auth/login", {
 				method: "POST",
 				headers: {
@@ -145,17 +165,33 @@ export const AuthProvider = ({ children }) => {
 				body: JSON.stringify({ username, password }),
 			});
 
+			console.log("🔐 [AUTH] Login response status:", response.status);
+			console.log(
+				"🔐 [AUTH] Login response headers:",
+				Object.fromEntries(response.headers.entries()),
+			);
+
 			const data = await response.json();
+			console.log("🔐 [AUTH] Login response data:", {
+				message: data.message,
+				hasToken: !!data.token,
+				hasUser: !!data.user,
+				requiresTfa: data.requiresTfa,
+			});
 
 			if (response.ok) {
+				console.log("🔐 [AUTH] Login successful!");
+
 				// Check if TFA is required
 				if (data.requiresTfa) {
+					console.log("🔐 [AUTH] TFA required");
 					return { success: true, requiresTfa: true };
 				}
 
 				// Regular successful login
 				// Note: httpOnly cookies are set by the server for secure auth
 				// localStorage is used for backward compatibility and UI state only
+				console.log("🔐 [AUTH] Setting user state and token");
 				setToken(data.token);
 				setUser({
 					...data.user,
@@ -175,16 +211,22 @@ export const AuthProvider = ({ children }) => {
 				);
 
 				// Fetch user permissions after successful login
+				console.log("🔐 [AUTH] Fetching user permissions...");
 				const userPermissions = await fetchPermissions(data.token);
 				if (userPermissions) {
+					console.log("🔐 [AUTH] Permissions fetched:", userPermissions);
 					setPermissions(userPermissions);
+				} else {
+					console.warn("🔐 [AUTH] No permissions returned");
 				}
 
 				// Note: User preferences will be automatically fetched by ColorThemeContext
 				// when the component mounts, so no need to invalidate here
 
+				console.log("🔐 [AUTH] Login complete, returning success");
 				return { success: true };
 			} else {
+				console.error("🔐 [AUTH] Login failed with status:", response.status);
 				// Handle HTTP error responses (like 500 CORS errors)
 				devLog("HTTP error response:", response.status, data);
 
@@ -204,6 +246,7 @@ export const AuthProvider = ({ children }) => {
 				return { success: false, error: data.error || "Login failed" };
 			}
 		} catch (error) {
+			console.error("🔐 [AUTH] Login exception:", error);
 			devLog("Login error:", error);
 			devLog("Error response:", error.response);
 			devLog("Error message:", error.message);

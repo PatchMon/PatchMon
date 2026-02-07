@@ -162,7 +162,7 @@ CREATE TABLE "settings" (
     "updated_at" TIMESTAMP(3) NOT NULL,
     "update_interval" INTEGER NOT NULL DEFAULT 60,
     "auto_update" BOOLEAN NOT NULL DEFAULT false,
-    "github_repo_url" TEXT NOT NULL DEFAULT 'https://github.com/MacJediWizard/PatchMon-Enhanced.git',
+    "github_repo_url" TEXT NOT NULL DEFAULT 'https://github.com/PatchMon/PatchMon.git',
     "ssh_key_path" TEXT,
     "repository_type" TEXT NOT NULL DEFAULT 'public',
     "last_update_check" TIMESTAMP(3),

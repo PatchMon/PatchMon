@@ -252,7 +252,7 @@ const Options = () => {
 					Options
 				</h1>
 				<p className="text-secondary-600 dark:text-secondary-300 mt-1">
-					Configure PatchMonEnhanced parameters and user preferences
+					Configure PatchMon parameters and user preferences
 				</p>
 			</div>
 

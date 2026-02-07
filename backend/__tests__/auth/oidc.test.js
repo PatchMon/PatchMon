@@ -74,17 +74,29 @@ describe("OIDC Authentication Service", () => {
 			expect(oidcModule.isLocalAuthDisabled()).toBe(false);
 		});
 
-		it("should return true when OIDC_DISABLE_LOCAL_AUTH is true", () => {
+		it("should return false when OIDC_DISABLE_LOCAL_AUTH is true but OIDC is not enabled", () => {
 			process.env.OIDC_DISABLE_LOCAL_AUTH = "true";
+			process.env.OIDC_ENABLED = "false";
 			oidcModule = require("../../src/auth/oidc");
 
-			expect(oidcModule.isLocalAuthDisabled()).toBe(true);
+			// Local auth should NOT be disabled if OIDC is not enabled
+			expect(oidcModule.isLocalAuthDisabled()).toBe(false);
 		});
 
 		it("should return false when OIDC_DISABLE_LOCAL_AUTH is not set", () => {
 			delete process.env.OIDC_DISABLE_LOCAL_AUTH;
 			oidcModule = require("../../src/auth/oidc");
 
+			expect(oidcModule.isLocalAuthDisabled()).toBe(false);
+		});
+
+		it("should return false when OIDC_DISABLE_LOCAL_AUTH is true but OIDC client is not initialized", () => {
+			process.env.OIDC_DISABLE_LOCAL_AUTH = "true";
+			process.env.OIDC_ENABLED = "true";
+			// But client not initialized (missing config)
+			oidcModule = require("../../src/auth/oidc");
+
+			// Local auth should NOT be disabled if OIDC client is not initialized
 			expect(oidcModule.isLocalAuthDisabled()).toBe(false);
 		});
 	});
@@ -132,13 +144,15 @@ describe("OIDC Authentication Service", () => {
 			expect(config.buttonText).toBe("Login with Authentik");
 		});
 
-		it("should return disableLocalAuth true when configured", () => {
+		it("should return disableLocalAuth false when OIDC_DISABLE_LOCAL_AUTH is true but OIDC is not enabled", () => {
 			process.env.OIDC_DISABLE_LOCAL_AUTH = "true";
+			process.env.OIDC_ENABLED = "false";
 			oidcModule = require("../../src/auth/oidc");
 
 			const config = oidcModule.getOIDCConfig();
 
-			expect(config.disableLocalAuth).toBe(true);
+			// Should be false because OIDC is not enabled
+			expect(config.disableLocalAuth).toBe(false);
 		});
 	});
 

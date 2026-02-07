@@ -16,6 +16,7 @@ import {
 	Key,
 	MemoryStick,
 	Monitor,
+	Network,
 	Package,
 	RefreshCw,
 	RotateCcw,
@@ -226,7 +227,7 @@ const HostDetail = () => {
 		},
 	});
 
-	// Toggle agent auto-update mutation (updates PatchMonEnhanced agent script, not system packages)
+	// Toggle agent auto-update mutation (updates PatchMon agent script, not system packages)
 	const toggleAutoUpdateMutation = useMutation({
 		mutationFn: (auto_update) =>
 			adminHostsAPI
@@ -534,7 +535,7 @@ const HostDetail = () => {
 			// Optimistically update the cache with the new state
 			queryClient.setQueryData(["host-integrations", hostId], (oldData) => {
 				if (!oldData) return oldData;
-				return {
+				const updatedData = {
 					...oldData,
 					data: {
 						...oldData.data,
@@ -544,11 +545,18 @@ const HostDetail = () => {
 						},
 					},
 				};
+				// Update compliance mode if compliance was toggled
+				if (data.data.integration === "compliance") {
+					updatedData.compliance_mode =
+						data.data.mode || (data.data.enabled ? "enabled" : "disabled");
+					updatedData.data.compliance_mode = updatedData.compliance_mode;
+				}
+				return updatedData;
 			});
 			// Also invalidate to ensure we get fresh data
 			queryClient.invalidateQueries(["host-integrations", hostId]);
 			// If compliance was just enabled/disabled, poll for setup status
-			if (data.data.integration === "compliance") {
+			if (data.data.integration === "compliance" && data.data.enabled) {
 				// Poll multiple times to catch status updates (installation takes ~4-10s)
 				const pollTimes = [500, 2000, 4000, 6000, 8000, 10000, 15000];
 				pollTimes.forEach((delay) => {
@@ -567,7 +575,48 @@ const HostDetail = () => {
 		},
 	});
 
-	// Toggle compliance on-demand-only mode mutation
+	// Set compliance mode mutation (three-state: disabled, on-demand, enabled)
+	const setComplianceModeMutation = useMutation({
+		mutationFn: (mode) =>
+			adminHostsAPI.setComplianceMode(hostId, mode).then((res) => res.data),
+		onSuccess: (data) => {
+			// Update the cache with the new state
+			queryClient.setQueryData(["host-integrations", hostId], (oldData) => {
+				if (!oldData) return oldData;
+				return {
+					...oldData,
+					compliance_mode: data.data.mode,
+					data: {
+						...oldData.data,
+						compliance_mode: data.data.mode,
+						integrations: {
+							...oldData.data.integrations,
+							compliance: data.data.mode !== "disabled",
+						},
+					},
+				};
+			});
+			// Also invalidate to ensure we get fresh data
+			queryClient.invalidateQueries(["host-integrations", hostId]);
+			// If compliance was just enabled, poll for setup status
+			if (data.data.mode === "enabled" || data.data.mode === "on-demand") {
+				const pollTimes = [500, 2000, 4000, 6000, 8000, 10000, 15000];
+				pollTimes.forEach((delay) => {
+					safeSetTimeout(() => refetchComplianceStatus(), delay);
+				});
+			}
+		},
+		onError: (error) => {
+			// On error, refetch to get the actual state
+			refetchIntegrations();
+			console.error(
+				"Failed to set compliance mode:",
+				error.response?.data?.error || error.message,
+			);
+		},
+	});
+
+	// Legacy: Toggle compliance on-demand-only mode mutation (kept for backward compatibility)
 	const toggleComplianceOnDemandOnlyMutation = useMutation({
 		mutationFn: (onDemandOnly) =>
 			adminHostsAPI
@@ -580,6 +629,9 @@ const HostDetail = () => {
 				return {
 					...oldData,
 					compliance_on_demand_only: data.data.on_demand_only,
+					compliance_mode:
+						data.data.mode ||
+						(data.data.on_demand_only ? "on-demand" : "enabled"),
 				};
 			});
 			// Also invalidate to ensure we get fresh data
@@ -943,81 +995,83 @@ const HostDetail = () => {
 			</div>
 
 			{/* Compliance Quick View - Only shows when compliance is enabled and has scan data */}
-			{complianceLatest && complianceLatest.score !== undefined && (
-				<div className="mb-6">
-					<button
-						type="button"
-						onClick={() => handleTabChange("compliance")}
-						className="card p-4 w-full cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left"
-						title="View compliance details"
-					>
-						<div className="flex items-center justify-between">
-							<div className="flex items-center gap-4">
-								<div className="flex-shrink-0">
-									<div
-										className={`w-12 h-12 rounded-full flex items-center justify-center ${
-											complianceLatest.score >= 80
-												? "bg-green-100 dark:bg-green-900/30"
-												: complianceLatest.score >= 60
-													? "bg-yellow-100 dark:bg-yellow-900/30"
-													: "bg-red-100 dark:bg-red-900/30"
-										}`}
-									>
-										<span
-											className={`text-lg font-bold ${
+			{integrationsData?.data?.integrations?.compliance &&
+				complianceLatest &&
+				complianceLatest.score !== undefined && (
+					<div className="mb-6">
+						<button
+							type="button"
+							onClick={() => handleTabChange("compliance")}
+							className="card p-4 w-full cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left"
+							title="View compliance details"
+						>
+							<div className="flex items-center justify-between">
+								<div className="flex items-center gap-4">
+									<div className="flex-shrink-0">
+										<div
+											className={`w-12 h-12 rounded-full flex items-center justify-center ${
 												complianceLatest.score >= 80
-													? "text-green-600 dark:text-green-400"
+													? "bg-green-100 dark:bg-green-900/30"
 													: complianceLatest.score >= 60
-														? "text-yellow-600 dark:text-yellow-400"
-														: "text-red-600 dark:text-red-400"
+														? "bg-yellow-100 dark:bg-yellow-900/30"
+														: "bg-red-100 dark:bg-red-900/30"
 											}`}
 										>
-											{Math.round(complianceLatest.score)}%
+											<span
+												className={`text-lg font-bold ${
+													complianceLatest.score >= 80
+														? "text-green-600 dark:text-green-400"
+														: complianceLatest.score >= 60
+															? "text-yellow-600 dark:text-yellow-400"
+															: "text-red-600 dark:text-red-400"
+												}`}
+											>
+												{Math.round(complianceLatest.score)}%
+											</span>
+										</div>
+									</div>
+									<div>
+										<div className="flex items-center gap-2">
+											<Shield className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+											<p className="text-sm font-medium text-secondary-900 dark:text-white">
+												Compliance Score
+											</p>
+										</div>
+										<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-0.5">
+											{complianceLatest.compliance_profiles?.name ||
+												"Security Profile"}
+											{complianceLatest.completed_at && (
+												<span className="ml-2">
+													• {formatRelativeTime(complianceLatest.completed_at)}
+												</span>
+											)}
+										</p>
+									</div>
+								</div>
+								<div className="flex items-center gap-4 text-sm">
+									<div className="flex items-center gap-1.5">
+										<CheckCircle className="h-4 w-4 text-green-500" />
+										<span className="text-secondary-700 dark:text-secondary-300">
+											{complianceLatest.passed || 0}
+										</span>
+									</div>
+									<div className="flex items-center gap-1.5">
+										<X className="h-4 w-4 text-red-500" />
+										<span className="text-secondary-700 dark:text-secondary-300">
+											{complianceLatest.failed || 0}
+										</span>
+									</div>
+									<div className="flex items-center gap-1.5">
+										<AlertTriangle className="h-4 w-4 text-yellow-500" />
+										<span className="text-secondary-700 dark:text-secondary-300">
+											{complianceLatest.warnings || 0}
 										</span>
 									</div>
 								</div>
-								<div>
-									<div className="flex items-center gap-2">
-										<Shield className="h-4 w-4 text-primary-600 dark:text-primary-400" />
-										<p className="text-sm font-medium text-secondary-900 dark:text-white">
-											Compliance Score
-										</p>
-									</div>
-									<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-0.5">
-										{complianceLatest.compliance_profiles?.name ||
-											"Security Profile"}
-										{complianceLatest.completed_at && (
-											<span className="ml-2">
-												• {formatRelativeTime(complianceLatest.completed_at)}
-											</span>
-										)}
-									</p>
-								</div>
 							</div>
-							<div className="flex items-center gap-4 text-sm">
-								<div className="flex items-center gap-1.5">
-									<CheckCircle className="h-4 w-4 text-green-500" />
-									<span className="text-secondary-700 dark:text-secondary-300">
-										{complianceLatest.passed || 0}
-									</span>
-								</div>
-								<div className="flex items-center gap-1.5">
-									<X className="h-4 w-4 text-red-500" />
-									<span className="text-secondary-700 dark:text-secondary-300">
-										{complianceLatest.failed || 0}
-									</span>
-								</div>
-								<div className="flex items-center gap-1.5">
-									<AlertTriangle className="h-4 w-4 text-yellow-500" />
-									<span className="text-secondary-700 dark:text-secondary-300">
-										{complianceLatest.warnings || 0}
-									</span>
-								</div>
-							</div>
-						</div>
-					</button>
-				</div>
-			)}
+						</button>
+					</div>
+				)}
 
 			{/* Main Content - Full Width */}
 			<div className="flex-1 md:overflow-hidden">
@@ -1970,7 +2024,6 @@ const HostDetail = () => {
 										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
 								}`}
 							>
-								<Database className="h-4 w-4 inline mr-1" />
 								Docker
 							</button>
 						)}
@@ -1984,7 +2037,6 @@ const HostDetail = () => {
 										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
 								}`}
 							>
-								<Shield className="h-4 w-4 inline mr-1" />
 								Compliance
 							</button>
 						)}
@@ -1997,7 +2049,6 @@ const HostDetail = () => {
 									: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
 							}`}
 						>
-							<Terminal className="h-4 w-4 inline mr-1" />
 							Terminal
 						</button>
 					</div>
@@ -3043,7 +3094,7 @@ const HostDetail = () => {
 										<RefreshCw className="h-6 w-6 animate-spin text-primary-600" />
 									</div>
 								) : (
-									<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+									<div className="grid grid-cols-1 gap-4">
 										{/* Docker Integration */}
 										<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
 											<div className="flex items-start justify-between gap-4">
@@ -3347,128 +3398,137 @@ const HostDetail = () => {
 													)}
 												</div>
 												<div className="flex-shrink-0">
-													<button
-														type="button"
-														onClick={() =>
-															toggleIntegrationMutation.mutate({
-																integrationName: "compliance",
-																enabled:
-																	!integrationsData?.data?.integrations
-																		?.compliance,
-															})
-														}
-														disabled={
-															toggleIntegrationMutation.isPending ||
+													{/* Three-state compliance mode selector - small inline */}
+													{(() => {
+														const currentMode =
+															integrationsData?.data?.compliance_mode ||
+															integrationsData?.compliance_mode ||
+															(integrationsData?.data?.integrations?.compliance
+																? integrationsData?.data
+																		?.compliance_on_demand_only ||
+																	integrationsData?.compliance_on_demand_only
+																	? "on-demand"
+																	: "enabled"
+																: "disabled");
+														const isDisabled =
+															setComplianceModeMutation.isPending ||
 															!wsStatus?.connected ||
 															complianceSetupStatus?.status?.status ===
 																"installing" ||
 															complianceSetupStatus?.status?.status ===
-																"removing"
-														}
-														title={
-															!wsStatus?.connected
-																? "Agent is not connected"
-																: complianceSetupStatus?.status?.status ===
-																		"installing"
-																	? "Installation in progress..."
-																	: complianceSetupStatus?.status?.status ===
-																			"removing"
-																		? "Removal in progress..."
-																		: integrationsData?.data?.integrations
-																					?.compliance
-																			? "Disable compliance scanning"
-																			: "Enable compliance scanning"
-														}
-														className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
-															integrationsData?.data?.integrations?.compliance
-																? "bg-primary-600 dark:bg-primary-500"
-																: "bg-secondary-200 dark:bg-secondary-600"
-														} ${
-															toggleIntegrationMutation.isPending ||
-															!integrationsData?.data?.connected ||
-															complianceSetupStatus?.status?.status ===
-																"installing" ||
-															complianceSetupStatus?.status?.status ===
-																"removing"
-																? "opacity-50 cursor-not-allowed"
-																: ""
-														}`}
-													>
-														<span
-															className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-																integrationsData?.data?.integrations?.compliance
-																	? "translate-x-5"
-																	: "translate-x-1"
-															}`}
-														/>
-													</button>
+																"removing";
+
+														return (
+															<div className="flex flex-col gap-0.5 bg-secondary-100 dark:bg-secondary-800 rounded-md p-0.5">
+																<button
+																	type="button"
+																	onClick={() =>
+																		setComplianceModeMutation.mutate("disabled")
+																	}
+																	disabled={isDisabled}
+																	title={
+																		isDisabled
+																			? "Agent is not connected or operation in progress"
+																			: "Disable compliance scanning"
+																	}
+																	className={`w-full px-2 py-1 text-xs font-medium rounded transition-colors ${
+																		currentMode === "disabled"
+																			? "bg-white dark:bg-secondary-700 text-secondary-900 dark:text-secondary-100 shadow-sm"
+																			: "text-secondary-600 dark:text-secondary-400 hover:text-secondary-900 dark:hover:text-secondary-100"
+																	} ${
+																		isDisabled
+																			? "opacity-50 cursor-not-allowed"
+																			: "cursor-pointer"
+																	}`}
+																>
+																	Disabled
+																</button>
+																<button
+																	type="button"
+																	onClick={() =>
+																		setComplianceModeMutation.mutate(
+																			"on-demand",
+																		)
+																	}
+																	disabled={isDisabled}
+																	title={
+																		isDisabled
+																			? "Agent is not connected or operation in progress"
+																			: "Enable compliance scanning (on-demand only - runs when triggered from UI)"
+																	}
+																	className={`w-full px-2 py-1 text-xs font-medium rounded transition-colors ${
+																		currentMode === "on-demand"
+																			? "bg-white dark:bg-secondary-700 text-secondary-900 dark:text-secondary-100 shadow-sm"
+																			: "text-secondary-600 dark:text-secondary-400 hover:text-secondary-900 dark:hover:text-secondary-100"
+																	} ${
+																		isDisabled
+																			? "opacity-50 cursor-not-allowed"
+																			: "cursor-pointer"
+																	}`}
+																>
+																	On-Demand
+																</button>
+																<button
+																	type="button"
+																	onClick={() =>
+																		setComplianceModeMutation.mutate("enabled")
+																	}
+																	disabled={isDisabled}
+																	title={
+																		isDisabled
+																			? "Agent is not connected or operation in progress"
+																			: "Enable compliance scanning with automatic scheduled scans"
+																	}
+																	className={`w-full px-2 py-1 text-xs font-medium rounded transition-colors ${
+																		currentMode === "enabled"
+																			? "bg-white dark:bg-secondary-700 text-secondary-900 dark:text-secondary-100 shadow-sm"
+																			: "text-secondary-600 dark:text-secondary-400 hover:text-secondary-900 dark:hover:text-secondary-100"
+																	} ${
+																		isDisabled
+																			? "opacity-50 cursor-not-allowed"
+																			: "cursor-pointer"
+																	}`}
+																>
+																	Enabled
+																</button>
+															</div>
+														);
+													})()}
 												</div>
 											</div>
 											{!wsStatus?.connected && (
 												<p className="text-xs text-warning-600 dark:text-warning-400 mt-2">
-													Agent must be connected via WebSocket to toggle
-													integrations
+													Agent must be connected via WebSocket to change
+													compliance settings
 												</p>
 											)}
-
-											{/* On-demand only toggle - only shown when compliance is enabled */}
-											{integrationsData?.data?.integrations?.compliance && (
-												<div className="mt-4 pt-4 border-t border-secondary-200 dark:border-secondary-700">
-													<div className="flex items-center justify-between">
-														<div className="flex-1 min-w-0 pr-4">
-															<div className="flex items-center gap-2">
-																<span className="text-sm font-medium text-secondary-900 dark:text-secondary-100">
-																	On-Demand Only
-																</span>
-															</div>
-															<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-1">
-																When enabled, compliance scans only run when
-																triggered from the UI, not during scheduled
-																reports
-															</p>
-														</div>
-														<div className="flex-shrink-0">
-															<button
-																type="button"
-																onClick={() =>
-																	toggleComplianceOnDemandOnlyMutation.mutate(
-																		!integrationsData?.compliance_on_demand_only,
-																	)
-																}
-																disabled={
-																	toggleComplianceOnDemandOnlyMutation.isPending ||
-																	!wsStatus?.connected
-																}
-																title={
-																	!wsStatus?.connected
-																		? "Agent is not connected"
-																		: integrationsData?.compliance_on_demand_only
-																			? "Disable on-demand only mode"
-																			: "Enable on-demand only mode"
-																}
-																className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
-																	integrationsData?.compliance_on_demand_only
-																		? "bg-primary-600 dark:bg-primary-500"
-																		: "bg-secondary-200 dark:bg-secondary-600"
-																} ${
-																	toggleComplianceOnDemandOnlyMutation.isPending ||
-																	!wsStatus?.connected
-																		? "opacity-50 cursor-not-allowed"
-																		: ""
-																}`}
-															>
-																<span
-																	className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-																		integrationsData?.compliance_on_demand_only
-																			? "translate-x-5"
-																			: "translate-x-1"
-																	}`}
-																/>
-															</button>
-														</div>
-													</div>
-												</div>
-											)}
+											{/* Mode description */}
+											{(() => {
+												const currentMode =
+													integrationsData?.data?.compliance_mode ||
+													integrationsData?.compliance_mode ||
+													(integrationsData?.data?.integrations?.compliance
+														? integrationsData?.data
+																?.compliance_on_demand_only ||
+															integrationsData?.compliance_on_demand_only
+															? "on-demand"
+															: "enabled"
+														: "disabled");
+												const modeDescriptions = {
+													disabled:
+														"Compliance scanning is disabled. No scans will run.",
+													"on-demand":
+														"Compliance scans only run when manually triggered from the UI, not during scheduled reports.",
+													enabled:
+														"Compliance scanning is enabled with automatic scheduled scans during regular reports.",
+												};
+												return (
+													<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-2">
+														{modeDescriptions[currentMode] ||
+															modeDescriptions.disabled}
+													</p>
+												);
+											})()}
 										</div>
 									</div>
 								)}
@@ -3491,107 +3551,7 @@ const HostDetail = () => {
 									</div>
 								) : (
 									<>
-										{/* Docker Header with Refresh Button */}
-										<div className="flex items-center justify-between mb-4">
-											<div className="flex items-center gap-2">
-												{dockerRefreshMessage.text && (
-													<span
-														className={`text-sm ${dockerRefreshMessage.isError ? "text-red-600" : "text-green-600"}`}
-													>
-														{dockerRefreshMessage.text}
-													</span>
-												)}
-											</div>
-											<button
-												onClick={() => refreshDockerMutation.mutate()}
-												disabled={refreshDockerMutation.isPending}
-												className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-900/20 hover:bg-primary-100 dark:hover:bg-primary-900/30 rounded-lg border border-primary-200 dark:border-primary-800 transition-colors disabled:opacity-50"
-												title="Refresh Docker data from agent"
-											>
-												<RefreshCw
-													className={`h-4 w-4 ${refreshDockerMutation.isPending ? "animate-spin" : ""}`}
-												/>
-												Refresh
-											</button>
-										</div>
-
-										{/* Summary Stats */}
-										{(() => {
-											// Calculate stacks from container labels
-											const stacks = new Set();
-											dockerData.containers?.forEach((c) => {
-												const project =
-													c.labels?.["com.docker.compose.project"];
-												if (project) stacks.add(project);
-											});
-											const stackCount = stacks.size;
-
-											return (
-												<div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-													<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
-														<div className="flex items-center gap-2 mb-1">
-															<div className="w-2 h-2 rounded-full bg-green-500" />
-															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
-																Running
-															</span>
-														</div>
-														<p className="text-xl font-bold text-secondary-900 dark:text-white">
-															{dockerData.containers?.filter(
-																(c) => c.state === "running",
-															).length || 0}
-														</p>
-													</div>
-													<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
-														<div className="flex items-center gap-2 mb-1">
-															<div className="w-2 h-2 rounded-full bg-red-500" />
-															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
-																Stopped
-															</span>
-														</div>
-														<p className="text-xl font-bold text-secondary-900 dark:text-white">
-															{dockerData.containers?.filter(
-																(c) => c.state !== "running",
-															).length || 0}
-														</p>
-													</div>
-													<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
-														<div className="flex items-center gap-2 mb-1">
-															<Server className="w-3 h-3 text-orange-500" />
-															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
-																Stacks
-															</span>
-														</div>
-														<p className="text-xl font-bold text-secondary-900 dark:text-white">
-															{stackCount}
-														</p>
-													</div>
-													<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
-														<div className="flex items-center gap-2 mb-1">
-															<Package className="w-3 h-3 text-blue-500" />
-															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
-																Images
-															</span>
-														</div>
-														<p className="text-xl font-bold text-secondary-900 dark:text-white">
-															{dockerData.images?.length || 0}
-														</p>
-													</div>
-													<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 border border-secondary-200 dark:border-secondary-600">
-														<div className="flex items-center gap-2 mb-1">
-															<HardDrive className="w-3 h-3 text-purple-500" />
-															<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
-																Volumes
-															</span>
-														</div>
-														<p className="text-xl font-bold text-secondary-900 dark:text-white">
-															{dockerData.volumes?.length || 0}
-														</p>
-													</div>
-												</div>
-											);
-										})()}
-
-										{/* Docker Sub-tabs */}
+										{/* Docker Sub-tabs with Refresh Button */}
 										{(() => {
 											// Calculate stacks for tab count
 											const stacksSet = new Set();
@@ -3603,79 +3563,99 @@ const HostDetail = () => {
 											const stackCount = stacksSet.size;
 
 											return (
-												<div className="flex gap-2 border-b border-secondary-200 dark:border-secondary-600 pb-2 flex-wrap">
-													<button
-														type="button"
-														onClick={() => setDockerSubTab("stacks")}
-														className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
-															dockerSubTab === "stacks"
-																? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
-																: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
-														}`}
-													>
-														Stacks
-														<span className="px-1.5 py-0.5 text-xs rounded bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400">
-															{stackCount}
-														</span>
-													</button>
-													<button
-														type="button"
-														onClick={() => setDockerSubTab("containers")}
-														className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
-															dockerSubTab === "containers"
-																? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
-																: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
-														}`}
-													>
-														Containers
-														<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
-															{dockerData.containers?.length || 0}
-														</span>
-													</button>
-													<button
-														type="button"
-														onClick={() => setDockerSubTab("running")}
-														className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
-															dockerSubTab === "running"
-																? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
-																: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
-														}`}
-													>
-														Running
-														<span className="px-1.5 py-0.5 text-xs rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
-															{dockerData.containers?.filter(
-																(c) => c.state === "running",
-															).length || 0}
-														</span>
-													</button>
-													<button
-														type="button"
-														onClick={() => setDockerSubTab("images")}
-														className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
-															dockerSubTab === "images"
-																? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
-																: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
-														}`}
-													>
-														Images
-														<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
-															{dockerData.images?.length || 0}
-														</span>
-													</button>
-													<button
-														type="button"
-														onClick={() => setDockerSubTab("volumes")}
-														className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
-															dockerSubTab === "volumes"
-																? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
-																: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
-														}`}
-													>
-														Volumes
-														<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
-															{dockerData.volumes?.length || 0}
-														</span>
-													</button>
+												<div className="flex items-center justify-between gap-2 border-b border-secondary-200 dark:border-secondary-600 pb-2 flex-wrap">
+													<div className="flex gap-2 flex-wrap">
+														<button
+															type="button"
+															onClick={() => setDockerSubTab("stacks")}
+															className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+																dockerSubTab === "stacks"
+																	? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+																	: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+															}`}
+														>
+															Stacks
+															<span className="px-1.5 py-0.5 text-xs rounded bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400">
+																{stackCount}
+															</span>
+														</button>
+														<button
+															type="button"
+															onClick={() => setDockerSubTab("containers")}
+															className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+																dockerSubTab === "containers"
+																	? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+																	: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+															}`}
+														>
+															Containers
+															<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
+																{dockerData.containers?.length || 0}
+															</span>
+														</button>
+														<button
+															type="button"
+															onClick={() => setDockerSubTab("images")}
+															className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+																dockerSubTab === "images"
+																	? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+																	: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+															}`}
+														>
+															Images
+															<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
+																{dockerData.images?.length || 0}
+															</span>
+														</button>
+														<button
+															type="button"
+															onClick={() => setDockerSubTab("volumes")}
+															className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+																dockerSubTab === "volumes"
+																	? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+																	: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+															}`}
+														>
+															Volumes
+															<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
+																{dockerData.volumes?.length || 0}
+															</span>
+														</button>
+														<button
+															type="button"
+															onClick={() => setDockerSubTab("networks")}
+															className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+																dockerSubTab === "networks"
+																	? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+																	: "text-secondary-500 dark:text-secondary-400 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+															}`}
+														>
+															Networks
+															<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
+																{dockerData.networks?.length || 0}
+															</span>
+														</button>
+													</div>
+													<div className="flex items-center gap-2">
+														{dockerRefreshMessage.text && (
+															<span
+																className={`text-xs ${dockerRefreshMessage.isError ? "text-red-600" : "text-green-600"}`}
+															>
+																{dockerRefreshMessage.text}
+															</span>
+														)}
+														<button
+															onClick={() => refreshDockerMutation.mutate()}
+															disabled={refreshDockerMutation.isPending}
+															className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-medium text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-900/20 hover:bg-primary-100 dark:hover:bg-primary-900/30 rounded border border-primary-200 dark:border-primary-800 transition-colors disabled:opacity-50"
+															title="Re-sync Docker data from agent"
+														>
+															<RefreshCw
+																className={`h-3.5 w-3.5 ${refreshDockerMutation.isPending ? "animate-spin" : ""}`}
+															/>
+															Re-sync
+														</button>
+													</div>
 												</div>
 											);
 										})()}
@@ -3774,10 +3754,15 @@ const HostDetail = () => {
 																							}`}
 																						/>
 																						<div>
-																							<p className="text-sm font-medium text-secondary-900 dark:text-white">
-																								{container.labels?.[
-																									"com.docker.compose.service"
-																								] || container.name}
+																							<p className="text-sm font-medium">
+																								<Link
+																									to={`/docker/containers/${container.id}`}
+																									className="text-primary-600 dark:text-primary-400 hover:text-primary-900 dark:hover:text-primary-300"
+																								>
+																									{container.labels?.[
+																										"com.docker.compose.service"
+																									] || container.name}
+																								</Link>
 																							</p>
 																							<p className="text-xs text-secondary-500 dark:text-secondary-400 font-mono">
 																								{container.image}
@@ -3823,9 +3808,12 @@ const HostDetail = () => {
 																									: "bg-yellow-500"
 																						}`}
 																					/>
-																					<span className="text-sm text-secondary-900 dark:text-white">
+																					<Link
+																						to={`/docker/containers/${container.id}`}
+																						className="text-sm text-primary-600 dark:text-primary-400 hover:text-primary-900 dark:hover:text-primary-300"
+																					>
 																						{container.name}
-																					</span>
+																					</Link>
 																				</div>
 																				<span className="text-xs text-secondary-500 dark:text-secondary-400 font-mono">
 																					{container.image}
@@ -3890,8 +3878,13 @@ const HostDetail = () => {
 																				{container.state}
 																			</span>
 																		</td>
-																		<td className="py-2 font-medium text-secondary-900 dark:text-white">
-																			{container.name}
+																		<td className="py-2 font-medium">
+																			<Link
+																				to={`/docker/containers/${container.id}`}
+																				className="text-primary-600 dark:text-primary-400 hover:text-primary-900 dark:hover:text-primary-300"
+																			>
+																				{container.name}
+																			</Link>
 																		</td>
 																		<td
 																			className="py-2 font-mono text-xs text-secondary-600 dark:text-secondary-300 max-w-[200px] truncate"
@@ -3900,22 +3893,36 @@ const HostDetail = () => {
 																			{container.image}
 																		</td>
 																		<td className="py-2 text-xs text-secondary-500 dark:text-secondary-400">
-																			{container.ports?.length > 0 ? (
+																			{container.ports &&
+																			Object.keys(container.ports).length >
+																				0 ? (
 																				<div className="flex flex-wrap gap-1">
-																					{container.ports
-																						.slice(0, 2)
-																						.map((port, idx) => (
-																							<span
-																								key={idx}
-																								className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs"
-																							>
-																								{port.PublicPort ||
-																									port.PrivatePort}
-																							</span>
-																						))}
-																					{container.ports.length > 2 && (
+																					{Object.entries(container.ports)
+																						.slice(0, 3)
+																						.map(
+																							([portKey, portValue], idx) => {
+																								// portKey is like "80/tcp" (private port), portValue is like "0.0.0.0:8080" (public binding)
+																								// Format: "0.0.0.0:8080->80/tcp" or just "80/tcp" if no public port
+																								const portStr = portValue
+																									? `${portValue}->${portKey}`
+																									: portKey;
+																								return (
+																									<span
+																										key={idx}
+																										className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs font-mono"
+																										title={portStr}
+																									>
+																										{portStr}
+																									</span>
+																								);
+																							},
+																						)}
+																					{Object.keys(container.ports).length >
+																						3 && (
 																						<span className="text-secondary-400">
-																							+{container.ports.length - 2}
+																							+
+																							{Object.keys(container.ports)
+																								.length - 3}
 																						</span>
 																					)}
 																				</div>
@@ -3932,69 +3939,6 @@ const HostDetail = () => {
 																))}
 															</tbody>
 														</table>
-													</div>
-												)}
-											</div>
-										)}
-
-										{/* Running Sub-tab */}
-										{dockerSubTab === "running" && (
-											<div className="space-y-2">
-												{dockerData.containers?.filter(
-													(c) => c.state === "running",
-												).length === 0 ? (
-													<p className="text-secondary-500 dark:text-secondary-400 text-center py-4">
-														No running containers
-													</p>
-												) : (
-													<div className="grid gap-3">
-														{dockerData.containers
-															?.filter((c) => c.state === "running")
-															.map((container) => (
-																<div
-																	key={container.id}
-																	className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600"
-																>
-																	<div className="flex items-start justify-between">
-																		<div className="flex items-center gap-3">
-																			<div className="w-10 h-10 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
-																				<span className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
-																			</div>
-																			<div>
-																				<h4 className="font-medium text-secondary-900 dark:text-white">
-																					{container.name}
-																				</h4>
-																				<p className="text-xs font-mono text-secondary-500 dark:text-secondary-400 max-w-[250px] truncate">
-																					{container.image}
-																				</p>
-																			</div>
-																		</div>
-																		<span className="text-xs text-secondary-500 dark:text-secondary-400">
-																			{container.status}
-																		</span>
-																	</div>
-																	{container.ports?.length > 0 && (
-																		<div className="mt-3 pt-3 border-t border-secondary-200 dark:border-secondary-600">
-																			<p className="text-xs text-secondary-500 dark:text-secondary-400 mb-1.5">
-																				Ports
-																			</p>
-																			<div className="flex flex-wrap gap-1.5">
-																				{container.ports.map((port, idx) => (
-																					<span
-																						key={idx}
-																						className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs font-mono"
-																					>
-																						{port.PublicPort
-																							? `${port.PublicPort}:${port.PrivatePort}`
-																							: port.PrivatePort}
-																						/{port.Type || "tcp"}
-																					</span>
-																				))}
-																			</div>
-																		</div>
-																	)}
-																</div>
-															))}
 													</div>
 												)}
 											</div>
@@ -4029,10 +3973,15 @@ const HostDetail = () => {
 																		className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
 																	>
 																		<td
-																			className="py-2 font-mono text-secondary-900 dark:text-white max-w-[200px] truncate"
+																			className="py-2 font-mono max-w-[200px] truncate"
 																			title={image.repository}
 																		>
-																			{image.repository || "<none>"}
+																			<Link
+																				to={`/docker/images/${image.id}`}
+																				className="text-primary-600 dark:text-primary-400 hover:text-primary-900 dark:hover:text-primary-300"
+																			>
+																				{image.repository || "<none>"}
+																			</Link>
 																		</td>
 																		<td className="py-2">
 																			<span className="px-2 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 rounded text-xs font-mono">
@@ -4080,10 +4029,15 @@ const HostDetail = () => {
 																		className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
 																	>
 																		<td
-																			className="py-2 font-mono text-secondary-900 dark:text-white max-w-[200px] truncate"
+																			className="py-2 font-mono max-w-[200px] truncate"
 																			title={volume.name}
 																		>
-																			{volume.name}
+																			<Link
+																				to={`/docker/volumes/${volume.name}`}
+																				className="text-primary-600 dark:text-primary-400 hover:text-primary-900 dark:hover:text-primary-300"
+																			>
+																				{volume.name}
+																			</Link>
 																		</td>
 																		<td className="py-2">
 																			<span className="px-2 py-0.5 bg-secondary-100 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-300 rounded text-xs">
@@ -4102,6 +4056,174 @@ const HostDetail = () => {
 														</table>
 													</div>
 												)}
+											</div>
+										)}
+
+										{/* Networks Sub-tab */}
+										{dockerSubTab === "networks" && (
+											<div className="space-y-2">
+												{dockerData.networks?.length === 0 ? (
+													<p className="text-secondary-500 dark:text-secondary-400 text-center py-4">
+														No networks found
+													</p>
+												) : (
+													<div className="overflow-x-auto">
+														<table className="w-full text-sm">
+															<thead>
+																<tr className="text-left text-xs text-secondary-500 dark:text-secondary-400 border-b border-secondary-200 dark:border-secondary-600">
+																	<th className="pb-2 font-medium">Name</th>
+																	<th className="pb-2 font-medium">Driver</th>
+																	<th className="pb-2 font-medium">Scope</th>
+																	<th className="pb-2 font-medium">Subnet</th>
+																</tr>
+															</thead>
+															<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
+																{dockerData.networks?.map((network) => (
+																	<tr
+																		key={network.id || network.name}
+																		className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+																	>
+																		<td
+																			className="py-2 font-mono max-w-[200px] truncate"
+																			title={network.name}
+																		>
+																			<Link
+																				to={`/docker/networks/${network.id || network.name}`}
+																				className="text-primary-600 dark:text-primary-400 hover:text-primary-900 dark:hover:text-primary-300"
+																			>
+																				{network.name}
+																			</Link>
+																		</td>
+																		<td className="py-2">
+																			<span className="px-2 py-0.5 bg-secondary-100 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-300 rounded text-xs">
+																				{network.driver || "bridge"}
+																			</span>
+																		</td>
+																		<td className="py-2 text-xs text-secondary-500 dark:text-secondary-400">
+																			{network.scope || "-"}
+																		</td>
+																		<td className="py-2 text-xs font-mono text-secondary-500 dark:text-secondary-400">
+																			{network.ipam?.config?.[0]?.subnet || "-"}
+																		</td>
+																	</tr>
+																))}
+															</tbody>
+														</table>
+													</div>
+												)}
+											</div>
+										)}
+
+										{/* Ports Sub-tab */}
+										{dockerSubTab === "ports" && (
+											<div className="space-y-2">
+												{(() => {
+													// Collect all ports from all containers
+													const allPorts = [];
+													dockerData.containers?.forEach((container) => {
+														if (container.ports && container.ports.length > 0) {
+															container.ports.forEach((port) => {
+																allPorts.push({
+																	containerName: container.name,
+																	containerId: container.id,
+																	containerState: container.state,
+																	publicPort: port.PublicPort,
+																	privatePort: port.PrivatePort,
+																	type: port.Type || "tcp",
+																	ip: port.IP || "0.0.0.0",
+																});
+															});
+														}
+													});
+
+													if (allPorts.length === 0) {
+														return (
+															<p className="text-secondary-500 dark:text-secondary-400 text-center py-4">
+																No ports found
+															</p>
+														);
+													}
+
+													return (
+														<div className="overflow-x-auto">
+															<table className="w-full text-sm">
+																<thead>
+																	<tr className="text-left text-xs text-secondary-500 dark:text-secondary-400 border-b border-secondary-200 dark:border-secondary-600">
+																		<th className="pb-2 font-medium">
+																			Container
+																		</th>
+																		<th className="pb-2 font-medium">
+																			Public Port
+																		</th>
+																		<th className="pb-2 font-medium">
+																			Private Port
+																		</th>
+																		<th className="pb-2 font-medium">Type</th>
+																		<th className="pb-2 font-medium">IP</th>
+																		<th className="pb-2 font-medium">Status</th>
+																	</tr>
+																</thead>
+																<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
+																	{allPorts.map((port, idx) => (
+																		<tr
+																			key={`${port.containerId}-${idx}`}
+																			className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+																		>
+																			<td className="py-2 font-medium text-secondary-900 dark:text-white">
+																				{port.containerName}
+																			</td>
+																			<td className="py-2">
+																				{port.publicPort ? (
+																					<span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs font-mono">
+																						{port.publicPort}
+																					</span>
+																				) : (
+																					<span className="text-secondary-400">
+																						-
+																					</span>
+																				)}
+																			</td>
+																			<td className="py-2">
+																				<span className="px-2 py-0.5 bg-secondary-100 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-300 rounded text-xs font-mono">
+																					{port.privatePort}
+																				</span>
+																			</td>
+																			<td className="py-2 text-xs text-secondary-500 dark:text-secondary-400 uppercase">
+																				{port.type}
+																			</td>
+																			<td className="py-2 text-xs font-mono text-secondary-500 dark:text-secondary-400">
+																				{port.ip}
+																			</td>
+																			<td className="py-2">
+																				<span
+																					className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+																						port.containerState === "running"
+																							? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+																							: port.containerState === "exited"
+																								? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+																								: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400"
+																					}`}
+																				>
+																					<span
+																						className={`w-1.5 h-1.5 rounded-full ${
+																							port.containerState === "running"
+																								? "bg-green-500"
+																								: port.containerState ===
+																										"exited"
+																									? "bg-red-500"
+																									: "bg-yellow-500"
+																						}`}
+																					/>
+																					{port.containerState}
+																				</span>
+																			</td>
+																		</tr>
+																	))}
+																</tbody>
+															</table>
+														</div>
+													);
+												})()}
 											</div>
 										)}
 									</>

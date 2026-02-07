@@ -1997,42 +1997,61 @@ const ComplianceTab = ({
 
 						{/* Current Scan Header - Shows which scan's results are displayed */}
 						{latestScan && (
-							<div className="flex items-center justify-between px-4 py-3 bg-secondary-800 rounded-lg border border-secondary-700">
-								<div className="flex items-center gap-4">
-									<div
-										className={`p-2 rounded-lg ${isDockerBenchResults ? "bg-blue-900/30" : "bg-green-900/30"}`}
-									>
-										{isDockerBenchResults ? (
-											<Container className="h-5 w-5 text-blue-400" />
-										) : (
-											<Shield className="h-5 w-5 text-green-400" />
-										)}
+							<>
+								<div className="flex items-center justify-between px-4 py-3 bg-secondary-800 rounded-lg border border-secondary-700">
+									<div className="flex items-center gap-4">
+										<div
+											className={`p-2 rounded-lg ${isDockerBenchResults ? "bg-blue-900/30" : "bg-green-900/30"}`}
+										>
+											{isDockerBenchResults ? (
+												<Container className="h-5 w-5 text-blue-400" />
+											) : (
+												<Shield className="h-5 w-5 text-green-400" />
+											)}
+										</div>
+										<div>
+											<p className="text-white font-medium">
+												{latestScan.compliance_profiles?.name ||
+													(isDockerBenchResults ? "Docker Bench" : "OpenSCAP")}
+											</p>
+											<p className="text-xs text-secondary-400">
+												{new Date(latestScan.completed_at).toLocaleString()} •{" "}
+												{latestScan.total_rules} rules evaluated
+											</p>
+										</div>
 									</div>
-									<div>
-										<p className="text-white font-medium">
-											{latestScan.compliance_profiles?.name ||
-												(isDockerBenchResults ? "Docker Bench" : "OpenSCAP")}
-										</p>
-										<p className="text-xs text-secondary-400">
-											{new Date(latestScan.completed_at).toLocaleString()} •{" "}
-											{latestScan.total_rules} rules evaluated
-										</p>
+									<div className="flex items-center gap-3">
+										<ComplianceScore score={latestScan.score} size="md" />
+										<button
+											onClick={() => {
+												refetchLatest();
+												refetchHistory();
+											}}
+											className="p-2 hover:bg-secondary-700 rounded-lg transition-colors"
+											title="Refresh results"
+										>
+											<RefreshCw className="h-4 w-4 text-secondary-400" />
+										</button>
 									</div>
 								</div>
-								<div className="flex items-center gap-3">
-									<ComplianceScore score={latestScan.score} size="md" />
-									<button
-										onClick={() => {
-											refetchLatest();
-											refetchHistory();
-										}}
-										className="p-2 hover:bg-secondary-700 rounded-lg transition-colors"
-										title="Refresh results"
-									>
-										<RefreshCw className="h-4 w-4 text-secondary-400" />
-									</button>
-								</div>
-							</div>
+
+								{/* Display error message if scan has one (e.g., CPE mismatch) */}
+								{latestScan.error_message && (
+									<div className="p-4 rounded-lg bg-orange-900/30 border border-orange-700 text-orange-200">
+										<div className="flex items-start gap-3">
+											<AlertTriangle className="h-5 w-5 text-orange-400 flex-shrink-0 mt-0.5" />
+											<div>
+												<p className="font-medium text-orange-300">
+													Scan Warning
+												</p>
+												<p className="text-sm text-orange-200/80 mt-1">
+													{latestScan.error_message}
+												</p>
+											</div>
+										</div>
+									</div>
+								)}
+							</>
 						)}
 
 						{/* Loading State */}
@@ -3590,8 +3609,8 @@ const ComplianceTab = ({
 					</h3>
 					<div className="space-y-4 text-sm text-secondary-300">
 						<p>
-							PatchMonEnhanced uses industry-standard compliance scanning tools
-							to evaluate your systems against security benchmarks.
+							PatchMon uses industry-standard compliance scanning tools to
+							evaluate your systems against security benchmarks.
 						</p>
 						<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 							<div className="p-3 bg-secondary-700/30 rounded-lg">

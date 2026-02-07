@@ -325,7 +325,7 @@ const Login = () => {
 
 				// Fetch repository info (includes star count)
 				const repoResponse = await fetch(
-					"https://api.github.com/repos/MacJediWizard/PatchMon-Enhanced",
+					"https://api.github.com/repos/PatchMon/PatchMon",
 					{
 						headers: {
 							Accept: "application/vnd.github.v3+json",
@@ -345,7 +345,7 @@ const Login = () => {
 
 				// Fetch latest release
 				const releaseResponse = await fetch(
-					"https://api.github.com/repos/MacJediWizard/PatchMon-Enhanced/releases/latest",
+					"https://api.github.com/repos/PatchMon/PatchMon/releases/latest",
 					{
 						headers: {
 							Accept: "application/vnd.github.v3+json",
@@ -599,7 +599,7 @@ const Login = () => {
 								<div>
 									<img
 										src="/assets/logo_dark.png"
-										alt="PatchMonEnhanced"
+										alt="PatchMon"
 										className="h-16 mb-4"
 									/>
 									<p className="text-sm text-blue-200 font-medium tracking-wide uppercase">
@@ -653,7 +653,7 @@ const Login = () => {
 										)}
 
 										<a
-											href="https://github.com/MacJediWizard/PatchMon-Enhanced/releases/latest"
+											href="https://github.com/PatchMon/PatchMon/releases/latest"
 											target="_blank"
 											rel="noopener noreferrer"
 											className="inline-flex items-center gap-2 text-sm text-blue-300 hover:text-blue-200 transition-colors font-medium"
@@ -695,7 +695,7 @@ const Login = () => {
 								<div className="flex flex-wrap items-center gap-2">
 									{/* GitHub */}
 									<a
-										href="https://github.com/MacJediWizard/PatchMon-Enhanced"
+										href="https://github.com/PatchMon/PatchMon"
 										target="_blank"
 										rel="noopener noreferrer"
 										className="flex items-center justify-center gap-1.5 px-3 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
@@ -824,7 +824,7 @@ const Login = () => {
 											})()}`
 										: "/assets/favicon.svg"
 								}
-								alt="PatchMonEnhanced Logo"
+								alt="PatchMon Logo"
 								className="h-16 w-16"
 								onError={(e) => {
 									e.target.src = "/assets/favicon.svg";
@@ -832,9 +832,7 @@ const Login = () => {
 							/>
 						</div>
 						<h2 className="mt-6 text-center text-3xl font-extrabold text-secondary-900 dark:text-secondary-100">
-							{isSignupMode
-								? "Create PatchMonEnhanced Account"
-								: "Sign in to PatchMonEnhanced"}
+							{isSignupMode ? "Create PatchMon Account" : "Sign in to PatchMon"}
 						</h2>
 						<p className="mt-2 text-center text-sm text-secondary-600 dark:text-secondary-400">
 							Monitor and manage your Linux package updates
@@ -1084,7 +1082,7 @@ const Login = () => {
 													}`
 												: "/assets/favicon.svg"
 										}
-										alt="PatchMonEnhanced Logo"
+										alt="PatchMon Logo"
 										className="h-16 w-16"
 										onError={(e) => {
 											e.target.src = "/assets/favicon.svg";

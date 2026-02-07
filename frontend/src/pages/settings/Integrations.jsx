@@ -1,3 +1,4 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	AlertCircle,
 	BookOpen,
@@ -7,6 +8,7 @@ import {
 	Eye,
 	EyeOff,
 	Plus,
+	Save,
 	Server,
 	Shield,
 	Trash2,
@@ -14,7 +16,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import SettingsLayout from "../../components/SettingsLayout";
-import api from "../../utils/api";
+import api, { settingsAPI } from "../../utils/api";
 
 const Integrations = () => {
 	// Generate unique IDs for form elements
@@ -38,6 +40,15 @@ const Integrations = () => {
 	const [usage_type, setUsageType] = useState("proxmox-lxc");
 	const [selected_script_type, setSelectedScriptType] = useState("proxmox-lxc");
 	const [curl_flags, setCurlFlags] = useState("-s");
+
+	// Compliance mode settings state
+	const defaultComplianceModeId = useId();
+	const [complianceFormData, setComplianceFormData] = useState({
+		defaultComplianceMode: "on-demand",
+	});
+	const [complianceIsDirty, setComplianceIsDirty] = useState(false);
+	const [complianceToast, setComplianceToast] = useState(null);
+	const queryClient = useQueryClient();
 
 	// Form state
 	const [form_data, setFormData] = useState({
@@ -79,6 +90,60 @@ const Integrations = () => {
 					[resource]: updated_scopes,
 				},
 			};
+		});
+	};
+
+	// Fetch current settings for compliance mode
+	const { data: settings, isLoading: settingsLoading } = useQuery({
+		queryKey: ["settings"],
+		queryFn: () => settingsAPI.get().then((res) => res.data),
+	});
+
+	// Update compliance form data when settings are loaded
+	useEffect(() => {
+		if (settings) {
+			setComplianceFormData({
+				defaultComplianceMode: settings.default_compliance_mode || "on-demand",
+			});
+			setComplianceIsDirty(false);
+		}
+	}, [settings]);
+
+	// Update settings mutation for compliance mode
+	const updateComplianceSettingsMutation = useMutation({
+		mutationFn: (data) => {
+			return settingsAPI.update(data).then((res) => res.data);
+		},
+		onSuccess: () => {
+			queryClient.invalidateQueries(["settings"]);
+			setComplianceIsDirty(false);
+			setComplianceToast({
+				message: "Compliance settings saved successfully!",
+				type: "success",
+			});
+			setTimeout(() => setComplianceToast(null), 3000);
+		},
+		onError: (error) => {
+			setComplianceToast({
+				message:
+					error.response?.data?.error || "Failed to update compliance settings",
+				type: "error",
+			});
+			setTimeout(() => setComplianceToast(null), 3000);
+		},
+	});
+
+	const handleComplianceInputChange = (field, value) => {
+		setComplianceFormData((prev) => ({
+			...prev,
+			[field]: value,
+		}));
+		setComplianceIsDirty(true);
+	};
+
+	const handleComplianceSave = () => {
+		updateComplianceSettingsMutation.mutate({
+			default_compliance_mode: complianceFormData.defaultComplianceMode,
 		});
 	};
 
@@ -707,8 +772,8 @@ const Integrations = () => {
 												</h4>
 											</div>
 											<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-3">
-												Programmatic access to PatchMonEnhanced data with
-												granular scope-based permissions.
+												Programmatic access to PatchMon data with granular
+												scope-based permissions.
 											</p>
 											<a
 												href="https://docs.patchmon.net/books/patchmon-application-documentation/page/integration-api-documentation"
@@ -739,8 +804,8 @@ const Integrations = () => {
 												GetHomepage Widget Integration
 											</h3>
 											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-												Create API keys to display PatchMonEnhanced statistics
-												in your GetHomepage dashboard
+												Create API keys to display PatchMon statistics in your
+												GetHomepage dashboard
 											</p>
 										</div>
 									</div>
@@ -998,8 +1063,7 @@ const Integrations = () => {
 											Docker Inventory Collection
 										</h3>
 										<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-											Docker monitoring is now built into the PatchMonEnhanced
-											Go agent
+											Docker monitoring is now built into the PatchMon Go agent
 										</p>
 									</div>
 								</div>
@@ -1013,8 +1077,8 @@ const Integrations = () => {
 												Automatic Docker Discovery
 											</h4>
 											<p className="text-xs md:text-sm text-primary-800 dark:text-primary-300 mb-3">
-												The PatchMonEnhanced Go agent automatically discovers
-												Docker when it's available on your host and collects
+												The PatchMon Go agent automatically discovers Docker
+												when it's available on your host and collects
 												comprehensive inventory information:
 											</p>
 											<ul className="list-disc list-inside space-y-2 text-xs md:text-sm text-primary-800 dark:text-primary-300 ml-2">
@@ -1050,8 +1114,8 @@ const Integrations = () => {
 									</h4>
 									<ol className="list-decimal list-inside space-y-3 text-xs md:text-sm text-secondary-700 dark:text-secondary-300">
 										<li>
-											Install the PatchMonEnhanced Go agent on your host (see
-											the Hosts page for installation instructions)
+											Install the PatchMon Go agent on your host (see the Hosts
+											page for installation instructions)
 										</li>
 										<li>
 											The agent automatically detects if Docker is installed and
@@ -1059,7 +1123,7 @@ const Integrations = () => {
 										</li>
 										<li>
 											During each collection cycle, the agent gathers Docker
-											inventory data and sends it to the PatchMonEnhanced server
+											inventory data and sends it to the PatchMon server
 										</li>
 										<li>
 											View your complete Docker inventory (containers, images,
@@ -1103,10 +1167,7 @@ const Integrations = () => {
 										<div className="text-xs md:text-sm text-blue-800 dark:text-blue-200">
 											<p className="font-semibold mb-2">Requirements:</p>
 											<ul className="list-disc list-inside space-y-1 ml-2">
-												<li>
-													PatchMonEnhanced Go agent must be installed and
-													running
-												</li>
+												<li>PatchMon Go agent must be installed and running</li>
 												<li>Docker daemon must be installed and running</li>
 												<li>
 													Agent must have access to the Docker socket (
@@ -1129,6 +1190,53 @@ const Integrations = () => {
 						{/* Compliance Tab */}
 						{activeTab === "compliance" && (
 							<div className="space-y-6">
+								{/* Toast Notification */}
+								{complianceToast && (
+									<div
+										className={`rounded-lg shadow-lg border-2 p-4 flex items-start space-x-3 animate-in slide-in-from-top-5 ${
+											complianceToast.type === "success"
+												? "bg-green-50 dark:bg-green-900/90 border-green-500 dark:border-green-600"
+												: "bg-red-50 dark:bg-red-900/90 border-red-500 dark:border-red-600"
+										}`}
+									>
+										<div
+											className={`flex-shrink-0 rounded-full p-1 ${
+												complianceToast.type === "success"
+													? "bg-green-100 dark:bg-green-800"
+													: "bg-red-100 dark:bg-red-800"
+											}`}
+										>
+											{complianceToast.type === "success" ? (
+												<CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />
+											) : (
+												<AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+											)}
+										</div>
+										<div className="flex-1">
+											<p
+												className={`text-sm font-medium ${
+													complianceToast.type === "success"
+														? "text-green-800 dark:text-green-100"
+														: "text-red-800 dark:text-red-100"
+												}`}
+											>
+												{complianceToast.message}
+											</p>
+										</div>
+										<button
+											type="button"
+											onClick={() => setComplianceToast(null)}
+											className={`flex-shrink-0 rounded-lg p-1 transition-colors ${
+												complianceToast.type === "success"
+													? "hover:bg-green-100 dark:hover:bg-green-800 text-green-600 dark:text-green-400"
+													: "hover:bg-red-100 dark:hover:bg-red-800 text-red-600 dark:text-red-400"
+											}`}
+										>
+											<X className="h-4 w-4" />
+										</button>
+									</div>
+								)}
+
 								{/* Header */}
 								<div className="flex items-center gap-3">
 									<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
@@ -1139,9 +1247,106 @@ const Integrations = () => {
 											Compliance Scanning
 										</h3>
 										<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-											Security compliance scanning is built into the
-											PatchMonEnhanced Go agent
+											Security compliance scanning is built into the PatchMon Go
+											agent
 										</p>
+									</div>
+								</div>
+
+								{/* Default Compliance Mode Setting (Master Toggle) */}
+								<div className="p-4 bg-secondary-50 dark:bg-secondary-800/50 rounded-lg border border-secondary-200 dark:border-secondary-700">
+									<div className="flex items-center gap-2 mb-3">
+										<label
+											htmlFor={defaultComplianceModeId}
+											className="text-sm font-medium text-secondary-900 dark:text-secondary-100"
+										>
+											Default Compliance Mode
+										</label>
+										<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900/50 dark:text-primary-300">
+											Master
+										</span>
+									</div>
+									<p className="text-sm text-secondary-500 dark:text-secondary-400 mb-4">
+										Default compliance mode for all new hosts. Per-host settings
+										in the dashboard can override this default. This setting
+										applies to newly registered hosts.
+									</p>
+									<div className="flex flex-col gap-2">
+										{["disabled", "on-demand", "enabled"].map((modeOption) => (
+											<label
+												key={modeOption}
+												className={`flex items-center justify-between p-3 border-2 rounded-lg transition-all duration-200 cursor-pointer ${
+													complianceFormData.defaultComplianceMode ===
+													modeOption
+														? "border-primary-500 bg-primary-50 dark:bg-primary-900/20"
+														: "bg-white dark:bg-secondary-700 hover:border-secondary-400 dark:hover:border-secondary-500 border-secondary-300 dark:border-secondary-600"
+												}`}
+											>
+												<div className="flex items-center gap-3">
+													<input
+														type="radio"
+														name="defaultComplianceMode"
+														id={`${defaultComplianceModeId}-${modeOption}`}
+														value={modeOption}
+														checked={
+															complianceFormData.defaultComplianceMode ===
+															modeOption
+														}
+														onChange={() =>
+															handleComplianceInputChange(
+																"defaultComplianceMode",
+																modeOption,
+															)
+														}
+														className="h-4 w-4 text-primary-600 border-secondary-300 focus:ring-primary-500"
+													/>
+													<div>
+														<div className="text-sm font-medium text-secondary-700 dark:text-secondary-200 capitalize">
+															{modeOption === "on-demand"
+																? "On-Demand Only"
+																: modeOption}
+														</div>
+														<div className="text-xs text-secondary-500 dark:text-secondary-400">
+															{modeOption === "disabled" &&
+																"Compliance scanning is completely off for new hosts."}
+															{modeOption === "on-demand" &&
+																"Compliance scans run only when manually triggered from the UI for new hosts."}
+															{modeOption === "enabled" &&
+																"Compliance scans run automatically during scheduled reports for new hosts."}
+														</div>
+													</div>
+												</div>
+											</label>
+										))}
+									</div>
+									{/* Save Button */}
+									<div className="flex justify-end mt-4">
+										<button
+											type="button"
+											onClick={handleComplianceSave}
+											disabled={
+												!complianceIsDirty ||
+												updateComplianceSettingsMutation.isPending
+											}
+											className={`inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white w-full sm:w-auto ${
+												!complianceIsDirty ||
+												updateComplianceSettingsMutation.isPending
+													? "bg-secondary-400 cursor-not-allowed"
+													: "bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+											}`}
+										>
+											{updateComplianceSettingsMutation.isPending ? (
+												<>
+													<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+													Saving...
+												</>
+											) : (
+												<>
+													<Save className="h-4 w-4 mr-2" />
+													Save Settings
+												</>
+											)}
+										</button>
 									</div>
 								</div>
 
@@ -1154,9 +1359,9 @@ const Integrations = () => {
 												Automatic Security Compliance Scanning
 											</h4>
 											<p className="text-xs md:text-sm text-primary-800 dark:text-primary-300 mb-3">
-												The PatchMonEnhanced Go agent includes built-in
-												compliance scanning capabilities that automatically
-												assess your hosts against industry security benchmarks:
+												The PatchMon Go agent includes built-in compliance
+												scanning capabilities that automatically assess your
+												hosts against industry security benchmarks:
 											</p>
 											<ul className="list-disc list-inside space-y-2 text-xs md:text-sm text-primary-800 dark:text-primary-300 ml-2">
 												<li>
@@ -1200,8 +1405,8 @@ const Integrations = () => {
 									</h4>
 									<ol className="list-decimal list-inside space-y-3 text-xs md:text-sm text-secondary-700 dark:text-secondary-300">
 										<li>
-											Install the PatchMonEnhanced Go agent on your host (see
-											the Hosts page for installation instructions)
+											Install the PatchMon Go agent on your host (see the Hosts
+											page for installation instructions)
 										</li>
 										<li>
 											Enable the Compliance integration from the dashboard
@@ -1216,7 +1421,7 @@ const Integrations = () => {
 										</li>
 										<li>
 											Compliance scans run periodically and results are sent to
-											the PatchMonEnhanced server
+											the PatchMon server
 										</li>
 										<li>
 											View compliance scores, failing rules, and remediation
@@ -1309,10 +1514,7 @@ const Integrations = () => {
 										<div className="text-xs md:text-sm text-blue-800 dark:text-blue-200">
 											<p className="font-semibold mb-2">Requirements:</p>
 											<ul className="list-disc list-inside space-y-1 ml-2">
-												<li>
-													PatchMonEnhanced Go agent must be installed and
-													running
-												</li>
+												<li>PatchMon Go agent must be installed and running</li>
 												<li>
 													Agent must run as root for full compliance scanning
 													capabilities

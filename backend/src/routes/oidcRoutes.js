@@ -44,8 +44,15 @@ function requireHTTPS(req, res, next) {
 	next();
 }
 
-// Apply HTTPS enforcement to all OIDC routes
-router.use(requireHTTPS);
+// Apply HTTPS enforcement to all OIDC routes except /config (which is public)
+router.use((req, res, next) => {
+	// Allow /config endpoint without HTTPS requirement (it's public)
+	if (req.path === "/config") {
+		return next();
+	}
+	// Apply HTTPS requirement for other OIDC routes
+	return requireHTTPS(req, res, next);
+});
 
 // Redis key prefix for OIDC sessions
 const OIDC_SESSION_PREFIX = "oidc:session:";
@@ -415,11 +422,21 @@ router.get("/callback", async (req, res) => {
 		);
 
 		// Set tokens in secure HTTP-only cookies instead of URL parameters
+		// Check if we're actually using HTTPS (not just NODE_ENV)
+		const isSecure = req.secure || req.headers["x-forwarded-proto"] === "https";
 		const isProduction = process.env.NODE_ENV === "production";
+		// Only use secure cookies if actually using HTTPS
+		const useSecureCookies = isSecure && isProduction;
+		const sameSiteValue = isProduction ? "strict" : "lax";
+
+		logger.info(
+			`OIDC: Setting cookies - Secure: ${useSecureCookies}, SameSite: ${sameSiteValue}, IsHTTPS: ${isSecure}`,
+		);
+
 		const cookieOptions = {
 			httpOnly: true,
-			secure: isProduction,
-			sameSite: "strict",
+			secure: useSecureCookies,
+			sameSite: sameSiteValue,
 			path: "/",
 		};
 

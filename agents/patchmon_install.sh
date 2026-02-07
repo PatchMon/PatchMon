@@ -567,7 +567,7 @@ chmod 600 /etc/patchmon/credentials.yml
 info "Downloading PatchMon agent binary..."
 
 # Determine the binary filename based on architecture
-BINARY_NAME="patchmonenhanced-agent-linux-${ARCHITECTURE}"
+BINARY_NAME="patchmon-agent-linux-${ARCHITECTURE}"
 
 # Check if agent binary already exists
 if [ -f "/usr/local/bin/patchmon-agent" ]; then

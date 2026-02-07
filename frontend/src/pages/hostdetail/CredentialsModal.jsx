@@ -200,7 +200,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 							</h4>
 							<p className="text-xs md:text-sm text-primary-700 dark:text-primary-300 mb-3">
 								Copy and run this command on the target host to securely install
-								and configure the PatchMonEnhanced agent:
+								and configure the PatchMon agent:
 							</p>
 
 							{/* Force Install Toggle */}

@@ -4,7 +4,7 @@ import { settingsAPI } from "../utils/api";
 
 const Logo = ({
 	className = "h-8 w-auto",
-	alt = "PatchMonEnhanced Logo",
+	alt = "PatchMon Logo",
 	...props
 }) => {
 	const { isDark } = useTheme();

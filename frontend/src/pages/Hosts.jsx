@@ -769,7 +769,7 @@ const Hosts = () => {
 
 	// Table filtering and sorting logic
 	const filteredAndSortedHosts = useMemo(() => {
-		if (!hosts) return [];
+		if (!hosts || !Array.isArray(hosts)) return [];
 
 		const filtered = hosts.filter((host) => {
 			// Search filter

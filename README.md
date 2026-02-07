@@ -1,4 +1,4 @@
-# PatchMonEnhanced - Linux Patch Monitoring made Simple
+# PatchMon - Linux Patch Monitoring made Simple
 
 [![Website](https://img.shields.io/badge/Website-patchmon.net-blue?style=for-the-badge)](https://patchmon.net)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-blue?style=for-the-badge&logo=discord)](https://patchmon.net/discord)
@@ -12,7 +12,7 @@
 
 ## Purpose
 
-PatchMonEnhanced provides centralized patch management across diverse server environments. Agents communicate outbound-only to the PatchMonEnhanced server, eliminating inbound ports on monitored hosts while delivering comprehensive visibility and safe automation.
+PatchMon provides centralized patch management across diverse server environments. Agents communicate outbound-only to the PatchMon server, eliminating inbound ports on monitored hosts while delivering comprehensive visibility and safe automation.
 
 ![Dashboard Screenshot](https://raw.githubusercontent.com/PatchMon/PatchMon/main/dashboard.jpeg)
 
@@ -73,9 +73,9 @@ See [Security Compliance Installation Guide](docs/security-compliance/INSTALLATI
 
 ## Getting Started
 
-### PatchMonEnhanced Cloud (coming soon)
+### PatchMon Cloud (coming soon)
 
-Managed, zero-maintenance PatchMonEnhanced hosting. Stay tuned.
+Managed, zero-maintenance PatchMon hosting. Stay tuned.
 
 ### Self-hosted Installation
 
@@ -135,16 +135,16 @@ After installation:
 - See all useful info in `deployment-info.txt`
 
 ## Forcing updates after host package changes
-Should you perform a manual package update on your host and wish to see the results reflected in PatchMonEnhanced quicker than the usual scheduled update, you can trigger the process manually by running:
+Should you perform a manual package update on your host and wish to see the results reflected in PatchMon quicker than the usual scheduled update, you can trigger the process manually by running:
 ```bash
 /usr/local/bin/patchmon-agent.sh update
 ```
 
-This will send the results immediately to PatchMonEnhanced.
+This will send the results immediately to PatchMon.
 
 ## Communication Model
 
-- Outbound-only agents: servers initiate communication to PatchMonEnhanced
+- Outbound-only agents: servers initiate communication to PatchMon
 - No inbound connections required on monitored servers
 - Secure server-side API with JWT authentication and rate limiting
 
@@ -253,7 +253,7 @@ We welcome contributions from the community! Here's how you can get involved:
 
 ## 🏢 Enterprise & Custom Solutions
 
-### PatchMonEnhanced Cloud
+### PatchMon Cloud
 - **Fully Managed**: We handle all infrastructure and maintenance
 - **Scalable**: Grows with your organization
 - **Secure**: Enterprise-grade security and compliance
@@ -263,7 +263,7 @@ We welcome contributions from the community! Here's how you can get involved:
 - **API Development**: Custom endpoints for your specific needs
 - **Third-Party Integrations**: Connect with your existing tools
 - **Custom Dashboards**: Tailored reporting and visualization
-- **White-Label Solutions**: Brand PatchMonEnhanced as your own
+- **White-Label Solutions**: Brand PatchMon as your own
 
 ### Enterprise Deployment
 - **On-Premises**: Deploy in your own data center
@@ -291,7 +291,7 @@ We welcome contributions from the community! Here's how you can get involved:
   
 
 ### Contributors
-Thank you to all our contributors who help make PatchMonEnhanced better every day!
+Thank you to all our contributors who help make PatchMon better every day!
 
 
 ## 🔗 Links
@@ -306,7 +306,7 @@ Thank you to all our contributors who help make PatchMonEnhanced better every da
 
 <div align="center">
 
-**Made with ❤️ by the PatchMonEnhanced Team**
+**Made with ❤️ by the PatchMon Team**
 
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-blue?style=for-the-badge&logo=discord)](https://patchmon.net/discord)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-black?style=for-the-badge&logo=github)](https://github.com/PatchMon/PatchMon)
