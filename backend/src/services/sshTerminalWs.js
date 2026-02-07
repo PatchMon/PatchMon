@@ -6,6 +6,7 @@ const logger = require("../utils/logger");
 const WebSocket = require("ws");
 const { Client } = require("ssh2");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 const {
 	validate_session,
 	update_session_activity,
@@ -15,6 +16,17 @@ const { logAuditEvent } = require("../utils/auditLogger");
 const { redis } = require("./automation/shared/redis");
 
 const prisma = getPrismaClient();
+
+// Import agentWs functions - will be set after agentWs is initialized
+let agentWsModule = null;
+
+// Set agentWs module reference (called from agentWs.js after init)
+function setAgentWsModule(module) {
+	agentWsModule = module;
+}
+
+// Map to track SSH proxy sessions: sessionId -> { frontendWs, hostId, apiId }
+const sshProxySessions = new Map();
 
 // SSH Ticket constants (must match authRoutes.js)
 const SSH_TICKET_PREFIX = "ssh:ticket:";
@@ -282,6 +294,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 			wss.handleUpgrade(request, socket, head, (ws) => {
 				let sshClient = null;
 				let sshStream = null;
+				let proxySessionId = null;
 
 				logger.info(
 					`[ssh-terminal] User ${user.username} connecting to host ${host.friendly_name} (${host.id})`,
@@ -293,7 +306,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 
 						if (data.type === "connect") {
 							// Initialize SSH connection
-							if (sshClient) {
+							if (sshClient || proxySessionId) {
 								ws.send(
 									JSON.stringify({
 										type: "error",
@@ -303,6 +316,140 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 								return;
 							}
 
+							// Check if proxy mode is requested
+							const connectionMode = data.connection_mode || "direct";
+							if (connectionMode === "proxy") {
+								// Proxy mode: route through agent WebSocket
+								if (!agentWsModule) {
+									ws.send(
+										JSON.stringify({
+											type: "error",
+											message: "Agent WebSocket service not available",
+										}),
+									);
+									return;
+								}
+
+								// Check if agent is connected
+								if (!agentWsModule.isConnected(host.api_id)) {
+									ws.send(
+										JSON.stringify({
+											type: "error",
+											message:
+												"Agent not connected. Please ensure the agent is running and connected.",
+										}),
+									);
+									return;
+								}
+
+								// Check if SSH proxy is enabled in agent config
+								// This will be checked by the agent, but we can provide a better error message
+								// by checking integration status if available
+								// For now, let the agent handle the check
+
+								// Generate unique session ID
+								proxySessionId = crypto.randomBytes(16).toString("hex");
+
+								// Store session mapping
+								sshProxySessions.set(proxySessionId, {
+									frontendWs: ws,
+									hostId: host.id,
+									apiId: host.api_id,
+								});
+
+								// Forward SSH proxy request to agent
+								const agentWs = agentWsModule.getConnectionByApiId(host.api_id);
+								if (!agentWs || agentWs.readyState !== WebSocket.OPEN) {
+									sshProxySessions.delete(proxySessionId);
+									proxySessionId = null;
+									ws.send(
+										JSON.stringify({
+											type: "error",
+											message: "Agent WebSocket connection lost",
+										}),
+									);
+									return;
+								}
+
+								// Validate proxy host and port
+								const proxyHost = data.proxy_host || "localhost";
+								const proxyPort = data.proxy_port || 22;
+
+								// Basic validation to prevent injection
+								if (
+									!proxyHost.match(/^[a-zA-Z0-9._-]+$/) &&
+									!proxyHost.match(/^(\d{1,3}\.){3}\d{1,3}$/)
+								) {
+									sshProxySessions.delete(proxySessionId);
+									proxySessionId = null;
+									ws.send(
+										JSON.stringify({
+											type: "error",
+											message: "Invalid proxy host format",
+										}),
+									);
+									return;
+								}
+
+								if (proxyPort < 1 || proxyPort > 65535) {
+									sshProxySessions.delete(proxySessionId);
+									proxySessionId = null;
+									ws.send(
+										JSON.stringify({
+											type: "error",
+											message: "Invalid proxy port (must be 1-65535)",
+										}),
+									);
+									return;
+								}
+
+								// Send SSH proxy request to agent
+								const sshProxyRequest = {
+									type: "ssh_proxy",
+									session_id: proxySessionId,
+									host: proxyHost,
+									port: proxyPort,
+									username: data.username || "root",
+									terminal: data.terminal || "xterm-256color",
+									cols: data.cols || 80,
+									rows: data.rows || 24,
+								};
+
+								// Add authentication data
+								if (data.password) {
+									sshProxyRequest.password = data.password;
+								}
+								if (data.privateKey) {
+									sshProxyRequest.private_key = data.privateKey;
+									if (data.passphrase) {
+										sshProxyRequest.passphrase = data.passphrase;
+									}
+								}
+
+								logger.info(
+									`[ssh-terminal] Sending SSH proxy request to agent ${host.api_id} for session ${proxySessionId}`,
+								);
+
+								try {
+									agentWs.send(JSON.stringify(sshProxyRequest));
+								} catch (err) {
+									logger.error(
+										`[ssh-terminal] Failed to send SSH proxy request to agent:`,
+										err,
+									);
+									sshProxySessions.delete(proxySessionId);
+									proxySessionId = null;
+									ws.send(
+										JSON.stringify({
+											type: "error",
+											message: "Failed to send proxy request to agent",
+										}),
+									);
+								}
+								return; // Don't proceed with direct connection
+							}
+
+							// Direct mode: existing behavior
 							sshClient = new Client();
 
 							sshClient.on("ready", () => {
@@ -429,17 +576,73 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 							sshClient.connect(sshConfig);
 						} else if (data.type === "input") {
 							// Send input to SSH session
-							if (sshStream?.writable) {
+							if (proxySessionId) {
+								// Proxy mode: forward input to agent
+								const session = sshProxySessions.get(proxySessionId);
+								if (session) {
+									const agentWs = agentWsModule.getConnectionByApiId(
+										session.apiId,
+									);
+									if (agentWs && agentWs.readyState === WebSocket.OPEN) {
+										agentWs.send(
+											JSON.stringify({
+												type: "ssh_proxy_input",
+												session_id: proxySessionId,
+												data: data.data,
+											}),
+										);
+									}
+								}
+							} else if (sshStream?.writable) {
+								// Direct mode
 								sshStream.write(data.data);
 							}
 						} else if (data.type === "resize") {
 							// Resize terminal
-							if (sshStream?.setWindow) {
+							if (proxySessionId) {
+								// Proxy mode: forward resize to agent
+								const session = sshProxySessions.get(proxySessionId);
+								if (session) {
+									const agentWs = agentWsModule.getConnectionByApiId(
+										session.apiId,
+									);
+									if (agentWs && agentWs.readyState === WebSocket.OPEN) {
+										agentWs.send(
+											JSON.stringify({
+												type: "ssh_proxy_resize",
+												session_id: proxySessionId,
+												cols: data.cols || 80,
+												rows: data.rows || 24,
+											}),
+										);
+									}
+								}
+							} else if (sshStream?.setWindow) {
+								// Direct mode
 								sshStream.setWindow(data.rows || 24, data.cols || 80);
 							}
 						} else if (data.type === "disconnect") {
 							// Disconnect SSH session
-							if (sshClient) {
+							if (proxySessionId) {
+								// Proxy mode: forward disconnect to agent
+								const session = sshProxySessions.get(proxySessionId);
+								if (session) {
+									const agentWs = agentWsModule.getConnectionByApiId(
+										session.apiId,
+									);
+									if (agentWs && agentWs.readyState === WebSocket.OPEN) {
+										agentWs.send(
+											JSON.stringify({
+												type: "ssh_proxy_disconnect",
+												session_id: proxySessionId,
+											}),
+										);
+									}
+									sshProxySessions.delete(proxySessionId);
+								}
+								proxySessionId = null;
+							} else if (sshClient) {
+								// Direct mode
 								try {
 									sshClient.end();
 								} catch (err) {
@@ -469,6 +672,33 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 					logger.info(
 						`[ssh-terminal] WebSocket closed for ${host.friendly_name}`,
 					);
+					// Clean up proxy session if exists
+					if (proxySessionId) {
+						const session = sshProxySessions.get(proxySessionId);
+						if (session) {
+							const agentWs = agentWsModule?.getConnectionByApiId(
+								session.apiId,
+							);
+							if (agentWs && agentWs.readyState === WebSocket.OPEN) {
+								try {
+									agentWs.send(
+										JSON.stringify({
+											type: "ssh_proxy_disconnect",
+											session_id: proxySessionId,
+										}),
+									);
+								} catch (err) {
+									logger.error(
+										`[ssh-terminal] Error sending disconnect to agent:`,
+										err,
+									);
+								}
+							}
+							sshProxySessions.delete(proxySessionId);
+						}
+						proxySessionId = null;
+					}
+					// Clean up direct SSH connection if exists
 					if (sshClient) {
 						try {
 							sshClient.end();
@@ -485,6 +715,15 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 						`[ssh-terminal] WebSocket error for ${host.friendly_name}:`,
 						err,
 					);
+					// Clean up proxy session if exists
+					if (proxySessionId) {
+						const session = sshProxySessions.get(proxySessionId);
+						if (session) {
+							sshProxySessions.delete(proxySessionId);
+						}
+						proxySessionId = null;
+					}
+					// Clean up direct SSH connection if exists
 					if (sshClient) {
 						try {
 							sshClient.end();
@@ -530,4 +769,73 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 	}
 }
 
-module.exports = { handleSshTerminalUpgrade };
+/**
+ * Handle SSH proxy messages from agent
+ * Called from agentWs.js when agent sends SSH proxy data
+ */
+function handleSshProxyMessage(apiId, message) {
+	const sessionId = message.session_id;
+	const session = sshProxySessions.get(sessionId);
+
+	if (!session) {
+		logger.warn(
+			`[ssh-terminal] Received SSH proxy message for unknown session ${sessionId}`,
+		);
+		return;
+	}
+
+	// Verify session belongs to this agent
+	if (session.apiId !== apiId) {
+		logger.warn(
+			`[ssh-terminal] Session ${sessionId} API ID mismatch: expected ${session.apiId}, got ${apiId}`,
+		);
+		return;
+	}
+
+	const frontendWs = session.frontendWs;
+
+	if (!frontendWs || frontendWs.readyState !== WebSocket.OPEN) {
+		// Frontend disconnected, clean up session
+		sshProxySessions.delete(sessionId);
+		return;
+	}
+
+	try {
+		if (message.type === "ssh_proxy_data") {
+			// Forward SSH data to frontend
+			frontendWs.send(
+				JSON.stringify({
+					type: "data",
+					data: message.data,
+				}),
+			);
+		} else if (message.type === "ssh_proxy_connected") {
+			// SSH connection established via proxy
+			frontendWs.send(JSON.stringify({ type: "connected" }));
+		} else if (message.type === "ssh_proxy_error") {
+			// SSH error via proxy
+			frontendWs.send(
+				JSON.stringify({
+					type: "error",
+					message: message.message || "SSH connection error",
+				}),
+			);
+		} else if (message.type === "ssh_proxy_closed") {
+			// SSH connection closed via proxy
+			frontendWs.send(JSON.stringify({ type: "closed" }));
+			sshProxySessions.delete(sessionId);
+		}
+	} catch (err) {
+		logger.error(
+			`[ssh-terminal] Error forwarding SSH proxy message to frontend:`,
+			err,
+		);
+		sshProxySessions.delete(sessionId);
+	}
+}
+
+module.exports = {
+	handleSshTerminalUpgrade,
+	setAgentWsModule,
+	handleSshProxyMessage,
+};

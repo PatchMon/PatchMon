@@ -45,13 +45,9 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	const [aiMessages, setAiMessages] = useState([]);
 	const [aiInput, setAiInput] = useState("");
 	const [aiLoading, setAiLoading] = useState(false);
-	const [commandSuggestion, setCommandSuggestion] = useState("");
-	const [currentInput, setCurrentInput] = useState("");
-	const [completionLoading, setCompletionLoading] = useState(false);
 	const terminalBufferRef = useRef("");
-	const completionTimeoutRef = useRef(null);
 	const aiInputRef = useRef(null);
-	const currentLineRef = useRef(""); // Track current line for AI completion
+	const currentLineRef = useRef(""); // Track current line for AI context
 
 	// Load cached username from localStorage, keyed by host ID for per-host caching
 	const getCachedUsername = () => {
@@ -71,6 +67,9 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 		passphrase: "",
 		port: 22,
 		authMethod: "password", // "password" or "key"
+		connectionMode: "direct", // "direct" or "proxy"
+		proxyHost: "localhost",
+		proxyPort: 22,
 	});
 
 	// Load cached username when host changes
@@ -167,83 +166,6 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 			setAiLoading(false);
 		}
 	};
-
-	// Get command completion suggestion (debounced)
-	const getCommandCompletion = useCallback(
-		async (input) => {
-			if (!aiEnabled || input.length < 3) {
-				setCommandSuggestion("");
-				setCompletionLoading(false);
-				return;
-			}
-
-			setCompletionLoading(true);
-			try {
-				const response = await aiAPI.complete({
-					input,
-					context: getTerminalContext(),
-				});
-				if (response.data.completion) {
-					setCommandSuggestion(response.data.completion);
-				} else {
-					setCommandSuggestion("");
-				}
-			} catch {
-				setCommandSuggestion("");
-			} finally {
-				setCompletionLoading(false);
-			}
-		},
-		[aiEnabled, getTerminalContext],
-	);
-
-	// Handle current input change for completion
-	const handleInputChange = useCallback(
-		(input) => {
-			setCurrentInput(input);
-
-			// Clear existing timeout
-			if (completionTimeoutRef.current) {
-				clearTimeout(completionTimeoutRef.current);
-			}
-
-			// Debounce completion requests (150ms for faster response)
-			completionTimeoutRef.current = setTimeout(() => {
-				getCommandCompletion(input);
-			}, 150);
-		},
-		[getCommandCompletion],
-	);
-
-	// Accept command suggestion
-	const _acceptSuggestion = useCallback(() => {
-		if (commandSuggestion && wsRef.current?.readyState === WebSocket.OPEN) {
-			wsRef.current.send(
-				JSON.stringify({
-					type: "input",
-					data: commandSuggestion,
-				}),
-			);
-			// Update currentInput with the combined value to continue suggesting
-			const newInput = currentInput + commandSuggestion;
-			setCurrentInput(newInput);
-			setCommandSuggestion("");
-			// Trigger new completion after a short delay
-			if (completionTimeoutRef.current) {
-				clearTimeout(completionTimeoutRef.current);
-			}
-			completionTimeoutRef.current = setTimeout(() => {
-				if (aiEnabled && newInput.length >= 3) {
-					getCommandCompletion(newInput);
-				}
-			}, 200);
-		}
-	}, [commandSuggestion, currentInput, aiEnabled, getCommandCompletion]);
-
-	// Clear suggestion
-	const _clearSuggestion = useCallback(() => {
-		setCommandSuggestion("");
-	}, []);
 
 	// Send a command from AI to terminal (without pressing Enter)
 	const sendCommandToTerminal = useCallback((command) => {
@@ -524,12 +446,19 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 					// Send connect message with SSH credentials
 					const connectData = {
 						type: "connect",
+						connection_mode: sshConfig.connectionMode || "direct",
 						username: sshConfig.username,
 						port: sshConfig.port || 22,
 						terminal: "xterm-256color",
 						cols: fitAddonRef.current?.proposeDimensions()?.cols || 80,
 						rows: fitAddonRef.current?.proposeDimensions()?.rows || 24,
 					};
+
+					// Add proxy configuration if proxy mode
+					if (sshConfig.connectionMode === "proxy") {
+						connectData.proxy_host = sshConfig.proxyHost || "localhost";
+						connectData.proxy_port = sshConfig.proxyPort || 22;
+					}
 
 					// Add authentication data based on selected method
 					if (sshConfig.authMethod === "password") {
@@ -770,52 +699,16 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 
 		const handleData = (data) => {
 			if (wsRef.current?.readyState === WebSocket.OPEN) {
-				// Handle Tab key for AI completion
-				if (data === "\t" && commandSuggestion && aiEnabled) {
-					// Accept AI suggestion - update the ref with combined value
-					const newLine = currentLineRef.current + commandSuggestion;
-					currentLineRef.current = newLine;
-					wsRef.current.send(
-						JSON.stringify({
-							type: "input",
-							data: commandSuggestion,
-						}),
-					);
-					setCommandSuggestion("");
-					setCurrentInput(newLine);
-					// Trigger new completion for continued suggestions
-					if (newLine.length >= 3) {
-						if (completionTimeoutRef.current) {
-							clearTimeout(completionTimeoutRef.current);
-						}
-						completionTimeoutRef.current = setTimeout(() => {
-							getCommandCompletion(newLine);
-						}, 200);
-					}
-					resetIdleTimeout();
-					return;
-				}
-
-				// Handle Escape key to dismiss suggestion
-				if (data === "\x1b" && commandSuggestion) {
-					setCommandSuggestion("");
-					return;
-				}
-
-				// Track current line for completion using ref (persists across effect re-runs)
+				// Track current line for AI context (no automatic completion)
 				if (data === "\r" || data === "\n") {
 					// Enter pressed - clear current line
 					currentLineRef.current = "";
-					setCommandSuggestion("");
-					setCurrentInput("");
 				} else if (data === "\x7f" || data === "\b") {
 					// Backspace - remove last char
 					currentLineRef.current = currentLineRef.current.slice(0, -1);
-					handleInputChange(currentLineRef.current);
 				} else if (data.length === 1 && data.charCodeAt(0) >= 32) {
 					// Printable character
 					currentLineRef.current += data;
-					handleInputChange(currentLineRef.current);
 				}
 
 				wsRef.current.send(
@@ -837,14 +730,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 				disposable.dispose();
 			}
 		};
-	}, [
-		isConnected,
-		commandSuggestion,
-		aiEnabled,
-		handleInputChange,
-		getCommandCompletion, // Reset idle timeout on input
-		resetIdleTimeout,
-	]);
+	}, [isConnected, resetIdleTimeout]);
 
 	// Set up idle timeout when connected, reset on terminal data
 	useEffect(() => {
@@ -1097,6 +983,88 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 								</div>
 							)}
 
+							{/* Connection Mode Toggle */}
+							<div className="flex gap-6 mb-1">
+								<label className="flex items-center gap-2 cursor-pointer group">
+									<input
+										type="radio"
+										name="connectionMode"
+										value="direct"
+										checked={sshConfig.connectionMode === "direct"}
+										onChange={(e) =>
+											setSshConfig({
+												...sshConfig,
+												connectionMode: e.target.value,
+											})
+										}
+										className="text-primary-600 focus:ring-primary-500"
+									/>
+									<span className="text-xs font-medium text-secondary-300 group-hover:text-secondary-200 transition-colors">
+										Direct
+									</span>
+								</label>
+								<label className="flex items-center gap-2 cursor-pointer group">
+									<input
+										type="radio"
+										name="connectionMode"
+										value="proxy"
+										checked={sshConfig.connectionMode === "proxy"}
+										onChange={(e) =>
+											setSshConfig({
+												...sshConfig,
+												connectionMode: e.target.value,
+											})
+										}
+										className="text-primary-600 focus:ring-primary-500"
+									/>
+									<span className="text-xs font-medium text-secondary-300 group-hover:text-secondary-200 transition-colors">
+										Proxy via Agent
+									</span>
+								</label>
+							</div>
+
+							{/* Proxy Configuration (only shown when proxy mode selected) */}
+							{sshConfig.connectionMode === "proxy" && (
+								<div className="flex gap-3 items-end mb-3 p-3 bg-secondary-700/50 rounded border border-secondary-600">
+									<div className="flex-1">
+										<label className="block text-xs font-medium text-secondary-300 mb-1">
+											Proxy Target Host
+										</label>
+										<input
+											type="text"
+											value={sshConfig.proxyHost}
+											onChange={(e) =>
+												setSshConfig({
+													...sshConfig,
+													proxyHost: e.target.value,
+												})
+											}
+											className="w-full px-3 py-2 text-sm bg-secondary-700 border border-secondary-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+											placeholder="localhost"
+										/>
+									</div>
+									<div className="w-20">
+										<label className="block text-xs font-medium text-secondary-300 mb-1">
+											Port
+										</label>
+										<input
+											type="number"
+											value={sshConfig.proxyPort}
+											onChange={(e) =>
+												setSshConfig({
+													...sshConfig,
+													proxyPort: parseInt(e.target.value, 10) || 22,
+												})
+											}
+											className="w-full px-3 py-2 text-sm bg-secondary-700 border border-secondary-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+											placeholder="22"
+											min="1"
+											max="65535"
+										/>
+									</div>
+								</div>
+							)}
+
 							{/* Authentication Method Toggle */}
 							<div className="flex gap-6 mb-1">
 								<label className="flex items-center gap-2 cursor-pointer group">
@@ -1335,43 +1303,6 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 						<div
 							className={`flex flex-col transition-all duration-300 overflow-hidden ${aiPanelOpen ? "flex-1 min-w-0 pr-2" : "flex-1"}`}
 						>
-							{/* Command Suggestion / Loading Indicator Bar */}
-							{aiEnabled && (completionLoading || commandSuggestion) && (
-								<div className="mx-4 mt-4 mb-0 px-3 py-2 bg-primary-900/40 border border-primary-700/50 rounded-lg flex items-center justify-between">
-									{completionLoading && !commandSuggestion ? (
-										<div className="flex items-center gap-2">
-											<Loader2 className="h-4 w-4 text-primary-400 animate-spin" />
-											<span className="text-sm text-secondary-400">
-												Getting AI suggestion...
-											</span>
-										</div>
-									) : commandSuggestion ? (
-										<>
-											<div className="flex items-center gap-2 min-w-0 flex-1">
-												<Sparkles className="h-4 w-4 text-primary-400 flex-shrink-0" />
-												<span className="text-sm text-secondary-300 truncate">
-													<span className="text-primary-300 font-mono">
-														{currentInput}
-													</span>
-													<span className="text-primary-400/60 font-mono">
-														{commandSuggestion}
-													</span>
-												</span>
-											</div>
-											<div className="flex items-center gap-2 text-xs text-secondary-400 flex-shrink-0 ml-2">
-												<kbd className="px-1.5 py-0.5 bg-secondary-700 rounded">
-													Tab
-												</kbd>
-												<span>accept</span>
-												<kbd className="px-1.5 py-0.5 bg-secondary-700 rounded">
-													Esc
-												</kbd>
-												<span>dismiss</span>
-											</div>
-										</>
-									) : null}
-								</div>
-							)}
 							{/* Terminal */}
 							<div className="flex-1 p-4 min-h-0">
 								<div

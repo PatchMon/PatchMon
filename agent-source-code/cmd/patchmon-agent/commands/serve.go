@@ -7,12 +7,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -28,6 +32,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
 )
 
 // serveCmd runs the agent as a long-lived service
@@ -375,6 +380,35 @@ func runService() error {
 				} else {
 					logger.WithField("mode", string(mode)).Info("Compliance mode updated in config.yml (from legacy on-demand-only)")
 				}
+			case "ssh_proxy":
+				logger.WithField("session_id", m.sshProxySessionID).Info("Handling SSH proxy connection request")
+				globalWsConnMu.RLock()
+				wsConn := globalWsConn
+				globalWsConnMu.RUnlock()
+				if wsConn != nil {
+					go handleSshProxy(m, wsConn)
+				}
+			case "ssh_proxy_input":
+				globalWsConnMu.RLock()
+				wsConn := globalWsConn
+				globalWsConnMu.RUnlock()
+				if wsConn != nil {
+					handleSshProxyInput(m, wsConn)
+				}
+			case "ssh_proxy_resize":
+				globalWsConnMu.RLock()
+				wsConn := globalWsConn
+				globalWsConnMu.RUnlock()
+				if wsConn != nil {
+					handleSshProxyResize(m, wsConn)
+				}
+			case "ssh_proxy_disconnect":
+				globalWsConnMu.RLock()
+				wsConn := globalWsConn
+				globalWsConnMu.RUnlock()
+				if wsConn != nil {
+					handleSshProxyDisconnect(m, wsConn)
+				}
 			}
 		}
 	}
@@ -710,6 +744,18 @@ type wsMsg struct {
 	scanAllImages          bool   // For docker_image_scan: scan all images on system
 	complianceOnDemandOnly bool   // For set_compliance_on_demand_only (legacy)
 	complianceMode         string // For set_compliance_mode: "disabled", "on-demand", or "enabled"
+	// SSH proxy fields
+	sshProxySessionID string // Unique session ID for SSH proxy
+	sshProxyHost      string // SSH target host
+	sshProxyPort      int    // SSH target port
+	sshProxyUsername  string // SSH username
+	sshProxyPassword  string // SSH password
+	sshProxyPrivateKey string // SSH private key
+	sshProxyPassphrase string // SSH private key passphrase
+	sshProxyTerminal   string // Terminal type
+	sshProxyCols       int    // Terminal columns
+	sshProxyRows       int    // Terminal rows
+	sshProxyData       string // SSH input data
 }
 
 // Input validation patterns for WebSocket message fields
@@ -792,6 +838,10 @@ type ComplianceScanProgress struct {
 
 // Global channel for compliance scan progress updates
 var complianceProgressChan = make(chan ComplianceScanProgress, 10)
+
+// Global WebSocket connection for SSH proxy (set in connectOnce)
+var globalWsConn *websocket.Conn
+var globalWsConnMu sync.RWMutex
 
 func wsLoop(out chan<- wsMsg, dockerEvents <-chan interface{}) {
 	backoff := time.Second
@@ -904,6 +954,16 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 
 	logger.WithField("url", wsURL).Info("WebSocket connected")
 
+	// Store connection globally for SSH proxy handlers
+	globalWsConnMu.Lock()
+	globalWsConn = conn
+	globalWsConnMu.Unlock()
+	defer func() {
+		globalWsConnMu.Lock()
+		globalWsConn = nil
+		globalWsConnMu.Unlock()
+	}()
+
 	// Create a goroutine to send Docker events through WebSocket - with cancellation support
 	go func() {
 		for {
@@ -997,6 +1057,18 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 			ScanAllImages        bool   `json:"scan_all_images"`        // For docker_image_scan: scan all images
 			OnDemandOnly         bool   `json:"on_demand_only"`         // For set_compliance_on_demand_only (legacy)
 			Mode                 string `json:"mode"`                   // For set_compliance_mode: "disabled", "on-demand", or "enabled"
+			// SSH proxy fields
+			SessionID   string `json:"session_id"`   // SSH proxy session ID
+			Host        string `json:"host"`         // SSH proxy target host
+			Port        int    `json:"port"`         // SSH proxy target port
+			Username    string `json:"username"`     // SSH username
+			Password    string `json:"password"`     // SSH password
+			PrivateKey  string `json:"private_key"`  // SSH private key
+			Passphrase  string `json:"passphrase"`   // SSH private key passphrase
+			Terminal    string `json:"terminal"`     // Terminal type
+			Cols        int    `json:"cols"`          // Terminal columns
+			Rows        int    `json:"rows"`          // Terminal rows
+			Data        string `json:"data"`          // SSH input data
 		}
 		if err := json.Unmarshal(data, &payload); err != nil {
 			logger.WithError(err).WithField("data", string(data)).Warn("Failed to parse WebSocket message")
@@ -1117,6 +1189,100 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 			out <- wsMsg{
 				kind:           "set_compliance_mode",
 				complianceMode: mode,
+			}
+		case "ssh_proxy":
+			// Validate SSH proxy is enabled in config
+			if !cfgManager.IsIntegrationEnabled("ssh-proxy-enabled") {
+				logger.Warn("SSH proxy requested but not enabled in config.yml")
+				// Send error back to backend
+				globalWsConnMu.RLock()
+				wsConn := globalWsConn
+				globalWsConnMu.RUnlock()
+				if wsConn != nil {
+					errorMsg := "SSH proxy is not enabled.\n\n" +
+						"To enable SSH proxy, edit the file /etc/patchmon/config.yml and add the following:\n\n" +
+						"integrations:\n" +
+						"    ssh-proxy-enabled: true\n\n" +
+						"Note: This cannot be pushed from the server to the agent and should require you to manually do this for security reasons."
+					sendSshProxyError(wsConn, payload.SessionID, errorMsg)
+				}
+				continue
+			}
+			// Validate session ID
+			if payload.SessionID == "" {
+				logger.Warn("SSH proxy request missing session_id")
+				continue
+			}
+			// Validate host
+			if err := validateSshProxyHost(payload.Host); err != nil {
+				logger.WithError(err).WithField("host", payload.Host).Warn("Invalid SSH proxy host")
+				globalWsConnMu.RLock()
+				wsConn := globalWsConn
+				globalWsConnMu.RUnlock()
+				if wsConn != nil {
+					sendSshProxyError(wsConn, payload.SessionID, fmt.Sprintf("Invalid host: %v", err))
+				}
+				continue
+			}
+			// Validate port
+			if payload.Port < 1 || payload.Port > 65535 {
+				logger.WithField("port", payload.Port).Warn("Invalid SSH proxy port")
+				globalWsConnMu.RLock()
+				wsConn := globalWsConn
+				globalWsConnMu.RUnlock()
+				if wsConn != nil {
+					sendSshProxyError(wsConn, payload.SessionID, "Invalid port (must be 1-65535)")
+				}
+				continue
+			}
+			logger.WithFields(map[string]interface{}{
+				"session_id": payload.SessionID,
+				"host":       payload.Host,
+				"port":       payload.Port,
+				"username":   payload.Username,
+			}).Info("ssh_proxy received")
+			out <- wsMsg{
+				kind:                "ssh_proxy",
+				sshProxySessionID:    payload.SessionID,
+				sshProxyHost:         payload.Host,
+				sshProxyPort:         payload.Port,
+				sshProxyUsername:     payload.Username,
+				sshProxyPassword:     payload.Password,
+				sshProxyPrivateKey:   payload.PrivateKey,
+				sshProxyPassphrase:   payload.Passphrase,
+				sshProxyTerminal:     payload.Terminal,
+				sshProxyCols:         payload.Cols,
+				sshProxyRows:         payload.Rows,
+			}
+		case "ssh_proxy_input":
+			if payload.SessionID == "" {
+				logger.Warn("ssh_proxy_input missing session_id")
+				continue
+			}
+			out <- wsMsg{
+				kind:             "ssh_proxy_input",
+				sshProxySessionID: payload.SessionID,
+				sshProxyData:      payload.Data,
+			}
+		case "ssh_proxy_resize":
+			if payload.SessionID == "" {
+				logger.Warn("ssh_proxy_resize missing session_id")
+				continue
+			}
+			out <- wsMsg{
+				kind:             "ssh_proxy_resize",
+				sshProxySessionID: payload.SessionID,
+				sshProxyCols:      payload.Cols,
+				sshProxyRows:      payload.Rows,
+			}
+		case "ssh_proxy_disconnect":
+			if payload.SessionID == "" {
+				logger.Warn("ssh_proxy_disconnect missing session_id")
+				continue
+			}
+			out <- wsMsg{
+				kind:             "ssh_proxy_disconnect",
+				sshProxySessionID: payload.SessionID,
 			}
 		default:
 			if payload.Type != "" && payload.Type != "connected" {
@@ -1787,4 +1953,359 @@ func runDockerImageScan(imageName, containerName string, scanAllImages bool) err
 	}).Info("Docker image CVE scan results sent to server")
 
 	return nil
+}
+
+// validateSshProxyHost validates SSH proxy host to prevent injection
+func validateSshProxyHost(host string) error {
+	if host == "" {
+		return fmt.Errorf("host is required")
+	}
+	if len(host) > 255 {
+		return fmt.Errorf("host too long (max 255 chars)")
+	}
+	// Allow localhost, IP addresses, and valid hostnames
+	validHostPattern := regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$|^localhost$|^(\d{1,3}\.){3}\d{1,3}$`)
+	if !validHostPattern.MatchString(host) {
+		return fmt.Errorf("invalid host format")
+	}
+	return nil
+}
+
+// SSH proxy session management
+type sshProxySession struct {
+	client    *ssh.Client
+	session   *ssh.Session
+	stdin     io.WriteCloser
+	stdout    io.Reader
+	stderr    io.Reader
+	conn      *websocket.Conn
+	sessionID string
+	mu        sync.Mutex
+}
+
+var sshProxySessions = make(map[string]*sshProxySession)
+var sshProxySessionsMu sync.RWMutex
+
+// sendSshProxyMessage sends a message to backend via WebSocket
+func sendSshProxyMessage(conn *websocket.Conn, msgType string, sessionID string, data interface{}) {
+	msg := map[string]interface{}{
+		"type":       msgType,
+		"session_id": sessionID,
+	}
+	if data != nil {
+		msg["data"] = data
+	}
+	if msgType == "ssh_proxy_error" {
+		if errMsg, ok := data.(string); ok {
+			msg["message"] = errMsg
+		}
+	}
+	msgJSON, err := json.Marshal(msg)
+	if err != nil {
+		logger.WithError(err).Error("Failed to marshal SSH proxy message")
+		return
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, msgJSON); err != nil {
+		logger.WithError(err).Error("Failed to send SSH proxy message")
+	}
+}
+
+func sendSshProxyError(conn *websocket.Conn, sessionID string, message string) {
+	sendSshProxyMessage(conn, "ssh_proxy_error", sessionID, message)
+}
+
+func sendSshProxyData(conn *websocket.Conn, sessionID string, data string) {
+	sendSshProxyMessage(conn, "ssh_proxy_data", sessionID, data)
+}
+
+func sendSshProxyConnected(conn *websocket.Conn, sessionID string) {
+	sendSshProxyMessage(conn, "ssh_proxy_connected", sessionID, nil)
+}
+
+func sendSshProxyClosed(conn *websocket.Conn, sessionID string) {
+	sendSshProxyMessage(conn, "ssh_proxy_closed", sessionID, nil)
+}
+
+// handleSshProxy establishes SSH connection and manages proxy session
+func handleSshProxy(m wsMsg, conn *websocket.Conn) {
+	sessionID := m.sshProxySessionID
+	host := m.sshProxyHost
+	if host == "" {
+		host = "localhost"
+	}
+	port := m.sshProxyPort
+	if port == 0 {
+		port = 22
+	}
+	username := m.sshProxyUsername
+	if username == "" {
+		username = "root"
+	}
+
+	logger.WithFields(map[string]interface{}{
+		"session_id": sessionID,
+		"host":       host,
+		"port":       port,
+		"username":   username,
+	}).Info("Establishing SSH proxy connection")
+
+	// Create SSH client config
+	config := &ssh.ClientConfig{
+		User:            username,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // Accept any host key
+		Timeout:         20 * time.Second,
+	}
+
+	// Set up authentication
+	if m.sshProxyPrivateKey != "" {
+		// Use private key authentication
+		signer, err := ssh.ParsePrivateKey([]byte(m.sshProxyPrivateKey))
+		if err != nil && m.sshProxyPassphrase != "" {
+			// Try with passphrase
+			signer, err = ssh.ParsePrivateKeyWithPassphrase([]byte(m.sshProxyPrivateKey), []byte(m.sshProxyPassphrase))
+		}
+		if err != nil {
+			logger.WithError(err).Error("Failed to parse SSH private key")
+			sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to parse private key: %v", err))
+			return
+		}
+		config.Auth = []ssh.AuthMethod{ssh.PublicKeys(signer)}
+	} else if m.sshProxyPassword != "" {
+		// Use password authentication
+		config.Auth = []ssh.AuthMethod{ssh.Password(m.sshProxyPassword)}
+	} else {
+		sendSshProxyError(conn, sessionID, "No authentication method provided (password or private key required)")
+		return
+	}
+
+	// Connect to SSH server
+	address := net.JoinHostPort(host, strconv.Itoa(port))
+	client, err := ssh.Dial("tcp", address, config)
+	if err != nil {
+		logger.WithError(err).Error("Failed to connect to SSH server")
+		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to connect: %v", err))
+		return
+	}
+
+	// Create session
+	session, err := client.NewSession()
+	if err != nil {
+		client.Close()
+		logger.WithError(err).Error("Failed to create SSH session")
+		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to create session: %v", err))
+		return
+	}
+
+	// Set up terminal
+	terminal := m.sshProxyTerminal
+	if terminal == "" {
+		terminal = "xterm-256color"
+	}
+	cols := m.sshProxyCols
+	if cols == 0 {
+		cols = 80
+	}
+	rows := m.sshProxyRows
+	if rows == 0 {
+		rows = 24
+	}
+
+	// Request PTY
+	if err := session.RequestPty(terminal, rows, cols, ssh.TerminalModes{
+		ssh.ECHO:          1,
+		ssh.TTY_OP_ISPEED: 14400,
+		ssh.TTY_OP_OSPEED: 14400,
+	}); err != nil {
+		session.Close()
+		client.Close()
+		logger.WithError(err).Error("Failed to request PTY")
+		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to request PTY: %v", err))
+		return
+	}
+
+	// Set up stdin, stdout, stderr
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		session.Close()
+		client.Close()
+		logger.WithError(err).Error("Failed to get stdin pipe")
+		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to get stdin: %v", err))
+		return
+	}
+
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		stdin.Close()
+		session.Close()
+		client.Close()
+		logger.WithError(err).Error("Failed to get stdout pipe")
+		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to get stdout: %v", err))
+		return
+	}
+
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		stdin.Close()
+		session.Close()
+		client.Close()
+		logger.WithError(err).Error("Failed to get stderr pipe")
+		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to get stderr: %v", err))
+		return
+	}
+
+	// Start shell
+	if err := session.Shell(); err != nil {
+		stdin.Close()
+		session.Close()
+		client.Close()
+		logger.WithError(err).Error("Failed to start shell")
+		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to start shell: %v", err))
+		return
+	}
+
+	// Create session object
+	proxySession := &sshProxySession{
+		client:    client,
+		session:   session,
+		stdin:     stdin,
+		stdout:    stdout,
+		stderr:    stderr,
+		conn:      conn,
+		sessionID: sessionID,
+	}
+
+	// Store session
+	sshProxySessionsMu.Lock()
+	sshProxySessions[sessionID] = proxySession
+	sshProxySessionsMu.Unlock()
+
+	// Send connected message
+	sendSshProxyConnected(conn, sessionID)
+
+	// Forward stdout to WebSocket
+	go func() {
+		buffer := make([]byte, 4096)
+		for {
+			n, err := stdout.Read(buffer)
+			if n > 0 {
+				sendSshProxyData(conn, sessionID, string(buffer[:n]))
+			}
+			if err != nil {
+				if err != io.EOF {
+					logger.WithError(err).Error("Error reading from SSH stdout")
+				}
+				break
+			}
+		}
+		// Clean up on stdout close
+		handleSshProxyDisconnect(wsMsg{sshProxySessionID: sessionID}, conn)
+	}()
+
+	// Forward stderr to WebSocket
+	go func() {
+		buffer := make([]byte, 4096)
+		for {
+			n, err := stderr.Read(buffer)
+			if n > 0 {
+				sendSshProxyData(conn, sessionID, string(buffer[:n]))
+			}
+			if err != nil {
+				if err != io.EOF {
+					logger.WithError(err).Error("Error reading from SSH stderr")
+				}
+				break
+			}
+		}
+	}()
+
+	// Wait for session to end
+	go func() {
+		err := session.Wait()
+		if err != nil {
+			logger.WithError(err).Debug("SSH session ended with error")
+		}
+		handleSshProxyDisconnect(wsMsg{sshProxySessionID: sessionID}, conn)
+	}()
+}
+
+// handleSshProxyInput sends input to SSH session
+func handleSshProxyInput(m wsMsg, conn *websocket.Conn) {
+	sshProxySessionsMu.RLock()
+	proxySession, exists := sshProxySessions[m.sshProxySessionID]
+	sshProxySessionsMu.RUnlock()
+
+	if !exists {
+		logger.WithField("session_id", m.sshProxySessionID).Warn("SSH proxy session not found for input")
+		return
+	}
+
+	proxySession.mu.Lock()
+	defer proxySession.mu.Unlock()
+
+	if proxySession.stdin != nil {
+		if _, err := proxySession.stdin.Write([]byte(m.sshProxyData)); err != nil {
+			logger.WithError(err).Error("Failed to write to SSH stdin")
+		}
+	}
+}
+
+// handleSshProxyResize resizes SSH terminal
+func handleSshProxyResize(m wsMsg, conn *websocket.Conn) {
+	sshProxySessionsMu.RLock()
+	proxySession, exists := sshProxySessions[m.sshProxySessionID]
+	sshProxySessionsMu.RUnlock()
+
+	if !exists {
+		logger.WithField("session_id", m.sshProxySessionID).Warn("SSH proxy session not found for resize")
+		return
+	}
+
+	cols := m.sshProxyCols
+	if cols == 0 {
+		cols = 80
+	}
+	rows := m.sshProxyRows
+	if rows == 0 {
+		rows = 24
+	}
+
+	if proxySession.session != nil {
+		if err := proxySession.session.WindowChange(rows, cols); err != nil {
+			logger.WithError(err).Error("Failed to resize SSH terminal")
+		}
+	}
+}
+
+// handleSshProxyDisconnect closes SSH session
+func handleSshProxyDisconnect(m wsMsg, conn *websocket.Conn) {
+	sshProxySessionsMu.Lock()
+	proxySession, exists := sshProxySessions[m.sshProxySessionID]
+	if exists {
+		delete(sshProxySessions, m.sshProxySessionID)
+	}
+	sshProxySessionsMu.Unlock()
+
+	if !exists {
+		return
+	}
+
+	logger.WithField("session_id", m.sshProxySessionID).Info("Closing SSH proxy session")
+
+	// Close stdin
+	if proxySession.stdin != nil {
+		proxySession.stdin.Close()
+	}
+
+	// Close session
+	if proxySession.session != nil {
+		proxySession.session.Close()
+	}
+
+	// Close client
+	if proxySession.client != nil {
+		proxySession.client.Close()
+	}
+
+	// Send closed message
+	sendSshProxyClosed(conn, m.sshProxySessionID)
 }

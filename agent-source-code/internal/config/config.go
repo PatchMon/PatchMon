@@ -26,6 +26,7 @@ const (
 var AvailableIntegrations = []string{
 	"docker",
 	"compliance",
+	"ssh-proxy-enabled",
 	// Future: "proxmox", "kubernetes", etc.
 }
 
@@ -261,6 +262,9 @@ func (m *Manager) SaveConfig() error {
 		if _, exists := m.config.Integrations[integrationName]; !exists {
 			if integrationName == "compliance" {
 				m.config.Integrations[integrationName] = "on-demand"
+			} else if integrationName == "ssh-proxy-enabled" {
+				// Default SSH proxy to disabled (security: must be explicitly enabled)
+				m.config.Integrations[integrationName] = false
 			} else {
 				m.config.Integrations[integrationName] = false
 			}

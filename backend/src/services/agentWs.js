@@ -5,7 +5,11 @@ const logger = require("../utils/logger");
 const WebSocket = require("ws");
 const url = require("node:url");
 const { get_current_time } = require("../utils/timezone");
-const { handleSshTerminalUpgrade } = require("./sshTerminalWs");
+const {
+	handleSshTerminalUpgrade,
+	setAgentWsModule,
+	handleSshProxyMessage,
+} = require("./sshTerminalWs");
 const { verifyApiKey } = require("../utils/apiKeyUtils");
 
 // Connection registry by api_id
@@ -26,9 +30,20 @@ const complianceProgressSubscribers = new Map();
 let wss;
 let prisma;
 
+function isConnected(apiId) {
+	const ws = apiIdToSocket.get(apiId);
+	return !!ws && ws.readyState === WebSocket.OPEN;
+}
+
 function init(server, prismaClient) {
 	prisma = prismaClient;
 	wss = new WebSocket.Server({ noServer: true });
+
+	// Set agentWs module reference in sshTerminalWs for bidirectional communication
+	setAgentWsModule({
+		isConnected,
+		getConnectionByApiId,
+	});
 
 	// Handle HTTP upgrade events and authenticate before accepting WS
 	server.on("upgrade", async (request, socket, head) => {
@@ -159,6 +174,14 @@ function init(server, prismaClient) {
 						} else if (message.type === "compliance_scan_progress") {
 							// Handle compliance scan progress events
 							handleComplianceProgressEvent(apiId, message);
+						} else if (
+							message.type === "ssh_proxy_data" ||
+							message.type === "ssh_proxy_connected" ||
+							message.type === "ssh_proxy_error" ||
+							message.type === "ssh_proxy_closed"
+						) {
+							// Handle SSH proxy messages from agent
+							handleSshProxyMessage(apiId, message);
 						}
 						// Add more message types here as needed
 					} catch (err) {
@@ -719,10 +742,7 @@ module.exports = {
 	// Expose read-only view of connected agents
 	getConnectedApiIds: () => Array.from(apiIdToSocket.keys()),
 	getConnectionByApiId,
-	isConnected: (apiId) => {
-		const ws = apiIdToSocket.get(apiId);
-		return !!ws && ws.readyState === WebSocket.OPEN;
-	},
+	isConnected,
 	// Get connection info including protocol (ws/wss)
 	getConnectionInfo: (apiId) => {
 		const metadata = connectionMetadata.get(apiId);
