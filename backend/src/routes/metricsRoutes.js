@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { body, validationResult } = require("express-validator");
 const { v4: uuidv4 } = require("uuid");
 const { authenticateToken } = require("../middleware/auth");
@@ -28,7 +29,7 @@ router.get("/", authenticateToken, requireManageSettings, async (_req, res) => {
 			metrics_last_sent: settings.metrics_last_sent,
 		});
 	} catch (error) {
-		console.error("Metrics settings fetch error:", error);
+		logger.error("Metrics settings fetch error:", error);
 		res.status(500).json({ error: "Failed to fetch metrics settings" });
 	}
 });
@@ -57,7 +58,7 @@ router.put(
 				metrics_enabled,
 			});
 
-			console.log(
+			logger.info(
 				`Metrics ${metrics_enabled ? "enabled" : "disabled"} by user`,
 			);
 
@@ -66,7 +67,7 @@ router.put(
 				metrics_enabled,
 			});
 		} catch (error) {
-			console.error("Metrics settings update error:", error);
+			logger.error("Metrics settings update error:", error);
 			res.status(500).json({ error: "Failed to update metrics settings" });
 		}
 	},
@@ -86,14 +87,14 @@ router.post(
 				metrics_anonymous_id: newAnonymousId,
 			});
 
-			console.log("Anonymous ID regenerated");
+			logger.info("Anonymous ID regenerated");
 
 			res.json({
 				message: "Anonymous ID regenerated successfully",
 				metrics_anonymous_id: newAnonymousId,
 			});
 		} catch (error) {
-			console.error("Anonymous ID regeneration error:", error);
+			logger.error("Anonymous ID regeneration error:", error);
 			res.status(500).json({ error: "Failed to regenerate anonymous ID" });
 		}
 	},
@@ -123,20 +124,20 @@ router.post(
 			);
 
 			if (result.success) {
-				console.log("✅ Manual metrics sent successfully");
+				logger.info("✅ Manual metrics sent successfully");
 				res.json({
 					message: "Metrics sent successfully",
 					data: result,
 				});
 			} else {
-				console.error("❌ Failed to send metrics:", result);
+				logger.error("❌ Failed to send metrics:", result);
 				res.status(500).json({
 					error: "Failed to send metrics",
 					details: result.reason || result.error,
 				});
 			}
 		} catch (error) {
-			console.error("Send metrics error:", error);
+			logger.error("Send metrics error:", error);
 			res.status(500).json({
 				error: "Failed to send metrics",
 				details: error.message,

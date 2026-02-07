@@ -1,4 +1,7 @@
 const express = require("express");
+const fs = require("node:fs");
+const path = require("node:path");
+const logger = require("../utils/logger");
 const { authenticateToken } = require("../middleware/auth");
 const { requireManageSettings } = require("../middleware/permissions");
 const { getPrismaClient } = require("../config/prisma");
@@ -6,20 +9,24 @@ const { getPrismaClient } = require("../config/prisma");
 const prisma = getPrismaClient();
 
 // Default GitHub repository URL
-const DEFAULT_GITHUB_REPO = "https://github.com/PatchMon/PatchMon.git";
+const DEFAULT_GITHUB_REPO =
+	"https://github.com/MacJediWizard/PatchMon-Enhanced.git";
 
 const router = express.Router();
 
 // Helper function to get current version from package.json
+// Uses fs.readFileSync to get fresh version on each call (avoids require cache)
 function getCurrentVersion() {
 	try {
-		const packageJson = require("../../package.json");
+		const packagePath = path.join(__dirname, "../../package.json");
+		const packageContent = fs.readFileSync(packagePath, "utf8");
+		const packageJson = JSON.parse(packageContent);
 		if (!packageJson?.version) {
 			throw new Error("Version not found in package.json");
 		}
 		return packageJson.version;
 	} catch (packageError) {
-		console.error(
+		logger.error(
 			"Could not read version from package.json:",
 			packageError.message,
 		);
@@ -81,7 +88,7 @@ async function getLatestRelease(owner, repo) {
 			htmlUrl: releaseData.html_url,
 		};
 	} catch (error) {
-		console.error("Error fetching latest release:", error.message);
+		logger.error("Error fetching latest release:", error.message);
 		throw error; // Re-throw to be caught by the calling function
 	}
 }
@@ -122,7 +129,7 @@ async function getLatestCommit(owner, repo) {
 			htmlUrl: commitData.html_url,
 		};
 	} catch (error) {
-		console.error("Error fetching latest commit:", error.message);
+		logger.error("Error fetching latest commit:", error.message);
 		throw error; // Re-throw to be caught by the calling function
 	}
 }
@@ -230,7 +237,7 @@ router.get("/current", authenticateToken, async (_req, res) => {
 			},
 		});
 	} catch (error) {
-		console.error("Error getting current version:", error);
+		logger.error("Error getting current version:", error);
 		res.status(500).json({ error: "Failed to get current version" });
 	}
 });
@@ -283,7 +290,7 @@ router.get(
 					latestCommit = commitData;
 					commitDifference = differenceData;
 				} catch (githubError) {
-					console.warn(
+					logger.warn(
 						"Failed to fetch fresh GitHub data:",
 						githubError.message,
 					);
@@ -293,27 +300,22 @@ router.get(
 						githubError.message.includes("rate limit") ||
 						githubError.message.includes("API rate limit")
 					) {
-						console.log("GitHub API rate limited, providing fallback data");
+						logger.info(
+							"GitHub API rate limited, using current version as fallback",
+						);
+						// Use current version from package.json as fallback instead of hardcoded values
 						latestRelease = {
-							tagName: "v1.2.8",
-							version: "1.2.8",
-							publishedAt: "2025-10-02T17:12:53Z",
-							htmlUrl:
-								"https://github.com/PatchMon/PatchMon/releases/tag/v1.2.8",
+							tagName: `v${currentVersion}`,
+							version: currentVersion,
+							publishedAt: null,
+							htmlUrl: `https://github.com/${owner}/${repo}/releases/tag/v${currentVersion}`,
 						};
-						latestCommit = {
-							sha: "cc89df161b8ea5d48ff95b0eb405fe69042052cd",
-							message: "Update README.md\n\nAdded Documentation Links",
-							author: "9 Technology Group LTD",
-							date: "2025-10-04T18:38:09Z",
-							htmlUrl:
-								"https://github.com/PatchMon/PatchMon/commit/cc89df161b8ea5d48ff95b0eb405fe69042052cd",
-						};
+						latestCommit = null;
 						commitDifference = {
 							commitsBehind: 0,
-							commitsAhead: 3, // Main branch is ahead of release
-							totalCommits: 3,
-							branchInfo: "main branch vs release",
+							commitsAhead: 0,
+							totalCommits: 0,
+							branchInfo: "GitHub API rate limited - showing current version",
 						};
 					} else {
 						// Fall back to cached data for other errors
@@ -352,7 +354,7 @@ router.get(
 				},
 			});
 		} catch (error) {
-			console.error("Error getting update information:", error);
+			logger.error("Error getting update information:", error);
 			res.status(500).json({ error: "Failed to get update information" });
 		}
 	},

@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateApiToken } = require("../middleware/apiAuth");
 const { requireApiScope } = require("../middleware/apiScope");
@@ -67,7 +68,7 @@ router.get(
 					);
 
 					if (notFoundNames.length > 0) {
-						console.warn(`Host groups not found: ${notFoundNames.join(", ")}`);
+						logger.warn(`Host groups not found: ${notFoundNames.join(", ")}`);
 					}
 				}
 
@@ -134,7 +135,7 @@ router.get(
 				filtered_by_groups: filterValues.length > 0 ? filterValues : undefined,
 			});
 		} catch (error) {
-			console.error("Error fetching hosts:", error);
+			logger.error("Error fetching hosts:", error);
 			res.status(500).json({ error: "Failed to fetch hosts" });
 		}
 	},
@@ -203,7 +204,7 @@ router.get(
 				total_repos: totalRepos,
 			});
 		} catch (error) {
-			console.error("Error fetching host statistics:", error);
+			logger.error("Error fetching host statistics:", error);
 			res.status(500).json({ error: "Failed to fetch host statistics" });
 		}
 	},
@@ -261,7 +262,7 @@ router.get(
 				})),
 			});
 		} catch (error) {
-			console.error("Error fetching host info:", error);
+			logger.error("Error fetching host info:", error);
 			res.status(500).json({ error: "Failed to fetch host information" });
 		}
 	},
@@ -299,7 +300,7 @@ router.get(
 				network_interfaces: host.network_interfaces || [],
 			});
 		} catch (error) {
-			console.error("Error fetching host network info:", error);
+			logger.error("Error fetching host network info:", error);
 			res
 				.status(500)
 				.json({ error: "Failed to fetch host network information" });
@@ -357,7 +358,7 @@ router.get(
 				reboot_reason: host.reboot_reason,
 			});
 		} catch (error) {
-			console.error("Error fetching host system info:", error);
+			logger.error("Error fetching host system info:", error);
 			res
 				.status(500)
 				.json({ error: "Failed to fetch host system information" });
@@ -419,7 +420,7 @@ router.get(
 				total: reports.length,
 			});
 		} catch (error) {
-			console.error("Error fetching host package reports:", error);
+			logger.error("Error fetching host package reports:", error);
 			res.status(500).json({ error: "Failed to fetch host package reports" });
 		}
 	},
@@ -474,7 +475,7 @@ router.get(
 			try {
 				// Try to get live queue stats from Bull/BullMQ if available
 				const { queueManager } = require("../services/automation");
-				if (queueManager && queueManager.getHostJobs) {
+				if (queueManager?.getHostJobs) {
 					const hostQueueData = await queueManager.getHostJobs(
 						host.api_id,
 						Number.parseInt(limit, 10),
@@ -487,7 +488,7 @@ router.get(
 					};
 				}
 			} catch (queueError) {
-				console.warn("Could not fetch live queue stats:", queueError.message);
+				logger.warn("Could not fetch live queue stats:", queueError.message);
 			}
 
 			res.json({
@@ -507,7 +508,7 @@ router.get(
 				total_jobs: jobs.length,
 			});
 		} catch (error) {
-			console.error("Error fetching host agent queue:", error);
+			logger.error("Error fetching host agent queue:", error);
 			res.status(500).json({ error: "Failed to fetch host agent queue" });
 		}
 	},
@@ -539,7 +540,7 @@ router.get(
 				notes: host.notes || "",
 			});
 		} catch (error) {
-			console.error("Error fetching host notes:", error);
+			logger.error("Error fetching host notes:", error);
 			res.status(500).json({ error: "Failed to fetch host notes" });
 		}
 	},
@@ -602,7 +603,7 @@ router.get(
 				},
 			});
 		} catch (error) {
-			console.error("Error fetching host integrations:", error);
+			logger.error("Error fetching host integrations:", error);
 			res.status(500).json({ error: "Failed to fetch host integrations" });
 		}
 	},

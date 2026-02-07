@@ -1,4 +1,5 @@
 const axios = require("axios");
+const logger = require("../../utils/logger");
 
 // In-memory cache for social media statistics
 const socialMediaStatsCache = {
@@ -184,7 +185,7 @@ async function scrapeBuyMeACoffee() {
 
 		return supporterCount;
 	} catch (error) {
-		console.error("Error scraping Buy Me a Coffee:", error.message);
+		logger.error("Error scraping Buy Me a Coffee:", error.message);
 		return null;
 	}
 }
@@ -307,7 +308,7 @@ async function scrapeDiscord() {
 
 		return memberCount;
 	} catch (error) {
-		console.error("Error scraping Discord:", error.message);
+		logger.error("Error scraping Discord:", error.message);
 		return null;
 	}
 }
@@ -415,7 +416,7 @@ async function scrapeYouTube() {
 
 		return subscriberCount;
 	} catch (error) {
-		console.error("Error scraping YouTube:", error.message);
+		logger.error("Error scraping YouTube:", error.message);
 		return null;
 	}
 }
@@ -529,7 +530,7 @@ async function scrapeLinkedIn() {
 
 		return followerCount;
 	} catch (error) {
-		console.error("Error scraping LinkedIn:", error.message);
+		logger.error("Error scraping LinkedIn:", error.message);
 		return null;
 	}
 }
@@ -549,7 +550,7 @@ class SocialMediaStats {
 	 */
 	async process(_job) {
 		const startTime = Date.now();
-		console.log("📊 Starting social media stats collection...");
+		logger.info("📊 Starting social media stats collection...");
 
 		const results = {
 			github_stars: null,
@@ -574,10 +575,10 @@ class SocialMediaStats {
 
 				if (response.data?.stargazers_count) {
 					results.github_stars = response.data.stargazers_count;
-					console.log(`✅ GitHub stars: ${results.github_stars}`);
+					logger.info(`✅ GitHub stars: ${results.github_stars}`);
 				}
 			} catch (error) {
-				console.error("Error fetching GitHub stars:", error.message);
+				logger.error("Error fetching GitHub stars:", error.message);
 			}
 
 			// Scrape Discord members
@@ -585,10 +586,10 @@ class SocialMediaStats {
 				const discordCount = await scrapeDiscord();
 				if (discordCount !== null) {
 					results.discord_members = discordCount;
-					console.log(`✅ Discord members: ${results.discord_members}`);
+					logger.info(`✅ Discord members: ${results.discord_members}`);
 				}
 			} catch (error) {
-				console.error("Error scraping Discord:", error.message);
+				logger.error("Error scraping Discord:", error.message);
 			}
 
 			// Scrape Buy Me a Coffee supporters
@@ -596,12 +597,12 @@ class SocialMediaStats {
 				const bmcCount = await scrapeBuyMeACoffee();
 				if (bmcCount !== null) {
 					results.buymeacoffee_supporters = bmcCount;
-					console.log(
+					logger.info(
 						`✅ Buy Me a Coffee supporters: ${results.buymeacoffee_supporters}`,
 					);
 				}
 			} catch (error) {
-				console.error("Error scraping Buy Me a Coffee:", error.message);
+				logger.error("Error scraping Buy Me a Coffee:", error.message);
 			}
 
 			// Scrape YouTube subscribers
@@ -609,10 +610,10 @@ class SocialMediaStats {
 				const youtubeCount = await scrapeYouTube();
 				if (youtubeCount !== null) {
 					results.youtube_subscribers = youtubeCount;
-					console.log(`✅ YouTube subscribers: ${results.youtube_subscribers}`);
+					logger.info(`✅ YouTube subscribers: ${results.youtube_subscribers}`);
 				}
 			} catch (error) {
-				console.error("Error scraping YouTube:", error.message);
+				logger.error("Error scraping YouTube:", error.message);
 			}
 
 			// Scrape LinkedIn followers
@@ -620,10 +621,10 @@ class SocialMediaStats {
 				const linkedinCount = await scrapeLinkedIn();
 				if (linkedinCount !== null) {
 					results.linkedin_followers = linkedinCount;
-					console.log(`✅ LinkedIn followers: ${results.linkedin_followers}`);
+					logger.info(`✅ LinkedIn followers: ${results.linkedin_followers}`);
 				}
 			} catch (error) {
-				console.error("Error scraping LinkedIn:", error.message);
+				logger.error("Error scraping LinkedIn:", error.message);
 			}
 
 			// Update cache - only update fields that successfully fetched
@@ -657,7 +658,7 @@ class SocialMediaStats {
 			}
 
 			const executionTime = Date.now() - startTime;
-			console.log(
+			logger.info(
 				`✅ Social media stats collection completed in ${executionTime}ms`,
 			);
 
@@ -668,7 +669,7 @@ class SocialMediaStats {
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			console.error(
+			logger.error(
 				`❌ Social media stats collection failed after ${executionTime}ms:`,
 				error.message,
 			);
@@ -688,7 +689,7 @@ class SocialMediaStats {
 				jobId: "social-media-stats-recurring",
 			},
 		);
-		console.log("✅ Social media stats collection scheduled");
+		logger.info("✅ Social media stats collection scheduled");
 		return job;
 	}
 
@@ -701,7 +702,7 @@ class SocialMediaStats {
 			{},
 			{ priority: 1 },
 		);
-		console.log("✅ Manual social media stats collection triggered");
+		logger.info("✅ Manual social media stats collection triggered");
 		return job;
 	}
 }

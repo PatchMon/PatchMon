@@ -15,36 +15,30 @@ import {
 import { useState } from "react";
 import SettingsLayout from "../../components/SettingsLayout";
 
-// API functions - will be added to utils/api.js
+// API functions - use httpOnly cookies for auth
 const metricsAPI = {
 	getSettings: () =>
 		fetch("/api/v1/metrics", {
-			headers: {
-				Authorization: `Bearer ${localStorage.getItem("token")}`,
-			},
+			credentials: "include",
 		}).then((res) => res.json()),
 	updateSettings: (data) =>
 		fetch("/api/v1/metrics", {
 			method: "PUT",
 			headers: {
 				"Content-Type": "application/json",
-				Authorization: `Bearer ${localStorage.getItem("token")}`,
 			},
+			credentials: "include",
 			body: JSON.stringify(data),
 		}).then((res) => res.json()),
 	regenerateId: () =>
 		fetch("/api/v1/metrics/regenerate-id", {
 			method: "POST",
-			headers: {
-				Authorization: `Bearer ${localStorage.getItem("token")}`,
-			},
+			credentials: "include",
 		}).then((res) => res.json()),
 	sendNow: () =>
 		fetch("/api/v1/metrics/send-now", {
 			method: "POST",
-			headers: {
-				Authorization: `Bearer ${localStorage.getItem("token")}`,
-			},
+			credentials: "include",
 		}).then((res) => res.json()),
 };
 
@@ -134,7 +128,8 @@ const SettingsMetrics = () => {
 							Anonymous Metrics & Telemetry
 						</h2>
 						<p className="text-sm text-secondary-600 dark:text-secondary-400 mt-1">
-							Help us understand PatchMon's global usage (100% anonymous)
+							Help us understand PatchMonEnhanced's global usage (100%
+							anonymous)
 						</p>
 					</div>
 				</div>
@@ -166,7 +161,7 @@ const SettingsMetrics = () => {
 									<CheckCircle className="h-4 w-4 mr-2 mt-0.5 flex-shrink-0" />
 									<span>
 										<strong>Purpose:</strong> Display a live counter on our
-										website showing global PatchMon adoption
+										website showing global PatchMonEnhanced adoption
 									</span>
 								</p>
 								<p className="flex items-start">
@@ -202,8 +197,9 @@ const SettingsMetrics = () => {
 								Enable Anonymous Metrics
 							</h3>
 							<p className="text-sm text-secondary-600 dark:text-secondary-400">
-								Share anonymous usage statistics to help us showcase PatchMon's
-								global adoption. Data is sent automatically every 24 hours.
+								Share anonymous usage statistics to help us showcase
+								PatchMonEnhanced's global adoption. Data is sent automatically
+								every 24 hours.
 							</p>
 						</div>
 						<button
@@ -235,7 +231,7 @@ const SettingsMetrics = () => {
 								<>
 									<CheckCircle className="h-4 w-4 text-green-500 mr-2" />
 									<span className="text-green-700 dark:text-green-400">
-										Metrics enabled - Thank you for supporting PatchMon!
+										Metrics enabled - Thank you for supporting PatchMonEnhanced!
 									</span>
 								</>
 							) : (

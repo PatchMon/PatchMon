@@ -30,8 +30,6 @@ const Settings = () => {
 	const updateIntervalId = useId();
 	const githubRepoUrlId = useId();
 	const sshKeyPathId = useId();
-	const _scriptFileId = useId();
-	const _scriptContentId = useId();
 	const [formData, setFormData] = useState({
 		serverProtocol: "http",
 		serverHost: "localhost",
@@ -116,13 +114,6 @@ const Settings = () => {
 	];
 
 	// Agent management state
-	const [_agentInfo, _setAgentInfo] = useState({
-		version: null,
-		lastModified: null,
-		size: null,
-		loading: true,
-		error: null,
-	});
 	const [showUploadModal, setShowUploadModal] = useState(false);
 
 	// Logo management state
@@ -178,7 +169,7 @@ const Settings = () => {
 				autoUpdate: settings.auto_update || false,
 				githubRepoUrl:
 					settings.github_repo_url ||
-					"https://github.com/PatchMon/PatchMon.git",
+					"https://github.com/MacJediWizard/PatchMon-Enhanced.git",
 				repositoryType: settings.repository_type || "public",
 				sshKeyPath: settings.ssh_key_path || "",
 				useCustomSshKey: !!settings.ssh_key_path,
@@ -244,8 +235,8 @@ const Settings = () => {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
-					Authorization: `Bearer ${localStorage.getItem("token")}`,
 				},
+				credentials: "include",
 				body: JSON.stringify({ logoType, fileContent, fileName }),
 			}).then((res) => res.json()),
 		onSuccess: (_data, variables) => {
@@ -479,7 +470,7 @@ const Settings = () => {
 			{/* Toast Notification */}
 			{toast && (
 				<div
-					className={`fixed top-4 right-4 z-50 max-w-md rounded-lg shadow-lg border-2 p-4 flex items-start space-x-3 animate-in slide-in-from-top-5 ${
+					className={`fixed top-20 right-4 z-[100] max-w-md rounded-lg shadow-lg border-2 p-4 flex items-start space-x-3 animate-in slide-in-from-top-5 ${
 						toast.type === "success"
 							? "bg-green-50 dark:bg-green-900/90 border-green-500 dark:border-green-600"
 							: "bg-red-50 dark:bg-red-900/90 border-red-500 dark:border-red-600"
@@ -525,8 +516,8 @@ const Settings = () => {
 
 			<div className="mb-8">
 				<p className="text-secondary-600 dark:text-secondary-300">
-					Configure your PatchMon server settings. These settings will be used
-					in installation scripts and agent communications.
+					Configure your PatchMonEnhanced server settings. These settings will
+					be used in installation scripts and agent communications.
 				</p>
 			</div>
 
@@ -688,8 +679,8 @@ const Settings = () => {
 									</h3>
 								</div>
 								<p className="text-sm text-secondary-500 dark:text-secondary-300 mb-4">
-									Customize your PatchMon installation with custom logos and
-									favicon.
+									Customize your PatchMonEnhanced installation with custom logos
+									and favicon.
 								</p>
 
 								<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1050,8 +1041,8 @@ const Settings = () => {
 										</h2>
 									</div>
 									<p className="text-sm text-secondary-500 dark:text-secondary-300">
-										Manage the PatchMon agent script file used for installations
-										and updates
+										Manage the PatchMonEnhanced agent script file used for
+										installations and updates
 									</p>
 								</div>
 								<div className="flex items-center gap-2">
@@ -1177,7 +1168,7 @@ const Settings = () => {
 												</h3>
 												<div className="mt-2 text-sm text-red-700 dark:text-red-300">
 													<p className="mb-3">
-														To completely remove PatchMon from a host:
+														To completely remove PatchMonEnhanced from a host:
 													</p>
 
 													{/* Agent Removal Script - Standard */}
@@ -1732,7 +1723,7 @@ const AgentUploadModal = ({ isOpen, onClose, onSubmit, isLoading, error }) => {
 								}}
 								rows={15}
 								className="block w-full border border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white font-mono text-sm"
-								placeholder="#!/bin/bash&#10;&#10;# PatchMon Agent Script&#10;VERSION=&quot;1.0.0&quot;&#10;&#10;# Your script content here..."
+								placeholder="#!/bin/bash&#10;&#10;# PatchMonEnhanced Agent Script&#10;VERSION=&quot;1.0.0&quot;&#10;&#10;# Your script content here..."
 							/>
 						</div>
 

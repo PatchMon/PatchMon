@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
 
 const router = express.Router();
@@ -214,7 +215,7 @@ router.get("/", async (req, res) => {
 			},
 		});
 	} catch (error) {
-		console.error("Error fetching packages:", error);
+		logger.error("Error fetching packages:", error);
 		res.status(500).json({ error: "Failed to fetch packages" });
 	}
 });
@@ -295,7 +296,7 @@ router.get("/:packageId", async (req, res) => {
 			},
 		});
 	} catch (error) {
-		console.error("Error fetching package details:", error);
+		logger.error("Error fetching package details:", error);
 		res.status(500).json({ error: "Failed to fetch package details" });
 	}
 });
@@ -402,7 +403,7 @@ router.get("/:packageId/hosts", async (req, res) => {
 			},
 		});
 	} catch (error) {
-		console.error("Error fetching package hosts:", error);
+		logger.error("Error fetching package hosts:", error);
 		res.status(500).json({ error: "Failed to fetch package hosts" });
 	}
 });

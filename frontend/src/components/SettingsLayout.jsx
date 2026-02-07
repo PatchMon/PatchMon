@@ -1,6 +1,7 @@
 import {
 	BarChart3,
 	Bell,
+	Bot,
 	ChevronDown,
 	ChevronLeft,
 	ChevronRight,
@@ -122,6 +123,11 @@ const SettingsLayout = ({ children }) => {
 						href: "/settings/integrations",
 						icon: Wrench,
 					},
+					{
+						name: "AI Terminal",
+						href: "/settings/ai-terminal",
+						icon: Bot,
+					},
 				],
 			});
 
@@ -177,11 +183,6 @@ const SettingsLayout = ({ children }) => {
 	};
 
 	const allNavItems = getAllNavItems();
-
-	const _getCurrentPageTitle = () => {
-		const currentItem = allNavItems.find((item) => isActive(item.href));
-		return currentItem ? currentItem.name : "Settings";
-	};
 
 	const handleDropdownChange = (e) => {
 		const selectedHref = e.target.value;

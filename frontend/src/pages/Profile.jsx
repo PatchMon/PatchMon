@@ -80,10 +80,8 @@ const Profile = () => {
 		setIsLoading(true);
 		setMessage({ type: "", text: "" });
 
-		console.log("Submitting profile data:", profileData);
 		try {
 			const result = await updateProfile(profileData);
-			console.log("Profile update result:", result);
 			if (result.success) {
 				setMessage({ type: "success", text: "Profile updated successfully!" });
 			} else {
@@ -191,9 +189,17 @@ const Profile = () => {
 			<div className="bg-white dark:bg-secondary-800 shadow rounded-lg p-4 md:p-6">
 				<div className="flex items-center space-x-3 md:space-x-4">
 					<div className="flex-shrink-0">
-						<div className="h-12 w-12 md:h-16 md:w-16 rounded-full bg-primary-100 dark:bg-primary-900 flex items-center justify-center">
-							<User className="h-6 w-6 md:h-8 md:w-8 text-primary-600 dark:text-primary-400" />
-						</div>
+						{user?.avatar_url ? (
+							<img
+								src={user.avatar_url}
+								alt={user.username}
+								className="h-12 w-12 md:h-16 md:w-16 rounded-full object-cover"
+							/>
+						) : (
+							<div className="h-12 w-12 md:h-16 md:w-16 rounded-full bg-primary-100 dark:bg-primary-900 flex items-center justify-center">
+								<User className="h-6 w-6 md:h-8 md:w-8 text-primary-600 dark:text-primary-400" />
+							</div>
+						)}
 					</div>
 					<div className="flex-1 min-w-0">
 						<h3 className="text-base md:text-lg font-medium text-secondary-900 dark:text-white truncate">
@@ -207,18 +213,22 @@ const Profile = () => {
 						<div className="mt-2">
 							<span
 								className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium ${
-									user?.role === "admin"
-										? "bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200"
-										: user?.role === "host_manager"
-											? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-											: user?.role === "readonly"
-												? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
-												: "bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
+									user?.role === "superadmin"
+										? "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+										: user?.role === "admin"
+											? "bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200"
+											: user?.role === "host_manager"
+												? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+												: user?.role === "readonly"
+													? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+													: "bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
 								}`}
 							>
 								<Shield className="h-3 w-3 mr-1" />
-								{user?.role?.charAt(0).toUpperCase() +
-									user?.role?.slice(1).replace("_", " ")}
+								{user?.role === "superadmin"
+									? "Super Admin"
+									: user?.role?.charAt(0).toUpperCase() +
+										user?.role?.slice(1).replace("_", " ")}
 							</span>
 						</div>
 					</div>
@@ -827,7 +837,7 @@ const TfaTab = () => {
 	};
 
 	const downloadBackupCodes = () => {
-		const content = `PatchMon Backup Codes\n\n${backupCodes.map((code, index) => `${index + 1}. ${code}`).join("\n")}\n\nKeep these codes safe! Each code can only be used once.`;
+		const content = `PatchMonEnhanced Backup Codes\n\n${backupCodes.map((code, index) => `${index + 1}. ${code}`).join("\n")}\n\nKeep these codes safe! Each code can only be used once.`;
 		const blob = new Blob([content], { type: "text/plain" });
 		const url = URL.createObjectURL(blob);
 		const a = document.createElement("a");
@@ -1191,8 +1201,6 @@ const TfaTab = () => {
 
 // Sessions Tab Component
 const SessionsTab = () => {
-	const _queryClient = useQueryClient();
-	const [_isLoading, _setIsLoading] = useState(false);
 	const [message, setMessage] = useState({ type: "", text: "" });
 
 	// Fetch user sessions
@@ -1204,9 +1212,7 @@ const SessionsTab = () => {
 		queryKey: ["user-sessions"],
 		queryFn: async () => {
 			const response = await fetch("/api/v1/auth/sessions", {
-				headers: {
-					Authorization: `Bearer ${localStorage.getItem("token")}`,
-				},
+				credentials: "include",
 			});
 			if (!response.ok) throw new Error("Failed to fetch sessions");
 			return response.json();
@@ -1218,9 +1224,7 @@ const SessionsTab = () => {
 		mutationFn: async (sessionId) => {
 			const response = await fetch(`/api/v1/auth/sessions/${sessionId}`, {
 				method: "DELETE",
-				headers: {
-					Authorization: `Bearer ${localStorage.getItem("token")}`,
-				},
+				credentials: "include",
 			});
 			if (!response.ok) throw new Error("Failed to revoke session");
 			return response.json();
@@ -1239,9 +1243,7 @@ const SessionsTab = () => {
 		mutationFn: async () => {
 			const response = await fetch("/api/v1/auth/sessions", {
 				method: "DELETE",
-				headers: {
-					Authorization: `Bearer ${localStorage.getItem("token")}`,
-				},
+				credentials: "include",
 			});
 			if (!response.ok) throw new Error("Failed to revoke sessions");
 			return response.json();

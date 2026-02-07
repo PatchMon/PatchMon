@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateToken } = require("../middleware/auth");
 
@@ -30,7 +31,7 @@ router.get("/", authenticateToken, async (req, res) => {
 			color_theme: user.color_theme || "cyber_blue",
 		});
 	} catch (error) {
-		console.error("Error fetching user preferences:", error);
+		logger.error("Error fetching user preferences:", error);
 		res.status(500).json({ error: "Failed to fetch user preferences" });
 	}
 });
@@ -97,7 +98,7 @@ router.patch("/", authenticateToken, async (req, res) => {
 			},
 		});
 	} catch (error) {
-		console.error("Error updating user preferences:", error);
+		logger.error("Error updating user preferences:", error);
 		res.status(500).json({ error: "Failed to update user preferences" });
 	}
 });

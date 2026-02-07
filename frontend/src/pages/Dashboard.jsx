@@ -115,34 +115,31 @@ const Dashboard = () => {
 		navigate(`/hosts?${newSearchParams.toString()}`);
 	};
 
-	const _handleOSDistributionClick = () => {
-		navigate("/hosts?showFilters=true", { replace: true });
-	};
-
 	const handleUpdateStatusClick = () => {
 		navigate("/hosts?filter=needsUpdates", { replace: true });
 	};
 
-	const _handlePackagePriorityClick = () => {
-		navigate("/packages?filter=security");
-	};
-
 	// Chart click handlers
 	const handleOSChartClick = (_, elements) => {
-		if (elements.length > 0) {
+		if (elements.length > 0 && stats?.charts?.osDistribution) {
 			const elementIndex = elements[0].index;
-			const osName =
-				stats.charts.osDistribution[elementIndex].name.toLowerCase();
-			navigate(`/hosts?osFilter=${osName}&showFilters=true`, { replace: true });
+			const osItem = stats.charts.osDistribution[elementIndex];
+			if (osItem?.name) {
+				navigate(
+					`/hosts?osFilter=${osItem.name.toLowerCase()}&showFilters=true`,
+					{ replace: true },
+				);
+			}
 		}
 	};
 
 	const handleUpdateStatusChartClick = (_, elements) => {
-		if (elements.length > 0) {
+		if (elements.length > 0 && stats?.charts?.updateStatusDistribution) {
 			const elementIndex = elements[0].index;
-			const statusName =
-				stats.charts.updateStatusDistribution[elementIndex].name;
+			const statusItem = stats.charts.updateStatusDistribution[elementIndex];
+			if (!statusItem?.name) return;
 
+			const statusName = statusItem.name;
 			// Map status names to filter parameters
 			let filter = "";
 			if (statusName.toLowerCase().includes("needs updates")) {
@@ -160,11 +157,12 @@ const Dashboard = () => {
 	};
 
 	const handlePackagePriorityChartClick = (_, elements) => {
-		if (elements.length > 0) {
+		if (elements.length > 0 && stats?.charts?.packageUpdateDistribution) {
 			const elementIndex = elements[0].index;
-			const priorityName =
-				stats.charts.packageUpdateDistribution[elementIndex].name;
+			const priorityItem = stats.charts.packageUpdateDistribution[elementIndex];
+			if (!priorityItem?.name) return;
 
+			const priorityName = priorityItem.name;
 			// Map priority names to filter parameters
 			if (priorityName.toLowerCase().includes("security")) {
 				navigate("/packages?filter=security", { replace: true });
@@ -1597,7 +1595,7 @@ const Dashboard = () => {
 						Welcome back, {user?.first_name || user?.username || "User"} 👋
 					</h1>
 					<p className="text-sm text-secondary-600 dark:text-white/80 mt-1">
-						Overview of your PatchMon infrastructure
+						Overview of your PatchMonEnhanced infrastructure
 					</p>
 				</div>
 				<div className="flex items-center gap-3">

@@ -8,12 +8,13 @@ import {
 	EyeOff,
 	Plus,
 	Server,
+	Shield,
 	Trash2,
 	X,
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import SettingsLayout from "../../components/SettingsLayout";
-import api, { formatDate } from "../../utils/api";
+import api from "../../utils/api";
 
 const Integrations = () => {
 	// Generate unique IDs for form elements
@@ -396,6 +397,20 @@ const Integrations = () => {
 								<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
 							)}
 						</button>
+						<button
+							type="button"
+							onClick={() => handleTabChange("compliance")}
+							className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+								activeTab === "compliance"
+									? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
+									: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+							}`}
+						>
+							<span>Compliance</span>
+							{activeTab === "compliance" && (
+								<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+							)}
+						</button>
 					</div>
 
 					{/* Desktop Tab Navigation */}
@@ -434,7 +449,17 @@ const Integrations = () => {
 							>
 								Docker
 							</button>
-							{/* Future tabs can be added here */}
+							<button
+								type="button"
+								onClick={() => handleTabChange("compliance")}
+								className={`px-6 py-3 text-sm font-medium ${
+									activeTab === "compliance"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
+										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+								}`}
+							>
+								Compliance
+							</button>
 						</div>
 					</div>
 
@@ -682,8 +707,8 @@ const Integrations = () => {
 												</h4>
 											</div>
 											<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-3">
-												Programmatic access to PatchMon data with granular
-												scope-based permissions.
+												Programmatic access to PatchMonEnhanced data with
+												granular scope-based permissions.
 											</p>
 											<a
 												href="https://docs.patchmon.net/books/patchmon-application-documentation/page/integration-api-documentation"
@@ -714,8 +739,8 @@ const Integrations = () => {
 												GetHomepage Widget Integration
 											</h3>
 											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-												Create API keys to display PatchMon statistics in your
-												GetHomepage dashboard
+												Create API keys to display PatchMonEnhanced statistics
+												in your GetHomepage dashboard
 											</p>
 										</div>
 									</div>
@@ -973,7 +998,8 @@ const Integrations = () => {
 											Docker Inventory Collection
 										</h3>
 										<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-											Docker monitoring is now built into the PatchMon Go agent
+											Docker monitoring is now built into the PatchMonEnhanced
+											Go agent
 										</p>
 									</div>
 								</div>
@@ -987,8 +1013,8 @@ const Integrations = () => {
 												Automatic Docker Discovery
 											</h4>
 											<p className="text-xs md:text-sm text-primary-800 dark:text-primary-300 mb-3">
-												The PatchMon Go agent automatically discovers Docker
-												when it's available on your host and collects
+												The PatchMonEnhanced Go agent automatically discovers
+												Docker when it's available on your host and collects
 												comprehensive inventory information:
 											</p>
 											<ul className="list-disc list-inside space-y-2 text-xs md:text-sm text-primary-800 dark:text-primary-300 ml-2">
@@ -1024,8 +1050,8 @@ const Integrations = () => {
 									</h4>
 									<ol className="list-decimal list-inside space-y-3 text-xs md:text-sm text-secondary-700 dark:text-secondary-300">
 										<li>
-											Install the PatchMon Go agent on your host (see the Hosts
-											page for installation instructions)
+											Install the PatchMonEnhanced Go agent on your host (see
+											the Hosts page for installation instructions)
 										</li>
 										<li>
 											The agent automatically detects if Docker is installed and
@@ -1033,7 +1059,7 @@ const Integrations = () => {
 										</li>
 										<li>
 											During each collection cycle, the agent gathers Docker
-											inventory data and sends it to the PatchMon server
+											inventory data and sends it to the PatchMonEnhanced server
 										</li>
 										<li>
 											View your complete Docker inventory (containers, images,
@@ -1077,7 +1103,10 @@ const Integrations = () => {
 										<div className="text-xs md:text-sm text-blue-800 dark:text-blue-200">
 											<p className="font-semibold mb-2">Requirements:</p>
 											<ul className="list-disc list-inside space-y-1 ml-2">
-												<li>PatchMon Go agent must be installed and running</li>
+												<li>
+													PatchMonEnhanced Go agent must be installed and
+													running
+												</li>
 												<li>Docker daemon must be installed and running</li>
 												<li>
 													Agent must have access to the Docker socket (
@@ -1089,6 +1118,208 @@ const Integrations = () => {
 												<li>
 													Typically requires running the agent as root or with
 													Docker group permissions
+												</li>
+											</ul>
+										</div>
+									</div>
+								</div>
+							</div>
+						)}
+
+						{/* Compliance Tab */}
+						{activeTab === "compliance" && (
+							<div className="space-y-6">
+								{/* Header */}
+								<div className="flex items-center gap-3">
+									<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
+										<Shield className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+									</div>
+									<div className="min-w-0">
+										<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
+											Compliance Scanning
+										</h3>
+										<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
+											Security compliance scanning is built into the
+											PatchMonEnhanced Go agent
+										</p>
+									</div>
+								</div>
+
+								{/* Info Message */}
+								<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
+									<div className="flex items-start gap-3">
+										<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400 flex-shrink-0 mt-0.5" />
+										<div className="min-w-0">
+											<h4 className="text-sm md:text-base font-semibold text-primary-900 dark:text-primary-200 mb-2">
+												Automatic Security Compliance Scanning
+											</h4>
+											<p className="text-xs md:text-sm text-primary-800 dark:text-primary-300 mb-3">
+												The PatchMonEnhanced Go agent includes built-in
+												compliance scanning capabilities that automatically
+												assess your hosts against industry security benchmarks:
+											</p>
+											<ul className="list-disc list-inside space-y-2 text-xs md:text-sm text-primary-800 dark:text-primary-300 ml-2">
+												<li>
+													<strong>OpenSCAP</strong> - CIS benchmark scanning for
+													Linux hosts with automatic tool installation
+												</li>
+												<li>
+													<strong>Docker Bench</strong> - CIS Docker Benchmark
+													security assessment for container hosts
+												</li>
+												<li>
+													<strong>Docker Image CVE Scanning</strong> -
+													Vulnerability scanning for Docker images using
+													oscap-docker
+												</li>
+												<li>
+													<strong>Scoring</strong> - Compliance scores
+													calculated based on passed vs failed rules
+												</li>
+												<li>
+													<strong>Trending</strong> - Track compliance
+													improvements over time with historical data
+												</li>
+												<li>
+													<strong>On-Demand Scans</strong> - Trigger compliance
+													scans from the dashboard at any time
+												</li>
+												<li>
+													<strong>Auto-Remediation</strong> - Automatically fix
+													failing rules when enabled
+												</li>
+											</ul>
+										</div>
+									</div>
+								</div>
+
+								{/* How It Works */}
+								<div className="bg-white dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 md:p-6">
+									<h4 className="text-sm md:text-base font-semibold text-secondary-900 dark:text-white mb-4">
+										How It Works
+									</h4>
+									<ol className="list-decimal list-inside space-y-3 text-xs md:text-sm text-secondary-700 dark:text-secondary-300">
+										<li>
+											Install the PatchMonEnhanced Go agent on your host (see
+											the Hosts page for installation instructions)
+										</li>
+										<li>
+											Enable the Compliance integration from the dashboard
+										</li>
+										<li>
+											The agent automatically installs required scanning tools
+											(OpenSCAP, SCAP Security Guide)
+										</li>
+										<li>
+											If Docker integration is also enabled, Docker Bench and
+											oscap-docker are set up automatically
+										</li>
+										<li>
+											Compliance scans run periodically and results are sent to
+											the PatchMonEnhanced server
+										</li>
+										<li>
+											View compliance scores, failing rules, and remediation
+											guidance in the{" "}
+											<a
+												href="/compliance"
+												className="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 underline"
+											>
+												Compliance page
+											</a>
+										</li>
+										<li>
+											Trigger on-demand scans or enable auto-remediation from
+											the host details page
+										</li>
+									</ol>
+								</div>
+
+								{/* Supported Profiles */}
+								<div className="bg-white dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 md:p-6">
+									<h4 className="text-sm md:text-base font-semibold text-secondary-900 dark:text-white mb-4">
+										Supported Compliance Profiles
+									</h4>
+									<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+										<div className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4">
+											<div className="flex items-center gap-2 mb-2">
+												<Shield className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+												<h5 className="font-semibold text-secondary-900 dark:text-white">
+													OpenSCAP
+												</h5>
+											</div>
+											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
+												CIS benchmarks for Ubuntu, Debian, RHEL, CentOS, Rocky,
+												AlmaLinux, Fedora, SLES, and OpenSUSE. Supports Level 1
+												and Level 2 server profiles.
+											</p>
+										</div>
+										<div className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4">
+											<div className="flex items-center gap-2 mb-2">
+												<Container className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+												<h5 className="font-semibold text-secondary-900 dark:text-white">
+													Docker Bench
+												</h5>
+											</div>
+											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
+												CIS Docker Benchmark security checks. Assesses Docker
+												daemon configuration, container images, and runtime
+												security. Requires Docker integration enabled.
+											</p>
+										</div>
+										<div className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4">
+											<div className="flex items-center gap-2 mb-2">
+												<AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+												<h5 className="font-semibold text-secondary-900 dark:text-white">
+													Docker Image CVE
+												</h5>
+											</div>
+											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
+												Vulnerability scanning for Docker container images using
+												oscap-docker. Identifies known CVEs in your images.
+												Requires both Docker and Compliance enabled.
+											</p>
+										</div>
+									</div>
+								</div>
+
+								{/* Automatic Tool Installation */}
+								<div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 md:p-4">
+									<div className="flex items-start gap-2">
+										<CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+										<div className="text-xs md:text-sm text-green-800 dark:text-green-200">
+											<p className="font-semibold mb-1">
+												Automatic Tool Installation
+											</p>
+											<p>
+												When you enable the Compliance integration, the agent
+												automatically installs openscap-scanner and
+												scap-security-guide packages. If Docker integration is
+												also enabled, oscap-docker is set up automatically for
+												container image scanning.
+											</p>
+										</div>
+									</div>
+								</div>
+
+								{/* Requirements */}
+								<div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 md:p-4">
+									<div className="flex items-start gap-2">
+										<AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+										<div className="text-xs md:text-sm text-blue-800 dark:text-blue-200">
+											<p className="font-semibold mb-2">Requirements:</p>
+											<ul className="list-disc list-inside space-y-1 ml-2">
+												<li>
+													PatchMonEnhanced Go agent must be installed and
+													running
+												</li>
+												<li>
+													Agent must run as root for full compliance scanning
+													capabilities
+												</li>
+												<li>
+													For Docker scanning: Docker must be installed and
+													Docker integration must be enabled
 												</li>
 											</ul>
 										</div>

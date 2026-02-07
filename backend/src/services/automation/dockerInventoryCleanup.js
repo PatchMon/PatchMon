@@ -1,4 +1,5 @@
 const { prisma } = require("./shared/prisma");
+const logger = require("../../utils/logger");
 
 /**
  * Docker Inventory Cleanup Automation
@@ -15,7 +16,7 @@ class DockerInventoryCleanup {
 	 */
 	async process(_job) {
 		const startTime = Date.now();
-		console.log("🧹 Starting Docker inventory cleanup...");
+		logger.info("🧹 Starting Docker inventory cleanup...");
 
 		try {
 			// Step 1: Find and delete orphaned containers (containers for non-existent hosts)
@@ -46,11 +47,11 @@ class DockerInventoryCleanup {
 						image_name: container.image_name,
 						host_id: container.host_id,
 					});
-					console.log(
+					logger.info(
 						`🗑️ Deleted orphaned container: ${container.name} (host_id: ${container.host_id})`,
 					);
 				} catch (deleteError) {
-					console.error(
+					logger.error(
 						`❌ Failed to delete container ${container.id}:`,
 						deleteError.message,
 					);
@@ -97,11 +98,11 @@ class DockerInventoryCleanup {
 						tag: image.tag,
 						image_id: image.image_id,
 					});
-					console.log(
+					logger.info(
 						`🗑️ Deleted orphaned image: ${image.repository}:${image.tag}`,
 					);
 				} catch (deleteError) {
-					console.error(
+					logger.error(
 						`❌ Failed to delete image ${image.id}:`,
 						deleteError.message,
 					);
@@ -109,7 +110,7 @@ class DockerInventoryCleanup {
 			}
 
 			const executionTime = Date.now() - startTime;
-			console.log(
+			logger.info(
 				`✅ Docker inventory cleanup completed in ${executionTime}ms - Deleted ${deletedContainersCount} containers and ${deletedImagesCount} images`,
 			);
 
@@ -123,7 +124,7 @@ class DockerInventoryCleanup {
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			console.error(
+			logger.error(
 				`❌ Docker inventory cleanup failed after ${executionTime}ms:`,
 				error.message,
 			);
@@ -143,7 +144,7 @@ class DockerInventoryCleanup {
 				jobId: "docker-inventory-cleanup-recurring",
 			},
 		);
-		console.log("✅ Docker inventory cleanup scheduled");
+		logger.info("✅ Docker inventory cleanup scheduled");
 		return job;
 	}
 
@@ -156,7 +157,7 @@ class DockerInventoryCleanup {
 			{},
 			{ priority: 1 },
 		);
-		console.log("✅ Manual Docker inventory cleanup triggered");
+		logger.info("✅ Manual Docker inventory cleanup triggered");
 		return job;
 	}
 }

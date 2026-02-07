@@ -1961,9 +1961,9 @@ const Docker = () => {
 										</p>
 									</div>
 									<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
-										⚠️ This only removes the container from PatchMon's inventory.
-										It does NOT stop or delete the actual Docker container on
-										the host.
+										⚠️ This only removes the container from PatchMonEnhanced's
+										inventory. It does NOT stop or delete the actual Docker
+										container on the host.
 									</p>
 								</div>
 							</div>
@@ -2031,8 +2031,9 @@ const Docker = () => {
 										</p>
 									) : (
 										<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
-											⚠️ This only removes the image from PatchMon's inventory.
-											It does NOT delete the actual Docker image from hosts.
+											⚠️ This only removes the image from PatchMonEnhanced's
+											inventory. It does NOT delete the actual Docker image from
+											hosts.
 										</p>
 									)}
 								</div>
@@ -2103,8 +2104,9 @@ const Docker = () => {
 										)}
 									</div>
 									<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
-										⚠️ This only removes the volume from PatchMon's inventory. It
-										does NOT delete the actual Docker volume from the host.
+										⚠️ This only removes the volume from PatchMonEnhanced's
+										inventory. It does NOT delete the actual Docker volume from
+										the host.
 									</p>
 								</div>
 							</div>
@@ -2176,8 +2178,9 @@ const Docker = () => {
 										)}
 									</div>
 									<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
-										⚠️ This only removes the network from PatchMon's inventory.
-										It does NOT delete the actual Docker network from the host.
+										⚠️ This only removes the network from PatchMonEnhanced's
+										inventory. It does NOT delete the actual Docker network from
+										the host.
 									</p>
 								</div>
 							</div>

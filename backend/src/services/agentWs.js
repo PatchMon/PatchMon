@@ -1,9 +1,12 @@
 // Lightweight WebSocket hub for agent connections
+const logger = require("../utils/logger");
 // Auth: X-API-ID / X-API-KEY headers on the upgrade request
 
 const WebSocket = require("ws");
 const url = require("node:url");
 const { get_current_time } = require("../utils/timezone");
+const { handleSshTerminalUpgrade } = require("./sshTerminalWs");
+const { verifyApiKey } = require("../utils/apiKeyUtils");
 
 // Connection registry by api_id
 const apiIdToSocket = new Map();
@@ -15,6 +18,10 @@ const connectionMetadata = new Map();
 // Subscribers for connection status changes (for SSE)
 // Map<api_id, Set<callback>>
 const connectionChangeSubscribers = new Map();
+
+// Subscribers for compliance scan progress (for SSE)
+// Map<api_id, Set<callback>>
+const complianceProgressSubscribers = new Map();
 
 let wss;
 let prisma;
@@ -65,9 +72,9 @@ function init(server, prismaClient) {
 							err.code === "EPIPE"
 						) {
 							// These are expected errors, just log quietly
-							console.log("[bullboard-ws] connection error:", err.code);
+							logger.info("[bullboard-ws] connection error:", err.code);
 						} else {
-							console.error("[bullboard-ws] error:", err.message || err);
+							logger.error("[bullboard-ws] error:", err.message || err);
 						}
 					});
 
@@ -76,6 +83,17 @@ function init(server, prismaClient) {
 					});
 				});
 				return;
+			}
+
+			// Handle SSH terminal WebSocket connections
+			if (pathname.startsWith("/api/") && pathname.includes("/ssh-terminal/")) {
+				const handled = await handleSshTerminalUpgrade(
+					request,
+					socket,
+					head,
+					pathname,
+				);
+				if (handled) return;
 			}
 
 			// Handle agent WebSocket connections
@@ -100,7 +118,15 @@ function init(server, prismaClient) {
 
 			// Validate credentials
 			const host = await prisma.hosts.findUnique({ where: { api_id: apiId } });
-			if (!host || host.api_key !== apiKey) {
+			if (!host) {
+				socket.destroy();
+				return;
+			}
+
+			// Verify API key (supports bcrypt hashed and legacy plaintext keys)
+			const isValidKey = await verifyApiKey(apiKey, host.api_key);
+			if (!isValidKey) {
+				logger.info(`[agent-ws] invalid API key for api_id=${apiId}`);
 				socket.destroy();
 				return;
 			}
@@ -115,7 +141,7 @@ function init(server, prismaClient) {
 				apiIdToSocket.set(apiId, ws);
 				connectionMetadata.set(apiId, { ws, secure: isSecure });
 
-				console.log(
+				logger.info(
 					`[agent-ws] connected api_id=${apiId} protocol=${isSecure ? "wss" : "ws"} total=${apiIdToSocket.size}`,
 				);
 
@@ -130,10 +156,13 @@ function init(server, prismaClient) {
 						if (message.type === "docker_status") {
 							// Handle Docker container status events
 							await handleDockerStatusEvent(apiId, message);
+						} else if (message.type === "compliance_scan_progress") {
+							// Handle compliance scan progress events
+							handleComplianceProgressEvent(apiId, message);
 						}
 						// Add more message types here as needed
 					} catch (err) {
-						console.error(
+						logger.error(
 							`[agent-ws] error parsing message from ${apiId}:`,
 							err,
 						);
@@ -150,7 +179,7 @@ function init(server, prismaClient) {
 					) {
 						// 1006 is a special close code indicating abnormal closure
 						// It cannot be sent in a close frame, but can occur when connection is lost
-						console.log(
+						logger.info(
 							`[agent-ws] connection error for ${apiId} (abnormal closure):`,
 							err.message || err.code,
 						);
@@ -160,10 +189,10 @@ function init(server, prismaClient) {
 						err.message?.includes("read ECONNRESET")
 					) {
 						// Connection reset errors are common and expected
-						console.log(`[agent-ws] connection reset for ${apiId}`);
+						logger.info(`[agent-ws] connection reset for ${apiId}`);
 					} else {
 						// Log other errors for debugging
-						console.error(
+						logger.error(
 							`[agent-ws] error for ${apiId}:`,
 							err.message || err.code || err,
 						);
@@ -199,7 +228,7 @@ function init(server, prismaClient) {
 						// Notify subscribers of disconnection
 						notifyConnectionChange(apiId, false);
 					}
-					console.log(
+					logger.info(
 						`[agent-ws] disconnected api_id=${apiId} code=${code} reason=${reason || "none"} total=${apiIdToSocket.size}`,
 					);
 				});
@@ -255,6 +284,34 @@ function pushUpdateAgent(apiId) {
 	safeSend(ws, JSON.stringify({ type: "update_agent" }));
 }
 
+function pushRefreshIntegrationStatus(apiId) {
+	const ws = apiIdToSocket.get(apiId);
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		safeSend(ws, JSON.stringify({ type: "refresh_integration_status" }));
+		logger.info(`📤 Pushed refresh integration status to agent ${apiId}`);
+		return true;
+	} else {
+		logger.info(
+			`⚠️ Agent ${apiId} not connected, cannot refresh integration status`,
+		);
+		return false;
+	}
+}
+
+function pushDockerInventoryRefresh(apiId) {
+	const ws = apiIdToSocket.get(apiId);
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		safeSend(ws, JSON.stringify({ type: "docker_inventory_refresh" }));
+		logger.info(`📤 Pushed Docker inventory refresh to agent ${apiId}`);
+		return true;
+	} else {
+		logger.info(
+			`⚠️ Agent ${apiId} not connected, cannot refresh Docker inventory`,
+		);
+		return false;
+	}
+}
+
 function pushIntegrationToggle(apiId, integrationName, enabled) {
 	const ws = apiIdToSocket.get(apiId);
 	if (ws && ws.readyState === WebSocket.OPEN) {
@@ -266,13 +323,35 @@ function pushIntegrationToggle(apiId, integrationName, enabled) {
 				enabled: enabled,
 			}),
 		);
-		console.log(
+		logger.info(
 			`📤 Pushed integration toggle to agent ${apiId}: ${integrationName} = ${enabled}`,
 		);
 		return true;
 	} else {
-		console.log(
+		logger.info(
 			`⚠️ Agent ${apiId} not connected, cannot push integration toggle, please edit config.yml manually`,
+		);
+		return false;
+	}
+}
+
+function pushSetComplianceOnDemandOnly(apiId, onDemandOnly) {
+	const ws = apiIdToSocket.get(apiId);
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		safeSend(
+			ws,
+			JSON.stringify({
+				type: "set_compliance_on_demand_only",
+				on_demand_only: onDemandOnly,
+			}),
+		);
+		logger.info(
+			`📤 Pushed compliance on-demand-only setting to agent ${apiId}: ${onDemandOnly}`,
+		);
+		return true;
+	} else {
+		logger.info(
+			`⚠️ Agent ${apiId} not connected, cannot push compliance on-demand-only setting`,
 		);
 		return false;
 	}
@@ -280,6 +359,80 @@ function pushIntegrationToggle(apiId, integrationName, enabled) {
 
 function getConnectionByApiId(apiId) {
 	return apiIdToSocket.get(apiId);
+}
+
+function pushComplianceScan(apiId, profileType = "all", options = {}) {
+	const ws = apiIdToSocket.get(apiId);
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		const payload = {
+			type: "compliance_scan",
+			profile_type: profileType,
+			profile_id: options.profileId || null,
+			enable_remediation: options.enableRemediation || false,
+			fetch_remote_resources: options.fetchRemoteResources || false,
+		};
+		safeSend(ws, JSON.stringify(payload));
+		const remediationStatus = options.enableRemediation
+			? " (with remediation)"
+			: "";
+		const profileInfo = options.profileId
+			? ` profile=${options.profileId}`
+			: "";
+		logger.info(
+			`[agent-ws] Triggered compliance scan for ${apiId}: ${profileType}${profileInfo}${remediationStatus}`,
+		);
+		return true;
+	}
+	return false;
+}
+
+function pushUpgradeSSG(apiId) {
+	logger.info(`[agent-ws] pushUpgradeSSG called for api_id=${apiId}`);
+	const ws = apiIdToSocket.get(apiId);
+	logger.info(
+		`[agent-ws] WebSocket found: ${!!ws}, readyState: ${ws?.readyState}, OPEN=${WebSocket.OPEN}`,
+	);
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		const payload = JSON.stringify({ type: "upgrade_ssg" });
+		logger.info(`[agent-ws] Sending payload: ${payload}`);
+		try {
+			ws.send(payload);
+			logger.info(`[agent-ws] Triggered SSG upgrade for ${apiId}`);
+			return true;
+		} catch (err) {
+			logger.error(`[agent-ws] Failed to send SSG upgrade to ${apiId}:`, err);
+			return false;
+		}
+	}
+	logger.info(
+		`[agent-ws] Cannot send SSG upgrade - WebSocket not ready for ${apiId}`,
+	);
+	return false;
+}
+
+function pushDockerImageScan(apiId, options = {}) {
+	const ws = apiIdToSocket.get(apiId);
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		const payload = {
+			type: "docker_image_scan",
+			image_name: options.imageName || null,
+			container_name: options.containerName || null,
+			scan_all_images: options.scanAllImages || false,
+		};
+		safeSend(ws, JSON.stringify(payload));
+		const scanTarget = options.scanAllImages
+			? "all images"
+			: options.imageName
+				? `image: ${options.imageName}`
+				: options.containerName
+					? `container: ${options.containerName}`
+					: "unknown target";
+		logger.info(
+			`[agent-ws] Triggered Docker image CVE scan for ${apiId}: ${scanTarget}`,
+		);
+		return true;
+	}
+	return false;
 }
 
 function pushUpdateNotification(apiId, updateInfo) {
@@ -295,12 +448,12 @@ function pushUpdateNotification(apiId, updateInfo) {
 				message: updateInfo.message,
 			}),
 		);
-		console.log(
+		logger.info(
 			`📤 Pushed update notification to agent ${apiId}: version ${updateInfo.version}`,
 		);
 		return true;
 	} else {
-		console.log(
+		logger.info(
 			`⚠️ Agent ${apiId} not connected, cannot push update notification`,
 		);
 		return false;
@@ -335,7 +488,7 @@ async function pushUpdateNotificationToAll(updateInfo) {
 			const hostAutoUpdate = hostAutoUpdateMap.get(apiId);
 			if (hostAutoUpdate === false) {
 				skippedCount++;
-				console.log(
+				logger.info(
 					`⚠️ Skipping update notification for agent ${apiId} (auto-update disabled for host)`,
 				);
 				continue;
@@ -352,12 +505,12 @@ async function pushUpdateNotificationToAll(updateInfo) {
 					}),
 				);
 				notifiedCount++;
-				console.log(
+				logger.info(
 					`📤 Pushed update notification to agent ${apiId}: version ${updateInfo.version}`,
 				);
 			} catch (error) {
 				failedCount++;
-				console.error(`❌ Failed to notify agent ${apiId}:`, error.message);
+				logger.error(`❌ Failed to notify agent ${apiId}:`, error.message);
 			}
 		} else {
 			failedCount++;
@@ -365,7 +518,7 @@ async function pushUpdateNotificationToAll(updateInfo) {
 	}
 
 	const totalAgents = apiIdToSocket.size;
-	console.log(
+	logger.info(
 		`📤 Update notification sent to ${notifiedCount} agents, ${failedCount} failed, ${skippedCount} skipped (auto-update disabled)`,
 	);
 	return { notifiedCount, failedCount, skippedCount, totalAgents };
@@ -379,7 +532,7 @@ function notifyConnectionChange(apiId, connected) {
 			try {
 				callback(connected);
 			} catch (err) {
-				console.error(`[agent-ws] error notifying subscriber:`, err);
+				logger.error(`[agent-ws] error notifying subscriber:`, err);
 			}
 		}
 	}
@@ -404,12 +557,68 @@ function subscribeToConnectionChanges(apiId, callback) {
 	};
 }
 
+// Handle compliance scan progress events from agent
+function handleComplianceProgressEvent(apiId, message) {
+	const {
+		phase,
+		profile_name,
+		message: progressMessage,
+		progress,
+		error,
+		timestamp,
+	} = message;
+
+	logger.info(
+		`[Compliance Progress] ${apiId}: ${phase} - ${progressMessage} (${progress}%)`,
+	);
+
+	// Notify all subscribers for this api_id
+	const subscribers = complianceProgressSubscribers.get(apiId);
+	if (subscribers) {
+		const progressData = {
+			phase,
+			profile_name,
+			message: progressMessage,
+			progress,
+			error,
+			timestamp: timestamp || new Date().toISOString(),
+		};
+
+		for (const callback of subscribers) {
+			try {
+				callback(progressData);
+			} catch (err) {
+				logger.error(`[Compliance Progress] error notifying subscriber:`, err);
+			}
+		}
+	}
+}
+
+// Subscribe to compliance progress updates for a specific api_id
+function subscribeToComplianceProgress(apiId, callback) {
+	if (!complianceProgressSubscribers.has(apiId)) {
+		complianceProgressSubscribers.set(apiId, new Set());
+	}
+	complianceProgressSubscribers.get(apiId).add(callback);
+
+	// Return unsubscribe function
+	return () => {
+		const subscribers = complianceProgressSubscribers.get(apiId);
+		if (subscribers) {
+			subscribers.delete(callback);
+			if (subscribers.size === 0) {
+				complianceProgressSubscribers.delete(apiId);
+			}
+		}
+	};
+}
+
 // Handle Docker container status events from agent
 async function handleDockerStatusEvent(apiId, message) {
 	try {
 		const { event: _event, container_id, name, status, timestamp } = message;
 
-		console.log(
+		logger.info(
 			`[Docker Event] ${apiId}: Container ${name} (${container_id}) - ${status}`,
 		);
 
@@ -419,7 +628,7 @@ async function handleDockerStatusEvent(apiId, message) {
 		});
 
 		if (!host) {
-			console.error(`[Docker Event] Host not found for api_id: ${apiId}`);
+			logger.error(`[Docker Event] Host not found for api_id: ${apiId}`);
 			return;
 		}
 
@@ -444,11 +653,11 @@ async function handleDockerStatusEvent(apiId, message) {
 				},
 			});
 
-			console.log(
+			logger.info(
 				`[Docker Event] Updated container ${name} status to ${status}`,
 			);
 		} else {
-			console.log(
+			logger.info(
 				`[Docker Event] Container ${name} not found in database (may be new)`,
 			);
 		}
@@ -456,8 +665,24 @@ async function handleDockerStatusEvent(apiId, message) {
 		// TODO: Broadcast to connected dashboard clients via SSE or WebSocket
 		// This would notify the frontend UI in real-time
 	} catch (error) {
-		console.error(`[Docker Event] Error handling Docker status event:`, error);
+		logger.error(`[Docker Event] Error handling Docker status event:`, error);
 	}
+}
+
+function pushRemediateRule(apiId, ruleId) {
+	const ws = apiIdToSocket.get(apiId);
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		const payload = {
+			type: "remediate_rule",
+			rule_id: ruleId,
+		};
+		safeSend(ws, JSON.stringify(payload));
+		logger.info(
+			`[agent-ws] Triggered single rule remediation for ${apiId}: ${ruleId}`,
+		);
+		return true;
+	}
+	return false;
 }
 
 module.exports = {
@@ -466,9 +691,16 @@ module.exports = {
 	pushReportNow,
 	pushSettingsUpdate,
 	pushUpdateAgent,
+	pushRefreshIntegrationStatus,
+	pushDockerInventoryRefresh,
 	pushIntegrationToggle,
+	pushSetComplianceOnDemandOnly,
 	pushUpdateNotification,
 	pushUpdateNotificationToAll,
+	pushComplianceScan,
+	pushUpgradeSSG,
+	pushRemediateRule,
+	pushDockerImageScan,
 	// Expose read-only view of connected agents
 	getConnectedApiIds: () => Array.from(apiIdToSocket.keys()),
 	getConnectionByApiId,
@@ -487,4 +719,6 @@ module.exports = {
 	},
 	// Subscribe to connection status changes (for SSE)
 	subscribeToConnectionChanges,
+	// Subscribe to compliance progress updates (for SSE)
+	subscribeToComplianceProgress,
 };

@@ -1,4 +1,5 @@
 const { Queue, Worker } = require("bullmq");
+const logger = require("../../utils/logger");
 const { redis, redisConnection } = require("./shared/redis");
 const { prisma } = require("./shared/prisma");
 const agentWs = require("../agentWs");
@@ -47,7 +48,7 @@ class QueueManager {
 	 */
 	async initialize() {
 		try {
-			console.log("✅ Redis connection successful");
+			logger.info("✅ Redis connection successful");
 
 			// Initialize queues
 			await this.initializeQueues();
@@ -62,9 +63,9 @@ class QueueManager {
 			this.setupEventListeners();
 
 			this.isInitialized = true;
-			console.log("✅ Queue manager initialized successfully");
+			logger.info("✅ Queue manager initialized successfully");
 		} catch (error) {
-			console.error("❌ Failed to initialize queue manager:", error.message);
+			logger.error("❌ Failed to initialize queue manager:", error.message);
 			throw error;
 		}
 	}
@@ -87,7 +88,7 @@ class QueueManager {
 				},
 			});
 
-			console.log(`✅ Queue '${queueName}' initialized`);
+			logger.info(`✅ Queue '${queueName}' initialized`);
 		}
 	}
 
@@ -117,7 +118,7 @@ class QueueManager {
 			this,
 		);
 
-		console.log("✅ All automation classes initialized");
+		logger.info("✅ All automation classes initialized");
 	}
 
 	/**
@@ -224,7 +225,7 @@ class QueueManager {
 			QUEUE_NAMES.AGENT_COMMANDS,
 			async (job) => {
 				const { api_id, type } = job.data;
-				console.log(`Processing agent command: ${type} for ${api_id}`);
+				logger.info(`Processing agent command: ${type} for ${api_id}`);
 
 				// Log job to job_history
 				let historyRecord = null;
@@ -249,10 +250,10 @@ class QueueManager {
 								updated_at: get_current_time(),
 							},
 						});
-						console.log(`📝 Logged job to job_history: ${job.id} (${type})`);
+						logger.info(`📝 Logged job to job_history: ${job.id} (${type})`);
 					}
 				} catch (error) {
-					console.error("Failed to log job to job_history:", error);
+					logger.error("Failed to log job to job_history:", error);
 				}
 
 				try {
@@ -271,7 +272,7 @@ class QueueManager {
 							// Check general server auto_update setting
 							const settings = await prisma.settings.findFirst();
 							if (!settings || !settings.auto_update) {
-								console.log(
+								logger.info(
 									`⚠️ Auto-update is disabled in server settings, skipping update_agent command for agent ${api_id}`,
 								);
 								throw new Error("Auto-update is disabled in server settings");
@@ -284,14 +285,14 @@ class QueueManager {
 							});
 
 							if (!host) {
-								console.log(
+								logger.info(
 									`⚠️ Host not found for agent ${api_id}, skipping update_agent command`,
 								);
 								throw new Error("Host not found");
 							}
 
 							if (!host.auto_update) {
-								console.log(
+								logger.info(
 									`⚠️ Auto-update is disabled for host ${api_id}, skipping update_agent command`,
 								);
 								throw new Error("Auto-update is disabled for this host");
@@ -303,15 +304,45 @@ class QueueManager {
 						if (ws && ws.readyState === 1) {
 							// WebSocket.OPEN
 							agentWs.pushUpdateAgent(api_id);
-							console.log(`✅ Update command sent to agent ${api_id}`);
+							logger.info(`✅ Update command sent to agent ${api_id}`);
 						} else {
-							console.error(`❌ Agent ${api_id} is not connected`);
+							logger.error(`❌ Agent ${api_id} is not connected`);
 							throw new Error(
 								`Agent ${api_id} is not connected. Cannot send update command.`,
 							);
 						}
+					} else if (type === "refresh_integration_status") {
+						// Request agent to refresh and report integration status
+						const ws = agentWs.getConnectionByApiId(api_id);
+						if (ws && ws.readyState === 1) {
+							// WebSocket.OPEN
+							agentWs.pushRefreshIntegrationStatus(api_id);
+							logger.info(
+								`✅ Refresh integration status command sent to agent ${api_id}`,
+							);
+						} else {
+							logger.error(`❌ Agent ${api_id} is not connected`);
+							throw new Error(
+								`Agent ${api_id} is not connected. Cannot refresh integration status.`,
+							);
+						}
+					} else if (type === "docker_inventory_refresh") {
+						// Request agent to refresh and report Docker inventory
+						const ws = agentWs.getConnectionByApiId(api_id);
+						if (ws && ws.readyState === 1) {
+							// WebSocket.OPEN
+							agentWs.pushDockerInventoryRefresh(api_id);
+							logger.info(
+								`✅ Docker inventory refresh command sent to agent ${api_id}`,
+							);
+						} else {
+							logger.error(`❌ Agent ${api_id} is not connected`);
+							throw new Error(
+								`Agent ${api_id} is not connected. Cannot refresh Docker inventory.`,
+							);
+						}
 					} else {
-						console.error(`Unknown agent command type: ${type}`);
+						logger.error(`Unknown agent command type: ${type}`);
 					}
 
 					// Update job history to completed
@@ -324,7 +355,7 @@ class QueueManager {
 								updated_at: get_current_time(),
 							},
 						});
-						console.log(`✅ Marked job as completed in job_history: ${job.id}`);
+						logger.info(`✅ Marked job as completed in job_history: ${job.id}`);
 					}
 				} catch (error) {
 					// Update job history to failed
@@ -338,7 +369,7 @@ class QueueManager {
 								updated_at: get_current_time(),
 							},
 						});
-						console.log(`❌ Marked job as failed in job_history: ${job.id}`);
+						logger.info(`❌ Marked job as failed in job_history: ${job.id}`);
 					}
 					throw error;
 				}
@@ -346,7 +377,7 @@ class QueueManager {
 			workerOptions,
 		);
 
-		console.log(
+		logger.info(
 			"✅ All workers initialized with optimized connection settings",
 		);
 	}
@@ -358,20 +389,17 @@ class QueueManager {
 		for (const queueName of Object.values(QUEUE_NAMES)) {
 			const queue = this.queues[queueName];
 			queue.on("error", (error) => {
-				console.error(`❌ Queue '${queueName}' experienced an error:`, error);
+				logger.error(`❌ Queue '${queueName}' experienced an error:`, error);
 			});
 			queue.on("failed", (job, err) => {
-				console.error(
-					`❌ Job '${job.id}' in queue '${queueName}' failed:`,
-					err,
-				);
+				logger.error(`❌ Job '${job.id}' in queue '${queueName}' failed:`, err);
 			});
 			queue.on("completed", (job) => {
-				console.log(`✅ Job '${job.id}' in queue '${queueName}' completed.`);
+				logger.info(`✅ Job '${job.id}' in queue '${queueName}' completed.`);
 			});
 		}
 
-		console.log("✅ Queue events initialized");
+		logger.info("✅ Queue events initialized");
 	}
 
 	/**
@@ -499,7 +527,7 @@ class QueueManager {
 			throw new Error(`Queue ${QUEUE_NAMES.AGENT_COMMANDS} not found`);
 		}
 
-		console.log(`[getHostJobs] Looking for jobs with api_id: ${apiId}`);
+		logger.info(`[getHostJobs] Looking for jobs with api_id: ${apiId}`);
 
 		// Get active queue status (waiting, active, delayed, failed)
 		const [waiting, active, delayed, failed] = await Promise.all([
@@ -518,7 +546,7 @@ class QueueManager {
 		const delayedCount = filterByApiId(delayed).length;
 		const failedCount = filterByApiId(failed).length;
 
-		console.log(
+		logger.info(
 			`[getHostJobs] Queue status - Waiting: ${waitingCount}, Active: ${activeCount}, Delayed: ${delayedCount}, Failed: ${failedCount}`,
 		);
 
@@ -533,7 +561,7 @@ class QueueManager {
 			take: limit,
 		});
 
-		console.log(
+		logger.info(
 			`[getHostJobs] Found ${jobHistory.length} job history records for api_id: ${apiId}`,
 		);
 
@@ -561,22 +589,19 @@ class QueueManager {
 	 * Graceful shutdown
 	 */
 	async shutdown() {
-		console.log("🛑 Shutting down queue manager...");
+		logger.info("🛑 Shutting down queue manager...");
 
 		for (const queueName of Object.keys(this.queues)) {
 			try {
 				await this.queues[queueName].close();
 			} catch (e) {
-				console.warn(
-					`⚠️ Failed to close queue '${queueName}':`,
-					e?.message || e,
-				);
+				logger.warn(`⚠️ Failed to close queue '${queueName}':`, e?.message || e);
 			}
 			if (this.workers?.[queueName]) {
 				try {
 					await this.workers[queueName].close();
 				} catch (e) {
-					console.warn(
+					logger.warn(
 						`⚠️ Failed to close worker for '${queueName}':`,
 						e?.message || e,
 					);
@@ -585,7 +610,7 @@ class QueueManager {
 		}
 
 		await redis.quit();
-		console.log("✅ Queue manager shutdown complete");
+		logger.info("✅ Queue manager shutdown complete");
 	}
 }
 

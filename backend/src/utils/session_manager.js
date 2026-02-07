@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const logger = require("./logger");
 const crypto = require("node:crypto");
 const { getPrismaClient } = require("../config/prisma");
 
@@ -82,22 +83,57 @@ function parse_expiration(expiration_string) {
 
 /**
  * Generate device fingerprint from request data
+ * SECURITY: Combines multiple factors including server-side data to prevent spoofing
+ * The fingerprint includes: client device ID + user-agent + accept-language + IP subnet
  */
 function generate_device_fingerprint(req) {
 	// Use the X-Device-ID header from frontend (unique per browser profile/localStorage)
 	const deviceId = req.get("x-device-id");
 
-	if (deviceId) {
-		// Hash the device ID for consistent storage format
-		return crypto
-			.createHash("sha256")
-			.update(deviceId)
-			.digest("hex")
-			.substring(0, 32);
+	if (!deviceId) {
+		// No device ID - return null (user needs to provide device ID for remember-me)
+		return null;
 	}
 
-	// No device ID - return null (user needs to provide device ID for remember-me)
-	return null;
+	// SECURITY: Include server-side data to make fingerprint harder to spoof
+	// An attacker would need to know/match ALL of these:
+	// 1. The device ID (from localStorage)
+	// 2. The exact user-agent string
+	// 3. The accept-language header
+	// 4. Be on the same IP subnet (first 3 octets for IPv4, first 4 segments for IPv6)
+
+	const userAgent = req.get("user-agent") || "";
+	const acceptLanguage = req.get("accept-language") || "";
+
+	// Get IP address and extract subnet (first 3 octets for IPv4)
+	// This provides some protection while allowing for DHCP changes within a network
+	let ipSubnet = "";
+	const ip = req.ip || req.connection?.remoteAddress || "";
+	if (ip) {
+		// Handle IPv4
+		const ipv4Match = ip.match(/(\d+\.\d+\.\d+)\.\d+/);
+		if (ipv4Match) {
+			ipSubnet = ipv4Match[1]; // First 3 octets (e.g., "192.168.1")
+		} else if (ip.includes(":")) {
+			// Handle IPv6 - use first 4 segments
+			const ipv6Parts = ip.split(":");
+			ipSubnet = ipv6Parts.slice(0, 4).join(":");
+		} else {
+			ipSubnet = ip;
+		}
+	}
+
+	// Combine all factors into the fingerprint
+	const fingerprintData = [deviceId, userAgent, acceptLanguage, ipSubnet].join(
+		"|",
+	);
+
+	// Hash for consistent storage format
+	return crypto
+		.createHash("sha256")
+		.update(fingerprintData)
+		.digest("hex")
+		.substring(0, 32);
 }
 
 /**
@@ -136,7 +172,7 @@ async function check_suspicious_activity(
 			unique_ips.size > TFA_SUSPICIOUS_ACTIVITY_THRESHOLD ||
 			unique_devices.size > TFA_SUSPICIOUS_ACTIVITY_THRESHOLD
 		) {
-			console.warn(
+			logger.warn(
 				`Suspicious activity detected for user ${user_id}: ${unique_ips.size} IPs, ${unique_devices.size} devices`,
 			);
 			return true;
@@ -144,7 +180,7 @@ async function check_suspicious_activity(
 
 		return false;
 	} catch (error) {
-		console.error("Error checking suspicious activity:", error);
+		logger.error("Error checking suspicious activity:", error);
 		return false;
 	}
 }
@@ -175,7 +211,7 @@ async function create_session(
 				device_fingerprint,
 			);
 			if (is_suspicious) {
-				console.warn(
+				logger.warn(
 					`Suspicious activity detected for user ${user_id}, session creation may be restricted`,
 				);
 			}
@@ -237,7 +273,7 @@ async function create_session(
 			tfa_bypass_until,
 		};
 	} catch (error) {
-		console.error("Error creating session:", error);
+		logger.error("Error creating session:", error);
 		throw error;
 	}
 }
@@ -281,7 +317,8 @@ async function validate_session(session_id, access_token) {
 		}
 
 		// Validate access token hash (optional security check)
-		if (session.access_token_hash) {
+		// Skip hash validation if no token provided (used by WS token validation and refresh_access_token)
+		if (access_token && session.access_token_hash) {
 			const provided_hash = hash_token(access_token);
 			if (session.access_token_hash !== provided_hash) {
 				return { valid: false, reason: "Token mismatch" };
@@ -300,7 +337,7 @@ async function validate_session(session_id, access_token) {
 			user: session.users,
 		};
 	} catch (error) {
-		console.error("Error validating session:", error);
+		logger.error("Error validating session:", error);
 		return { valid: false, reason: "Validation error" };
 	}
 }
@@ -316,7 +353,7 @@ async function update_session_activity(session_id) {
 		});
 		return true;
 	} catch (error) {
-		console.error("Error updating session activity:", error);
+		logger.error("Error updating session activity:", error);
 		return false;
 	}
 }
@@ -361,7 +398,7 @@ async function refresh_access_token(refresh_token) {
 			user: session.users,
 		};
 	} catch (error) {
-		console.error("Error refreshing access token:", error);
+		logger.error("Error refreshing access token:", error);
 		return { success: false, error: "Token refresh failed" };
 	}
 }
@@ -377,7 +414,7 @@ async function revoke_session(session_id) {
 		});
 		return true;
 	} catch (error) {
-		console.error("Error revoking session:", error);
+		logger.error("Error revoking session:", error);
 		return false;
 	}
 }
@@ -393,7 +430,7 @@ async function revoke_all_user_sessions(user_id) {
 		});
 		return true;
 	} catch (error) {
-		console.error("Error revoking user sessions:", error);
+		logger.error("Error revoking user sessions:", error);
 		return false;
 	}
 }
@@ -408,10 +445,10 @@ async function cleanup_expired_sessions() {
 				OR: [{ expires_at: { lt: new Date() } }, { is_revoked: true }],
 			},
 		});
-		console.log(`Cleaned up ${result.count} expired sessions`);
+		logger.info(`Cleaned up ${result.count} expired sessions`);
 		return result.count;
 	} catch (error) {
-		console.error("Error cleaning up sessions:", error);
+		logger.error("Error cleaning up sessions:", error);
 		return 0;
 	}
 }
@@ -440,7 +477,7 @@ async function get_user_sessions(user_id) {
 			orderBy: { last_activity: "desc" },
 		});
 	} catch (error) {
-		console.error("Error getting user sessions:", error);
+		logger.error("Error getting user sessions:", error);
 		return [];
 	}
 }
@@ -476,7 +513,7 @@ async function is_tfa_bypassed(session_id) {
 
 		return false;
 	} catch (error) {
-		console.error("Error checking TFA bypass:", error);
+		logger.error("Error checking TFA bypass:", error);
 		return false;
 	}
 }

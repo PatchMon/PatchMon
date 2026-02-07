@@ -3,23 +3,103 @@ const { getPrismaClient } = require("../config/prisma");
 const { body, validationResult } = require("express-validator");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("node:crypto");
-const _path = require("node:path");
-const _fs = require("node:fs");
-const { authenticateToken, _requireAdmin } = require("../middleware/auth");
+const bcrypt = require("bcryptjs");
+const logger = require("../utils/logger");
+const { authenticateToken } = require("../middleware/auth");
 const {
 	requireManageHosts,
 	requireManageSettings,
 } = require("../middleware/permissions");
 const { queueManager, QUEUE_NAMES } = require("../services/automation");
-const { pushIntegrationToggle, isConnected } = require("../services/agentWs");
+const {
+	pushIntegrationToggle,
+	pushSetComplianceOnDemandOnly,
+	isConnected,
+} = require("../services/agentWs");
 const { compareVersions } = require("../services/automation/shared/utils");
+const { redis } = require("../services/automation/shared/redis");
+const { verifyApiKey } = require("../utils/apiKeyUtils");
+const { encrypt, decrypt } = require("../utils/encryption");
 
 const router = express.Router();
 const prisma = getPrismaClient();
 
-// In-memory cache for integration states (api_id -> { integration_name -> enabled })
-// This stores the last known state from successful toggles
+// Bootstrap token configuration
+const BOOTSTRAP_TOKEN_PREFIX = "bootstrap:";
+const BOOTSTRAP_TOKEN_TTL = 300; // 5 minutes in seconds
+
+/**
+ * Generate a secure bootstrap token for agent installation
+ * @param {string} apiId - The host's API ID
+ * @param {string} apiKey - The host's API key (will be stored encrypted)
+ * @returns {Promise<string>} The bootstrap token
+ */
+async function generateBootstrapToken(apiId, apiKey) {
+	const token = crypto.randomBytes(32).toString("hex");
+	const key = `${BOOTSTRAP_TOKEN_PREFIX}${token}`;
+
+	// Encrypt the API key before storing in Redis
+	const encryptedApiKey = encrypt(apiKey);
+
+	// Store the credentials encrypted in Redis with short TTL
+	const data = JSON.stringify({
+		apiId,
+		apiKey: encryptedApiKey,
+		createdAt: Date.now(),
+	});
+	await redis.setex(key, BOOTSTRAP_TOKEN_TTL, data);
+
+	return token;
+}
+
+/**
+ * Retrieve and delete bootstrap token data (one-time use)
+ * @param {string} token - The bootstrap token
+ * @returns {Promise<{apiId: string, apiKey: string}|null>} The credentials or null
+ */
+async function consumeBootstrapToken(token) {
+	const key = `${BOOTSTRAP_TOKEN_PREFIX}${token}`;
+	const data = await redis.get(key);
+
+	if (!data) {
+		return null;
+	}
+
+	// Delete immediately (one-time use)
+	await redis.del(key);
+
+	try {
+		const parsed = JSON.parse(data);
+		// Decrypt the API key
+		const decryptedApiKey = decrypt(parsed.apiKey);
+		if (!decryptedApiKey) {
+			logger.error("Failed to decrypt bootstrap token API key");
+			return null;
+		}
+		return {
+			apiId: parsed.apiId,
+			apiKey: decryptedApiKey,
+			createdAt: parsed.createdAt,
+		};
+	} catch (_e) {
+		return null;
+	}
+}
+
+// In-memory cache for integration states (api_id -> { integrations: {}, lastAccess: timestamp })
+// This stores the last known state from successful toggles with TTL cleanup
 const integrationStateCache = new Map();
+const INTEGRATION_CACHE_TTL = 5 * 60 * 1000; // 5 minutes TTL
+
+// Periodic cleanup of stale integration cache entries
+setInterval(() => {
+	const now = Date.now();
+	for (const [key, value] of integrationStateCache.entries()) {
+		if (now - value.lastAccess > INTEGRATION_CACHE_TTL) {
+			integrationStateCache.delete(key);
+		}
+	}
+}, 60 * 1000); // Clean up every minute
 
 // Middleware to validate API credentials
 const validateApiCredentials = async (req, res, next) => {
@@ -31,21 +111,25 @@ const validateApiCredentials = async (req, res, next) => {
 			return res.status(401).json({ error: "API ID and Key required" });
 		}
 
-		const host = await prisma.hosts.findFirst({
-			where: {
-				api_id: apiId,
-				api_key: apiKey,
-			},
+		// Find host by API ID only (we'll verify the key separately)
+		const host = await prisma.hosts.findUnique({
+			where: { api_id: apiId },
 		});
 
 		if (!host) {
 			return res.status(401).json({ error: "Invalid API credentials" });
 		}
 
+		// Verify the API key
+		const isValidKey = await verifyApiKey(apiKey, host.api_key);
+		if (!isValidKey) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
 		req.hostRecord = host;
 		next();
 	} catch (error) {
-		console.error("API credential validation error:", error);
+		logger.error("API credential validation error:", error);
 		res.status(500).json({ error: "API credential validation failed" });
 	}
 };
@@ -66,7 +150,13 @@ router.get("/agent/download", async (req, res) => {
 			where: { api_id: apiId },
 		});
 
-		if (!host || host.api_key !== apiKey) {
+		if (!host) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
+		// Verify API key (supports both hashed and legacy plaintext keys)
+		const isValidKey = await verifyApiKey(apiKey, host.api_key);
+		if (!isValidKey) {
 			return res.status(401).json({ error: "Invalid API credentials" });
 		}
 
@@ -108,7 +198,7 @@ router.get("/agent/download", async (req, res) => {
 			fileStream.pipe(res);
 
 			fileStream.on("error", (error) => {
-				console.error("Migration script stream error:", error);
+				logger.error("Migration script stream error:", error);
 				if (!res.headersSent) {
 					res.status(500).json({ error: "Failed to stream migration script" });
 				}
@@ -125,7 +215,7 @@ router.get("/agent/download", async (req, res) => {
 				});
 			}
 
-			const binaryName = `patchmon-agent-linux-${architecture}`;
+			const binaryName = `patchmonenhanced-agent-linux-${architecture}`;
 			const binaryPath = path.join(__dirname, "../../../agents", binaryName);
 
 			if (!fs.existsSync(binaryPath)) {
@@ -146,14 +236,14 @@ router.get("/agent/download", async (req, res) => {
 			fileStream.pipe(res);
 
 			fileStream.on("error", (error) => {
-				console.error("Binary stream error:", error);
+				logger.error("Binary stream error:", error);
 				if (!res.headersSent) {
 					res.status(500).json({ error: "Failed to stream agent binary" });
 				}
 			});
 		}
 	} catch (error) {
-		console.error("Agent download error:", error);
+		logger.error("Agent download error:", error);
 		res.status(500).json({ error: "Failed to serve agent" });
 	}
 });
@@ -228,13 +318,15 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 			// Go agent version check
 			// Always check the server's local binary for the requested architecture
 			// The server's agents folder is the source of truth, not GitHub
-			const { exec } = require("node:child_process");
+			const { execFile } = require("node:child_process");
 			const { promisify } = require("node:util");
-			const execAsync = promisify(exec);
+			const execFileAsync = promisify(execFile);
 
-			const binaryName = `patchmon-agent-linux-${architecture}`;
-			if (binaryName.includes('..')) {
-				return res.status(400).json({ error: "Invalid architecture specified" });
+			const binaryName = `patchmonenhanced-agent-linux-${architecture}`;
+			if (binaryName.includes("..")) {
+				return res
+					.status(400)
+					.json({ error: "Invalid architecture specified" });
 			}
 			const binaryPath = path.join(__dirname, "../../../agents", binaryName);
 
@@ -242,9 +334,10 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 				// Binary exists in server's agents folder - use its version
 				let serverVersion = null;
 
-				// Try method 1: Execute binary (works for same architecture)
+				// Try method 1: Execute binary directly (works for same architecture)
+				// Using execFile instead of exec to prevent shell injection
 				try {
-					const { stdout } = await execAsync(`${binaryPath} --help`, {
+					const { stdout } = await execFileAsync(binaryPath, ["--help"], {
 						timeout: 10000,
 					});
 
@@ -258,31 +351,32 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 					}
 				} catch (execError) {
 					// Execution failed (likely cross-architecture) - try alternative method
-					console.warn(
+					logger.warn(
 						`Failed to execute binary ${binaryName} to get version (may be cross-architecture): ${execError.message}`,
 					);
 
 					// Try method 2: Extract version using strings command (works for cross-architecture)
+					// Using execFile with strings command to avoid shell injection
 					try {
-						const { stdout: stringsOutput } = await execAsync(
-							`strings "${binaryPath}" | grep -E "PatchMon Agent v[0-9]+\\.[0-9]+\\.[0-9]+" | head -1`,
-							{
-								timeout: 10000,
-							},
+						const { stdout: stringsOutput } = await execFileAsync(
+							"strings",
+							[binaryPath],
+							{ timeout: 10000, maxBuffer: 10 * 1024 * 1024 },
 						);
 
+						// Filter in Node.js instead of piping through grep
 						const versionMatch = stringsOutput.match(
 							/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
 						);
 
 						if (versionMatch) {
 							serverVersion = versionMatch[1];
-							console.log(
+							logger.info(
 								`✅ Extracted version ${serverVersion} from binary using strings command`,
 							);
 						}
 					} catch (stringsError) {
-						console.warn(
+						logger.warn(
 							`Failed to extract version using strings command: ${stringsError.message}`,
 						);
 					}
@@ -294,6 +388,21 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 
 					// Proper semantic version comparison: only update if server version is NEWER
 					const hasUpdate = compareVersions(serverVersion, agentVersion) > 0;
+
+					// Calculate SHA256 hash of the binary for integrity verification
+					// This allows agents to verify the downloaded binary matches the expected hash
+					let binaryHash = null;
+					try {
+						const binaryContent = fs.readFileSync(binaryPath);
+						binaryHash = crypto
+							.createHash("sha256")
+							.update(binaryContent)
+							.digest("hex");
+					} catch (hashErr) {
+						logger.warn(
+							`Failed to calculate hash for binary ${binaryName}: ${hashErr.message}`,
+						);
+					}
 
 					// Return update info, but indicate if auto-update is disabled
 					return res.json({
@@ -309,11 +418,12 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 						minServerVersion: null,
 						architecture: architecture,
 						agentType: "go",
+						hash: binaryHash, // SHA256 hash for integrity verification
 					});
 				}
 
 				// If we couldn't get version, fall through to error response
-				console.warn(
+				logger.warn(
 					`Could not determine version for binary ${binaryName} using any method`,
 				);
 			}
@@ -335,16 +445,18 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 			});
 		}
 	} catch (error) {
-		console.error("Version check error:", error);
+		logger.error("Version check error:", error);
 		res.status(500).json({ error: "Failed to get agent version" });
 	}
 });
 
-// Generate API credentials
-const generateApiCredentials = () => {
+// Generate API credentials with hashed key for secure storage
+const generateApiCredentials = async () => {
 	const apiId = `patchmon_${crypto.randomBytes(8).toString("hex")}`;
 	const apiKey = crypto.randomBytes(32).toString("hex");
-	return { apiId, apiKey };
+	// Hash the API key for secure storage (bcrypt with cost factor 10)
+	const apiKeyHash = await bcrypt.hash(apiKey, 10);
+	return { apiId, apiKey, apiKeyHash };
 };
 
 // Admin endpoint to create a new host manually (replaces auto-registration)
@@ -368,6 +480,10 @@ router.post(
 			.optional()
 			.isBoolean()
 			.withMessage("Docker enabled must be a boolean"),
+		body("compliance_enabled")
+			.optional()
+			.isBoolean()
+			.withMessage("Compliance enabled must be a boolean"),
 	],
 	async (req, res) => {
 		try {
@@ -376,10 +492,16 @@ router.post(
 				return res.status(400).json({ errors: errors.array() });
 			}
 
-			const { friendly_name, hostGroupIds, docker_enabled } = req.body;
+			const {
+				friendly_name,
+				hostGroupIds,
+				docker_enabled,
+				compliance_enabled,
+			} = req.body;
 
 			// Generate unique API credentials for this host
-			const { apiId, apiKey } = generateApiCredentials();
+			// apiKey is plaintext (shown to admin once), apiKeyHash is stored in DB
+			const { apiId, apiKey, apiKeyHash } = await generateApiCredentials();
 
 			// If hostGroupIds is provided, verify all groups exist
 			if (hostGroupIds && hostGroupIds.length > 0) {
@@ -395,6 +517,7 @@ router.post(
 			}
 
 			// Create new host with API credentials - system info will be populated when agent connects
+			// Store the hashed API key for security (plaintext is shown to admin only once)
 			const host = await prisma.hosts.create({
 				data: {
 					id: uuidv4(),
@@ -405,9 +528,10 @@ router.post(
 					ip: null, // Will be updated when agent connects
 					architecture: null, // Will be updated when agent connects
 					api_id: apiId,
-					api_key: apiKey,
+					api_key: apiKeyHash, // Store hash, not plaintext
 					status: "pending", // Will change to 'active' when agent connects
 					docker_enabled: docker_enabled ?? false, // Set integration state if provided
+					compliance_enabled: compliance_enabled ?? false, // Set compliance integration state if provided
 					updated_at: new Date(),
 					// Create host group memberships if hostGroupIds are provided
 					host_group_memberships:
@@ -442,7 +566,7 @@ router.post(
 				hostId: host.id,
 				friendlyName: host.friendly_name,
 				apiId: host.api_id,
-				apiKey: host.api_key,
+				apiKey: apiKey, // Return plaintext key (shown only once, not stored)
 				hostGroups:
 					host.host_group_memberships?.map(
 						(membership) => membership.host_groups,
@@ -451,7 +575,7 @@ router.post(
 					"Use these credentials in your patchmon agent configuration. System information will be automatically detected when the agent connects.",
 			});
 		} catch (error) {
-			console.error("Host creation error:", error);
+			logger.error("Host creation error:", error);
 
 			// Check if error is related to connection pool exhaustion
 			if (
@@ -460,14 +584,14 @@ router.post(
 					error.message.includes("Timed out fetching") ||
 					error.message.includes("pool timeout"))
 			) {
-				console.error("⚠️  DATABASE CONNECTION POOL EXHAUSTED!");
-				console.error(
+				logger.error("⚠️  DATABASE CONNECTION POOL EXHAUSTED!");
+				logger.error(
 					`⚠️  Current limit: DB_CONNECTION_LIMIT=${process.env.DB_CONNECTION_LIMIT || "30"}`,
 				);
-				console.error(
+				logger.error(
 					`⚠️  Pool timeout: DB_POOL_TIMEOUT=${process.env.DB_POOL_TIMEOUT || "20"}s`,
 				);
-				console.error(
+				logger.error(
 					"⚠️  Suggestion: Increase DB_CONNECTION_LIMIT in your .env file",
 				);
 			}
@@ -488,12 +612,21 @@ router.post("/register", async (_req, res) => {
 	});
 });
 
+// Request size limit middleware for /update endpoint
+// Smaller limit than global to prevent DoS while still allowing large package lists
+const updateBodyLimit = express.json({
+	limit: process.env.AGENT_UPDATE_BODY_LIMIT || "2mb",
+});
+
 // Update host information and packages (now uses API credentials)
 router.post(
 	"/update",
+	updateBodyLimit,
 	validateApiCredentials,
 	[
-		body("packages").isArray().withMessage("Packages must be an array"),
+		body("packages")
+			.isArray({ max: 10000 })
+			.withMessage("Packages must be an array with max 10000 items"),
 		body("packages.*.name")
 			.isLength({ min: 1 })
 			.withMessage("Package name is required"),
@@ -632,7 +765,7 @@ router.post(
 				updateData.gateway_ip = req.body.gatewayIp;
 			} else if (Object.hasOwn(req.body, "gatewayIp")) {
 				// Log warning if gateway field was sent but empty (isolated network)
-				console.warn(
+				logger.warn(
 					`Host ${host.hostname} reported with no default gateway configured`,
 				);
 			}
@@ -686,7 +819,6 @@ router.post(
 					// Process packages in batches using createMany/updateMany
 					const packagesToCreate = [];
 					const packagesToUpdate = [];
-					const _hostPackagesToUpsert = [];
 
 					// First pass: identify what needs to be created/updated
 					const existingPackages = await tx.packages.findMany({
@@ -892,7 +1024,7 @@ router.post(
 
 			res.json(response);
 		} catch (error) {
-			console.error("Host update error:", error);
+			logger.error("Host update error:", error);
 
 			// Log error in update history
 			try {
@@ -907,7 +1039,7 @@ router.post(
 					},
 				});
 			} catch (logError) {
-				console.error("Failed to log update error:", logError);
+				logger.error("Failed to log update error:", logError);
 			}
 
 			res.status(500).json({ error: "Failed to update host" });
@@ -937,7 +1069,7 @@ router.get("/info", validateApiCredentials, async (req, res) => {
 
 		res.json(host);
 	} catch (error) {
-		console.error("Get host info error:", error);
+		logger.error("Get host info error:", error);
 		res.status(500).json({ error: "Failed to fetch host information" });
 	}
 });
@@ -950,7 +1082,8 @@ router.get("/integrations", validateApiCredentials, async (req, res) => {
 			select: {
 				id: true,
 				docker_enabled: true,
-				// Future: add other integration fields here
+				compliance_enabled: true,
+				compliance_on_demand_only: true,
 			},
 		});
 
@@ -961,16 +1094,83 @@ router.get("/integrations", validateApiCredentials, async (req, res) => {
 		// Return integration states from database (source of truth)
 		const integrations = {
 			docker: host.docker_enabled ?? false,
-			// Future integrations can be added here
+			compliance: host.compliance_enabled ?? false,
 		};
 
 		res.json({
 			success: true,
 			integrations: integrations,
+			compliance_on_demand_only: host.compliance_on_demand_only ?? false,
 		});
 	} catch (error) {
-		console.error("Get integration status error:", error);
+		logger.error("Get integration status error:", error);
 		res.status(500).json({ error: "Failed to get integration status" });
+	}
+});
+
+// Receive integration setup status from agent
+router.post("/integration-status", validateApiCredentials, async (req, res) => {
+	try {
+		const { integration, enabled, status, message, components, scanner_info } =
+			req.body;
+		const hostId = req.hostRecord.id;
+		const apiId = req.hostRecord.api_id;
+
+		logger.info(`📊 Integration status update from ${apiId}:`, {
+			integration,
+			enabled,
+			status,
+			message,
+			components,
+			scanner_info: scanner_info ? "present" : "not provided",
+		});
+
+		// Store the status update in Redis for real-time UI updates
+		const statusKey = `integration_status:${apiId}:${integration}`;
+		const statusData = {
+			integration,
+			enabled,
+			status,
+			message,
+			components: components || {},
+			scanner_info: scanner_info || null,
+			timestamp: new Date().toISOString(),
+		};
+
+		// Store with 1 hour expiry
+		await redis.setex(statusKey, 3600, JSON.stringify(statusData));
+
+		// Also broadcast via WebSocket if available
+		try {
+			const { broadcastToHost } = require("../services/agentWs");
+			if (broadcastToHost) {
+				broadcastToHost(apiId, {
+					type: "integration_status",
+					data: statusData,
+				});
+			}
+		} catch (wsError) {
+			logger.info("WebSocket broadcast not available:", wsError.message);
+		}
+
+		// Update host record with compliance setup status
+		if (integration === "compliance" && status === "ready") {
+			await prisma.hosts.update({
+				where: { id: hostId },
+				data: {
+					compliance_enabled: enabled,
+					updated_at: new Date(),
+				},
+			});
+		}
+
+		res.json({
+			success: true,
+			message: "Integration status received",
+		});
+	} catch (error) {
+		logger.error("Integration status update error:", error);
+		res.status(500).json({ error: "Failed to process integration status" });
 	}
 });
 
@@ -987,13 +1187,13 @@ router.post("/ping", validateApiCredentials, async (req, res) => {
 
 		// Log agent startup
 		if (isStartup) {
-			console.log(
+			logger.info(
 				`🚀 Agent startup detected: ${req.hostRecord.friendly_name} (${req.hostRecord.hostname || req.hostRecord.api_id})`,
 			);
 
 			// Check if status was previously offline
 			if (req.hostRecord.status === "offline") {
-				console.log(`✅ Agent back online: ${req.hostRecord.friendly_name}`);
+				logger.info(`✅ Agent back online: ${req.hostRecord.friendly_name}`);
 			}
 		}
 
@@ -1018,12 +1218,12 @@ router.post("/ping", validateApiCredentials, async (req, res) => {
 		// This allows agent to sync config.yml with database state during setup
 		response.integrations = {
 			docker: req.hostRecord.docker_enabled ?? false,
-			// Future integrations can be added here
+			compliance: req.hostRecord.compliance_enabled ?? false,
 		};
 
 		// Check if this is a crontab update trigger
 		if (req.body.triggerCrontabUpdate && req.hostRecord.auto_update) {
-			console.log(
+			logger.info(
 				`Triggering crontab update for host: ${req.hostRecord.friendly_name}`,
 			);
 			response.crontabUpdate = {
@@ -1036,7 +1236,7 @@ router.post("/ping", validateApiCredentials, async (req, res) => {
 
 		res.json(response);
 	} catch (error) {
-		console.error("Ping error:", error);
+		logger.error("Ping error:", error);
 		res.status(500).json({ error: "Ping failed" });
 	}
 });
@@ -1050,37 +1250,44 @@ router.post(
 		try {
 			const { hostId } = req.params;
 
-			const host = await prisma.hosts.findUnique({
-				where: { id: hostId },
-			});
+			// Generate new API credentials before transaction (CPU intensive, don't hold lock)
+			// apiKey is plaintext (shown to admin once), apiKeyHash is stored in DB
+			const { apiId, apiKey, apiKeyHash } = await generateApiCredentials();
 
-			if (!host) {
-				return res.status(404).json({ error: "Host not found" });
-			}
+			// Use transaction to ensure atomicity of check and update
+			const updatedHost = await prisma.$transaction(async (tx) => {
+				const host = await tx.hosts.findUnique({
+					where: { id: hostId },
+				});
 
-			// Generate new API credentials
-			const { apiId, apiKey } = generateApiCredentials();
+				if (!host) {
+					throw new Error("HOST_NOT_FOUND");
+				}
 
-			// Update host with new credentials
-			const updatedHost = await prisma.hosts.update({
-				where: { id: hostId },
-				data: {
-					api_id: apiId,
-					api_key: apiKey,
-					updated_at: new Date(),
-				},
+				// Update host with new credentials (store hash, not plaintext)
+				return tx.hosts.update({
+					where: { id: hostId },
+					data: {
+						api_id: apiId,
+						api_key: apiKeyHash, // Store hash, not plaintext
+						updated_at: new Date(),
+					},
+				});
 			});
 
 			res.json({
 				message: "API credentials regenerated successfully",
 				hostname: updatedHost.hostname,
 				apiId: updatedHost.api_id,
-				apiKey: updatedHost.api_key,
+				apiKey: apiKey, // Return plaintext key (shown only once, not stored)
 				warning:
 					"Previous credentials are now invalid. Update your agent configuration.",
 			});
 		} catch (error) {
-			console.error("Credential regeneration error:", error);
+			if (error.message === "HOST_NOT_FOUND") {
+				return res.status(404).json({ error: "Host not found" });
+			}
+			logger.error("Credential regeneration error:", error);
 			res.status(500).json({ error: "Failed to regenerate credentials" });
 		}
 	},
@@ -1192,7 +1399,7 @@ router.put(
 				hosts: updatedHosts,
 			});
 		} catch (error) {
-			console.error("Bulk host groups update error:", error);
+			logger.error("Bulk host groups update error:", error);
 			res.status(500).json({ error: "Failed to update host groups" });
 		}
 	},
@@ -1281,7 +1488,7 @@ router.put(
 				host: updatedHost,
 			});
 		} catch (error) {
-			console.error("Host groups update error:", error);
+			logger.error("Host groups update error:", error);
 			res.status(500).json({ error: "Failed to update host groups" });
 		}
 	},
@@ -1368,20 +1575,30 @@ router.put(
 				host: updatedHost,
 			});
 		} catch (error) {
-			console.error("Host group update error:", error);
+			logger.error("Host group update error:", error);
 			res.status(500).json({ error: "Failed to update host group" });
 		}
 	},
 );
 
-// Admin endpoint to list all hosts
+// Admin endpoint to list all hosts with optional pagination
+// Query params: page (default: 1), pageSize (default: 100, max: 500), all (skip pagination)
 router.get(
 	"/admin/list",
 	authenticateToken,
 	requireManageHosts,
-	async (_req, res) => {
+	async (req, res) => {
 		try {
-			const hosts = await prisma.hosts.findMany({
+			// Check if client wants all results (for backward compatibility)
+			const returnAll = req.query.all === "true";
+
+			// Pagination parameters with defaults and limits
+			const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+			const pageSize = returnAll
+				? undefined
+				: Math.min(Math.max(1, parseInt(req.query.pageSize, 10) || 100), 500);
+
+			const queryOptions = {
 				select: {
 					id: true,
 					friendly_name: true,
@@ -1410,11 +1627,33 @@ router.get(
 					},
 				},
 				orderBy: { created_at: "desc" },
-			});
+			};
 
-			res.json(hosts);
+			// Add pagination if not requesting all
+			if (!returnAll) {
+				queryOptions.skip = (page - 1) * pageSize;
+				queryOptions.take = pageSize;
+			}
+
+			const [hosts, totalCount] = await Promise.all([
+				prisma.hosts.findMany(queryOptions),
+				prisma.hosts.count(),
+			]);
+
+			// Return paginated response with metadata
+			res.json({
+				data: hosts,
+				pagination: returnAll
+					? { total: totalCount, page: 1, pageSize: totalCount, totalPages: 1 }
+					: {
+							total: totalCount,
+							page,
+							pageSize,
+							totalPages: Math.ceil(totalCount / pageSize),
+						},
+			});
 		} catch (error) {
-			console.error("List hosts error:", error);
+			logger.error("List hosts error:", error);
 			res.status(500).json({ error: "Failed to fetch hosts" });
 		}
 	},
@@ -1464,7 +1703,7 @@ router.delete(
 
 			// Check if all hosts were actually deleted
 			if (deleteResult.count !== hostIds.length) {
-				console.warn(
+				logger.warn(
 					`Expected to delete ${hostIds.length} hosts, but only deleted ${deleteResult.count}`,
 				);
 			}
@@ -1479,7 +1718,7 @@ router.delete(
 				})),
 			});
 		} catch (error) {
-			console.error("Bulk host deletion error:", error);
+			logger.error("Bulk host deletion error:", error);
 
 			// Handle specific Prisma errors
 			if (error.code === "P2025") {
@@ -1540,7 +1779,7 @@ router.delete(
 				},
 			});
 		} catch (error) {
-			console.error("Host deletion error:", error);
+			logger.error("Host deletion error:", error);
 
 			// Handle specific Prisma errors
 			if (error.code === "P2025") {
@@ -1619,7 +1858,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Force fetch report error:", error);
+			logger.error("Force fetch report error:", error);
 			res.status(500).json({ error: "Failed to fetch report" });
 		}
 	},
@@ -1645,6 +1884,23 @@ router.patch(
 			const { hostId } = req.params;
 			const { auto_update } = req.body;
 
+			// If enabling auto-update on a host, also enable the global setting
+			// This makes the per-host toggle the primary control
+			let globalEnabled = false;
+			if (auto_update) {
+				const settings = await prisma.settings.findFirst();
+				if (settings && !settings.auto_update) {
+					await prisma.settings.update({
+						where: { id: settings.id },
+						data: { auto_update: true },
+					});
+					globalEnabled = true;
+					logger.info(
+						"📊 Global auto-update enabled (triggered by host toggle)",
+					);
+				}
+			}
+
 			const host = await prisma.hosts.update({
 				where: { id: hostId },
 				data: {
@@ -1654,15 +1910,16 @@ router.patch(
 			});
 
 			res.json({
-				message: `Agent auto-update ${auto_update ? "enabled" : "disabled"} successfully`,
+				message: `Agent auto-update ${auto_update ? "enabled" : "disabled"} successfully${globalEnabled ? " (global setting also enabled)" : ""}`,
 				host: {
 					id: host.id,
 					friendlyName: host.friendly_name,
 					autoUpdate: host.auto_update,
 				},
+				globalEnabled: globalEnabled,
 			});
 		} catch (error) {
-			console.error("Agent auto-update toggle error:", error);
+			logger.error("Agent auto-update toggle error:", error);
 			res.status(500).json({ error: "Failed to toggle agent auto-update" });
 		}
 	},
@@ -1724,8 +1981,139 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Force agent update error:", error);
-			res.status(500).json({ error: "Failed to force agent update" });
+			logger.error("Force agent update error:", error);
+			res.status(500).json({
+				error: "Failed to queue agent update",
+				details: error.message || "Unknown error occurred",
+			});
+		}
+	},
+);
+
+// Refresh integration status for specific host
+// This triggers the agent to re-scan and report its integration capabilities
+router.post(
+	"/:hostId/refresh-integration-status",
+	authenticateToken,
+	requireManageHosts,
+	async (req, res) => {
+		try {
+			const { hostId } = req.params;
+
+			// Get host to verify it exists
+			const host = await prisma.hosts.findUnique({
+				where: { id: hostId },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			// Get the agent-commands queue
+			const queue = queueManager.queues[QUEUE_NAMES.AGENT_COMMANDS];
+
+			if (!queue) {
+				return res.status(500).json({
+					error: "Queue not available",
+				});
+			}
+
+			// Add job to queue to refresh integration status
+			const job = await queue.add(
+				"refresh_integration_status",
+				{
+					api_id: host.api_id,
+					type: "refresh_integration_status",
+				},
+				{
+					attempts: 2,
+					backoff: {
+						type: "exponential",
+						delay: 1000,
+					},
+				},
+			);
+
+			res.json({
+				success: true,
+				message: "Integration status refresh queued",
+				jobId: job.id,
+				host: {
+					id: host.id,
+					friendlyName: host.friendly_name,
+					apiId: host.api_id,
+				},
+			});
+		} catch (error) {
+			logger.error("Refresh integration status error:", error);
+			res.status(500).json({
+				error: "Failed to refresh integration status",
+				details: error.message || "Unknown error occurred",
+			});
+		}
+	},
+);
+
+// Refresh Docker inventory for a host
+// This triggers the agent to re-collect and report Docker data
+router.post(
+	"/:hostId/refresh-docker",
+	authenticateToken,
+	requireManageHosts,
+	async (req, res) => {
+		try {
+			const { hostId } = req.params;
+
+			// Get host to verify it exists
+			const host = await prisma.hosts.findUnique({
+				where: { id: hostId },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			// Get the agent-commands queue
+			const queue = queueManager.queues[QUEUE_NAMES.AGENT_COMMANDS];
+
+			if (!queue) {
+				return res.status(500).json({
+					error: "Queue not available",
+				});
+			}
+
+			// Add job to queue to refresh Docker inventory
+			const job = await queue.add(
+				"docker_inventory_refresh",
+				{
+					api_id: host.api_id,
+					type: "docker_inventory_refresh",
+				},
+				{
+					attempts: 2,
+					backoff: {
+						type: "exponential",
+						delay: 1000,
+					},
+				},
+			);
+
+			res.json({
+				success: true,
+				message: "Docker inventory refresh queued",
+				jobId: job.id,
+				host: {
+					id: host.id,
+					friendlyName: host.friendly_name,
+					apiId: host.api_id,
+				},
+			});
+		} catch (error) {
+			logger.error("Refresh Docker inventory error:", error);
+			res.status(500).json({
+				error: "Failed to refresh Docker inventory",
+				details: error.message || "Unknown error occurred",
+			});
 		}
 	},
 );
@@ -1746,7 +2134,13 @@ router.get("/install", async (req, res) => {
 			where: { api_id: apiId },
 		});
 
-		if (!host || host.api_key !== apiKey) {
+		if (!host) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
+		// Verify API key (supports both hashed and legacy plaintext keys)
+		const isValidKey = await verifyApiKey(apiKey, host.api_key);
+		if (!isValidKey) {
 			return res.status(401).json({ error: "Invalid API credentials" });
 		}
 
@@ -1775,7 +2169,7 @@ router.get("/install", async (req, res) => {
 				serverUrl = settings.server_url;
 			}
 		} catch (settingsError) {
-			console.warn(
+			logger.warn(
 				"Could not fetch settings, using default server URL:",
 				settingsError.message,
 			);
@@ -1790,7 +2184,9 @@ router.get("/install", async (req, res) => {
 				curlFlags = "-sk";
 				skipSSLVerify = "true";
 			}
-		} catch (_) {}
+		} catch (sslSettingsError) {
+			logger.warn("Could not fetch SSL settings:", sslSettingsError.message);
+		}
 
 		// Check for --force parameter
 		const forceInstall = req.query.force === "true" || req.query.force === "1";
@@ -1798,19 +2194,44 @@ router.get("/install", async (req, res) => {
 		// Get architecture parameter (only set if explicitly provided, otherwise let script auto-detect)
 		const architecture = req.query.arch;
 
-		// Inject the API credentials, server URL, curl flags, SSL verify flag, force flag, and architecture into the script
-		// Only set ARCHITECTURE if explicitly provided, otherwise let the script auto-detect
+		// Generate a secure bootstrap token instead of embedding the API key directly
+		// The agent will exchange this token for actual credentials via a secure API call
+		// IMPORTANT: Use the plaintext apiKey from the request headers, NOT host.api_key (which is the hash)
+		const bootstrapToken = await generateBootstrapToken(host.api_id, apiKey);
+
+		// Inject bootstrap token and server URL into the script
+		// The actual API credentials are NOT embedded - they will be fetched securely
 		const archExport = architecture
 			? `export ARCHITECTURE="${architecture}"\n`
 			: "";
 		const envVars = `#!/bin/sh
 export PATCHMON_URL="${serverUrl}"
-export API_ID="${host.api_id}"
-export API_KEY="${host.api_key}"
+export BOOTSTRAP_TOKEN="${bootstrapToken}"
 export CURL_FLAGS="${curlFlags}"
 export SKIP_SSL_VERIFY="${skipSSLVerify}"
 export FORCE_INSTALL="${forceInstall ? "true" : "false"}"
 ${archExport}
+# Fetch actual credentials using bootstrap token (one-time use, expires in 5 minutes)
+fetch_credentials() {
+    CREDS=$(curl \${CURL_FLAGS} -X POST "\${PATCHMON_URL}/api/v1/hosts/bootstrap/exchange" \\
+        -H "Content-Type: application/json" \\
+        -d "{\\"token\\": \\"\${BOOTSTRAP_TOKEN}\\"}" 2>/dev/null)
+
+    if [ -z "$CREDS" ] || echo "$CREDS" | grep -q '"error"'; then
+        echo "ERROR: Failed to fetch credentials. Bootstrap token may have expired."
+        echo "Please request a new installation script."
+        exit 1
+    fi
+
+    export API_ID=$(echo "$CREDS" | grep -o '"apiId":"[^"]*"' | cut -d'"' -f4)
+    export API_KEY=$(echo "$CREDS" | grep -o '"apiKey":"[^"]*"' | cut -d'"' -f4)
+
+    if [ -z "$API_ID" ] || [ -z "$API_KEY" ]; then
+        echo "ERROR: Invalid credentials received from server."
+        exit 1
+    fi
+}
+fetch_credentials
 `;
 
 		// Remove the shebang from the original script and prepend our env vars
@@ -1824,14 +2245,44 @@ ${archExport}
 		);
 		res.send(script);
 	} catch (error) {
-		console.error("Installation script error:", error);
+		logger.error("Installation script error:", error);
 		res.status(500).json({ error: "Failed to serve installation script" });
 	}
 });
 
 // Note: /check-machine-id endpoint removed - using config.yml checking method instead
 
-// Serve the removal script (public endpoint - no authentication required)
+// Exchange bootstrap token for actual API credentials (one-time use)
+router.post("/bootstrap/exchange", async (req, res) => {
+	try {
+		const { token } = req.body;
+
+		if (!token) {
+			return res.status(400).json({ error: "Bootstrap token required" });
+		}
+
+		// Consume the bootstrap token (one-time use)
+		const credentials = await consumeBootstrapToken(token);
+
+		if (!credentials) {
+			return res.status(401).json({
+				error: "Invalid or expired bootstrap token",
+			});
+		}
+
+		// Return the actual credentials
+		res.json({
+			apiId: credentials.apiId,
+			apiKey: credentials.apiKey,
+		});
+	} catch (error) {
+		logger.error("Bootstrap token exchange error:", error.message);
+		res.status(500).json({ error: "Failed to exchange bootstrap token" });
+	}
+});
+
+// Serve the removal script (public - no authentication required)
+// The script is static and only removes PatchMon files from the system
 router.get("/remove", async (_req, res) => {
 	try {
 		const fs = require("node:fs");
@@ -1859,7 +2310,9 @@ router.get("/remove", async (_req, res) => {
 			if (settings && settings.ignore_ssl_self_signed === true) {
 				curlFlags = "-sk";
 			}
-		} catch (_) {}
+		} catch (settingsError) {
+			logger.warn("Could not fetch settings:", settingsError.message);
+		}
 
 		// Prepend environment for CURL_FLAGS so script can use it if needed
 		const envPrefix = `#!/bin/sh\nexport CURL_FLAGS="${curlFlags}"\n\n`;
@@ -1874,7 +2327,7 @@ router.get("/remove", async (_req, res) => {
 		);
 		res.send(script);
 	} catch (error) {
-		console.error("Removal script error:", error);
+		logger.error("Removal script error:", error.message);
 		res.status(500).json({ error: "Failed to serve removal script" });
 	}
 });
@@ -1925,7 +2378,7 @@ router.get(
 				}
 			}
 		} catch (error) {
-			console.error("Get agent info error:", error);
+			logger.error("Get agent info error:", error);
 			res.status(500).json({ error: "Failed to get agent information" });
 		}
 	},
@@ -1963,11 +2416,11 @@ router.post(
 			try {
 				const backupPath = `${agentPath}.backup.${Date.now()}`;
 				await fs.copyFile(agentPath, backupPath);
-				console.log(`Created backup: ${backupPath}`);
+				logger.info(`Created backup: ${backupPath}`);
 			} catch (error) {
 				// Ignore if original doesn't exist
 				if (error.code !== "ENOENT") {
-					console.warn("Failed to create backup:", error.message);
+					logger.warn("Failed to create backup:", error.message);
 				}
 			}
 
@@ -1987,7 +2440,7 @@ router.post(
 				sizeFormatted: `${(stats.size / 1024).toFixed(1)} KB`,
 			});
 		} catch (error) {
-			console.error("Upload agent error:", error);
+			logger.error("Upload agent error:", error);
 			res.status(500).json({ error: "Failed to update agent script" });
 		}
 	},
@@ -2005,14 +2458,17 @@ router.get("/agent/timestamp", async (req, res) => {
 		}
 
 		// Verify API credentials
-		const host = await prisma.hosts.findFirst({
-			where: {
-				api_id: apiId,
-				api_key: apiKey,
-			},
+		const host = await prisma.hosts.findUnique({
+			where: { api_id: apiId },
 		});
 
 		if (!host) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
+		// Verify API key using bcrypt (or timing-safe comparison for legacy keys)
+		const isValidKey = await verifyApiKey(apiKey, host.api_key);
+		if (!isValidKey) {
 			return res.status(401).json({ error: "Invalid API credentials" });
 		}
 
@@ -2048,7 +2504,7 @@ router.get("/agent/timestamp", async (req, res) => {
 			}
 		}
 	} catch (error) {
-		console.error("Get agent timestamp error:", error);
+		logger.error("Get agent timestamp error:", error);
 		res.status(500).json({ error: "Failed to get agent timestamp" });
 	}
 });
@@ -2065,14 +2521,17 @@ router.get("/settings", async (req, res) => {
 		}
 
 		// Verify API credentials
-		const host = await prisma.hosts.findFirst({
-			where: {
-				api_id: apiId,
-				api_key: apiKey,
-			},
+		const host = await prisma.hosts.findUnique({
+			where: { api_id: apiId },
 		});
 
 		if (!host) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
+		// Verify API key using bcrypt (or timing-safe comparison for legacy keys)
+		const isValidKey = await verifyApiKey(apiKey, host.api_key);
+		if (!isValidKey) {
 			return res.status(401).json({ error: "Invalid API credentials" });
 		}
 
@@ -2084,7 +2543,7 @@ router.get("/settings", async (req, res) => {
 			host_auto_update: host.auto_update || false,
 		});
 	} catch (error) {
-		console.error("Get settings error:", error);
+		logger.error("Get settings error:", error);
 		res.status(500).json({ error: "Failed to get settings" });
 	}
 });
@@ -2166,8 +2625,87 @@ router.patch(
 				host: updatedHost,
 			});
 		} catch (error) {
-			console.error("Update friendly name error:", error);
+			logger.error("Update friendly name error:", error);
 			res.status(500).json({ error: "Failed to update friendly name" });
+		}
+	},
+);
+
+// Update host IP and hostname (admin only)
+router.patch(
+	"/:hostId/connection",
+	authenticateToken,
+	requireManageHosts,
+	[
+		body("ip").optional().isIP().withMessage("IP must be a valid IP address"),
+		body("hostname")
+			.optional()
+			.isLength({ max: 255 })
+			.withMessage("Hostname must be less than 255 characters"),
+	],
+	async (req, res) => {
+		try {
+			const errors = validationResult(req);
+			if (!errors.isEmpty()) {
+				return res.status(400).json({ errors: errors.array() });
+			}
+
+			const { hostId } = req.params;
+			const { ip, hostname } = req.body;
+
+			// Check if host exists
+			const host = await prisma.hosts.findUnique({
+				where: { id: hostId },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			// Build update data
+			const updateData = {};
+			if (ip !== undefined) updateData.ip = ip;
+			if (hostname !== undefined) updateData.hostname = hostname;
+			updateData.updated_at = new Date();
+
+			// Update the host
+			const updatedHost = await prisma.hosts.update({
+				where: { id: hostId },
+				data: updateData,
+				select: {
+					id: true,
+					friendly_name: true,
+					hostname: true,
+					ip: true,
+					os_type: true,
+					os_version: true,
+					architecture: true,
+					last_update: true,
+					status: true,
+					updated_at: true,
+					host_group_memberships: {
+						include: {
+							host_groups: {
+								select: {
+									id: true,
+									name: true,
+									color: true,
+								},
+							},
+						},
+					},
+				},
+			});
+
+			res.json({
+				message: "Host connection information updated successfully",
+				host: updatedHost,
+			});
+		} catch (error) {
+			logger.error("Update host connection error:", error);
+			res
+				.status(500)
+				.json({ error: "Failed to update host connection information" });
 		}
 	},
 );
@@ -2239,7 +2777,7 @@ router.patch(
 				host: updatedHost,
 			});
 		} catch (error) {
-			console.error("Update notes error:", error);
+			logger.error("Update notes error:", error);
 			res.status(500).json({ error: "Failed to update notes" });
 		}
 	},
@@ -2262,6 +2800,8 @@ router.get(
 					api_id: true,
 					friendly_name: true,
 					docker_enabled: true,
+					compliance_enabled: true,
+					compliance_on_demand_only: true,
 				},
 			});
 
@@ -2274,14 +2814,19 @@ router.get(
 
 			// Get integration states from database (persisted) with cache fallback
 			// Database is source of truth, cache is used for quick WebSocket lookups
-			const cachedState = integrationStateCache.get(host.api_id) || {};
+			const cached = integrationStateCache.get(host.api_id);
+			const cachedState = cached?.integrations || {};
+			if (cached) {
+				cached.lastAccess = Date.now(); // Update access time
+			}
 			const integrations = {
 				docker: host.docker_enabled ?? cachedState.docker ?? false,
-				// Future integrations can be added here
+				compliance: host.compliance_enabled ?? cachedState.compliance ?? false,
 			};
 
 			res.json({
 				success: true,
+				compliance_on_demand_only: host.compliance_on_demand_only ?? true,
 				data: {
 					integrations,
 					connected,
@@ -2293,8 +2838,49 @@ router.get(
 				},
 			});
 		} catch (error) {
-			console.error("Get integration status error:", error);
+			logger.error("Get integration status error:", error);
 			res.status(500).json({ error: "Failed to get integration status" });
+		}
+	},
+);
+
+// Get integration setup status for a host (frontend-facing)
+router.get(
+	"/:hostId/integrations/:integrationName/status",
+	authenticateToken,
+	async (req, res) => {
+		try {
+			const { hostId, integrationName } = req.params;
+
+			// Get host to get api_id
+			const host = await prisma.hosts.findUnique({
+				where: { id: hostId },
+				select: { api_id: true },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			// Get status from Redis
+			const statusKey = `integration_status:${host.api_id}:${integrationName}`;
+			const statusData = await redis.get(statusKey);
+
+			if (!statusData) {
+				return res.json({
+					success: true,
+					status: null,
+					message: "No status available",
+				});
+			}
+
+			res.json({
+				success: true,
+				status: JSON.parse(statusData),
+			});
+		} catch (error) {
+			logger.error("Get integration setup status error:", error);
+			res.status(500).json({ error: "Failed to get integration setup status" });
 		}
 	},
 );
@@ -2316,7 +2902,7 @@ router.post(
 			const { enabled } = req.body;
 
 			// Validate integration name
-			const validIntegrations = ["docker"]; // Add more as they're implemented
+			const validIntegrations = ["docker", "compliance"];
 			if (!validIntegrations.includes(integrationName)) {
 				return res.status(400).json({
 					error: "Invalid integration name",
@@ -2368,13 +2954,24 @@ router.post(
 					where: { id: hostId },
 					data: { docker_enabled: enabled },
 				});
+			} else if (integrationName === "compliance") {
+				await prisma.hosts.update({
+					where: { id: hostId },
+					data: { compliance_enabled: enabled },
+				});
 			}
 
 			// Update cache with new state (for quick WebSocket lookups)
+			const now = Date.now();
 			if (!integrationStateCache.has(host.api_id)) {
-				integrationStateCache.set(host.api_id, {});
+				integrationStateCache.set(host.api_id, {
+					integrations: {},
+					lastAccess: now,
+				});
 			}
-			integrationStateCache.get(host.api_id)[integrationName] = enabled;
+			const cacheEntry = integrationStateCache.get(host.api_id);
+			cacheEntry.integrations[integrationName] = enabled;
+			cacheEntry.lastAccess = now;
 
 			res.json({
 				success: true,
@@ -2390,8 +2987,91 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Toggle integration error:", error);
+			logger.error("Toggle integration error:", error);
 			res.status(500).json({ error: "Failed to toggle integration" });
+		}
+	},
+);
+
+// Set compliance on-demand-only mode for a host
+router.post(
+	"/:hostId/compliance/on-demand-only",
+	authenticateToken,
+	requireManageHosts,
+	[
+		body("on_demand_only")
+			.isBoolean()
+			.withMessage("on_demand_only must be a boolean"),
+	],
+	async (req, res) => {
+		try {
+			const errors = validationResult(req);
+			if (!errors.isEmpty()) {
+				return res.status(400).json({ errors: errors.array() });
+			}
+
+			const { hostId } = req.params;
+			const { on_demand_only } = req.body;
+
+			// Get host to verify it exists
+			const host = await prisma.hosts.findUnique({
+				where: { id: hostId },
+				select: {
+					id: true,
+					api_id: true,
+					friendly_name: true,
+				},
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			// Check if agent is connected
+			if (!isConnected(host.api_id)) {
+				return res.status(503).json({
+					error: "Agent is not connected",
+					message:
+						"The agent must be connected via WebSocket to change compliance settings",
+				});
+			}
+
+			// Send WebSocket message to agent
+			const success = pushSetComplianceOnDemandOnly(
+				host.api_id,
+				on_demand_only,
+			);
+
+			if (!success) {
+				return res.status(503).json({
+					error: "Failed to send compliance setting",
+					message: "Agent connection may have been lost",
+				});
+			}
+
+			// Persist setting to database
+			await prisma.hosts.update({
+				where: { id: hostId },
+				data: { compliance_on_demand_only: on_demand_only },
+			});
+
+			res.json({
+				success: true,
+				message: `Compliance on-demand-only mode ${on_demand_only ? "enabled" : "disabled"} successfully`,
+				data: {
+					on_demand_only,
+					host: {
+						id: host.id,
+						friendlyName: host.friendly_name,
+						apiId: host.api_id,
+					},
+				},
+			});
+		} catch (error) {
+			logger.error("Set compliance on-demand-only error:", error);
+			res
+				.status(500)
+				.json({ error: "Failed to set compliance on-demand-only mode" });
 		}
 	},
 );

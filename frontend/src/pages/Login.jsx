@@ -61,6 +61,12 @@ const Login = () => {
 	const [showGithubVersionOnLogin, setShowGithubVersionOnLogin] =
 		useState(true);
 	const [latestRelease, setLatestRelease] = useState(null);
+	const [_githubStars, setGithubStars] = useState(null);
+	const [oidcConfig, setOidcConfig] = useState({
+		enabled: false,
+		buttonText: "Login with SSO",
+		disableLocalAuth: false,
+	});
 	const [socialMediaStats, setSocialMediaStats] = useState({
 		github_stars: null,
 		discord_members: null,
@@ -196,12 +202,68 @@ const Login = () => {
 		checkLoginSettings();
 	}, []);
 
+	// Fetch OIDC configuration
+	useEffect(() => {
+		const fetchOidcConfig = async () => {
+			try {
+				const response = await fetch("/api/v1/auth/oidc/config");
+				if (response.ok) {
+					const config = await response.json();
+					setOidcConfig(config);
+				}
+			} catch (error) {
+				console.error("Failed to fetch OIDC config:", error);
+			}
+		};
+		fetchOidcConfig();
+	}, []);
+
+	// Handle OIDC callback (tokens are now in httpOnly cookies)
+	useEffect(() => {
+		const urlParams = new URLSearchParams(window.location.search);
+		const oidcSuccess = urlParams.get("oidc");
+		const oidcError = urlParams.get("error");
+
+		if (oidcError) {
+			setError(decodeURIComponent(oidcError));
+			// Clean up URL
+			window.history.replaceState({}, document.title, "/login");
+		} else if (oidcSuccess === "success") {
+			// Tokens are in httpOnly cookies, fetch user profile to verify auth
+			const fetchUserAndRedirect = async () => {
+				try {
+					// The token cookie will be sent automatically with credentials
+					const response = await fetch("/api/v1/auth/profile", {
+						credentials: "include",
+					});
+					if (response.ok) {
+						const data = await response.json();
+						// Store minimal info for UI state (token is in httpOnly cookie)
+						setAuthState(null, data.user);
+						navigate("/");
+					} else {
+						setError("Failed to complete OIDC login");
+					}
+				} catch (err) {
+					console.error("Error fetching user after OIDC login:", err);
+					setError("Failed to complete OIDC login");
+				}
+				// Clean up URL
+				window.history.replaceState({}, document.title, "/login");
+			};
+			fetchUserAndRedirect();
+		}
+	}, [navigate, setAuthState]);
+
 	// Fetch latest release and social media stats
 	useEffect(() => {
 		// Only fetch if the setting allows it
 		if (!showGithubVersionOnLogin) {
 			return;
 		}
+
+		const abortController = new AbortController();
+		let isMounted = true;
 
 		const fetchData = async () => {
 			try {
@@ -210,38 +272,50 @@ const Login = () => {
 				const cacheTime = localStorage.getItem("githubReleaseCacheTime");
 				const now = Date.now();
 
-				// Load cached release data immediately
-				if (cachedRelease) {
-					setLatestRelease(JSON.parse(cachedRelease));
+				// Load cached data immediately
+				if (cachedRelease && isMounted) {
+					try {
+						setLatestRelease(JSON.parse(cachedRelease));
+					} catch (_e) {
+						localStorage.removeItem("githubLatestRelease");
+					}
+				}
+				const cachedStars = localStorage.getItem("githubStarsCount");
+				if (cachedStars && isMounted) {
+					setGithubStars(parseInt(cachedStars, 10));
 				}
 
-				// Fetch social media stats from cache
-				const statsResponse = await fetch("/api/v1/social-media-stats");
-				if (statsResponse.ok) {
-					const statsData = await statsResponse.json();
-					// Only update stats that are not null - preserve existing values if fetch failed
-					setSocialMediaStats((prev) => ({
-						github_stars:
-							statsData.github_stars !== null
-								? statsData.github_stars
-								: prev.github_stars,
-						discord_members:
-							statsData.discord_members !== null
-								? statsData.discord_members
-								: prev.discord_members,
-						buymeacoffee_supporters:
-							statsData.buymeacoffee_supporters !== null
-								? statsData.buymeacoffee_supporters
-								: prev.buymeacoffee_supporters,
-						youtube_subscribers:
-							statsData.youtube_subscribers !== null
-								? statsData.youtube_subscribers
-								: prev.youtube_subscribers,
-						linkedin_followers:
-							statsData.linkedin_followers !== null
-								? statsData.linkedin_followers
-								: prev.linkedin_followers,
-					}));
+				// Fetch social media stats from backend cache
+				try {
+					const statsResponse = await fetch("/api/v1/social-media-stats");
+					if (statsResponse.ok && isMounted) {
+						const statsData = await statsResponse.json();
+						// Only update stats that are not null - preserve existing values if fetch failed
+						setSocialMediaStats((prev) => ({
+							github_stars:
+								statsData.github_stars !== null
+									? statsData.github_stars
+									: prev.github_stars,
+							discord_members:
+								statsData.discord_members !== null
+									? statsData.discord_members
+									: prev.discord_members,
+							buymeacoffee_supporters:
+								statsData.buymeacoffee_supporters !== null
+									? statsData.buymeacoffee_supporters
+									: prev.buymeacoffee_supporters,
+							youtube_subscribers:
+								statsData.youtube_subscribers !== null
+									? statsData.youtube_subscribers
+									: prev.youtube_subscribers,
+							linkedin_followers:
+								statsData.linkedin_followers !== null
+									? statsData.linkedin_followers
+									: prev.linkedin_followers,
+						}));
+					}
+				} catch (_statsError) {
+					// Silently fail - social media stats are optional
 				}
 
 				// Use cache if less than 1 hour old
@@ -249,17 +323,38 @@ const Login = () => {
 					return;
 				}
 
-				// Fetch latest release
-				const releaseResponse = await fetch(
-					"https://api.github.com/repos/PatchMon/PatchMon/releases/latest",
+				// Fetch repository info (includes star count)
+				const repoResponse = await fetch(
+					"https://api.github.com/repos/MacJediWizard/PatchMon-Enhanced",
 					{
 						headers: {
 							Accept: "application/vnd.github.v3+json",
 						},
+						signal: abortController.signal,
 					},
 				);
 
-				if (releaseResponse.ok) {
+				if (repoResponse.ok && isMounted) {
+					const repoData = await repoResponse.json();
+					setGithubStars(repoData.stargazers_count);
+					localStorage.setItem(
+						"githubStarsCount",
+						repoData.stargazers_count.toString(),
+					);
+				}
+
+				// Fetch latest release
+				const releaseResponse = await fetch(
+					"https://api.github.com/repos/MacJediWizard/PatchMon-Enhanced/releases/latest",
+					{
+						headers: {
+							Accept: "application/vnd.github.v3+json",
+						},
+						signal: abortController.signal,
+					},
+				);
+
+				if (releaseResponse.ok && isMounted) {
 					const data = await releaseResponse.json();
 					const releaseInfo = {
 						version: data.tag_name,
@@ -284,10 +379,13 @@ const Login = () => {
 
 				localStorage.setItem("githubReleaseCacheTime", now.toString());
 			} catch (error) {
+				// Ignore abort errors
+				if (error.name === "AbortError") return;
+
 				console.error("Failed to fetch GitHub data:", error);
 				// Set fallback data if nothing cached
 				const cachedRelease = localStorage.getItem("githubLatestRelease");
-				if (!cachedRelease) {
+				if (!cachedRelease && isMounted) {
 					setLatestRelease({
 						version: "v1.3.0",
 						name: "Latest Release",
@@ -299,6 +397,11 @@ const Login = () => {
 		};
 
 		fetchData();
+
+		return () => {
+			isMounted = false;
+			abortController.abort();
+		};
 	}, [showGithubVersionOnLogin]); // Run once on mount
 
 	const handleSubmit = async (e) => {
@@ -427,8 +530,8 @@ const Login = () => {
 					err.response?.data?.error || err.message || "TFA verification failed";
 				setError(errorMessage);
 			}
-			// Clear the token input for security
-			setTfaData({ token: "" });
+			// Clear the token input for security (preserve remember_me preference)
+			setTfaData((prev) => ({ ...prev, token: "" }));
 		} finally {
 			setIsLoading(false);
 		}
@@ -496,7 +599,7 @@ const Login = () => {
 								<div>
 									<img
 										src="/assets/logo_dark.png"
-										alt="PatchMon"
+										alt="PatchMonEnhanced"
 										className="h-16 mb-4"
 									/>
 									<p className="text-sm text-blue-200 font-medium tracking-wide uppercase">
@@ -550,7 +653,7 @@ const Login = () => {
 										)}
 
 										<a
-											href="https://github.com/PatchMon/PatchMon/releases/latest"
+											href="https://github.com/MacJediWizard/PatchMon-Enhanced/releases/latest"
 											target="_blank"
 											rel="noopener noreferrer"
 											className="inline-flex items-center gap-2 text-sm text-blue-300 hover:text-blue-200 transition-colors font-medium"
@@ -592,7 +695,7 @@ const Login = () => {
 								<div className="flex flex-wrap items-center gap-2">
 									{/* GitHub */}
 									<a
-										href="https://github.com/PatchMon/PatchMon"
+										href="https://github.com/MacJediWizard/PatchMon-Enhanced"
 										target="_blank"
 										rel="noopener noreferrer"
 										className="flex items-center justify-center gap-1.5 px-3 h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg transition-colors border border-white/10"
@@ -721,7 +824,7 @@ const Login = () => {
 											})()}`
 										: "/assets/favicon.svg"
 								}
-								alt="PatchMon Logo"
+								alt="PatchMonEnhanced Logo"
 								className="h-16 w-16"
 								onError={(e) => {
 									e.target.src = "/assets/favicon.svg";
@@ -729,7 +832,9 @@ const Login = () => {
 							/>
 						</div>
 						<h2 className="mt-6 text-center text-3xl font-extrabold text-secondary-900 dark:text-secondary-100">
-							{isSignupMode ? "Create PatchMon Account" : "Sign in to PatchMon"}
+							{isSignupMode
+								? "Create PatchMonEnhanced Account"
+								: "Sign in to PatchMonEnhanced"}
 						</h2>
 						<p className="mt-2 text-center text-sm text-secondary-600 dark:text-secondary-400">
 							Monitor and manage your Linux package updates
@@ -741,148 +846,151 @@ const Login = () => {
 							className="mt-8 space-y-6"
 							onSubmit={isSignupMode ? handleSignupSubmit : handleSubmit}
 						>
-							<div className="space-y-4">
-								<div>
-									<label
-										htmlFor={usernameId}
-										className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
-									>
-										{isSignupMode ? "Username" : "Username or Email"}
-									</label>
-									<div className="mt-1 relative">
-										<input
-											id={usernameId}
-											name="username"
-											type="text"
-											required
-											value={formData.username}
-											onChange={handleInputChange}
-											className="appearance-none rounded-md relative block w-full pl-10 pr-3 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
-											placeholder={
-												isSignupMode
-													? "Enter your username"
-													: "Enter your username or email"
-											}
-										/>
-										<div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-20 flex items-center">
-											<User size={20} color="#64748b" strokeWidth={2} />
+							{/* Only show form fields if local auth is not disabled */}
+							{!oidcConfig.disableLocalAuth && (
+								<div className="space-y-4">
+									<div>
+										<label
+											htmlFor={usernameId}
+											className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
+										>
+											{isSignupMode ? "Username" : "Username or Email"}
+										</label>
+										<div className="mt-1 relative">
+											<input
+												id={usernameId}
+												name="username"
+												type="text"
+												required
+												value={formData.username}
+												onChange={handleInputChange}
+												className="appearance-none rounded-md relative block w-full pl-10 pr-3 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
+												placeholder={
+													isSignupMode
+														? "Enter your username"
+														: "Enter your username or email"
+												}
+											/>
+											<div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-20 flex items-center">
+												<User size={20} color="#64748b" strokeWidth={2} />
+											</div>
+										</div>
+									</div>
+
+									{isSignupMode && (
+										<>
+											<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+												<div>
+													<label
+														htmlFor={firstNameId}
+														className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
+													>
+														First Name
+													</label>
+													<div className="mt-1 relative">
+														<div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+															<User className="h-5 w-5 text-secondary-400" />
+														</div>
+														<input
+															id={firstNameId}
+															name="firstName"
+															type="text"
+															required
+															value={formData.firstName}
+															onChange={handleInputChange}
+															className="appearance-none rounded-md relative block w-full pl-10 pr-3 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
+															placeholder="Enter your first name"
+														/>
+													</div>
+												</div>
+												<div>
+													<label
+														htmlFor={lastNameId}
+														className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
+													>
+														Last Name
+													</label>
+													<div className="mt-1 relative">
+														<div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+															<User className="h-5 w-5 text-secondary-400" />
+														</div>
+														<input
+															id={lastNameId}
+															name="lastName"
+															type="text"
+															required
+															value={formData.lastName}
+															onChange={handleInputChange}
+															className="appearance-none rounded-md relative block w-full pl-10 pr-3 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
+															placeholder="Enter your last name"
+														/>
+													</div>
+												</div>
+											</div>
+											<div>
+												<label
+													htmlFor={emailId}
+													className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
+												>
+													Email
+												</label>
+												<div className="mt-1 relative">
+													<input
+														id={emailId}
+														name="email"
+														type="email"
+														required
+														value={formData.email}
+														onChange={handleInputChange}
+														className="appearance-none rounded-md relative block w-full pl-10 pr-3 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
+														placeholder="Enter your email"
+													/>
+													<div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-20 flex items-center">
+														<Mail size={20} color="#64748b" strokeWidth={2} />
+													</div>
+												</div>
+											</div>
+										</>
+									)}
+
+									<div>
+										<label
+											htmlFor={passwordId}
+											className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
+										>
+											Password
+										</label>
+										<div className="mt-1 relative">
+											<input
+												id={passwordId}
+												name="password"
+												type={showPassword ? "text" : "password"}
+												required
+												value={formData.password}
+												onChange={handleInputChange}
+												className="appearance-none rounded-md relative block w-full pl-10 pr-10 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
+												placeholder="Enter your password"
+											/>
+											<div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-20 flex items-center">
+												<Lock size={20} color="#64748b" strokeWidth={2} />
+											</div>
+											<div className="absolute right-3 top-1/2 -translate-y-1/2 z-20 flex items-center">
+												<button
+													type="button"
+													onClick={() => setShowPassword(!showPassword)}
+													className="bg-transparent border-none cursor-pointer p-1 flex items-center justify-center"
+												>
+													{showPassword ? (
+														<EyeOff size={20} color="#64748b" strokeWidth={2} />
+													) : (
+														<Eye size={20} color="#64748b" strokeWidth={2} />
+													)}
+												</button>
+											</div>
 										</div>
 									</div>
 								</div>
-
-								{isSignupMode && (
-									<>
-										<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-											<div>
-												<label
-													htmlFor={firstNameId}
-													className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
-												>
-													First Name
-												</label>
-												<div className="mt-1 relative">
-													<div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-														<User className="h-5 w-5 text-secondary-400" />
-													</div>
-													<input
-														id={firstNameId}
-														name="firstName"
-														type="text"
-														required
-														value={formData.firstName}
-														onChange={handleInputChange}
-														className="appearance-none rounded-md relative block w-full pl-10 pr-3 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
-														placeholder="Enter your first name"
-													/>
-												</div>
-											</div>
-											<div>
-												<label
-													htmlFor={lastNameId}
-													className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
-												>
-													Last Name
-												</label>
-												<div className="mt-1 relative">
-													<div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-														<User className="h-5 w-5 text-secondary-400" />
-													</div>
-													<input
-														id={lastNameId}
-														name="lastName"
-														type="text"
-														required
-														value={formData.lastName}
-														onChange={handleInputChange}
-														className="appearance-none rounded-md relative block w-full pl-10 pr-3 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
-														placeholder="Enter your last name"
-													/>
-												</div>
-											</div>
-										</div>
-										<div>
-											<label
-												htmlFor={emailId}
-												className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
-											>
-												Email
-											</label>
-											<div className="mt-1 relative">
-												<input
-													id={emailId}
-													name="email"
-													type="email"
-													required
-													value={formData.email}
-													onChange={handleInputChange}
-													className="appearance-none rounded-md relative block w-full pl-10 pr-3 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
-													placeholder="Enter your email"
-												/>
-												<div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-20 flex items-center">
-													<Mail size={20} color="#64748b" strokeWidth={2} />
-												</div>
-											</div>
-										</div>
-									</>
-								)}
-
-								<div>
-									<label
-										htmlFor={passwordId}
-										className="block text-sm font-medium text-secondary-900 dark:text-secondary-100"
-									>
-										Password
-									</label>
-									<div className="mt-1 relative">
-										<input
-											id={passwordId}
-											name="password"
-											type={showPassword ? "text" : "password"}
-											required
-											value={formData.password}
-											onChange={handleInputChange}
-											className="appearance-none rounded-md relative block w-full pl-10 pr-10 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
-											placeholder="Enter your password"
-										/>
-										<div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-20 flex items-center">
-											<Lock size={20} color="#64748b" strokeWidth={2} />
-										</div>
-										<div className="absolute right-3 top-1/2 -translate-y-1/2 z-20 flex items-center">
-											<button
-												type="button"
-												onClick={() => setShowPassword(!showPassword)}
-												className="bg-transparent border-none cursor-pointer p-1 flex items-center justify-center"
-											>
-												{showPassword ? (
-													<EyeOff size={20} color="#64748b" strokeWidth={2} />
-												) : (
-													<Eye size={20} color="#64748b" strokeWidth={2} />
-												)}
-											</button>
-										</div>
-									</div>
-								</div>
-							</div>
+							)}
 
 							{error && (
 								<div className="bg-danger-50 border border-danger-200 rounded-md p-3">
@@ -895,26 +1003,57 @@ const Login = () => {
 								</div>
 							)}
 
-							<div>
-								<button
-									type="submit"
-									disabled={isLoading}
-									className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
-								>
-									{isLoading ? (
-										<div className="flex items-center">
-											<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-											{isSignupMode ? "Creating account..." : "Signing in..."}
-										</div>
-									) : isSignupMode ? (
-										"Create Account"
-									) : (
-										"Sign in"
-									)}
-								</button>
-							</div>
+							{/* Only show local auth form if not disabled by OIDC config */}
+							{!oidcConfig.disableLocalAuth && (
+								<div>
+									<button
+										type="submit"
+										disabled={isLoading}
+										className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+									>
+										{isLoading ? (
+											<div className="flex items-center">
+												<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+												{isSignupMode ? "Creating account..." : "Signing in..."}
+											</div>
+										) : isSignupMode ? (
+											"Create Account"
+										) : (
+											"Sign in"
+										)}
+									</button>
+								</div>
+							)}
 
-							{signupEnabled && (
+							{/* SSO Login Button */}
+							{oidcConfig.enabled && (
+								<div className={oidcConfig.disableLocalAuth ? "" : "mt-4"}>
+									{!oidcConfig.disableLocalAuth && (
+										<div className="relative">
+											<div className="absolute inset-0 flex items-center">
+												<div className="w-full border-t border-secondary-300 dark:border-secondary-600"></div>
+											</div>
+											<div className="relative flex justify-center text-sm">
+												<span className="px-2 bg-white dark:bg-secondary-900 text-secondary-500">
+													or
+												</span>
+											</div>
+										</div>
+									)}
+
+									<button
+										onClick={() => {
+											window.location.href = "/api/v1/auth/oidc/login";
+										}}
+										className={`${oidcConfig.disableLocalAuth ? "" : "mt-4"} w-full flex justify-center py-2 px-4 border border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-800 hover:bg-secondary-50 dark:hover:bg-secondary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500`}
+										type="button"
+									>
+										{oidcConfig.buttonText || "Login with SSO"}
+									</button>
+								</div>
+							)}
+
+							{signupEnabled && !oidcConfig.disableLocalAuth && (
 								<div className="text-center">
 									<p className="text-sm text-secondary-700 dark:text-secondary-300">
 										{isSignupMode
@@ -945,7 +1084,7 @@ const Login = () => {
 													}`
 												: "/assets/favicon.svg"
 										}
-										alt="PatchMon Logo"
+										alt="PatchMonEnhanced Logo"
 										className="h-16 w-16"
 										onError={(e) => {
 											e.target.src = "/assets/favicon.svg";
