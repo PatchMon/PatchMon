@@ -974,8 +974,8 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 			<div
 				className="bg-secondary-900 rounded-lg w-full flex flex-col overflow-hidden"
 				style={{
-					height: isConnected || isConnecting ? "calc(50vh - 50px)" : "auto",
-					minHeight: isConnected || isConnecting ? "300px" : "auto",
+					height: isConnected || isConnecting ? "calc(100vh - 200px)" : "auto",
+					minHeight: isConnected || isConnecting ? "600px" : "auto",
 				}}
 			>
 				{/* Compact Header */}
