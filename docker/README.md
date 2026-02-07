@@ -180,7 +180,7 @@ When you do this, updating to a new version requires manually updating the image
 | `PORT`            | Backend API port                                                                                | `3001`                  |
 | `SERVER_PROTOCOL` | Frontend server protocol (`http` or `https`)                                                    | `http`                  |
 | `SERVER_HOST`     | Frontend server host                                                                            | `localhost`             |
-| `SERVER_PORT`     | Frontend server port                                                                            | `3000`                  |
+| `SERVER_PORT`     | Frontend server port                                                                            | `3000` (Change to 443 if using a FQDN in `SERVER_HOST` variable)|
 | `CORS_ORIGIN`     | CORS origin URL                                                                                 | `http://localhost:3000` |
 | `ENABLE_HSTS`     | Enable HTTP Strict Transport Security                                                           | `true`                  |
 | `TRUST_PROXY`     | Trust proxy headers - See [Express.js docs](https://expressjs.com/en/guide/behind-proxies.html) | `true`                  |
