@@ -10,3 +10,11 @@ pre-commit:
         --colors=off
         {staged_files}
       stage_fixed: true
+    golangci-lint:
+      glob: "agent-source-code/**/*.go"
+      run: >-
+        cd agent-source-code &&
+        golangci-lint run
+        --timeout=5m
+        ./...
+      stage_fixed: false
