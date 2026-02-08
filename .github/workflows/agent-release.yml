@@ -69,11 +69,11 @@ jobs:
           
           # Verify it's a Linux binary (for linux builds)
           if [ "${{ matrix.goos }}" = "linux" ]; then
-            if ! file "${OUTPUT_NAME}" | grep -q "Linux"; then
-              echo "❌ Error: Binary is not a Linux binary"
+            if ! file "${OUTPUT_NAME}" | grep -qE "(ELF|Linux)"; then
+              echo "❌ Error: Binary is not a Linux binary (expected ELF format)"
               exit 1
             fi
-            echo "✅ Verified: Linux binary"
+            echo "✅ Verified: Linux binary (ELF format)"
           fi
           
       - name: Test binary basic functionality
