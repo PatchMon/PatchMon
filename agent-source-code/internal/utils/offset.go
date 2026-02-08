@@ -1,3 +1,6 @@
+// Package utils provides utility functions for common operations
+//
+//nolint:revive // utils is a common package name in Go projects
 package utils
 
 import (

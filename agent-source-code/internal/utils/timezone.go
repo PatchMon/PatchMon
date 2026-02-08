@@ -1,4 +1,5 @@
 // Package utils provides utility functions for timezone and other common operations
+//nolint:revive // utils is a common package name in Go projects
 package utils
 
 import (
