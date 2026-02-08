@@ -257,6 +257,7 @@ const Layout = ({ children }) => {
 				name: "Compliance",
 				href: "/compliance",
 				icon: Shield,
+				alpha: true,
 			});
 
 			if (canViewReports()) {
@@ -772,6 +773,11 @@ const Layout = ({ children }) => {
 																				Soon
 																			</span>
 																		)}
+																		{subItem.alpha && (
+																			<span className="text-xs bg-purple-100 dark:bg-purple-900 text-purple-600 dark:text-purple-200 px-1.5 py-0.5 rounded font-medium">
+																				Alpha
+																			</span>
+																		)}
 																		{subItem.beta && (
 																			<span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-200 px-1.5 py-0.5 rounded font-medium">
 																				Beta
@@ -1203,6 +1209,11 @@ const Layout = ({ children }) => {
 																				{subItem.comingSoon && (
 																					<span className="text-xs bg-secondary-100 text-secondary-600 px-1.5 py-0.5 rounded">
 																						Soon
+																					</span>
+																				)}
+																				{subItem.alpha && (
+																					<span className="text-xs bg-purple-100 dark:bg-purple-900 text-purple-600 dark:text-purple-200 px-1.5 py-0.5 rounded font-medium">
+																						Alpha
 																					</span>
 																				)}
 																				{subItem.beta && (
