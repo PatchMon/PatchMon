@@ -668,18 +668,26 @@ rm -f "$0"
 			// Write the script content to the file
 			if _, err := file.WriteString(helperScript); err != nil {
 				logger.WithError(err).Warn("Failed to write restart helper script")
-				file.Close()
-				os.Remove(helperPath)
+				if closeErr := file.Close(); closeErr != nil {
+					logger.WithError(closeErr).Warn("Failed to close file after write error")
+				}
+				if err := os.Remove(helperPath); err != nil {
+					logger.WithError(err).Warn("Failed to remove helper script after write error")
+				}
 				// Fall through to exit approach
 			} else {
-				file.Close()
+				if err := file.Close(); err != nil {
+					logger.WithError(err).Warn("Failed to close restart helper script file")
+				}
 
 				// SECURITY: Verify the file we're about to execute is the one we created
 				// Check it's a regular file, not a symlink that was swapped in
 				fileInfo, err := os.Lstat(helperPath)
 				if err != nil || fileInfo.Mode()&os.ModeSymlink != 0 {
 					logger.Warn("Security: helper script may have been tampered with, refusing to execute")
-					os.Remove(helperPath)
+					if err := os.Remove(helperPath); err != nil {
+						logger.WithError(err).Warn("Failed to remove tampered helper script")
+					}
 					os.Exit(0)
 				}
 
@@ -767,18 +775,26 @@ rm -f "$0"
 			// Write the script content to the file
 			if _, err := file.WriteString(helperScript); err != nil {
 				logger.WithError(err).Warn("Failed to write restart helper script")
-				file.Close()
-				os.Remove(helperPath)
+				if closeErr := file.Close(); closeErr != nil {
+					logger.WithError(closeErr).Warn("Failed to close file after write error")
+				}
+				if err := os.Remove(helperPath); err != nil {
+					logger.WithError(err).Warn("Failed to remove helper script after write error")
+				}
 				// Fall through to exit approach
 			} else {
-				file.Close()
+				if err := file.Close(); err != nil {
+					logger.WithError(err).Warn("Failed to close restart helper script file")
+				}
 
 				// SECURITY: Verify the file we're about to execute is the one we created
 				// Check it's a regular file, not a symlink that was swapped in
 				fileInfo, err := os.Lstat(helperPath)
 				if err != nil || fileInfo.Mode()&os.ModeSymlink != 0 {
 					logger.Warn("Security: helper script may have been tampered with, refusing to execute")
-					os.Remove(helperPath)
+					if err := os.Remove(helperPath); err != nil {
+						logger.WithError(err).Warn("Failed to remove tampered helper script")
+					}
 					os.Exit(0)
 				}
 

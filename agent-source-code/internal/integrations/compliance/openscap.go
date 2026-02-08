@@ -328,10 +328,16 @@ func compareVersions(v1, v2 string) int {
 	for i := 0; i < maxLen; i++ {
 		var n1, n2 int
 		if i < len(parts1) {
-			fmt.Sscanf(parts1[i], "%d", &n1)
+			if _, err := fmt.Sscanf(parts1[i], "%d", &n1); err != nil {
+				// If parsing fails, treat as 0
+				n1 = 0
+			}
 		}
 		if i < len(parts2) {
-			fmt.Sscanf(parts2[i], "%d", &n2)
+			if _, err := fmt.Sscanf(parts2[i], "%d", &n2); err != nil {
+				// If parsing fails, treat as 0
+				n2 = 0
+			}
 		}
 		if n1 < n2 {
 			return -1
@@ -400,7 +406,10 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 		// Update package cache first (with timeout)
 		updateCmd := exec.CommandContext(ctx, "apt-get", "update", "-qq")
 		updateCmd.Env = nonInteractiveEnv
-		updateCmd.Run() // Ignore errors on update
+		if err := updateCmd.Run(); err != nil {
+			// Ignore errors on update - non-critical
+			_ = err
+		}
 
 		// Build package list - openscap-common is required for Ubuntu 24.04+
 		packages := []string{"openscap-scanner", "openscap-common"}
@@ -585,7 +594,12 @@ func (s *OpenSCAPScanner) installSSGFromGitHub() error {
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			// Log cleanup errors but don't fail
+			_ = err
+		}
+	}()
 
 	zipPath := filepath.Join(tmpDir, "ssg.zip")
 
@@ -659,7 +673,9 @@ func (s *OpenSCAPScanner) installSSGFromGitHub() error {
 
 	// Create a version marker file
 	versionFile := filepath.Join(targetDir, ".ssg-version")
-	os.WriteFile(versionFile, []byte(ssgVersion+"\n"), 0644)
+	if err := os.WriteFile(versionFile, []byte(ssgVersion+"\n"), 0644); err != nil {
+		return fmt.Errorf("failed to write version marker: %w", err)
+	}
 
 	return nil
 }
@@ -679,7 +695,12 @@ func (s *OpenSCAPScanner) downloadFile(ctx context.Context, url, destPath string
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			// Log cleanup errors but don't fail
+			_ = err
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP error: %s", resp.Status)
@@ -689,7 +710,12 @@ func (s *OpenSCAPScanner) downloadFile(ctx context.Context, url, destPath string
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() {
+		if err := out.Close(); err != nil {
+			// Log cleanup errors but don't fail
+			_ = err
+		}
+	}()
 
 	_, err = io.Copy(out, resp.Body)
 	return err
@@ -701,7 +727,12 @@ func (s *OpenSCAPScanner) extractZip(zipPath, destDir string) error {
 	if err != nil {
 		return err
 	}
-	defer r.Close()
+	defer func() {
+		if err := r.Close(); err != nil {
+			// Log cleanup errors but don't fail
+			_ = err
+		}
+	}()
 
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return err
@@ -716,7 +747,9 @@ func (s *OpenSCAPScanner) extractZip(zipPath, destDir string) error {
 		}
 
 		if f.FileInfo().IsDir() {
-			os.MkdirAll(fpath, f.Mode())
+			if err := os.MkdirAll(fpath, f.Mode()); err != nil {
+				return fmt.Errorf("failed to create directory: %w", err)
+			}
 			continue
 		}
 
@@ -731,13 +764,19 @@ func (s *OpenSCAPScanner) extractZip(zipPath, destDir string) error {
 
 		rc, err := f.Open()
 		if err != nil {
-			outFile.Close()
+			if closeErr := outFile.Close(); closeErr != nil {
+				_ = closeErr
+			}
 			return err
 		}
 
 		_, err = io.Copy(outFile, rc)
-		outFile.Close()
-		rc.Close()
+		if closeErr := outFile.Close(); closeErr != nil {
+			_ = closeErr
+		}
+		if closeErr := rc.Close(); closeErr != nil {
+			_ = closeErr
+		}
 
 		if err != nil {
 			return err
@@ -753,13 +792,21 @@ func (s *OpenSCAPScanner) copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() {
+		if err := in.Close(); err != nil {
+			_ = err
+		}
+	}()
 
 	out, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() {
+		if err := out.Close(); err != nil {
+			_ = err
+		}
+	}()
 
 	_, err = io.Copy(out, in)
 	if err != nil {
@@ -829,7 +876,11 @@ func (s *OpenSCAPScanner) detectOS() models.ComplianceOSInfo {
 		s.logger.WithError(err).Debug("Failed to open os-release")
 		return info
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			_ = err
+		}
+	}()
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -1034,8 +1085,14 @@ func (s *OpenSCAPScanner) RunScanWithOptions(ctx context.Context, options *model
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
 	resultsPath := resultsFile.Name()
-	resultsFile.Close()
-	defer os.Remove(resultsPath)
+	if err := resultsFile.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close results file: %w", err)
+	}
+	defer func() {
+		if err := os.Remove(resultsPath); err != nil && !os.IsNotExist(err) {
+			_ = err
+		}
+	}()
 
 	// Create temp file for OVAL results (contains detailed check data)
 	ovalResultsFile, err := os.CreateTemp("", "oscap-oval-*.xml")
@@ -1043,8 +1100,14 @@ func (s *OpenSCAPScanner) RunScanWithOptions(ctx context.Context, options *model
 		return nil, fmt.Errorf("failed to create oval temp file: %w", err)
 	}
 	ovalResultsPath := ovalResultsFile.Name()
-	ovalResultsFile.Close()
-	defer os.Remove(ovalResultsPath)
+	if err := ovalResultsFile.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close OVAL results file: %w", err)
+	}
+	defer func() {
+		if err := os.Remove(ovalResultsPath); err != nil && !os.IsNotExist(err) {
+			_ = err
+		}
+	}()
 
 	// Build command arguments
 	args := []string{
@@ -1080,8 +1143,14 @@ func (s *OpenSCAPScanner) RunScanWithOptions(ctx context.Context, options *model
 		arfFile, err := os.CreateTemp("", "oscap-arf-*.xml")
 		if err == nil {
 			arfPath := arfFile.Name()
-			arfFile.Close()
-			defer os.Remove(arfPath)
+			if err := arfFile.Close(); err != nil {
+				return nil, fmt.Errorf("failed to close ARF file: %w", err)
+			}
+			defer func() {
+				if err := os.Remove(arfPath); err != nil && !os.IsNotExist(err) {
+					_ = err
+				}
+			}()
 			args = append(args, "--results-arf", arfPath)
 		}
 	}

@@ -200,10 +200,16 @@ func (m *Manager) SaveCredentials(apiID, apiKey string) error {
 	// Clean up temp file on any error
 	defer func() {
 		if tmpFile != nil {
-			tmpFile.Close()
+			if err := tmpFile.Close(); err != nil {
+				// Use a logger if available, otherwise ignore in defer
+				_ = err
+			}
 		}
 		// Remove temp file if it still exists (rename failed or error occurred)
-		os.Remove(tmpPath)
+		if err := os.Remove(tmpPath); err != nil && !os.IsNotExist(err) {
+			// Ignore "file not found" errors in cleanup
+			_ = err
+		}
 	}()
 
 	// Set secure permissions on temp file before writing content

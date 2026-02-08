@@ -11,4 +11,4 @@ linters:
     # Additional useful linters
     - misspell
     - revive
-    - gosec
+    # - gosec

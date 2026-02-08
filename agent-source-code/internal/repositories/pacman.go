@@ -94,7 +94,11 @@ func (p *PacmanManager) parseMirrorList(filename string, repoName string) []mode
 		p.logger.WithError(err).WithField("file", filename).Debug("Failed to open include file")
 		return nil
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			p.logger.WithError(err).WithField("file", filename).Debug("Failed to close include file")
+		}
+	}()
 
 	var repos []models.Repository
 	scanner := bufio.NewScanner(file)

@@ -924,7 +924,9 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 	done := make(chan struct{})
 	defer func() {
 		close(done) // Signal all goroutines to stop
-		_ = conn.Close()
+		if err := conn.Close(); err != nil {
+			logger.WithError(err).Warn("Failed to close WebSocket connection")
+		}
 	}()
 
 	// ping loop - now with cancellation support
@@ -1313,13 +1315,15 @@ func toggleIntegration(integrationName string, enabled bool) error {
 			logger.Info("Compliance enabled - installing required tools...")
 			overallStatus = "installing"
 
-			// Send initial "installing" status
-			httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
-				Integration: "compliance",
-				Enabled:     true,
-				Status:      "installing",
-				Message:     "Installing compliance tools...",
-			})
+		// Send initial "installing" status
+		if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
+			Integration: "compliance",
+			Enabled:     true,
+			Status:      "installing",
+			Message:     "Installing compliance tools...",
+		}); err != nil {
+			logger.WithError(err).Warn("Failed to send initial compliance installation status")
+		}
 
 			// Install OpenSCAP
 			openscapScanner := compliance.NewOpenSCAPScanner(logger)
@@ -1419,28 +1423,32 @@ func toggleIntegration(integrationName string, enabled bool) error {
 				}
 			}
 
-			// Send final status with scanner info
-			httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
-				Integration: "compliance",
-				Enabled:     enabled,
-				Status:      overallStatus,
-				Message:     statusMessage,
-				Components:  components,
-				ScannerInfo: scannerDetails,
-			})
+		// Send final status with scanner info
+		if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
+			Integration: "compliance",
+			Enabled:     enabled,
+			Status:      overallStatus,
+			Message:     statusMessage,
+			Components:  components,
+			ScannerInfo: scannerDetails,
+		}); err != nil {
+			logger.WithError(err).Warn("Failed to send final compliance status")
+		}
 			return nil // Skip the generic status send below
 
 		} else {
 			logger.Info("Compliance disabled - removing tools...")
 			overallStatus = "removing"
 
-			// Send initial "removing" status
-			httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
-				Integration: "compliance",
-				Enabled:     false,
-				Status:      "removing",
-				Message:     "Removing compliance tools...",
-			})
+		// Send initial "removing" status
+		if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
+			Integration: "compliance",
+			Enabled:     false,
+			Status:      "removing",
+			Message:     "Removing compliance tools...",
+		}); err != nil {
+			logger.WithError(err).Warn("Failed to send initial compliance removal status")
+		}
 
 			// Remove OpenSCAP packages
 			openscapScanner := compliance.NewOpenSCAPScanner(logger)
@@ -1468,13 +1476,15 @@ func toggleIntegration(integrationName string, enabled bool) error {
 			logger.Info("Compliance cleanup complete")
 
 			// Send final status update for disable
-			httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
+			if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
 				Integration: "compliance",
 				Enabled:     enabled,
 				Status:      overallStatus,
 				Message:     statusMessage,
 				Components:  components,
-			})
+			}); err != nil {
+				logger.WithError(err).Warn("Failed to send final compliance disable status")
+			}
 		}
 	}
 
@@ -1536,13 +1546,15 @@ func toggleIntegration(integrationName string, enabled bool) error {
 			}
 
 			// Send updated compliance status with Docker scanning tools
-			httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
+			if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
 				Integration: "compliance",
 				Enabled:     true,
 				Status:      "ready",
 				Message:     "Docker scanning tools now available",
 				ScannerInfo: scannerDetails,
-			})
+			}); err != nil {
+				logger.WithError(err).Warn("Failed to send compliance status with Docker tools")
+			}
 		}
 	}
 
@@ -1617,21 +1629,29 @@ rm -f "$0"
 			logger.WithError(err).Warn("Failed to create restart helper script, will exit and rely on OpenRC auto-restart")
 			// Fall through to exit approach
 		} else {
-			// Write the script content to the file
-			if _, err := file.WriteString(helperScript); err != nil {
-				logger.WithError(err).Warn("Failed to write restart helper script")
-				file.Close()
-				os.Remove(helperPath)
-				// Fall through to exit approach
-			} else {
-				file.Close()
+		// Write the script content to the file
+		if _, err := file.WriteString(helperScript); err != nil {
+			logger.WithError(err).Warn("Failed to write restart helper script")
+			if closeErr := file.Close(); closeErr != nil {
+				logger.WithError(closeErr).Warn("Failed to close file after write error")
+			}
+			if err := os.Remove(helperPath); err != nil {
+				logger.WithError(err).Warn("Failed to remove helper script after write error")
+			}
+			// Fall through to exit approach
+		} else {
+			if err := file.Close(); err != nil {
+				logger.WithError(err).Warn("Failed to close restart helper script file")
+			}
 
 				// SECURITY: Verify the file we're about to execute is the one we created
 				// Check it's a regular file, not a symlink that was swapped in
 				fileInfo, err := os.Lstat(helperPath)
 				if err != nil || fileInfo.Mode()&os.ModeSymlink != 0 {
 					logger.Warn("Security: helper script may have been tampered with, refusing to execute")
-					os.Remove(helperPath)
+					if err := os.Remove(helperPath); err != nil {
+						logger.WithError(err).Warn("Failed to remove tampered helper script")
+					}
 					os.Exit(0)
 				}
 
@@ -2090,7 +2110,9 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 	// Create session
 	session, err := client.NewSession()
 	if err != nil {
-		client.Close()
+		if closeErr := client.Close(); closeErr != nil {
+			logger.WithError(closeErr).Warn("Failed to close SSH client after session creation error")
+		}
 		logger.WithError(err).Error("Failed to create SSH session")
 		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to create session: %v", err))
 		return
@@ -2116,8 +2138,12 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 		ssh.TTY_OP_ISPEED: 14400,
 		ssh.TTY_OP_OSPEED: 14400,
 	}); err != nil {
-		session.Close()
-		client.Close()
+		if closeErr := session.Close(); closeErr != nil {
+			logger.WithError(closeErr).Warn("Failed to close session after PTY request error")
+		}
+		if closeErr := client.Close(); closeErr != nil {
+			logger.WithError(closeErr).Warn("Failed to close client after PTY request error")
+		}
 		logger.WithError(err).Error("Failed to request PTY")
 		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to request PTY: %v", err))
 		return
@@ -2126,8 +2152,12 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 	// Set up stdin, stdout, stderr
 	stdin, err := session.StdinPipe()
 	if err != nil {
-		session.Close()
-		client.Close()
+		if closeErr := session.Close(); closeErr != nil {
+			logger.WithError(closeErr).Warn("Failed to close session after stdin pipe error")
+		}
+		if closeErr := client.Close(); closeErr != nil {
+			logger.WithError(closeErr).Warn("Failed to close client after stdin pipe error")
+		}
 		logger.WithError(err).Error("Failed to get stdin pipe")
 		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to get stdin: %v", err))
 		return
@@ -2135,9 +2165,15 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 
 	stdout, err := session.StdoutPipe()
 	if err != nil {
-		stdin.Close()
-		session.Close()
-		client.Close()
+		if closeErr := stdin.Close(); closeErr != nil {
+			logger.WithError(closeErr).Warn("Failed to close stdin after stdout pipe error")
+		}
+		if closeErr := session.Close(); closeErr != nil {
+			logger.WithError(closeErr).Warn("Failed to close session after stdout pipe error")
+		}
+		if closeErr := client.Close(); closeErr != nil {
+			logger.WithError(closeErr).Warn("Failed to close client after stdout pipe error")
+		}
 		logger.WithError(err).Error("Failed to get stdout pipe")
 		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to get stdout: %v", err))
 		return
@@ -2145,9 +2181,15 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 
 	stderr, err := session.StderrPipe()
 	if err != nil {
-		stdin.Close()
-		session.Close()
-		client.Close()
+		if closeErr := stdin.Close(); closeErr != nil {
+			logger.WithError(closeErr).Warn("Failed to close stdin after stderr pipe error")
+		}
+		if closeErr := session.Close(); closeErr != nil {
+			logger.WithError(closeErr).Warn("Failed to close session after stderr pipe error")
+		}
+		if closeErr := client.Close(); closeErr != nil {
+			logger.WithError(closeErr).Warn("Failed to close client after stderr pipe error")
+		}
 		logger.WithError(err).Error("Failed to get stderr pipe")
 		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to get stderr: %v", err))
 		return
@@ -2155,9 +2197,15 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 
 	// Start shell
 	if err := session.Shell(); err != nil {
-		stdin.Close()
-		session.Close()
-		client.Close()
+		if closeErr := stdin.Close(); closeErr != nil {
+			logger.WithError(closeErr).Warn("Failed to close stdin after shell start error")
+		}
+		if closeErr := session.Close(); closeErr != nil {
+			logger.WithError(closeErr).Warn("Failed to close session after shell start error")
+		}
+		if closeErr := client.Close(); closeErr != nil {
+			logger.WithError(closeErr).Warn("Failed to close client after shell start error")
+		}
 		logger.WithError(err).Error("Failed to start shell")
 		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to start shell: %v", err))
 		return
@@ -2293,17 +2341,23 @@ func handleSshProxyDisconnect(m wsMsg, conn *websocket.Conn) {
 
 	// Close stdin
 	if proxySession.stdin != nil {
-		proxySession.stdin.Close()
+		if err := proxySession.stdin.Close(); err != nil {
+			logger.WithError(err).Warn("Failed to close SSH proxy stdin")
+		}
 	}
 
 	// Close session
 	if proxySession.session != nil {
-		proxySession.session.Close()
+		if err := proxySession.session.Close(); err != nil {
+			logger.WithError(err).Warn("Failed to close SSH proxy session")
+		}
 	}
 
 	// Close client
 	if proxySession.client != nil {
-		proxySession.client.Close()
+		if err := proxySession.client.Close(); err != nil {
+			logger.WithError(err).Warn("Failed to close SSH proxy client")
+		}
 	}
 
 	// Send closed message
