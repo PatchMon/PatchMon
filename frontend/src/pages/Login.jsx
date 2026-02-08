@@ -319,65 +319,76 @@ const Login = () => {
 				}
 
 				// Use cache if less than 1 hour old
-				if (cacheTime && now - parseInt(cacheTime, 10) < 3600000) {
-					return;
-				}
+				const shouldFetchFresh = !cacheTime || now - parseInt(cacheTime, 10) >= 3600000;
 
-				// Fetch repository info (includes star count)
-				const repoResponse = await fetch(
-					"https://api.github.com/repos/PatchMon/PatchMon",
-					{
-						headers: {
-							Accept: "application/vnd.github.v3+json",
-						},
-						signal: abortController.signal,
-					},
-				);
-
-				if (repoResponse.ok && isMounted) {
-					const repoData = await repoResponse.json();
-					setGithubStars(repoData.stargazers_count);
-					localStorage.setItem(
-						"githubStarsCount",
-						repoData.stargazers_count.toString(),
-					);
-				}
-
-				// Fetch latest release
-				const releaseResponse = await fetch(
-					"https://api.github.com/repos/PatchMon/PatchMon/releases/latest",
-					{
-						headers: {
-							Accept: "application/vnd.github.v3+json",
-						},
-						signal: abortController.signal,
-					},
-				);
-
-				if (releaseResponse.ok && isMounted) {
-					const data = await releaseResponse.json();
-					const releaseInfo = {
-						version: data.tag_name,
-						name: data.name,
-						publishedAt: new Date(data.published_at).toLocaleDateString(
-							"en-US",
-							{
-								year: "numeric",
-								month: "long",
-								day: "numeric",
+				// Fetch repository info (includes star count) - still from GitHub for stars
+				try {
+					const repoResponse = await fetch(
+						"https://api.github.com/repos/PatchMon/PatchMon",
+						{
+							headers: {
+								Accept: "application/vnd.github.v3+json",
 							},
-						),
-						body: data.body?.split("\n").slice(0, 3).join("\n") || "", // First 3 lines
-					};
-
-					setLatestRelease(releaseInfo);
-					localStorage.setItem(
-						"githubLatestRelease",
-						JSON.stringify(releaseInfo),
+							signal: abortController.signal,
+						},
 					);
+
+					if (repoResponse.ok && isMounted) {
+						const repoData = await repoResponse.json();
+						setGithubStars(repoData.stargazers_count);
+						localStorage.setItem(
+							"githubStarsCount",
+							repoData.stargazers_count.toString(),
+						);
+					}
+				} catch (_repoError) {
+					// Silently fail - stars are optional
 				}
 
-				localStorage.setItem("githubReleaseCacheTime", now.toString());
+				// Fetch latest release from GitHub API (for release notes, published date, etc.)
+				if (shouldFetchFresh) {
+					try {
+						const releaseResponse = await fetch(
+							"https://api.github.com/repos/PatchMon/PatchMon/releases/latest",
+							{
+								headers: {
+									Accept: "application/vnd.github.v3+json",
+								},
+								signal: abortController.signal,
+							},
+						);
+
+						if (releaseResponse.ok && isMounted) {
+							const data = await releaseResponse.json();
+							const releaseInfo = {
+								version: data.tag_name,
+								name: data.name,
+								publishedAt: new Date(data.published_at).toLocaleDateString(
+									"en-US",
+									{
+										year: "numeric",
+										month: "long",
+										day: "numeric",
+									},
+								),
+								body: data.body?.split("\n").slice(0, 3).join("\n") || "", // First 3 lines
+							};
+
+							setLatestRelease(releaseInfo);
+							localStorage.setItem(
+								"githubLatestRelease",
+								JSON.stringify(releaseInfo),
+							);
+							localStorage.setItem("githubReleaseCacheTime", now.toString());
+						}
+					} catch (releaseError) {
+						// Ignore abort errors
+						if (releaseError.name === "AbortError") return;
+						console.error("Failed to fetch release from GitHub:", releaseError);
+						// Will use cached data if available
+					}
+				}
+
 			} catch (error) {
 				// Ignore abort errors
 				if (error.name === "AbortError") return;

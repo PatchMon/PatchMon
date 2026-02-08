@@ -7,7 +7,7 @@ const { v4: uuidv4 } = require("uuid");
 const { get_current_time } = require("../../utils/timezone");
 
 // Import automation classes
-const GitHubUpdateCheck = require("./githubUpdateCheck");
+const VersionUpdateCheck = require("./versionUpdateCheck");
 const SessionCleanup = require("./sessionCleanup");
 const OrphanedRepoCleanup = require("./orphanedRepoCleanup");
 const OrphanedPackageCleanup = require("./orphanedPackageCleanup");
@@ -19,7 +19,7 @@ const SocialMediaStats = require("./socialMediaStats");
 
 // Queue names
 const QUEUE_NAMES = {
-	GITHUB_UPDATE_CHECK: "github-update-check",
+	VERSION_UPDATE_CHECK: "version-update-check",
 	SESSION_CLEANUP: "session-cleanup",
 	ORPHANED_REPO_CLEANUP: "orphaned-repo-cleanup",
 	ORPHANED_PACKAGE_CLEANUP: "orphaned-package-cleanup",
@@ -96,7 +96,7 @@ class QueueManager {
 	 * Initialize automation classes
 	 */
 	async initializeAutomations() {
-		this.automations[QUEUE_NAMES.GITHUB_UPDATE_CHECK] = new GitHubUpdateCheck(
+		this.automations[QUEUE_NAMES.VERSION_UPDATE_CHECK] = new VersionUpdateCheck(
 			this,
 		);
 		this.automations[QUEUE_NAMES.SESSION_CLEANUP] = new SessionCleanup(this);
@@ -139,11 +139,11 @@ class QueueManager {
 			},
 		};
 
-		// GitHub Update Check Worker
-		this.workers[QUEUE_NAMES.GITHUB_UPDATE_CHECK] = new Worker(
-			QUEUE_NAMES.GITHUB_UPDATE_CHECK,
-			this.automations[QUEUE_NAMES.GITHUB_UPDATE_CHECK].process.bind(
-				this.automations[QUEUE_NAMES.GITHUB_UPDATE_CHECK],
+		// Version Update Check Worker
+		this.workers[QUEUE_NAMES.VERSION_UPDATE_CHECK] = new Worker(
+			QUEUE_NAMES.VERSION_UPDATE_CHECK,
+			this.automations[QUEUE_NAMES.VERSION_UPDATE_CHECK].process.bind(
+				this.automations[QUEUE_NAMES.VERSION_UPDATE_CHECK],
 			),
 			workerOptions,
 		);
@@ -406,7 +406,7 @@ class QueueManager {
 	 * Schedule all recurring jobs
 	 */
 	async scheduleAllJobs() {
-		await this.automations[QUEUE_NAMES.GITHUB_UPDATE_CHECK].schedule();
+		await this.automations[QUEUE_NAMES.VERSION_UPDATE_CHECK].schedule();
 		await this.automations[QUEUE_NAMES.SESSION_CLEANUP].schedule();
 		await this.automations[QUEUE_NAMES.ORPHANED_REPO_CLEANUP].schedule();
 		await this.automations[QUEUE_NAMES.ORPHANED_PACKAGE_CLEANUP].schedule();
@@ -420,8 +420,8 @@ class QueueManager {
 	/**
 	 * Manual job triggers
 	 */
-	async triggerGitHubUpdateCheck() {
-		return this.automations[QUEUE_NAMES.GITHUB_UPDATE_CHECK].triggerManual();
+	async triggerVersionUpdateCheck() {
+		return this.automations[QUEUE_NAMES.VERSION_UPDATE_CHECK].triggerManual();
 	}
 
 	async triggerSessionCleanup() {

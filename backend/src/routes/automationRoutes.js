@@ -174,22 +174,22 @@ router.get("/jobs/:queueName", authenticateToken, async (req, res) => {
 	}
 });
 
-// Trigger manual GitHub update check
-router.post("/trigger/github-update", authenticateToken, async (_req, res) => {
+// Trigger manual version update check
+router.post("/trigger/version-update", authenticateToken, async (_req, res) => {
 	try {
-		const job = await queueManager.triggerGitHubUpdateCheck();
+		const job = await queueManager.triggerVersionUpdateCheck();
 		res.json({
 			success: true,
 			data: {
 				jobId: job.id,
-				message: "GitHub update check triggered successfully",
+				message: "Version update check triggered successfully",
 			},
 		});
 	} catch (error) {
-		logger.error("Error triggering GitHub update check:", error);
+		logger.error("Error triggering version update check:", error);
 		res.status(500).json({
 			success: false,
-			error: "Failed to trigger GitHub update check",
+			error: "Failed to trigger version update check",
 		});
 	}
 });
@@ -393,7 +393,7 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 
 		// Get recent jobs for each queue to show last run times
 		const recentJobs = await Promise.all([
-			queueManager.getRecentJobs(QUEUE_NAMES.GITHUB_UPDATE_CHECK, 1),
+			queueManager.getRecentJobs(QUEUE_NAMES.VERSION_UPDATE_CHECK, 1),
 			queueManager.getRecentJobs(QUEUE_NAMES.SESSION_CLEANUP, 1),
 			queueManager.getRecentJobs(QUEUE_NAMES.ORPHANED_REPO_CLEANUP, 1),
 			queueManager.getRecentJobs(QUEUE_NAMES.ORPHANED_PACKAGE_CLEANUP, 1),
@@ -405,7 +405,7 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 		// Calculate overview metrics
 		const overview = {
 			scheduledTasks:
-				stats[QUEUE_NAMES.GITHUB_UPDATE_CHECK].delayed +
+				stats[QUEUE_NAMES.VERSION_UPDATE_CHECK].delayed +
 				stats[QUEUE_NAMES.SESSION_CLEANUP].delayed +
 				stats[QUEUE_NAMES.ORPHANED_REPO_CLEANUP].delayed +
 				stats[QUEUE_NAMES.ORPHANED_PACKAGE_CLEANUP].delayed +
@@ -413,7 +413,7 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 				stats[QUEUE_NAMES.SYSTEM_STATISTICS].delayed,
 
 			runningTasks:
-				stats[QUEUE_NAMES.GITHUB_UPDATE_CHECK].active +
+				stats[QUEUE_NAMES.VERSION_UPDATE_CHECK].active +
 				stats[QUEUE_NAMES.SESSION_CLEANUP].active +
 				stats[QUEUE_NAMES.ORPHANED_REPO_CLEANUP].active +
 				stats[QUEUE_NAMES.ORPHANED_PACKAGE_CLEANUP].active +
@@ -421,7 +421,7 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 				stats[QUEUE_NAMES.SYSTEM_STATISTICS].active,
 
 			failedTasks:
-				stats[QUEUE_NAMES.GITHUB_UPDATE_CHECK].failed +
+				stats[QUEUE_NAMES.VERSION_UPDATE_CHECK].failed +
 				stats[QUEUE_NAMES.SESSION_CLEANUP].failed +
 				stats[QUEUE_NAMES.ORPHANED_REPO_CLEANUP].failed +
 				stats[QUEUE_NAMES.ORPHANED_PACKAGE_CLEANUP].failed +
@@ -442,9 +442,9 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 			// Automation details with last run times
 			automations: [
 				{
-					name: "GitHub Update Check",
-					queue: QUEUE_NAMES.GITHUB_UPDATE_CHECK,
-					description: "Checks for new PatchMon releases",
+					name: "Version Update Check",
+					queue: QUEUE_NAMES.VERSION_UPDATE_CHECK,
+					description: "Checks for new PatchMon releases via DNS",
 					schedule: "Daily at midnight",
 					lastRun: recentJobs[0][0]?.finishedOn
 						? new Date(recentJobs[0][0].finishedOn).toLocaleString()
@@ -455,7 +455,7 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 						: recentJobs[0][0]
 							? "Success"
 							: "Never run",
-					stats: stats[QUEUE_NAMES.GITHUB_UPDATE_CHECK],
+					stats: stats[QUEUE_NAMES.VERSION_UPDATE_CHECK],
 				},
 				{
 					name: "Session Cleanup",

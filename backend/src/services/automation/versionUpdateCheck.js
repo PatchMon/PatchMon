@@ -2,54 +2,34 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { prisma } = require("./shared/prisma");
 const logger = require("../../utils/logger");
-const { compareVersions, checkPublicRepo } = require("./shared/utils");
+const { compareVersions, checkVersionFromDNS } = require("./shared/utils");
 const { invalidateCache } = require("../settingsService");
 
 /**
- * GitHub Update Check Automation
- * Checks for new releases on GitHub using HTTPS API
+ * Version Update Check Automation
+ * Checks for new releases using DNS TXT record lookup
  */
-class GitHubUpdateCheck {
+class VersionUpdateCheck {
 	constructor(queueManager) {
 		this.queueManager = queueManager;
-		this.queueName = "github-update-check";
+		this.queueName = "version-update-check";
 	}
 
 	/**
-	 * Process GitHub update check job
+	 * Process version update check job
 	 */
 	async process(_job) {
 		const startTime = Date.now();
-		logger.info("🔍 Starting GitHub update check...");
+		logger.info("🔍 Starting version update check...");
 
 		try {
 			// Get settings
 			const settings = await prisma.settings.findFirst();
-			const DEFAULT_GITHUB_REPO = "https://github.com/PatchMon/PatchMon.git";
-			const repoUrl = settings?.githubRepoUrl || DEFAULT_GITHUB_REPO;
-			let owner, repo;
 
-			// Parse GitHub repository URL (supports both HTTPS and SSH formats)
-			if (repoUrl.includes("git@github.com:")) {
-				const match = repoUrl.match(/git@github\.com:([^/]+)\/([^/]+)\.git/);
-				if (match) {
-					[, owner, repo] = match;
-				}
-			} else if (repoUrl.includes("github.com/")) {
-				const match = repoUrl.match(
-					/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/,
-				);
-				if (match) {
-					[, owner, repo] = match;
-				}
-			}
-
-			if (!owner || !repo) {
-				throw new Error("Could not parse GitHub repository URL");
-			}
-
-			// Always use HTTPS GitHub API (simpler and more reliable)
-			const latestVersion = await checkPublicRepo(owner, repo);
+			// Check version from DNS TXT record
+			const latestVersion = await checkVersionFromDNS(
+				"server.vcheck.patchmon.net",
+			);
 
 			if (!latestVersion) {
 				throw new Error("Could not determine latest version");
@@ -96,7 +76,7 @@ class GitHubUpdateCheck {
 
 			const executionTime = Date.now() - startTime;
 			logger.info(
-				`✅ GitHub update check completed in ${executionTime}ms - Current: ${currentVersion}, Latest: ${latestVersion}, Update Available: ${isUpdateAvailable}`,
+				`✅ Version update check completed in ${executionTime}ms - Current: ${currentVersion}, Latest: ${latestVersion}, Update Available: ${isUpdateAvailable}`,
 			);
 
 			return {
@@ -109,7 +89,7 @@ class GitHubUpdateCheck {
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			logger.error(
-				`❌ GitHub update check failed after ${executionTime}ms:`,
+				`❌ Version update check failed after ${executionTime}ms:`,
 				error.message,
 			);
 
@@ -136,33 +116,34 @@ class GitHubUpdateCheck {
 	}
 
 	/**
-	 * Schedule recurring GitHub update check (daily at midnight)
+	 * Schedule recurring version update check (daily at midnight)
 	 */
 	async schedule() {
 		const job = await this.queueManager.queues[this.queueName].add(
-			"github-update-check",
+			"version-update-check",
 			{},
 			{
 				repeat: { cron: "0 0 * * *" }, // Daily at midnight
-				jobId: "github-update-check-recurring",
+				jobId: "version-update-check-recurring",
 			},
 		);
-		logger.info("✅ GitHub update check scheduled");
+		logger.info("✅ Version update check scheduled");
 		return job;
 	}
 
 	/**
-	 * Trigger manual GitHub update check
+	 * Trigger manual version update check
 	 */
 	async triggerManual() {
 		const job = await this.queueManager.queues[this.queueName].add(
-			"github-update-check-manual",
+			"version-update-check-manual",
 			{},
 			{ priority: 1 },
 		);
-		logger.info("✅ Manual GitHub update check triggered");
+		logger.info("✅ Manual version update check triggered");
 		return job;
 	}
 }
 
-module.exports = GitHubUpdateCheck;
+module.exports = VersionUpdateCheck;
+

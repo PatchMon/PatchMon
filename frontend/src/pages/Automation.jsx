@@ -45,14 +45,14 @@ const Automation = () => {
 		queryFn: async () => {
 			const jobs = await Promise.all([
 				api
-					.get("/automation/jobs/github-update-check?limit=5")
+					.get("/automation/jobs/version-update-check?limit=5")
 					.then((r) => r.data.data || []),
 				api
 					.get("/automation/jobs/session-cleanup?limit=5")
 					.then((r) => r.data.data || []),
 			]);
 			return {
-				githubUpdate: jobs[0],
+				versionUpdate: jobs[0],
 				sessionCleanup: jobs[1],
 			};
 		},
@@ -268,7 +268,7 @@ const Automation = () => {
 			let endpoint;
 
 			if (jobType === "github") {
-				endpoint = "/automation/trigger/github-update";
+				endpoint = "/automation/trigger/version-update";
 			} else if (jobType === "sessions") {
 				endpoint = "/automation/trigger/session-cleanup";
 			} else if (jobType === "orphaned-repos") {
@@ -538,7 +538,7 @@ const Automation = () => {
 												<button
 													type="button"
 													onClick={() => {
-														if (automation.queue.includes("github")) {
+														if (automation.queue.includes("version-update-check")) {
 															triggerManualJob("github");
 														} else if (automation.queue.includes("session")) {
 															triggerManualJob("sessions");
@@ -679,7 +679,7 @@ const Automation = () => {
 														<button
 															type="button"
 															onClick={() => {
-																if (automation.queue.includes("github")) {
+																if (automation.queue.includes("version-update-check")) {
 																	triggerManualJob("github");
 																} else if (
 																	automation.queue.includes("session")

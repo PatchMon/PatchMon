@@ -5,11 +5,13 @@ const logger = require("../utils/logger");
 const { authenticateToken } = require("../middleware/auth");
 const { requireManageSettings } = require("../middleware/permissions");
 const { getPrismaClient } = require("../config/prisma");
+const dns = require("node:dns").promises;
+const { checkVersionFromDNS } = require("../services/automation/shared/utils");
 
 const prisma = getPrismaClient();
 
-// Default GitHub repository URL
-const DEFAULT_GITHUB_REPO = "https://github.com/PatchMon/PatchMon.git";
+// DNS domain for server version check
+const SERVER_VERSION_DNS = "server.vcheck.patchmon.net";
 
 const router = express.Router();
 
@@ -33,61 +35,43 @@ function getCurrentVersion() {
 	}
 }
 
-// Helper function to parse GitHub repository URL
-function parseGitHubRepo(repoUrl) {
-	let owner, repo;
-
-	if (repoUrl.includes("git@github.com:")) {
-		const match = repoUrl.match(/git@github\.com:([^/]+)\/([^/]+)\.git/);
-		if (match) {
-			[, owner, repo] = match;
-		}
-	} else if (repoUrl.includes("github.com/")) {
-		const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-		if (match) {
-			[, owner, repo] = match;
+// Add endpoint to get latest version (for frontend - public endpoint)
+router.get("/latest", async (_req, res) => {
+	try {
+		const latestRelease = await getLatestRelease();
+		res.json({
+			version: latestRelease.version,
+			tagName: latestRelease.tagName,
+			htmlUrl: latestRelease.htmlUrl,
+		});
+	} catch (error) {
+		logger.error("Error getting latest version:", error);
+		// Return cached version from settings as fallback
+		const settings = await prisma.settings.findFirst();
+		if (settings?.latest_version) {
+			res.json({
+				version: settings.latest_version,
+				tagName: `v${settings.latest_version}`,
+				htmlUrl: `https://github.com/PatchMon/PatchMon/releases/tag/v${settings.latest_version}`,
+			});
+		} else {
+			res.status(500).json({ error: "Failed to get latest version" });
 		}
 	}
+});
 
-	return { owner, repo };
-}
-
-// Helper function to get latest release from GitHub API
-async function getLatestRelease(owner, repo) {
+// Helper function to get latest release from DNS
+async function getLatestRelease() {
 	try {
-		const currentVersion = getCurrentVersion();
-		const apiUrl = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
-
-		const response = await fetch(apiUrl, {
-			method: "GET",
-			headers: {
-				Accept: "application/vnd.github.v3+json",
-				"User-Agent": `PatchMon-Server/${currentVersion}`,
-			},
-		});
-
-		if (!response.ok) {
-			const errorText = await response.text();
-			if (
-				errorText.includes("rate limit") ||
-				errorText.includes("API rate limit")
-			) {
-				throw new Error("GitHub API rate limit exceeded");
-			}
-			throw new Error(
-				`GitHub API error: ${response.status} ${response.statusText}`,
-			);
-		}
-
-		const releaseData = await response.json();
+		const version = await checkVersionFromDNS(SERVER_VERSION_DNS);
 		return {
-			tagName: releaseData.tag_name,
-			version: releaseData.tag_name.replace("v", ""),
-			publishedAt: releaseData.published_at,
-			htmlUrl: releaseData.html_url,
+			tagName: `v${version}`,
+			version: version,
+			publishedAt: null, // DNS doesn't provide publish date
+			htmlUrl: `https://github.com/PatchMon/PatchMon/releases/tag/v${version}`,
 		};
 	} catch (error) {
-		logger.error("Error fetching latest release:", error.message);
+		logger.error("Error fetching latest release from DNS:", error.message);
 		throw error; // Re-throw to be caught by the calling function
 	}
 }
@@ -215,10 +199,8 @@ router.get("/current", authenticateToken, async (_req, res) => {
 	try {
 		const currentVersion = getCurrentVersion();
 
-		// Get settings with cached update info (no GitHub API calls)
+		// Get settings with cached update info (no DNS calls)
 		const settings = await prisma.settings.findFirst();
-		const githubRepoUrl = settings?.githubRepoUrl || DEFAULT_GITHUB_REPO;
-		const { owner, repo } = parseGitHubRepo(githubRepoUrl);
 
 		// Return current version and cached update information
 		// The backend scheduler updates this data periodically
@@ -229,11 +211,6 @@ router.get("/current", authenticateToken, async (_req, res) => {
 			last_update_check: settings?.last_update_check || null,
 			buildDate: new Date().toISOString(),
 			environment: process.env.NODE_ENV || "development",
-			github: {
-				repository: githubRepoUrl,
-				owner: owner,
-				repo: repo,
-			},
 		});
 	} catch (error) {
 		logger.error("Error getting current version:", error);
@@ -254,7 +231,7 @@ router.post(
 	},
 );
 
-// Check for updates from GitHub
+// Check for updates from DNS
 router.get(
 	"/check-updates",
 	authenticateToken,
@@ -269,65 +246,23 @@ router.get(
 			}
 
 			const currentVersion = getCurrentVersion();
-			const githubRepoUrl = settings.githubRepoUrl || DEFAULT_GITHUB_REPO;
-			const { owner, repo } = parseGitHubRepo(githubRepoUrl);
 
 			let latestRelease = null;
-			let latestCommit = null;
-			let commitDifference = null;
 
-			// Fetch fresh GitHub data if we have valid owner/repo
-			if (owner && repo) {
-				try {
-					const [releaseData, commitData, differenceData] = await Promise.all([
-						getLatestRelease(owner, repo),
-						getLatestCommit(owner, repo),
-						getCommitDifference(owner, repo, currentVersion),
-					]);
+			// Fetch fresh version from DNS
+			try {
+				latestRelease = await getLatestRelease();
+			} catch (dnsError) {
+				logger.warn("Failed to fetch version from DNS:", dnsError.message);
 
-					latestRelease = releaseData;
-					latestCommit = commitData;
-					commitDifference = differenceData;
-				} catch (githubError) {
-					logger.warn(
-						"Failed to fetch fresh GitHub data:",
-						githubError.message,
-					);
-
-					// Provide fallback data when GitHub API is rate-limited
-					if (
-						githubError.message.includes("rate limit") ||
-						githubError.message.includes("API rate limit")
-					) {
-						logger.info(
-							"GitHub API rate limited, using current version as fallback",
-						);
-						// Use current version from package.json as fallback instead of hardcoded values
-						latestRelease = {
-							tagName: `v${currentVersion}`,
-							version: currentVersion,
-							publishedAt: null,
-							htmlUrl: `https://github.com/${owner}/${repo}/releases/tag/v${currentVersion}`,
-						};
-						latestCommit = null;
-						commitDifference = {
-							commitsBehind: 0,
-							commitsAhead: 0,
-							totalCommits: 0,
-							branchInfo: "GitHub API rate limited - showing current version",
-						};
-					} else {
-						// Fall back to cached data for other errors
-						const githubRepoUrl = settings.githubRepoUrl || DEFAULT_GITHUB_REPO;
-						latestRelease = settings.latest_version
-							? {
-									version: settings.latest_version,
-									tagName: `v${settings.latest_version}`,
-									publishedAt: null, // Only use date from GitHub API, not cached data
-									htmlUrl: `${githubRepoUrl.replace(/\.git$/, "")}/releases/tag/v${settings.latest_version}`,
-								}
-							: null;
-					}
+				// Fall back to cached data
+				if (settings.latest_version) {
+					latestRelease = {
+						version: settings.latest_version,
+						tagName: `v${settings.latest_version}`,
+						publishedAt: null,
+						htmlUrl: `https://github.com/PatchMon/PatchMon/releases/tag/v${settings.latest_version}`,
+					};
 				}
 			}
 
@@ -342,15 +277,7 @@ router.get(
 				latestVersion,
 				isUpdateAvailable,
 				lastUpdateCheck: settings.last_update_check || null,
-				repositoryType: settings.repository_type || "public",
-				github: {
-					repository: githubRepoUrl,
-					owner: owner,
-					repo: repo,
-					latestRelease: latestRelease,
-					latestCommit: latestCommit,
-					commitDifference: commitDifference,
-				},
+				latestRelease: latestRelease,
 			});
 		} catch (error) {
 			logger.error("Error getting update information:", error);
