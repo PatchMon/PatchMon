@@ -424,33 +424,8 @@ function init(server, prismaClient) {
 							);
 
 							if (alertsEnabled) {
-								let hostDownConfig =
+								const hostDownConfig =
 									await alertConfigService.getAlertConfigByType("host_down");
-
-								// Create default config if it doesn't exist
-								if (!hostDownConfig) {
-									logger.info(
-										`[agent-ws] Host down config not found, creating default...`,
-									);
-									try {
-										hostDownConfig = await alertConfigService.updateAlertConfig(
-											"host_down",
-											{
-												is_enabled: true,
-												default_severity: "warning",
-												auto_assign_enabled: false,
-												notification_enabled: true,
-												cleanup_resolved_only: true,
-											},
-										);
-										logger.info(`[agent-ws] Created default host_down config`);
-									} catch (createError) {
-										logger.error(
-											`[agent-ws] Failed to create host_down config:`,
-											createError,
-										);
-									}
-								}
 
 								logger.info(
 									`[agent-ws] Host down config: ${hostDownConfig ? `enabled=${hostDownConfig.is_enabled}, auto_assign_enabled=${hostDownConfig.auto_assign_enabled}, auto_assign_user_id=${hostDownConfig.auto_assign_user_id}` : "not found"}`,

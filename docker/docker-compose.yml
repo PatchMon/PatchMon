@@ -78,11 +78,12 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: your-redis-password-here
       REDIS_DB: 0
-      # Assets directory for custom branding (logos, favicons)
+      # Assets directory for custom branding (logos, favicons) - NEW in 1.4.0
+      # This is optional - remove ASSETS_DIR and branding_assets volume if you don't need custom branding
       ASSETS_DIR: /app/assets
     volumes:
       - agent_files:/app/agents
-      - branding_assets:/app/assets
+      - branding_assets:/app/assets  # Optional: Remove this line if you don't need custom branding
     networks:
       - patchmon-internal
     depends_on:
@@ -96,6 +97,8 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+    # Optional: Custom branding assets (NEW in 1.4.0)
+    # Remove this volume mount if you don't need custom branding - the entrypoint will handle initialization
     volumes:
       - branding_assets:/usr/share/nginx/html/assets
     networks:
@@ -108,7 +111,7 @@ volumes:
   postgres_data:
   redis_data:
   agent_files:
-  branding_assets:
+  branding_assets:  # Optional: Remove this line if you don't need custom branding (NEW in 1.4.0)
 
 networks:
   patchmon-internal:

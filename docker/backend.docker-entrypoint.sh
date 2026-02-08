@@ -151,7 +151,7 @@ export NODE_PATH="/app/node_modules:/app/backend/node_modules:$NODE_PATH"
 update_agents
 
 log "Running database migrations..."
-cd /app/backend && npx --package=prisma@6.1.0 prisma migrate deploy
+cd /app/backend && npx prisma migrate deploy
 
 log "Starting application..."
 if [ "${NODE_ENV}" = "development" ]; then
