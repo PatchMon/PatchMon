@@ -61,7 +61,7 @@ const Dashboard = () => {
 	const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
 	const navigate = useNavigate();
 	const { isDark } = useTheme();
-	const { user } = useAuth();
+	const { user, permissions } = useAuth();
 
 	// Navigation handlers
 	const handleTotalHostsClick = () => {
@@ -115,34 +115,31 @@ const Dashboard = () => {
 		navigate(`/hosts?${newSearchParams.toString()}`);
 	};
 
-	const _handleOSDistributionClick = () => {
-		navigate("/hosts?showFilters=true", { replace: true });
-	};
-
 	const handleUpdateStatusClick = () => {
 		navigate("/hosts?filter=needsUpdates", { replace: true });
 	};
 
-	const _handlePackagePriorityClick = () => {
-		navigate("/packages?filter=security");
-	};
-
 	// Chart click handlers
 	const handleOSChartClick = (_, elements) => {
-		if (elements.length > 0) {
+		if (elements.length > 0 && stats?.charts?.osDistribution) {
 			const elementIndex = elements[0].index;
-			const osName =
-				stats.charts.osDistribution[elementIndex].name.toLowerCase();
-			navigate(`/hosts?osFilter=${osName}&showFilters=true`, { replace: true });
+			const osItem = stats.charts.osDistribution[elementIndex];
+			if (osItem?.name) {
+				navigate(
+					`/hosts?osFilter=${osItem.name.toLowerCase()}&showFilters=true`,
+					{ replace: true },
+				);
+			}
 		}
 	};
 
 	const handleUpdateStatusChartClick = (_, elements) => {
-		if (elements.length > 0) {
+		if (elements.length > 0 && stats?.charts?.updateStatusDistribution) {
 			const elementIndex = elements[0].index;
-			const statusName =
-				stats.charts.updateStatusDistribution[elementIndex].name;
+			const statusItem = stats.charts.updateStatusDistribution[elementIndex];
+			if (!statusItem?.name) return;
 
+			const statusName = statusItem.name;
 			// Map status names to filter parameters
 			let filter = "";
 			if (statusName.toLowerCase().includes("needs updates")) {
@@ -160,11 +157,12 @@ const Dashboard = () => {
 	};
 
 	const handlePackagePriorityChartClick = (_, elements) => {
-		if (elements.length > 0) {
+		if (elements.length > 0 && stats?.charts?.packageUpdateDistribution) {
 			const elementIndex = elements[0].index;
-			const priorityName =
-				stats.charts.packageUpdateDistribution[elementIndex].name;
+			const priorityItem = stats.charts.packageUpdateDistribution[elementIndex];
+			if (!priorityItem?.name) return;
 
+			const priorityName = priorityItem.name;
 			// Map priority names to filter parameters
 			if (priorityName.toLowerCase().includes("security")) {
 				navigate("/packages?filter=security", { replace: true });
@@ -235,11 +233,27 @@ const Dashboard = () => {
 		refetchOnWindowFocus: false,
 	});
 
+	// Fetch user's dashboard preferences (must be fetched before recentUsers query)
+	const { data: preferences } = useQuery({
+		queryKey: ["dashboardPreferences"],
+		queryFn: () => dashboardPreferencesAPI.get().then((res) => res.data),
+		staleTime: 5 * 60 * 1000, // Consider data fresh for 5 minutes
+	});
+
 	// Fetch recent users (permission protected server-side)
+	// Only fetch if user has permission AND the card is enabled in user's preferences
+	const hasViewUsersPermission = permissions?.can_view_users === true;
+	const isRecentUsersCardEnabled = cardPreferences.some(
+		(card) => card.cardId === "recentUsers" && card.enabled,
+	);
 	const { data: recentUsers } = useQuery({
 		queryKey: ["dashboardRecentUsers"],
 		queryFn: () => dashboardAPI.getRecentUsers().then((res) => res.data),
 		staleTime: 60 * 1000,
+		enabled:
+			hasViewUsersPermission &&
+			isRecentUsersCardEnabled &&
+			preferences !== undefined, // Only fetch if user has permission, card is enabled, and preferences are loaded
 	});
 
 	// Fetch recent collection (permission protected server-side)
@@ -253,13 +267,6 @@ const Dashboard = () => {
 	const { data: settings } = useQuery({
 		queryKey: ["settings"],
 		queryFn: () => settingsAPI.get().then((res) => res.data),
-	});
-
-	// Fetch user's dashboard preferences
-	const { data: preferences } = useQuery({
-		queryKey: ["dashboardPreferences"],
-		queryFn: () => dashboardPreferencesAPI.get().then((res) => res.data),
-		staleTime: 5 * 60 * 1000, // Consider data fresh for 5 minutes
 	});
 
 	// Fetch default card configuration
@@ -322,9 +329,19 @@ const Dashboard = () => {
 	}, []);
 
 	// Helper function to check if a card should be displayed
+	// Also checks permissions to ensure users can't see cards they don't have access to
 	const isCardEnabled = (cardId) => {
 		const card = cardPreferences.find((c) => c.cardId === cardId);
-		return card ? card.enabled : true; // Default to enabled if not found
+		if (!card) return true; // Default to enabled if not found
+
+		// Check permissions for cards that require specific permissions
+		if (cardId === "totalUsers" || cardId === "recentUsers") {
+			if (permissions?.can_view_users !== true) {
+				return false; // Hide card if user doesn't have permission
+			}
+		}
+
+		return card.enabled;
 	};
 
 	// Helper function to get card type for layout grouping

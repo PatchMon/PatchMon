@@ -1,9 +1,11 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const rateLimit = require("express-rate-limit");
 const { getPrismaClient } = require("../config/prisma");
 const { body, validationResult } = require("express-validator");
-const { authenticateToken, _requireAdmin } = require("../middleware/auth");
+const { authenticateToken } = require("../middleware/auth");
 const {
 	requireViewUsers,
 	requireManageUsers,
@@ -19,9 +21,306 @@ const {
 	revoke_all_user_sessions,
 	generate_device_fingerprint,
 } = require("../utils/session_manager");
+const { redis } = require("../services/automation/shared/redis");
+const { AUDIT_EVENTS, logAuditEvent } = require("../utils/auditLogger");
 
 const router = express.Router();
 const prisma = getPrismaClient();
+
+// SECURITY: Strict rate limiting for password operations (5 requests per 15 minutes per IP)
+const passwordOperationLimiter = rateLimit({
+	windowMs:
+		parseInt(process.env.PASSWORD_RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000, // 15 minutes
+	max: parseInt(process.env.PASSWORD_RATE_LIMIT_MAX, 10) || 5, // 5 attempts
+	message: {
+		error: "Too many password operation attempts, please try again later.",
+		retryAfter: Math.ceil(
+			(parseInt(process.env.PASSWORD_RATE_LIMIT_WINDOW_MS, 10) ||
+				15 * 60 * 1000) / 1000,
+		),
+	},
+	standardHeaders: true,
+	legacyHeaders: false,
+	skipSuccessfulRequests: false,
+	keyGenerator: (req) => {
+		// Use a combination of IP and user ID (if authenticated) for more targeted limiting
+		const ip = req.ip || req.connection?.remoteAddress || "unknown";
+		const userId = req.user?.id || "unauthenticated";
+		return `password:${ip}:${userId}`;
+	},
+});
+
+/**
+ * Check if a user has the can_manage_superusers permission
+ * @param {string} role - User's role
+ * @returns {Promise<boolean>} - Whether the user can manage superusers
+ */
+async function canManageSuperusers(role) {
+	const permissions = await prisma.role_permissions.findUnique({
+		where: { role },
+		select: { can_manage_superusers: true },
+	});
+	return permissions?.can_manage_superusers === true;
+}
+
+/**
+ * Verify a backup code against stored hashes
+ * @param {string} code - Plain text code to verify
+ * @param {string[]} hashedCodes - Array of hashed codes
+ * @returns {Promise<{valid: boolean, index: number}>} - Whether valid and which index matched
+ */
+async function verifyBackupCode(code, hashedCodes) {
+	for (let i = 0; i < hashedCodes.length; i++) {
+		const match = await bcrypt.compare(code, hashedCodes[i]);
+		if (match) {
+			return { valid: true, index: i };
+		}
+	}
+	return { valid: false, index: -1 };
+}
+
+// Account lockout configuration
+const LOCKOUT_PREFIX = "login:lockout:";
+const FAILED_ATTEMPTS_PREFIX = "login:failed:";
+const MAX_FAILED_ATTEMPTS = parseInt(process.env.MAX_LOGIN_ATTEMPTS, 10) || 5;
+const LOCKOUT_DURATION =
+	parseInt(process.env.LOCKOUT_DURATION_MINUTES, 10) || 15; // minutes
+const FAILED_ATTEMPT_TTL = 60 * 15; // 15 minutes in seconds
+
+// TFA rate limiting configuration (separate from login)
+const TFA_LOCKOUT_PREFIX = "tfa:lockout:";
+const TFA_FAILED_PREFIX = "tfa:failed:";
+const MAX_TFA_ATTEMPTS = parseInt(process.env.MAX_TFA_ATTEMPTS, 10) || 5;
+const TFA_LOCKOUT_DURATION =
+	parseInt(process.env.TFA_LOCKOUT_DURATION_MINUTES, 10) || 30; // minutes
+
+/**
+ * Set authentication cookies (httpOnly for XSS protection)
+ * @param {Response} res - Express response object
+ * @param {string} accessToken - JWT access token
+ * @param {string} refreshToken - JWT refresh token
+ * @param {boolean} rememberMe - Whether to use extended expiration
+ * @param {Request} req - Express request object (optional, for checking HTTPS)
+ */
+function setAuthCookies(
+	res,
+	accessToken,
+	refreshToken,
+	rememberMe = false,
+	req = null,
+) {
+	// Check if we're actually using HTTPS (not just NODE_ENV)
+	// This allows cookies to work in development even if NODE_ENV=production
+	const isSecure = req
+		? req.secure || req.headers["x-forwarded-proto"] === "https"
+		: false;
+	const isProduction = process.env.NODE_ENV === "production";
+
+	// Only use secure cookies if actually using HTTPS
+	// This fixes the issue where NODE_ENV=production but using HTTP in dev
+	const useSecureCookies = isSecure && isProduction;
+
+	// Use 'lax' for sameSite in development to allow cookies across subdomains
+	// 'strict' is more secure but can cause issues with local development setups
+	const sameSiteValue = isProduction ? "strict" : "lax";
+
+	logger.info(
+		`Setting cookies - Secure: ${useSecureCookies}, SameSite: ${sameSiteValue}, IsHTTPS: ${isSecure}, NODE_ENV: ${process.env.NODE_ENV}`,
+	);
+
+	const cookieOptions = {
+		httpOnly: true,
+		secure: useSecureCookies,
+		sameSite: sameSiteValue,
+		path: "/",
+	};
+
+	// Access token cookie (1 hour, or use JWT expiration)
+	res.cookie("token", accessToken, {
+		...cookieOptions,
+		maxAge: 60 * 60 * 1000, // 1 hour
+	});
+
+	// Refresh token cookie (7 days, or 30 days if remember me)
+	res.cookie("refresh_token", refreshToken, {
+		...cookieOptions,
+		maxAge: rememberMe ? 30 * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000,
+	});
+}
+
+/**
+ * Clear authentication cookies
+ * @param {Response} res - Express response object
+ */
+function clearAuthCookies(res) {
+	res.clearCookie("token", { path: "/" });
+	res.clearCookie("refresh_token", { path: "/" });
+}
+
+/**
+ * Check if an account is locked
+ * @param {string} identifier - Username or email
+ * @returns {Promise<{locked: boolean, remainingTime: number}>}
+ */
+async function isAccountLocked(identifier) {
+	const key = `${LOCKOUT_PREFIX}${identifier.toLowerCase()}`;
+	const lockoutTime = await redis.get(key);
+	if (lockoutTime) {
+		const ttl = await redis.ttl(key);
+		return { locked: true, remainingTime: ttl };
+	}
+	return { locked: false, remainingTime: 0 };
+}
+
+/**
+ * Record a failed login attempt
+ * @param {string} identifier - Username or email
+ * @returns {Promise<{attempts: number, locked: boolean}>}
+ */
+async function recordFailedAttempt(identifier) {
+	const key = `${FAILED_ATTEMPTS_PREFIX}${identifier.toLowerCase()}`;
+	const attempts = await redis.incr(key);
+
+	// Set TTL on first attempt
+	if (attempts === 1) {
+		await redis.expire(key, FAILED_ATTEMPT_TTL);
+	}
+
+	// Lock account if max attempts exceeded
+	if (attempts >= MAX_FAILED_ATTEMPTS) {
+		const lockKey = `${LOCKOUT_PREFIX}${identifier.toLowerCase()}`;
+		await redis.setex(lockKey, LOCKOUT_DURATION * 60, Date.now().toString());
+		// Clear failed attempts counter
+		await redis.del(key);
+		return { attempts, locked: true };
+	}
+
+	return { attempts, locked: false };
+}
+
+/**
+ * Clear failed login attempts on successful login
+ * @param {string} identifier - Username or email
+ */
+async function clearFailedAttempts(identifier) {
+	const key = `${FAILED_ATTEMPTS_PREFIX}${identifier.toLowerCase()}`;
+	await redis.del(key);
+}
+
+/**
+ * Check if TFA is locked for a user
+ * @param {string} userId - User ID
+ * @returns {Promise<{locked: boolean, remainingTime: number}>}
+ */
+async function isTFALocked(userId) {
+	const key = `${TFA_LOCKOUT_PREFIX}${userId}`;
+	const lockoutTime = await redis.get(key);
+	if (lockoutTime) {
+		const ttl = await redis.ttl(key);
+		return { locked: true, remainingTime: ttl };
+	}
+	return { locked: false, remainingTime: 0 };
+}
+
+/**
+ * Record a failed TFA attempt
+ * @param {string} userId - User ID
+ * @returns {Promise<{attempts: number, locked: boolean}>}
+ */
+async function recordFailedTFAAttempt(userId) {
+	const key = `${TFA_FAILED_PREFIX}${userId}`;
+	const attempts = await redis.incr(key);
+
+	// Set TTL on first attempt
+	if (attempts === 1) {
+		await redis.expire(key, TFA_LOCKOUT_DURATION * 60);
+	}
+
+	// Lock TFA if max attempts exceeded
+	if (attempts >= MAX_TFA_ATTEMPTS) {
+		const lockKey = `${TFA_LOCKOUT_PREFIX}${userId}`;
+		await redis.setex(
+			lockKey,
+			TFA_LOCKOUT_DURATION * 60,
+			Date.now().toString(),
+		);
+		await redis.del(key);
+		return { attempts, locked: true };
+	}
+
+	return { attempts, locked: false };
+}
+
+/**
+ * Clear failed TFA attempts on successful verification
+ * @param {string} userId - User ID
+ */
+async function clearFailedTFAAttempts(userId) {
+	const key = `${TFA_FAILED_PREFIX}${userId}`;
+	await redis.del(key);
+}
+
+/**
+ * Password complexity requirements
+ * - Minimum 8 characters
+ * - At least one uppercase letter
+ * - At least one lowercase letter
+ * - At least one number
+ * - At least one special character
+ */
+const PASSWORD_MIN_LENGTH = parseInt(process.env.PASSWORD_MIN_LENGTH, 10) || 8;
+const PASSWORD_REQUIRE_UPPERCASE =
+	process.env.PASSWORD_REQUIRE_UPPERCASE !== "false";
+const PASSWORD_REQUIRE_LOWERCASE =
+	process.env.PASSWORD_REQUIRE_LOWERCASE !== "false";
+const PASSWORD_REQUIRE_NUMBER = process.env.PASSWORD_REQUIRE_NUMBER !== "false";
+const PASSWORD_REQUIRE_SPECIAL =
+	process.env.PASSWORD_REQUIRE_SPECIAL !== "false";
+
+/**
+ * Validate password complexity
+ * @param {string} password - The password to validate
+ * @returns {{valid: boolean, errors: string[]}}
+ */
+function validatePasswordComplexity(password) {
+	const errors = [];
+
+	if (!password || password.length < PASSWORD_MIN_LENGTH) {
+		errors.push(`Password must be at least ${PASSWORD_MIN_LENGTH} characters`);
+	}
+
+	if (PASSWORD_REQUIRE_UPPERCASE && !/[A-Z]/.test(password)) {
+		errors.push("Password must contain at least one uppercase letter");
+	}
+
+	if (PASSWORD_REQUIRE_LOWERCASE && !/[a-z]/.test(password)) {
+		errors.push("Password must contain at least one lowercase letter");
+	}
+
+	if (PASSWORD_REQUIRE_NUMBER && !/[0-9]/.test(password)) {
+		errors.push("Password must contain at least one number");
+	}
+
+	if (
+		PASSWORD_REQUIRE_SPECIAL &&
+		!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)
+	) {
+		errors.push("Password must contain at least one special character");
+	}
+
+	return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Express-validator custom validator for password complexity
+ */
+const passwordComplexityValidator = (value) => {
+	const result = validatePasswordComplexity(value);
+	if (!result.valid) {
+		throw new Error(result.errors.join(". "));
+	}
+	return true;
+};
 
 /**
  * Parse user agent string to extract browser and OS info
@@ -78,18 +377,31 @@ function get_location_from_ip(ip) {
 }
 
 // Check if any admin users exist (for first-time setup)
+// Note: Only returns boolean, not count (to prevent information disclosure)
+// Also returns OIDC config so frontend can bypass welcome page when OIDC is configured
 router.get("/check-admin-users", async (_req, res) => {
 	try {
 		const adminCount = await prisma.users.count({
 			where: { role: "admin" },
 		});
 
+		// Check OIDC configuration
+		const oidcEnabled = process.env.OIDC_ENABLED === "true";
+		const oidcAutoCreate = process.env.OIDC_AUTO_CREATE_USERS === "true";
+
+		// Only return boolean - don't expose exact count for security
 		res.json({
 			hasAdminUsers: adminCount > 0,
-			adminCount: adminCount,
+			// Include OIDC info so frontend can bypass welcome page
+			oidc: {
+				enabled: oidcEnabled,
+				autoCreateUsers: oidcAutoCreate,
+				// If OIDC is enabled with auto-create, first user can be created via OIDC
+				canBypassWelcome: oidcEnabled && oidcAutoCreate,
+			},
 		});
 	} catch (error) {
-		console.error("Error checking admin users:", error);
+		logger.error("Error checking admin users:", error.message);
 		res.status(500).json({
 			error: "Failed to check admin users",
 			hasAdminUsers: true, // Assume admin exists for security
@@ -107,9 +419,7 @@ router.post(
 		body("lastName").isLength({ min: 1 }).withMessage("Last name is required"),
 		body("username").isLength({ min: 1 }).withMessage("Username is required"),
 		body("email").isEmail().withMessage("Valid email is required"),
-		body("password")
-			.isLength({ min: 8 })
-			.withMessage("Password must be at least 8 characters for security"),
+		body("password").custom(passwordComplexityValidator),
 	],
 	async (req, res) => {
 		try {
@@ -123,61 +433,80 @@ router.post(
 
 			const { firstName, lastName, username, email, password } = req.body;
 
-			// Check if any admin users already exist
-			const adminCount = await prisma.users.count({
-				where: { role: "admin" },
-			});
-
-			if (adminCount > 0) {
-				return res.status(400).json({
-					error:
-						"Admin users already exist. This endpoint is only for first-time setup.",
-				});
-			}
-
-			// Check if username or email already exists
-			const existingUser = await prisma.users.findFirst({
-				where: {
-					OR: [
-						{ username: { equals: username.trim(), mode: "insensitive" } },
-						{ email: email.trim().toLowerCase() },
-					],
-				},
-			});
-
-			if (existingUser) {
-				return res.status(400).json({
-					error: "Username or email already exists",
-				});
-			}
-
-			// Hash password
+			// Hash password before transaction (CPU-intensive, don't hold transaction lock)
 			const passwordHash = await bcrypt.hash(password, 12);
 
-			// Create admin user
-			const user = await prisma.users.create({
-				data: {
-					id: uuidv4(),
-					username: username.trim(),
-					email: email.trim().toLowerCase(),
-					password_hash: passwordHash,
-					first_name: firstName.trim(),
-					last_name: lastName.trim(),
-					role: "admin",
-					is_active: true,
-					created_at: new Date(),
-					updated_at: new Date(),
-				},
-				select: {
-					id: true,
-					username: true,
-					email: true,
-					first_name: true,
-					last_name: true,
-					role: true,
-					created_at: true,
-				},
-			});
+			// Use transaction to prevent race condition where two requests
+			// could both pass the admin check and create duplicate admins
+			const user = await prisma
+				.$transaction(async (tx) => {
+					// Check if any admin users already exist
+					const adminCount = await tx.users.count({
+						where: { role: "admin" },
+					});
+
+					if (adminCount > 0) {
+						throw new Error("ADMIN_EXISTS");
+					}
+
+					// Check if username or email already exists (case-insensitive)
+					const existingUser = await tx.users.findFirst({
+						where: {
+							OR: [
+								{ username: { equals: username.trim(), mode: "insensitive" } },
+								{ email: email.trim().toLowerCase() },
+							],
+						},
+					});
+
+					if (existingUser) {
+						throw new Error("USER_EXISTS");
+					}
+
+					// Create admin user within transaction
+					const newUser = await tx.users.create({
+						data: {
+							id: uuidv4(),
+							username: username.trim(),
+							email: email.trim().toLowerCase(),
+							password_hash: passwordHash,
+							first_name: firstName.trim(),
+							last_name: lastName.trim(),
+							role: "admin",
+							is_active: true,
+							created_at: new Date(),
+							updated_at: new Date(),
+						},
+						select: {
+							id: true,
+							username: true,
+							email: true,
+							first_name: true,
+							last_name: true,
+							role: true,
+							created_at: true,
+						},
+					});
+
+					return newUser;
+				})
+				.catch((error) => {
+					if (error.message === "ADMIN_EXISTS") {
+						return {
+							error:
+								"Admin users already exist. This endpoint is only for first-time setup.",
+						};
+					}
+					if (error.message === "USER_EXISTS") {
+						return { error: "Username or email already exists" };
+					}
+					throw error;
+				});
+
+			// Check if transaction returned an error
+			if (user.error) {
+				return res.status(400).json({ error: user.error });
+			}
 
 			// Create default dashboard preferences for the new admin user
 			await createDefaultDashboardPreferences(user.id, "admin");
@@ -186,6 +515,15 @@ router.post(
 			const ip_address = req.ip || req.connection.remoteAddress;
 			const user_agent = req.get("user-agent");
 			const session = await create_session(user.id, ip_address, user_agent);
+
+			// Set httpOnly cookies for XSS protection
+			setAuthCookies(
+				res,
+				session.access_token,
+				session.refresh_token,
+				false,
+				req,
+			);
 
 			res.status(201).json({
 				message: "Admin user created successfully",
@@ -203,7 +541,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Error creating admin user:", error);
+			logger.error("Error creating admin user:", error);
 			res.status(500).json({
 				error: "Failed to create admin user",
 			});
@@ -221,14 +559,56 @@ const generateToken = (userId) => {
 	});
 };
 
-// Admin endpoint to list all users
+// Public endpoint for user assignment (returns minimal user info for dropdowns)
+// Available to all authenticated users for assignment purposes (alerts, etc.)
+router.get("/users/for-assignment", authenticateToken, async (_req, res) => {
+	try {
+		const queryOptions = {
+			select: {
+				id: true,
+				username: true,
+				email: true,
+				first_name: true,
+				last_name: true,
+				is_active: true,
+			},
+			where: {
+				is_active: true, // Only return active users
+			},
+			orderBy: {
+				username: "asc",
+			},
+		};
+
+		const users = await prisma.users.findMany(queryOptions);
+
+		res.json({
+			data: users,
+		});
+	} catch (error) {
+		logger.error("List users for assignment error:", error);
+		res.status(500).json({ error: "Failed to fetch users" });
+	}
+});
+
+// Admin endpoint to list all users with optional pagination
+// Query params: page (default: 1), pageSize (default: 50, max: 200), all (skip pagination)
 router.get(
 	"/admin/users",
 	authenticateToken,
 	requireViewUsers,
-	async (_req, res) => {
+	async (req, res) => {
 		try {
-			const users = await prisma.users.findMany({
+			// Check if client wants all results (for backward compatibility)
+			const returnAll = req.query.all === "true";
+
+			// Pagination parameters with defaults and limits
+			const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+			const pageSize = returnAll
+				? undefined
+				: Math.min(Math.max(1, parseInt(req.query.pageSize, 10) || 50), 200);
+
+			const queryOptions = {
 				select: {
 					id: true,
 					username: true,
@@ -240,15 +620,38 @@ router.get(
 					last_login: true,
 					created_at: true,
 					updated_at: true,
+					avatar_url: true,
 				},
 				orderBy: {
 					created_at: "desc",
 				},
-			});
+			};
 
-			res.json(users);
+			// Add pagination if not requesting all
+			if (!returnAll) {
+				queryOptions.skip = (page - 1) * pageSize;
+				queryOptions.take = pageSize;
+			}
+
+			const [users, totalCount] = await Promise.all([
+				prisma.users.findMany(queryOptions),
+				prisma.users.count(),
+			]);
+
+			// Return paginated response with metadata
+			res.json({
+				data: users,
+				pagination: returnAll
+					? { total: totalCount, page: 1, pageSize: totalCount, totalPages: 1 }
+					: {
+							total: totalCount,
+							page,
+							pageSize,
+							totalPages: Math.ceil(totalCount / pageSize),
+						},
+			});
 		} catch (error) {
-			console.error("List users error:", error);
+			logger.error("List users error:", error);
 			res.status(500).json({ error: "Failed to fetch users" });
 		}
 	},
@@ -264,9 +667,7 @@ router.post(
 			.isLength({ min: 3 })
 			.withMessage("Username must be at least 3 characters"),
 		body("email").isEmail().withMessage("Valid email is required"),
-		body("password")
-			.isLength({ min: 6 })
-			.withMessage("Password must be at least 6 characters"),
+		body("password").custom(passwordComplexityValidator),
 		body("first_name")
 			.optional()
 			.isLength({ min: 1 })
@@ -280,7 +681,13 @@ router.post(
 			.custom(async (value) => {
 				if (!value) return true; // Optional field
 				// Allow built-in roles even if not in role_permissions table yet
-				const builtInRoles = ["admin", "user"];
+				const builtInRoles = [
+					"superadmin",
+					"admin",
+					"host_manager",
+					"readonly",
+					"user",
+				];
 				if (builtInRoles.includes(value)) return true;
 				const rolePermissions = await prisma.role_permissions.findUnique({
 					where: { role: value },
@@ -308,47 +715,49 @@ router.post(
 				userRole = settings?.default_user_role || "user";
 			}
 
-			// Check if user already exists
-			const existingUser = await prisma.users.findFirst({
-				where: {
-					OR: [
-						{ username: { equals: username, mode: "insensitive" } },
-						{ email: email.trim().toLowerCase() },
-					],
-				},
-			});
-
-			if (existingUser) {
-				return res
-					.status(409)
-					.json({ error: "Username or email already exists" });
-			}
-
-			// Hash password
+			// Hash password before transaction (CPU intensive, don't hold lock)
 			const passwordHash = await bcrypt.hash(password, 12);
 
-			// Create user
-			const user = await prisma.users.create({
-				data: {
-					id: uuidv4(),
-					username,
-					email: email.trim().toLowerCase(),
-					password_hash: passwordHash,
-					first_name: first_name || null,
-					last_name: last_name || null,
-					role: userRole,
-					updated_at: new Date(),
-				},
-				select: {
-					id: true,
-					username: true,
-					email: true,
-					first_name: true,
-					last_name: true,
-					role: true,
-					is_active: true,
-					created_at: true,
-				},
+			// Use transaction to prevent TOCTOU race conditions
+			const user = await prisma.$transaction(async (tx) => {
+				// Check if user already exists within transaction
+				const existingUser = await tx.users.findFirst({
+					where: {
+						OR: [
+							{ username: { equals: username, mode: "insensitive" } },
+							{ email: email.trim().toLowerCase() },
+						],
+					},
+				});
+
+				if (existingUser) {
+					throw new Error("USERNAME_OR_EMAIL_EXISTS");
+				}
+
+				// Create user
+				return tx.users.create({
+					data: {
+						id: uuidv4(),
+						username,
+						email: email.trim().toLowerCase(),
+						password_hash: passwordHash,
+						first_name: first_name || null,
+						last_name: last_name || null,
+						role: userRole,
+						updated_at: new Date(),
+					},
+					select: {
+						id: true,
+						username: true,
+						email: true,
+						first_name: true,
+						last_name: true,
+						role: true,
+						is_active: true,
+						created_at: true,
+						avatar_url: true,
+					},
+				});
 			});
 
 			// Create default dashboard preferences for the new user
@@ -359,7 +768,12 @@ router.post(
 				user,
 			});
 		} catch (error) {
-			console.error("User creation error:", error);
+			if (error.message === "USERNAME_OR_EMAIL_EXISTS") {
+				return res
+					.status(409)
+					.json({ error: "Username or email already exists" });
+			}
+			logger.error("User creation error:", error);
 			res.status(500).json({ error: "Failed to create user" });
 		}
 	},
@@ -431,6 +845,21 @@ router.put(
 				return res.status(404).json({ error: "User not found" });
 			}
 
+			// Protect superadmin users - check can_manage_superusers permission
+			const hasManageSuperusers = await canManageSuperusers(req.user.role);
+			if (existingUser.role === "superadmin" && !hasManageSuperusers) {
+				return res.status(403).json({
+					error: "You do not have permission to modify superadmin users",
+				});
+			}
+
+			// Prevent assigning superadmin role without permission
+			if (role === "superadmin" && !hasManageSuperusers) {
+				return res.status(403).json({
+					error: "You do not have permission to assign the superadmin role",
+				});
+			}
+
 			// Check if username/email already exists (excluding current user)
 			if (username || email) {
 				const duplicateUser = await prisma.users.findFirst({
@@ -463,19 +892,45 @@ router.put(
 				}
 			}
 
-			// Prevent deactivating the last admin
-			if (is_active === false && existingUser.role === "admin") {
-				const adminCount = await prisma.users.count({
+			// Prevent deactivating the last superadmin
+			if (is_active === false && existingUser.role === "superadmin") {
+				const superadminCount = await prisma.users.count({
 					where: {
-						role: "admin",
+						role: "superadmin",
 						is_active: true,
 					},
 				});
 
-				if (adminCount <= 1) {
+				if (superadminCount <= 1) {
 					return res
 						.status(400)
-						.json({ error: "Cannot deactivate the last admin user" });
+						.json({ error: "Cannot deactivate the last superadmin user" });
+				}
+			}
+
+			// Prevent deactivating the last admin (when no superadmins exist)
+			if (is_active === false && existingUser.role === "admin") {
+				const superadminCount = await prisma.users.count({
+					where: {
+						role: "superadmin",
+						is_active: true,
+					},
+				});
+
+				// Only protect last admin if there are no superadmins
+				if (superadminCount === 0) {
+					const adminCount = await prisma.users.count({
+						where: {
+							role: "admin",
+							is_active: true,
+						},
+					});
+
+					if (adminCount <= 1) {
+						return res
+							.status(400)
+							.json({ error: "Cannot deactivate the last admin user" });
+					}
 				}
 			}
 
@@ -494,6 +949,7 @@ router.put(
 					last_login: true,
 					created_at: true,
 					updated_at: true,
+					avatar_url: true,
 				},
 			});
 
@@ -502,7 +958,7 @@ router.put(
 				user: updatedUser,
 			});
 		} catch (error) {
-			console.error("User update error:", error);
+			logger.error("User update error:", error);
 			res.status(500).json({ error: "Failed to update user" });
 		}
 	},
@@ -533,19 +989,53 @@ router.delete(
 				return res.status(404).json({ error: "User not found" });
 			}
 
-			// Prevent deleting the last admin
-			if (user.role === "admin") {
-				const adminCount = await prisma.users.count({
+			// Protect superadmin users - check can_manage_superusers permission
+			const hasManageSuperusers = await canManageSuperusers(req.user.role);
+			if (user.role === "superadmin" && !hasManageSuperusers) {
+				return res.status(403).json({
+					error: "You do not have permission to delete superadmin users",
+				});
+			}
+
+			// Prevent deleting the last superadmin
+			if (user.role === "superadmin") {
+				const superadminCount = await prisma.users.count({
 					where: {
-						role: "admin",
+						role: "superadmin",
 						is_active: true,
 					},
 				});
 
-				if (adminCount <= 1) {
+				if (superadminCount <= 1) {
 					return res
 						.status(400)
-						.json({ error: "Cannot delete the last admin user" });
+						.json({ error: "Cannot delete the last superadmin user" });
+				}
+			}
+
+			// Prevent deleting the last admin (when no superadmins exist)
+			if (user.role === "admin") {
+				const superadminCount = await prisma.users.count({
+					where: {
+						role: "superadmin",
+						is_active: true,
+					},
+				});
+
+				// Only protect last admin if there are no superadmins
+				if (superadminCount === 0) {
+					const adminCount = await prisma.users.count({
+						where: {
+							role: "admin",
+							is_active: true,
+						},
+					});
+
+					if (adminCount <= 1) {
+						return res
+							.status(400)
+							.json({ error: "Cannot delete the last admin user" });
+					}
 				}
 			}
 
@@ -558,7 +1048,7 @@ router.delete(
 				message: "User deleted successfully",
 			});
 		} catch (error) {
-			console.error("User deletion error:", error);
+			logger.error("User deletion error:", error);
 			res.status(500).json({ error: "Failed to delete user" });
 		}
 	},
@@ -567,13 +1057,10 @@ router.delete(
 // Admin endpoint to reset user password
 router.post(
 	"/admin/users/:userId/reset-password",
+	passwordOperationLimiter,
 	authenticateToken,
 	requireManageUsers,
-	[
-		body("newPassword")
-			.isLength({ min: 6 })
-			.withMessage("New password must be at least 6 characters"),
-	],
+	[body("newPassword").custom(passwordComplexityValidator)],
 	async (req, res) => {
 		try {
 			const { userId } = req.params;
@@ -592,13 +1079,24 @@ router.post(
 					id: true,
 					username: true,
 					email: true,
+					first_name: true,
+					last_name: true,
 					role: true,
 					is_active: true,
+					avatar_url: true,
 				},
 			});
 
 			if (!user) {
 				return res.status(404).json({ error: "User not found" });
+			}
+
+			// Protect superadmin users - check can_manage_superusers permission
+			const hasManageSuperusers = await canManageSuperusers(req.user.role);
+			if (user.role === "superadmin" && !hasManageSuperusers) {
+				return res.status(403).json({
+					error: "You do not have permission to reset superadmin passwords",
+				});
 			}
 
 			// Prevent resetting password of inactive users
@@ -617,10 +1115,17 @@ router.post(
 				data: { password_hash: passwordHash },
 			});
 
-			// Log the password reset action (you might want to add an audit log table)
-			console.log(
-				`Password reset for user ${user.username} (${user.email}) by admin ${req.user.username}`,
-			);
+			// Log the password reset action (audit log)
+			await logAuditEvent({
+				event: AUDIT_EVENTS.PASSWORD_RESET,
+				userId: user.id,
+				username: user.username,
+				ipAddress: req.ip,
+				userAgent: req.get("user-agent"),
+				requestId: req.id,
+				success: true,
+				details: { resetByAdmin: req.user.username },
+			});
 
 			res.json({
 				message: "Password reset successfully",
@@ -631,7 +1136,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Password reset error:", error);
+			logger.error("Password reset error:", error.message);
 			res.status(500).json({ error: "Failed to reset password" });
 		}
 	},
@@ -643,7 +1148,7 @@ router.get("/signup-enabled", async (_req, res) => {
 		const settings = await prisma.settings.findFirst();
 		res.json({ signupEnabled: settings?.signup_enabled || false });
 	} catch (error) {
-		console.error("Error checking signup status:", error);
+		logger.error("Error checking signup status:", error);
 		res.status(500).json({ error: "Failed to check signup status" });
 	}
 });
@@ -660,9 +1165,7 @@ router.post(
 			.isLength({ min: 3 })
 			.withMessage("Username must be at least 3 characters"),
 		body("email").isEmail().withMessage("Valid email is required"),
-		body("password")
-			.isLength({ min: 6 })
-			.withMessage("Password must be at least 6 characters"),
+		body("password").custom(passwordComplexityValidator),
 	],
 	async (req, res) => {
 		try {
@@ -681,57 +1184,58 @@ router.post(
 
 			const { firstName, lastName, username, email, password } = req.body;
 
-			// Check if user already exists
-			const existingUser = await prisma.users.findFirst({
-				where: {
-					OR: [
-						{ username: { equals: username, mode: "insensitive" } },
-						{ email: email.trim().toLowerCase() },
-					],
-				},
-			});
-
-			if (existingUser) {
-				return res
-					.status(409)
-					.json({ error: "Username or email already exists" });
-			}
-
-			// Hash password
+			// Hash password before transaction (CPU intensive, don't hold lock)
 			const passwordHash = await bcrypt.hash(password, 12);
 
 			// Get default user role from settings or environment variable
 			const defaultRole =
 				settings?.default_user_role || process.env.DEFAULT_USER_ROLE || "user";
 
-			// Create user with default role from settings
-			const user = await prisma.users.create({
-				data: {
-					id: uuidv4(),
-					username,
-					email: email.trim().toLowerCase(),
-					password_hash: passwordHash,
-					first_name: firstName.trim(),
-					last_name: lastName.trim(),
-					role: defaultRole,
-					updated_at: new Date(),
-				},
-				select: {
-					id: true,
-					username: true,
-					email: true,
-					first_name: true,
-					last_name: true,
-					role: true,
-					is_active: true,
-					created_at: true,
-				},
+			// Use transaction to prevent TOCTOU race conditions
+			const user = await prisma.$transaction(async (tx) => {
+				// Check if user already exists within transaction
+				const existingUser = await tx.users.findFirst({
+					where: {
+						OR: [
+							{ username: { equals: username, mode: "insensitive" } },
+							{ email: email.trim().toLowerCase() },
+						],
+					},
+				});
+
+				if (existingUser) {
+					throw new Error("USERNAME_OR_EMAIL_EXISTS");
+				}
+
+				// Create user with default role from settings
+				return tx.users.create({
+					data: {
+						id: uuidv4(),
+						username,
+						email: email.trim().toLowerCase(),
+						password_hash: passwordHash,
+						first_name: firstName.trim(),
+						last_name: lastName.trim(),
+						role: defaultRole,
+						updated_at: new Date(),
+					},
+					select: {
+						id: true,
+						username: true,
+						email: true,
+						first_name: true,
+						last_name: true,
+						role: true,
+						is_active: true,
+						created_at: true,
+					},
+				});
 			});
 
 			// Create default dashboard preferences for the new user
 			await createDefaultDashboardPreferences(user.id, defaultRole);
 
-			console.log(`New user registered: ${user.username} (${user.email})`);
+			logger.info(`New user registered: ${user.username} (${user.email})`);
 
 			// Generate token for immediate login
 			const token = generateToken(user.id);
@@ -747,9 +1251,12 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Signup error:", error);
-			console.error("Signup error message:", error.message);
-			console.error("Signup error stack:", error.stack);
+			if (error.message === "USERNAME_OR_EMAIL_EXISTS") {
+				return res
+					.status(409)
+					.json({ error: "Username or email already exists" });
+			}
+			logger.error("Signup error:", error.message);
 			res.status(500).json({ error: "Failed to create account" });
 		}
 	},
@@ -764,12 +1271,60 @@ router.post(
 	],
 	async (req, res) => {
 		try {
+			logger.info("=== LOGIN ATTEMPT START ===");
+			logger.info(`Login attempt for username: ${req.body.username}`);
+			logger.info(`IP Address: ${req.ip}`);
+			logger.info(`User Agent: ${req.get("user-agent")}`);
+
+			// Check if local auth is disabled via OIDC
+			// Only disable if OIDC is actually enabled and working
+			const { isLocalAuthDisabled } = require("../auth/oidc");
+			const localAuthDisabled = isLocalAuthDisabled();
+			logger.info(`OIDC check - isLocalAuthDisabled(): ${localAuthDisabled}`);
+			logger.info(`OIDC_ENABLED: ${process.env.OIDC_ENABLED}`);
+			logger.info(
+				`OIDC_DISABLE_LOCAL_AUTH: ${process.env.OIDC_DISABLE_LOCAL_AUTH}`,
+			);
+
+			if (localAuthDisabled) {
+				logger.warn("Login blocked: Local authentication is disabled via OIDC");
+				return res.status(403).json({
+					error: "Local authentication is disabled. Please use SSO.",
+				});
+			}
+
 			const errors = validationResult(req);
 			if (!errors.isEmpty()) {
+				logger.warn("Login validation errors:", errors.array());
 				return res.status(400).json({ errors: errors.array() });
 			}
 
 			const { username, password } = req.body;
+			logger.info(`Processing login for username: ${username}`);
+
+			// Check if account is locked due to too many failed attempts
+			const lockStatus = await isAccountLocked(username);
+			logger.info(
+				`Account lock status: ${lockStatus.locked ? "LOCKED" : "NOT LOCKED"}`,
+			);
+			if (lockStatus.locked) {
+				const remainingMinutes = Math.ceil(lockStatus.remainingTime / 60);
+				await logAuditEvent({
+					event: AUDIT_EVENTS.LOGIN_LOCKED,
+					username,
+					ipAddress: req.ip,
+					userAgent: req.get("user-agent"),
+					requestId: req.id,
+					success: false,
+					details: { remainingMinutes },
+				});
+				return res.status(429).json({
+					error:
+						"Account temporarily locked due to too many failed login attempts",
+					lockedUntil: remainingMinutes,
+					message: `Please try again in ${remainingMinutes} minute${remainingMinutes !== 1 ? "s" : ""}`,
+				});
+			}
 
 			// Find user by username or email
 			const user = await prisma.users.findFirst({
@@ -793,23 +1348,98 @@ router.post(
 					created_at: true,
 					updated_at: true,
 					tfa_enabled: true,
+					avatar_url: true,
 				},
 			});
 
 			if (!user) {
+				logger.warn(`User not found: ${username}`);
+				// Record failed attempt even if user doesn't exist (prevents username enumeration timing attacks)
+				await recordFailedAttempt(username);
+				await logAuditEvent({
+					event: AUDIT_EVENTS.LOGIN_FAILED,
+					username,
+					ipAddress: req.ip,
+					userAgent: req.get("user-agent"),
+					requestId: req.id,
+					success: false,
+					details: { reason: "user_not_found" },
+				});
 				return res.status(401).json({ error: "Invalid credentials" });
 			}
 
+			logger.info(`User found: ${user.username} (ID: ${user.id})`);
+			logger.info(`User active: ${user.is_active}`);
+			logger.info(`User has password_hash: ${!!user.password_hash}`);
+			logger.info(`User OIDC-only: ${!user.password_hash}`);
+
+			// Check if user is OIDC-only (no password_hash)
+			if (!user.password_hash) {
+				logger.warn(
+					`Login blocked: User ${user.username} is OIDC-only (no password_hash)`,
+				);
+				await logAuditEvent({
+					event: AUDIT_EVENTS.LOGIN_FAILED,
+					userId: user.id,
+					username: user.username,
+					ipAddress: req.ip,
+					userAgent: req.get("user-agent"),
+					requestId: req.id,
+					success: false,
+					details: { reason: "oidc_only_user" },
+				});
+				return res.status(403).json({
+					error:
+						"This account uses SSO authentication. Please use the SSO login option.",
+				});
+			}
+
 			// Verify password
+			logger.info("Verifying password...");
 			const isValidPassword = await bcrypt.compare(
 				password,
 				user.password_hash,
 			);
+			logger.info(
+				`Password verification result: ${isValidPassword ? "VALID" : "INVALID"}`,
+			);
 			if (!isValidPassword) {
-				return res.status(401).json({ error: "Invalid credentials" });
+				logger.warn(`Invalid password for user: ${user.username}`);
+				// Record failed attempt
+				const result = await recordFailedAttempt(username);
+				await logAuditEvent({
+					event: result.locked
+						? AUDIT_EVENTS.LOGIN_LOCKED
+						: AUDIT_EVENTS.LOGIN_FAILED,
+					userId: user.id,
+					username: user.username,
+					ipAddress: req.ip,
+					userAgent: req.get("user-agent"),
+					requestId: req.id,
+					success: false,
+					details: { reason: "invalid_password", attempts: result.attempts },
+				});
+				if (result.locked) {
+					return res.status(429).json({
+						error:
+							"Account temporarily locked due to too many failed login attempts",
+						lockedUntil: LOCKOUT_DURATION,
+						message: `Please try again in ${LOCKOUT_DURATION} minutes`,
+					});
+				}
+				const remainingAttempts = MAX_FAILED_ATTEMPTS - result.attempts;
+				return res.status(401).json({
+					error: "Invalid credentials",
+					remainingAttempts: remainingAttempts > 0 ? remainingAttempts : 0,
+				});
 			}
 
+			// Clear failed attempts on successful password verification
+			logger.info("Password verified successfully, clearing failed attempts");
+			await clearFailedAttempts(username);
+
 			// Check if TFA is enabled
+			logger.info(`TFA enabled for user: ${user.tfa_enabled}`);
 			if (user.tfa_enabled) {
 				// Get device fingerprint from X-Device-ID header
 				const device_fingerprint = generate_device_fingerprint(req);
@@ -856,6 +1486,7 @@ router.post(
 			});
 
 			// Create session with access and refresh tokens
+			logger.info("Creating session for user...");
 			const ip_address = req.ip || req.connection.remoteAddress;
 			const user_agent = req.get("user-agent");
 			const session = await create_session(
@@ -865,6 +1496,21 @@ router.post(
 				false,
 				req,
 			);
+			logger.info(
+				`Session created successfully. Session ID: ${session.session_id || "N/A"}`,
+			);
+
+			// Audit log successful login
+			await logAuditEvent({
+				event: AUDIT_EVENTS.LOGIN_SUCCESS,
+				userId: user.id,
+				username: user.username,
+				ipAddress: ip_address,
+				userAgent: user_agent,
+				requestId: req.id,
+				success: true,
+				details: { role: user.role },
+			});
 
 			// Get accepted release notes versions
 			let acceptedVersions = [];
@@ -875,12 +1521,21 @@ router.post(
 				});
 			} catch (error) {
 				// If table doesn't exist yet or Prisma client not regenerated, use empty array
-				console.warn(
+				logger.warn(
 					"Could not fetch release notes acceptances:",
 					error.message,
 				);
 				acceptedVersions = [];
 			}
+
+			// Set httpOnly cookies for XSS protection
+			setAuthCookies(
+				res,
+				session.access_token,
+				session.refresh_token,
+				false,
+				req,
+			);
 
 			res.json({
 				message: "Login successful",
@@ -907,7 +1562,10 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Login error:", error);
+			logger.error("=== LOGIN ERROR ===");
+			logger.error(`Error message: ${error.message}`);
+			logger.error(`Error stack: ${error.stack}`);
+			logger.error("Full error:", error);
 			res.status(500).json({ error: "Login failed" });
 		}
 	},
@@ -964,40 +1622,105 @@ router.post(
 					.json({ error: "Invalid credentials or TFA not enabled" });
 			}
 
+			// Check if TFA is locked for this user
+			const tfaLockStatus = await isTFALocked(user.id);
+			if (tfaLockStatus.locked) {
+				const remainingMinutes = Math.ceil(tfaLockStatus.remainingTime / 60);
+				await logAuditEvent({
+					event: AUDIT_EVENTS.TFA_VERIFICATION_LOCKED,
+					userId: user.id,
+					username: user.username,
+					ipAddress: req.ip,
+					userAgent: req.get("user-agent"),
+					requestId: req.id,
+					success: false,
+					details: { remainingMinutes },
+				});
+				return res.status(429).json({
+					error: "Too many failed TFA attempts",
+					message: `TFA verification is locked. Try again in ${remainingMinutes} minute(s).`,
+					locked: true,
+					remainingTime: tfaLockStatus.remainingTime,
+				});
+			}
+
 			// Verify TFA token using the TFA routes logic
 			const speakeasy = require("speakeasy");
 
-			// Check if it's a backup code
-			const backupCodes = user.tfa_backup_codes
-				? JSON.parse(user.tfa_backup_codes)
-				: [];
-			const isBackupCode = backupCodes.includes(token);
+			// Parse stored hashed backup codes
+			let hashedBackupCodes = [];
+			if (user.tfa_backup_codes) {
+				try {
+					hashedBackupCodes = JSON.parse(user.tfa_backup_codes);
+				} catch (parseError) {
+					logger.error("Failed to parse TFA backup codes:", parseError.message);
+					hashedBackupCodes = [];
+				}
+			}
 
 			let verified = false;
+			let _usedBackupCode = false;
 
-			if (isBackupCode) {
-				// Remove the used backup code
-				const updatedBackupCodes = backupCodes.filter((code) => code !== token);
-				await prisma.users.update({
-					where: { id: user.id },
-					data: {
-						tfa_backup_codes: JSON.stringify(updatedBackupCodes),
-					},
-				});
-				verified = true;
-			} else {
-				// Verify TOTP token
-				verified = speakeasy.totp.verify({
-					secret: user.tfa_secret,
-					encoding: "base32",
-					token: token,
-					window: 2,
-				});
+			// First try to verify as a TOTP token
+			verified = speakeasy.totp.verify({
+				secret: user.tfa_secret,
+				encoding: "base32",
+				token: token,
+				window: 2,
+			});
+
+			// If TOTP fails, try backup codes
+			if (!verified && hashedBackupCodes.length > 0) {
+				const backupResult = await verifyBackupCode(
+					token.toUpperCase(),
+					hashedBackupCodes,
+				);
+				if (backupResult.valid) {
+					// Remove the used backup code
+					hashedBackupCodes.splice(backupResult.index, 1);
+					await prisma.users.update({
+						where: { id: user.id },
+						data: {
+							tfa_backup_codes: JSON.stringify(hashedBackupCodes),
+						},
+					});
+					verified = true;
+					_usedBackupCode = true;
+				}
 			}
 
 			if (!verified) {
-				return res.status(401).json({ error: "Invalid verification code" });
+				// Record failed TFA attempt
+				const result = await recordFailedTFAAttempt(user.id);
+				const remainingAttempts = MAX_TFA_ATTEMPTS - result.attempts;
+
+				await logAuditEvent({
+					event: AUDIT_EVENTS.TFA_FAILED,
+					userId: user.id,
+					username: user.username,
+					ipAddress: req.ip,
+					userAgent: req.get("user-agent"),
+					requestId: req.id,
+					success: false,
+					details: { remainingAttempts, locked: result.locked },
+				});
+
+				if (result.locked) {
+					return res.status(429).json({
+						error: "Too many failed TFA attempts",
+						message: `TFA verification is locked for ${TFA_LOCKOUT_DURATION} minutes.`,
+						locked: true,
+					});
+				}
+
+				return res.status(401).json({
+					error: "Invalid verification code",
+					remainingAttempts: remainingAttempts > 0 ? remainingAttempts : 0,
+				});
 			}
+
+			// Clear failed TFA attempts on success
+			await clearFailedTFAAttempts(user.id);
 
 			// Update last login and fetch complete user data
 			const updatedUser = await prisma.users.update({
@@ -1016,6 +1739,7 @@ router.post(
 					updated_at: true,
 					theme_preference: true,
 					color_theme: true,
+					avatar_url: true,
 				},
 			});
 
@@ -1039,12 +1763,21 @@ router.post(
 				});
 			} catch (error) {
 				// If table doesn't exist yet or Prisma client not regenerated, use empty array
-				console.warn(
+				logger.warn(
 					"Could not fetch release notes acceptances:",
 					error.message,
 				);
 				acceptedVersions = [];
 			}
+
+			// Set httpOnly cookies for XSS protection
+			setAuthCookies(
+				res,
+				session.access_token,
+				session.refresh_token,
+				remember_me,
+				req,
+			);
 
 			res.json({
 				message: "Login successful",
@@ -1060,20 +1793,124 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("TFA verification error:", error);
+			logger.error("TFA verification error:", error.message);
 			res.status(500).json({ error: "TFA verification failed" });
 		}
 	},
 );
 
+// Get a short-lived WebSocket token for authenticated users
+// This is needed because WebSocket connections can't use httpOnly cookies
+router.get("/ws-token", authenticateToken, async (req, res) => {
+	try {
+		// Generate a short-lived token specifically for WebSocket connections
+		const wsToken = jwt.sign(
+			{
+				userId: req.user.id,
+				sessionId: req.session_id,
+				purpose: "websocket", // Mark this token as WebSocket-only
+			},
+			process.env.JWT_SECRET,
+			{ expiresIn: "5m" }, // Very short-lived - only for establishing WS connection
+		);
+
+		res.json({ token: wsToken, expiresIn: 300 }); // 300 seconds = 5 minutes
+	} catch (error) {
+		logger.error("WebSocket token generation error:", error);
+		res.status(500).json({ error: "Failed to generate WebSocket token" });
+	}
+});
+
+// SSH Terminal Ticket - One-time use ticket for SSH terminal WebSocket authentication
+// SECURITY: Uses Redis-stored tickets instead of tokens in URLs to prevent exposure in logs
+const SSH_TICKET_PREFIX = "ssh:ticket:";
+const SSH_TICKET_TTL = 30; // 30 seconds - very short-lived
+
+router.post("/ssh-ticket", authenticateToken, async (req, res) => {
+	try {
+		const { hostId } = req.body;
+
+		if (!hostId) {
+			return res.status(400).json({ error: "Host ID is required" });
+		}
+
+		// Generate a random ticket
+		const crypto = require("node:crypto");
+		const ticket = crypto.randomBytes(32).toString("hex");
+		const key = `${SSH_TICKET_PREFIX}${ticket}`;
+
+		// Store ticket data in Redis with short TTL
+		const ticketData = JSON.stringify({
+			userId: req.user.id,
+			sessionId: req.session_id,
+			hostId: hostId,
+			createdAt: Date.now(),
+		});
+
+		await redis.setex(key, SSH_TICKET_TTL, ticketData);
+
+		res.json({
+			ticket: ticket,
+			expiresIn: SSH_TICKET_TTL,
+		});
+	} catch (error) {
+		logger.error("SSH ticket generation error:", error);
+		res.status(500).json({ error: "Failed to generate SSH ticket" });
+	}
+});
+
+// Validate and consume SSH ticket (used by WebSocket handler)
+// Exported for use in sshTerminalWs.js
+async function consumeSshTicket(ticket, expectedHostId) {
+	const key = `${SSH_TICKET_PREFIX}${ticket}`;
+	const data = await redis.get(key);
+
+	if (!data) {
+		return { valid: false, reason: "Invalid or expired ticket" };
+	}
+
+	// Delete ticket immediately (one-time use)
+	await redis.del(key);
+
+	const ticketData = JSON.parse(data);
+
+	// Verify host ID matches
+	if (ticketData.hostId !== expectedHostId) {
+		return { valid: false, reason: "Ticket host mismatch" };
+	}
+
+	return {
+		valid: true,
+		userId: ticketData.userId,
+		sessionId: ticketData.sessionId,
+	};
+}
+
+// Export for use in other modules
+router.consumeSshTicket = consumeSshTicket;
+
 // Get current user profile
 router.get("/profile", authenticateToken, async (req, res) => {
 	try {
+		// Fetch accepted release notes versions for this user
+		let acceptedVersions = [];
+		if (prisma.release_notes_acceptances) {
+			const acceptances = await prisma.release_notes_acceptances.findMany({
+				where: { user_id: req.user.id },
+				select: { version: true },
+			});
+			acceptedVersions = acceptances.map((a) => a.version);
+		}
 		res.json({
-			user: req.user,
+			user: {
+				...req.user,
+				accepted_release_notes_versions: acceptedVersions,
+				oidc_sub: req.user.oidc_sub || null,
+				oidc_provider: req.user.oidc_provider || null,
+			},
 		});
 	} catch (error) {
-		console.error("Get profile error:", error);
+		logger.error("Get profile error:", error);
 		res.status(500).json({ error: "Failed to get profile" });
 	}
 });
@@ -1116,6 +1953,22 @@ router.put(
 			const errors = validationResult(req);
 			if (!errors.isEmpty()) {
 				return res.status(400).json({ errors: errors.array() });
+			}
+
+			// Check if user is OIDC user - prevent modification of OIDC-managed fields
+			if (req.user.oidc_sub || req.user.oidc_provider) {
+				// OIDC users cannot modify username, email, first_name, or last_name
+				if (
+					req.body.username ||
+					req.body.email ||
+					req.body.first_name !== undefined ||
+					req.body.last_name !== undefined
+				) {
+					return res.status(403).json({
+						error:
+							"Profile information is managed by your OIDC provider and cannot be modified here",
+					});
+				}
 			}
 
 			const { username, email, first_name, last_name } = req.body;
@@ -1187,6 +2040,7 @@ router.put(
 					is_active: true,
 					last_login: true,
 					updated_at: true,
+					avatar_url: true,
 				},
 			});
 
@@ -1204,6 +2058,7 @@ router.put(
 					is_active: true,
 					last_login: true,
 					updated_at: true,
+					avatar_url: true,
 				},
 			});
 
@@ -1215,7 +2070,7 @@ router.put(
 				user: responseUser,
 			});
 		} catch (error) {
-			console.error("Update profile error:", error);
+			logger.error("Update profile error:", error);
 			res.status(500).json({ error: "Failed to update profile" });
 		}
 	},
@@ -1224,14 +2079,13 @@ router.put(
 // Change password
 router.put(
 	"/change-password",
+	passwordOperationLimiter,
 	authenticateToken,
 	[
 		body("currentPassword")
 			.notEmpty()
 			.withMessage("Current password is required"),
-		body("newPassword")
-			.isLength({ min: 6 })
-			.withMessage("New password must be at least 6 characters"),
+		body("newPassword").custom(passwordComplexityValidator),
 	],
 	async (req, res) => {
 		try {
@@ -1265,11 +2119,22 @@ router.put(
 				data: { password_hash: newPasswordHash },
 			});
 
+			// Audit log password change
+			await logAuditEvent({
+				event: AUDIT_EVENTS.PASSWORD_CHANGED,
+				userId: req.user.id,
+				username: req.user.username,
+				ipAddress: req.ip,
+				userAgent: req.get("user-agent"),
+				requestId: req.id,
+				success: true,
+			});
+
 			res.json({
 				message: "Password changed successfully",
 			});
 		} catch (error) {
-			console.error("Change password error:", error);
+			logger.error("Change password error:", error.message);
 			res.status(500).json({ error: "Failed to change password" });
 		}
 	},
@@ -1283,11 +2148,14 @@ router.post("/logout", authenticateToken, async (req, res) => {
 			await revoke_session(req.session_id);
 		}
 
+		// Clear authentication cookies
+		clearAuthCookies(res);
+
 		res.json({
 			message: "Logout successful",
 		});
 	} catch (error) {
-		console.error("Logout error:", error);
+		logger.error("Logout error:", error);
 		res.status(500).json({ error: "Logout failed" });
 	}
 });
@@ -1297,11 +2165,14 @@ router.post("/logout-all", authenticateToken, async (req, res) => {
 	try {
 		await revoke_all_user_sessions(req.user.id);
 
+		// Clear authentication cookies
+		clearAuthCookies(res);
+
 		res.json({
 			message: "All sessions logged out successfully",
 		});
 	} catch (error) {
-		console.error("Logout all error:", error);
+		logger.error("Logout all error:", error);
 		res.status(500).json({ error: "Logout all failed" });
 	}
 });
@@ -1309,21 +2180,34 @@ router.post("/logout-all", authenticateToken, async (req, res) => {
 // Refresh access token using refresh token
 router.post(
 	"/refresh-token",
-	[body("refresh_token").notEmpty().withMessage("Refresh token is required")],
+	[body("refresh_token").optional().isString()],
 	async (req, res) => {
 		try {
-			const errors = validationResult(req);
-			if (!errors.isEmpty()) {
-				return res.status(400).json({ errors: errors.array() });
-			}
+			// Check for refresh token in cookies first, then body
+			const refresh_token =
+				req.cookies?.refresh_token || req.body.refresh_token;
 
-			const { refresh_token } = req.body;
+			if (!refresh_token) {
+				return res.status(400).json({ error: "Refresh token is required" });
+			}
 
 			const result = await refresh_access_token(refresh_token);
 
 			if (!result.success) {
+				// Clear invalid cookies
+				clearAuthCookies(res);
 				return res.status(401).json({ error: result.error });
 			}
+
+			// Set new access token cookie
+			const isProduction = process.env.NODE_ENV === "production";
+			res.cookie("token", result.access_token, {
+				httpOnly: true,
+				secure: isProduction,
+				sameSite: "strict",
+				path: "/",
+				maxAge: 60 * 60 * 1000, // 1 hour
+			});
 
 			res.json({
 				message: "Token refreshed successfully",
@@ -1332,12 +2216,15 @@ router.post(
 					id: result.user.id,
 					username: result.user.username,
 					email: result.user.email,
+					first_name: result.user.first_name,
+					last_name: result.user.last_name,
 					role: result.user.role,
 					is_active: result.user.is_active,
+					avatar_url: result.user.avatar_url,
 				},
 			});
 		} catch (error) {
-			console.error("Refresh token error:", error);
+			logger.error("Refresh token error:", error.message);
 			res.status(500).json({ error: "Token refresh failed" });
 		}
 	},
@@ -1385,7 +2272,7 @@ router.get("/sessions", authenticateToken, async (req, res) => {
 			sessions: enhanced_sessions,
 		});
 	} catch (error) {
-		console.error("Get sessions error:", error);
+		logger.error("Get sessions error:", error);
 		res.status(500).json({ error: "Failed to fetch sessions" });
 	}
 });
@@ -1415,7 +2302,7 @@ router.delete("/sessions/:session_id", authenticateToken, async (req, res) => {
 			message: "Session revoked successfully",
 		});
 	} catch (error) {
-		console.error("Revoke session error:", error);
+		logger.error("Revoke session error:", error);
 		res.status(500).json({ error: "Failed to revoke session" });
 	}
 });
@@ -1436,7 +2323,7 @@ router.delete("/sessions", authenticateToken, async (req, res) => {
 			message: "All other sessions revoked successfully",
 		});
 	} catch (error) {
-		console.error("Revoke all sessions error:", error);
+		logger.error("Revoke all sessions error:", error);
 		res.status(500).json({ error: "Failed to revoke sessions" });
 	}
 });

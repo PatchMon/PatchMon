@@ -3,6 +3,7 @@ import {
 	Calendar,
 	CheckCircle,
 	Edit,
+	Info,
 	Key,
 	Mail,
 	Save,
@@ -29,13 +30,31 @@ const UsersTab = () => {
 	});
 	const [isSignupDirty, setIsSignupDirty] = useState(false);
 
-	// Listen for the header button event to open add modal
+	// Fetch OIDC config to determine if OIDC is enabled
+	const { data: oidcConfig } = useQuery({
+		queryKey: ["oidcConfig"],
+		queryFn: async () => {
+			const response = await fetch("/api/v1/auth/oidc/config");
+			if (response.ok) {
+				return response.json();
+			}
+			return { enabled: false };
+		},
+	});
+
+	const isOIDCEnabled = oidcConfig?.enabled || false;
+
+	// Listen for the header button event to open add modal (only if OIDC is not enabled)
 	useEffect(() => {
-		const handleOpenAddModal = () => setShowAddModal(true);
+		const handleOpenAddModal = () => {
+			if (!isOIDCEnabled) {
+				setShowAddModal(true);
+			}
+		};
 		window.addEventListener("openAddUserModal", handleOpenAddModal);
 		return () =>
 			window.removeEventListener("openAddUserModal", handleOpenAddModal);
-	}, []);
+	}, [isOIDCEnabled]);
 
 	// Fetch users
 	const {
@@ -44,7 +63,7 @@ const UsersTab = () => {
 		error,
 	} = useQuery({
 		queryKey: ["users"],
-		queryFn: () => adminUsersAPI.list().then((res) => res.data),
+		queryFn: () => adminUsersAPI.list().then((res) => res.data.data),
 	});
 
 	// Fetch available roles
@@ -192,9 +211,17 @@ const UsersTab = () => {
 									{/* User Name and Avatar */}
 									<div className="flex items-center gap-3">
 										<div className="flex-shrink-0 h-10 w-10">
-											<div className="h-10 w-10 rounded-full bg-primary-100 dark:bg-primary-900 flex items-center justify-center">
-												<User className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-											</div>
+											{user.avatar_url ? (
+												<img
+													src={user.avatar_url}
+													alt={user.username}
+													className="h-10 w-10 rounded-full object-cover"
+												/>
+											) : (
+												<div className="h-10 w-10 rounded-full bg-primary-100 dark:bg-primary-900 flex items-center justify-center">
+													<User className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+												</div>
+											)}
 										</div>
 										<div className="flex-1 min-w-0">
 											<div className="flex items-center gap-2">
@@ -222,18 +249,22 @@ const UsersTab = () => {
 									<div className="flex items-center justify-between gap-2">
 										<span
 											className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium ${
-												user.role === "admin"
-													? "bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200"
-													: user.role === "host_manager"
-														? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-														: user.role === "readonly"
-															? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
-															: "bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
+												user.role === "superadmin"
+													? "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+													: user.role === "admin"
+														? "bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200"
+														: user.role === "host_manager"
+															? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+															: user.role === "readonly"
+																? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+																: "bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
 											}`}
 										>
 											<Shield className="h-3 w-3 mr-1" />
-											{user.role.charAt(0).toUpperCase() +
-												user.role.slice(1).replace("_", " ")}
+											{user.role === "superadmin"
+												? "Super Admin"
+												: user.role.charAt(0).toUpperCase() +
+													user.role.slice(1).replace("_", " ")}
 										</span>
 										{user.is_active ? (
 											<div className="flex items-center text-green-600 dark:text-green-400">
@@ -360,9 +391,17 @@ const UsersTab = () => {
 											<td className="px-6 py-4 whitespace-nowrap">
 												<div className="flex items-center">
 													<div className="flex-shrink-0 h-10 w-10">
-														<div className="h-10 w-10 rounded-full bg-primary-100 flex items-center justify-center">
-															<User className="h-5 w-5 text-primary-600" />
-														</div>
+														{user.avatar_url ? (
+															<img
+																src={user.avatar_url}
+																alt={user.username}
+																className="h-10 w-10 rounded-full object-cover"
+															/>
+														) : (
+															<div className="h-10 w-10 rounded-full bg-primary-100 flex items-center justify-center">
+																<User className="h-5 w-5 text-primary-600" />
+															</div>
+														)}
 													</div>
 													<div className="ml-4">
 														<div className="flex items-center">
@@ -387,18 +426,22 @@ const UsersTab = () => {
 											<td className="px-6 py-4 whitespace-nowrap">
 												<span
 													className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium ${
-														user.role === "admin"
-															? "bg-primary-100 text-primary-800"
-															: user.role === "host_manager"
-																? "bg-green-100 text-green-800"
-																: user.role === "readonly"
-																	? "bg-yellow-100 text-yellow-800"
-																	: "bg-secondary-100 text-secondary-800"
+														user.role === "superadmin"
+															? "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+															: user.role === "admin"
+																? "bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200"
+																: user.role === "host_manager"
+																	? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+																	: user.role === "readonly"
+																		? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+																		: "bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
 													}`}
 												>
 													<Shield className="h-3 w-3 mr-1" />
-													{user.role.charAt(0).toUpperCase() +
-														user.role.slice(1).replace("_", " ")}
+													{user.role === "superadmin"
+														? "Super Admin"
+														: user.role.charAt(0).toUpperCase() +
+															user.role.slice(1).replace("_", " ")}
 												</span>
 											</td>
 											<td className="px-6 py-4 whitespace-nowrap">
@@ -495,13 +538,15 @@ const UsersTab = () => {
 				)}
 			</div>
 
-			{/* Add User Modal */}
-			<AddUserModal
-				isOpen={showAddModal}
-				onClose={() => setShowAddModal(false)}
-				onUserCreated={handleUserCreated}
-				roles={roles}
-			/>
+			{/* Add User Modal - only show when OIDC is not enabled */}
+			{!isOIDCEnabled && (
+				<AddUserModal
+					isOpen={showAddModal}
+					onClose={() => setShowAddModal(false)}
+					onUserCreated={handleUserCreated}
+					roles={roles}
+				/>
+			)}
 
 			{/* Edit User Modal */}
 			{editingUser && (
@@ -526,137 +571,160 @@ const UsersTab = () => {
 				/>
 			)}
 
-			{/* User Registration Settings */}
-			<div className="bg-white dark:bg-secondary-800 shadow overflow-hidden sm:rounded-lg">
-				<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
-					<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
-						User Registration Settings
-					</h3>
-				</div>
-				<div className="px-6 py-4 space-y-4">
-					{/* User Signup Setting */}
-					<div>
-						<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2">
-							<div className="flex items-center gap-2">
-								<input
-									id={signupEnabledId}
-									type="checkbox"
-									checked={signupFormData.signupEnabled}
-									onChange={(e) =>
-										handleSignupInputChange("signupEnabled", e.target.checked)
-									}
-									className="rounded border-secondary-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
-									disabled={settingsLoading}
-								/>
-								<label htmlFor={signupEnabledId}>
-									Enable User Self-Registration
-								</label>
-							</div>
-						</label>
-
-						{/* Default User Role Dropdown */}
-						{signupFormData.signupEnabled && (
-							<div className="mt-3 ml-6">
-								<label
-									htmlFor={defaultRoleId}
-									className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2"
-								>
-									Default Role for New Users
-								</label>
-								<select
-									id={defaultRoleId}
-									value={signupFormData.defaultUserRole}
-									onChange={(e) =>
-										handleSignupInputChange("defaultUserRole", e.target.value)
-									}
-									className="w-full max-w-xs border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
-									disabled={rolesLoading}
-								>
-									{rolesLoading ? (
-										<option>Loading roles...</option>
-									) : roles && Array.isArray(roles) ? (
-										roles.map((role) => (
-											<option key={role.role} value={role.role}>
-												{role.role.charAt(0).toUpperCase() + role.role.slice(1)}
-											</option>
-										))
-									) : (
-										<option value="user">User</option>
-									)}
-								</select>
-								<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
-									New users will be assigned this role when they register.
-								</p>
-							</div>
-						)}
-
-						<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
-							When enabled, users can create their own accounts through the
-							signup page. When disabled, only administrators can create user
-							accounts.
-						</p>
-					</div>
-
-					{/* Security Notice */}
-					<div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-md p-4">
-						<div className="flex">
-							<Shield className="h-5 w-5 text-blue-400 dark:text-blue-300" />
-							<div className="ml-3">
-								<h3 className="text-sm font-medium text-blue-800 dark:text-blue-200">
-									Security Notice
-								</h3>
-								<p className="mt-1 text-sm text-blue-700 dark:text-blue-300">
-									When enabling user self-registration, exercise caution on
-									internal networks. Consider restricting access to trusted
-									networks only and ensure proper role assignments to prevent
-									unauthorized access to sensitive systems.
-								</p>
-							</div>
+			{/* OIDC Info Banner - show when OIDC is enabled */}
+			{isOIDCEnabled && (
+				<div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+					<div className="flex">
+						<Info className="h-5 w-5 text-blue-500 dark:text-blue-400 flex-shrink-0" />
+						<div className="ml-3">
+							<h3 className="text-sm font-medium text-blue-800 dark:text-blue-200">
+								OIDC Authentication Enabled
+							</h3>
+							<p className="mt-1 text-sm text-blue-700 dark:text-blue-300">
+								User management is handled by your Identity Provider (IdP).
+								Users are created automatically when they log in via OIDC. Roles
+								are assigned based on IdP group membership configured in your
+								environment variables.
+							</p>
 						</div>
 					</div>
+				</div>
+			)}
 
-					{/* Save Button */}
-					<div className="flex justify-end">
-						<button
-							type="button"
-							onClick={handleSignupSave}
-							disabled={
-								!isSignupDirty || updateSignupSettingsMutation.isPending
-							}
-							className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white ${
-								!isSignupDirty || updateSignupSettingsMutation.isPending
-									? "bg-secondary-400 cursor-not-allowed"
-									: "bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-							}`}
-						>
-							{updateSignupSettingsMutation.isPending ? (
-								<>
-									<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-									Saving...
-								</>
-							) : (
-								<>
-									<Save className="h-4 w-4 mr-2" />
-									Save Settings
-								</>
-							)}
-						</button>
+			{/* User Registration Settings - only show when OIDC is not enabled */}
+			{!isOIDCEnabled && (
+				<div className="bg-white dark:bg-secondary-800 shadow overflow-hidden sm:rounded-lg">
+					<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+							User Registration Settings
+						</h3>
 					</div>
+					<div className="px-6 py-4 space-y-4">
+						{/* User Signup Setting */}
+						<div>
+							<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2">
+								<div className="flex items-center gap-2">
+									<input
+										id={signupEnabledId}
+										type="checkbox"
+										checked={signupFormData.signupEnabled}
+										onChange={(e) =>
+											handleSignupInputChange("signupEnabled", e.target.checked)
+										}
+										className="rounded border-secondary-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
+										disabled={settingsLoading}
+									/>
+									<label htmlFor={signupEnabledId}>
+										Enable User Self-Registration
+									</label>
+								</div>
+							</label>
 
-					{updateSignupSettingsMutation.isSuccess && (
-						<div className="bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded-md p-4">
+							{/* Default User Role Dropdown */}
+							{signupFormData.signupEnabled && (
+								<div className="mt-3 ml-6">
+									<label
+										htmlFor={defaultRoleId}
+										className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2"
+									>
+										Default Role for New Users
+									</label>
+									<select
+										id={defaultRoleId}
+										value={signupFormData.defaultUserRole}
+										onChange={(e) =>
+											handleSignupInputChange("defaultUserRole", e.target.value)
+										}
+										className="w-full max-w-xs border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+										disabled={rolesLoading}
+									>
+										{rolesLoading ? (
+											<option>Loading roles...</option>
+										) : roles && Array.isArray(roles) ? (
+											roles.map((role) => (
+												<option key={role.role} value={role.role}>
+													{role.role.charAt(0).toUpperCase() +
+														role.role.slice(1)}
+												</option>
+											))
+										) : (
+											<option value="user">User</option>
+										)}
+									</select>
+									<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+										New users will be assigned this role when they register.
+									</p>
+								</div>
+							)}
+
+							<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
+								When enabled, users can create their own accounts through the
+								signup page. When disabled, only administrators can create user
+								accounts.
+							</p>
+						</div>
+
+						{/* Security Notice */}
+						<div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-md p-4">
 							<div className="flex">
-								<CheckCircle className="h-5 w-5 text-green-400 dark:text-green-300" />
+								<Shield className="h-5 w-5 text-blue-400 dark:text-blue-300" />
 								<div className="ml-3">
-									<p className="text-sm text-green-700 dark:text-green-300">
-										Settings saved successfully!
+									<h3 className="text-sm font-medium text-blue-800 dark:text-blue-200">
+										Security Notice
+									</h3>
+									<p className="mt-1 text-sm text-blue-700 dark:text-blue-300">
+										When enabling user self-registration, exercise caution on
+										internal networks. Consider restricting access to trusted
+										networks only and ensure proper role assignments to prevent
+										unauthorized access to sensitive systems.
 									</p>
 								</div>
 							</div>
 						</div>
-					)}
+
+						{/* Save Button */}
+						<div className="flex justify-end">
+							<button
+								type="button"
+								onClick={handleSignupSave}
+								disabled={
+									!isSignupDirty || updateSignupSettingsMutation.isPending
+								}
+								className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white ${
+									!isSignupDirty || updateSignupSettingsMutation.isPending
+										? "bg-secondary-400 cursor-not-allowed"
+										: "bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+								}`}
+							>
+								{updateSignupSettingsMutation.isPending ? (
+									<>
+										<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+										Saving...
+									</>
+								) : (
+									<>
+										<Save className="h-4 w-4 mr-2" />
+										Save Settings
+									</>
+								)}
+							</button>
+						</div>
+
+						{updateSignupSettingsMutation.isSuccess && (
+							<div className="bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded-md p-4">
+								<div className="flex">
+									<CheckCircle className="h-5 w-5 text-green-400 dark:text-green-300" />
+									<div className="ml-3">
+										<p className="text-sm text-green-700 dark:text-green-300">
+											Settings saved successfully!
+										</p>
+									</div>
+								</div>
+							</div>
+						)}
+					</div>
 				</div>
-			</div>
+			)}
 		</div>
 	);
 };

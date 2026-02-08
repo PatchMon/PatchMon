@@ -79,6 +79,15 @@ export default {
 				"card-hover-dark":
 					"0 4px 6px -1px rgba(255, 255, 255, 0.15), 0 2px 4px -1px rgba(255, 255, 255, 0.1)",
 			},
+			keyframes: {
+				"slide-in": {
+					"0%": { transform: "translateX(100%)", opacity: "0" },
+					"100%": { transform: "translateX(0)", opacity: "1" },
+				},
+			},
+			animation: {
+				"slide-in": "slide-in 0.3s ease-out",
+			},
 		},
 	},
 	plugins: [],

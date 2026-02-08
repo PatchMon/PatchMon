@@ -1,6 +1,6 @@
 # Change 3 Passwords in this file:
 # Generate passwords with 'openssl rand -hex 64'
-# 
+#
 # 1. The database password in the environment variable POSTGRES_PASSWORD
 # 2. The redis password in the command redis-server --requirepass your-redis-password-here
 # 3. The jwt secret in the environment variable JWT_SECRET

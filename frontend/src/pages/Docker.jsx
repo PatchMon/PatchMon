@@ -1247,7 +1247,7 @@ const Docker = () => {
 										<div key={host.id} className="card p-4 space-y-3">
 											{/* Host Name */}
 											<Link
-												to={`/docker/hosts/${host.id}`}
+												to={`/hosts/${host.id}`}
 												className="flex items-center gap-3"
 											>
 												<Server className="h-5 w-5 text-secondary-400 flex-shrink-0" />
@@ -1287,7 +1287,7 @@ const Docker = () => {
 											{/* Actions */}
 											<div className="flex items-center justify-end pt-2 border-t border-secondary-200 dark:border-secondary-600">
 												<Link
-													to={`/docker/hosts/${host.id}`}
+													to={`/hosts/${host.id}`}
 													className="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300 inline-flex items-center gap-1 text-sm"
 													title="View details"
 												>
@@ -1352,7 +1352,7 @@ const Docker = () => {
 														<div className="flex items-center gap-2">
 															<Server className="h-4 w-4 text-secondary-400 dark:text-secondary-500 flex-shrink-0" />
 															<Link
-																to={`/docker/hosts/${host.id}`}
+																to={`/hosts/${host.id}`}
 																className="text-sm font-medium text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300 truncate"
 															>
 																{host.friendly_name || host.hostname}
@@ -1370,7 +1370,7 @@ const Docker = () => {
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap text-center">
 														<Link
-															to={`/docker/hosts/${host.id}`}
+															to={`/hosts/${host.id}`}
 															className="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300 inline-flex items-center gap-1"
 															title="View details"
 														>

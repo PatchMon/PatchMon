@@ -1,4 +1,5 @@
 const { prisma } = require("./shared/prisma");
+const logger = require("../../utils/logger");
 
 /**
  * Orphaned Package Cleanup Automation
@@ -15,7 +16,7 @@ class OrphanedPackageCleanup {
 	 */
 	async process(_job) {
 		const startTime = Date.now();
-		console.log("🧹 Starting orphaned package cleanup...");
+		logger.info("🧹 Starting orphaned package cleanup...");
 
 		try {
 			// Find packages with 0 hosts
@@ -51,11 +52,11 @@ class OrphanedPackageCleanup {
 						category: pkg.category,
 						latest_version: pkg.latest_version,
 					});
-					console.log(
+					logger.info(
 						`🗑️ Deleted orphaned package: ${pkg.name} (${pkg.latest_version})`,
 					);
 				} catch (deleteError) {
-					console.error(
+					logger.error(
 						`❌ Failed to delete package ${pkg.id}:`,
 						deleteError.message,
 					);
@@ -63,7 +64,7 @@ class OrphanedPackageCleanup {
 			}
 
 			const executionTime = Date.now() - startTime;
-			console.log(
+			logger.info(
 				`✅ Orphaned package cleanup completed in ${executionTime}ms - Deleted ${deletedCount} packages`,
 			);
 
@@ -75,7 +76,7 @@ class OrphanedPackageCleanup {
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			console.error(
+			logger.error(
 				`❌ Orphaned package cleanup failed after ${executionTime}ms:`,
 				error.message,
 			);
@@ -95,7 +96,7 @@ class OrphanedPackageCleanup {
 				jobId: "orphaned-package-cleanup-recurring",
 			},
 		);
-		console.log("✅ Orphaned package cleanup scheduled");
+		logger.info("✅ Orphaned package cleanup scheduled");
 		return job;
 	}
 
@@ -108,7 +109,7 @@ class OrphanedPackageCleanup {
 			{},
 			{ priority: 1 },
 		);
-		console.log("✅ Manual orphaned package cleanup triggered");
+		logger.info("✅ Manual orphaned package cleanup triggered");
 		return job;
 	}
 }

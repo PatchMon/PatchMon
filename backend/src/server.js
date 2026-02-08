@@ -1,5 +1,20 @@
 require("dotenv").config();
 
+// Global error handlers for unhandled rejections and exceptions
+process.on("unhandledRejection", (reason, promise) => {
+	console.error("Unhandled Rejection at:", promise);
+	console.error("Reason:", reason instanceof Error ? reason.message : reason);
+	// Don't exit - let the application continue but log the error
+});
+
+process.on("uncaughtException", (error) => {
+	console.error("Uncaught Exception:", error.message);
+	console.error("Stack:", error.stack);
+	// For uncaught exceptions, we should exit after logging
+	// Give time for logs to flush
+	setTimeout(() => process.exit(1), 1000);
+});
+
 // Validate required environment variables on startup
 function validateEnvironmentVariables() {
 	const requiredVars = {
@@ -47,6 +62,9 @@ const {
 } = require("./config/prisma");
 const winston = require("winston");
 
+const swaggerUi = require("swagger-ui-express");
+const swaggerDocument = require("./swagger_output.json");
+
 // Import routes
 const authRoutes = require("./routes/authRoutes");
 const hostRoutes = require("./routes/hostRoutes");
@@ -75,10 +93,18 @@ const apiHostsRoutes = require("./routes/apiHostsRoutes");
 const releaseNotesRoutes = require("./routes/releaseNotesRoutes");
 const releaseNotesAcceptanceRoutes = require("./routes/releaseNotesAcceptanceRoutes");
 const buyMeACoffeeRoutes = require("./routes/buyMeACoffeeRoutes");
+const oidcRoutes = require("./routes/oidcRoutes");
+const complianceRoutes = require("./routes/complianceRoutes");
+const { initializeOIDC } = require("./auth/oidc");
 const socialMediaStatsRoutes = require("./routes/socialMediaStatsRoutes");
+const aiRoutes = require("./routes/aiRoutes");
+const alertRoutes = require("./routes/alertRoutes");
 const { initSettings } = require("./services/settingsService");
 const { queueManager } = require("./services/automation");
-const { authenticateToken, requireAdmin } = require("./middleware/auth");
+const {
+	authenticateToken,
+	requireAdmin: _requireAdmin,
+} = require("./middleware/auth");
 const { createBullBoard } = require("@bull-board/api");
 const { BullMQAdapter } = require("@bull-board/api/bullMQAdapter");
 const { ExpressAdapter } = require("@bull-board/express");
@@ -103,7 +129,25 @@ async function checkAndCreateRolePermissions() {
 		const crypto = require("node:crypto");
 
 		// Define default roles and permissions
+		// These 5 roles align with OIDC role mapping (superadmin, admin, host_manager, readonly, user)
 		const defaultRoles = [
+			{
+				id: crypto.randomUUID(),
+				role: "superadmin",
+				can_view_dashboard: true,
+				can_view_hosts: true,
+				can_manage_hosts: true,
+				can_view_packages: true,
+				can_manage_packages: true,
+				can_view_users: true,
+				can_manage_users: true,
+				can_manage_superusers: true, // Only superadmin can manage other superadmins
+				can_view_reports: true,
+				can_export_data: true,
+				can_manage_settings: true,
+				created_at: new Date(),
+				updated_at: new Date(),
+			},
 			{
 				id: crypto.randomUUID(),
 				role: "admin",
@@ -114,9 +158,44 @@ async function checkAndCreateRolePermissions() {
 				can_manage_packages: true,
 				can_view_users: true,
 				can_manage_users: true,
+				can_manage_superusers: false,
 				can_view_reports: true,
 				can_export_data: true,
 				can_manage_settings: true,
+				created_at: new Date(),
+				updated_at: new Date(),
+			},
+			{
+				id: crypto.randomUUID(),
+				role: "host_manager",
+				can_view_dashboard: true,
+				can_view_hosts: true,
+				can_manage_hosts: true,
+				can_view_packages: true,
+				can_manage_packages: true,
+				can_view_users: false,
+				can_manage_users: false,
+				can_manage_superusers: false,
+				can_view_reports: true,
+				can_export_data: true,
+				can_manage_settings: false,
+				created_at: new Date(),
+				updated_at: new Date(),
+			},
+			{
+				id: crypto.randomUUID(),
+				role: "readonly",
+				can_view_dashboard: true,
+				can_view_hosts: true,
+				can_manage_hosts: false,
+				can_view_packages: true,
+				can_manage_packages: false,
+				can_view_users: false,
+				can_manage_users: false,
+				can_manage_superusers: false,
+				can_view_reports: true,
+				can_export_data: false,
+				can_manage_settings: false,
 				created_at: new Date(),
 				updated_at: new Date(),
 			},
@@ -130,6 +209,7 @@ async function checkAndCreateRolePermissions() {
 				can_manage_packages: false,
 				can_view_users: false,
 				can_manage_users: false,
+				can_manage_superusers: false,
 				can_view_reports: true,
 				can_export_data: false,
 				can_manage_settings: false,
@@ -274,6 +354,7 @@ const { init: initAgentWs } = require("./services/agentWs");
 const agentVersionService = require("./services/agentVersionService");
 
 // Trust proxy (needed when behind reverse proxy) and remove X-Powered-By
+// SECURITY: Only trust proxy when explicitly configured to prevent IP spoofing
 if (process.env.TRUST_PROXY) {
 	const trustProxyValue = process.env.TRUST_PROXY;
 
@@ -296,7 +377,14 @@ if (process.env.TRUST_PROXY) {
 		);
 	}
 } else {
-	app.set("trust proxy", 1);
+	// SECURITY: Don't trust proxy by default to prevent IP spoofing via X-Forwarded-For
+	// Set TRUST_PROXY environment variable if running behind a reverse proxy
+	app.set("trust proxy", false);
+	if (process.env.NODE_ENV === "production") {
+		console.warn(
+			"⚠️  TRUST_PROXY not configured. If behind a reverse proxy, set TRUST_PROXY=1 or appropriate value.",
+		);
+	}
 }
 app.disable("x-powered-by");
 
@@ -312,11 +400,26 @@ const limiter = rateLimit({
 	},
 	standardHeaders: true,
 	legacyHeaders: false,
-	skipSuccessfulRequests: true, // Don't count successful requests
-	skipFailedRequests: false, // Count failed requests
+	skipSuccessfulRequests: false, // Count all requests for proper rate limiting
+	skipFailedRequests: false, // Also count failed requests
 });
 
 // Middleware
+
+// Request ID middleware for log tracing
+app.use((req, res, next) => {
+	// Use existing request ID from header or generate new one
+	req.id =
+		req.headers["x-request-id"] ||
+		`req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+	res.setHeader("X-Request-ID", req.id);
+	next();
+});
+
+// Security audit logging middleware
+const { auditMiddleware } = require("./utils/auditLogger");
+app.use(auditMiddleware);
+
 // Helmet with stricter defaults (CSP/HSTS only in production)
 app.use(
 	helmet({
@@ -363,22 +466,42 @@ if (!allowedOrigins.includes(bullBoardOrigin)) {
 app.use(
 	cors({
 		origin: (origin, callback) => {
-			// Allow non-browser/SSR tools with no origin
-			if (!origin) return callback(null, true);
+			// Handle requests without origin header
+			if (!origin) {
+				// Allow server-to-server requests (agents, curl, etc.)
+				// These are legitimate API calls without a browser origin
+				// Security note: API endpoints still require authentication
+				return callback(null, true);
+			}
 			if (allowedOrigins.includes(origin)) return callback(null, true);
 
 			// Allow Bull Board requests from the same origin as CORS_ORIGIN
 			if (origin === bullBoardOrigin) return callback(null, true);
 
-			// Allow same-origin requests (e.g., Bull Board accessing its own API)
-			// This allows http://hostname:3001 to make requests to http://hostname:3001
-			if (origin?.includes(":3001")) return callback(null, true);
+			// Allow same-origin requests from backend port (localhost/127.0.0.1 only)
+			// This safely allows Bull Board to access its own API without allowing arbitrary origins
+			try {
+				const originUrl = new URL(origin);
+				const isLocalhost =
+					originUrl.hostname === "localhost" ||
+					originUrl.hostname === "127.0.0.1";
+				const isBackendPort = originUrl.port === "3001";
+				if (isLocalhost && isBackendPort) {
+					return callback(null, true);
+				}
 
-			// Allow Bull Board requests from the frontend origin (same host, different port)
-			// This handles cases where frontend is on port 3000 and backend on 3001
-			const frontendOrigin = origin?.replace(/:3001$/, ":3000");
-			if (frontendOrigin && allowedOrigins.includes(frontendOrigin)) {
-				return callback(null, true);
+				// Allow requests from same hostname but different port (frontend on 3000, backend on 3001)
+				const corsUrl = new URL(
+					process.env.CORS_ORIGIN || "http://localhost:3000",
+				);
+				if (
+					originUrl.hostname === corsUrl.hostname &&
+					originUrl.port === "3001"
+				) {
+					return callback(null, true);
+				}
+			} catch (_e) {
+				// Invalid URL, reject
 			}
 
 			return callback(new Error("Not allowed by CORS"));
@@ -409,14 +532,21 @@ app.use(
 );
 
 // Request logging - only if logging is enabled
+// In dev mode, suppress all request logging to reduce terminal noise
+// Set PM_LOG_REQUESTS_IN_DEV=true to enable request logging in dev mode
 if (process.env.ENABLE_LOGGING === "true") {
 	app.use((req, _, next) => {
-		// Log health check requests at debug level to reduce log spam
-		if (req.path === "/health") {
-			logger.debug(`${req.method} ${req.path} - ${req.ip}`);
-		} else {
-			logger.info(`${req.method} ${req.path} - ${req.ip}`);
+		const isDev = process.env.NODE_ENV !== "production";
+		const logRequestsInDev = process.env.PM_LOG_REQUESTS_IN_DEV === "true";
+
+		// Skip all request logging in dev mode unless explicitly enabled
+		if (isDev && !logRequestsInDev) {
+			next();
+			return;
 		}
+
+		// Log requests in production or when explicitly enabled in dev
+		logger.info(`${req.method} ${req.path} - ${req.ip}`);
 		next();
 	});
 }
@@ -428,6 +558,14 @@ app.get("/health", (_req, res) => {
 
 // API routes
 const apiVersion = process.env.API_VERSION || "v1";
+
+// Swagger - Protected with authentication
+app.use(
+	`/api/${apiVersion}/api-docs`,
+	authenticateToken,
+	swaggerUi.serve,
+	swaggerUi.setup(swaggerDocument),
+);
 
 // Per-route rate limits with monitoring
 const authLimiter = rateLimit({
@@ -443,7 +581,7 @@ const authLimiter = rateLimit({
 	},
 	standardHeaders: true,
 	legacyHeaders: false,
-	skipSuccessfulRequests: true,
+	skipSuccessfulRequests: false, // Count all requests for proper rate limiting
 });
 const agentLimiter = rateLimit({
 	windowMs: parseInt(process.env.AGENT_RATE_LIMIT_WINDOW_MS, 10) || 60 * 1000,
@@ -457,10 +595,11 @@ const agentLimiter = rateLimit({
 	},
 	standardHeaders: true,
 	legacyHeaders: false,
-	skipSuccessfulRequests: true,
+	skipSuccessfulRequests: false, // Count all requests for proper rate limiting
 });
 
 app.use(`/api/${apiVersion}/auth`, authLimiter, authRoutes);
+app.use(`/api/${apiVersion}/auth/oidc`, authLimiter, oidcRoutes);
 app.use(`/api/${apiVersion}/hosts`, agentLimiter, hostRoutes);
 app.use(`/api/${apiVersion}/host-groups`, hostGroupRoutes);
 app.use(`/api/${apiVersion}/packages`, packageRoutes);
@@ -492,7 +631,10 @@ app.use(
 	releaseNotesAcceptanceRoutes,
 );
 app.use(`/api/${apiVersion}/buy-me-a-coffee`, buyMeACoffeeRoutes);
+app.use(`/api/${apiVersion}/compliance`, complianceRoutes);
 app.use(`/api/${apiVersion}/social-media-stats`, socialMediaStatsRoutes);
+app.use(`/api/${apiVersion}/ai`, aiRoutes);
+app.use(`/api/${apiVersion}/alerts`, alertRoutes);
 
 // Bull Board - will be populated after queue manager initializes
 let bullBoardRouter = null;
@@ -508,15 +650,20 @@ app.use(`/bullboard`, (_req, res, next) => {
 
 	// Add headers to help with WebSocket connections
 	res.setHeader("X-Frame-Options", "SAMEORIGIN");
+	// Tightened CSP: removed blob:, restricted connect-src to same origin only
+	// Note: 'unsafe-inline' and 'unsafe-eval' are required for Bull Board's React app
 	res.setHeader(
 		"Content-Security-Policy",
-		"default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' ws: wss:;",
+		"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; object-src 'none';",
 	);
 
 	next();
 });
 
-// Simplified Bull Board authentication - just validate token once and set a simple auth cookie
+// Bull Board authentication using one-time tickets
+// SECURITY: Uses tickets instead of tokens in URLs to prevent exposure in server logs
+const { consumeBullBoardTicket } = require("./routes/automationRoutes");
+
 app.use(`/bullboard`, async (req, res, next) => {
 	// Skip authentication for static assets
 	if (req.path.includes("/static/") || req.path.includes("/favicon")) {
@@ -529,39 +676,35 @@ app.use(`/bullboard`, async (req, res, next) => {
 		return next();
 	}
 
-	// No auth cookie - check for token in query
-	const token = req.query.token;
-	if (!token) {
+	// No auth cookie - check for ticket in query (not token!)
+	const ticket = req.query.ticket;
+	if (!ticket) {
 		return res.status(401).json({
 			error:
 				"Authentication required. Please access Bull Board from the Automation page.",
 		});
 	}
 
-	// Validate token and set auth cookie
-	req.headers.authorization = `Bearer ${token}`;
-	return authenticateToken(req, res, (err) => {
-		if (err) {
-			return res.status(401).json({ error: "Invalid authentication token" });
-		}
-		return requireAdmin(req, res, (adminErr) => {
-			if (adminErr) {
-				return res.status(403).json({ error: "Admin access required" });
-			}
+	// Validate and consume the one-time ticket
+	const result = await consumeBullBoardTicket(ticket);
+	if (!result.valid) {
+		return res.status(401).json({ error: result.reason || "Invalid ticket" });
+	}
 
-			// Set a simple auth cookie that will persist for the session
-			res.cookie("bull-board-auth", token, {
-				httpOnly: false,
-				secure: false,
-				maxAge: 3600000, // 1 hour
-				path: "/bullboard",
-				sameSite: "lax",
-			});
+	// Generate a session identifier for the cookie (not the original ticket)
+	const crypto = require("node:crypto");
+	const sessionId = crypto.randomBytes(16).toString("hex");
 
-			console.log("Bull Board - Authentication successful, cookie set");
-			return next();
-		});
+	// Set a secure auth cookie that will persist for the session
+	res.cookie("bull-board-auth", sessionId, {
+		httpOnly: true,
+		secure: process.env.NODE_ENV === "production",
+		maxAge: 3600000, // 1 hour
+		path: "/bullboard",
+		sameSite: "strict",
 	});
+
+	return next();
 });
 
 // Remove all the old complex middleware below and replace with the new Bull Board router setup
@@ -580,11 +723,14 @@ app.use("/bullboard", (err, req, res, _next) => {
 	if (process.env.ENABLE_LOGGING === "true") {
 		logger.error(`Bull Board error on ${req.method} ${req.url}:`, err);
 	}
+	// SECURITY: Don't expose internal error details in production
 	res.status(500).json({
 		error: "Internal server error",
-		message: err.message,
-		path: req.path,
-		url: req.url,
+		...(process.env.NODE_ENV === "development" && {
+			message: err.message,
+			path: req.path,
+			url: req.url,
+		}),
 	});
 });
 
@@ -594,14 +740,15 @@ app.use((err, _req, res, _next) => {
 		logger.error(err.stack);
 	}
 
-	// Special handling for CORS errors - always include the message
+	// SECURITY: Use generic error messages in production to prevent info leakage
+	// CORS errors get a specific 403 status but generic message
 	if (err.message?.includes("Not allowed by CORS")) {
-		return res.status(500).json({
-			error: "Something went wrong!",
-			message: err.message, // Always include CORS error message
+		return res.status(403).json({
+			error: "CORS policy violation",
 		});
 	}
 
+	// Only expose error details in development
 	res.status(500).json({
 		error: "Something went wrong!",
 		message: process.env.NODE_ENV === "development" ? err.message : undefined,
@@ -630,6 +777,27 @@ process.on("SIGTERM", async () => {
 	await queueManager.shutdown();
 	await disconnectPrisma(prisma);
 	process.exit(0);
+});
+
+// Handle unhandled promise rejections
+process.on("unhandledRejection", (reason, promise) => {
+	console.error("❌ Unhandled Rejection at:", promise);
+	console.error("❌ Reason:", reason);
+	if (process.env.ENABLE_LOGGING === "true") {
+		logger.error("Unhandled Rejection:", { reason, promise: String(promise) });
+	}
+	// Don't exit the process - just log the error
+	// In production, you might want to track these for debugging
+});
+
+// Handle uncaught exceptions
+process.on("uncaughtException", (error) => {
+	console.error("❌ Uncaught Exception:", error);
+	if (process.env.ENABLE_LOGGING === "true") {
+		logger.error("Uncaught Exception:", error);
+	}
+	// For uncaught exceptions, it's safer to exit and let process manager restart
+	process.exit(1);
 });
 
 // Initialize dashboard preferences for all users
@@ -688,24 +856,27 @@ async function initializeDashboardPreferences() {
 				const currentCardCount = user.dashboard_preferences.length;
 
 				if (currentCardCount !== expectedCardCount) {
-					// Delete existing preferences
-					await prisma.dashboard_preferences.deleteMany({
-						where: { user_id: user.id },
-					});
+					// Use transaction to prevent race condition
+					await prisma.$transaction(async (tx) => {
+						// Delete existing preferences
+						await tx.dashboard_preferences.deleteMany({
+							where: { user_id: user.id },
+						});
 
-					// Create new preferences based on permissions
-					const preferencesData = expectedPreferences.map((pref) => ({
-						id: require("uuid").v4(),
-						user_id: user.id,
-						card_id: pref.cardId,
-						enabled: pref.enabled,
-						order: pref.order,
-						created_at: new Date(),
-						updated_at: new Date(),
-					}));
+						// Create new preferences based on permissions
+						const preferencesData = expectedPreferences.map((pref) => ({
+							id: require("uuid").v4(),
+							user_id: user.id,
+							card_id: pref.cardId,
+							enabled: pref.enabled,
+							order: pref.order,
+							created_at: new Date(),
+							updated_at: new Date(),
+						}));
 
-					await prisma.dashboard_preferences.createMany({
-						data: preferencesData,
+						await tx.dashboard_preferences.createMany({
+							data: preferencesData,
+						});
 					});
 
 					updatedCount++;
@@ -892,6 +1063,18 @@ async function startServer() {
 
 		// Check and create default role permissions on startup
 		await checkAndCreateRolePermissions();
+
+		// Initialize OIDC if enabled
+		if (process.env.OIDC_ENABLED === "true") {
+			const oidcInitialized = await initializeOIDC();
+			if (oidcInitialized) {
+				console.log("OIDC authentication enabled and initialized");
+			} else {
+				console.warn(
+					"OIDC is enabled but failed to initialize - check configuration",
+				);
+			}
+		}
 
 		// Initialize dashboard preferences for all users
 		await initializeDashboardPreferences();

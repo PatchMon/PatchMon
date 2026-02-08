@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
 const crypto = require("node:crypto");
 const bcrypt = require("bcryptjs");
@@ -6,9 +7,109 @@ const { body, validationResult } = require("express-validator");
 const { authenticateToken } = require("../middleware/auth");
 const { requireManageSettings } = require("../middleware/permissions");
 const { v4: uuidv4 } = require("uuid");
+const { getSettings } = require("../services/settingsService");
 
 const router = express.Router();
 const prisma = getPrismaClient();
+
+/**
+ * Parse an IP address into its numeric components
+ * Handles both IPv4 and IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
+ * @param {string} ip - IP address string
+ * @returns {number[]|null} Array of 4 octets or null if invalid
+ */
+function parseIPv4(ip) {
+	if (!ip || typeof ip !== "string") return null;
+
+	// Handle IPv4-mapped IPv6 addresses (::ffff:192.168.1.1)
+	let ipv4 = ip;
+	if (ip.startsWith("::ffff:")) {
+		ipv4 = ip.substring(7);
+	}
+
+	// Validate IPv4 format
+	const parts = ipv4.split(".");
+	if (parts.length !== 4) return null;
+
+	const octets = parts.map((part) => {
+		const num = parseInt(part, 10);
+		if (Number.isNaN(num) || num < 0 || num > 255 || String(num) !== part) {
+			return -1;
+		}
+		return num;
+	});
+
+	if (octets.some((o) => o === -1)) return null;
+	return octets;
+}
+
+/**
+ * Convert IP octets to a 32-bit number
+ * @param {number[]} octets - Array of 4 octets
+ * @returns {number} 32-bit representation
+ */
+function ipToNumber(octets) {
+	return (
+		((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0
+	);
+}
+
+/**
+ * Check if an IP address matches a CIDR range or exact IP
+ * @param {string} clientIp - The client's IP address
+ * @param {string} allowedRange - CIDR notation (e.g., "10.0.0.0/24") or exact IP
+ * @returns {boolean} True if IP matches the range
+ */
+function ipMatchesCIDR(clientIp, allowedRange) {
+	const clientOctets = parseIPv4(clientIp);
+	if (!clientOctets) return false;
+
+	// Check if it's a CIDR range or exact IP
+	const cidrParts = allowedRange.split("/");
+	const rangeIp = cidrParts[0];
+	const rangeOctets = parseIPv4(rangeIp);
+	if (!rangeOctets) return false;
+
+	// If no CIDR prefix, do exact match
+	if (cidrParts.length === 1) {
+		return clientOctets.every((octet, i) => octet === rangeOctets[i]);
+	}
+
+	// Parse CIDR prefix
+	const prefix = parseInt(cidrParts[1], 10);
+	if (Number.isNaN(prefix) || prefix < 0 || prefix > 32) return false;
+
+	// Calculate subnet mask
+	const mask = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0;
+
+	// Compare masked addresses
+	const clientNum = ipToNumber(clientOctets);
+	const rangeNum = ipToNumber(rangeOctets);
+
+	return (clientNum & mask) === (rangeNum & mask);
+}
+
+/**
+ * Validate if a client IP is allowed by any of the whitelist entries
+ * Supports exact IP matches and CIDR notation
+ * @param {string} clientIp - The client's IP address
+ * @param {string[]} allowedRanges - Array of allowed IPs or CIDR ranges
+ * @returns {boolean} True if IP is allowed
+ */
+function isIPAllowed(clientIp, allowedRanges) {
+	if (
+		!clientIp ||
+		!Array.isArray(allowedRanges) ||
+		allowedRanges.length === 0
+	) {
+		return false;
+	}
+
+	return allowedRanges.some((range) => {
+		if (!range || typeof range !== "string") return false;
+		return ipMatchesCIDR(clientIp, range.trim());
+	});
+}
 
 // Generate auto-enrollment token credentials
 const generate_auto_enrollment_token = () => {
@@ -52,13 +153,11 @@ const validate_auto_enrollment_token = async (req, res, next) => {
 		// Check IP whitelist if configured
 		if (token.allowed_ip_ranges && token.allowed_ip_ranges.length > 0) {
 			const client_ip = req.ip || req.connection.remoteAddress;
-			// Basic IP check - can be enhanced with CIDR matching
-			const ip_allowed = token.allowed_ip_ranges.some((allowed_ip) => {
-				return client_ip.includes(allowed_ip);
-			});
+			// Proper IP validation with CIDR support
+			const ip_allowed = isIPAllowed(client_ip, token.allowed_ip_ranges);
 
 			if (!ip_allowed) {
-				console.warn(
+				logger.warn(
 					`Auto-enrollment attempt from unauthorized IP: ${client_ip}`,
 				);
 				return res
@@ -94,7 +193,7 @@ const validate_auto_enrollment_token = async (req, res, next) => {
 		req.auto_enrollment_token = token;
 		next();
 	} catch (error) {
-		console.error("Auto-enrollment token validation error:", error);
+		logger.error("Auto-enrollment token validation error:", error);
 		res.status(500).json({ error: "Token validation failed" });
 	}
 };
@@ -238,7 +337,7 @@ router.post(
 				warning: "⚠️ Save the token_secret now - it cannot be retrieved later!",
 			});
 		} catch (error) {
-			console.error("Create auto-enrollment token error:", error);
+			logger.error("Create auto-enrollment token error:", error);
 			res.status(500).json({ error: "Failed to create token" });
 		}
 	},
@@ -287,7 +386,7 @@ router.get(
 
 			res.json(tokens);
 		} catch (error) {
-			console.error("List auto-enrollment tokens error:", error);
+			logger.error("List auto-enrollment tokens error:", error);
 			res.status(500).json({ error: "Failed to list tokens" });
 		}
 	},
@@ -332,7 +431,7 @@ router.get(
 
 			res.json(token_data);
 		} catch (error) {
-			console.error("Get token error:", error);
+			logger.error("Get token error:", error);
 			res.status(500).json({ error: "Failed to get token" });
 		}
 	},
@@ -475,7 +574,7 @@ router.patch(
 				token: token_data,
 			});
 		} catch (error) {
-			console.error("Update token error:", error);
+			logger.error("Update token error:", error);
 			res.status(500).json({ error: "Failed to update token" });
 		}
 	},
@@ -510,7 +609,7 @@ router.delete(
 				},
 			});
 		} catch (error) {
-			console.error("Delete token error:", error);
+			logger.error("Delete token error:", error);
 			res.status(500).json({ error: "Failed to delete token" });
 		}
 	},
@@ -606,7 +705,7 @@ router.get("/script", async (req, res) => {
 				server_url = settings.server_url;
 			}
 		} catch (settings_error) {
-			console.warn(
+			logger.warn(
 				"Could not fetch settings, using default server URL:",
 				settings_error.message,
 			);
@@ -619,7 +718,12 @@ router.get("/script", async (req, res) => {
 			if (settings && settings.ignore_ssl_self_signed === true) {
 				curl_flags = "-sk";
 			}
-		} catch (_) {}
+		} catch (curlFlagsError) {
+			logger.warn(
+				"Could not fetch SSL settings for curl flags:",
+				curlFlagsError.message,
+			);
+		}
 
 		// Check for --force parameter
 		const force_install = req.query.force === "true" || req.query.force === "1";
@@ -656,7 +760,7 @@ export FORCE_INSTALL="${force_install ? "true" : "false"}"
 		);
 		res.send(script);
 	} catch (error) {
-		console.error("Script serve error:", error);
+		logger.error("Script serve error:", error);
 		res.status(500).json({ error: "Failed to serve enrollment script" });
 	}
 });
@@ -689,6 +793,16 @@ router.post(
 			// Generate host API credentials
 			const api_id = `patchmon_${crypto.randomBytes(8).toString("hex")}`;
 			const api_key = crypto.randomBytes(32).toString("hex");
+			const api_key_hash = await bcrypt.hash(api_key, 10);
+
+			// Get global settings for default compliance mode
+			const settings = await getSettings();
+			const defaultComplianceMode =
+				settings.default_compliance_mode || "on-demand";
+
+			// Apply global default compliance mode
+			const complianceEnabled = defaultComplianceMode !== "disabled";
+			const complianceOnDemandOnly = defaultComplianceMode === "on-demand";
 
 			// Create host (no duplicate check - using config.yml checking instead)
 			const host = await prisma.hosts.create({
@@ -699,8 +813,10 @@ router.post(
 					os_type: "unknown",
 					os_version: "unknown",
 					api_id: api_id,
-					api_key: api_key,
+					api_key: api_key_hash,
 					status: "pending",
+					compliance_enabled: complianceEnabled,
+					compliance_on_demand_only: complianceOnDemandOnly,
 					notes: `Auto-enrolled via ${req.auto_enrollment_token.token_name} on ${new Date().toISOString()}`,
 					updated_at: new Date(),
 				},
@@ -729,7 +845,7 @@ router.post(
 				},
 			});
 
-			console.log(
+			logger.info(
 				`Auto-enrolled host: ${friendly_name} (${host.id}) via token: ${req.auto_enrollment_token.token_name}`,
 			);
 
@@ -758,7 +874,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Auto-enrollment error:", error);
+			logger.error("Auto-enrollment error:", error);
 			res.status(500).json({ error: "Failed to enroll host" });
 		}
 	},
@@ -810,6 +926,7 @@ router.post(
 					// Generate credentials (no duplicate check - using config.yml checking instead)
 					const api_id = `patchmon_${crypto.randomBytes(8).toString("hex")}`;
 					const api_key = crypto.randomBytes(32).toString("hex");
+					const api_key_hash = await bcrypt.hash(api_key, 10);
 
 					// Create host
 					const host = await prisma.hosts.create({
@@ -820,7 +937,7 @@ router.post(
 							os_type: "unknown",
 							os_version: "unknown",
 							api_id: api_id,
-							api_key: api_key,
+							api_key: api_key_hash,
 							status: "pending",
 							notes: `Auto-enrolled via ${req.auto_enrollment_token.token_name} on ${new Date().toISOString()}`,
 							updated_at: new Date(),
@@ -870,7 +987,7 @@ router.post(
 				results,
 			});
 		} catch (error) {
-			console.error("Bulk auto-enrollment error:", error);
+			logger.error("Bulk auto-enrollment error:", error);
 			res.status(500).json({ error: "Failed to bulk enroll hosts" });
 		}
 	},

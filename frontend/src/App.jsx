@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { Route, Routes } from "react-router-dom";
+import ErrorBoundary from "./components/ErrorBoundary";
 import FirstTimeAdminSetup from "./components/FirstTimeAdminSetup";
 import Layout from "./components/Layout";
 import LogoProvider from "./components/LogoProvider";
@@ -10,6 +11,7 @@ import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ColorThemeProvider } from "./contexts/ColorThemeContext";
 import { SettingsProvider } from "./contexts/SettingsContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { ToastProvider } from "./contexts/ToastContext";
 import { UpdateNotificationProvider } from "./contexts/UpdateNotificationContext";
 
 // Lazy load pages
@@ -24,6 +26,8 @@ const Automation = lazy(() => import("./pages/Automation"));
 const Repositories = lazy(() => import("./pages/Repositories"));
 const RepositoryDetail = lazy(() => import("./pages/RepositoryDetail"));
 const Docker = lazy(() => import("./pages/Docker"));
+const Compliance = lazy(() => import("./pages/Compliance"));
+const Reporting = lazy(() => import("./pages/Reporting"));
 const DockerContainerDetail = lazy(
 	() => import("./pages/docker/ContainerDetail"),
 );
@@ -32,6 +36,7 @@ const DockerHostDetail = lazy(() => import("./pages/docker/HostDetail"));
 const DockerVolumeDetail = lazy(() => import("./pages/docker/VolumeDetail"));
 const DockerNetworkDetail = lazy(() => import("./pages/docker/NetworkDetail"));
 const AlertChannels = lazy(() => import("./pages/settings/AlertChannels"));
+const AlertSettings = lazy(() => import("./pages/settings/AlertSettings"));
 const Integrations = lazy(() => import("./pages/settings/Integrations"));
 const Notifications = lazy(() => import("./pages/settings/Notifications"));
 const PatchManagement = lazy(() => import("./pages/settings/PatchManagement"));
@@ -46,6 +51,7 @@ const SettingsServerConfig = lazy(
 );
 const SettingsUsers = lazy(() => import("./pages/settings/SettingsUsers"));
 const SettingsMetrics = lazy(() => import("./pages/settings/SettingsMetrics"));
+const AiSettings = lazy(() => import("./pages/settings/AiSettings"));
 
 // Loading fallback component
 const LoadingFallback = () => (
@@ -128,6 +134,16 @@ function AppRoutes() {
 					}
 				/>
 				<Route
+					path="/reporting"
+					element={
+						<ProtectedRoute requirePermission="can_view_reports">
+							<Layout>
+								<Reporting />
+							</Layout>
+						</ProtectedRoute>
+					}
+				/>
+				<Route
 					path="/repositories"
 					element={
 						<ProtectedRoute requirePermission="can_view_hosts">
@@ -153,6 +169,16 @@ function AppRoutes() {
 						<ProtectedRoute requirePermission="can_view_hosts">
 							<Layout>
 								<Automation />
+							</Layout>
+						</ProtectedRoute>
+					}
+				/>
+				<Route
+					path="/compliance"
+					element={
+						<ProtectedRoute requirePermission="can_view_hosts">
+							<Layout>
+								<Compliance />
 							</Layout>
 						</ProtectedRoute>
 					}
@@ -342,6 +368,18 @@ function AppRoutes() {
 					}
 				/>
 				<Route
+					path="/settings/alert-settings"
+					element={
+						<ProtectedRoute requirePermission="can_manage_settings">
+							<Layout>
+								<SettingsLayout>
+									<AlertSettings />
+								</SettingsLayout>
+							</Layout>
+						</ProtectedRoute>
+					}
+				/>
+				<Route
 					path="/settings/alert-channels"
 					element={
 						<ProtectedRoute requirePermission="can_manage_settings">
@@ -424,6 +462,16 @@ function AppRoutes() {
 					}
 				/>
 				<Route
+					path="/settings/ai-terminal"
+					element={
+						<ProtectedRoute requirePermission="can_manage_settings">
+							<Layout>
+								<AiSettings />
+							</Layout>
+						</ProtectedRoute>
+					}
+				/>
+				<Route
 					path="/options"
 					element={
 						<ProtectedRoute requirePermission="can_manage_hosts">
@@ -450,19 +498,23 @@ function AppRoutes() {
 
 function App() {
 	return (
-		<AuthProvider>
-			<ThemeProvider>
-				<SettingsProvider>
-					<ColorThemeProvider>
-						<UpdateNotificationProvider>
-							<LogoProvider>
-								<AppRoutes />
-							</LogoProvider>
-						</UpdateNotificationProvider>
-					</ColorThemeProvider>
-				</SettingsProvider>
-			</ThemeProvider>
-		</AuthProvider>
+		<ErrorBoundary>
+			<AuthProvider>
+				<ThemeProvider>
+					<SettingsProvider>
+						<ColorThemeProvider>
+							<ToastProvider>
+								<UpdateNotificationProvider>
+									<LogoProvider>
+										<AppRoutes />
+									</LogoProvider>
+								</UpdateNotificationProvider>
+							</ToastProvider>
+						</ColorThemeProvider>
+					</SettingsProvider>
+				</ThemeProvider>
+			</AuthProvider>
+		</ErrorBoundary>
 	);
 }
 

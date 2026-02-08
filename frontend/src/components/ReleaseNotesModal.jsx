@@ -25,9 +25,7 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 			const response = await fetch(
 				`/api/v1/release-notes/${versionInfo.version}`,
 				{
-					headers: {
-						Authorization: `Bearer ${localStorage.getItem("token")}`,
-					},
+					credentials: "include",
 				},
 			);
 			return response.json();
@@ -39,7 +37,9 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 	const { data: socialMediaStats, isLoading: isLoadingSupporters } = useQuery({
 		queryKey: ["socialMediaStats"],
 		queryFn: async () => {
-			const response = await fetch("/api/v1/social-media-stats");
+			const response = await fetch("/api/v1/buy-me-a-coffee/supporter-count", {
+				credentials: "include",
+			});
 			if (!response.ok) return null;
 			return response.json();
 		},

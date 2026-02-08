@@ -30,8 +30,6 @@ const Settings = () => {
 	const updateIntervalId = useId();
 	const githubRepoUrlId = useId();
 	const sshKeyPathId = useId();
-	const _scriptFileId = useId();
-	const _scriptContentId = useId();
 	const [formData, setFormData] = useState({
 		serverProtocol: "http",
 		serverHost: "localhost",
@@ -116,13 +114,6 @@ const Settings = () => {
 	];
 
 	// Agent management state
-	const [_agentInfo, _setAgentInfo] = useState({
-		version: null,
-		lastModified: null,
-		size: null,
-		loading: true,
-		error: null,
-	});
 	const [showUploadModal, setShowUploadModal] = useState(false);
 
 	// Logo management state
@@ -244,8 +235,8 @@ const Settings = () => {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
-					Authorization: `Bearer ${localStorage.getItem("token")}`,
 				},
+				credentials: "include",
 				body: JSON.stringify({ logoType, fileContent, fileName }),
 			}).then((res) => res.json()),
 		onSuccess: (_data, variables) => {
@@ -479,7 +470,7 @@ const Settings = () => {
 			{/* Toast Notification */}
 			{toast && (
 				<div
-					className={`fixed top-4 right-4 z-50 max-w-md rounded-lg shadow-lg border-2 p-4 flex items-start space-x-3 animate-in slide-in-from-top-5 ${
+					className={`fixed top-20 right-4 z-[100] max-w-md rounded-lg shadow-lg border-2 p-4 flex items-start space-x-3 animate-in slide-in-from-top-5 ${
 						toast.type === "success"
 							? "bg-green-50 dark:bg-green-900/90 border-green-500 dark:border-green-600"
 							: "bg-red-50 dark:bg-red-900/90 border-red-500 dark:border-red-600"

@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { body, validationResult } = require("express-validator");
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateToken } = require("../middleware/auth");
@@ -55,7 +56,7 @@ router.get("/", authenticateToken, requireViewHosts, async (_req, res) => {
 
 		res.json(transformedRepos);
 	} catch (error) {
-		console.error("Repository list error:", error);
+		logger.error("Repository list error:", error);
 		res.status(500).json({ error: "Failed to fetch repositories" });
 	}
 });
@@ -89,7 +90,7 @@ router.get(
 
 			res.json(hostRepositories);
 		} catch (error) {
-			console.error("Host repositories error:", error);
+			logger.error("Host repositories error:", error);
 			res.status(500).json({ error: "Failed to fetch host repositories" });
 		}
 	},
@@ -138,7 +139,7 @@ router.get(
 
 			res.json(repository);
 		} catch (error) {
-			console.error("Repository detail error:", error);
+			logger.error("Repository detail error:", error);
 			res.status(500).json({ error: "Failed to fetch repository details" });
 		}
 	},
@@ -193,7 +194,7 @@ router.put(
 
 			res.json(repository);
 		} catch (error) {
-			console.error("Repository update error:", error);
+			logger.error("Repository update error:", error);
 			res.status(500).json({ error: "Failed to update repository" });
 		}
 	},
@@ -241,7 +242,7 @@ router.patch(
 				hostRepository,
 			});
 		} catch (error) {
-			console.error("Host repository toggle error:", error);
+			logger.error("Host repository toggle error:", error);
 			res.status(500).json({ error: "Failed to toggle repository status" });
 		}
 	},
@@ -284,7 +285,7 @@ router.get(
 					stats._count > 0 ? Math.round((secureRepos / stats._count) * 100) : 0,
 			});
 		} catch (error) {
-			console.error("Repository stats error:", error);
+			logger.error("Repository stats error:", error);
 			res.status(500).json({ error: "Failed to fetch repository statistics" });
 		}
 	},
@@ -336,7 +337,7 @@ router.delete(
 				},
 			});
 		} catch (error) {
-			console.error("Repository deletion error:", error);
+			logger.error("Repository deletion error:", error);
 
 			// Handle specific Prisma errors
 			if (error.code === "P2025") {
@@ -368,7 +369,7 @@ router.delete(
 	requireManageHosts,
 	async (_req, res) => {
 		try {
-			console.log("Cleaning up orphaned repositories...");
+			logger.info("Cleaning up orphaned repositories...");
 
 			// Find repositories with no host relationships
 			const orphanedRepos = await prisma.repositories.findMany({
@@ -396,7 +397,7 @@ router.delete(
 				},
 			});
 
-			console.log(`Deleted ${deleteResult.count} orphaned repositories`);
+			logger.info(`Deleted ${deleteResult.count} orphaned repositories`);
 
 			res.json({
 				message: `Successfully deleted ${deleteResult.count} orphaned repositories`,
@@ -408,7 +409,7 @@ router.delete(
 				})),
 			});
 		} catch (error) {
-			console.error("Repository cleanup error:", error);
+			logger.error("Repository cleanup error:", error);
 			res
 				.status(500)
 				.json({ error: "Failed to cleanup orphaned repositories" });

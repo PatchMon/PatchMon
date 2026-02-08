@@ -1,4 +1,5 @@
 const { getPrismaClient } = require("../config/prisma");
+const logger = require("../utils/logger");
 const { v4: uuidv4 } = require("uuid");
 
 const prisma = getPrismaClient();
@@ -42,13 +43,14 @@ async function createSettingsFromEnvironment() {
 			server_port: port,
 			update_interval: 60,
 			auto_update: false,
+			default_compliance_mode: "on-demand",
 			signup_enabled: false,
 			ignore_ssl_self_signed: false,
 			updated_at: new Date(),
 		},
 	});
 
-	console.log("Created settings");
+	logger.info("Created settings");
 	return settings;
 }
 
@@ -74,7 +76,7 @@ async function syncEnvironmentToSettings(currentSettings) {
 				updates[settingsField] = convertedValue;
 				hasChanges = true;
 				if (process.env.ENABLE_LOGGING === "true") {
-					console.log(
+					logger.info(
 						`Environment variable ${envVar} (${envValue}) differs from settings ${settingsField} (${currentValue}), updating...`,
 					);
 				}
@@ -93,7 +95,7 @@ async function syncEnvironmentToSettings(currentSettings) {
 		updates.server_url = constructedServerUrl;
 		hasChanges = true;
 		if (process.env.ENABLE_LOGGING === "true") {
-			console.log(`Updating server_url to: ${constructedServerUrl}`);
+			logger.info(`Updating server_url to: ${constructedServerUrl}`);
 		}
 	}
 
@@ -107,7 +109,7 @@ async function syncEnvironmentToSettings(currentSettings) {
 			},
 		});
 		if (process.env.ENABLE_LOGGING === "true") {
-			console.log(
+			logger.info(
 				`Synced ${Object.keys(updates).length} environment variables to settings`,
 			);
 		}
@@ -140,7 +142,7 @@ async function initSettings() {
 		cachedSettings = settings;
 		return settings;
 	} catch (error) {
-		console.error("Failed to initialise settings:", error);
+		logger.error("Failed to initialise settings:", error);
 		throw error;
 	}
 }
@@ -179,7 +181,7 @@ async function updateSettings(id, updateData) {
 		cachedSettings = updatedSettings;
 		return updatedSettings;
 	} catch (error) {
-		console.error("Failed to update settings:", error);
+		logger.error("Failed to update settings:", error);
 		throw error;
 	}
 }

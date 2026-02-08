@@ -1,6 +1,8 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
 const { v4: uuidv4 } = require("uuid");
+const { verifyApiKey } = require("../utils/apiKeyUtils");
 
 const prisma = getPrismaClient();
 const router = express.Router();
@@ -22,21 +24,28 @@ router.post("/docker", async (req, res) => {
 			agent_version: _agent_version,
 		} = req.body;
 
-		console.log(
+		logger.info(
 			`[Docker Integration] Received data from ${hostname || machine_id}`,
 		);
 
 		// Validate API credentials
 		const host = await prisma.hosts.findFirst({
-			where: { api_id: apiId, api_key: apiKey },
+			where: { api_id: apiId },
 		});
 
 		if (!host) {
-			console.warn("[Docker Integration] Invalid API credentials");
+			logger.warn("[Docker Integration] Invalid API credentials");
 			return res.status(401).json({ error: "Invalid API credentials" });
 		}
 
-		console.log(
+		// Verify API key (supports bcrypt hashed and legacy plaintext keys)
+		const isValidKey = await verifyApiKey(apiKey, host.api_key);
+		if (!isValidKey) {
+			logger.warn("[Docker Integration] Invalid API key");
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
+		logger.info(
 			`[Docker Integration] Processing for host: ${host.friendly_name}`,
 		);
 
@@ -57,7 +66,7 @@ router.post("/docker", async (req, res) => {
 
 		// Process containers
 		if (containers && Array.isArray(containers)) {
-			console.log(
+			logger.info(
 				`[Docker Integration] Processing ${containers.length} containers`,
 			);
 			for (const containerData of containers) {
@@ -107,6 +116,7 @@ router.post("/docker", async (req, res) => {
 						status: containerData.status,
 						state: containerData.state || containerData.status,
 						ports: containerData.ports || null,
+						labels: containerData.labels || null,
 						started_at: containerData.started_at
 							? parseDate(containerData.started_at)
 							: null,
@@ -124,6 +134,7 @@ router.post("/docker", async (req, res) => {
 						status: containerData.status,
 						state: containerData.state || containerData.status,
 						ports: containerData.ports || null,
+						labels: containerData.labels || null,
 						created_at: parseDate(containerData.created_at),
 						started_at: containerData.started_at
 							? parseDate(containerData.started_at)
@@ -137,7 +148,7 @@ router.post("/docker", async (req, res) => {
 
 		// Process standalone images
 		if (images && Array.isArray(images)) {
-			console.log(`[Docker Integration] Processing ${images.length} images`);
+			logger.info(`[Docker Integration] Processing ${images.length} images`);
 			for (const imageData of images) {
 				await prisma.docker_images.upsert({
 					where: {
@@ -175,7 +186,7 @@ router.post("/docker", async (req, res) => {
 
 		// Process volumes
 		if (volumes && Array.isArray(volumes)) {
-			console.log(`[Docker Integration] Processing ${volumes.length} volumes`);
+			logger.info(`[Docker Integration] Processing ${volumes.length} volumes`);
 			for (const volumeData of volumes) {
 				await prisma.docker_volumes.upsert({
 					where: {
@@ -224,7 +235,7 @@ router.post("/docker", async (req, res) => {
 
 		// Process networks
 		if (networks && Array.isArray(networks)) {
-			console.log(
+			logger.info(
 				`[Docker Integration] Processing ${networks.length} networks`,
 			);
 			for (const networkData of networks) {
@@ -283,7 +294,7 @@ router.post("/docker", async (req, res) => {
 
 		// Process updates
 		if (updates && Array.isArray(updates)) {
-			console.log(`[Docker Integration] Processing ${updates.length} updates`);
+			logger.info(`[Docker Integration] Processing ${updates.length} updates`);
 			for (const updateData of updates) {
 				// Find the image by repository and image_id
 				const image = await prisma.docker_images.findFirst({
@@ -330,7 +341,7 @@ router.post("/docker", async (req, res) => {
 			}
 		}
 
-		console.log(
+		logger.info(
 			`[Docker Integration] Successfully processed: ${containersProcessed} containers, ${imagesProcessed} images, ${volumesProcessed} volumes, ${networksProcessed} networks, ${updatesProcessed} updates`,
 		);
 
@@ -343,8 +354,8 @@ router.post("/docker", async (req, res) => {
 			updates_found: updatesProcessed,
 		});
 	} catch (error) {
-		console.error("[Docker Integration] Error collecting Docker data:", error);
-		console.error("[Docker Integration] Error stack:", error.stack);
+		logger.error("[Docker Integration] Error collecting Docker data:", error);
+		logger.error("[Docker Integration] Error stack:", error.stack);
 		res.status(500).json({
 			error: "Failed to collect Docker data",
 			message: error.message,

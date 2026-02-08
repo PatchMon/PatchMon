@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { Plus, Shield, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -13,6 +14,20 @@ const SettingsUsers = () => {
 		if (location.pathname === "/settings/roles") return "roles";
 		return "users";
 	});
+
+	// Fetch OIDC config to determine if OIDC is enabled
+	const { data: oidcConfig } = useQuery({
+		queryKey: ["oidcConfig"],
+		queryFn: async () => {
+			const response = await fetch("/api/v1/auth/oidc/config");
+			if (response.ok) {
+				return response.json();
+			}
+			return { enabled: false };
+		},
+	});
+
+	const isOIDCEnabled = oidcConfig?.enabled || false;
 
 	const tabs = [
 		{ id: "users", name: "Users", icon: Users, href: "/settings/users" },
@@ -68,7 +83,7 @@ const SettingsUsers = () => {
 								);
 							})}
 						</div>
-						{activeTab === "users" && (
+						{activeTab === "users" && !isOIDCEnabled && (
 							<button
 								type="button"
 								onClick={() =>
@@ -81,7 +96,7 @@ const SettingsUsers = () => {
 								Add User
 							</button>
 						)}
-						{activeTab === "roles" && (
+						{activeTab === "roles" && !isOIDCEnabled && (
 							<button
 								type="button"
 								onClick={() =>

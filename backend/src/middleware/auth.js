@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
 const {
 	validate_session,
@@ -11,8 +12,14 @@ const prisma = getPrismaClient();
 // Middleware to verify JWT token with session validation
 const authenticateToken = async (req, res, next) => {
 	try {
-		const authHeader = req.headers.authorization;
-		const token = authHeader?.split(" ")[1]; // Bearer TOKEN
+		// Check for token in cookies first (preferred for XSS protection)
+		// Then fall back to Authorization header for API clients
+		let token = req.cookies?.token;
+
+		if (!token) {
+			const authHeader = req.headers.authorization;
+			token = authHeader?.split(" ")[1]; // Bearer TOKEN
+		}
 
 		if (!token) {
 			return res.status(401).json({ error: "Access token required" });
@@ -26,7 +33,6 @@ const authenticateToken = async (req, res, next) => {
 
 		// Validate session and check inactivity timeout
 		const validation = await validate_session(decoded.sessionId, token);
-
 		if (!validation.valid) {
 			const error_messages = {
 				"Session not found": "Session not found",
@@ -70,7 +76,7 @@ const authenticateToken = async (req, res, next) => {
 		if (error.name === "TokenExpiredError") {
 			return res.status(401).json({ error: "Token expired" });
 		}
-		console.error("Auth middleware error:", error);
+		logger.error("Auth middleware error:", error);
 		return res.status(500).json({ error: "Authentication failed" });
 	}
 };
@@ -105,6 +111,7 @@ const optionalAuth = async (req, _res, next) => {
 					last_login: true,
 					created_at: true,
 					updated_at: true,
+					avatar_url: true,
 				},
 			});
 
@@ -138,7 +145,7 @@ const requireTfaIfEnabled = async (req, res, next) => {
 
 		next();
 	} catch (error) {
-		console.error("TFA requirement check error:", error);
+		logger.error("TFA requirement check error:", error);
 		return res.status(500).json({ error: "Authentication check failed" });
 	}
 };

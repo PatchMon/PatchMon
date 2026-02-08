@@ -24,9 +24,9 @@ COPY frontend/package*.json ./
 
 RUN echo "=== Starting npm install ===" &&\
     npm cache clean --force &&\
-    rm -rf node_modules ~/.npm /root/.npm &&\
+    rm -rf node_modules ~/.npm /root/.npm package-lock.json &&\
     echo "=== npm install ===" &&\
-    npm install --ignore-scripts --legacy-peer-deps --no-audit --prefer-online --fetch-retries=3 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 &&\
+    npm install --ignore-scripts --legacy-peer-deps --no-audit --force &&\
     echo "=== npm install completed ===" &&\
     npm cache clean --force
 

@@ -44,6 +44,9 @@ const Profile = () => {
 	const [isLoading, setIsLoading] = useState(false);
 	const [message, setMessage] = useState({ type: "", text: "" });
 
+	// Check if user is OIDC user
+	const isOIDCUser = user?.oidc_sub || user?.oidc_provider;
+
 	const [profileData, setProfileData] = useState({
 		username: user?.username || "",
 		email: user?.email || "",
@@ -77,13 +80,21 @@ const Profile = () => {
 
 	const handleProfileSubmit = async (e) => {
 		e.preventDefault();
+
+		// Prevent submission if user is OIDC user trying to modify OIDC-managed fields
+		if (isOIDCUser) {
+			setMessage({
+				type: "error",
+				text: "Username, email, and name fields are managed by your OIDC provider and cannot be modified here.",
+			});
+			return;
+		}
+
 		setIsLoading(true);
 		setMessage({ type: "", text: "" });
 
-		console.log("Submitting profile data:", profileData);
 		try {
 			const result = await updateProfile(profileData);
-			console.log("Profile update result:", result);
 			if (result.success) {
 				setMessage({ type: "success", text: "Profile updated successfully!" });
 			} else {
@@ -174,7 +185,9 @@ const Profile = () => {
 	const tabs = [
 		{ id: "profile", name: "Profile Information", icon: User },
 		{ id: "password", name: "Change Password", icon: Key },
-		{ id: "tfa", name: "Multi-Factor Authentication", icon: Smartphone },
+		...(isOIDCUser
+			? []
+			: [{ id: "tfa", name: "Multi-Factor Authentication", icon: Smartphone }]), // Hide TFA tab for OIDC users
 		{ id: "sessions", name: "Active Sessions", icon: Monitor },
 	];
 
@@ -191,9 +204,17 @@ const Profile = () => {
 			<div className="bg-white dark:bg-secondary-800 shadow rounded-lg p-4 md:p-6">
 				<div className="flex items-center space-x-3 md:space-x-4">
 					<div className="flex-shrink-0">
-						<div className="h-12 w-12 md:h-16 md:w-16 rounded-full bg-primary-100 dark:bg-primary-900 flex items-center justify-center">
-							<User className="h-6 w-6 md:h-8 md:w-8 text-primary-600 dark:text-primary-400" />
-						</div>
+						{user?.avatar_url ? (
+							<img
+								src={user.avatar_url}
+								alt={user.username}
+								className="h-12 w-12 md:h-16 md:w-16 rounded-full object-cover"
+							/>
+						) : (
+							<div className="h-12 w-12 md:h-16 md:w-16 rounded-full bg-primary-100 dark:bg-primary-900 flex items-center justify-center">
+								<User className="h-6 w-6 md:h-8 md:w-8 text-primary-600 dark:text-primary-400" />
+							</div>
+						)}
 					</div>
 					<div className="flex-1 min-w-0">
 						<h3 className="text-base md:text-lg font-medium text-secondary-900 dark:text-white truncate">
@@ -207,18 +228,22 @@ const Profile = () => {
 						<div className="mt-2">
 							<span
 								className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium ${
-									user?.role === "admin"
-										? "bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200"
-										: user?.role === "host_manager"
-											? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-											: user?.role === "readonly"
-												? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
-												: "bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
+									user?.role === "superadmin"
+										? "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+										: user?.role === "admin"
+											? "bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200"
+											: user?.role === "host_manager"
+												? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+												: user?.role === "readonly"
+													? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+													: "bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
 								}`}
 							>
 								<Shield className="h-3 w-3 mr-1" />
-								{user?.role?.charAt(0).toUpperCase() +
-									user?.role?.slice(1).replace("_", " ")}
+								{user?.role === "superadmin"
+									? "Super Admin"
+									: user?.role?.charAt(0).toUpperCase() +
+										user?.role?.slice(1).replace("_", " ")}
 							</span>
 						</div>
 					</div>
@@ -323,6 +348,11 @@ const Profile = () => {
 											className="block text-sm font-medium text-secondary-700 dark:text-secondary-200"
 										>
 											Username
+											{isOIDCUser && (
+												<span className="ml-2 text-xs text-secondary-500 dark:text-secondary-400 italic">
+													(Managed by OIDC provider)
+												</span>
+											)}
 										</label>
 										<div className="mt-1 relative">
 											<input
@@ -331,7 +361,12 @@ const Profile = () => {
 												id={usernameId}
 												value={profileData.username}
 												onChange={handleInputChange}
-												className="block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 pl-10 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+												disabled={isOIDCUser}
+												className={`block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 pl-10 ${
+													isOIDCUser
+														? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-secondary-400 cursor-not-allowed"
+														: "bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+												}`}
 												required
 											/>
 											<User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-secondary-500" />
@@ -344,6 +379,11 @@ const Profile = () => {
 											className="block text-sm font-medium text-secondary-700 dark:text-secondary-200"
 										>
 											Email Address
+											{isOIDCUser && (
+												<span className="ml-2 text-xs text-secondary-500 dark:text-secondary-400 italic">
+													(Managed by OIDC provider)
+												</span>
+											)}
 										</label>
 										<div className="mt-1 relative">
 											<input
@@ -352,7 +392,12 @@ const Profile = () => {
 												id={emailId}
 												value={profileData.email}
 												onChange={handleInputChange}
-												className="block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 pl-10 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+												disabled={isOIDCUser}
+												className={`block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 pl-10 ${
+													isOIDCUser
+														? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-secondary-400 cursor-not-allowed"
+														: "bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+												}`}
 												required
 											/>
 											<Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-secondary-500" />
@@ -365,6 +410,11 @@ const Profile = () => {
 											className="block text-sm font-medium text-secondary-700 dark:text-secondary-200"
 										>
 											First Name
+											{isOIDCUser && (
+												<span className="ml-2 text-xs text-secondary-500 dark:text-secondary-400 italic">
+													(Managed by OIDC provider)
+												</span>
+											)}
 										</label>
 										<div className="mt-1">
 											<input
@@ -373,7 +423,12 @@ const Profile = () => {
 												id={firstNameId}
 												value={profileData.first_name}
 												onChange={handleInputChange}
-												className="block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+												disabled={isOIDCUser}
+												className={`block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 ${
+													isOIDCUser
+														? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-secondary-400 cursor-not-allowed"
+														: "bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+												}`}
 											/>
 										</div>
 									</div>
@@ -384,6 +439,11 @@ const Profile = () => {
 											className="block text-sm font-medium text-secondary-700 dark:text-secondary-200"
 										>
 											Last Name
+											{isOIDCUser && (
+												<span className="ml-2 text-xs text-secondary-500 dark:text-secondary-400 italic">
+													(Managed by OIDC provider)
+												</span>
+											)}
 										</label>
 										<div className="mt-1">
 											<input
@@ -392,7 +452,12 @@ const Profile = () => {
 												id={lastNameId}
 												value={profileData.last_name}
 												onChange={handleInputChange}
-												className="block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+												disabled={isOIDCUser}
+												className={`block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 ${
+													isOIDCUser
+														? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-secondary-400 cursor-not-allowed"
+														: "bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+												}`}
 											/>
 										</div>
 									</div>
@@ -510,13 +575,28 @@ const Profile = () => {
 							<div className="flex justify-end">
 								<button
 									type="submit"
-									disabled={isLoading}
+									disabled={isLoading || isOIDCUser}
 									className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 w-full sm:w-auto justify-center sm:justify-end"
 								>
 									<Save className="h-4 w-4 mr-2" />
 									{isLoading ? "Saving..." : "Save Changes"}
 								</button>
 							</div>
+							{isOIDCUser && (
+								<div className="mt-4 rounded-md p-4 bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700">
+									<div className="flex">
+										<AlertCircle className="h-5 w-5 text-blue-400 dark:text-blue-300" />
+										<div className="ml-3">
+											<p className="text-sm font-medium text-blue-800 dark:text-blue-200">
+												Profile information is managed by your OIDC provider. To
+												update your username, email, or name, please contact
+												your administrator or update your information in the
+												OIDC provider.
+											</p>
+										</div>
+									</div>
+								</div>
+							)}
 						</form>
 					)}
 
@@ -657,6 +737,8 @@ const Profile = () => {
 
 // TFA Tab Component
 const TfaTab = () => {
+	const { user } = useAuth();
+	const isOIDCUser = user?.oidc_sub || user?.oidc_provider;
 	const verificationTokenId = useId();
 	const disablePasswordId = useId();
 	const [setupStep, setSetupStep] = useState("status"); // 'status', 'setup', 'verify', 'backup-codes'
@@ -843,6 +925,30 @@ const TfaTab = () => {
 		return (
 			<div className="flex items-center justify-center h-64">
 				<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+			</div>
+		);
+	}
+
+	// Show message for OIDC users
+	if (isOIDCUser) {
+		return (
+			<div className="space-y-6">
+				<div>
+					<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+						Multi-Factor Authentication
+					</h3>
+					<div className="rounded-md p-4 bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700">
+						<div className="flex">
+							<AlertCircle className="h-5 w-5 text-blue-400 dark:text-blue-300" />
+							<div className="ml-3">
+								<p className="text-sm font-medium text-blue-800 dark:text-blue-200">
+									Multi-factor authentication is managed by your OIDC provider.
+									Please configure MFA settings in your identity provider.
+								</p>
+							</div>
+						</div>
+					</div>
+				</div>
 			</div>
 		);
 	}
@@ -1191,8 +1297,6 @@ const TfaTab = () => {
 
 // Sessions Tab Component
 const SessionsTab = () => {
-	const _queryClient = useQueryClient();
-	const [_isLoading, _setIsLoading] = useState(false);
 	const [message, setMessage] = useState({ type: "", text: "" });
 
 	// Fetch user sessions
@@ -1204,9 +1308,7 @@ const SessionsTab = () => {
 		queryKey: ["user-sessions"],
 		queryFn: async () => {
 			const response = await fetch("/api/v1/auth/sessions", {
-				headers: {
-					Authorization: `Bearer ${localStorage.getItem("token")}`,
-				},
+				credentials: "include",
 			});
 			if (!response.ok) throw new Error("Failed to fetch sessions");
 			return response.json();
@@ -1218,9 +1320,7 @@ const SessionsTab = () => {
 		mutationFn: async (sessionId) => {
 			const response = await fetch(`/api/v1/auth/sessions/${sessionId}`, {
 				method: "DELETE",
-				headers: {
-					Authorization: `Bearer ${localStorage.getItem("token")}`,
-				},
+				credentials: "include",
 			});
 			if (!response.ok) throw new Error("Failed to revoke session");
 			return response.json();
@@ -1239,9 +1339,7 @@ const SessionsTab = () => {
 		mutationFn: async () => {
 			const response = await fetch("/api/v1/auth/sessions", {
 				method: "DELETE",
-				headers: {
-					Authorization: `Bearer ${localStorage.getItem("token")}`,
-				},
+				credentials: "include",
 			});
 			if (!response.ok) throw new Error("Failed to revoke sessions");
 			return response.json();

@@ -1,15 +1,85 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { body, validationResult } = require("express-validator");
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateToken } = require("../middleware/auth");
 const { requireManageSettings } = require("../middleware/permissions");
 const { getSettings, updateSettings } = require("../services/settingsService");
+const { verifyApiKey } = require("../utils/apiKeyUtils");
 
 const router = express.Router();
+
+/**
+ * Sanitize SVG content to remove potentially dangerous elements
+ * Removes: script tags, event handlers, external references, data URIs
+ * @param {string} svgContent - Raw SVG content
+ * @returns {string} - Sanitized SVG content
+ */
+function sanitizeSvg(svgContent) {
+	// Remove script tags and their contents
+	let sanitized = svgContent.replace(
+		/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,
+		"",
+	);
+
+	// Remove on* event handlers (onclick, onload, onerror, etc.)
+	sanitized = sanitized.replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, "");
+	sanitized = sanitized.replace(/\s+on\w+\s*=\s*[^\s>]+/gi, "");
+
+	// Remove javascript: URLs
+	sanitized = sanitized.replace(
+		/href\s*=\s*["']javascript:[^"']*["']/gi,
+		'href=""',
+	);
+	sanitized = sanitized.replace(
+		/xlink:href\s*=\s*["']javascript:[^"']*["']/gi,
+		'xlink:href=""',
+	);
+
+	// Remove data: URLs (can contain JavaScript)
+	sanitized = sanitized.replace(/href\s*=\s*["']data:[^"']*["']/gi, 'href=""');
+	sanitized = sanitized.replace(
+		/xlink:href\s*=\s*["']data:[^"']*["']/gi,
+		'xlink:href=""',
+	);
+
+	// Remove foreign object elements (can embed HTML/JS)
+	sanitized = sanitized.replace(
+		/<foreignObject\b[^<]*(?:(?!<\/foreignObject>)<[^<]*)*<\/foreignObject>/gi,
+		"",
+	);
+
+	// Remove use elements with external references (security risk)
+	sanitized = sanitized.replace(
+		/<use\b[^>]*xlink:href\s*=\s*["']https?:\/\/[^"']*["'][^>]*\/?>/gi,
+		"",
+	);
+
+	// Remove embed, object, iframe elements
+	sanitized = sanitized.replace(/<embed\b[^>]*\/?>/gi, "");
+	sanitized = sanitized.replace(
+		/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi,
+		"",
+	);
+	sanitized = sanitized.replace(
+		/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi,
+		"",
+	);
+
+	// Remove set and animate elements with dangerous attributes
+	sanitized = sanitized.replace(
+		/<set\b[^>]*attributeName\s*=\s*["']on\w+["'][^>]*\/?>/gi,
+		"",
+	);
+	sanitized = sanitized.replace(
+		/<animate\b[^>]*attributeName\s*=\s*["']on\w+["'][^>]*\/?>/gi,
+		"",
+	);
+
+	return sanitized;
+}
 const prisma = getPrismaClient();
 
-// WebSocket broadcaster for agent policy updates (no longer used - queue-based delivery preferred)
-// const { broadcastSettingsUpdate } = require("../services/agentWs");
 const { queueManager, QUEUE_NAMES } = require("../services/automation");
 
 // Helpers
@@ -52,15 +122,30 @@ function buildCronExpression(minutes) {
 }
 
 // Get current settings
+// Public settings endpoint - returns read-only settings that all authenticated users can view
+// This allows users to see things like auto_update status without requiring can_manage_settings
+router.get("/public", authenticateToken, async (_req, res) => {
+	try {
+		const settings = await getSettings();
+		// Return only public/read-only settings
+		res.json({
+			auto_update: settings.auto_update || false,
+		});
+	} catch (error) {
+		logger.error("Public settings fetch error:", error);
+		res.status(500).json({ error: "Failed to fetch public settings" });
+	}
+});
+
 router.get("/", authenticateToken, requireManageSettings, async (_req, res) => {
 	try {
 		const settings = await getSettings();
 		if (process.env.ENABLE_LOGGING === "true") {
-			console.log("Returning settings:", settings);
+			logger.info("Returning settings");
 		}
 		res.json(settings);
 	} catch (error) {
-		console.error("Settings fetch error:", error);
+		logger.error("Settings fetch error:", error);
 		res.status(500).json({ error: "Failed to fetch settings" });
 	}
 });
@@ -91,6 +176,12 @@ router.put(
 			.optional()
 			.isBoolean()
 			.withMessage("Auto update must be a boolean"),
+		body("defaultComplianceMode")
+			.optional()
+			.isIn(["disabled", "on-demand", "enabled"])
+			.withMessage(
+				"Default compliance mode must be one of: disabled, on-demand, enabled",
+			),
 		body("ignoreSslSelfSigned")
 			.optional()
 			.isBoolean()
@@ -143,7 +234,7 @@ router.put(
 		try {
 			const errors = validationResult(req);
 			if (!errors.isEmpty()) {
-				console.log("Validation errors:", errors.array());
+				logger.info("Validation errors:", errors.array());
 				return res.status(400).json({ errors: errors.array() });
 			}
 
@@ -153,6 +244,7 @@ router.put(
 				serverPort,
 				updateInterval,
 				autoUpdate,
+				defaultComplianceMode,
 				ignoreSslSelfSigned,
 				signupEnabled,
 				defaultUserRole,
@@ -181,6 +273,8 @@ router.put(
 				updateData.update_interval = normalizeUpdateInterval(updateInterval);
 			}
 			if (autoUpdate !== undefined) updateData.auto_update = autoUpdate;
+			if (defaultComplianceMode !== undefined)
+				updateData.default_compliance_mode = defaultComplianceMode;
 			if (ignoreSslSelfSigned !== undefined)
 				updateData.ignore_ssl_self_signed = ignoreSslSelfSigned;
 			if (signupEnabled !== undefined)
@@ -204,14 +298,16 @@ router.put(
 				updateData,
 			);
 
-			console.log("Settings updated successfully:", updatedSettings);
+			if (process.env.ENABLE_LOGGING === "true") {
+				logger.info("Settings updated successfully");
+			}
 
 			// If update interval changed, enqueue persistent jobs for agents
 			if (
 				updateInterval !== undefined &&
 				oldUpdateInterval !== updateData.update_interval
 			) {
-				console.log(
+				logger.info(
 					`Update interval changed from ${oldUpdateInterval} to ${updateData.update_interval} minutes. Enqueueing agent settings updates...`,
 				);
 
@@ -243,7 +339,7 @@ router.put(
 				settings: updatedSettings,
 			});
 		} catch (error) {
-			console.error("Settings update error:", error);
+			logger.error("Settings update error:", error);
 			res.status(500).json({ error: "Failed to update settings" });
 		}
 	},
@@ -256,7 +352,7 @@ router.get("/server-url", async (_req, res) => {
 		const serverUrl = settings.server_url;
 		res.json({ server_url: serverUrl });
 	} catch (error) {
-		console.error("Server URL fetch error:", error);
+		logger.error("Server URL fetch error:", error);
 		res.status(500).json({ error: "Failed to fetch server URL" });
 	}
 });
@@ -271,7 +367,7 @@ router.get("/login-settings", async (_req, res) => {
 			signup_enabled: settings.signup_enabled || false,
 		});
 	} catch (error) {
-		console.error("Failed to fetch login settings:", error);
+		logger.error("Failed to fetch login settings:", error);
 		res.status(500).json({ error: "Failed to fetch login settings" });
 	}
 });
@@ -292,7 +388,13 @@ router.get("/update-interval", async (req, res) => {
 			where: { api_id: apiId },
 		});
 
-		if (!host || host.api_key !== apiKey) {
+		if (!host) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
+		// Verify API key using bcrypt (or timing-safe comparison for legacy keys)
+		const isValidKey = await verifyApiKey(apiKey, host.api_key);
+		if (!isValidKey) {
 			return res.status(401).json({ error: "Invalid API credentials" });
 		}
 
@@ -303,20 +405,43 @@ router.get("/update-interval", async (req, res) => {
 			cronExpression: buildCronExpression(interval),
 		});
 	} catch (error) {
-		console.error("Update interval fetch error:", error);
+		logger.error("Update interval fetch error:", error);
 		res.json({ updateInterval: 60, cronExpression: "0 * * * *" });
 	}
 });
 
-// Get auto-update policy for agents (public endpoint)
-router.get("/auto-update", async (_req, res) => {
+// Get auto-update policy for agents (requires API authentication)
+router.get("/auto-update", async (req, res) => {
 	try {
+		// Verify API credentials
+		const apiId = req.headers["x-api-id"];
+		const apiKey = req.headers["x-api-key"];
+
+		if (!apiId || !apiKey) {
+			return res.status(401).json({ error: "API credentials required" });
+		}
+
+		// Validate API credentials
+		const host = await prisma.hosts.findUnique({
+			where: { api_id: apiId },
+		});
+
+		if (!host) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
+		// Verify API key using bcrypt (or timing-safe comparison for legacy keys)
+		const isValidKey = await verifyApiKey(apiKey, host.api_key);
+		if (!isValidKey) {
+			return res.status(401).json({ error: "Invalid API credentials" });
+		}
+
 		const settings = await getSettings();
 		res.json({
 			autoUpdate: settings.auto_update || false,
 		});
 	} catch (error) {
-		console.error("Auto-update fetch error:", error);
+		logger.error("Auto-update fetch error:", error);
 		res.json({ autoUpdate: false });
 	}
 });
@@ -328,7 +453,7 @@ router.post(
 	requireManageSettings,
 	async (req, res) => {
 		try {
-			const { logoType, fileContent, fileName } = req.body;
+			const { logoType, fileContent } = req.body;
 
 			if (!logoType || !fileContent) {
 				return res.status(400).json({
@@ -349,62 +474,29 @@ router.post(
 				});
 			}
 
+			// Validate file size (max 5MB for logos)
+			const MAX_FILE_SIZE = 5 * 1024 * 1024;
+			const estimatedSize = (fileContent.length * 3) / 4; // Approximate decoded size
+			if (estimatedSize > MAX_FILE_SIZE) {
+				return res.status(400).json({
+					error: "File size exceeds maximum allowed (5MB)",
+				});
+			}
+
 			const fs = require("node:fs").promises;
 			const path = require("node:path");
-			const _crypto = require("node:crypto");
 
 			// Create assets directory if it doesn't exist
-			// In Docker: use ASSETS_DIR environment variable (mounted volume)
 			// In development: save to public/assets (served by Vite)
-			// In production (non-Docker): save to public/assets (build copies to dist/)
-			const assetsDir = process.env.ASSETS_DIR
-				? path.resolve(process.env.ASSETS_DIR)
-				: path.resolve(__dirname, "../../../frontend/public/assets");
+			// In production: save to dist/assets (served by built app)
+			const isDevelopment = process.env.NODE_ENV !== "production";
+			const assetsDir = isDevelopment
+				? path.join(__dirname, "../../../frontend/public/assets")
+				: path.join(__dirname, "../../../frontend/dist/assets");
+			const resolvedAssetsDir = path.resolve(assetsDir);
+			await fs.mkdir(resolvedAssetsDir, { recursive: true });
 
-			console.log(`📁 Assets directory: ${assetsDir}`);
-
-			await fs.mkdir(assetsDir, { recursive: true });
-
-			// Verify directory exists
-			const dirExists = await fs
-				.access(assetsDir)
-				.then(() => true)
-				.catch(() => false);
-
-			if (!dirExists) {
-				throw new Error(
-					`Failed to create or access assets directory: ${assetsDir}`,
-				);
-			}
-
-			// Determine file extension and path
-			let fileExtension;
-			let fileName_final;
-
-			if (logoType === "favicon") {
-				fileExtension = ".svg";
-				fileName_final = fileName || "logo_square.svg";
-			} else {
-				// Determine extension from file content or use default
-				if (fileContent.startsWith("data:image/png")) {
-					fileExtension = ".png";
-				} else if (fileContent.startsWith("data:image/svg")) {
-					fileExtension = ".svg";
-				} else if (
-					fileContent.startsWith("data:image/jpeg") ||
-					fileContent.startsWith("data:image/jpg")
-				) {
-					fileExtension = ".jpg";
-				} else {
-					fileExtension = ".png"; // Default to PNG
-				}
-				fileName_final = fileName || `logo_${logoType}${fileExtension}`;
-			}
-
-			const filePath = path.resolve(assetsDir, fileName_final);
-			console.log(`📄 Full file path: ${filePath}`);
-
-			// Handle base64 data URLs
+			// Handle base64 data URLs - decode first to validate magic bytes
 			let fileBuffer;
 			if (fileContent.startsWith("data:")) {
 				const base64Data = fileContent.split(",")[1];
@@ -414,35 +506,90 @@ router.post(
 				fileBuffer = Buffer.from(fileContent, "base64");
 			}
 
+			// Magic byte validation for file type
+			const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+			const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
+			const isPng = fileBuffer.slice(0, 4).equals(PNG_MAGIC);
+			const isJpeg = fileBuffer.slice(0, 3).equals(JPEG_MAGIC);
+			const isSvg = fileBuffer.toString("utf8", 0, 100).includes("<svg");
+
+			// Determine file extension based on actual content (magic bytes)
+			let fileExtension;
+			let fileName_final;
+
+			if (logoType === "favicon") {
+				if (!isSvg) {
+					return res.status(400).json({
+						error: "Favicon must be an SVG file",
+					});
+				}
+				fileExtension = ".svg";
+				fileName_final = "logo_square.svg";
+			} else {
+				// Validate and determine extension from magic bytes
+				if (isPng) {
+					fileExtension = ".png";
+				} else if (isJpeg) {
+					fileExtension = ".jpg";
+				} else if (isSvg) {
+					fileExtension = ".svg";
+				} else {
+					return res.status(400).json({
+						error: "Invalid file type. Allowed: PNG, JPEG, SVG",
+					});
+				}
+				fileName_final = `logo_${logoType}${fileExtension}`;
+			}
+
+			// SECURITY: Sanitize filename to prevent path traversal
+			// Only allow alphanumeric, underscore, hyphen, and dot
+			const sanitizedFileName = path
+				.basename(fileName_final)
+				.replace(/[^a-zA-Z0-9_.-]/g, "_");
+			if (
+				sanitizedFileName !== fileName_final ||
+				sanitizedFileName.includes("..")
+			) {
+				return res.status(400).json({
+					error: "Invalid filename",
+				});
+			}
+
+			const filePath = path.join(resolvedAssetsDir, sanitizedFileName);
+
+			// SECURITY: Verify final path is within assets directory
+			if (!filePath.startsWith(resolvedAssetsDir + path.sep)) {
+				return res.status(400).json({
+					error: "Invalid file path",
+				});
+			}
+
 			// Create backup of existing file
 			try {
 				const backupPath = `${filePath}.backup.${Date.now()}`;
 				await fs.copyFile(filePath, backupPath);
-				console.log(`Created backup: ${backupPath}`);
+				logger.info(`Created backup: ${backupPath}`);
 			} catch (error) {
 				// Ignore if original doesn't exist
 				if (error.code !== "ENOENT") {
-					console.warn("Failed to create backup:", error.message);
+					logger.warn("Failed to create backup:", error.message);
 				}
+			}
+
+			// Sanitize SVG content to prevent XSS attacks
+			if (isSvg) {
+				const svgContent = fileBuffer.toString("utf8");
+				const sanitizedSvg = sanitizeSvg(svgContent);
+				fileBuffer = Buffer.from(sanitizedSvg, "utf8");
+				logger.info("SVG content sanitized for security");
 			}
 
 			// Write new logo file
 			await fs.writeFile(filePath, fileBuffer);
-			console.log(`✅ Logo file written to: ${filePath}`);
-
-			// Verify file was written
-			const fileExists = await fs
-				.access(filePath)
-				.then(() => true)
-				.catch(() => false);
-
-			if (!fileExists) {
-				throw new Error(`Failed to verify file was written: ${filePath}`);
-			}
 
 			// Update settings with new logo path
 			const settings = await getSettings();
-			const logoPath = `/assets/${fileName_final}`;
+			const logoPath = `/assets/${sanitizedFileName}`;
 
 			const updateData = {};
 			if (logoType === "dark") {
@@ -453,29 +600,21 @@ router.post(
 				updateData.favicon = logoPath;
 			}
 
-			const updatedSettings = await updateSettings(settings.id, updateData);
-			console.log(
-				`✅ Settings updated with new ${logoType} logo path: ${logoPath}`,
-			);
+			await updateSettings(settings.id, updateData);
 
 			// Get file stats
 			const stats = await fs.stat(filePath);
 
 			res.json({
 				message: `${logoType} logo uploaded successfully`,
-				fileName: fileName_final,
+				fileName: sanitizedFileName,
 				path: logoPath,
 				size: stats.size,
 				sizeFormatted: `${(stats.size / 1024).toFixed(1)} KB`,
-				timestamp: updatedSettings.updated_at.getTime(), // Include timestamp for cache busting
 			});
 		} catch (error) {
-			console.error("Upload logo error:", error);
-			res.status(500).json({
-				error: "Failed to upload logo",
-				details: error.message || "Unknown error",
-				stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
-			});
+			logger.error("Upload logo error:", error);
+			res.status(500).json({ error: "Failed to upload logo" });
 		}
 	},
 );
@@ -521,7 +660,7 @@ router.post(
 				logoType,
 			});
 		} catch (error) {
-			console.error("Reset logo error:", error);
+			logger.error("Reset logo error:", error);
 			res.status(500).json({ error: "Failed to reset logo" });
 		}
 	},

@@ -15,36 +15,30 @@ import {
 import { useState } from "react";
 import SettingsLayout from "../../components/SettingsLayout";
 
-// API functions - will be added to utils/api.js
+// API functions - use httpOnly cookies for auth
 const metricsAPI = {
 	getSettings: () =>
 		fetch("/api/v1/metrics", {
-			headers: {
-				Authorization: `Bearer ${localStorage.getItem("token")}`,
-			},
+			credentials: "include",
 		}).then((res) => res.json()),
 	updateSettings: (data) =>
 		fetch("/api/v1/metrics", {
 			method: "PUT",
 			headers: {
 				"Content-Type": "application/json",
-				Authorization: `Bearer ${localStorage.getItem("token")}`,
 			},
+			credentials: "include",
 			body: JSON.stringify(data),
 		}).then((res) => res.json()),
 	regenerateId: () =>
 		fetch("/api/v1/metrics/regenerate-id", {
 			method: "POST",
-			headers: {
-				Authorization: `Bearer ${localStorage.getItem("token")}`,
-			},
+			credentials: "include",
 		}).then((res) => res.json()),
 	sendNow: () =>
 		fetch("/api/v1/metrics/send-now", {
 			method: "POST",
-			headers: {
-				Authorization: `Bearer ${localStorage.getItem("token")}`,
-			},
+			credentials: "include",
 		}).then((res) => res.json()),
 };
 

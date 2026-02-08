@@ -1440,14 +1440,7 @@ server {
 
 # HTTPS server block
 server {
-$listen_line
-EOF
-        # Add http2_line only if it's not empty (for newer versions)
-        if [ -n "$http2_line" ]; then
-            echo "$http2_line" >> "$config_file"
-        fi
-        
-        cat >> "$config_file" << EOF
+    listen 443 ssl http2;
     server_name $fqdn;
     
     # SSL Configuration

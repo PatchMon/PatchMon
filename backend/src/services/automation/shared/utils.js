@@ -1,6 +1,6 @@
 // Common utilities for automation jobs
-const path = require("node:path");
-const fs = require("node:fs");
+const logger = require("../../../utils/logger");
+const dns = require("node:dns").promises;
 
 /**
  * Compare two semantic versions
@@ -26,63 +26,30 @@ function compareVersions(version1, version2) {
 }
 
 /**
- * Check public GitHub repository for latest release
- * @param {string} owner - Repository owner
- * @param {string} repo - Repository name
- * @returns {Promise<string|null>} - Latest version or null
+ * Check version from DNS TXT record
+ * @param {string} domain - DNS domain to query (e.g., "server.vcheck.patchmon.net")
+ * @returns {Promise<string>} - Latest version string (e.g., "1.4.0")
  */
-async function checkPublicRepo(owner, repo) {
+async function checkVersionFromDNS(domain) {
 	try {
-		const httpsRepoUrl = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
-
-		// Get current version for User-Agent (or use generic if unavailable)
-		let currentVersion = "unknown";
-		try {
-			// Use __dirname to construct absolute path to package.json
-			const packageJsonPath = path.join(__dirname, "../../../package.json");
-			const packageJsonContent = fs.readFileSync(packageJsonPath, "utf8");
-			const packageJson = JSON.parse(packageJsonContent);
-			if (packageJson?.version) {
-				currentVersion = packageJson.version;
-			}
-		} catch (packageError) {
-			console.warn(
-				"Could not read version from package.json for User-Agent:",
-				packageError.message,
-			);
+		const records = await dns.resolveTxt(domain);
+		if (!records || records.length === 0) {
+			throw new Error(`No TXT records found for ${domain}`);
 		}
-
-		const response = await fetch(httpsRepoUrl, {
-			method: "GET",
-			headers: {
-				Accept: "application/vnd.github.v3+json",
-				"User-Agent": `PatchMon-Server/${currentVersion}`,
-			},
-		});
-
-		if (!response.ok) {
-			const errorText = await response.text();
-			if (
-				errorText.includes("rate limit") ||
-				errorText.includes("API rate limit")
-			) {
-				console.log("⚠️ GitHub API rate limit exceeded, skipping update check");
-				return null;
-			}
-			throw new Error(
-				`GitHub API error: ${response.status} ${response.statusText}`,
-			);
+		// TXT records are arrays of strings, get first record's first string
+		const version = records[0][0].trim().replace(/^["']|["']$/g, "");
+		// Validate version format (semantic versioning)
+		if (!/^\d+\.\d+\.\d+/.test(version)) {
+			throw new Error(`Invalid version format: ${version}`);
 		}
-
-		const releaseData = await response.json();
-		return releaseData.tag_name.replace("v", "");
+		return version;
 	} catch (error) {
-		console.error("GitHub API error:", error.message);
+		logger.error(`DNS lookup failed for ${domain}:`, error.message);
 		throw error;
 	}
 }
 
 module.exports = {
 	compareVersions,
-	checkPublicRepo,
+	checkVersionFromDNS,
 };
