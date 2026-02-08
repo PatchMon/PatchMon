@@ -98,6 +98,7 @@ const complianceRoutes = require("./routes/complianceRoutes");
 const { initializeOIDC } = require("./auth/oidc");
 const socialMediaStatsRoutes = require("./routes/socialMediaStatsRoutes");
 const aiRoutes = require("./routes/aiRoutes");
+const alertRoutes = require("./routes/alertRoutes");
 const { initSettings } = require("./services/settingsService");
 const { queueManager } = require("./services/automation");
 const { authenticateToken, requireAdmin } = require("./middleware/auth");
@@ -630,6 +631,7 @@ app.use(`/api/${apiVersion}/buy-me-a-coffee`, buyMeACoffeeRoutes);
 app.use(`/api/${apiVersion}/compliance`, complianceRoutes);
 app.use(`/api/${apiVersion}/social-media-stats`, socialMediaStatsRoutes);
 app.use(`/api/${apiVersion}/ai`, aiRoutes);
+app.use(`/api/${apiVersion}/alerts`, alertRoutes);
 
 // Bull Board - will be populated after queue manager initializes
 let bullBoardRouter = null;

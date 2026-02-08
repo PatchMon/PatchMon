@@ -27,6 +27,7 @@ const Repositories = lazy(() => import("./pages/Repositories"));
 const RepositoryDetail = lazy(() => import("./pages/RepositoryDetail"));
 const Docker = lazy(() => import("./pages/Docker"));
 const Compliance = lazy(() => import("./pages/Compliance"));
+const Reporting = lazy(() => import("./pages/Reporting"));
 const DockerContainerDetail = lazy(
 	() => import("./pages/docker/ContainerDetail"),
 );
@@ -35,6 +36,7 @@ const DockerHostDetail = lazy(() => import("./pages/docker/HostDetail"));
 const DockerVolumeDetail = lazy(() => import("./pages/docker/VolumeDetail"));
 const DockerNetworkDetail = lazy(() => import("./pages/docker/NetworkDetail"));
 const AlertChannels = lazy(() => import("./pages/settings/AlertChannels"));
+const AlertSettings = lazy(() => import("./pages/settings/AlertSettings"));
 const Integrations = lazy(() => import("./pages/settings/Integrations"));
 const Notifications = lazy(() => import("./pages/settings/Notifications"));
 const PatchManagement = lazy(() => import("./pages/settings/PatchManagement"));
@@ -127,6 +129,16 @@ function AppRoutes() {
 						<ProtectedRoute requirePermission="can_view_packages">
 							<Layout>
 								<Packages />
+							</Layout>
+						</ProtectedRoute>
+					}
+				/>
+				<Route
+					path="/reporting"
+					element={
+						<ProtectedRoute requirePermission="can_view_reports">
+							<Layout>
+								<Reporting />
 							</Layout>
 						</ProtectedRoute>
 					}
@@ -351,6 +363,18 @@ function AppRoutes() {
 						<ProtectedRoute requirePermission="can_manage_settings">
 							<Layout>
 								<SettingsServerConfig />
+							</Layout>
+						</ProtectedRoute>
+					}
+				/>
+				<Route
+					path="/settings/alert-settings"
+					element={
+						<ProtectedRoute requirePermission="can_manage_settings">
+							<Layout>
+								<SettingsLayout>
+									<AlertSettings />
+								</SettingsLayout>
 							</Layout>
 						</ProtectedRoute>
 					}

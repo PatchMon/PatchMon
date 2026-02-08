@@ -769,6 +769,103 @@ class AgentVersionService {
 				`✅ Bulk update notification sent to ${result.notifiedCount} agents`,
 			);
 
+			// Create or update alert for agent update availability
+			try {
+				const alertService = require("./alertService");
+				const alertConfigService = require("./alertConfigService");
+				const { getPrismaClient } = require("../config/prisma");
+				const prismaClient = getPrismaClient();
+
+				// Check if alerts system is enabled
+				const alertsEnabled = await alertService.isAlertsEnabled();
+				if (!alertsEnabled) {
+					logger.info("⚠️ Alerts system is disabled, skipping agent update alert");
+					return {
+						success: true,
+						message: `Update notifications sent to ${result.notifiedCount} agents`,
+						updatedAgents: result.notifiedCount,
+						totalAgents: result.totalAgents,
+						targetVersion: versionInfo.latestVersion,
+					};
+				}
+
+				const alertType = "agent_update";
+				const isEnabled = await alertConfigService.isAlertTypeEnabled(alertType);
+
+				if (isEnabled && result.notifiedCount > 0) {
+					const defaultSeverity = await alertConfigService.getDefaultSeverity(alertType);
+
+					// Check if alert already exists for this version
+					const existingAlert = await prismaClient.alerts.findFirst({
+						where: {
+							type: alertType,
+							is_active: true,
+							metadata: {
+								path: ["latest_version"],
+								equals: versionInfo.latestVersion,
+							},
+						},
+					});
+
+					if (!existingAlert) {
+						// Create new alert
+						const alert = await alertService.createAlert(
+							alertType,
+							defaultSeverity,
+							"Agent Update Available",
+							`A new agent version (${versionInfo.latestVersion}) is available. ${result.notifiedCount} agent(s) need updates.`,
+							{
+								latest_version: versionInfo.latestVersion,
+								agents_needing_update: result.notifiedCount,
+								total_agents: result.totalAgents,
+							},
+						);
+
+						// Check auto-assignment
+						if (await alertConfigService.shouldAutoAssign(alertType, { severity: defaultSeverity })) {
+							const assignUserId = await alertConfigService.getAutoAssignUser(alertType);
+							if (assignUserId) {
+								await alertService.assignAlertToUser(alert.id, assignUserId, null);
+							}
+						}
+
+						logger.info(`✅ Created agent update alert: ${alert.id}`);
+					} else {
+						// Update existing alert with new count
+						await prismaClient.alerts.update({
+							where: { id: existingAlert.id },
+							data: {
+								message: `A new agent version (${versionInfo.latestVersion}) is available. ${result.notifiedCount} agent(s) need updates.`,
+								metadata: {
+									...existingAlert.metadata,
+									agents_needing_update: result.notifiedCount,
+									total_agents: result.totalAgents,
+								},
+								updated_at: new Date(),
+							},
+						});
+					}
+				} else if (result.notifiedCount === 0 && result.totalAgents > 0) {
+					// All agents are up to date - resolve existing alerts
+					const existingAlert = await prismaClient.alerts.findFirst({
+						where: {
+							type: alertType,
+							is_active: true,
+						},
+					});
+
+					if (existingAlert) {
+						await alertService.performAlertAction(null, existingAlert.id, "resolved", {
+							reason: "all_agents_up_to_date",
+						});
+						logger.info(`✅ Resolved agent update alert: ${existingAlert.id}`);
+					}
+				}
+			} catch (alertError) {
+				// Don't fail the update check if alert creation fails
+				logger.error("Failed to create/update agent update alert:", alertError);
+			}
+
 			return {
 				success: true,
 				message: `Update notifications sent to ${result.notifiedCount} agents`,

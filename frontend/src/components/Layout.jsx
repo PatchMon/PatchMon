@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import {
+	AlertTriangle,
 	BookOpen,
 	ChevronLeft,
 	ChevronRight,
@@ -30,7 +31,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useColorTheme } from "../contexts/ColorThemeContext";
 import SidebarContext from "../contexts/SidebarContext";
 import { useUpdateNotification } from "../contexts/UpdateNotificationContext";
-import { dashboardAPI, settingsAPI, versionAPI } from "../utils/api";
+import { alertsAPI, dashboardAPI, settingsAPI, versionAPI } from "../utils/api";
 import DiscordIcon from "./DiscordIcon";
 import GlobalSearch from "./GlobalSearch";
 import Logo from "./Logo";
@@ -96,7 +97,7 @@ const Layout = ({ children }) => {
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
 
-	// Fetch settings for favicon
+	// Fetch settings for favicon and alerts_enabled
 	const { data: settings } = useQuery({
 		queryKey: ["settings"],
 		queryFn: () => settingsAPI.get().then((res) => res.data),
@@ -117,6 +118,15 @@ const Layout = ({ children }) => {
 		enabled: canViewHosts(),
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
 		refetchOnWindowFocus: false,
+	});
+
+	// Fetch alert stats for Reporting badge (only if user can view reports and alerts are enabled)
+	const { data: alertStats } = useQuery({
+		queryKey: ["alert-stats", "sidebar"],
+		queryFn: () => alertsAPI.getAlertStats().then((res) => res.data.data || {}),
+		enabled: canViewReports() && settings?.alerts_enabled !== false,
+		refetchInterval: 5000, // Refresh every 5 seconds for real-time updates
+		staleTime: 0, // Always consider stale
 	});
 
 	// Track WebSocket status for hosts
@@ -240,6 +250,14 @@ const Layout = ({ children }) => {
 				});
 			}
 
+			if (canViewReports() && settings?.alerts_enabled !== false) {
+				inventoryItems.push({
+					name: "Reporting",
+					href: "/reporting",
+					icon: AlertTriangle,
+				});
+			}
+
 			if (inventoryItems.length > 0) {
 				nav.push({
 					section: "INVENTORY",
@@ -257,7 +275,7 @@ const Layout = ({ children }) => {
 				name: "Compliance",
 				href: "/compliance",
 				icon: Shield,
-				alpha: true,
+				beta: true,
 			});
 
 			if (canViewReports()) {
@@ -265,7 +283,6 @@ const Layout = ({ children }) => {
 					name: "Docker",
 					href: "/docker",
 					icon: Container,
-					beta: true,
 				});
 			}
 
@@ -325,6 +342,7 @@ const Layout = ({ children }) => {
 		if (path === "/") return "Dashboard";
 		if (path === "/hosts") return "Hosts";
 		if (path === "/packages") return "Packages";
+		if (path === "/reporting") return "Reporting";
 		if (path === "/repositories" || path.startsWith("/repositories/"))
 			return "Repositories";
 		if (path === "/services") return "Services";
@@ -759,7 +777,7 @@ const Layout = ({ children }) => {
 																	}
 																>
 																	<subItem.icon className="mr-3 h-5 w-5" />
-																	<span className="flex items-center gap-2">
+																	<span className="flex items-center gap-2 flex-1">
 																		{subItem.name}
 																		{subItem.name === "Hosts" &&
 																			stats?.cards?.totalHosts !==
@@ -767,6 +785,35 @@ const Layout = ({ children }) => {
 																				<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-200">
 																					{stats.cards.totalHosts}
 																				</span>
+																			)}
+																		{subItem.name === "Reporting" &&
+																			alertStats && (
+																				<div className="ml-2 flex items-center gap-0.5">
+																					{/* Informational - Blue */}
+																					{(alertStats.informational || 0) > 0 && (
+																						<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200">
+																							{alertStats.informational}
+																						</span>
+																					)}
+																					{/* Warning - Yellow */}
+																					{(alertStats.warning || 0) > 0 && (
+																						<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-200">
+																							{alertStats.warning}
+																						</span>
+																					)}
+																					{/* Error - Orange/Red */}
+																					{(alertStats.error || 0) > 0 && (
+																						<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-200">
+																							{alertStats.error}
+																						</span>
+																					)}
+																					{/* Critical - Red */}
+																					{(alertStats.critical || 0) > 0 && (
+																						<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200">
+																							{alertStats.critical}
+																						</span>
+																					)}
+																				</div>
 																			)}
 																		{subItem.comingSoon && (
 																			<span className="text-xs bg-secondary-100 dark:bg-secondary-600 text-secondary-600 dark:text-secondary-200 px-1.5 py-0.5 rounded">
@@ -1192,6 +1239,35 @@ const Layout = ({ children }) => {
 																							{stats.cards.totalHosts}
 																						</span>
 																					)}
+																				{subItem.name === "Reporting" &&
+																					alertStats && (
+																						<div className="ml-2 flex items-center gap-0.5">
+																							{/* Informational - Blue */}
+																							{(alertStats.informational || 0) > 0 && (
+																								<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200">
+																									{alertStats.informational}
+																								</span>
+																							)}
+																							{/* Warning - Yellow */}
+																							{(alertStats.warning || 0) > 0 && (
+																								<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-200">
+																									{alertStats.warning}
+																								</span>
+																							)}
+																							{/* Error - Orange/Red */}
+																							{(alertStats.error || 0) > 0 && (
+																								<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-200">
+																									{alertStats.error}
+																								</span>
+																							)}
+																							{/* Critical - Red */}
+																							{(alertStats.critical || 0) > 0 && (
+																								<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200">
+																									{alertStats.critical}
+																								</span>
+																							)}
+																						</div>
+																					)}
 																				{/* {subItem.name === "Packages" &&
 																			stats?.cards?.totalOutdatedPackages !==
 																				undefined && (
@@ -1518,6 +1594,7 @@ const Layout = ({ children }) => {
 								"/hosts",
 								"/repositories",
 								"/packages",
+								"/reporting",
 								"/automation",
 								"/compliance",
 								"/docker",
@@ -1535,7 +1612,7 @@ const Layout = ({ children }) => {
 
 							{/* Global Search Bar */}
 							<div
-								className={`flex items-center min-w-0 ${["/", "/hosts", "/repositories", "/packages", "/automation", "/compliance", "/docker"].includes(location.pathname) || location.pathname.startsWith("/hosts/") || location.pathname.startsWith("/docker/") || location.pathname.startsWith("/packages/") || location.pathname.startsWith("/settings/") ? "flex-1 max-w-none" : "flex-1 md:flex-none md:max-w-sm"}`}
+								className={`flex items-center min-w-0 ${["/", "/hosts", "/repositories", "/packages", "/reporting", "/automation", "/compliance", "/docker"].includes(location.pathname) || location.pathname.startsWith("/hosts/") || location.pathname.startsWith("/docker/") || location.pathname.startsWith("/packages/") || location.pathname.startsWith("/settings/") ? "flex-1 max-w-none" : "flex-1 md:flex-none md:max-w-sm"}`}
 							>
 								<GlobalSearch />
 							</div>

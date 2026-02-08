@@ -12,6 +12,17 @@ const {
 } = require("./sshTerminalWs");
 const { verifyApiKey } = require("../utils/apiKeyUtils");
 
+// Lazy load alert services to avoid circular dependencies
+let alertService = null;
+let alertConfigService = null;
+function getAlertServices() {
+	if (!alertService) {
+		alertService = require("./alertService");
+		alertConfigService = require("./alertConfigService");
+	}
+	return { alertService, alertConfigService };
+}
+
 // Connection registry by api_id
 const apiIdToSocket = new Map();
 
@@ -162,6 +173,67 @@ function init(server, prismaClient) {
 
 				// Notify subscribers of connection
 				notifyConnectionChange(apiId, true);
+				
+				// Resolve any existing host_down alerts when host reconnects
+				(async () => {
+					try {
+						const { alertService, alertConfigService } = getAlertServices();
+						const alertsEnabled = await alertService.isAlertsEnabled();
+						
+						if (alertsEnabled) {
+							const hostDownConfig = await alertConfigService.getAlertConfigByType("host_down");
+							
+							if (hostDownConfig && hostDownConfig.is_enabled) {
+								// Find the host
+								const host = await prisma.hosts.findUnique({
+									where: { api_id: apiId },
+									select: { id: true },
+								});
+								
+								if (host) {
+									// Find and resolve any existing host_down alerts
+									const allHostDownAlerts = await prisma.alerts.findMany({
+										where: {
+											type: "host_down",
+											is_active: true,
+										},
+									});
+									
+									const existingAlert = allHostDownAlerts.find(
+										(alert) => {
+											const alertHostId = alert.metadata?.host_id;
+											return alertHostId === host.id || alertHostId === host.id.toString();
+										},
+									);
+									
+									if (existingAlert) {
+										// Always resolve when host reconnects (immediate resolution)
+										try {
+											await alertService.performAlertAction(
+												null, // System action
+												existingAlert.id,
+												"resolved",
+												{
+													resolved_reason: "Host reconnected via WebSocket",
+													system_action: true,
+												},
+											);
+											logger.info(`✅ Resolved host_down alert ${existingAlert.id} for ${apiId} (host reconnected)`);
+										} catch (resolveError) {
+											logger.error(`❌ Failed to resolve alert ${existingAlert.id}:`, resolveError);
+										}
+									} else {
+									}
+								} else {
+									logger.warn(`[agent-ws] Host not found for apiId: ${apiId}`);
+								}
+							}
+						}
+					} catch (error) {
+						// Don't let alert resolution errors break the connection handler
+						logger.error(`[agent-ws] Error resolving host_down alert:`, error);
+					}
+				})();
 
 				ws.on("message", async (data) => {
 					// Handle incoming messages from agent (e.g., Docker status updates)
@@ -228,6 +300,82 @@ function init(server, prismaClient) {
 						connectionMetadata.delete(apiId);
 						// Notify subscribers of disconnection
 						notifyConnectionChange(apiId, false);
+						
+						// Create alert for host going offline (if alerts are enabled)
+						// This handles the case where connection is lost due to error
+						(async () => {
+							try {
+								const { alertService, alertConfigService } = getAlertServices();
+								const alertsEnabled = await alertService.isAlertsEnabled();
+								
+								if (alertsEnabled) {
+									const hostDownConfig = await alertConfigService.getAlertConfigByType("host_down");
+									
+									if (hostDownConfig && hostDownConfig.is_enabled) {
+										// Find the host
+										const host = await prisma.hosts.findUnique({
+											where: { api_id: apiId },
+											select: {
+												id: true,
+												friendly_name: true,
+												hostname: true,
+												api_id: true,
+											},
+										});
+										
+										if (host) {
+											// Check if alert already exists for this host
+											const allHostDownAlerts = await prisma.alerts.findMany({
+												where: {
+													type: "host_down",
+													is_active: true,
+												},
+											});
+											
+											const existingAlert = allHostDownAlerts.find(
+												(alert) => alert.metadata?.host_id === host.id,
+											);
+											
+											if (!existingAlert) {
+												// Create new alert
+												const severity = hostDownConfig.default_severity || "warning";
+												const hostName = host.friendly_name || host.hostname || host.api_id;
+												
+												const newAlert = await alertService.createAlert(
+													"host_down",
+													severity,
+													`Host ${hostName} is offline`,
+													`Host "${hostName}" lost WebSocket connection due to error.`,
+													{
+														host_id: host.id,
+														host_name: hostName,
+														disconnect_reason: "connection_error",
+													},
+												);
+												
+												// Auto-assign if configured
+												if (
+													newAlert &&
+													hostDownConfig.auto_assign_enabled &&
+													hostDownConfig.auto_assign_user_id
+												) {
+													await alertService.assignAlertToUser(
+														newAlert.id,
+														hostDownConfig.auto_assign_user_id,
+														null, // System assignment
+													);
+												}
+												
+												logger.info(`✅ Created host_down alert for ${hostName} (${apiId}) - connection error`);
+											}
+										}
+									}
+								}
+							} catch (error) {
+								// Don't let alert creation errors break the error handler
+								logger.error(`[agent-ws] Error creating host_down alert on error:`, error);
+							}
+						})();
 					}
 
 					// Try to close the connection gracefully if still open
@@ -243,13 +391,136 @@ function init(server, prismaClient) {
 					}
 				});
 
-				ws.on("close", (code, reason) => {
+				ws.on("close", async (code, reason) => {
 					const existing = apiIdToSocket.get(apiId);
 					if (existing === ws) {
 						apiIdToSocket.delete(apiId);
 						connectionMetadata.delete(apiId);
 						// Notify subscribers of disconnection
 						notifyConnectionChange(apiId, false);
+						
+						// Create alert for host going offline (if alerts are enabled)
+						try {
+							const { alertService, alertConfigService } = getAlertServices();
+							const alertsEnabled = await alertService.isAlertsEnabled();
+							
+							logger.info(`[agent-ws] Checking alerts for disconnect: apiId=${apiId}, alertsEnabled=${alertsEnabled}`);
+							
+							if (alertsEnabled) {
+								let hostDownConfig = await alertConfigService.getAlertConfigByType("host_down");
+								
+								// Create default config if it doesn't exist
+								if (!hostDownConfig) {
+									logger.info(`[agent-ws] Host down config not found, creating default...`);
+									try {
+										hostDownConfig = await alertConfigService.updateAlertConfig("host_down", {
+											is_enabled: true,
+											default_severity: "warning",
+											auto_assign_enabled: false,
+											notification_enabled: true,
+											cleanup_resolved_only: true,
+										});
+										logger.info(`[agent-ws] Created default host_down config`);
+									} catch (createError) {
+										logger.error(`[agent-ws] Failed to create host_down config:`, createError);
+									}
+								}
+								
+								logger.info(`[agent-ws] Host down config: ${hostDownConfig ? `enabled=${hostDownConfig.is_enabled}, auto_assign_enabled=${hostDownConfig.auto_assign_enabled}, auto_assign_user_id=${hostDownConfig.auto_assign_user_id}` : 'not found'}`);
+								
+								if (hostDownConfig && hostDownConfig.is_enabled) {
+									// Find the host
+									const host = await prisma.hosts.findUnique({
+										where: { api_id: apiId },
+										select: {
+											id: true,
+											friendly_name: true,
+											hostname: true,
+											api_id: true,
+										},
+									});
+									
+									if (host) {
+										logger.info(`[agent-ws] Found host: ${host.friendly_name || host.hostname || host.api_id} (id: ${host.id})`);
+										
+										// Check if alert already exists for this host
+										const allHostDownAlerts = await prisma.alerts.findMany({
+											where: {
+												type: "host_down",
+												is_active: true,
+											},
+										});
+										
+										const existingAlert = allHostDownAlerts.find(
+											(alert) => alert.metadata?.host_id === host.id,
+										);
+										
+										if (!existingAlert) {
+											// Create new alert
+											const severity = hostDownConfig.default_severity || "warning";
+											const hostName = host.friendly_name || host.hostname || host.api_id;
+											
+											logger.info(`[agent-ws] Creating host_down alert for ${hostName} (${apiId})`);
+											
+											const newAlert = await alertService.createAlert(
+												"host_down",
+												severity,
+												`Host ${hostName} is offline`,
+												`Host "${hostName}" lost WebSocket connection.`,
+												{
+													host_id: host.id,
+													host_name: hostName,
+													disconnect_code: code,
+													disconnect_reason: reason?.toString() || "none",
+												},
+											);
+											
+											if (newAlert) {
+												logger.info(`✅ Created host_down alert: ${newAlert.id} for ${hostName} (${apiId})`);
+												
+												// Auto-assign if configured
+												const autoAssignUserId = hostDownConfig.auto_assign_user_id;
+												logger.info(`[agent-ws] Checking auto-assign: enabled=${hostDownConfig.auto_assign_enabled}, userId=${autoAssignUserId}, userId type=${typeof autoAssignUserId}`);
+												
+												if (
+													hostDownConfig.auto_assign_enabled &&
+													autoAssignUserId
+												) {
+													try {
+														logger.info(`[agent-ws] Attempting to auto-assign alert ${newAlert.id} to user ${autoAssignUserId}...`);
+														await alertService.assignAlertToUser(
+															newAlert.id,
+															autoAssignUserId,
+															null, // System assignment
+														);
+														logger.info(`✅ Auto-assigned alert ${newAlert.id} to user ${autoAssignUserId}`);
+													} catch (assignError) {
+														logger.error(`❌ Failed to auto-assign alert ${newAlert.id}:`, assignError);
+														logger.error(`❌ Assignment error stack:`, assignError.stack);
+													}
+												} else {
+													logger.info(`[agent-ws] Auto-assign not configured: enabled=${hostDownConfig.auto_assign_enabled}, userId=${autoAssignUserId}`);
+												}
+											} else {
+												logger.warn(`[agent-ws] Alert creation returned null for ${hostName} (${apiId}) - alerts may be disabled`);
+											}
+										} else {
+											logger.info(`[agent-ws] Alert already exists for host ${host.id} (alert: ${existingAlert.id}), skipping creation`);
+										}
+									} else {
+										logger.warn(`[agent-ws] Host not found for apiId: ${apiId}`);
+									}
+								} else {
+									logger.warn(`[agent-ws] Host down config not found or disabled for ${apiId}`);
+								}
+							} else {
+								logger.info(`[agent-ws] Alerts system is disabled, skipping alert creation for ${apiId}`);
+							}
+						} catch (error) {
+							// Don't let alert creation errors break the disconnect handler
+							logger.error(`[agent-ws] Error creating host_down alert for ${apiId}:`, error);
+							logger.error(`[agent-ws] Error stack:`, error.stack);
+						}
 					}
 					logger.info(
 						`[agent-ws] disconnected api_id=${apiId} code=${code} reason=${reason || "none"} total=${apiIdToSocket.size}`,

@@ -431,4 +431,32 @@ export const aiAPI = {
 	complete: (data) => api.post("/ai/complete", data),
 };
 
+// Alerts API
+export const alertsAPI = {
+	getAlerts: (params = {}) => {
+		const queryString = new URLSearchParams(params).toString();
+		const url = `/alerts${queryString ? `?${queryString}` : ""}`;
+		return api.get(url);
+	},
+	getAlertStats: () => api.get("/alerts/stats"),
+	getAlert: (id) => api.get(`/alerts/${id}`),
+	getAlertHistory: (id) => api.get(`/alerts/${id}/history`),
+	getAvailableActions: () => api.get("/alerts/actions"),
+	performAlertAction: (id, action, metadata = null) =>
+		api.post(`/alerts/${id}/action`, { action, metadata }),
+	assignAlert: (id, userId) => api.post(`/alerts/${id}/assign`, { userId }),
+	unassignAlert: (id) => api.post(`/alerts/${id}/unassign`),
+	resolveAlert: (id) => api.put(`/alerts/${id}/resolve`),
+	getAlertConfig: () => api.get("/alerts/config"),
+	getAlertConfigByType: (alertType) => api.get(`/alerts/config/${alertType}`),
+	updateAlertConfig: (alertType, config) =>
+		api.put(`/alerts/config/${alertType}`, config),
+	bulkUpdateAlertConfig: (configs) =>
+		api.post("/alerts/config/bulk-update", { configs }),
+	previewCleanup: () => api.get("/alerts/cleanup/preview"),
+	triggerCleanup: () => api.post("/alerts/cleanup"),
+	deleteAlert: (id) => api.delete(`/alerts/${id}`),
+	bulkDeleteAlerts: (alertIds) => api.post("/alerts/bulk-delete", { alertIds }),
+};
+
 export default api;

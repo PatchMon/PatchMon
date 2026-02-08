@@ -16,6 +16,8 @@ const DockerImageUpdateCheck = require("./dockerImageUpdateCheck");
 const MetricsReporting = require("./metricsReporting");
 const SystemStatistics = require("./systemStatistics");
 const SocialMediaStats = require("./socialMediaStats");
+const AlertCleanup = require("./alertCleanup");
+const HostStatusMonitor = require("./hostStatusMonitor");
 
 // Queue names
 const QUEUE_NAMES = {
@@ -29,6 +31,8 @@ const QUEUE_NAMES = {
 	SYSTEM_STATISTICS: "system-statistics",
 	SOCIAL_MEDIA_STATS: "social-media-stats",
 	AGENT_COMMANDS: "agent-commands",
+	ALERT_CLEANUP: "alert-cleanup",
+	HOST_STATUS_MONITOR: "host-status-monitor",
 };
 
 /**
@@ -115,6 +119,10 @@ class QueueManager {
 			this,
 		);
 		this.automations[QUEUE_NAMES.SOCIAL_MEDIA_STATS] = new SocialMediaStats(
+			this,
+		);
+		this.automations[QUEUE_NAMES.ALERT_CLEANUP] = new AlertCleanup(this);
+		this.automations[QUEUE_NAMES.HOST_STATUS_MONITOR] = new HostStatusMonitor(
 			this,
 		);
 
@@ -216,6 +224,24 @@ class QueueManager {
 			QUEUE_NAMES.SOCIAL_MEDIA_STATS,
 			this.automations[QUEUE_NAMES.SOCIAL_MEDIA_STATS].process.bind(
 				this.automations[QUEUE_NAMES.SOCIAL_MEDIA_STATS],
+			),
+			workerOptions,
+		);
+
+		// Alert Cleanup Worker
+		this.workers[QUEUE_NAMES.ALERT_CLEANUP] = new Worker(
+			QUEUE_NAMES.ALERT_CLEANUP,
+			this.automations[QUEUE_NAMES.ALERT_CLEANUP].process.bind(
+				this.automations[QUEUE_NAMES.ALERT_CLEANUP],
+			),
+			workerOptions,
+		);
+
+		// Host Status Monitor Worker
+		this.workers[QUEUE_NAMES.HOST_STATUS_MONITOR] = new Worker(
+			QUEUE_NAMES.HOST_STATUS_MONITOR,
+			this.automations[QUEUE_NAMES.HOST_STATUS_MONITOR].process.bind(
+				this.automations[QUEUE_NAMES.HOST_STATUS_MONITOR],
 			),
 			workerOptions,
 		);
@@ -415,6 +441,8 @@ class QueueManager {
 		await this.automations[QUEUE_NAMES.METRICS_REPORTING].schedule();
 		await this.automations[QUEUE_NAMES.SYSTEM_STATISTICS].schedule();
 		await this.automations[QUEUE_NAMES.SOCIAL_MEDIA_STATS].schedule();
+		await this.automations[QUEUE_NAMES.ALERT_CLEANUP].schedule();
+		await this.automations[QUEUE_NAMES.HOST_STATUS_MONITOR].schedule();
 	}
 
 	/**

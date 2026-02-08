@@ -82,6 +82,11 @@ const SettingsLayout = ({ children }) => {
 				section: "Alert Management",
 				items: [
 					{
+						name: "Alert Settings",
+						href: "/settings/alert-settings",
+						icon: Bell,
+					},
+					{
 						name: "Alert Channels",
 						href: "/settings/alert-channels",
 						icon: Bell,

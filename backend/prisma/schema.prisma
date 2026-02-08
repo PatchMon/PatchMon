@@ -221,6 +221,8 @@ model settings {
   ai_provider                  String    @default("openrouter") // openrouter, anthropic, openai, gemini
   ai_model                     String?
   ai_api_key                   String?   // Encrypted API key
+  // Alerts system settings
+  alerts_enabled               Boolean   @default(true) // Master switch for alerts system
 }
 
 model update_history {
@@ -278,6 +280,10 @@ model users {
   user_sessions             user_sessions[]
   auto_enrollment_tokens    auto_enrollment_tokens[]
   release_notes_acceptances release_notes_acceptances[]
+  alerts_assigned           alerts[]                @relation("AlertAssignedTo")
+  alerts_resolved           alerts[]                 @relation("AlertResolvedBy")
+  alert_history             alert_history[]          @relation("AlertHistoryUser")
+  alert_config_auto_assign  alert_config[]           @relation("AlertConfigAutoAssign")
 
   @@index([role])
 }
@@ -592,4 +598,88 @@ model compliance_results {
   @@index([rule_id])
   @@index([status])
   @@index([scan_id, status])
+}
+
+// ==========================================
+// Alerts System Models
+// ==========================================
+
+model alerts {
+  id                String         @id @default(uuid())
+  type              String         // e.g., "server_update", "agent_update", "host_down"
+  severity          String         // "informational", "warning", "error", "critical"
+  title             String
+  message           String
+  metadata          Json?
+  is_active         Boolean        @default(true)
+  assigned_to_user_id String?      @db.Text
+  resolved_at       DateTime?
+  resolved_by_user_id String?      @db.Text
+  created_at        DateTime       @default(now())
+  updated_at        DateTime       @updatedAt
+  alert_history     alert_history[]
+  users_assigned    users?         @relation("AlertAssignedTo", fields: [assigned_to_user_id], references: [id], onDelete: SetNull)
+  users_resolved    users?         @relation("AlertResolvedBy", fields: [resolved_by_user_id], references: [id], onDelete: SetNull)
+
+  @@index([type])
+  @@index([severity])
+  @@index([is_active])
+  @@index([assigned_to_user_id])
+  @@index([created_at])
+}
+
+model alert_history {
+  id        String   @id @default(uuid())
+  alert_id  String
+  user_id   String? // Made nullable for system actions like 'created'
+  action    String   // Action type: "done", "silenced", "unsilenced", "resolved", "created", "acknowledged", etc.
+  metadata  Json?
+  created_at DateTime @default(now())
+  alerts    alerts   @relation(fields: [alert_id], references: [id], onDelete: Cascade)
+  users     users?   @relation("AlertHistoryUser", fields: [user_id], references: [id], onDelete: Cascade) // Optional user relation
+
+  @@index([alert_id])
+  @@index([user_id])
+  @@index([action])
+  @@index([created_at])
+  @@index([alert_id, created_at])
+}
+
+model alert_actions {
+  id              String   @id @default(uuid())
+  name            String   @unique // Action identifier: "done", "silenced", "unsilenced", etc.
+  display_name    String   // Human-readable name: "Mark as Done", "Silence", etc.
+  description     String?  @db.Text
+  is_state_action Boolean  @default(false) // Whether this action represents a state change
+  severity_override String? // If this action changes severity (optional)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@index([name])
+  @@index([is_state_action])
+}
+
+model alert_config {
+  id                      String   @id @default(uuid())
+  alert_type              String   @unique // Alert type: "server_update", "agent_update", "host_down", etc.
+  is_enabled              Boolean  @default(true)
+  default_severity        String   @default("informational")
+  auto_assign_enabled     Boolean  @default(false)
+  auto_assign_user_id     String?  @db.Text
+  auto_assign_rule        String?
+  auto_assign_conditions  Json?
+  retention_days           Int?
+  auto_resolve_after_days  Int?
+  cleanup_resolved_only    Boolean  @default(true)
+  notification_enabled     Boolean  @default(true)
+  escalation_enabled       Boolean  @default(false)
+  escalation_after_hours   Int?
+  metadata                 Json?
+  created_at               DateTime @default(now())
+  updated_at               DateTime @updatedAt
+  users_auto_assign        users?   @relation("AlertConfigAutoAssign", fields: [auto_assign_user_id], references: [id], onDelete: SetNull)
+
+  @@index([alert_type])
+  @@index([is_enabled])
+  @@index([auto_assign_enabled])
 }
