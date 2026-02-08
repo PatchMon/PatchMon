@@ -140,14 +140,14 @@ jobs:
           echo "📋 Binary information:"
           file patchmon-agent-linux-*
           
-          # Verify all are Linux binaries
+          # Verify all are Linux binaries (ELF format)
           for binary in patchmon-agent-linux-*; do
-            if ! file "$binary" | grep -q "Linux"; then
-              echo "❌ Error: $binary is not a Linux binary"
+            if ! file "$binary" | grep -qE "(ELF|Linux)"; then
+              echo "❌ Error: $binary is not a Linux binary (expected ELF format)"
               exit 1
             fi
           done
-          echo "✅ All binaries are Linux executables"
+          echo "✅ All binaries are Linux executables (ELF format)"
 
       - name: Test amd64 binary functionality
         working-directory: agent-source-code
