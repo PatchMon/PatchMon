@@ -339,12 +339,12 @@ Both Dockerfiles use multi-stage builds with separate development and production
 
 ```bash
 # Build development images
-docker build -f docker/backend.Dockerfile --target development -t patchmon-backend:dev .
-docker build -f docker/frontend.Dockerfile --target development -t patchmon-frontend:dev .
+docker build -f docker/backend.Dockerfile --target development --provenance=false --sbom=false -t patchmon-backend:dev .
+docker build -f docker/frontend.Dockerfile --target development --provenance=false --sbom=false -t patchmon-frontend:dev .
 
 # Build production images (default target)
-docker build -f docker/backend.Dockerfile -t patchmon-backend:latest .
-docker build -f docker/frontend.Dockerfile -t patchmon-frontend:latest .
+docker build -f docker/backend.Dockerfile --provenance=false --sbom=false -t patchmon-backend:latest .
+docker build -f docker/frontend.Dockerfile --provenance=false --sbom=false -t patchmon-frontend:latest .
 ```
 
 ## Development Commands

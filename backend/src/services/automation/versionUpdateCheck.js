@@ -288,35 +288,6 @@ class VersionUpdateCheck {
 			if (agentCurrentVersion && agentLatestVersion) {
 				logger.info("🔍 Checking agent update alert...");
 
-				// Ensure agent_update config exists (create default if missing)
-				let agentUpdateConfig =
-					await alertConfigService.getAlertConfigByType("agent_update");
-				if (!agentUpdateConfig) {
-					logger.info(
-						`[version-update-check] Agent update config not found, creating default...`,
-					);
-					try {
-						agentUpdateConfig = await alertConfigService.updateAlertConfig(
-							"agent_update",
-							{
-								is_enabled: true,
-								default_severity: "informational",
-								auto_assign_enabled: false,
-								notification_enabled: true,
-								cleanup_resolved_only: true,
-							},
-						);
-						logger.info(
-							`[version-update-check] Created default agent_update config`,
-						);
-					} catch (createError) {
-						logger.error(
-							`[version-update-check] Failed to create agent_update config:`,
-							createError,
-						);
-					}
-				}
-
 				await this.checkAndCreateUpdateAlert(
 					"agent_update",
 					agentCurrentVersion,

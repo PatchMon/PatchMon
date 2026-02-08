@@ -487,12 +487,19 @@ router.post(
 			const path = require("node:path");
 
 			// Create assets directory if it doesn't exist
-			// In development: save to public/assets (served by Vite)
-			// In production: save to dist/assets (served by built app)
-			const isDevelopment = process.env.NODE_ENV !== "production";
-			const assetsDir = isDevelopment
-				? path.join(__dirname, "../../../frontend/public/assets")
-				: path.join(__dirname, "../../../frontend/dist/assets");
+			// Priority: 1. ASSETS_DIR env var (Docker), 2. Development/public, 3. Production/dist
+			let assetsDir;
+			if (process.env.ASSETS_DIR) {
+				// Docker: Use ASSETS_DIR environment variable (mounted volume)
+				assetsDir = process.env.ASSETS_DIR;
+			} else {
+				// Local development: save to public/assets (served by Vite)
+				// Local production: save to dist/assets (served by built app)
+				const isDevelopment = process.env.NODE_ENV !== "production";
+				assetsDir = isDevelopment
+					? path.join(__dirname, "../../../frontend/public/assets")
+					: path.join(__dirname, "../../../frontend/dist/assets");
+			}
 			const resolvedAssetsDir = path.resolve(assetsDir);
 			await fs.mkdir(resolvedAssetsDir, { recursive: true });
 
