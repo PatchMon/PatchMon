@@ -73,6 +73,10 @@ jobs:
         with:
           go-version-file: 'agent-source-code/go.mod'
 
+      - name: Download dependencies
+        working-directory: agent-source-code
+        run: go mod download
+
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
