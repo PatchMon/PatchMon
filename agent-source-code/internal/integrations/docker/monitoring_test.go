@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,14 +13,17 @@ import (
 
 // TestMonitoringLoopReconnection tests that monitoring loop reconnects on EOF
 func TestMonitoringLoopReconnection(t *testing.T) {
-	attemptCount := 0
+	var attemptCount int64
 
 	t.Run("reconnect_on_eof", func(t *testing.T) {
 		startTime := time.Now()
 		testCtx, testCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer testCancel()
 
+		done := make(chan struct{})
+
 		go func() {
+			defer close(done)
 			backoffDuration := initialBackoffDuration
 
 			for i := 0; i < 3; i++ {
@@ -27,7 +31,7 @@ func TestMonitoringLoopReconnection(t *testing.T) {
 				case <-testCtx.Done():
 					return
 				case <-time.After(backoffDuration):
-					attemptCount++
+					atomic.AddInt64(&attemptCount, 1)
 					backoffDuration = time.Duration(float64(backoffDuration) * 1.5)
 					if backoffDuration > maxBackoffDuration {
 						backoffDuration = maxBackoffDuration
@@ -36,15 +40,23 @@ func TestMonitoringLoopReconnection(t *testing.T) {
 			}
 		}()
 
-		<-testCtx.Done()
+		// Wait for goroutine to complete or timeout
+		select {
+		case <-done:
+			// Goroutine completed
+		case <-testCtx.Done():
+			// Timeout reached
+		}
+
 		elapsed := time.Since(startTime)
+		count := atomic.LoadInt64(&attemptCount)
 
 		if elapsed < 4*time.Second {
 			t.Logf("Test completed too quickly: %v (expected >= 4 seconds)", elapsed)
 		}
 
-		if attemptCount != 3 {
-			t.Errorf("Expected 3 attempts, got %d", attemptCount)
+		if count != 3 {
+			t.Errorf("Expected 3 attempts, got %d", count)
 		}
 	})
 }
