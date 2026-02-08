@@ -117,17 +117,17 @@ func (d *Detector) getLatestKernelFromBoot() string {
 
 	var kernels []string
 	for _, entry := range entries {
-		name := entry.Name()
-		// Look for vmlinuz-* files
-		if strings.HasPrefix(name, "vmlinuz-") {
-			version := strings.TrimPrefix(name, "vmlinuz-")
-			// Skip generic/recovery kernels
-			if strings.Contains(version, "generic") || strings.Contains(version, "recovery") {
-				continue
+			name := entry.Name()
+			// Look for vmlinuz-* files
+			if strings.HasPrefix(name, "vmlinuz-") {
+				version := strings.TrimPrefix(name, "vmlinuz-")
+				// Skip recovery kernels but keep generic kernels
+				if strings.Contains(version, "recovery") {
+					continue
+				}
+				kernels = append(kernels, version)
 			}
-			kernels = append(kernels, version)
 		}
-	}
 
 	if len(kernels) == 0 {
 		return ""
@@ -244,7 +244,9 @@ func (d *Detector) getLatestKernelFromDpkg() string {
 		return ""
 	}
 
-	var latestVersion string
+	var kernels []string
+	metaPackages := make(map[string]bool)
+
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
 		fields := strings.Fields(line)
@@ -254,19 +256,76 @@ func (d *Detector) getLatestKernelFromDpkg() string {
 
 		// Look for installed kernel image packages
 		if fields[0] == "ii" && strings.HasPrefix(fields[1], "linux-image-") {
-			// Extract version from package name
-			// Format: linux-image-VERSION or linux-image-X.Y.Z-N-generic
 			pkgName := fields[1]
 			version := strings.TrimPrefix(pkgName, "linux-image-")
 
-			// Skip meta packages
-			if version == "generic" || version == "lowlatency" {
-				continue
+			// Identify meta-packages (generic, virtual, lowlatency, etc.)
+			if version == "generic" || version == "virtual" || version == "lowlatency" ||
+				version == "server" || version == "cloud" || version == "kvm" {
+				metaPackages[pkgName] = true
+			} else {
+				// This is an actual kernel package with version
+				kernels = append(kernels, version)
 			}
-
-			latestVersion = version
 		}
 	}
 
-	return latestVersion
+	// If we found actual kernel versions, return the latest
+	if len(kernels) > 0 {
+		// Sort kernels by version and return the latest
+		sort.Slice(kernels, func(i, j int) bool {
+			return compareKernelVersions(kernels[i], kernels[j]) < 0
+		})
+		return kernels[len(kernels)-1]
+	}
+
+	// If we only found meta-packages, resolve dependencies to find actual kernels
+	for metaPkg := range metaPackages {
+		if actualVersion := d.resolveMetaPackage(metaPkg); actualVersion != "" {
+			return actualVersion
+		}
+	}
+
+	return ""
+}
+
+// resolveMetaPackage resolves a meta-package (like linux-image-virtual) to the actual kernel version
+func (d *Detector) resolveMetaPackage(metaPkg string) string {
+	// Use dpkg-query to get the dependencies
+	cmd := exec.Command("dpkg-query", "-W", "-f=${Depends}", metaPkg)
+	output, err := cmd.Output()
+	if err != nil {
+		d.logger.WithError(err).Debug("Failed to query package dependencies")
+		return ""
+	}
+
+	depends := string(output)
+
+	// Parse dependencies to find linux-image-X.Y.Z-N-generic
+	// Dependencies format: "package1 (>= version), package2, ..."
+	parts := strings.Split(depends, ",")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+
+		// Remove version constraints like (>= 6.8.0.31.31)
+		if idx := strings.Index(part, " ("); idx != -1 {
+			part = part[:idx]
+		}
+
+		// Check if this is a linux-image package with actual version
+		if strings.HasPrefix(part, "linux-image-") {
+			version := strings.TrimPrefix(part, "linux-image-")
+
+			// Skip if this is another meta-package
+			if version == "generic" || version == "virtual" || version == "lowlatency" ||
+				version == "server" || version == "cloud" || version == "kvm" {
+				continue
+			}
+
+			// This should be an actual kernel version
+			return version
+		}
+	}
+
+	return ""
 }
