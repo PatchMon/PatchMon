@@ -2,13 +2,14 @@ version: "2"
 
 linters:
   enable:
+    # Enabled by default linters
     - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
     - unused
-    - goimports
+    # Additional useful linters
+    - gosimple
     - misspell
     - revive
     - gosec
