@@ -9,7 +9,6 @@ linters:
     - staticcheck
     - unused
     # Additional useful linters
-    - gosimple
     - misspell
     - revive
     - gosec
