@@ -25,12 +25,16 @@ func NewAPTManager(logger *logrus.Logger) *APTManager {
 
 // detectPackageManager detects whether to use apt or apt-get
 func (m *APTManager) detectPackageManager() string {
-	// Prefer apt over apt-get for modern Debian-based systems
-	packageManager := "apt"
-	if _, err := exec.LookPath("apt"); err != nil {
-		packageManager = "apt-get"
+	// Prefer /usr/bin/apt (upstream binary) to avoid wrapper scripts (like on Linux Mint)
+	if _, err := exec.LookPath("/usr/bin/apt"); err == nil {
+		return "/usr/bin/apt"
 	}
-	return packageManager
+	// Fallback to checking for "apt" in PATH
+	if _, err := exec.LookPath("apt"); err == nil {
+		return "apt"
+	}
+	// As a last resort, try "apt-get"
+	return "apt-get"
 }
 
 // GetPackages gets package information for APT-based systems
