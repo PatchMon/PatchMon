@@ -1,5 +1,5 @@
 const swaggerAutogen = require("swagger-autogen");
-const fs = require("fs");
+const fs = require("node:fs");
 
 const outputFile = "./swagger_output.json";
 const endpointsFiles = ["./server.js"];
@@ -34,10 +34,10 @@ swaggerAutogen(outputFile, endpointsFiles, doc).then(() => {
 	// Post-process: Fix paths to remove /api/ prefix since basePath is /api/v1
 	// swagger-autogen generates paths like /api/auth/... and /api/api/hosts/...
 	// With basePath /api/v1, we need to remove /api/ from paths so they become /auth/... and /api/hosts/...
-	const path = require("path");
+	const path = require("node:path");
 	const outputPath = path.join(__dirname, outputFile);
 	const swaggerDoc = JSON.parse(fs.readFileSync(outputPath, "utf8"));
-	const apiVersion = process.env.API_VERSION || "v1";
+	const _apiVersion = process.env.API_VERSION || "v1";
 
 	if (swaggerDoc.paths) {
 		const newPaths = {};

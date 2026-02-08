@@ -13,7 +13,6 @@ import {
 	PanelRightOpen,
 	Play,
 	Send,
-	Sparkles,
 	TerminalSquare,
 	X,
 } from "lucide-react";
@@ -50,7 +49,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	const currentLineRef = useRef(""); // Track current line for AI context
 
 	// Load cached username from localStorage, keyed by host ID for per-host caching
-	const getCachedUsername = () => {
+	const _getCachedUsername = () => {
 		if (!host?.id) return "root";
 		try {
 			const cached = localStorage.getItem(`ssh_username_${host.id}`);

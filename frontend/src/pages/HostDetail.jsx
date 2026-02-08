@@ -16,7 +16,6 @@ import {
 	Key,
 	MemoryStick,
 	Monitor,
-	Network,
 	Package,
 	RefreshCw,
 	RotateCcw,
@@ -617,7 +616,7 @@ const HostDetail = () => {
 	});
 
 	// Legacy: Toggle compliance on-demand-only mode mutation (kept for backward compatibility)
-	const toggleComplianceOnDemandOnlyMutation = useMutation({
+	const _toggleComplianceOnDemandOnlyMutation = useMutation({
 		mutationFn: (onDemandOnly) =>
 			adminHostsAPI
 				.setComplianceOnDemandOnly(hostId, onDemandOnly)

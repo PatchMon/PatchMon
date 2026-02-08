@@ -1,7 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-	Activity,
-	BarChart3,
 	BookOpen,
 	ChevronLeft,
 	ChevronRight,
@@ -24,7 +22,6 @@ import {
 	Star,
 	UserCircle,
 	X,
-	Zap,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { FaLinkedin, FaYoutube } from "react-icons/fa";
@@ -33,12 +30,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useColorTheme } from "../contexts/ColorThemeContext";
 import SidebarContext from "../contexts/SidebarContext";
 import { useUpdateNotification } from "../contexts/UpdateNotificationContext";
-import {
-	adminHostsAPI,
-	dashboardAPI,
-	settingsAPI,
-	versionAPI,
-} from "../utils/api";
+import { dashboardAPI, settingsAPI, versionAPI } from "../utils/api";
 import DiscordIcon from "./DiscordIcon";
 import GlobalSearch from "./GlobalSearch";
 import Logo from "./Logo";

@@ -476,7 +476,14 @@ const ComplianceTab = ({
 			console.log("[Compliance SSE] Disconnecting");
 			eventSource.close();
 		};
-	}, [scanInProgress, apiId]);
+	}, [
+		scanInProgress,
+		apiId,
+		refetchHistory, // Refetch data to get the latest results
+		refetchLatest, // Set scan as no longer in progress
+		setScanInProgress,
+		setScanMessage,
+	]);
 
 	const triggerScan = useMutation({
 		mutationFn: (options) => complianceAPI.triggerScan(hostId, options),

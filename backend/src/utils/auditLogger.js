@@ -182,7 +182,7 @@ async function storeAuditLog(auditEntry) {
 		const prisma = getPrismaClient();
 		await prisma.audit_logs.create({
 			data: {
-				id: require("crypto").randomUUID(),
+				id: require("node:crypto").randomUUID(),
 				event: auditEntry.event,
 				user_id: auditEntry.userId,
 				target_user_id: auditEntry.targetUserId,

@@ -14,7 +14,7 @@ const SENSITIVE_FIELDS = [
 ];
 
 // Fields that should be masked (show only first/last few characters)
-const MASKED_FIELDS = [];
+const _MASKED_FIELDS = [];
 
 /**
  * Sanitize an object by removing sensitive fields

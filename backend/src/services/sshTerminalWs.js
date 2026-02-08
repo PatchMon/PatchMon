@@ -6,7 +6,7 @@ const logger = require("../utils/logger");
 const WebSocket = require("ws");
 const { Client } = require("ssh2");
 const jwt = require("jsonwebtoken");
-const crypto = require("crypto");
+const crypto = require("node:crypto");
 const {
 	validate_session,
 	update_session_activity,
