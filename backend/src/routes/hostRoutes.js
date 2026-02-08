@@ -1832,6 +1832,117 @@ router.delete(
 	},
 );
 
+// Force immediate report from multiple agents (bulk)
+router.post(
+	"/bulk/fetch-report",
+	authenticateToken,
+	requireManageHosts,
+	[
+		body("hostIds")
+			.isArray({ min: 1 })
+			.withMessage("At least one host ID is required"),
+		body("hostIds.*")
+			.isLength({ min: 1 })
+			.withMessage("Each host ID must be provided"),
+	],
+	async (req, res) => {
+		try {
+			const errors = validationResult(req);
+			if (!errors.isEmpty()) {
+				return res.status(400).json({ errors: errors.array() });
+			}
+
+			const { hostIds } = req.body;
+
+			// Get the agent-commands queue
+			const queue = queueManager.queues[QUEUE_NAMES.AGENT_COMMANDS];
+
+			if (!queue) {
+				return res.status(500).json({
+					error: "Queue not available",
+				});
+			}
+
+			// Get all hosts to verify they exist
+			const hosts = await prisma.hosts.findMany({
+				where: { id: { in: hostIds } },
+				select: { id: true, friendly_name: true, api_id: true },
+			});
+
+			if (hosts.length !== hostIds.length) {
+				const foundIds = hosts.map((h) => h.id);
+				const missingIds = hostIds.filter((id) => !foundIds.includes(id));
+				return res.status(404).json({
+					error: "Some hosts not found",
+					missingIds,
+				});
+			}
+
+			// Add jobs to queue for all hosts
+			const jobs = [];
+			const results = [];
+
+			for (const host of hosts) {
+				try {
+					const job = await queue.add(
+						"report_now",
+						{
+							api_id: host.api_id,
+							type: "report_now",
+						},
+						{
+							attempts: 3,
+							backoff: {
+								type: "exponential",
+								delay: 2000,
+							},
+						},
+					);
+
+					jobs.push(job);
+					results.push({
+						success: true,
+						hostId: host.id,
+						friendlyName: host.friendly_name,
+						apiId: host.api_id,
+						jobId: job.id,
+					});
+				} catch (error) {
+					logger.error(
+						`Failed to queue report fetch for host ${host.id}:`,
+						error,
+					);
+					results.push({
+						success: false,
+						hostId: host.id,
+						friendlyName: host.friendly_name,
+						apiId: host.api_id,
+						error: error.message || "Failed to queue report fetch",
+					});
+				}
+			}
+
+			const successCount = results.filter((r) => r.success).length;
+			const failureCount = results.filter((r) => !r.success).length;
+
+			res.json({
+				success: true,
+				message: `Report fetch queued for ${successCount} of ${hosts.length} host${hosts.length !== 1 ? "s" : ""}`,
+				totalRequested: hostIds.length,
+				successCount,
+				failureCount,
+				results,
+			});
+		} catch (error) {
+			logger.error("Bulk force fetch report error:", error);
+			res.status(500).json({
+				error: "Failed to fetch reports",
+				details: error.message || "An unexpected error occurred",
+			});
+		}
+	},
+);
+
 // Force immediate report from agent
 router.post(
 	"/:hostId/fetch-report",

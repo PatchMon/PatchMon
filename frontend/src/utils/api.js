@@ -124,6 +124,8 @@ export const adminHostsAPI = {
 	refreshIntegrationStatus: (hostId) =>
 		api.post(`/hosts/${hostId}/refresh-integration-status`),
 	fetchReport: (hostId) => api.post(`/hosts/${hostId}/fetch-report`),
+	fetchReportBulk: (hostIds) =>
+		api.post("/hosts/bulk/fetch-report", { hostIds }),
 	updateFriendlyName: (hostId, friendlyName) =>
 		api.patch(`/hosts/${hostId}/friendly-name`, {
 			friendly_name: friendlyName,

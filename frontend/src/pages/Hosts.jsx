@@ -11,6 +11,7 @@ import {
 	Clock,
 	Columns,
 	Container,
+	Download,
 	ExternalLink,
 	Eye as EyeIcon,
 	EyeOff as EyeOffIcon,
@@ -321,6 +322,10 @@ const Hosts = () => {
 	const [selectedHosts, setSelectedHosts] = useState([]);
 	const [showBulkAssignModal, setShowBulkAssignModal] = useState(false);
 	const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+	const [bulkFetchReportMessage, setBulkFetchReportMessage] = useState({
+		text: "",
+		type: "success", // "success" or "error"
+	});
 	const [searchParams] = useSearchParams();
 	const navigate = useNavigate();
 
@@ -726,6 +731,41 @@ const Hosts = () => {
 		},
 	});
 
+	const bulkFetchReportMutation = useMutation({
+		mutationFn: (hostIds) =>
+			adminHostsAPI.fetchReportBulk(hostIds).then((res) => res.data),
+		onSuccess: (data) => {
+			queryClient.invalidateQueries(["hosts"]);
+			// Show success message
+			if (data?.successCount !== undefined) {
+				const message = `Report fetch queued for ${data.successCount} of ${data.totalRequested} host${data.totalRequested !== 1 ? "s" : ""}`;
+				setBulkFetchReportMessage({ text: message, type: "success" });
+				// Clear message after 5 seconds
+				setTimeout(
+					() => setBulkFetchReportMessage({ text: "", type: "success" }),
+					5000,
+				);
+			} else if (data?.message) {
+				setBulkFetchReportMessage({ text: data.message, type: "success" });
+				setTimeout(
+					() => setBulkFetchReportMessage({ text: "", type: "success" }),
+					5000,
+				);
+			}
+		},
+		onError: (error) => {
+			const errorMsg =
+				error.response?.data?.error ||
+				error.response?.data?.details ||
+				"Failed to fetch reports";
+			setBulkFetchReportMessage({ text: errorMsg, type: "error" });
+			setTimeout(
+				() => setBulkFetchReportMessage({ text: "", type: "error" }),
+				5000,
+			);
+		},
+	});
+
 	// Helper functions for bulk selection
 	const handleSelectHost = (hostId) => {
 		setSelectedHosts((prev) =>
@@ -765,6 +805,10 @@ const Hosts = () => {
 
 	const handleBulkDelete = () => {
 		bulkDeleteMutation.mutate(selectedHosts);
+	};
+
+	const handleBulkFetchReport = () => {
+		bulkFetchReportMutation.mutate(selectedHosts);
 	};
 
 	// Table filtering and sorting logic
@@ -1572,12 +1616,43 @@ const Hosts = () => {
 			<div className="card flex-1 flex flex-col md:overflow-hidden min-h-0">
 				<div className="px-4 py-4 sm:p-4 flex-1 flex flex-col md:overflow-hidden min-h-0">
 					<div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3 mb-4">
+						{bulkFetchReportMessage.text && (
+							<div
+								className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm ${
+									bulkFetchReportMessage.type === "success"
+										? "bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700 text-green-800 dark:text-green-200"
+										: "bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 text-red-800 dark:text-red-200"
+								}`}
+							>
+								{bulkFetchReportMessage.type === "success" ? (
+									<CheckCircle className="h-4 w-4" />
+								) : (
+									<AlertTriangle className="h-4 w-4" />
+								)}
+								<span>{bulkFetchReportMessage.text}</span>
+							</div>
+						)}
 						{selectedHosts.length > 0 && (
 							<div className="flex flex-wrap items-center gap-2 sm:gap-3">
 								<span className="text-sm text-secondary-600 dark:text-white/80 flex-shrink-0">
 									{selectedHosts.length} host
 									{selectedHosts.length !== 1 ? "s" : ""} selected
 								</span>
+								<button
+									type="button"
+									onClick={handleBulkFetchReport}
+									disabled={bulkFetchReportMutation.isPending}
+									className="btn-outline flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 min-h-[44px] text-xs sm:text-sm"
+									title="Fetch reports from selected hosts"
+								>
+									<Download
+										className={`h-4 w-4 flex-shrink-0 ${
+											bulkFetchReportMutation.isPending ? "animate-spin" : ""
+										}`}
+									/>
+									<span className="hidden sm:inline">Fetch Reports</span>
+									<span className="sm:hidden">Fetch</span>
+								</button>
 								<button
 									type="button"
 									onClick={() => setShowBulkAssignModal(true)}
