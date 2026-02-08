@@ -1823,6 +1823,52 @@
 				}
 			}
 		},
+		"/hosts/bulk/fetch-report": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"hostIds": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
 		"/hosts/{hostId}/fetch-report": {
 			"post": {
 				"description": "",

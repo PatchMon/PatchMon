@@ -39,6 +39,7 @@ const (
 	RepoTypeDebSrc = "deb-src"
 	RepoTypeRPM    = "rpm"
 	RepoTypeAPK    = "apk"
+	RepoTypePacman = "pacman"
 )
 
 // Log level constants

@@ -80,8 +80,14 @@ func (m *APTManager) GetPackages() []models.Package {
 		m.logger.WithField("count", len(upgradablePackages)).Debug("Found upgradable packages")
 	}
 
+	// Convert installed packages map to simple name->version map for CombinePackageData
+	installedPackagesMap := make(map[string]string)
+	for name, pkg := range installedPackages {
+		installedPackagesMap[name] = pkg.CurrentVersion
+	}
+
 	// Merge and deduplicate packages
-	packages := CombinePackageData(installedPackages, upgradablePackages)
+	packages := CombinePackageData(installedPackagesMap, upgradablePackages)
 
 	return packages
 }

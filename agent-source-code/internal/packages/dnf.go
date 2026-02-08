@@ -86,8 +86,14 @@ func (m *DNFManager) GetPackages() []models.Package {
 		upgradablePackages = []models.Package{}
 	}
 
+	// Convert installed packages map to simple name->version map for CombinePackageData
+	installedPackagesMap := make(map[string]string)
+	for name, pkg := range installedPackages {
+		installedPackagesMap[name] = pkg.CurrentVersion
+	}
+
 	// Merge and deduplicate packages
-	packages := CombinePackageData(installedPackages, upgradablePackages)
+	packages := CombinePackageData(installedPackagesMap, upgradablePackages)
 	m.logger.WithFields(logrus.Fields{
 		"total":             len(packages),
 		"installed":         len(installedPackages),

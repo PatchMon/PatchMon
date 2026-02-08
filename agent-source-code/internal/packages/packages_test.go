@@ -11,26 +11,17 @@ import (
 func TestCombinePackageData(t *testing.T) {
 	tests := []struct {
 		name               string
-		installedPackages  map[string]models.Package
+		installedPackages  map[string]string
 		upgradablePackages []models.Package
 		expectedCount      int
 		expectedUpgradable int
 	}{
 		{
 			name: "merge installed and upgradable",
-			installedPackages: map[string]models.Package{
-				"vim": {
-					Name:           "vim",
-					CurrentVersion: "2:8.2.3995-1ubuntu2.16",
-				},
-				"bash": {
-					Name:           "bash",
-					CurrentVersion: "5.1-6ubuntu1",
-				},
-				"curl": {
-					Name:           "curl",
-					CurrentVersion: "7.81.0-1ubuntu1.15",
-				},
+			installedPackages: map[string]string{
+				"vim":  "2:8.2.3995-1ubuntu2.16",
+				"bash": "5.1-6ubuntu1",
+				"curl": "7.81.0-1ubuntu1.15",
 			},
 			upgradablePackages: []models.Package{
 				{
@@ -45,7 +36,7 @@ func TestCombinePackageData(t *testing.T) {
 		},
 		{
 			name:               "empty inputs",
-			installedPackages:  map[string]models.Package{},
+			installedPackages:  map[string]string{},
 			upgradablePackages: []models.Package{},
 			expectedCount:      0,
 			expectedUpgradable: 0,

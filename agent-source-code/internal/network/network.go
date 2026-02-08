@@ -1,6 +1,7 @@
 package network
 
 import (
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -43,20 +44,37 @@ func (m *Manager) GetNetworkInfo() models.NetworkInfo {
 	return info
 }
 
-// getGatewayIP gets the default gateway IP from routing table file
+// getGatewayIP tries to get the default gateway IP (IPv4 first, then IPv6)
 func (m *Manager) getGatewayIP() string {
+	// Try IPv4 first
+	if gw := m.getIPv4GatewayIP(); gw != "" {
+		return gw
+	}
+
+	// If no IPv4 gateway found, try IPv6
+	if gw := m.getIPv6GatewayIP(); gw != "" {
+		return gw
+	}
+
+	return ""
+}
+
+// getIPv4GatewayIP gets the default gateway IP from IPv4 routing table
+func (m *Manager) getIPv4GatewayIP() string {
 	// Read /proc/net/route to find default gateway
 	data, err := os.ReadFile("/proc/net/route")
 	if err != nil {
-		m.logger.WithError(err).Warn("Failed to read /proc/net/route")
+		// Log as debug because on an IPv6-only system, this file might exist but be irrelevant, or fail cleanly
+		m.logger.WithError(err).Debug("Failed to read /proc/net/route")
 		return ""
 	}
 
 	for line := range strings.SplitSeq(string(data), "\n") {
 		fields := strings.Fields(line)
+		// Field 1 is Destination, Field 2 is Gateway
 		if len(fields) >= 3 && fields[1] == "00000000" { // Default route
 			// Convert hex gateway to IP
-			if gateway := m.hexToIP(fields[2]); gateway != "" {
+			if gateway := m.hexToIPv4(fields[2]); gateway != "" {
 				return gateway
 			}
 		}
@@ -65,8 +83,46 @@ func (m *Manager) getGatewayIP() string {
 	return ""
 }
 
-// hexToIP converts hex IP address to dotted decimal notation
-func (m *Manager) hexToIP(hexIP string) string {
+// getIPv6GatewayIP gets the default gateway IP from IPv6 routing table
+func (m *Manager) getIPv6GatewayIP() string {
+	// Read /proc/net/ipv6_route to find default gateway
+	data, err := os.ReadFile("/proc/net/ipv6_route")
+	if err != nil {
+		m.logger.WithError(err).Debug("Failed to read /proc/net/ipv6_route")
+		return ""
+	}
+
+	// Format of /proc/net/ipv6_route:
+	// 1. Dest network (32 hex chars)
+	// 2. Prefix length (2 hex chars)
+	// 3. Source network (32 hex chars)
+	// 4. Source prefix length (2 hex chars)
+	// 5. Next hop / Gateway (32 hex chars)
+	// ... other flags ...
+
+	for line := range strings.SplitSeq(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 5 {
+			dest := fields[0]
+			prefixLen := fields[1]
+			gatewayHex := fields[4]
+
+			// Check for default route: Dest is all zeros and prefix length is 00
+			if dest == "00000000000000000000000000000000" && prefixLen == "00" {
+				// Ignore if gateway is also 0 (means on-link) unless that's what we want,
+				// but usually we want the router address.
+				if gatewayHex != "00000000000000000000000000000000" {
+					return m.hexToIPv6(gatewayHex)
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
+// hexToIPv4 converts hex IP address to dotted decimal notation
+func (m *Manager) hexToIPv4(hexIP string) string {
 	if len(hexIP) != 8 {
 		return ""
 	}
@@ -82,6 +138,19 @@ func (m *Manager) hexToIP(hexIP string) string {
 	}
 
 	return net.IP(ip).String()
+}
+
+// hexToIPv6 converts standard hex IPv6 string (32 chars) to IP string
+func (m *Manager) hexToIPv6(hexIP string) string {
+	if len(hexIP) != 32 {
+		return ""
+	}
+	// IPv6 in /proc/net/ipv6_route is simply a 32-char hex string (Big Endian usually)
+	bytes, err := hex.DecodeString(hexIP)
+	if err != nil {
+		return ""
+	}
+	return net.IP(bytes).String()
 }
 
 // parseHexByte parses a 2-character hex string to byte
@@ -277,7 +346,7 @@ func (m *Manager) getInterfaceGateway(interfaceName string, ipv6 bool) string {
 			fields := strings.Fields(line)
 			if len(fields) >= 3 && fields[0] == interfaceName && fields[1] == "00000000" {
 				// Default route for this interface
-				if gateway := m.hexToIP(fields[2]); gateway != "" {
+				if gateway := m.hexToIPv4(fields[2]); gateway != "" {
 					return gateway
 				}
 			}

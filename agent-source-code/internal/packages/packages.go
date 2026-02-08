@@ -11,10 +11,11 @@ import (
 
 // Manager handles package information collection
 type Manager struct {
-	logger     *logrus.Logger
-	aptManager *APTManager
-	dnfManager *DNFManager
-	apkManager *APKManager
+	logger        *logrus.Logger
+	aptManager    *APTManager
+	dnfManager    *DNFManager
+	apkManager    *APKManager
+	pacmanManager *PacmanManager
 }
 
 // New creates a new package manager
@@ -22,12 +23,14 @@ func New(logger *logrus.Logger) *Manager {
 	aptManager := NewAPTManager(logger)
 	dnfManager := NewDNFManager(logger)
 	apkManager := NewAPKManager(logger)
+	pacmanManager := NewPacmanManager(logger)
 
 	return &Manager{
-		logger:     logger,
-		aptManager: aptManager,
-		dnfManager: dnfManager,
-		apkManager: apkManager,
+		logger:        logger,
+		aptManager:    aptManager,
+		dnfManager:    dnfManager,
+		apkManager:    apkManager,
+		pacmanManager: pacmanManager,
 	}
 }
 
@@ -44,6 +47,8 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 		return m.dnfManager.GetPackages(), nil
 	case "apk":
 		return m.apkManager.GetPackages(), nil
+	case "pacman":
+		return m.pacmanManager.GetPackages()
 	default:
 		return nil, fmt.Errorf("unsupported package manager: %s", packageManager)
 	}
@@ -72,33 +77,31 @@ func (m *Manager) detectPackageManager() string {
 		return "yum"
 	}
 
+	// Check for Pacman
+	if _, err := exec.LookPath("pacman"); err == nil {
+		return "pacman"
+	}
+
 	return "unknown"
 }
 
 // CombinePackageData combines and deduplicates installed and upgradable package lists
-func CombinePackageData(installedPackages map[string]models.Package, upgradablePackages []models.Package) []models.Package {
+func CombinePackageData(installedPackages map[string]string, upgradablePackages []models.Package) []models.Package {
 	packages := make([]models.Package, 0)
 	upgradableMap := make(map[string]bool)
 
 	// First, add all upgradable packages
 	for _, pkg := range upgradablePackages {
-		// Preserve description from installed packages if available and not present in upgradable
-		if installedPkg, exists := installedPackages[pkg.Name]; exists {
-			if pkg.Description == "" {
-				pkg.Description = installedPkg.Description
-			}
-		}
 		packages = append(packages, pkg)
 		upgradableMap[pkg.Name] = true
 	}
 
 	// Then add installed packages that are not upgradable
-	for packageName, pkg := range installedPackages {
+	for packageName, version := range installedPackages {
 		if !upgradableMap[packageName] {
 			packages = append(packages, models.Package{
-				Name:             pkg.Name,
-				Description:      pkg.Description,
-				CurrentVersion:   pkg.CurrentVersion,
+				Name:             packageName,
+				CurrentVersion:   version,
 				NeedsUpdate:      false,
 				IsSecurityUpdate: false,
 			})

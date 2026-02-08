@@ -10,19 +10,21 @@ import (
 
 // Manager handles repository information collection
 type Manager struct {
-	logger     *logrus.Logger
-	aptManager *APTManager
-	dnfManager *DNFManager
-	apkManager *APKManager
+	logger        *logrus.Logger
+	aptManager    *APTManager
+	dnfManager    *DNFManager
+	apkManager    *APKManager
+	pacmanManager *PacmanManager
 }
 
 // New creates a new repository manager
 func New(logger *logrus.Logger) *Manager {
 	return &Manager{
-		logger:     logger,
-		aptManager: NewAPTManager(logger),
-		dnfManager: NewDNFManager(logger),
-		apkManager: NewAPKManager(logger),
+		logger:        logger,
+		aptManager:    NewAPTManager(logger),
+		dnfManager:    NewDNFManager(logger),
+		apkManager:    NewAPKManager(logger),
+		pacmanManager: NewPacmanManager(logger),
 	}
 }
 
@@ -40,6 +42,8 @@ func (m *Manager) GetRepositories() ([]models.Repository, error) {
 		return repos, nil
 	case "apk":
 		return m.apkManager.GetRepositories()
+	case "pacman":
+		return m.pacmanManager.GetRepositories()
 	default:
 		m.logger.WithField("package_manager", packageManager).Warn("Unsupported package manager")
 		return []models.Repository{}, nil
@@ -51,6 +55,11 @@ func (m *Manager) detectPackageManager() string {
 	// Check for APK first (Alpine Linux)
 	if _, err := exec.LookPath("apk"); err == nil {
 		return "apk"
+	}
+
+	// Check for Pacman (Arch Linux and derivatives)
+	if _, err := exec.LookPath("pacman"); err == nil {
+		return "pacman"
 	}
 
 	// Check for APT

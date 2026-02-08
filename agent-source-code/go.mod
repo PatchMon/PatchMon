@@ -12,6 +12,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.47.0
+	gopkg.in/ini.v1 v1.67.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 

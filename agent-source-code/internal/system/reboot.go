@@ -260,8 +260,12 @@ func (d *Detector) getLatestKernelFromDpkg() string {
 			version := strings.TrimPrefix(pkgName, "linux-image-")
 
 			// Identify meta-packages (generic, virtual, lowlatency, etc.)
-			if version == "generic" || version == "virtual" || version == "lowlatency" ||
-				version == "server" || version == "cloud" || version == "kvm" {
+			// Also handle generic-hwe and generic-* patterns (like generic-hwe-22.04)
+			isMetaPackage := version == "generic" || version == "virtual" || version == "lowlatency" ||
+				version == "server" || version == "cloud" || version == "kvm" ||
+				version == "generic-hwe" || strings.HasPrefix(version, "generic-")
+
+			if isMetaPackage {
 				metaPackages[pkgName] = true
 			} else {
 				// This is an actual kernel package with version
@@ -317,8 +321,10 @@ func (d *Detector) resolveMetaPackage(metaPkg string) string {
 			version := strings.TrimPrefix(part, "linux-image-")
 
 			// Skip if this is another meta-package
+			// Also handle generic-hwe and generic-* patterns
 			if version == "generic" || version == "virtual" || version == "lowlatency" ||
-				version == "server" || version == "cloud" || version == "kvm" {
+				version == "server" || version == "cloud" || version == "kvm" ||
+				version == "generic-hwe" || strings.HasPrefix(version, "generic-") {
 				continue
 			}
 
