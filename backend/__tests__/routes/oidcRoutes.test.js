@@ -28,7 +28,10 @@ const {
 	createDefaultDashboardPreferences,
 } = require("../../src/routes/dashboardPreferencesRoutes");
 const { v4: uuidv4 } = require("uuid");
-const { AUDIT_EVENTS, logAuditEvent } = require("../../src/utils/auditLogger");
+const {
+	AUDIT_EVENTS: _AUDIT_EVENTS,
+	logAuditEvent,
+} = require("../../src/utils/auditLogger");
 
 // Setup default mock implementations
 const mockPrisma = {

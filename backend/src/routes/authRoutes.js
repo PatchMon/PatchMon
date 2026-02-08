@@ -559,6 +559,38 @@ const generateToken = (userId) => {
 	});
 };
 
+// Public endpoint for user assignment (returns minimal user info for dropdowns)
+// Available to all authenticated users for assignment purposes (alerts, etc.)
+router.get("/users/for-assignment", authenticateToken, async (_req, res) => {
+	try {
+		const queryOptions = {
+			select: {
+				id: true,
+				username: true,
+				email: true,
+				first_name: true,
+				last_name: true,
+				is_active: true,
+			},
+			where: {
+				is_active: true, // Only return active users
+			},
+			orderBy: {
+				username: "asc",
+			},
+		};
+
+		const users = await prisma.users.findMany(queryOptions);
+
+		res.json({
+			data: users,
+		});
+	} catch (error) {
+		logger.error("List users for assignment error:", error);
+		res.status(500).json({ error: "Failed to fetch users" });
+	}
+});
+
 // Admin endpoint to list all users with optional pagination
 // Query params: page (default: 1), pageSize (default: 50, max: 200), all (skip pagination)
 router.get(
@@ -1873,6 +1905,8 @@ router.get("/profile", authenticateToken, async (req, res) => {
 			user: {
 				...req.user,
 				accepted_release_notes_versions: acceptedVersions,
+				oidc_sub: req.user.oidc_sub || null,
+				oidc_provider: req.user.oidc_provider || null,
 			},
 		});
 	} catch (error) {
@@ -1919,6 +1953,22 @@ router.put(
 			const errors = validationResult(req);
 			if (!errors.isEmpty()) {
 				return res.status(400).json({ errors: errors.array() });
+			}
+
+			// Check if user is OIDC user - prevent modification of OIDC-managed fields
+			if (req.user.oidc_sub || req.user.oidc_provider) {
+				// OIDC users cannot modify username, email, first_name, or last_name
+				if (
+					req.body.username ||
+					req.body.email ||
+					req.body.first_name !== undefined ||
+					req.body.last_name !== undefined
+				) {
+					return res.status(403).json({
+						error:
+							"Profile information is managed by your OIDC provider and cannot be modified here",
+					});
+				}
 			}
 
 			const { username, email, first_name, last_name } = req.body;

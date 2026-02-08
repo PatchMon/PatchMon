@@ -164,6 +164,27 @@ async function handleCallback(code, codeVerifier, expectedNonce) {
 		throw new Error("Issuer mismatch - token may be from wrong IdP");
 	}
 
+	// Extract groups from various possible claim names (Authentik uses different names)
+	// Authentik may use: groups, ak_groups, or groups in the access token
+	let groups = [];
+	if (claims.groups) {
+		groups = Array.isArray(claims.groups) ? claims.groups : [claims.groups];
+	} else if (claims.ak_groups) {
+		// Authentik-specific claim name
+		groups = Array.isArray(claims.ak_groups)
+			? claims.ak_groups
+			: [claims.ak_groups];
+	}
+
+	// Log groups for debugging
+	if (groups.length > 0) {
+		logger.info(`OIDC groups found: ${JSON.stringify(groups)}`);
+	} else {
+		logger.warn(
+			`No groups found in OIDC token. Available claims: ${Object.keys(claims).join(", ")}`,
+		);
+	}
+
 	return {
 		sub: claims.sub,
 		email: claims.email,
@@ -172,7 +193,7 @@ async function handleCallback(code, codeVerifier, expectedNonce) {
 		givenName: claims.given_name || null,
 		familyName: claims.family_name || null,
 		emailVerified: claims.email_verified || false,
-		groups: claims.groups || [],
+		groups: groups,
 		picture: claims.picture || null,
 		raw: claims,
 	};

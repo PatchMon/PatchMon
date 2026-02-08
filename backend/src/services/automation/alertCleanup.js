@@ -60,7 +60,9 @@ class AlertCleanup {
 
 			for (const config of configs) {
 				const cutoffDate = new Date();
-				cutoffDate.setDate(cutoffDate.getDate() - config.auto_resolve_after_days);
+				cutoffDate.setDate(
+					cutoffDate.getDate() - config.auto_resolve_after_days,
+				);
 
 				const alertsToResolve = await prisma.alerts.findMany({
 					where: {
@@ -147,4 +149,3 @@ class AlertCleanup {
 }
 
 module.exports = AlertCleanup;
-

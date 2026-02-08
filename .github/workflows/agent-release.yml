@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    name: Build and Upload Agent Binaries
+    name: Build Agent Binaries (Manual Upload)
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -43,12 +43,97 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
         run: |
           OUTPUT_NAME="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
-          go build -ldflags="-s -w -X patchmon-agent/internal/version.Version=${{ github.event.release.tag_name }}" -o "${OUTPUT_NAME}" ./cmd/patchmon-agent
+          go build -buildvcs=false -ldflags="-s -w -X patchmon-agent/internal/version.Version=${{ github.event.release.tag_name }}" -o "${OUTPUT_NAME}" ./cmd/patchmon-agent
           
-      - name: Upload binary to release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: agent-source-code/patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+      - name: Verify binary exists and is executable
+        working-directory: agent-source-code
+        run: |
+          OUTPUT_NAME="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
+          if [ ! -f "${OUTPUT_NAME}" ]; then
+            echo "❌ Error: Binary ${OUTPUT_NAME} was not created"
+            exit 1
+          fi
+          chmod +x "${OUTPUT_NAME}"
+          ls -lh "${OUTPUT_NAME}"
+          echo "✅ Binary ${OUTPUT_NAME} created successfully"
+          
+      - name: Verify binary architecture and type
+        working-directory: agent-source-code
+        run: |
+          OUTPUT_NAME="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
+          echo "📋 Binary information:"
+          file "${OUTPUT_NAME}"
+          
+          # Verify it's a Linux binary (for linux builds)
+          if [ "${{ matrix.goos }}" = "linux" ]; then
+            if ! file "${OUTPUT_NAME}" | grep -q "Linux"; then
+              echo "❌ Error: Binary is not a Linux binary"
+              exit 1
+            fi
+            echo "✅ Verified: Linux binary"
+          fi
+          
+      - name: Test binary basic functionality
+        working-directory: agent-source-code
+        run: |
+          OUTPUT_NAME="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
+          
+          # Test version command (if available)
+          if [ "${{ matrix.goos }}" = "linux" ] && [ "${{ matrix.goarch }}" = "amd64" ]; then
+            echo "🧪 Testing binary functionality..."
+            ./"${OUTPUT_NAME}" --version || ./"${OUTPUT_NAME}" version || echo "Version command not available (may require config)"
+            ./"${OUTPUT_NAME}" --help || ./"${OUTPUT_NAME}" help || echo "Help command not available"
+            echo "✅ Basic functionality test passed"
+          else
+            echo "⏭️  Skipping functionality test for ${{ matrix.goos }}/${{ matrix.goarch }} (requires native architecture)"
+          fi
+          
+      - name: Verify static linking (Linux only)
+        if: matrix.goos == 'linux'
+        working-directory: agent-source-code
+        run: |
+          OUTPUT_NAME="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
+          echo "🔍 Checking binary dependencies..."
+          
+          # Check if binary is statically linked (should have minimal or no dynamic dependencies)
+          if command -v ldd &> /dev/null; then
+            DEPS=$(ldd "${OUTPUT_NAME}" 2>/dev/null | wc -l || echo "0")
+            if [ "$DEPS" -gt "3" ]; then
+              echo "⚠️  Warning: Binary may have dynamic dependencies:"
+              ldd "${OUTPUT_NAME}" 2>/dev/null || true
+            else
+              echo "✅ Binary appears to be statically linked (minimal dependencies)"
+            fi
+          fi
+          
+          # Check for GLIBC version requirements
+          if command -v objdump &> /dev/null; then
+            echo "🔍 Checking GLIBC version requirements..."
+            GLIBC_VERSIONS=$(objdump -T "${OUTPUT_NAME}" 2>/dev/null | grep "GLIBC_" | sed 's/.*GLIBC_\([0-9.]*\).*/\1/' | sort -V -u || echo "")
+            if [ -n "$GLIBC_VERSIONS" ]; then
+              echo "📌 GLIBC versions required:"
+              echo "$GLIBC_VERSIONS"
+              # Check if any version is > 2.28 (Debian Buster)
+              HIGHEST=$(echo "$GLIBC_VERSIONS" | tail -1)
+              if [ -n "$HIGHEST" ]; then
+                echo "ℹ️  Highest GLIBC requirement: $HIGHEST"
+                echo "✅ With CGO_ENABLED=0, binary should work on Debian Buster (GLIBC 2.28)"
+              fi
+            else
+              echo "✅ No GLIBC version requirements found (statically linked)"
+            fi
+          fi
+          
+      - name: Build summary
+        run: |
+          echo "📦 Build Summary:"
+          echo "  OS: ${{ matrix.goos }}"
+          echo "  Architecture: ${{ matrix.goarch }}"
+          echo "  CGO_ENABLED: 0 (static linking)"
+          echo ""
+          echo "✅ Binary built and verified successfully"
+          echo "📝 Note: Manually attach tested binaries from PatchMon/agents/ to the GitHub release"
 

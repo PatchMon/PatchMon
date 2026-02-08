@@ -417,9 +417,7 @@ class AgentVersionService {
 		if (this.latestVersion) {
 			logger.info(`📦 Latest version from DNS: ${this.latestVersion}`);
 		} else {
-			logger.info(
-				`⚠️ No latest version available (DNS lookup may have failed)`,
-			);
+			logger.info(`⚠️ No latest version available (DNS lookup may have failed)`);
 		}
 
 		if (this.currentVersion) {
@@ -455,15 +453,15 @@ class AgentVersionService {
 			updateStatus = "no-data";
 		}
 
-			return {
-				currentVersion: this.currentVersion,
-				latestVersion: this.latestVersion, // Always return DNS version, not local
-				hasUpdate: hasUpdate,
-				updateStatus: updateStatus,
-				lastChecked: this.lastChecked,
-				supportedArchitectures: this.supportedArchitectures,
-				status: this.latestVersion ? "ready" : "no-version",
-			};
+		return {
+			currentVersion: this.currentVersion,
+			latestVersion: this.latestVersion, // Always return DNS version, not local
+			hasUpdate: hasUpdate,
+			updateStatus: updateStatus,
+			lastChecked: this.lastChecked,
+			supportedArchitectures: this.supportedArchitectures,
+			status: this.latestVersion ? "ready" : "no-version",
+		};
 	}
 
 	async refreshCurrentVersion() {
@@ -779,7 +777,9 @@ class AgentVersionService {
 				// Check if alerts system is enabled
 				const alertsEnabled = await alertService.isAlertsEnabled();
 				if (!alertsEnabled) {
-					logger.info("⚠️ Alerts system is disabled, skipping agent update alert");
+					logger.info(
+						"⚠️ Alerts system is disabled, skipping agent update alert",
+					);
 					return {
 						success: true,
 						message: `Update notifications sent to ${result.notifiedCount} agents`,
@@ -790,10 +790,12 @@ class AgentVersionService {
 				}
 
 				const alertType = "agent_update";
-				const isEnabled = await alertConfigService.isAlertTypeEnabled(alertType);
+				const isEnabled =
+					await alertConfigService.isAlertTypeEnabled(alertType);
 
 				if (isEnabled && result.notifiedCount > 0) {
-					const defaultSeverity = await alertConfigService.getDefaultSeverity(alertType);
+					const defaultSeverity =
+						await alertConfigService.getDefaultSeverity(alertType);
 
 					// Check if alert already exists for this version
 					const existingAlert = await prismaClient.alerts.findFirst({
@@ -822,10 +824,19 @@ class AgentVersionService {
 						);
 
 						// Check auto-assignment
-						if (await alertConfigService.shouldAutoAssign(alertType, { severity: defaultSeverity })) {
-							const assignUserId = await alertConfigService.getAutoAssignUser(alertType);
+						if (
+							await alertConfigService.shouldAutoAssign(alertType, {
+								severity: defaultSeverity,
+							})
+						) {
+							const assignUserId =
+								await alertConfigService.getAutoAssignUser(alertType);
 							if (assignUserId) {
-								await alertService.assignAlertToUser(alert.id, assignUserId, null);
+								await alertService.assignAlertToUser(
+									alert.id,
+									assignUserId,
+									null,
+								);
 							}
 						}
 
@@ -855,9 +866,14 @@ class AgentVersionService {
 					});
 
 					if (existingAlert) {
-						await alertService.performAlertAction(null, existingAlert.id, "resolved", {
-							reason: "all_agents_up_to_date",
-						});
+						await alertService.performAlertAction(
+							null,
+							existingAlert.id,
+							"resolved",
+							{
+								reason: "all_agents_up_to_date",
+							},
+						);
 						logger.info(`✅ Resolved agent update alert: ${existingAlert.id}`);
 					}
 				}

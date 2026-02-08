@@ -18,7 +18,6 @@ class VersionUpdateCheck {
 		this.queueName = "version-update-check";
 	}
 
-
 	/**
 	 * Check and create alert for a specific update type (server or agent)
 	 */
@@ -30,24 +29,32 @@ class VersionUpdateCheck {
 		updateMessage,
 	) {
 		try {
-			logger.info(`🔍 Processing ${alertType} alert check - current: ${currentVersion}, latest: ${latestVersion}`);
-			
+			logger.info(
+				`🔍 Processing ${alertType} alert check - current: ${currentVersion}, latest: ${latestVersion}`,
+			);
+
 			const alertsEnabled = await alertService.isAlertsEnabled();
 			if (!alertsEnabled) {
-				logger.info(`⚠️ Alerts system is disabled, skipping ${alertType} update alert`);
+				logger.info(
+					`⚠️ Alerts system is disabled, skipping ${alertType} update alert`,
+				);
 				return;
 			}
 
 			const isEnabled = await alertConfigService.isAlertTypeEnabled(alertType);
 			if (!isEnabled) {
 				logger.info(`⚠️ ${alertType} alerts are disabled, skipping`);
-				logger.info(`💡 Tip: Enable ${alertType} alerts in Alert Configuration settings to receive update notifications.`);
+				logger.info(
+					`💡 Tip: Enable ${alertType} alerts in Alert Configuration settings to receive update notifications.`,
+				);
 				return;
 			}
 
-			const defaultSeverity = await alertConfigService.getDefaultSeverity(alertType);
+			const defaultSeverity =
+				await alertConfigService.getDefaultSeverity(alertType);
 
-			const isUpdateAvailable = compareVersions(latestVersion, currentVersion) > 0;
+			const isUpdateAvailable =
+				compareVersions(latestVersion, currentVersion) > 0;
 
 			if (isUpdateAvailable) {
 				// Check if alert already exists for this specific update version
@@ -77,22 +84,37 @@ class VersionUpdateCheck {
 					);
 
 					if (!alert) {
-						logger.warn(`⚠️ Alert creation returned null for ${alertType} - alerts may be disabled`);
+						logger.warn(
+							`⚠️ Alert creation returned null for ${alertType} - alerts may be disabled`,
+						);
 						return;
 					}
 
 					// Check auto-assignment
-					if (await alertConfigService.shouldAutoAssign(alertType, { severity: defaultSeverity })) {
-						const assignUserId = await alertConfigService.getAutoAssignUser(alertType);
+					if (
+						await alertConfigService.shouldAutoAssign(alertType, {
+							severity: defaultSeverity,
+						})
+					) {
+						const assignUserId =
+							await alertConfigService.getAutoAssignUser(alertType);
 						if (assignUserId) {
-							await alertService.assignAlertToUser(alert.id, assignUserId, null);
-							logger.info(`✅ Auto-assigned ${alertType} alert ${alert.id} to user ${assignUserId}`);
+							await alertService.assignAlertToUser(
+								alert.id,
+								assignUserId,
+								null,
+							);
+							logger.info(
+								`✅ Auto-assigned ${alertType} alert ${alert.id} to user ${assignUserId}`,
+							);
 						}
 					}
 
 					logger.info(`✅ Created ${alertType} alert: ${alert.id}`);
 				} else {
-					logger.info(`ℹ️ ${alertType} update alert already exists: ${existingAlert.id}`);
+					logger.info(
+						`ℹ️ ${alertType} update alert already exists: ${existingAlert.id}`,
+					);
 				}
 			} else {
 				// System is up to date - resolve ALL active alerts of this type
@@ -104,7 +126,9 @@ class VersionUpdateCheck {
 				});
 
 				if (activeAlerts.length > 0) {
-					logger.info(`✅ Resolving ${activeAlerts.length} active ${alertType} alert(s) - system is up to date`);
+					logger.info(
+						`✅ Resolving ${activeAlerts.length} active ${alertType} alert(s) - system is up to date`,
+					);
 					for (const alert of activeAlerts) {
 						await alertService.performAlertAction(null, alert.id, "resolved", {
 							reason: "update_no_longer_available",
@@ -114,7 +138,9 @@ class VersionUpdateCheck {
 						logger.info(`✅ Resolved ${alertType} alert: ${alert.id}`);
 					}
 				} else {
-					logger.info(`ℹ️ ${alertType} is up to date, no active alerts to resolve`);
+					logger.info(
+						`ℹ️ ${alertType} is up to date, no active alerts to resolve`,
+					);
 				}
 			}
 		} catch (alertError) {
@@ -165,7 +191,8 @@ class VersionUpdateCheck {
 					}
 
 					if (serverCurrentVersion && serverLatestVersion) {
-						serverUpdateAvailable = compareVersions(serverLatestVersion, serverCurrentVersion) > 0;
+						serverUpdateAvailable =
+							compareVersions(serverLatestVersion, serverCurrentVersion) > 0;
 					}
 				}
 			} catch (serverError) {
@@ -179,16 +206,20 @@ class VersionUpdateCheck {
 
 			try {
 				// Use the existing agentVersionService to get version info (same as used in /settings/agent-version)
-				logger.info("🔍 Getting agent version info from agentVersionService...");
+				logger.info(
+					"🔍 Getting agent version info from agentVersionService...",
+				);
 				const agentVersionInfo = await agentVersionService.getVersionInfo();
-				
+
 				agentCurrentVersion = agentVersionInfo.currentVersion || null;
 				agentLatestVersion = agentVersionInfo.latestVersion || null;
 
 				if (agentCurrentVersion) {
 					logger.info(`✅ Current agent version: ${agentCurrentVersion}`);
 				} else {
-					logger.warn("⚠️ Could not determine current agent version (binary not found or version parsing failed)");
+					logger.warn(
+						"⚠️ Could not determine current agent version (binary not found or version parsing failed)",
+					);
 				}
 
 				if (agentLatestVersion) {
@@ -198,10 +229,15 @@ class VersionUpdateCheck {
 				}
 
 				if (agentCurrentVersion && agentLatestVersion) {
-					agentUpdateAvailable = compareVersions(agentLatestVersion, agentCurrentVersion) > 0;
-					logger.info(`🔍 Agent version comparison: ${agentCurrentVersion} vs ${agentLatestVersion} = ${agentUpdateAvailable ? "UPDATE AVAILABLE" : "UP TO DATE"}`);
+					agentUpdateAvailable =
+						compareVersions(agentLatestVersion, agentCurrentVersion) > 0;
+					logger.info(
+						`🔍 Agent version comparison: ${agentCurrentVersion} vs ${agentLatestVersion} = ${agentUpdateAvailable ? "UPDATE AVAILABLE" : "UP TO DATE"}`,
+					);
 				} else {
-					logger.warn(`⚠️ Cannot compare agent versions - current: ${agentCurrentVersion || "null"}, latest: ${agentLatestVersion || "null"}`);
+					logger.warn(
+						`⚠️ Cannot compare agent versions - current: ${agentCurrentVersion || "null"}, latest: ${agentLatestVersion || "null"}`,
+					);
 				}
 			} catch (agentError) {
 				logger.error("❌ Agent version check failed:", agentError.message);
@@ -243,31 +279,44 @@ class VersionUpdateCheck {
 					`A new server version (${serverLatestVersion}) is available. Current version: ${serverCurrentVersion}`,
 				);
 			} else {
-				logger.warn(`⚠️ Skipping server update alert - current: ${serverCurrentVersion || "null"}, latest: ${serverLatestVersion || "null"}`);
+				logger.warn(
+					`⚠️ Skipping server update alert - current: ${serverCurrentVersion || "null"}, latest: ${serverLatestVersion || "null"}`,
+				);
 			}
 
 			// Check agent update alert
 			if (agentCurrentVersion && agentLatestVersion) {
 				logger.info("🔍 Checking agent update alert...");
-				
+
 				// Ensure agent_update config exists (create default if missing)
-				let agentUpdateConfig = await alertConfigService.getAlertConfigByType("agent_update");
+				let agentUpdateConfig =
+					await alertConfigService.getAlertConfigByType("agent_update");
 				if (!agentUpdateConfig) {
-					logger.info(`[version-update-check] Agent update config not found, creating default...`);
+					logger.info(
+						`[version-update-check] Agent update config not found, creating default...`,
+					);
 					try {
-						agentUpdateConfig = await alertConfigService.updateAlertConfig("agent_update", {
-							is_enabled: true,
-							default_severity: "informational",
-							auto_assign_enabled: false,
-							notification_enabled: true,
-							cleanup_resolved_only: true,
-						});
-						logger.info(`[version-update-check] Created default agent_update config`);
+						agentUpdateConfig = await alertConfigService.updateAlertConfig(
+							"agent_update",
+							{
+								is_enabled: true,
+								default_severity: "informational",
+								auto_assign_enabled: false,
+								notification_enabled: true,
+								cleanup_resolved_only: true,
+							},
+						);
+						logger.info(
+							`[version-update-check] Created default agent_update config`,
+						);
 					} catch (createError) {
-						logger.error(`[version-update-check] Failed to create agent_update config:`, createError);
+						logger.error(
+							`[version-update-check] Failed to create agent_update config:`,
+							createError,
+						);
 					}
 				}
-				
+
 				await this.checkAndCreateUpdateAlert(
 					"agent_update",
 					agentCurrentVersion,
@@ -276,9 +325,13 @@ class VersionUpdateCheck {
 					`A new agent version (${agentLatestVersion}) is available. Current version: ${agentCurrentVersion}`,
 				);
 			} else {
-				logger.warn(`⚠️ Skipping agent update alert - current: ${agentCurrentVersion || "null"}, latest: ${agentLatestVersion || "null"}`);
+				logger.warn(
+					`⚠️ Skipping agent update alert - current: ${agentCurrentVersion || "null"}, latest: ${agentLatestVersion || "null"}`,
+				);
 				if (!agentCurrentVersion) {
-					logger.info("💡 Tip: Agent binary not found. Download agent binaries from the Automation page to enable agent update alerts.");
+					logger.info(
+						"💡 Tip: Agent binary not found. Download agent binaries from the Automation page to enable agent update alerts.",
+					);
 				}
 			}
 
@@ -361,4 +414,3 @@ class VersionUpdateCheck {
 }
 
 module.exports = VersionUpdateCheck;
-

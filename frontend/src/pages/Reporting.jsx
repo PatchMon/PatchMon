@@ -14,13 +14,12 @@ import {
 	X,
 	XCircle,
 } from "lucide-react";
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { alertsAPI, adminUsersAPI } from "../utils/api";
-import { formatRelativeTime } from "../utils/api";
+import { adminUsersAPI, alertsAPI, formatRelativeTime } from "../utils/api";
 
 const Reporting = () => {
-	const { user } = useAuth();
+	const { user: _user } = useAuth();
 	const queryClient = useQueryClient();
 	const [searchTerm, setSearchTerm] = useState("");
 	const [severityFilter, setSeverityFilter] = useState("all");
@@ -60,10 +59,7 @@ const Reporting = () => {
 	});
 
 	// Fetch alert stats - with aggressive polling for real-time updates
-	const {
-		data: statsData,
-		isLoading: statsLoading,
-	} = useQuery({
+	const { data: statsData, isLoading: statsLoading } = useQuery({
 		queryKey: ["alert-stats"],
 		queryFn: async () => {
 			const response = await alertsAPI.getAlertStats();
@@ -84,12 +80,28 @@ const Reporting = () => {
 		},
 	});
 
-	// Fetch users for assignment
+	// Fetch users for assignment (use public endpoint that works for all authenticated users)
 	const { data: usersData } = useQuery({
-		queryKey: ["users"],
+		queryKey: ["users", "for-assignment"],
 		queryFn: async () => {
-			const response = await adminUsersAPI.list();
-			return response.data.data || [];
+			try {
+				// Try public assignment endpoint first (available to all authenticated users)
+				const response = await adminUsersAPI.listForAssignment();
+				return response.data.data || [];
+			} catch (error) {
+				// Fallback to admin endpoint if user has permissions
+				if (error.response?.status === 403 || error.response?.status === 401) {
+					try {
+						const response = await adminUsersAPI.list();
+						return response.data.data || [];
+					} catch (e) {
+						// If both fail, return empty array
+						return [];
+					}
+				}
+				// For other errors, return empty array
+				return [];
+			}
 		},
 	});
 
@@ -168,9 +180,12 @@ const Reporting = () => {
 	const getSeverityBadge = (severity) => {
 		const severityLower = severity?.toLowerCase() || "informational";
 		const colors = {
-			informational: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-			warning: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
-			error: "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
+			informational:
+				"bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+			warning:
+				"bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+			error:
+				"bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
 			critical: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
 		};
 		return (
@@ -228,14 +243,17 @@ const Reporting = () => {
 	// Get type badge
 	const getTypeBadge = (type) => {
 		const typeColors = {
-			server_update: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
-			agent_update: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200",
+			server_update:
+				"bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
+			agent_update:
+				"bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200",
 			host_down: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
 		};
 		return (
 			<span
 				className={`px-2 py-1 text-xs font-medium rounded ${
-					typeColors[type] || "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200"
+					typeColors[type] ||
+					"bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200"
 				}`}
 			>
 				{type.replace("_", " ")}
@@ -261,7 +279,8 @@ const Reporting = () => {
 		// Severity filter
 		if (severityFilter !== "all") {
 			filtered = filtered.filter(
-				(alert) => alert.severity?.toLowerCase() === severityFilter.toLowerCase(),
+				(alert) =>
+					alert.severity?.toLowerCase() === severityFilter.toLowerCase(),
 			);
 		}
 
@@ -281,7 +300,10 @@ const Reporting = () => {
 				if (statusFilter === "done") return action === "done";
 				if (statusFilter === "silenced") return action === "silenced";
 				if (statusFilter === "resolved") return action === "resolved";
-				return statusFilter === "active" && !["done", "silenced", "resolved"].includes(action);
+				return (
+					statusFilter === "active" &&
+					!["done", "silenced", "resolved"].includes(action)
+				);
 			});
 		}
 
@@ -300,7 +322,12 @@ const Reporting = () => {
 				aValue = new Date(a.created_at).getTime();
 				bValue = new Date(b.created_at).getTime();
 			} else if (sortField === "severity") {
-				const severityOrder = { critical: 4, error: 3, warning: 2, informational: 1 };
+				const severityOrder = {
+					critical: 4,
+					error: 3,
+					warning: 2,
+					informational: 1,
+				};
 				aValue = severityOrder[a.severity?.toLowerCase()] || 0;
 				bValue = severityOrder[b.severity?.toLowerCase()] || 0;
 			} else if (sortField === "type") {
@@ -415,7 +442,9 @@ const Reporting = () => {
 				const buttonRef = menuButtonRefs.current[openActionMenu];
 				if (buttonRef && !buttonRef.contains(event.target)) {
 					// Check if click is outside the menu as well
-					const menuElement = document.querySelector(`[data-menu-id="${openActionMenu}"]`);
+					const menuElement = document.querySelector(
+						`[data-menu-id="${openActionMenu}"]`,
+					);
 					if (menuElement && !menuElement.contains(event.target)) {
 						setOpenActionMenu(null);
 					}
@@ -476,8 +505,12 @@ const Reporting = () => {
 	// Handle delete selected alerts
 	const handleDeleteSelected = async () => {
 		if (selectedAlerts.size === 0) return;
-		
-		if (window.confirm(`Are you sure you want to delete ${selectedAlerts.size} alert(s)? This action cannot be undone.`)) {
+
+		if (
+			window.confirm(
+				`Are you sure you want to delete ${selectedAlerts.size} alert(s)? This action cannot be undone.`,
+			)
+		) {
 			try {
 				await deleteAlertsMutation.mutateAsync(Array.from(selectedAlerts));
 			} catch (error) {
@@ -727,7 +760,10 @@ const Reporting = () => {
 									>
 										<input
 											type="checkbox"
-											checked={selectedAlerts.size > 0 && selectedAlerts.size === filteredAndSortedAlerts.length}
+											checked={
+												selectedAlerts.size > 0 &&
+												selectedAlerts.size === filteredAndSortedAlerts.length
+											}
 											onChange={(e) => {
 												e.stopPropagation();
 												handleSelectAll(e.target.checked);
@@ -804,7 +840,7 @@ const Reporting = () => {
 										key={alert.id}
 										className="hover:bg-secondary-50 dark:hover:bg-secondary-800"
 									>
-										<td 
+										<td
 											className="px-4 py-2 whitespace-nowrap"
 											onClick={(e) => e.stopPropagation()}
 										>
@@ -819,19 +855,19 @@ const Reporting = () => {
 												className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 rounded cursor-pointer"
 											/>
 										</td>
-										<td 
+										<td
 											className="px-4 py-2 whitespace-nowrap cursor-pointer"
 											onClick={() => handleRowClick(alert)}
 										>
 											{getSeverityBadge(alert.severity)}
 										</td>
-										<td 
+										<td
 											className="px-4 py-2 whitespace-nowrap cursor-pointer"
 											onClick={() => handleRowClick(alert)}
 										>
 											{getTypeBadge(alert.type)}
 										</td>
-										<td 
+										<td
 											className="px-4 py-2 cursor-pointer"
 											onClick={() => handleRowClick(alert)}
 										>
@@ -839,7 +875,7 @@ const Reporting = () => {
 												{alert.title}
 											</div>
 										</td>
-										<td 
+										<td
 											className="hidden md:table-cell px-4 py-2 cursor-pointer"
 											onClick={() => handleRowClick(alert)}
 										>
@@ -847,7 +883,10 @@ const Reporting = () => {
 												{alert.message}
 											</div>
 										</td>
-										<td className="px-4 py-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+										<td
+											className="px-4 py-2 whitespace-nowrap"
+											onClick={(e) => e.stopPropagation()}
+										>
 											<select
 												value={alert.assigned_to_user_id || ""}
 												onChange={(e) => {
@@ -856,7 +895,10 @@ const Reporting = () => {
 												}}
 												onClick={(e) => e.stopPropagation()}
 												className="px-2 py-1 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white hover:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 min-w-[120px]"
-												disabled={assignAlertMutation.isPending || unassignAlertMutation.isPending}
+												disabled={
+													assignAlertMutation.isPending ||
+													unassignAlertMutation.isPending
+												}
 											>
 												<option value="">Unassigned</option>
 												{usersData?.map((u) => (
@@ -866,19 +908,22 @@ const Reporting = () => {
 												))}
 											</select>
 										</td>
-										<td 
+										<td
 											className="px-4 py-2 whitespace-nowrap cursor-pointer"
 											onClick={() => handleRowClick(alert)}
 										>
 											{getStatusBadge(alert)}
 										</td>
-										<td 
+										<td
 											className="px-4 py-2 whitespace-nowrap text-sm text-secondary-500 dark:text-secondary-400 cursor-pointer"
 											onClick={() => handleRowClick(alert)}
 										>
 											{formatRelativeTime(alert.created_at)}
 										</td>
-										<td className="px-4 py-2 whitespace-nowrap text-right text-sm font-medium" onClick={(e) => e.stopPropagation()}>
+										<td
+											className="px-4 py-2 whitespace-nowrap text-right text-sm font-medium"
+											onClick={(e) => e.stopPropagation()}
+										>
 											<div className="relative inline-block">
 												<button
 													ref={(el) => {
@@ -891,11 +936,15 @@ const Reporting = () => {
 													type="button"
 													onClick={(e) => {
 														e.stopPropagation();
-														const newMenuId = openActionMenu === alert.id ? null : alert.id;
+														const newMenuId =
+															openActionMenu === alert.id ? null : alert.id;
 														setOpenActionMenu(newMenuId);
 														if (newMenuId) {
 															// Calculate position after state update
-															setTimeout(() => calculateMenuPosition(newMenuId), 0);
+															setTimeout(
+																() => calculateMenuPosition(newMenuId),
+																0,
+															);
 														}
 													}}
 													className="p-1 text-secondary-500 hover:text-secondary-700 dark:hover:text-secondary-300 rounded-md hover:bg-secondary-100 dark:hover:bg-secondary-700"
@@ -992,7 +1041,9 @@ const Reporting = () => {
 									<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
 										Severity
 									</label>
-									<div className="mt-1">{getSeverityBadge(selectedAlert.severity)}</div>
+									<div className="mt-1">
+										{getSeverityBadge(selectedAlert.severity)}
+									</div>
 								</div>
 								<div>
 									<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
@@ -1025,7 +1076,10 @@ const Reporting = () => {
 											handleInlineAssign(selectedAlert.id, newUserId);
 										}}
 										className="mt-1 w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
-										disabled={assignAlertMutation.isPending || unassignAlertMutation.isPending}
+										disabled={
+											assignAlertMutation.isPending ||
+											unassignAlertMutation.isPending
+										}
 									>
 										<option value="">Unassigned</option>
 										{usersData?.map((u) => (
@@ -1058,18 +1112,19 @@ const Reporting = () => {
 							</div>
 
 							{/* Metadata */}
-							{selectedAlert.metadata && Object.keys(selectedAlert.metadata).length > 0 && (
-								<div>
-									<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
-										Metadata
-									</label>
-									<div className="mt-1 text-sm text-secondary-700 dark:text-secondary-300 bg-secondary-50 dark:bg-secondary-900 p-3 rounded-md">
-										<pre className="whitespace-pre-wrap">
-											{JSON.stringify(selectedAlert.metadata, null, 2)}
-										</pre>
+							{selectedAlert.metadata &&
+								Object.keys(selectedAlert.metadata).length > 0 && (
+									<div>
+										<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
+											Metadata
+										</label>
+										<div className="mt-1 text-sm text-secondary-700 dark:text-secondary-300 bg-secondary-50 dark:bg-secondary-900 p-3 rounded-md">
+											<pre className="whitespace-pre-wrap">
+												{JSON.stringify(selectedAlert.metadata, null, 2)}
+											</pre>
+										</div>
 									</div>
-								</div>
-							)}
+								)}
 
 							{/* Actions */}
 							<div>
@@ -1114,7 +1169,10 @@ const Reporting = () => {
 														{historyItem.action}
 													</div>
 													<div className="text-xs text-secondary-500 dark:text-secondary-400">
-														by {historyItem.users?.username || historyItem.users?.email || "System"}
+														by{" "}
+														{historyItem.users?.username ||
+															historyItem.users?.email ||
+															"System"}
 													</div>
 													<div className="text-xs text-secondary-400">
 														{new Date(historyItem.created_at).toLocaleString()}
@@ -1150,4 +1208,3 @@ const Reporting = () => {
 };
 
 export default Reporting;
-

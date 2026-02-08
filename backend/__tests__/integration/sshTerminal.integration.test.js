@@ -5,7 +5,7 @@
 
 const _WebSocket = require("ws");
 const _jwt = require("jsonwebtoken");
-const { Client } = require("ssh2");
+const { Client: _Client } = require("ssh2");
 
 // Note: These are integration tests that would require:
 // 1. A test database with seeded data

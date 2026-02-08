@@ -101,7 +101,10 @@ const aiRoutes = require("./routes/aiRoutes");
 const alertRoutes = require("./routes/alertRoutes");
 const { initSettings } = require("./services/settingsService");
 const { queueManager } = require("./services/automation");
-const { authenticateToken, requireAdmin } = require("./middleware/auth");
+const {
+	authenticateToken,
+	requireAdmin: _requireAdmin,
+} = require("./middleware/auth");
 const { createBullBoard } = require("@bull-board/api");
 const { BullMQAdapter } = require("@bull-board/api/bullMQAdapter");
 const { ExpressAdapter } = require("@bull-board/express");

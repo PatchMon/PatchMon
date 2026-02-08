@@ -26,12 +26,15 @@ class HostStatusMonitor {
 			// Check if alerts system is enabled
 			const { isAlertsEnabled } = require("../alertService");
 			if (!(await isAlertsEnabled())) {
-				logger.info("⚠️ Alerts system is disabled, skipping host status monitoring");
+				logger.info(
+					"⚠️ Alerts system is disabled, skipping host status monitoring",
+				);
 				return;
 			}
 
 			// Check if host_down alert type is enabled
-			const hostDownConfig = await alertConfigService.getAlertConfigByType("host_down");
+			const hostDownConfig =
+				await alertConfigService.getAlertConfigByType("host_down");
 			if (!hostDownConfig || !hostDownConfig.is_enabled) {
 				logger.info("⚠️ Host down alerts are disabled, skipping monitoring");
 				return;
@@ -52,6 +55,7 @@ class HostStatusMonitor {
 					api_id: true,
 					last_update: true,
 					status: true,
+					host_down_alerts_enabled: true,
 				},
 			});
 
@@ -68,57 +72,73 @@ class HostStatusMonitor {
 
 				// Only create alert if host is stale and was previously active
 				if (isStale && host.status === "active") {
-					// Check if alert already exists for this host
-					// Fetch all host_down alerts and filter by metadata
-					const allHostDownAlerts = await prisma.alerts.findMany({
-						where: {
-							type: "host_down",
-							is_active: true,
-						},
-					});
-
-					const existingAlert = allHostDownAlerts.find(
-						(alert) => alert.metadata?.host_id === host.id,
-					);
-
-					if (existingAlert) {
-						// Update existing alert
-						await alertService.updateAlert(existingAlert.id, {
-							updated_at: new Date(),
-						});
-						alertsUpdated++;
+					// Check per-host setting: false = disabled, null = inherit, true = enabled
+					let shouldCreateAlert = false;
+					if (host.host_down_alerts_enabled === false) {
+						// Explicitly disabled for this host
+						shouldCreateAlert = false;
+					} else if (host.host_down_alerts_enabled === true) {
+						// Explicitly enabled for this host (overrides global)
+						shouldCreateAlert = true;
 					} else {
-						// Create new alert
-						const severity = hostDownConfig.default_severity || "warning";
-						const hostName = host.friendly_name || host.hostname || host.api_id;
-						
-						const newAlert = await alertService.createAlert(
-							"host_down",
-							severity,
-							`Host ${hostName} is offline`,
-							`Host "${hostName}" has not reported in ${thresholdMinutes} minutes. Last update: ${new Date(host.last_update).toLocaleString()}`,
-							{
-								host_id: host.id,
-								host_name: hostName,
-								last_update: host.last_update,
-								threshold_minutes: thresholdMinutes,
+						// null = inherit from global config
+						shouldCreateAlert = hostDownConfig?.is_enabled;
+					}
+
+					if (shouldCreateAlert) {
+						// Check if alert already exists for this host
+						// Fetch all host_down alerts and filter by metadata
+						const allHostDownAlerts = await prisma.alerts.findMany({
+							where: {
+								type: "host_down",
+								is_active: true,
 							},
+						});
+
+						const existingAlert = allHostDownAlerts.find(
+							(alert) => alert.metadata?.host_id === host.id,
 						);
 
-						// Auto-assign if configured
-						if (
-							newAlert &&
-							hostDownConfig.auto_assign_enabled &&
-							hostDownConfig.auto_assign_user_id
-						) {
-							await alertService.assignAlertToUser(
-								newAlert.id,
-								hostDownConfig.auto_assign_user_id,
-								null, // System assignment
-							);
-						}
+						if (existingAlert) {
+							// Update existing alert
+							await alertService.updateAlert(existingAlert.id, {
+								updated_at: new Date(),
+							});
+							alertsUpdated++;
+						} else {
+							// Create new alert
+							const severity = hostDownConfig.default_severity || "warning";
+							const hostName =
+								host.friendly_name || host.hostname || host.api_id;
 
-						alertsCreated++;
+							const newAlert = await alertService.createAlert(
+								"host_down",
+								severity,
+								`Host ${hostName} is offline`,
+								`Host "${hostName}" has not reported in ${thresholdMinutes} minutes. Last update: ${new Date(host.last_update).toLocaleString()}`,
+								{
+									host_id: host.id,
+									host_name: hostName,
+									last_update: host.last_update,
+									threshold_minutes: thresholdMinutes,
+								},
+							);
+
+							// Auto-assign if configured
+							if (
+								newAlert &&
+								hostDownConfig.auto_assign_enabled &&
+								hostDownConfig.auto_assign_user_id
+							) {
+								await alertService.assignAlertToUser(
+									newAlert.id,
+									hostDownConfig.auto_assign_user_id,
+									null, // System assignment
+								);
+							}
+
+							alertsCreated++;
+						}
 					}
 				} else if (!isStale && host.status === "offline") {
 					// Host came back online - resolve any existing alerts

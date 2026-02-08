@@ -790,7 +790,8 @@ const Layout = ({ children }) => {
 																			alertStats && (
 																				<div className="ml-2 flex items-center gap-0.5">
 																					{/* Informational - Blue */}
-																					{(alertStats.informational || 0) > 0 && (
+																					{(alertStats.informational || 0) >
+																						0 && (
 																						<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200">
 																							{alertStats.informational}
 																						</span>
@@ -1243,13 +1244,15 @@ const Layout = ({ children }) => {
 																					alertStats && (
 																						<div className="ml-2 flex items-center gap-0.5">
 																							{/* Informational - Blue */}
-																							{(alertStats.informational || 0) > 0 && (
+																							{(alertStats.informational || 0) >
+																								0 && (
 																								<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200">
 																									{alertStats.informational}
 																								</span>
 																							)}
 																							{/* Warning - Yellow */}
-																							{(alertStats.warning || 0) > 0 && (
+																							{(alertStats.warning || 0) >
+																								0 && (
 																								<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-200">
 																									{alertStats.warning}
 																								</span>
@@ -1261,7 +1264,8 @@ const Layout = ({ children }) => {
 																								</span>
 																							)}
 																							{/* Critical - Red */}
-																							{(alertStats.critical || 0) > 0 && (
+																							{(alertStats.critical || 0) >
+																								0 && (
 																								<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200">
 																									{alertStats.critical}
 																								</span>

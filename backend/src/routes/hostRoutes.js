@@ -7,6 +7,7 @@ const bcrypt = require("bcryptjs");
 const logger = require("../utils/logger");
 const { authenticateToken } = require("../middleware/auth");
 const {
+	requireViewHosts,
 	requireManageHosts,
 	requireManageSettings,
 } = require("../middleware/permissions");
@@ -14,7 +15,7 @@ const { queueManager, QUEUE_NAMES } = require("../services/automation");
 const {
 	pushIntegrationToggle,
 	pushSetComplianceMode,
-	pushSetComplianceOnDemandOnly, // Legacy - kept for backward compatibility
+	pushSetComplianceOnDemandOnly: _pushSetComplianceOnDemandOnly, // Legacy - kept for backward compatibility
 	isConnected,
 } = require("../services/agentWs");
 const { compareVersions } = require("../services/automation/shared/utils");
@@ -2064,6 +2065,72 @@ router.patch(
 	},
 );
 
+// Toggle host down alerts for specific host
+router.patch(
+	"/:hostId/host-down-alerts",
+	authenticateToken,
+	requireManageHosts,
+	[
+		body("host_down_alerts_enabled")
+			.optional()
+			.custom((value) => {
+				if (value === null || value === undefined) return true;
+				if (typeof value === "boolean") return true;
+				throw new Error("host_down_alerts_enabled must be a boolean or null");
+			}),
+	],
+	async (req, res) => {
+		try {
+			const errors = validationResult(req);
+			if (!errors.isEmpty()) {
+				return res.status(400).json({ errors: errors.array() });
+			}
+
+			const { hostId } = req.params;
+			const { host_down_alerts_enabled } = req.body;
+
+			// Allow null, true, or false
+			const updateData = {
+				updated_at: new Date(),
+			};
+
+			if (host_down_alerts_enabled !== undefined) {
+				// Convert to null if explicitly set to null, otherwise use boolean value
+				updateData.host_down_alerts_enabled =
+					host_down_alerts_enabled === null
+						? null
+						: Boolean(host_down_alerts_enabled);
+			}
+
+			const host = await prisma.hosts.update({
+				where: { id: hostId },
+				data: updateData,
+			});
+
+			let statusMessage = "inherit from global settings";
+			if (host.host_down_alerts_enabled === true) {
+				statusMessage = "enabled";
+			} else if (host.host_down_alerts_enabled === false) {
+				statusMessage = "disabled";
+			}
+
+			res.json({
+				message: `Host down alerts ${statusMessage} successfully`,
+				host: {
+					id: host.id,
+					friendlyName: host.friendly_name,
+					hostDownAlertsEnabled: host.host_down_alerts_enabled,
+				},
+			});
+		} catch (error) {
+			logger.error("Host down alerts toggle error:", error);
+			res
+				.status(500)
+				.json({ error: "Failed to update host down alerts setting" });
+		}
+	},
+);
+
 // Force agent update for specific host
 router.post(
 	"/:hostId/force-agent-update",
@@ -2922,11 +2989,11 @@ router.patch(
 	},
 );
 
-// Get integration status for a host
+// Get integration status for a host (read-only, viewable by users who can view hosts)
 router.get(
 	"/:hostId/integrations",
 	authenticateToken,
-	requireManageHosts,
+	requireViewHosts,
 	async (req, res) => {
 		try {
 			const { hostId } = req.params;

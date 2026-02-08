@@ -20,7 +20,7 @@ const { getPrismaClient } = require("../../src/config/prisma");
 const { authenticateToken } = require("../../src/middleware/auth");
 const agentWs = require("../../src/services/agentWs");
 const { verifyApiKey } = require("../../src/utils/apiKeyUtils");
-const { v4: uuidv4 } = require("uuid");
+const { v4: _uuidv4 } = require("uuid");
 
 // Mock verifyApiKey to always return true for test API keys
 verifyApiKey.mockImplementation((providedKey, storedKey) => {

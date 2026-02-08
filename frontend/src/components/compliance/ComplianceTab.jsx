@@ -400,12 +400,15 @@ const ComplianceTab = ({
 			}, 10000); // Poll every 10 seconds instead of 5 to reduce load
 		}
 		return () => clearInterval(pollInterval);
+		// biome-ignore lint/correctness/useExhaustiveDependencies: React useState setters are stable and don't change
 	}, [
 		scanInProgress,
 		scanMessage?.startTime,
 		refetchLatest,
 		refetchHistory,
+		// @ts-expect-error - React useState setters are stable
 		setScanInProgress,
+		// @ts-expect-error - React useState setters are stable
 		setScanMessage,
 	]);
 
@@ -476,12 +479,15 @@ const ComplianceTab = ({
 			console.log("[Compliance SSE] Disconnecting");
 			eventSource.close();
 		};
+		// biome-ignore lint/correctness/useExhaustiveDependencies: React useState setters are stable and don't change
 	}, [
 		scanInProgress,
 		apiId,
 		refetchHistory, // Refetch data to get the latest results
 		refetchLatest, // Set scan as no longer in progress
+		// @ts-expect-error - React useState setters are stable
 		setScanInProgress,
+		// @ts-expect-error - React useState setters are stable
 		setScanMessage,
 	]);
 
@@ -757,7 +763,7 @@ const ComplianceTab = ({
 																.filter((s) => s.severity !== "unknown")
 																.map((entry, index) => (
 																	<Cell
-																		key={`cell-${index}`}
+																		key={`cell-${entry.severity || index}`}
 																		fill={
 																			entry.severity === "critical"
 																				? "#ef4444"
@@ -919,9 +925,9 @@ const ComplianceTab = ({
 														<Bar dataKey="count" radius={[0, 4, 4, 0]}>
 															{scansByType["docker-bench"].section_breakdown
 																.slice(0, 4)
-																.map((_entry, index) => (
+																.map((entry, index) => (
 																	<Cell
-																		key={`cell-${index}`}
+																		key={`cell-${entry?.section || index}`}
 																		fill={
 																			[
 																				"#ef4444",
@@ -3562,7 +3568,7 @@ const ComplianceTab = ({
 										{info?.available_profiles?.length > 0 ? (
 											info.available_profiles.map((profile, idx) => (
 												<div
-													key={idx}
+													key={`profile-${idx}-${profile || ""}`}
 													className="flex items-center justify-between text-sm"
 												>
 													<span className="text-secondary-300">

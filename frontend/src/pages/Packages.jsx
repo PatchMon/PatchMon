@@ -121,7 +121,7 @@ const Packages = () => {
 			// This is the default behavior, so we don't need to change filters
 			setCategoryFilter("all");
 			setUpdateStatusFilter("needs-updates");
-		} else if (filter === "security") {
+		} else if (filter === "security" || filter === "security-updates") {
 			// For security updates, filter to show only security updates
 			setUpdateStatusFilter("security-updates");
 			setCategoryFilter("all");

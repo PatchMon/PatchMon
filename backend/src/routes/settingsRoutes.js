@@ -122,6 +122,21 @@ function buildCronExpression(minutes) {
 }
 
 // Get current settings
+// Public settings endpoint - returns read-only settings that all authenticated users can view
+// This allows users to see things like auto_update status without requiring can_manage_settings
+router.get("/public", authenticateToken, async (_req, res) => {
+	try {
+		const settings = await getSettings();
+		// Return only public/read-only settings
+		res.json({
+			auto_update: settings.auto_update || false,
+		});
+	} catch (error) {
+		logger.error("Public settings fetch error:", error);
+		res.status(500).json({ error: "Failed to fetch public settings" });
+	}
+});
+
 router.get("/", authenticateToken, requireManageSettings, async (_req, res) => {
 	try {
 		const settings = await getSettings();
@@ -438,7 +453,7 @@ router.post(
 	requireManageSettings,
 	async (req, res) => {
 		try {
-			const { logoType, fileContent, fileName } = req.body;
+			const { logoType, fileContent } = req.body;
 
 			if (!logoType || !fileContent) {
 				return res.status(400).json({

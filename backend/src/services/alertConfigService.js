@@ -184,7 +184,10 @@ class AlertConfigService {
 			}
 
 			// Handle different assignment rules
-			if (config.auto_assign_rule === "specific_user" && config.auto_assign_user_id) {
+			if (
+				config.auto_assign_rule === "specific_user" &&
+				config.auto_assign_user_id
+			) {
 				return config.auto_assign_user_id;
 			}
 
@@ -294,7 +297,11 @@ class AlertConfigService {
 				},
 			});
 
-			if (!config || !config.escalation_enabled || !config.escalation_after_hours) {
+			if (
+				!config ||
+				!config.escalation_enabled ||
+				!config.escalation_after_hours
+			) {
 				return false;
 			}
 
@@ -311,4 +318,3 @@ class AlertConfigService {
 
 // Export singleton instance
 module.exports = new AlertConfigService();
-

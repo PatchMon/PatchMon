@@ -538,7 +538,9 @@ const Automation = () => {
 												<button
 													type="button"
 													onClick={() => {
-														if (automation.queue.includes("version-update-check")) {
+														if (
+															automation.queue.includes("version-update-check")
+														) {
 															triggerManualJob("github");
 														} else if (automation.queue.includes("session")) {
 															triggerManualJob("sessions");
@@ -679,7 +681,11 @@ const Automation = () => {
 														<button
 															type="button"
 															onClick={() => {
-																if (automation.queue.includes("version-update-check")) {
+																if (
+																	automation.queue.includes(
+																		"version-update-check",
+																	)
+																) {
 																	triggerManualJob("github");
 																} else if (
 																	automation.queue.includes("session")

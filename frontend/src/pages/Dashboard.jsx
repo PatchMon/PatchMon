@@ -61,7 +61,7 @@ const Dashboard = () => {
 	const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
 	const navigate = useNavigate();
 	const { isDark } = useTheme();
-	const { user } = useAuth();
+	const { user, permissions } = useAuth();
 
 	// Navigation handlers
 	const handleTotalHostsClick = () => {
@@ -233,11 +233,27 @@ const Dashboard = () => {
 		refetchOnWindowFocus: false,
 	});
 
+	// Fetch user's dashboard preferences (must be fetched before recentUsers query)
+	const { data: preferences } = useQuery({
+		queryKey: ["dashboardPreferences"],
+		queryFn: () => dashboardPreferencesAPI.get().then((res) => res.data),
+		staleTime: 5 * 60 * 1000, // Consider data fresh for 5 minutes
+	});
+
 	// Fetch recent users (permission protected server-side)
+	// Only fetch if user has permission AND the card is enabled in user's preferences
+	const hasViewUsersPermission = permissions?.can_view_users === true;
+	const isRecentUsersCardEnabled = cardPreferences.some(
+		(card) => card.cardId === "recentUsers" && card.enabled,
+	);
 	const { data: recentUsers } = useQuery({
 		queryKey: ["dashboardRecentUsers"],
 		queryFn: () => dashboardAPI.getRecentUsers().then((res) => res.data),
 		staleTime: 60 * 1000,
+		enabled:
+			hasViewUsersPermission &&
+			isRecentUsersCardEnabled &&
+			preferences !== undefined, // Only fetch if user has permission, card is enabled, and preferences are loaded
 	});
 
 	// Fetch recent collection (permission protected server-side)
@@ -251,13 +267,6 @@ const Dashboard = () => {
 	const { data: settings } = useQuery({
 		queryKey: ["settings"],
 		queryFn: () => settingsAPI.get().then((res) => res.data),
-	});
-
-	// Fetch user's dashboard preferences
-	const { data: preferences } = useQuery({
-		queryKey: ["dashboardPreferences"],
-		queryFn: () => dashboardPreferencesAPI.get().then((res) => res.data),
-		staleTime: 5 * 60 * 1000, // Consider data fresh for 5 minutes
 	});
 
 	// Fetch default card configuration
@@ -320,9 +329,19 @@ const Dashboard = () => {
 	}, []);
 
 	// Helper function to check if a card should be displayed
+	// Also checks permissions to ensure users can't see cards they don't have access to
 	const isCardEnabled = (cardId) => {
 		const card = cardPreferences.find((c) => c.cardId === cardId);
-		return card ? card.enabled : true; // Default to enabled if not found
+		if (!card) return true; // Default to enabled if not found
+
+		// Check permissions for cards that require specific permissions
+		if (cardId === "totalUsers" || cardId === "recentUsers") {
+			if (permissions?.can_view_users !== true) {
+				return false; // Hide card if user doesn't have permission
+			}
+		}
+
+		return card.enabled;
 	};
 
 	// Helper function to get card type for layout grouping

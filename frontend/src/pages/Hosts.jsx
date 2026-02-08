@@ -522,9 +522,28 @@ const Hosts = () => {
 	});
 
 	// Fetch global settings to check if auto-update master toggle is enabled
+	// Fetch settings to check global auto-update status
+	// Try public endpoint first (works for all users), fallback to full settings if user has permissions
 	const { data: settings } = useQuery({
 		queryKey: ["settings"],
-		queryFn: () => settingsAPI.get().then((res) => res.data),
+		queryFn: async () => {
+			try {
+				// Try public endpoint first (available to all authenticated users)
+				return await settingsAPI.getPublic().then((res) => res.data);
+			} catch (error) {
+				// If public endpoint fails, try full settings (requires can_manage_settings)
+				if (error.response?.status === 403 || error.response?.status === 401) {
+					try {
+						return await settingsAPI.get().then((res) => res.data);
+					} catch (_e) {
+						// If both fail, return minimal default
+						return { auto_update: false };
+					}
+				}
+				// For other errors, return minimal default
+				return { auto_update: false };
+			}
+		},
 	});
 
 	// State for auto-update confirmation dialog

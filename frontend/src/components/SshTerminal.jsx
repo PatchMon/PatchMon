@@ -652,8 +652,37 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 		return () => document.removeEventListener("mousedown", handleClickOutside);
 	}, [showInstallCommands]);
 
+	// Handle disconnect
+	const handleDisconnect = useCallback(() => {
+		// Clear idle timeouts
+		if (idleTimeoutRef.current) {
+			clearTimeout(idleTimeoutRef.current);
+			idleTimeoutRef.current = null;
+		}
+		if (idleWarningTimeoutRef.current) {
+			clearTimeout(idleWarningTimeoutRef.current);
+			idleWarningTimeoutRef.current = null;
+		}
+		setIdleWarning(false);
+
+		if (wsRef.current) {
+			wsRef.current.send(JSON.stringify({ type: "disconnect" }));
+			wsRef.current.close();
+			wsRef.current = null;
+		}
+		setIsConnected(false);
+		setIsConnecting(false);
+		// Clear sensitive credentials from memory
+		setSshConfig((prev) => ({
+			...prev,
+			password: "",
+			privateKey: "",
+			passphrase: "",
+		}));
+	}, []);
+
 	// Reset idle timeout on activity
-	const resetIdleTimeout = () => {
+	const resetIdleTimeout = useCallback(() => {
 		if (!isConnected) return;
 
 		// Clear existing timeouts
@@ -688,7 +717,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 			}
 			handleDisconnect();
 		}, IDLE_TIMEOUT_MS);
-	};
+	}, [isConnected, handleDisconnect]);
 
 	// Handle terminal input with AI completion support
 	useEffect(() => {
@@ -816,35 +845,6 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 		}
 		// In embedded mode, we never cleanup - connection stays alive when tab is hidden
 	}, [isOpen, embedded]);
-
-	// Handle disconnect
-	const handleDisconnect = () => {
-		// Clear idle timeouts
-		if (idleTimeoutRef.current) {
-			clearTimeout(idleTimeoutRef.current);
-			idleTimeoutRef.current = null;
-		}
-		if (idleWarningTimeoutRef.current) {
-			clearTimeout(idleWarningTimeoutRef.current);
-			idleWarningTimeoutRef.current = null;
-		}
-		setIdleWarning(false);
-
-		if (wsRef.current) {
-			wsRef.current.send(JSON.stringify({ type: "disconnect" }));
-			wsRef.current.close();
-			wsRef.current = null;
-		}
-		setIsConnected(false);
-		setIsConnecting(false);
-		// Clear sensitive credentials from memory
-		setSshConfig((prev) => ({
-			...prev,
-			password: "",
-			privateKey: "",
-			passphrase: "",
-		}));
-	};
 
 	const handleClose = () => {
 		handleDisconnect();
@@ -1372,7 +1372,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 												: [];
 										return (
 											<div
-												key={idx}
+												key={`msg-${idx}-${msg.role}-${msg.content.slice(0, 10)}`}
 												className={`text-sm ${
 													msg.role === "user"
 														? "bg-primary-900/30 border border-primary-700/30 rounded-lg p-2 ml-4"
@@ -1399,7 +1399,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 																</span>
 																{codeBlocks.map((cmd, cmdIdx) => (
 																	<button
-																		key={cmdIdx}
+																		key={`cmd-${cmdIdx}-${cmd.slice(0, 20)}`}
 																		type="button"
 																		onClick={() => sendCommandToTerminal(cmd)}
 																		className="w-full flex items-center gap-2 px-2 py-1.5 text-xs bg-secondary-600/50 hover:bg-primary-600/50 border border-secondary-500/50 hover:border-primary-500/50 rounded text-left transition-colors group"

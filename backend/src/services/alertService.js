@@ -30,7 +30,9 @@ class AlertService {
 			// Check if alerts system is enabled
 			const alertsEnabled = await this.isAlertsEnabled();
 			if (!alertsEnabled) {
-				logger.info(`⚠️ Alerts system is disabled, skipping alert creation: ${type}`);
+				logger.info(
+					`⚠️ Alerts system is disabled, skipping alert creation: ${type}`,
+				);
 				return null;
 			}
 
@@ -247,7 +249,9 @@ class AlertService {
 				throw new Error(`Invalid action: ${actionName}`);
 			}
 
-			logger.info(`[alert-service] Performing action ${actionName} on alert ${alertId} by ${userId || 'system'}`);
+			logger.info(
+				`[alert-service] Performing action ${actionName} on alert ${alertId} by ${userId || "system"}`,
+			);
 
 			// Record in history first
 			await this.recordAlertHistory(alertId, userId, actionName, metadata);
@@ -256,7 +260,9 @@ class AlertService {
 			// Handle specific actions that update alert fields
 			if (actionName === "resolved" || actionName === "done") {
 				// These actions hide the alert from stats (mark as inactive/resolved)
-				logger.info(`[alert-service] Marking alert ${alertId} as ${actionName} - setting is_active=false, resolved_at=now`);
+				logger.info(
+					`[alert-service] Marking alert ${alertId} as ${actionName} - setting is_active=false, resolved_at=now`,
+				);
 				await prisma.alerts.update({
 					where: { id: alertId },
 					data: {
@@ -266,11 +272,19 @@ class AlertService {
 						updated_at: new Date(),
 					},
 				});
-				logger.info(`[alert-service] ✅ Alert ${alertId} marked as ${actionName}`);
-			} else if (["assigned", "silenced", "unsilenced", "acknowledged"].includes(actionName)) {
+				logger.info(
+					`[alert-service] ✅ Alert ${alertId} marked as ${actionName}`,
+				);
+			} else if (
+				["assigned", "silenced", "unsilenced", "acknowledged"].includes(
+					actionName,
+				)
+			) {
 				// These actions should un-resolve the alert (make it active again)
 				// This allows users to take action on a resolved alert and have it show up in stats again
-				logger.info(`[alert-service] Un-resolving alert ${alertId} via action ${actionName} - setting is_active=true, resolved_at=null`);
+				logger.info(
+					`[alert-service] Un-resolving alert ${alertId} via action ${actionName} - setting is_active=true, resolved_at=null`,
+				);
 				await prisma.alerts.update({
 					where: { id: alertId },
 					data: {
@@ -280,15 +294,20 @@ class AlertService {
 						updated_at: new Date(),
 					},
 				});
-				logger.info(`[alert-service] ✅ Alert ${alertId} un-resolved via action ${actionName}`);
+				logger.info(
+					`[alert-service] ✅ Alert ${alertId} un-resolved via action ${actionName}`,
+				);
 			}
 
 			logger.info(
-				`✅ Performed action ${actionName} on alert ${alertId} by ${userId || 'system'}`,
+				`✅ Performed action ${actionName} on alert ${alertId} by ${userId || "system"}`,
 			);
 			return { success: true, action: actionName };
 		} catch (error) {
-			logger.error(`❌ Failed to perform alert action ${actionName} on alert ${alertId}:`, error);
+			logger.error(
+				`❌ Failed to perform alert action ${actionName} on alert ${alertId}:`,
+				error,
+			);
 			logger.error(`❌ Error stack:`, error.stack);
 			throw error;
 		}
@@ -299,8 +318,10 @@ class AlertService {
 	 */
 	async assignAlertToUser(alertId, assignedToUserId, assignedByUserId) {
 		try {
-			logger.info(`[alert-service] Assigning alert ${alertId} to user ${assignedToUserId} by ${assignedByUserId || 'system'}`);
-			
+			logger.info(
+				`[alert-service] Assigning alert ${alertId} to user ${assignedToUserId} by ${assignedByUserId || "system"}`,
+			);
+
 			await prisma.alerts.update({
 				where: { id: alertId },
 				data: {
@@ -311,19 +332,26 @@ class AlertService {
 					updated_at: new Date(),
 				},
 			});
-			logger.info(`[alert-service] Updated alert ${alertId} with assigned_to_user_id=${assignedToUserId}, is_active=true, resolved_at=null`);
+			logger.info(
+				`[alert-service] Updated alert ${alertId} with assigned_to_user_id=${assignedToUserId}, is_active=true, resolved_at=null`,
+			);
 
 			await this.recordAlertHistory(alertId, assignedByUserId, "assigned", {
 				assigned_to_user_id: assignedToUserId,
 			});
-			logger.info(`[alert-service] Recorded assignment history for alert ${alertId}`);
+			logger.info(
+				`[alert-service] Recorded assignment history for alert ${alertId}`,
+			);
 
 			logger.info(
-				`✅ Assigned alert ${alertId} to user ${assignedToUserId} by ${assignedByUserId || 'system'}`,
+				`✅ Assigned alert ${alertId} to user ${assignedToUserId} by ${assignedByUserId || "system"}`,
 			);
 			return { success: true };
 		} catch (error) {
-			logger.error(`❌ Failed to assign alert ${alertId} to user ${assignedToUserId}:`, error);
+			logger.error(
+				`❌ Failed to assign alert ${alertId} to user ${assignedToUserId}:`,
+				error,
+			);
 			logger.error(`❌ Assignment error stack:`, error.stack);
 			throw error;
 		}
@@ -385,16 +413,21 @@ class AlertService {
 
 			stats.forEach((stat) => {
 				if (!stat.severity) {
-					logger.warn(`[alert-stats] Skipping stat with null/undefined severity:`, stat);
+					logger.warn(
+						`[alert-stats] Skipping stat with null/undefined severity:`,
+						stat,
+					);
 					return; // Skip if severity is null or undefined
 				}
 				const severity = stat.severity.toLowerCase().trim();
-				if (result.hasOwnProperty(severity)) {
+				if (Object.hasOwn(result, severity)) {
 					result[severity] = stat._count.id;
 					result.total += stat._count.id;
 				} else {
 					// Log unexpected severity values for debugging
-					logger.warn(`⚠️ Unexpected severity value in stats: "${stat.severity}" (normalized: "${severity}")`);
+					logger.warn(
+						`⚠️ Unexpected severity value in stats: "${stat.severity}" (normalized: "${severity}")`,
+					);
 				}
 			});
 
@@ -610,4 +643,3 @@ class AlertService {
 
 // Export singleton instance
 module.exports = new AlertService();
-

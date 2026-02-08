@@ -94,7 +94,7 @@ const Integrations = () => {
 	};
 
 	// Fetch current settings for compliance mode
-	const { data: settings, isLoading: settingsLoading } = useQuery({
+	const { data: settings } = useQuery({
 		queryKey: ["settings"],
 		queryFn: () => settingsAPI.get().then((res) => res.data),
 	});

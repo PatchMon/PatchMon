@@ -3,36 +3,34 @@ const logger = require("../utils/logger");
 const alertService = require("../services/alertService");
 const alertConfigService = require("../services/alertConfigService");
 const { authenticateToken } = require("../middleware/auth");
-const { requireViewReports, requireManageSettings } = require("../middleware/permissions");
+const {
+	requireViewReports,
+	requireManageSettings,
+} = require("../middleware/permissions");
 
 const router = express.Router();
 
 // Get all global alerts (including inactive/resolved)
-router.get(
-	"/",
-	authenticateToken,
-	requireViewReports,
-	async (req, res) => {
-		try {
-			const { assignedToMe } = req.query;
-			const userId = assignedToMe === "true" ? req.user.id : null;
+router.get("/", authenticateToken, requireViewReports, async (req, res) => {
+	try {
+		const { assignedToMe } = req.query;
+		const userId = assignedToMe === "true" ? req.user.id : null;
 
-			// Include inactive alerts so resolved alerts are visible
-			const alerts = await alertService.getActiveAlerts(userId, true);
+		// Include inactive alerts so resolved alerts are visible
+		const alerts = await alertService.getActiveAlerts(userId, true);
 
-			res.json({
-				success: true,
-				data: alerts,
-			});
-		} catch (error) {
-			logger.error("Error fetching alerts:", error);
-			res.status(500).json({
-				success: false,
-				error: "Failed to fetch alerts",
-			});
-		}
-	},
-);
+		res.json({
+			success: true,
+			data: alerts,
+		});
+	} catch (error) {
+		logger.error("Error fetching alerts:", error);
+		res.status(500).json({
+			success: false,
+			error: "Failed to fetch alerts",
+		});
+	}
+});
 
 // Get alert statistics by severity
 router.get(
@@ -131,7 +129,11 @@ router.post(
 						config.alert_type,
 						config,
 					);
-					results.push({ success: true, alert_type: config.alert_type, data: updated });
+					results.push({
+						success: true,
+						alert_type: config.alert_type,
+						data: updated,
+					});
 				} catch (error) {
 					results.push({
 						success: false,
@@ -157,11 +159,11 @@ router.post(
 	},
 );
 
-// Get configuration for specific alert type
+// Get configuration for specific alert type (read-only, viewable by users who can view reports)
 router.get(
 	"/config/:alertType",
 	authenticateToken,
-	requireManageSettings,
+	requireViewReports,
 	async (req, res) => {
 		try {
 			const { alertType } = req.params;
@@ -270,38 +272,33 @@ router.post(
 );
 
 // Get specific alert details (MUST be after all specific routes)
-router.get(
-	"/:id",
-	authenticateToken,
-	requireViewReports,
-	async (req, res) => {
-		try {
-			const { id } = req.params;
+router.get("/:id", authenticateToken, requireViewReports, async (req, res) => {
+	try {
+		const { id } = req.params;
 
-			const alert = await alertService.getActiveAlerts().then((alerts) =>
-				alerts.find((a) => a.id === id),
-			);
+		const alert = await alertService
+			.getActiveAlerts()
+			.then((alerts) => alerts.find((a) => a.id === id));
 
-			if (!alert) {
-				return res.status(404).json({
-					success: false,
-					error: "Alert not found",
-				});
-			}
-
-			res.json({
-				success: true,
-				data: alert,
-			});
-		} catch (error) {
-			logger.error("Error fetching alert:", error);
-			res.status(500).json({
+		if (!alert) {
+			return res.status(404).json({
 				success: false,
-				error: "Failed to fetch alert",
+				error: "Alert not found",
 			});
 		}
-	},
-);
+
+		res.json({
+			success: true,
+			data: alert,
+		});
+	} catch (error) {
+		logger.error("Error fetching alert:", error);
+		res.status(500).json({
+			success: false,
+			error: "Failed to fetch alert",
+		});
+	}
+});
 
 // Get history of actions for a specific alert
 router.get(
@@ -347,11 +344,7 @@ router.post(
 
 			// Handle assignment separately if needed
 			if (action === "assigned" && assignedToUserId) {
-				await alertService.assignAlertToUser(
-					id,
-					assignedToUserId,
-					req.user.id,
-				);
+				await alertService.assignAlertToUser(id, assignedToUserId, req.user.id);
 			} else {
 				await alertService.performAlertAction(
 					req.user.id,
@@ -525,4 +518,3 @@ router.post(
 );
 
 module.exports = router;
-

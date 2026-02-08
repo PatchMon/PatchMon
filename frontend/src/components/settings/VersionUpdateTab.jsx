@@ -6,7 +6,6 @@ import {
 	Code,
 	Download,
 	ExternalLink,
-	GitCommit,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { settingsAPI, versionAPI } from "../../utils/api";
@@ -260,7 +259,6 @@ const VersionUpdateTab = () => {
 									</div>
 								</div>
 							)}
-
 						</div>
 					</div>
 				)}

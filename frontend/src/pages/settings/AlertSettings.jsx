@@ -1,15 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Save, RefreshCw } from "lucide-react";
-import { useState, useEffect } from "react";
-import { alertsAPI, settingsAPI, adminUsersAPI } from "../../utils/api";
+import { RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { adminUsersAPI, alertsAPI, settingsAPI } from "../../utils/api";
 
 const AlertSettings = () => {
 	const queryClient = useQueryClient();
-	const [saving, setSaving] = useState(false);
 	const [saveMessage, setSaveMessage] = useState(null);
 
 	// Fetch settings for master switch
-	const { data: settings, refetch: refetchSettings } = useQuery({
+	const { data: settings } = useQuery({
 		queryKey: ["settings"],
 		queryFn: async () => {
 			const response = await settingsAPI.get();
@@ -31,12 +30,28 @@ const AlertSettings = () => {
 		},
 	});
 
-	// Fetch users for auto-assignment dropdown
+	// Fetch users for auto-assignment dropdown (use public endpoint that works for all authenticated users)
 	const { data: usersData } = useQuery({
-		queryKey: ["users"],
+		queryKey: ["users", "for-assignment"],
 		queryFn: async () => {
-			const response = await adminUsersAPI.list();
-			return response.data.data || [];
+			try {
+				// Try public assignment endpoint first (available to all authenticated users)
+				const response = await adminUsersAPI.listForAssignment();
+				return response.data.data || [];
+			} catch (error) {
+				// Fallback to admin endpoint if user has permissions
+				if (error.response?.status === 403 || error.response?.status === 401) {
+					try {
+						const response = await adminUsersAPI.list();
+						return response.data.data || [];
+					} catch (_e) {
+						// If both fail, return empty array
+						return [];
+					}
+				}
+				// For other errors, return empty array
+				return [];
+			}
 		},
 	});
 
@@ -79,7 +94,7 @@ const AlertSettings = () => {
 	});
 
 	// Bulk update mutation
-	const bulkUpdateMutation = useMutation({
+	const _bulkUpdateMutation = useMutation({
 		mutationFn: async (configs) => {
 			return alertsAPI.bulkUpdateAlertConfig(configs);
 		},
@@ -104,7 +119,13 @@ const AlertSettings = () => {
 
 		// Convert empty strings to null for optional fields
 		let cleanedValue = value;
-		if (value === "" && (field === "auto_assign_user_id" || field === "retention_days" || field === "auto_resolve_after_days" || field === "escalation_after_hours")) {
+		if (
+			value === "" &&
+			(field === "auto_assign_user_id" ||
+				field === "retention_days" ||
+				field === "auto_resolve_after_days" ||
+				field === "escalation_after_hours")
+		) {
 			cleanedValue = null;
 		}
 
@@ -139,7 +160,9 @@ const AlertSettings = () => {
 			<div className="space-y-6">
 				<div className="text-center py-8">
 					<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-					<p className="mt-2 text-sm text-secondary-500">Loading alert settings...</p>
+					<p className="mt-2 text-sm text-secondary-500">
+						Loading alert settings...
+					</p>
 				</div>
 			</div>
 		);
@@ -181,7 +204,8 @@ const AlertSettings = () => {
 						Alert Settings
 					</h1>
 					<p className="mt-1 text-sm text-secondary-600 dark:text-secondary-400">
-						Configure alert types, severities, auto-assignment, and retention policies
+						Configure alert types, severities, auto-assignment, and retention
+						policies
 					</p>
 				</div>
 				<div className="flex items-center gap-3">
@@ -217,8 +241,9 @@ const AlertSettings = () => {
 							Alerts System Master Switch
 						</h2>
 						<p className="text-sm text-secondary-600 dark:text-secondary-400 mt-1">
-							Enable or disable the entire alerts system. When disabled, no alerts will be
-							created, alert queues will be skipped, and the Reporting page will be hidden.
+							Enable or disable the entire alerts system. When disabled, no
+							alerts will be created, alert queues will be skipped, and the
+							Reporting page will be hidden.
 						</p>
 					</div>
 					<label className="relative inline-flex items-center cursor-pointer">
@@ -249,8 +274,8 @@ const AlertSettings = () => {
 									Alerts System Disabled
 								</h3>
 								<p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
-									All alert-related services are currently disabled. No alerts will be
-									created, and alert cleanup jobs will be skipped.
+									All alert-related services are currently disabled. No alerts
+									will be created, and alert cleanup jobs will be skipped.
 								</p>
 							</div>
 						</div>
@@ -386,7 +411,9 @@ const AlertTypeTableRow = ({ config, onUpdate, isSaving, usersData }) => {
 			<td className="px-6 py-4 whitespace-nowrap">
 				<select
 					value={localConfig.default_severity}
-					onChange={(e) => handleFieldChange("default_severity", e.target.value)}
+					onChange={(e) =>
+						handleFieldChange("default_severity", e.target.value)
+					}
 					disabled={isSaving || !localConfig.is_enabled}
 					className="px-2 py-1 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
 				>
@@ -440,7 +467,7 @@ const AlertTypeTableRow = ({ config, onUpdate, isSaving, usersData }) => {
 					onChange={(e) =>
 						handleFieldChange(
 							"retention_days",
-							e.target.value ? parseInt(e.target.value) : null,
+							e.target.value ? parseInt(e.target.value, 10) : null,
 						)
 					}
 					disabled={isSaving || !localConfig.is_enabled}
@@ -457,7 +484,7 @@ const AlertTypeTableRow = ({ config, onUpdate, isSaving, usersData }) => {
 					onChange={(e) =>
 						handleFieldChange(
 							"auto_resolve_after_days",
-							e.target.value ? parseInt(e.target.value) : null,
+							e.target.value ? parseInt(e.target.value, 10) : null,
 						)
 					}
 					disabled={isSaving || !localConfig.is_enabled}
@@ -513,10 +540,15 @@ const CleanupSection = () => {
 
 		try {
 			const response = await alertsAPI.triggerCleanup();
-			alert(`Cleanup completed: ${response.data.data.deleted_count} alerts deleted`);
+			alert(
+				`Cleanup completed: ${response.data.data.deleted_count} alerts deleted`,
+			);
 			setPreviewData(null);
 		} catch (error) {
-			alert("Failed to trigger cleanup: " + (error.response?.data?.error || error.message));
+			alert(
+				"Failed to trigger cleanup: " +
+					(error.response?.data?.error || error.message),
+			);
 		}
 	};
 
@@ -529,7 +561,9 @@ const CleanupSection = () => {
 					disabled={previewLoading}
 					className="btn-outline flex items-center gap-2"
 				>
-					<RefreshCw className={`h-4 w-4 ${previewLoading ? "animate-spin" : ""}`} />
+					<RefreshCw
+						className={`h-4 w-4 ${previewLoading ? "animate-spin" : ""}`}
+					/>
 					Preview Cleanup
 				</button>
 				{previewData && previewData.length > 0 && (
@@ -547,7 +581,8 @@ const CleanupSection = () => {
 				<div className="mt-4">
 					{previewData.length === 0 ? (
 						<p className="text-sm text-secondary-600 dark:text-secondary-400">
-							No alerts need to be cleaned up based on current retention policies.
+							No alerts need to be cleaned up based on current retention
+							policies.
 						</p>
 					) : (
 						<div className="bg-secondary-50 dark:bg-secondary-800 rounded-md p-4">
@@ -574,4 +609,3 @@ const CleanupSection = () => {
 };
 
 export default AlertSettings;
-

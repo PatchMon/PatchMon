@@ -74,7 +74,7 @@ const CustomTooltip = ({ active, payload, label, type }) => {
 
 					return (
 						<div
-							key={index}
+							key={`entry-${index}-${entry.name || entry.dataKey || ""}`}
 							className="flex items-center justify-between gap-4 text-sm"
 						>
 							<div className="flex items-center gap-2">
@@ -563,7 +563,7 @@ const Compliance = () => {
 											<p>Failed hosts:</p>
 											<ul className="list-disc list-inside">
 												{bulkScanResult.failed.map((f, i) => (
-													<li key={i}>
+													<li key={`failed-${i}-${f.hostName || ""}`}>
 														{f.hostName}: {f.error}
 													</li>
 												))}
@@ -1369,7 +1369,7 @@ const Compliance = () => {
 															>
 																{openscapRuleData.map((entry, index) => (
 																	<Cell
-																		key={`cell-${index}`}
+																		key={`cell-${index}-${entry.color || entry.severity || ""}`}
 																		fill={entry.color}
 																	/>
 																))}
@@ -1428,7 +1428,7 @@ const Compliance = () => {
 																	<Bar dataKey="count" radius={[0, 4, 4, 0]}>
 																		{openscapScoreRanges.map((entry, index) => (
 																			<Cell
-																				key={`cell-${index}`}
+																				key={`cell-${index}-${entry.color || entry.severity || ""}`}
 																				fill={entry.color}
 																			/>
 																		))}
@@ -1476,7 +1476,7 @@ const Compliance = () => {
 															>
 																{dockerRuleData.map((entry, index) => (
 																	<Cell
-																		key={`cell-${index}`}
+																		key={`cell-${index}-${entry.color || entry.severity || ""}`}
 																		fill={entry.color}
 																	/>
 																))}
@@ -1535,7 +1535,7 @@ const Compliance = () => {
 																	<Bar dataKey="count" radius={[0, 4, 4, 0]}>
 																		{dockerScoreRanges.map((entry, index) => (
 																			<Cell
-																				key={`cell-${index}`}
+																				key={`cell-${index}-${entry.color || entry.severity || ""}`}
 																				fill={entry.color}
 																			/>
 																		))}
@@ -1692,7 +1692,10 @@ const Compliance = () => {
 													/>
 													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
 														{chartData.map((entry, index) => (
-															<Cell key={`cell-${index}`} fill={entry.color} />
+															<Cell
+																key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																fill={entry.color}
+															/>
 														))}
 													</Bar>
 												</BarChart>
@@ -1764,7 +1767,10 @@ const Compliance = () => {
 													/>
 													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
 														{scoreRanges.map((entry, index) => (
-															<Cell key={`cell-${index}`} fill={entry.color} />
+															<Cell
+																key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																fill={entry.color}
+															/>
 														))}
 													</Bar>
 												</BarChart>
@@ -1829,7 +1835,10 @@ const Compliance = () => {
 													<Tooltip content={<CustomTooltip type="scanAge" />} />
 													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
 														{chartData.map((entry, index) => (
-															<Cell key={`cell-${index}`} fill={entry.color} />
+															<Cell
+																key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																fill={entry.color}
+															/>
 														))}
 													</Bar>
 												</BarChart>
@@ -1994,7 +2003,10 @@ const Compliance = () => {
 													/>
 													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
 														{chartData.map((entry, index) => (
-															<Cell key={`cell-${index}`} fill={entry.color} />
+															<Cell
+																key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																fill={entry.color}
+															/>
 														))}
 													</Bar>
 												</BarChart>
@@ -2066,7 +2078,10 @@ const Compliance = () => {
 													/>
 													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
 														{scoreRanges.map((entry, index) => (
-															<Cell key={`cell-${index}`} fill={entry.color} />
+															<Cell
+																key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																fill={entry.color}
+															/>
 														))}
 													</Bar>
 												</BarChart>
@@ -2133,7 +2148,10 @@ const Compliance = () => {
 													<Tooltip content={<CustomTooltip type="scanAge" />} />
 													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
 														{chartData.map((entry, index) => (
-															<Cell key={`cell-${index}`} fill={entry.color} />
+															<Cell
+																key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																fill={entry.color}
+															/>
 														))}
 													</Bar>
 												</BarChart>
@@ -2222,7 +2240,10 @@ const Compliance = () => {
 													/>
 													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
 														{chartData.map((entry, index) => (
-															<Cell key={`cell-${index}`} fill={entry.color} />
+															<Cell
+																key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																fill={entry.color}
+															/>
 														))}
 													</Bar>
 												</BarChart>
@@ -2336,7 +2357,10 @@ const Compliance = () => {
 													/>
 													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
 														{chartData.map((entry, index) => (
-															<Cell key={`cell-${index}`} fill={entry.color} />
+															<Cell
+																key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																fill={entry.color}
+															/>
 														))}
 													</Bar>
 												</BarChart>

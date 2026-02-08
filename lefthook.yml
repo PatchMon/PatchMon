@@ -3,15 +3,16 @@ pre-commit:
   commands:
     biome:
       run: |
-        echo "Running Biome on entire codebase (all files: committed, staged, and unstaged)..."
-        npx @biomejs/biome check
-        --write
-        --no-errors-on-unmatched
-        --files-ignore-unknown=true
-        --colors=off
-        .
-      stage_fixed: true
-      fail_text: "Biome found issues in the entire codebase. Please fix them before committing."
+        echo "Running Biome check (reporting errors, no auto-fix)..."
+        # Check for errors WITHOUT auto-fixing - this will fail the commit if there are any issues
+        # Errors must be fixed manually before committing
+        npx @biomejs/biome check \
+          --no-errors-on-unmatched \
+          --files-ignore-unknown=true \
+          --colors=off \
+          .
+      stage_fixed: false
+      fail_text: "Biome found errors in the codebase. Please fix them manually before committing."
       skip: merge
     golangci-lint:
       run: |

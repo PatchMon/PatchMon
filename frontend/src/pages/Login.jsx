@@ -319,7 +319,8 @@ const Login = () => {
 				}
 
 				// Use cache if less than 1 hour old
-				const shouldFetchFresh = !cacheTime || now - parseInt(cacheTime, 10) >= 3600000;
+				const shouldFetchFresh =
+					!cacheTime || now - parseInt(cacheTime, 10) >= 3600000;
 
 				// Fetch repository info (includes star count) - still from GitHub for stars
 				try {
@@ -388,7 +389,6 @@ const Login = () => {
 						// Will use cached data if available
 					}
 				}
-
 			} catch (error) {
 				// Ignore abort errors
 				if (error.name === "AbortError") return;

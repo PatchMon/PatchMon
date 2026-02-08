@@ -5,7 +5,7 @@ const logger = require("../utils/logger");
 const { authenticateToken } = require("../middleware/auth");
 const { requireManageSettings } = require("../middleware/permissions");
 const { getPrismaClient } = require("../config/prisma");
-const dns = require("node:dns").promises;
+const _dns = require("node:dns").promises;
 const { checkVersionFromDNS } = require("../services/automation/shared/utils");
 
 const prisma = getPrismaClient();
@@ -77,7 +77,7 @@ async function getLatestRelease() {
 }
 
 // Helper function to get latest commit from main branch
-async function getLatestCommit(owner, repo) {
+async function _getLatestCommit(owner, repo) {
 	try {
 		const currentVersion = getCurrentVersion();
 		const apiUrl = `https://api.github.com/repos/${owner}/${repo}/commits/main`;
@@ -118,7 +118,7 @@ async function getLatestCommit(owner, repo) {
 }
 
 // Helper function to get commit count difference
-async function getCommitDifference(owner, repo, currentVersion) {
+async function _getCommitDifference(owner, repo, currentVersion) {
 	// Try both with and without 'v' prefix for compatibility
 	const versionTags = [
 		currentVersion, // Try without 'v' first (new format)

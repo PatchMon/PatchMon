@@ -120,6 +120,10 @@ export const adminHostsAPI = {
 		api.put("/hosts/bulk/groups", { hostIds, groupIds }),
 	toggleAutoUpdate: (hostId, autoUpdate) =>
 		api.patch(`/hosts/${hostId}/auto-update`, { auto_update: autoUpdate }),
+	toggleHostDownAlerts: (hostId, enabled) =>
+		api.patch(`/hosts/${hostId}/host-down-alerts`, {
+			host_down_alerts_enabled: enabled,
+		}),
 	forceAgentUpdate: (hostId) => api.post(`/hosts/${hostId}/force-agent-update`),
 	refreshIntegrationStatus: (hostId) =>
 		api.post(`/hosts/${hostId}/refresh-integration-status`),
@@ -167,6 +171,7 @@ export const hostGroupsAPI = {
 // Admin Users API (for user management)
 export const adminUsersAPI = {
 	list: () => api.get("/auth/admin/users"),
+	listForAssignment: () => api.get("/auth/users/for-assignment"), // Public endpoint for assignment dropdowns
 	create: (userData) => api.post("/auth/admin/users", userData),
 	update: (userId, userData) =>
 		api.put(`/auth/admin/users/${userId}`, userData),
@@ -188,6 +193,7 @@ export const permissionsAPI = {
 // Settings API
 export const settingsAPI = {
 	get: () => api.get("/settings"),
+	getPublic: () => api.get("/settings/public"), // Public endpoint for read-only settings (auto_update, etc.)
 	update: (settings) => api.put("/settings", settings),
 	getServerUrl: () => api.get("/settings/server-url"),
 };
