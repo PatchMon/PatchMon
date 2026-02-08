@@ -32,8 +32,6 @@ func generateRepoName(url, distribution, components string) string {
 			baseName += "-updates"
 		} else if strings.Contains(components, "backports") && !strings.Contains(baseName, "backports") {
 			baseName += "-backports"
-		} else if strings.Contains(components, "main") && strings.Contains(components, " ") {
-			// Multiple components, don't add suffix
 		} else if components != "main" && !strings.Contains(components, " ") {
 			// Single non-main component
 			baseName += fmt.Sprintf("-%s", components)

@@ -285,7 +285,7 @@ func (s *OscapDockerScanner) parseImageCveOutput(output string, imageName string
 			case "medium":
 				totalPenalty += 2
 			case "low":
-				totalPenalty += 1
+				totalPenalty++
 			}
 		}
 		// Score decreases with more/worse vulnerabilities

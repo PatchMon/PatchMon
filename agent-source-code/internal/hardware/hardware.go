@@ -1,3 +1,4 @@
+// Package hardware provides hardware information and detection functionality
 package hardware
 
 import (

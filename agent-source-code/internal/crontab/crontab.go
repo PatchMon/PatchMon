@@ -1,3 +1,4 @@
+// Package crontab provides functionality for managing cron jobs
 package crontab
 
 import (

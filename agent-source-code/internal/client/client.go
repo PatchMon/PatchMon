@@ -1,3 +1,4 @@
+// Package client provides HTTP client functionality for communicating with the PatchMon server
 package client
 
 import (

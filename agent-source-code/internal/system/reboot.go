@@ -1,3 +1,4 @@
+// Package system provides system-level operations including reboot functionality
 package system
 
 import (
@@ -117,17 +118,17 @@ func (d *Detector) getLatestKernelFromBoot() string {
 
 	var kernels []string
 	for _, entry := range entries {
-			name := entry.Name()
-			// Look for vmlinuz-* files
-			if strings.HasPrefix(name, "vmlinuz-") {
-				version := strings.TrimPrefix(name, "vmlinuz-")
-				// Skip recovery kernels but keep generic kernels
-				if strings.Contains(version, "recovery") {
-					continue
-				}
-				kernels = append(kernels, version)
+		name := entry.Name()
+		// Look for vmlinuz-* files
+		if strings.HasPrefix(name, "vmlinuz-") {
+			version := strings.TrimPrefix(name, "vmlinuz-")
+			// Skip recovery kernels but keep generic kernels
+			if strings.Contains(version, "recovery") {
+				continue
 			}
+			kernels = append(kernels, version)
 		}
+	}
 
 	if len(kernels) == 0 {
 		return ""

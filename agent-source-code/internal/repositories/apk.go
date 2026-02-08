@@ -1,3 +1,4 @@
+// Package repositories provides repository management functionality for APK package manager
 package repositories
 
 import (

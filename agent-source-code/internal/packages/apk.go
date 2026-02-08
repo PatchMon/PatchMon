@@ -1,3 +1,4 @@
+// Package packages provides package management functionality for APK package manager
 package packages
 
 import (

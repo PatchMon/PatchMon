@@ -1,3 +1,4 @@
+// Package utils provides utility functions for timezone and other common operations
 package utils
 
 import (

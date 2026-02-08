@@ -1,3 +1,4 @@
+// Package constants provides shared constants used across the agent
 package constants
 
 // SELinux status constants

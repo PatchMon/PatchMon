@@ -68,7 +68,7 @@ func (s *DockerBenchScanner) checkAvailability() {
 // RunScan executes a Docker Bench for Security scan
 func (s *DockerBenchScanner) RunScan(ctx context.Context) (*models.ComplianceScan, error) {
 	if !s.available {
-		return nil, fmt.Errorf("Docker is not available")
+		return nil, fmt.Errorf("docker is not available")
 	}
 
 	startTime := time.Now()
@@ -84,7 +84,7 @@ func (s *DockerBenchScanner) RunScan(ctx context.Context) (*models.ComplianceSca
 		checkCmd := exec.CommandContext(ctx, dockerBinary, "images", "-q", dockerBenchImage)
 		checkOutput, checkErr := checkCmd.Output()
 		if checkErr != nil || strings.TrimSpace(string(checkOutput)) == "" {
-			return nil, fmt.Errorf("Docker Bench image not available and pull failed: %w", err)
+			return nil, fmt.Errorf("docker bench image not available and pull failed: %w", err)
 		}
 		s.logger.Info("Using existing Docker Bench image")
 	} else {
@@ -132,13 +132,13 @@ func (s *DockerBenchScanner) RunScan(ctx context.Context) (*models.ComplianceSca
 	}
 
 	if dockerSocket == "" {
-		return nil, fmt.Errorf("Docker socket not found at any known location")
+		return nil, fmt.Errorf("docker socket not found at any known location")
 	}
 
 	// Verify socket is accessible
 	socketInfo, err := os.Stat(dockerSocket)
 	if err != nil {
-		return nil, fmt.Errorf("Docker socket not accessible: %w", err)
+		return nil, fmt.Errorf("docker socket not accessible: %w", err)
 	}
 	s.logger.WithFields(logrus.Fields{
 		"socket": dockerSocket,
@@ -255,7 +255,7 @@ func (s *DockerBenchScanner) parseOutput(output string) *models.ComplianceScan {
 
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	currentSection := ""
-	var lastResultIdx int = -1
+	var lastResultIdx = -1
 	inRemediation := false // Track if we're reading multi-line remediation
 
 	for scanner.Scan() {
@@ -440,7 +440,7 @@ func (s *DockerBenchScanner) EnsureInstalled() error {
 	s.checkAvailability()
 
 	if !s.available {
-		return fmt.Errorf("Docker is not available - Docker Bench requires Docker to run")
+		return fmt.Errorf("docker is not available - Docker Bench requires Docker to run")
 	}
 
 	s.logger.Info("Pre-pulling Docker Bench for Security image...")

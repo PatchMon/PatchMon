@@ -1,3 +1,4 @@
+// Package docker provides Docker container integration functionality
 package docker
 
 import (

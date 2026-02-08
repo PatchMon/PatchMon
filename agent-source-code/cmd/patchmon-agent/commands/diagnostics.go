@@ -87,7 +87,7 @@ func showDiagnostics() error {
 
 	// Basic network connectivity test
 	serverHost, serverPort := extractURLHostAndPort(cfg.PatchmonServer)
-	if isReachable := utils.TcpPing(serverHost, serverPort); isReachable {
+	if isReachable := utils.TCPPing(serverHost, serverPort); isReachable {
 		fmt.Printf("  ✅ Server is reachable\n")
 	} else {
 		fmt.Printf("  ❌ Server is not reachable\n")

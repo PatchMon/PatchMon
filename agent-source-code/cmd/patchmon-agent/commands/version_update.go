@@ -30,6 +30,7 @@ const (
 	versionCheckTimeout = 10 * time.Second // Shorter timeout for version checks
 )
 
+// ServerVersionResponse represents the response from the server when checking for version updates
 type ServerVersionResponse struct {
 	Version      string `json:"version"`
 	Architecture string `json:"architecture"`
@@ -39,6 +40,7 @@ type ServerVersionResponse struct {
 	BinaryData   []byte `json:"-"` // Binary data (not serialized to JSON)
 }
 
+// ServerVersionInfo contains version information for the agent
 type ServerVersionInfo struct {
 	CurrentVersion           string   `json:"currentVersion"`
 	LatestVersion            string   `json:"latestVersion"`
@@ -55,7 +57,7 @@ var checkVersionCmd = &cobra.Command{
 	Use:   "check-version",
 	Short: "Check for agent updates",
 	Long:  "Check if there are any updates available for the PatchMon agent.",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		if err := checkRoot(); err != nil {
 			return err
 		}
@@ -69,7 +71,7 @@ var updateAgentCmd = &cobra.Command{
 	Use:   "update-agent",
 	Short: "Update agent to latest version",
 	Long:  "Download and install the latest version of the PatchMon agent.",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		if err := checkRoot(); err != nil {
 			return err
 		}
@@ -612,7 +614,7 @@ func markRecentUpdate() {
 }
 
 // restartService restarts the patchmon-agent service (supports systemd and OpenRC)
-func restartService(_ string, expectedVersion string) error {
+func restartService(_ string, _ string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
@@ -831,17 +833,17 @@ rm -f "$0"
 		os.Exit(0)
 		// os.Exit never returns, but we need this for code flow
 		return nil
-	} else {
-		// Fallback: try to kill and let service manager restart it
-		logger.Warn("No known init system detected, attempting to restart via process signal")
-		// Try to find and kill the process, service manager should restart it
-		killCmd := exec.CommandContext(ctx, "pkill", "-HUP", "patchmon-agent")
-		if err := killCmd.Run(); err != nil {
-			return fmt.Errorf("failed to restart service: no init system detected and pkill failed: %w", err)
-		}
-		logger.Info("Sent HUP signal to agent process")
-		return nil
 	}
+
+	// Fallback: try to kill and let service manager restart it
+	logger.Warn("No known init system detected, attempting to restart via process signal")
+	// Try to find and kill the process, service manager should restart it
+	killCmd := exec.CommandContext(ctx, "pkill", "-HUP", "patchmon-agent")
+	if err := killCmd.Run(); err != nil {
+		return fmt.Errorf("failed to restart service: no init system detected and pkill failed: %w", err)
+	}
+	logger.Info("Sent HUP signal to agent process")
+	return nil
 }
 
 // Removed update-crontab command (cron is no longer used)

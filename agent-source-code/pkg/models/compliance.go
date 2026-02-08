@@ -1,3 +1,4 @@
+// Package models provides data models used throughout the agent
 package models
 
 import "time"

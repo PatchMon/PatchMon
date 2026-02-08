@@ -1,4 +1,5 @@
 pre-commit:
+  parallel: true
   commands:
     check:
       glob: "*.{js,ts,cjs,mjs,d.cts,d.mts,jsx,tsx,json,jsonc}"
@@ -11,10 +12,10 @@ pre-commit:
         {staged_files}
       stage_fixed: true
     golangci-lint:
-      glob: "agent-source-code/**/*.go"
-      run: >-
-        cd agent-source-code &&
-        golangci-lint run
-        --timeout=5m
-        ./...
+      run: |
+        echo "Running golangci-lint on entire codebase (all files: committed, staged, and unstaged)..."
+        cd agent-source-code
+        golangci-lint run --timeout=5m ./...
       stage_fixed: false
+      fail_text: "golangci-lint found issues in the entire codebase. Please fix them before committing."
+      skip: merge

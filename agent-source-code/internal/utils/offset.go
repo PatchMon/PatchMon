@@ -14,22 +14,21 @@ import (
 //
 // The same api_id will always produce the same offset, ensuring consistency
 // across service restarts.
-func CalculateReportOffset(apiId string, intervalMinutes int) time.Duration {
+func CalculateReportOffset(apiID string, intervalMinutes int) time.Duration {
 	// Hash the api_id to get a consistent numeric value
-	hash := hashString(apiId)
+	hash := hashString(apiID)
 
 	if intervalMinutes >= 60 {
 		// For hourly or longer intervals, offset in minutes (0-59)
 		// Example: api_id hash % 60 = 10 → reports at :10 past each hour
 		offsetMinutes := hash % 60
 		return time.Duration(offsetMinutes) * time.Minute
-	} else {
-		// For sub-hourly intervals, offset in seconds
-		// Example: 5-minute interval, hash % 300 = 7 → reports at :07, :12, :17, etc.
-		maxOffsetSeconds := intervalMinutes * 60
-		offsetSeconds := hash % uint64(maxOffsetSeconds)
-		return time.Duration(offsetSeconds) * time.Second
 	}
+	// For sub-hourly intervals, offset in seconds
+	// Example: 5-minute interval, hash % 300 = 7 → reports at :07, :12, :17, etc.
+	maxOffsetSeconds := intervalMinutes * 60
+	offsetSeconds := hash % uint64(maxOffsetSeconds)
+	return time.Duration(offsetSeconds) * time.Second
 }
 
 // hashString creates a deterministic hash from a string using FNV-1a algorithm

@@ -82,7 +82,7 @@ func (s *OpenSCAPScanner) GetOSInfo() models.ComplianceOSInfo {
 	return s.osInfo
 }
 
-// GetContentFile returns the path to the content file being used
+// GetContentFilePath returns the path to the content file being used
 func (s *OpenSCAPScanner) GetContentFilePath() string {
 	return s.getContentFile()
 }
@@ -151,23 +151,23 @@ func (s *OpenSCAPScanner) DiscoverProfiles() []models.ScanProfileInfo {
 			continue
 		}
 
-		xccdfId := strings.TrimSpace(parts[0])
-		name := xccdfId
+		xccdfID := strings.TrimSpace(parts[0])
+		name := xccdfID
 		if len(parts) == 2 {
 			name = strings.TrimSpace(parts[1])
 		}
 
 		// Determine category from profile ID
-		category := s.categorizeProfile(xccdfId)
+		category := s.categorizeProfile(xccdfID)
 
 		// Create short ID from XCCDF ID
-		shortId := s.createShortId(xccdfId)
+		shortID := s.createShortID(xccdfID)
 
 		profiles = append(profiles, models.ScanProfileInfo{
-			ID:       shortId,
+			ID:       shortID,
 			Name:     name,
 			Type:     "openscap",
-			XCCDFId:  xccdfId,
+			XCCDFId:  xccdfID,
 			Category: category,
 		})
 	}
@@ -181,8 +181,8 @@ func (s *OpenSCAPScanner) DiscoverProfiles() []models.ScanProfileInfo {
 }
 
 // categorizeProfile determines the category of a profile based on its ID
-func (s *OpenSCAPScanner) categorizeProfile(xccdfId string) string {
-	id := strings.ToLower(xccdfId)
+func (s *OpenSCAPScanner) categorizeProfile(xccdfID string) string {
+	id := strings.ToLower(xccdfID)
 	switch {
 	case strings.Contains(id, "cis"):
 		return "cis"
@@ -201,16 +201,16 @@ func (s *OpenSCAPScanner) categorizeProfile(xccdfId string) string {
 	}
 }
 
-// createShortId creates a short profile ID from the full XCCDF ID
-func (s *OpenSCAPScanner) createShortId(xccdfId string) string {
+// createShortID creates a short profile ID from the full XCCDF ID
+func (s *OpenSCAPScanner) createShortID(xccdfID string) string {
 	// Extract the profile name part: xccdf_org.ssgproject.content_profile_XXX -> XXX
-	if strings.Contains(xccdfId, "_profile_") {
-		parts := strings.SplitN(xccdfId, "_profile_", 2)
+	if strings.Contains(xccdfID, "_profile_") {
+		parts := strings.SplitN(xccdfID, "_profile_", 2)
 		if len(parts) == 2 {
 			return parts[1]
 		}
 	}
-	return xccdfId
+	return xccdfID
 }
 
 // getDefaultProfiles returns fallback profiles when discovery fails

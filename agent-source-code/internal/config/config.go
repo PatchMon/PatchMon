@@ -1,3 +1,4 @@
+// Package config provides configuration management functionality for the agent
 package config
 
 import (
@@ -13,12 +14,18 @@ import (
 )
 
 const (
-	DefaultAPIVersion      = "v1"
-	DefaultConfigFile      = "/etc/patchmon/config.yml"
+	// DefaultAPIVersion is the default API version to use
+	DefaultAPIVersion = "v1"
+	// DefaultConfigFile is the default path to the configuration file
+	DefaultConfigFile = "/etc/patchmon/config.yml"
+	// DefaultCredentialsFile is the default path to the credentials file
 	DefaultCredentialsFile = "/etc/patchmon/credentials.yml"
-	DefaultLogFile         = "/etc/patchmon/logs/patchmon-agent.log"
-	DefaultLogLevel        = "info"
-	CronFilePath           = "/etc/cron.d/patchmon-agent"
+	// DefaultLogFile is the default path to the log file
+	DefaultLogFile = "/etc/patchmon/logs/patchmon-agent.log"
+	// DefaultLogLevel is the default logging level
+	DefaultLogLevel = "info"
+	// CronFilePath is the path to the cron configuration file
+	CronFilePath = "/etc/cron.d/patchmon-agent"
 )
 
 // AvailableIntegrations lists all integrations that can be enabled/disabled
@@ -123,11 +130,12 @@ func (m *Manager) LoadConfig() error {
 			// Keep bool as-is (false = disabled, true = enabled with auto-scans)
 		case string:
 			// Normalize string values
-			if v == "on-demand" || v == "on_demand" {
+			switch v {
+			case "on-demand", "on_demand":
 				m.config.Integrations["compliance"] = "on-demand"
-			} else if v == "true" {
+			case "true":
 				m.config.Integrations["compliance"] = true
-			} else if v == "false" {
+			case "false":
 				m.config.Integrations["compliance"] = false
 			}
 		}
@@ -266,12 +274,13 @@ func (m *Manager) SaveConfig() error {
 	}
 	for _, integrationName := range AvailableIntegrations {
 		if _, exists := m.config.Integrations[integrationName]; !exists {
-			if integrationName == "compliance" {
+			switch integrationName {
+			case "compliance":
 				m.config.Integrations[integrationName] = "on-demand"
-			} else if integrationName == "ssh-proxy-enabled" {
+			case "ssh-proxy-enabled":
 				// Default SSH proxy to disabled (security: must be explicitly enabled)
 				m.config.Integrations[integrationName] = false
-			} else {
+			default:
 				m.config.Integrations[integrationName] = false
 			}
 		}
@@ -284,11 +293,12 @@ func (m *Manager) SaveConfig() error {
 			// Keep bool as-is (false = disabled, true = enabled with auto-scans)
 		case string:
 			// Normalize string values
-			if v == "on-demand" || v == "on_demand" {
+			switch v {
+			case "on-demand", "on_demand":
 				m.config.Integrations["compliance"] = "on-demand"
-			} else if v == "true" {
+			case "true":
 				m.config.Integrations["compliance"] = true
-			} else if v == "false" {
+			case "false":
 				m.config.Integrations["compliance"] = false
 			}
 		}
@@ -379,9 +389,12 @@ func (m *Manager) SetIntegrationEnabled(name string, enabled bool) error {
 type ComplianceMode string
 
 const (
-	ComplianceDisabled ComplianceMode = "disabled"  // false - compliance is disabled
+	// ComplianceDisabled indicates compliance scanning is disabled
+	ComplianceDisabled ComplianceMode = "disabled" // false - compliance is disabled
+	// ComplianceOnDemand indicates compliance scanning runs only when triggered
 	ComplianceOnDemand ComplianceMode = "on-demand" // "on-demand" - only run when triggered
-	ComplianceEnabled  ComplianceMode = "enabled"   // true - enabled with automatic scheduled scans
+	// ComplianceEnabled indicates compliance scanning is enabled with automatic scheduled scans
+	ComplianceEnabled ComplianceMode = "enabled" // true - enabled with automatic scheduled scans
 )
 
 // GetComplianceMode returns the current compliance mode

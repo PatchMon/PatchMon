@@ -296,11 +296,11 @@ func (d *Detector) getSystemUptime(ctx context.Context) string {
 
 	if days > 0 {
 		return fmt.Sprintf("%d days, %d hours, %d minutes", days, hours, minutes)
-	} else if hours > 0 {
-		return fmt.Sprintf("%d hours, %d minutes", hours, minutes)
-	} else {
-		return fmt.Sprintf("%d minutes", minutes)
 	}
+	if hours > 0 {
+		return fmt.Sprintf("%d hours, %d minutes", hours, minutes)
+	}
+	return fmt.Sprintf("%d minutes", minutes)
 }
 
 // getLoadAverage gets system load average

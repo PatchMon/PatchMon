@@ -39,7 +39,7 @@ import (
 var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Run the agent as a service with async updates",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		if err := checkRoot(); err != nil {
 			return err
 		}
@@ -870,10 +870,9 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		wsURL = "wss://" + strings.TrimPrefix(wsURL, "https://")
 	} else if strings.HasPrefix(wsURL, "http://") {
 		wsURL = "ws://" + strings.TrimPrefix(wsURL, "http://")
-	} else if strings.HasPrefix(wsURL, "wss://") {
-		// Already a WebSocket secure URL, use as-is
-	} else if strings.HasPrefix(wsURL, "ws://") {
-		// Already a WebSocket URL, use as-is
+	} else if strings.HasPrefix(wsURL, "wss://") || strings.HasPrefix(wsURL, "ws://") {
+		// Already a WebSocket URL, use as-is - no conversion needed
+		_ = wsURL // URL is already in correct format, no action needed
 	} else {
 		// No protocol prefix - assume HTTPS and use WSS
 		logger.WithField("server", server).Warn("Server URL missing protocol prefix, assuming HTTPS")
@@ -1433,56 +1432,55 @@ func toggleIntegration(integrationName string, enabled bool) error {
 				logger.WithError(err).Warn("Failed to send final compliance status")
 			}
 			return nil // Skip the generic status send below
+		}
 
+		logger.Info("Compliance disabled - removing tools...")
+		overallStatus = "removing"
+
+		// Send initial "removing" status
+		if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
+			Integration: "compliance",
+			Enabled:     false,
+			Status:      overallStatus,
+			Message:     "Removing compliance tools...",
+		}); err != nil {
+			logger.WithError(err).Warn("Failed to send initial compliance removal status")
+		}
+
+		// Remove OpenSCAP packages
+		openscapScanner := compliance.NewOpenSCAPScanner(logger)
+		if err := openscapScanner.Cleanup(); err != nil {
+			logger.WithError(err).Warn("Failed to remove OpenSCAP packages")
+			components["openscap"] = "cleanup-failed"
 		} else {
-			logger.Info("Compliance disabled - removing tools...")
-			overallStatus = "removing"
+			logger.Info("OpenSCAP packages removed successfully")
+			components["openscap"] = "removed"
+		}
 
-			// Send initial "removing" status
-			if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
-				Integration: "compliance",
-				Enabled:     false,
-				Status:      overallStatus,
-				Message:     "Removing compliance tools...",
-			}); err != nil {
-				logger.WithError(err).Warn("Failed to send initial compliance removal status")
-			}
-
-			// Remove OpenSCAP packages
-			openscapScanner := compliance.NewOpenSCAPScanner(logger)
-			if err := openscapScanner.Cleanup(); err != nil {
-				logger.WithError(err).Warn("Failed to remove OpenSCAP packages")
-				components["openscap"] = "cleanup-failed"
+		// Clean up Docker Bench images
+		dockerBenchScanner := compliance.NewDockerBenchScanner(logger)
+		if dockerBenchScanner.IsAvailable() {
+			if err := dockerBenchScanner.Cleanup(); err != nil {
+				logger.WithError(err).Debug("Failed to cleanup Docker Bench image")
+				components["docker-bench"] = "cleanup-failed"
 			} else {
-				logger.Info("OpenSCAP packages removed successfully")
-				components["openscap"] = "removed"
+				components["docker-bench"] = "removed"
 			}
+		}
 
-			// Clean up Docker Bench images
-			dockerBenchScanner := compliance.NewDockerBenchScanner(logger)
-			if dockerBenchScanner.IsAvailable() {
-				if err := dockerBenchScanner.Cleanup(); err != nil {
-					logger.WithError(err).Debug("Failed to cleanup Docker Bench image")
-					components["docker-bench"] = "cleanup-failed"
-				} else {
-					components["docker-bench"] = "removed"
-				}
-			}
+		overallStatus = "disabled"
+		statusMessage = "Compliance disabled and tools removed"
+		logger.Info("Compliance cleanup complete")
 
-			overallStatus = "disabled"
-			statusMessage = "Compliance disabled and tools removed"
-			logger.Info("Compliance cleanup complete")
-
-			// Send final status update for disable
-			if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
-				Integration: "compliance",
-				Enabled:     enabled,
-				Status:      overallStatus,
-				Message:     statusMessage,
-				Components:  components,
-			}); err != nil {
-				logger.WithError(err).Warn("Failed to send final compliance disable status")
-			}
+		// Send final status update for disable
+		if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
+			Integration: "compliance",
+			Enabled:     enabled,
+			Status:      overallStatus,
+			Message:     statusMessage,
+			Components:  components,
+		}); err != nil {
+			logger.WithError(err).Warn("Failed to send final compliance disable status")
 		}
 	}
 
@@ -1686,17 +1684,17 @@ rm -f "$0"
 		os.Exit(0)
 		// os.Exit never returns, but we need this for code flow
 		return nil
-	} else {
-		logger.Warn("No known init system detected, attempting to restart via process signal")
-		// Try to find and kill the process, service manager should restart it
-		killCmd := exec.CommandContext(ctx, "pkill", "-HUP", "patchmon-agent")
-		if err := killCmd.Run(); err != nil {
-			logger.WithError(err).Warn("Failed to restart service (this is not critical)")
-			return fmt.Errorf("failed to restart service: no init system detected and pkill failed: %w", err)
-		}
-		logger.Info("Sent HUP signal to agent process")
-		return nil
 	}
+
+	logger.Warn("No known init system detected, attempting to restart via process signal")
+	// Try to find and kill the process, service manager should restart it
+	killCmd := exec.CommandContext(ctx, "pkill", "-HUP", "patchmon-agent")
+	if err := killCmd.Run(); err != nil {
+		logger.WithError(err).Warn("Failed to restart service (this is not critical)")
+		return fmt.Errorf("failed to restart service: no init system detected and pkill failed: %w", err)
+	}
+	logger.Info("Sent HUP signal to agent process")
+	return nil
 }
 
 // sendComplianceProgress sends a progress update via the global channel

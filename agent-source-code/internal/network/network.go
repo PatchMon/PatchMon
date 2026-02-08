@@ -1,3 +1,4 @@
+// Package network provides network-related functionality
 package network
 
 import (

@@ -1,3 +1,4 @@
+// Package integrations provides integration management functionality
 package integrations
 
 import (

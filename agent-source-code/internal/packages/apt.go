@@ -127,9 +127,8 @@ func (m *APTManager) parseAPTUpgrade(output string) []models.Package {
 					if strings.HasSuffix(fields[j], "]") {
 						versionParts = append(versionParts, strings.TrimSuffix(fields[j], "]"))
 						break
-					} else {
-						versionParts = append(versionParts, fields[j])
 					}
+					versionParts = append(versionParts, fields[j])
 				}
 				currentVersion = strings.Join(versionParts, " ")
 				break

@@ -1,3 +1,4 @@
+// Package compliance provides compliance scanning functionality including OpenSCAP and Docker Bench
 package compliance
 
 import (

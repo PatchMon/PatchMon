@@ -1,3 +1,4 @@
+// Package main is the entry point for the patchmon-agent application
 package main
 
 import (

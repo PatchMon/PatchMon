@@ -1,3 +1,5 @@
+// Package utils provides utility functions for common operations
+//nolint:revive // utils is a common package name in Go projects
 package utils
 
 import (
@@ -15,8 +17,8 @@ func IsProductionEnvironment() bool {
 	return env == "production" || env == "prod"
 }
 
-// TcpPing performs a simple TCP connection test to the specified host and port
-func TcpPing(host, port string) bool {
+// TCPPing performs a simple TCP connection test to the specified host and port
+func TCPPing(host, port string) bool {
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%s", host, port), 5*time.Second)
 	if err != nil {
 		return false

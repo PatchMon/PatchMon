@@ -102,7 +102,7 @@ func (d *Integration) monitoringLoop(ctx context.Context, eventChan chan<- inter
 				Info("Waiting for Docker to be ready before reconnecting...")
 			if !d.waitForDockerReady(ctx) {
 				// Docker not ready, will retry after backoff
-				err := fmt.Errorf("Docker daemon not available")
+				err := fmt.Errorf("docker daemon not available")
 				reconnectAttempts++
 				d.logger.WithError(err).WithField("attempt", reconnectAttempts).
 					Warn("Docker daemon not ready, will retry...")
@@ -335,11 +335,12 @@ func (d *Integration) waitForDockerReady(ctx context.Context) bool {
 				return false
 			case <-ticker.C:
 				if _, err := os.Stat(dockerSocketPath); err == nil {
-					// Socket exists, break to try ping
-					break
+					// Socket exists, break out of for loop to try ping
+					goto pingCheck
 				}
 			}
 		}
+	pingCheck:
 	}
 
 	// Socket exists, now check if daemon is responding
