@@ -20,7 +20,7 @@ var diagnosticsCmd = &cobra.Command{
 	Use:   "diagnostics",
 	Short: "Show detailed system diagnostics",
 	Long:  "Display comprehensive diagnostic information about the agent, system, and configuration.",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		return showDiagnostics()
 	},
 }
@@ -86,7 +86,7 @@ func showDiagnostics() error {
 	fmt.Printf("  Server URL: %s\n", cfg.PatchmonServer)
 
 	// Basic network connectivity test
-	serverHost, serverPort := extractUrlHostAndPort(cfg.PatchmonServer)
+	serverHost, serverPort := extractURLHostAndPort(cfg.PatchmonServer)
 	if isReachable := utils.TcpPing(serverHost, serverPort); isReachable {
 		fmt.Printf("  ✅ Server is reachable\n")
 	} else {
@@ -124,8 +124,8 @@ func showDiagnostics() error {
 	return nil
 }
 
-// extractUrlHostAndPort extracts the host and port from a URL string
-func extractUrlHostAndPort(url string) (host string, port string) {
+// extractURLHostAndPort extracts the host and port from a URL string
+func extractURLHostAndPort(url string) (host string, port string) {
 	trimmed := strings.TrimPrefix(url, "http://")
 	trimmed = strings.TrimPrefix(trimmed, "https://")
 	hostPort := strings.SplitN(trimmed, "/", 2)[0]

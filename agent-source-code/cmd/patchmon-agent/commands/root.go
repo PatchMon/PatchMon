@@ -30,7 +30,7 @@ var rootCmd = &cobra.Command{
 	Long: `PatchMon Agent v` + version.Version + `
 
 A monitoring agent that sends package information to PatchMon.`,
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+	PersistentPreRun: func(cmd *cobra.Command, _ []string) {
 		initialiseAgent()
 		updateLogLevel(cmd)
 	},
@@ -69,14 +69,14 @@ func initialiseAgent() {
 	// Note: logrus TextFormatter doesn't directly support timezone
 	// The timestamp will use the system timezone, but we can configure
 	// the TZ environment variable to control this
-	tz_loc := utils.GetTimezoneLocation()
+	tzLoc := utils.GetTimezoneLocation()
 	logger.SetFormatter(&logrus.TextFormatter{
 		DisableTimestamp: false,
 		FullTimestamp:    true,
 		TimestampFormat:  "2006-01-02T15:04:05",
 	})
 	// Store timezone location for future use if needed
-	_ = tz_loc
+	_ = tzLoc
 
 	// Initialise configuration manager
 	cfgManager = config.New()

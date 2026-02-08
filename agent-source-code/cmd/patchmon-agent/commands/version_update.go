@@ -612,7 +612,7 @@ func markRecentUpdate() {
 }
 
 // restartService restarts the patchmon-agent service (supports systemd and OpenRC)
-func restartService(executablePath, expectedVersion string) error {
+func restartService(_ string, expectedVersion string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 

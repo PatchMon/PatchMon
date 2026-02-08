@@ -191,7 +191,7 @@ func (m *APKManager) extractDistributionAndComponents(url string) (distribution,
 }
 
 // generateRepoName generates a repository name from URL, distribution, components, and tag
-func (m *APKManager) generateRepoName(url, distribution, components, tag string) string {
+func (m *APKManager) generateRepoName(_ string, distribution, components, tag string) string {
 	// If tag is present, use it in the name
 	if tag != "" {
 		tagName := strings.TrimPrefix(tag, "@")

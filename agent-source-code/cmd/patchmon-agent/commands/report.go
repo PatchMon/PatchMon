@@ -24,33 +24,33 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var reportJson bool
+var reportJSON bool
 
 // reportCmd represents the report command
 var reportCmd = &cobra.Command{
 	Use:   "report",
 	Short: "Report system and package information to server",
 	Long:  "Collect and report system, package, and repository information to the PatchMon server.",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		if err := checkRoot(); err != nil {
 			return err
 		}
 
-		return sendReport(reportJson)
+		return sendReport(reportJSON)
 	},
 }
 
 func init() {
-	reportCmd.Flags().BoolVar(&reportJson, "json", false, "Output the JSON report payload to stdout instead of sending to server")
+	reportCmd.Flags().BoolVar(&reportJSON, "json", false, "Output the JSON report payload to stdout instead of sending to server")
 }
 
-func sendReport(outputJson bool) error {
+func sendReport(outputJSON bool) error {
 	// Start tracking execution time
 	startTime := time.Now()
 	logger.Debug("Starting report process")
 
 	// Load API credentials only if we're sending the report (not just outputting JSON)
-	if !outputJson {
+	if !outputJSON {
 		logger.Debug("Loading API credentials")
 		if err := cfgManager.LoadCredentials(); err != nil {
 			logger.WithError(err).Debug("Failed to load credentials")
@@ -202,7 +202,7 @@ func sendReport(outputJson bool) error {
 	}
 
 	// If --report-json flag is set, output JSON and exit
-	if outputJson {
+	if outputJSON {
 		jsonData, err := json.MarshalIndent(payload, "", "  ")
 		if err != nil {
 			return fmt.Errorf("failed to marshal JSON: %w", err)

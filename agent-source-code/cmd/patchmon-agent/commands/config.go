@@ -22,7 +22,7 @@ var configShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show current configuration",
 	Long:  "Display the current configuration settings for the PatchMon agent.",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		return showConfig()
 	},
 }

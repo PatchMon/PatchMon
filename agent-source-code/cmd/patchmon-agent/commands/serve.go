@@ -60,7 +60,7 @@ func runService() error {
 	ctx := context.Background()
 
 	// Get api_id for offset calculation
-	apiId := cfgManager.GetCredentials().APIID
+	apiID := cfgManager.GetCredentials().APIID
 
 	// Load interval from config.yml (with default fallback)
 	intervalMinutes := cfgManager.GetConfig().UpdateInterval
@@ -135,14 +135,14 @@ func runService() error {
 	configOffsetSeconds := cfgManager.GetConfig().ReportOffset
 
 	// Calculate what the offset should be based on current api_id and interval
-	calculatedOffset := utils.CalculateReportOffset(apiId, intervalMinutes)
+	calculatedOffset := utils.CalculateReportOffset(apiID, intervalMinutes)
 	calculatedOffsetSeconds := int(calculatedOffset.Seconds())
 
 	// Use config offset if it exists and matches calculated value, otherwise recalculate and save
 	if configOffsetSeconds > 0 && configOffsetSeconds == calculatedOffsetSeconds {
 		offset = time.Duration(configOffsetSeconds) * time.Second
 		logger.WithFields(map[string]interface{}{
-			"api_id":           apiId,
+			"api_id":           apiID,
 			"interval_minutes": intervalMinutes,
 			"offset_seconds":   offset.Seconds(),
 		}).Info("Loaded report offset from config.yml")
@@ -153,7 +153,7 @@ func runService() error {
 			logger.WithError(err).Warn("Failed to save offset to config.yml")
 		} else {
 			logger.WithFields(map[string]interface{}{
-				"api_id":           apiId,
+				"api_id":           apiID,
 				"interval_minutes": intervalMinutes,
 				"offset_seconds":   offset.Seconds(),
 			}).Info("Calculated and saved report offset to config.yml")
@@ -234,7 +234,7 @@ func runService() error {
 					}
 
 					// Recalculate offset for new interval and save to config.yml
-					newOffset := utils.CalculateReportOffset(apiId, m.interval)
+					newOffset := utils.CalculateReportOffset(apiID, m.interval)
 					newOffsetSeconds := int(newOffset.Seconds())
 					if err := cfgManager.SetReportOffset(newOffsetSeconds); err != nil {
 						logger.WithError(err).Warn("Failed to save offset to config.yml")
@@ -386,28 +386,28 @@ func runService() error {
 				wsConn := globalWsConn
 				globalWsConnMu.RUnlock()
 				if wsConn != nil {
-					go handleSshProxy(m, wsConn)
+					go handleSSHProxy(m, wsConn)
 				}
 			case "ssh_proxy_input":
 				globalWsConnMu.RLock()
 				wsConn := globalWsConn
 				globalWsConnMu.RUnlock()
 				if wsConn != nil {
-					handleSshProxyInput(m, wsConn)
+					handleSSHProxyInput(m, wsConn)
 				}
 			case "ssh_proxy_resize":
 				globalWsConnMu.RLock()
 				wsConn := globalWsConn
 				globalWsConnMu.RUnlock()
 				if wsConn != nil {
-					handleSshProxyResize(m, wsConn)
+					handleSSHProxyResize(m, wsConn)
 				}
 			case "ssh_proxy_disconnect":
 				globalWsConnMu.RLock()
 				wsConn := globalWsConn
 				globalWsConnMu.RUnlock()
 				if wsConn != nil {
-					handleSshProxyDisconnect(m, wsConn)
+					handleSSHProxyDisconnect(m, wsConn)
 				}
 			}
 		}
@@ -745,11 +745,11 @@ type wsMsg struct {
 	complianceOnDemandOnly bool   // For set_compliance_on_demand_only (legacy)
 	complianceMode         string // For set_compliance_mode: "disabled", "on-demand", or "enabled"
 	// SSH proxy fields
-	sshProxySessionID string // Unique session ID for SSH proxy
-	sshProxyHost      string // SSH target host
-	sshProxyPort      int    // SSH target port
-	sshProxyUsername  string // SSH username
-	sshProxyPassword  string // SSH password
+	sshProxySessionID  string // Unique session ID for SSH proxy
+	sshProxyHost       string // SSH target host
+	sshProxyPort       int    // SSH target port
+	sshProxyUsername   string // SSH username
+	sshProxyPassword   string // SSH password
 	sshProxyPrivateKey string // SSH private key
 	sshProxyPassphrase string // SSH private key passphrase
 	sshProxyTerminal   string // Terminal type
@@ -872,10 +872,8 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		wsURL = "ws://" + strings.TrimPrefix(wsURL, "http://")
 	} else if strings.HasPrefix(wsURL, "wss://") {
 		// Already a WebSocket secure URL, use as-is
-		// No conversion needed
 	} else if strings.HasPrefix(wsURL, "ws://") {
 		// Already a WebSocket URL, use as-is
-		// No conversion needed
 	} else {
 		// No protocol prefix - assume HTTPS and use WSS
 		logger.WithField("server", server).Warn("Server URL missing protocol prefix, assuming HTTPS")
@@ -1060,17 +1058,17 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 			OnDemandOnly         bool   `json:"on_demand_only"`         // For set_compliance_on_demand_only (legacy)
 			Mode                 string `json:"mode"`                   // For set_compliance_mode: "disabled", "on-demand", or "enabled"
 			// SSH proxy fields
-			SessionID   string `json:"session_id"`   // SSH proxy session ID
-			Host        string `json:"host"`         // SSH proxy target host
-			Port        int    `json:"port"`         // SSH proxy target port
-			Username    string `json:"username"`     // SSH username
-			Password    string `json:"password"`     // SSH password
-			PrivateKey  string `json:"private_key"`  // SSH private key
-			Passphrase  string `json:"passphrase"`   // SSH private key passphrase
-			Terminal    string `json:"terminal"`     // Terminal type
-			Cols        int    `json:"cols"`          // Terminal columns
-			Rows        int    `json:"rows"`          // Terminal rows
-			Data        string `json:"data"`          // SSH input data
+			SessionID  string `json:"session_id"`  // SSH proxy session ID
+			Host       string `json:"host"`        // SSH proxy target host
+			Port       int    `json:"port"`        // SSH proxy target port
+			Username   string `json:"username"`    // SSH username
+			Password   string `json:"password"`    // SSH password
+			PrivateKey string `json:"private_key"` // SSH private key
+			Passphrase string `json:"passphrase"`  // SSH private key passphrase
+			Terminal   string `json:"terminal"`    // Terminal type
+			Cols       int    `json:"cols"`        // Terminal columns
+			Rows       int    `json:"rows"`        // Terminal rows
+			Data       string `json:"data"`        // SSH input data
 		}
 		if err := json.Unmarshal(data, &payload); err != nil {
 			logger.WithError(err).WithField("data", string(data)).Warn("Failed to parse WebSocket message")
@@ -1206,7 +1204,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 						"integrations:\n" +
 						"    ssh-proxy-enabled: true\n\n" +
 						"Note: This cannot be pushed from the server to the agent and should require you to manually do this for security reasons."
-					sendSshProxyError(wsConn, payload.SessionID, errorMsg)
+					sendSSHProxyError(wsConn, payload.SessionID, errorMsg)
 				}
 				continue
 			}
@@ -1216,13 +1214,13 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				continue
 			}
 			// Validate host
-			if err := validateSshProxyHost(payload.Host); err != nil {
+			if err := validateSSHProxyHost(payload.Host); err != nil {
 				logger.WithError(err).WithField("host", payload.Host).Warn("Invalid SSH proxy host")
 				globalWsConnMu.RLock()
 				wsConn := globalWsConn
 				globalWsConnMu.RUnlock()
 				if wsConn != nil {
-					sendSshProxyError(wsConn, payload.SessionID, fmt.Sprintf("Invalid host: %v", err))
+					sendSSHProxyError(wsConn, payload.SessionID, fmt.Sprintf("Invalid host: %v", err))
 				}
 				continue
 			}
@@ -1233,7 +1231,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				wsConn := globalWsConn
 				globalWsConnMu.RUnlock()
 				if wsConn != nil {
-					sendSshProxyError(wsConn, payload.SessionID, "Invalid port (must be 1-65535)")
+					sendSSHProxyError(wsConn, payload.SessionID, "Invalid port (must be 1-65535)")
 				}
 				continue
 			}
@@ -1244,17 +1242,17 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				"username":   payload.Username,
 			}).Info("ssh_proxy received")
 			out <- wsMsg{
-				kind:                "ssh_proxy",
-				sshProxySessionID:    payload.SessionID,
-				sshProxyHost:         payload.Host,
-				sshProxyPort:         payload.Port,
-				sshProxyUsername:     payload.Username,
-				sshProxyPassword:     payload.Password,
-				sshProxyPrivateKey:   payload.PrivateKey,
-				sshProxyPassphrase:   payload.Passphrase,
-				sshProxyTerminal:     payload.Terminal,
-				sshProxyCols:         payload.Cols,
-				sshProxyRows:         payload.Rows,
+				kind:               "ssh_proxy",
+				sshProxySessionID:  payload.SessionID,
+				sshProxyHost:       payload.Host,
+				sshProxyPort:       payload.Port,
+				sshProxyUsername:   payload.Username,
+				sshProxyPassword:   payload.Password,
+				sshProxyPrivateKey: payload.PrivateKey,
+				sshProxyPassphrase: payload.Passphrase,
+				sshProxyTerminal:   payload.Terminal,
+				sshProxyCols:       payload.Cols,
+				sshProxyRows:       payload.Rows,
 			}
 		case "ssh_proxy_input":
 			if payload.SessionID == "" {
@@ -1262,7 +1260,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				continue
 			}
 			out <- wsMsg{
-				kind:             "ssh_proxy_input",
+				kind:              "ssh_proxy_input",
 				sshProxySessionID: payload.SessionID,
 				sshProxyData:      payload.Data,
 			}
@@ -1272,7 +1270,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				continue
 			}
 			out <- wsMsg{
-				kind:             "ssh_proxy_resize",
+				kind:              "ssh_proxy_resize",
 				sshProxySessionID: payload.SessionID,
 				sshProxyCols:      payload.Cols,
 				sshProxyRows:      payload.Rows,
@@ -1283,7 +1281,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				continue
 			}
 			out <- wsMsg{
-				kind:             "ssh_proxy_disconnect",
+				kind:              "ssh_proxy_disconnect",
 				sshProxySessionID: payload.SessionID,
 			}
 		default:
@@ -1315,15 +1313,15 @@ func toggleIntegration(integrationName string, enabled bool) error {
 			logger.Info("Compliance enabled - installing required tools...")
 			overallStatus = "installing"
 
-		// Send initial "installing" status
-		if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
-			Integration: "compliance",
-			Enabled:     true,
-			Status:      "installing",
-			Message:     "Installing compliance tools...",
-		}); err != nil {
-			logger.WithError(err).Warn("Failed to send initial compliance installation status")
-		}
+			// Send initial "installing" status
+			if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
+				Integration: "compliance",
+				Enabled:     true,
+				Status:      overallStatus,
+				Message:     "Installing compliance tools...",
+			}); err != nil {
+				logger.WithError(err).Warn("Failed to send initial compliance installation status")
+			}
 
 			// Install OpenSCAP
 			openscapScanner := compliance.NewOpenSCAPScanner(logger)
@@ -1423,32 +1421,32 @@ func toggleIntegration(integrationName string, enabled bool) error {
 				}
 			}
 
-		// Send final status with scanner info
-		if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
-			Integration: "compliance",
-			Enabled:     enabled,
-			Status:      overallStatus,
-			Message:     statusMessage,
-			Components:  components,
-			ScannerInfo: scannerDetails,
-		}); err != nil {
-			logger.WithError(err).Warn("Failed to send final compliance status")
-		}
+			// Send final status with scanner info
+			if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
+				Integration: "compliance",
+				Enabled:     enabled,
+				Status:      overallStatus,
+				Message:     statusMessage,
+				Components:  components,
+				ScannerInfo: scannerDetails,
+			}); err != nil {
+				logger.WithError(err).Warn("Failed to send final compliance status")
+			}
 			return nil // Skip the generic status send below
 
 		} else {
 			logger.Info("Compliance disabled - removing tools...")
 			overallStatus = "removing"
 
-		// Send initial "removing" status
-		if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
-			Integration: "compliance",
-			Enabled:     false,
-			Status:      "removing",
-			Message:     "Removing compliance tools...",
-		}); err != nil {
-			logger.WithError(err).Warn("Failed to send initial compliance removal status")
-		}
+			// Send initial "removing" status
+			if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
+				Integration: "compliance",
+				Enabled:     false,
+				Status:      overallStatus,
+				Message:     "Removing compliance tools...",
+			}); err != nil {
+				logger.WithError(err).Warn("Failed to send initial compliance removal status")
+			}
 
 			// Remove OpenSCAP packages
 			openscapScanner := compliance.NewOpenSCAPScanner(logger)
@@ -1629,20 +1627,20 @@ rm -f "$0"
 			logger.WithError(err).Warn("Failed to create restart helper script, will exit and rely on OpenRC auto-restart")
 			// Fall through to exit approach
 		} else {
-		// Write the script content to the file
-		if _, err := file.WriteString(helperScript); err != nil {
-			logger.WithError(err).Warn("Failed to write restart helper script")
-			if closeErr := file.Close(); closeErr != nil {
-				logger.WithError(closeErr).Warn("Failed to close file after write error")
-			}
-			if err := os.Remove(helperPath); err != nil {
-				logger.WithError(err).Warn("Failed to remove helper script after write error")
-			}
-			// Fall through to exit approach
-		} else {
-			if err := file.Close(); err != nil {
-				logger.WithError(err).Warn("Failed to close restart helper script file")
-			}
+			// Write the script content to the file
+			if _, err := file.WriteString(helperScript); err != nil {
+				logger.WithError(err).Warn("Failed to write restart helper script")
+				if closeErr := file.Close(); closeErr != nil {
+					logger.WithError(closeErr).Warn("Failed to close file after write error")
+				}
+				if err := os.Remove(helperPath); err != nil {
+					logger.WithError(err).Warn("Failed to remove helper script after write error")
+				}
+				// Fall through to exit approach
+			} else {
+				if err := file.Close(); err != nil {
+					logger.WithError(err).Warn("Failed to close restart helper script file")
+				}
 
 				// SECURITY: Verify the file we're about to execute is the one we created
 				// Check it's a regular file, not a symlink that was swapped in
@@ -1699,13 +1697,6 @@ rm -f "$0"
 		logger.Info("Sent HUP signal to agent process")
 		return nil
 	}
-}
-
-// runComplianceScan runs an on-demand compliance scan and sends results to server (backwards compatible)
-func runComplianceScan(profileType string) error {
-	return runComplianceScanWithOptions(&models.ComplianceScanOptions{
-		ProfileID: profileType,
-	})
 }
 
 // sendComplianceProgress sends a progress update via the global channel
@@ -1975,8 +1966,8 @@ func runDockerImageScan(imageName, containerName string, scanAllImages bool) err
 	return nil
 }
 
-// validateSshProxyHost validates SSH proxy host to prevent injection
-func validateSshProxyHost(host string) error {
+// validateSSHProxyHost validates SSH proxy host to prevent injection
+func validateSSHProxyHost(host string) error {
 	if host == "" {
 		return fmt.Errorf("host is required")
 	}
@@ -2006,8 +1997,8 @@ type sshProxySession struct {
 var sshProxySessions = make(map[string]*sshProxySession)
 var sshProxySessionsMu sync.RWMutex
 
-// sendSshProxyMessage sends a message to backend via WebSocket
-func sendSshProxyMessage(conn *websocket.Conn, msgType string, sessionID string, data interface{}) {
+// sendSSHProxyMessage sends a message to backend via WebSocket
+func sendSSHProxyMessage(conn *websocket.Conn, msgType string, sessionID string, data interface{}) {
 	msg := map[string]interface{}{
 		"type":       msgType,
 		"session_id": sessionID,
@@ -2030,24 +2021,24 @@ func sendSshProxyMessage(conn *websocket.Conn, msgType string, sessionID string,
 	}
 }
 
-func sendSshProxyError(conn *websocket.Conn, sessionID string, message string) {
-	sendSshProxyMessage(conn, "ssh_proxy_error", sessionID, message)
+func sendSSHProxyError(conn *websocket.Conn, sessionID string, message string) {
+	sendSSHProxyMessage(conn, "ssh_proxy_error", sessionID, message)
 }
 
-func sendSshProxyData(conn *websocket.Conn, sessionID string, data string) {
-	sendSshProxyMessage(conn, "ssh_proxy_data", sessionID, data)
+func sendSSHProxyData(conn *websocket.Conn, sessionID string, data string) {
+	sendSSHProxyMessage(conn, "ssh_proxy_data", sessionID, data)
 }
 
-func sendSshProxyConnected(conn *websocket.Conn, sessionID string) {
-	sendSshProxyMessage(conn, "ssh_proxy_connected", sessionID, nil)
+func sendSSHProxyConnected(conn *websocket.Conn, sessionID string) {
+	sendSSHProxyMessage(conn, "ssh_proxy_connected", sessionID, nil)
 }
 
-func sendSshProxyClosed(conn *websocket.Conn, sessionID string) {
-	sendSshProxyMessage(conn, "ssh_proxy_closed", sessionID, nil)
+func sendSSHProxyClosed(conn *websocket.Conn, sessionID string) {
+	sendSSHProxyMessage(conn, "ssh_proxy_closed", sessionID, nil)
 }
 
-// handleSshProxy establishes SSH connection and manages proxy session
-func handleSshProxy(m wsMsg, conn *websocket.Conn) {
+// handleSSHProxy establishes SSH connection and manages proxy session
+func handleSSHProxy(m wsMsg, conn *websocket.Conn) {
 	sessionID := m.sshProxySessionID
 	host := m.sshProxyHost
 	if host == "" {
@@ -2086,7 +2077,7 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 		}
 		if err != nil {
 			logger.WithError(err).Error("Failed to parse SSH private key")
-			sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to parse private key: %v", err))
+			sendSSHProxyError(conn, sessionID, fmt.Sprintf("Failed to parse private key: %v", err))
 			return
 		}
 		config.Auth = []ssh.AuthMethod{ssh.PublicKeys(signer)}
@@ -2094,7 +2085,7 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 		// Use password authentication
 		config.Auth = []ssh.AuthMethod{ssh.Password(m.sshProxyPassword)}
 	} else {
-		sendSshProxyError(conn, sessionID, "No authentication method provided (password or private key required)")
+		sendSSHProxyError(conn, sessionID, "No authentication method provided (password or private key required)")
 		return
 	}
 
@@ -2103,7 +2094,7 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 	client, err := ssh.Dial("tcp", address, config)
 	if err != nil {
 		logger.WithError(err).Error("Failed to connect to SSH server")
-		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to connect: %v", err))
+		sendSSHProxyError(conn, sessionID, fmt.Sprintf("Failed to connect: %v", err))
 		return
 	}
 
@@ -2114,7 +2105,7 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 			logger.WithError(closeErr).Warn("Failed to close SSH client after session creation error")
 		}
 		logger.WithError(err).Error("Failed to create SSH session")
-		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to create session: %v", err))
+		sendSSHProxyError(conn, sessionID, fmt.Sprintf("Failed to create session: %v", err))
 		return
 	}
 
@@ -2145,7 +2136,7 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 			logger.WithError(closeErr).Warn("Failed to close client after PTY request error")
 		}
 		logger.WithError(err).Error("Failed to request PTY")
-		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to request PTY: %v", err))
+		sendSSHProxyError(conn, sessionID, fmt.Sprintf("Failed to request PTY: %v", err))
 		return
 	}
 
@@ -2159,7 +2150,7 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 			logger.WithError(closeErr).Warn("Failed to close client after stdin pipe error")
 		}
 		logger.WithError(err).Error("Failed to get stdin pipe")
-		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to get stdin: %v", err))
+		sendSSHProxyError(conn, sessionID, fmt.Sprintf("Failed to get stdin: %v", err))
 		return
 	}
 
@@ -2175,7 +2166,7 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 			logger.WithError(closeErr).Warn("Failed to close client after stdout pipe error")
 		}
 		logger.WithError(err).Error("Failed to get stdout pipe")
-		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to get stdout: %v", err))
+		sendSSHProxyError(conn, sessionID, fmt.Sprintf("Failed to get stdout: %v", err))
 		return
 	}
 
@@ -2191,7 +2182,7 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 			logger.WithError(closeErr).Warn("Failed to close client after stderr pipe error")
 		}
 		logger.WithError(err).Error("Failed to get stderr pipe")
-		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to get stderr: %v", err))
+		sendSSHProxyError(conn, sessionID, fmt.Sprintf("Failed to get stderr: %v", err))
 		return
 	}
 
@@ -2207,7 +2198,7 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 			logger.WithError(closeErr).Warn("Failed to close client after shell start error")
 		}
 		logger.WithError(err).Error("Failed to start shell")
-		sendSshProxyError(conn, sessionID, fmt.Sprintf("Failed to start shell: %v", err))
+		sendSSHProxyError(conn, sessionID, fmt.Sprintf("Failed to start shell: %v", err))
 		return
 	}
 
@@ -2228,7 +2219,7 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 	sshProxySessionsMu.Unlock()
 
 	// Send connected message
-	sendSshProxyConnected(conn, sessionID)
+	sendSSHProxyConnected(conn, sessionID)
 
 	// Forward stdout to WebSocket
 	go func() {
@@ -2236,7 +2227,7 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 		for {
 			n, err := stdout.Read(buffer)
 			if n > 0 {
-				sendSshProxyData(conn, sessionID, string(buffer[:n]))
+				sendSSHProxyData(conn, sessionID, string(buffer[:n]))
 			}
 			if err != nil {
 				if err != io.EOF {
@@ -2246,7 +2237,7 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 			}
 		}
 		// Clean up on stdout close
-		handleSshProxyDisconnect(wsMsg{sshProxySessionID: sessionID}, conn)
+		handleSSHProxyDisconnect(wsMsg{sshProxySessionID: sessionID}, conn)
 	}()
 
 	// Forward stderr to WebSocket
@@ -2255,7 +2246,7 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 		for {
 			n, err := stderr.Read(buffer)
 			if n > 0 {
-				sendSshProxyData(conn, sessionID, string(buffer[:n]))
+				sendSSHProxyData(conn, sessionID, string(buffer[:n]))
 			}
 			if err != nil {
 				if err != io.EOF {
@@ -2272,12 +2263,12 @@ func handleSshProxy(m wsMsg, conn *websocket.Conn) {
 		if err != nil {
 			logger.WithError(err).Debug("SSH session ended with error")
 		}
-		handleSshProxyDisconnect(wsMsg{sshProxySessionID: sessionID}, conn)
+		handleSSHProxyDisconnect(wsMsg{sshProxySessionID: sessionID}, conn)
 	}()
 }
 
-// handleSshProxyInput sends input to SSH session
-func handleSshProxyInput(m wsMsg, conn *websocket.Conn) {
+// handleSSHProxyInput sends input to SSH session
+func handleSSHProxyInput(m wsMsg, _ *websocket.Conn) {
 	sshProxySessionsMu.RLock()
 	proxySession, exists := sshProxySessions[m.sshProxySessionID]
 	sshProxySessionsMu.RUnlock()
@@ -2297,8 +2288,8 @@ func handleSshProxyInput(m wsMsg, conn *websocket.Conn) {
 	}
 }
 
-// handleSshProxyResize resizes SSH terminal
-func handleSshProxyResize(m wsMsg, conn *websocket.Conn) {
+// handleSSHProxyResize resizes SSH terminal
+func handleSSHProxyResize(m wsMsg, _ *websocket.Conn) {
 	sshProxySessionsMu.RLock()
 	proxySession, exists := sshProxySessions[m.sshProxySessionID]
 	sshProxySessionsMu.RUnlock()
@@ -2324,8 +2315,8 @@ func handleSshProxyResize(m wsMsg, conn *websocket.Conn) {
 	}
 }
 
-// handleSshProxyDisconnect closes SSH session
-func handleSshProxyDisconnect(m wsMsg, conn *websocket.Conn) {
+// handleSSHProxyDisconnect closes SSH session
+func handleSSHProxyDisconnect(m wsMsg, conn *websocket.Conn) {
 	sshProxySessionsMu.Lock()
 	proxySession, exists := sshProxySessions[m.sshProxySessionID]
 	if exists {
@@ -2361,5 +2352,5 @@ func handleSshProxyDisconnect(m wsMsg, conn *websocket.Conn) {
 	}
 
 	// Send closed message
-	sendSshProxyClosed(conn, m.sshProxySessionID)
+	sendSSHProxyClosed(conn, m.sshProxySessionID)
 }

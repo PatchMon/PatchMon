@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bufio"
 	"context"
-	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -1341,16 +1340,6 @@ func (s *OpenSCAPScanner) RunOfflineRemediation(ctx context.Context, resultsPath
 	return nil
 }
 
-// XCCDF result structures for parsing
-type xccdfTestResult struct {
-	XMLName xml.Name          `xml:"TestResult"`
-	Rules   []xccdfRuleResult `xml:"rule-result"`
-}
-
-type xccdfRuleResult struct {
-	IDRef  string `xml:"idref,attr"`
-	Result string `xml:"result"`
-}
 
 // ruleMetadata holds extracted rule information from the benchmark
 type ruleMetadata struct {
@@ -1581,7 +1570,7 @@ func (s *OpenSCAPScanner) parseOscapOutput(output string) map[string]string {
 }
 
 // parseActualExpected attempts to extract actual and expected values from finding text
-func (s *OpenSCAPScanner) parseActualExpected(finding string, description string) (actual, expected string) {
+func (s *OpenSCAPScanner) parseActualExpected(finding string, _ string) (actual, expected string) {
 	if finding == "" {
 		return "", ""
 	}

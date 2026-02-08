@@ -207,7 +207,7 @@ func (d *Integration) collectDaemonInfo(ctx context.Context) (*models.DockerDaem
 }
 
 // normalizeStatus converts Docker status to normalized status string
-func normalizeStatus(status string, state string) string {
+func normalizeStatus(_ string, state string) string {
 	// State is more reliable than Status for determining actual state
 	switch state {
 	case "running":

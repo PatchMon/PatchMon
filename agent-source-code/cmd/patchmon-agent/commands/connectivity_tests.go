@@ -14,7 +14,7 @@ var pingCmd = &cobra.Command{
 	Use:   "ping",
 	Short: "Test connectivity and credentials",
 	Long:  "Test connectivity to the PatchMon server and validate API credentials.",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		if err := checkRoot(); err != nil {
 			return err
 		}
