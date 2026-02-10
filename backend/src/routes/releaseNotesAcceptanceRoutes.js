@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { authenticateToken } = require("../middleware/auth");
 const { getPrismaClient } = require("../config/prisma");
 
@@ -17,7 +18,7 @@ router.post("/accept", authenticateToken, async (req, res) => {
 
 		// Check if the model exists (Prisma client might not be regenerated yet)
 		if (!prisma.release_notes_acceptances) {
-			console.warn(
+			logger.warn(
 				"release_notes_acceptances model not available - Prisma client may need regeneration",
 			);
 			return res.status(503).json({
@@ -45,7 +46,7 @@ router.post("/accept", authenticateToken, async (req, res) => {
 
 		res.json({ success: true });
 	} catch (error) {
-		console.error("Error accepting release notes:", error);
+		logger.error("Error accepting release notes:", error);
 		res.status(500).json({ error: "Failed to accept release notes" });
 	}
 });

@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { body, validationResult } = require("express-validator");
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateToken } = require("../middleware/auth");
@@ -16,7 +17,7 @@ async function getUserPermissions(userRole) {
 
 		// If no specific permissions found, return default admin permissions (for backward compatibility)
 		if (!permissions) {
-			console.warn(
+			logger.warn(
 				`No permissions found for role: ${userRole}, defaulting to admin access`,
 			);
 			return {
@@ -35,7 +36,7 @@ async function getUserPermissions(userRole) {
 
 		return permissions;
 	} catch (error) {
-		console.error("Error fetching user permissions:", error);
+		logger.error("Error fetching user permissions:", error);
 		// Return admin permissions as fallback
 		return {
 			can_view_dashboard: true,
@@ -172,11 +173,11 @@ async function createDefaultDashboardPreferences(userId, userRole = "user") {
 			data: preferencesData,
 		});
 
-		console.log(
+		logger.info(
 			`Permission-based dashboard preferences created for user ${userId} with role ${userRole}: ${allowedCards.length} cards`,
 		);
 	} catch (error) {
-		console.error("Error creating default dashboard preferences:", error);
+		logger.error("Error creating default dashboard preferences:", error);
 		// Don't throw error - this shouldn't break user creation
 	}
 }
@@ -191,7 +192,7 @@ router.get("/", authenticateToken, async (req, res) => {
 
 		res.json(preferences);
 	} catch (error) {
-		console.error("Dashboard preferences fetch error:", error);
+		logger.error("Dashboard preferences fetch error:", error);
 		res.status(500).json({ error: "Failed to fetch dashboard preferences" });
 	}
 });
@@ -242,7 +243,7 @@ router.put(
 				preferences: newPreferences,
 			});
 		} catch (error) {
-			console.error("Dashboard preferences update error:", error);
+			logger.error("Dashboard preferences update error:", error);
 			res.status(500).json({ error: "Failed to update dashboard preferences" });
 		}
 	},
@@ -383,7 +384,7 @@ router.get("/defaults", authenticateToken, async (_req, res) => {
 
 		res.json(defaultCards);
 	} catch (error) {
-		console.error("Default dashboard cards error:", error);
+		logger.error("Default dashboard cards error:", error);
 		res.status(500).json({ error: "Failed to fetch default dashboard cards" });
 	}
 });

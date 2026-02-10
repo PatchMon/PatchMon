@@ -1,10 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-	Activity,
 	ArrowDown,
 	ArrowUp,
 	ArrowUpDown,
-	CheckCircle,
 	Clock,
 	Play,
 	Settings,
@@ -12,9 +10,11 @@ import {
 	Zap,
 } from "lucide-react";
 import { useState } from "react";
+import { useAuth } from "../contexts/AuthContext";
 import api from "../utils/api";
 
 const Automation = () => {
+	const { user } = useAuth();
 	const [activeTab, setActiveTab] = useState("overview");
 	const [sortField, setSortField] = useState("nextRunTimestamp");
 	const [sortDirection, setSortDirection] = useState("asc");
@@ -45,55 +45,19 @@ const Automation = () => {
 		queryFn: async () => {
 			const jobs = await Promise.all([
 				api
-					.get("/automation/jobs/github-update-check?limit=5")
+					.get("/automation/jobs/version-update-check?limit=5")
 					.then((r) => r.data.data || []),
 				api
 					.get("/automation/jobs/session-cleanup?limit=5")
 					.then((r) => r.data.data || []),
 			]);
 			return {
-				githubUpdate: jobs[0],
+				versionUpdate: jobs[0],
 				sessionCleanup: jobs[1],
 			};
 		},
 		refetchInterval: 30000,
 	});
-
-	const _getStatusIcon = (status) => {
-		switch (status) {
-			case "completed":
-				return <CheckCircle className="h-4 w-4 text-green-500" />;
-			case "failed":
-				return <XCircle className="h-4 w-4 text-red-500" />;
-			case "active":
-				return <Activity className="h-4 w-4 text-blue-500 animate-pulse" />;
-			default:
-				return <Clock className="h-4 w-4 text-gray-500" />;
-		}
-	};
-
-	const _getStatusColor = (status) => {
-		switch (status) {
-			case "completed":
-				return "bg-green-100 text-green-800";
-			case "failed":
-				return "bg-red-100 text-red-800";
-			case "active":
-				return "bg-blue-100 text-blue-800";
-			default:
-				return "bg-gray-100 text-gray-800";
-		}
-	};
-
-	const _formatDate = (dateString) => {
-		if (!dateString) return "N/A";
-		return new Date(dateString).toLocaleString();
-	};
-
-	const _formatDuration = (ms) => {
-		if (!ms) return "N/A";
-		return `${ms}ms`;
-	};
 
 	const getStatusBadge = (status) => {
 		switch (status) {
@@ -270,42 +234,32 @@ const Automation = () => {
 		return Number.MAX_SAFE_INTEGER; // Unknown schedules go to bottom
 	};
 
-	const openBullBoard = () => {
-		const token = localStorage.getItem("token");
-		if (!token) {
+	const openBullBoard = async () => {
+		// SECURITY: Use ticket-based authentication instead of passing token in URL
+		// Tickets are one-time use and short-lived (30 seconds)
+		if (!user) {
 			alert("Please log in to access the Queue Monitor");
 			return;
 		}
 
-		// Use the proxied URL through the frontend (port 3000)
-		// This avoids CORS issues as everything goes through the same origin
-		const url = `/bullboard?token=${encodeURIComponent(token)}`;
-		// Open in a new tab instead of a new window
-		const bullBoardWindow = window.open(url, "_blank");
+		try {
+			// Request a one-time ticket from the backend
+			const response = await api.post("/automation/bullboard-ticket");
+			const { ticket } = response.data;
 
-		// Add a message listener to handle authentication failures
-		if (bullBoardWindow) {
-			// Listen for authentication failures and refresh with token
-			const checkAuth = () => {
-				try {
-					// Check if the Bull Board window is still open
-					if (bullBoardWindow.closed) return;
+			if (!ticket) {
+				alert("Failed to generate access ticket");
+				return;
+			}
 
-					// Inject a script to handle authentication failures
-					bullBoardWindow.postMessage(
-						{
-							type: "BULL_BOARD_TOKEN",
-							token: token,
-						},
-						window.location.origin,
-					);
-				} catch (e) {
-					console.log("Could not communicate with Bull Board window:", e);
-				}
-			};
-
-			// Send token after a short delay to ensure Bull Board is loaded
-			setTimeout(checkAuth, 1000);
+			// Use the proxied URL through the frontend (port 3000)
+			// This avoids CORS issues as everything goes through the same origin
+			const url = `/bullboard?ticket=${encodeURIComponent(ticket)}`;
+			// Open in a new tab instead of a new window
+			window.open(url, "_blank");
+		} catch (error) {
+			console.error("Failed to open Bull Board:", error);
+			alert(error.response?.data?.error || "Failed to access Queue Monitor");
 		}
 	};
 
@@ -314,7 +268,7 @@ const Automation = () => {
 			let endpoint;
 
 			if (jobType === "github") {
-				endpoint = "/automation/trigger/github-update";
+				endpoint = "/automation/trigger/version-update";
 			} else if (jobType === "sessions") {
 				endpoint = "/automation/trigger/session-cleanup";
 			} else if (jobType === "orphaned-repos") {
@@ -584,7 +538,9 @@ const Automation = () => {
 												<button
 													type="button"
 													onClick={() => {
-														if (automation.queue.includes("github")) {
+														if (
+															automation.queue.includes("version-update-check")
+														) {
 															triggerManualJob("github");
 														} else if (automation.queue.includes("session")) {
 															triggerManualJob("sessions");
@@ -725,7 +681,11 @@ const Automation = () => {
 														<button
 															type="button"
 															onClick={() => {
-																if (automation.queue.includes("github")) {
+																if (
+																	automation.queue.includes(
+																		"version-update-check",
+																	)
+																) {
 																	triggerManualJob("github");
 																} else if (
 																	automation.queue.includes("session")

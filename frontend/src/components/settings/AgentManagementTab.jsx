@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
 	AlertCircle,
 	CheckCircle,
@@ -12,7 +12,6 @@ import { useEffect, useState } from "react";
 import api from "../../utils/api";
 
 const AgentManagementTab = () => {
-	const _queryClient = useQueryClient();
 	const [toast, setToast] = useState(null);
 
 	// Auto-hide toast after 5 seconds
@@ -202,7 +201,7 @@ const AgentManagementTab = () => {
 			{/* Toast Notification */}
 			{toast && (
 				<div
-					className={`fixed top-4 right-4 z-50 max-w-md rounded-lg shadow-lg border-2 p-4 flex items-start space-x-3 animate-in slide-in-from-top-5 ${
+					className={`fixed top-20 right-4 z-[100] max-w-md rounded-lg shadow-lg border-2 p-4 flex items-start space-x-3 animate-in slide-in-from-top-5 ${
 						toast.type === "success"
 							? "bg-green-50 dark:bg-green-900/90 border-green-500 dark:border-green-600"
 							: "bg-red-50 dark:bg-red-900/90 border-red-500 dark:border-red-600"
@@ -416,7 +415,7 @@ const AgentManagementTab = () => {
 								)}
 							</button>
 							<a
-								href="https://github.com/PatchMon/PatchMon-agent/releases"
+								href="https://github.com/PatchMon/PatchMon/releases"
 								target="_blank"
 								rel="noopener noreferrer"
 								className="flex items-center justify-center px-4 py-3 text-secondary-700 dark:text-secondary-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors duration-200 font-medium border border-secondary-300 dark:border-secondary-600 rounded-lg hover:bg-secondary-50 dark:hover:bg-secondary-700"

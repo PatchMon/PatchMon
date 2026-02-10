@@ -24,7 +24,24 @@ export const SettingsProvider = ({ children }) => {
 		refetch,
 	} = useQuery({
 		queryKey: ["settings"],
-		queryFn: () => settingsAPI.get().then((res) => res.data),
+		queryFn: async () => {
+			try {
+				// Try public endpoint first (available to all authenticated users)
+				return await settingsAPI.getPublic().then((res) => res.data);
+			} catch (error) {
+				// If public endpoint fails, try full settings (requires can_manage_settings)
+				if (error.response?.status === 403 || error.response?.status === 401) {
+					try {
+						return await settingsAPI.get().then((res) => res.data);
+					} catch (_e) {
+						// If both fail, return minimal default
+						return { auto_update: false };
+					}
+				}
+				// For other errors, return minimal default
+				return { auto_update: false };
+			}
+		},
 		staleTime: 5 * 60 * 1000, // Settings stay fresh for 5 minutes
 		refetchOnWindowFocus: false,
 		enabled: isAuthReady(authPhase, isAuthenticated()),

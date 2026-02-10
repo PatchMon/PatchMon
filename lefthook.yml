@@ -1,12 +1,24 @@
 pre-commit:
+  parallel: true
   commands:
-    check:
-      glob: "*.{js,ts,cjs,mjs,d.cts,d.mts,jsx,tsx,json,jsonc}"
-      run: >-
-        npx @biomejs/biome check
-        --write
-        --no-errors-on-unmatched
-        --files-ignore-unknown=true
-        --colors=off
-        {staged_files}
-      stage_fixed: true
+    biome:
+      run: |
+        echo "Running Biome check (reporting errors, no auto-fix)..."
+        # Check for errors WITHOUT auto-fixing - this will fail the commit if there are any issues
+        # Errors must be fixed manually before committing
+        npx @biomejs/biome check \
+          --no-errors-on-unmatched \
+          --files-ignore-unknown=true \
+          --colors=off \
+          .
+      stage_fixed: false
+      fail_text: "Biome found errors in the codebase. Please fix them manually before committing."
+      skip: merge
+    golangci-lint:
+      run: |
+        echo "Running golangci-lint on entire codebase (all files: committed, staged, and unstaged)..."
+        cd agent-source-code
+        golangci-lint run --timeout=5m ./...
+      stage_fixed: false
+      fail_text: "golangci-lint found issues in the entire codebase. Please fix them before committing."
+      skip: merge

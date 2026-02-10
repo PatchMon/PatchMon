@@ -10,6 +10,8 @@ import {
 	ChevronUp,
 	Clock,
 	Columns,
+	Container,
+	Download,
 	ExternalLink,
 	Eye as EyeIcon,
 	EyeOff as EyeOffIcon,
@@ -21,6 +23,7 @@ import {
 	RotateCcw,
 	Search,
 	Server,
+	Shield,
 	Square,
 	Trash2,
 	Wifi,
@@ -36,6 +39,7 @@ import {
 	dashboardAPI,
 	formatRelativeTime,
 	hostGroupsAPI,
+	settingsAPI,
 } from "../utils/api";
 import { getOSDisplayName, OSIcon } from "../utils/osIcons.jsx";
 
@@ -46,6 +50,7 @@ const AddHostModal = ({ isOpen, onClose, onSuccess }) => {
 		friendly_name: "",
 		hostGroupIds: [], // Changed to array for multiple selection
 		docker_enabled: false, // Integration states
+		compliance_enabled: false,
 	});
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState("");
@@ -63,23 +68,18 @@ const AddHostModal = ({ isOpen, onClose, onSuccess }) => {
 		setIsSubmitting(true);
 		setError("");
 
-		console.log("Creating host:", formData.friendly_name);
-
 		try {
 			const response = await adminHostsAPI.create(formData);
-			console.log("Host created successfully:", formData.friendly_name);
 			onSuccess(response.data);
 			setFormData({
 				friendly_name: "",
 				hostGroupIds: [],
 				docker_enabled: false,
+				compliance_enabled: false,
 			});
 			setIntegrationsExpanded(false);
 			onClose();
 		} catch (err) {
-			console.error("Full error object:", err);
-			console.error("Error response:", err.response);
-
 			let errorMessage = "Failed to create host";
 
 			if (err.response?.data?.errors) {
@@ -248,6 +248,34 @@ const AddHostModal = ({ isOpen, onClose, onSuccess }) => {
 										className="w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
 									/>
 								</label>
+
+								{/* Compliance Integration */}
+								<label className="flex items-center justify-between p-3 border-2 rounded-lg transition-all duration-200 cursor-pointer bg-white dark:bg-secondary-700 hover:border-secondary-400 dark:hover:border-secondary-500 border-secondary-300 dark:border-secondary-600">
+									<div className="flex items-center gap-3">
+										<div className="flex-shrink-0">
+											<Shield className="h-5 w-5 text-secondary-600 dark:text-secondary-400" />
+										</div>
+										<div>
+											<div className="text-sm font-medium text-secondary-700 dark:text-secondary-200">
+												Compliance Integration
+											</div>
+											<div className="text-xs text-secondary-500 dark:text-secondary-400">
+												Enable compliance scanning and reporting for this host
+											</div>
+										</div>
+									</div>
+									<input
+										type="checkbox"
+										checked={formData.compliance_enabled}
+										onChange={(e) =>
+											setFormData({
+												...formData,
+												compliance_enabled: e.target.checked,
+											})
+										}
+										className="w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+									/>
+								</label>
 								<p className="text-xs text-secondary-500 dark:text-secondary-400">
 									Integration settings will be synced to the agent's config.yml
 									during installation.
@@ -294,6 +322,10 @@ const Hosts = () => {
 	const [selectedHosts, setSelectedHosts] = useState([]);
 	const [showBulkAssignModal, setShowBulkAssignModal] = useState(false);
 	const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+	const [bulkFetchReportMessage, setBulkFetchReportMessage] = useState({
+		text: "",
+		type: "success", // "success" or "error"
+	});
 	const [searchParams] = useSearchParams();
 	const navigate = useNavigate();
 
@@ -402,18 +434,19 @@ const Hosts = () => {
 				order: 8,
 			},
 			{ id: "ws_status", label: "Connection", visible: true, order: 9 },
-			{ id: "status", label: "Status", visible: true, order: 10 },
-			{ id: "needs_reboot", label: "Reboot", visible: true, order: 11 },
-			{ id: "updates", label: "Updates", visible: true, order: 12 },
+			{ id: "integrations", label: "Integrations", visible: true, order: 10 },
+			{ id: "status", label: "Status", visible: true, order: 11 },
+			{ id: "needs_reboot", label: "Reboot", visible: true, order: 12 },
+			{ id: "updates", label: "Updates", visible: true, order: 13 },
 			{
 				id: "security_updates",
 				label: "Security Updates",
 				visible: true,
-				order: 13,
+				order: 14,
 			},
-			{ id: "notes", label: "Notes", visible: false, order: 14 },
-			{ id: "last_update", label: "Last Update", visible: true, order: 15 },
-			{ id: "actions", label: "Actions", visible: true, order: 16 },
+			{ id: "notes", label: "Notes", visible: false, order: 15 },
+			{ id: "last_update", label: "Last Update", visible: true, order: 16 },
+			{ id: "actions", label: "Actions", visible: true, order: 17 },
 		];
 
 		const saved = localStorage.getItem("hosts-column-config");
@@ -488,6 +521,38 @@ const Hosts = () => {
 		queryFn: () => hostGroupsAPI.list().then((res) => res.data),
 	});
 
+	// Fetch global settings to check if auto-update master toggle is enabled
+	// Fetch settings to check global auto-update status
+	// Try public endpoint first (works for all users), fallback to full settings if user has permissions
+	const { data: settings } = useQuery({
+		queryKey: ["settings"],
+		queryFn: async () => {
+			try {
+				// Try public endpoint first (available to all authenticated users)
+				return await settingsAPI.getPublic().then((res) => res.data);
+			} catch (error) {
+				// If public endpoint fails, try full settings (requires can_manage_settings)
+				if (error.response?.status === 403 || error.response?.status === 401) {
+					try {
+						return await settingsAPI.get().then((res) => res.data);
+					} catch (_e) {
+						// If both fail, return minimal default
+						return { auto_update: false };
+					}
+				}
+				// For other errors, return minimal default
+				return { auto_update: false };
+			}
+		},
+	});
+
+	// State for auto-update confirmation dialog
+	const [autoUpdateDialog, setAutoUpdateDialog] = useState({
+		show: false,
+		hostId: null,
+		hostName: null,
+	});
+
 	// Track WebSocket status for all hosts
 	const [wsStatusMap, setWsStatusMap] = useState({});
 
@@ -495,10 +560,6 @@ const Hosts = () => {
 	useEffect(() => {
 		if (!hosts || hosts.length === 0) return;
 
-		const token = localStorage.getItem("token");
-		if (!token) return;
-
-		// Fetch initial WebSocket status for all hosts
 		// Fetch initial WebSocket status for all hosts
 		const fetchInitialStatus = async () => {
 			const apiIds = hosts
@@ -511,9 +572,7 @@ const Hosts = () => {
 				const response = await fetch(
 					`/api/v1/ws/status?apiIds=${apiIds.join(",")}`,
 					{
-						headers: {
-							Authorization: `Bearer ${token}`,
-						},
+						credentials: "include",
 					},
 				);
 				if (response.ok) {
@@ -532,9 +591,6 @@ const Hosts = () => {
 	useEffect(() => {
 		if (!hosts || hosts.length === 0) return;
 
-		const token = localStorage.getItem("token");
-		if (!token) return;
-
 		// Use polling instead of SSE to avoid connection pool issues
 		// Poll every 10 seconds instead of 19 persistent connections
 		const pollInterval = setInterval(() => {
@@ -545,9 +601,7 @@ const Hosts = () => {
 			if (apiIds.length === 0) return;
 
 			fetch(`/api/v1/ws/status?apiIds=${apiIds.join(",")}`, {
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
+				credentials: "include",
 			})
 				.then((response) => response.json())
 				.then((result) => {
@@ -570,8 +624,6 @@ const Hosts = () => {
 		mutationFn: ({ hostIds, groupIds }) =>
 			adminHostsAPI.bulkUpdateGroups(hostIds, groupIds),
 		onSuccess: (data) => {
-			console.log("bulkUpdateGroupMutation success:", data);
-
 			// Update the cache with the new host data
 			if (data?.hosts) {
 				queryClient.setQueryData(["hosts"], (oldData) => {
@@ -603,88 +655,19 @@ const Hosts = () => {
 		},
 	});
 
-	const _updateHostGroupMutation = useMutation({
-		mutationFn: ({ hostId, hostGroupId }) => {
-			console.log("updateHostGroupMutation called with:", {
-				hostId,
-				hostGroupId,
-			});
-			return adminHostsAPI.updateGroup(hostId, hostGroupId).then((res) => {
-				console.log("updateGroup API response:", res);
-				return res.data;
-			});
-		},
-		onSuccess: (data) => {
-			// Update the cache with the new host data
-			queryClient.setQueryData(["hosts"], (oldData) => {
-				console.log("Old cache data before update:", oldData);
-				if (!oldData) return oldData;
-				const updatedData = oldData.map((host) => {
-					if (host.id === data.host.id) {
-						console.log(
-							"Updating host in cache:",
-							host.id,
-							"with new data:",
-							data.host,
-						);
-						// Host already has host_group_memberships from backend
-						const updatedHost = {
-							...data.host,
-						};
-						console.log("Updated host in cache:", updatedHost);
-						return updatedHost;
-					}
-					return host;
-				});
-				console.log("New cache data after update:", updatedData);
-				return updatedData;
-			});
-
-			// Also invalidate to ensure consistency
-			queryClient.invalidateQueries(["hosts"]);
-		},
-		onError: (error) => {
-			console.error("updateHostGroupMutation error:", error);
-		},
-	});
-
 	const updateHostGroupsMutation = useMutation({
-		mutationFn: ({ hostId, groupIds }) => {
-			console.log("updateHostGroupsMutation called with:", {
-				hostId,
-				groupIds,
-			});
-			return adminHostsAPI.updateGroups(hostId, groupIds).then((res) => {
-				console.log("updateGroups API response:", res);
-				return res.data;
-			});
-		},
+		mutationFn: ({ hostId, groupIds }) =>
+			adminHostsAPI.updateGroups(hostId, groupIds).then((res) => res.data),
 		onSuccess: (data) => {
 			// Update the cache with the new host data
 			queryClient.setQueryData(["hosts"], (oldData) => {
-				console.log("Old cache data before update:", oldData);
 				if (!oldData) return oldData;
-				const updatedData = oldData.map((host) => {
-					if (host.id === data.host.id) {
-						console.log(
-							"Updating host in cache:",
-							host.id,
-							"with new data:",
-							data.host,
-						);
-						return data.host;
-					}
-					return host;
-				});
-				console.log("New cache data after update:", updatedData);
-				return updatedData;
+				return oldData.map((host) =>
+					host.id === data.host.id ? data.host : host,
+				);
 			});
-
 			// Also invalidate to ensure consistency
 			queryClient.invalidateQueries(["hosts"]);
-		},
-		onError: (error) => {
-			console.error("updateHostGroupsMutation error:", error);
 		},
 	});
 
@@ -698,16 +681,107 @@ const Hosts = () => {
 		},
 	});
 
+	// Mutation to enable global auto-update setting
+	const enableGlobalAutoUpdateMutation = useMutation({
+		mutationFn: () =>
+			settingsAPI.update({ autoUpdate: true }).then((res) => res.data),
+		onSuccess: () => {
+			queryClient.invalidateQueries(["settings"]);
+		},
+	});
+
+	// Handle auto-update toggle with global setting check
+	const handleAutoUpdateToggle = (host, newValue) => {
+		// If disabling, just do it
+		if (!newValue) {
+			toggleAutoUpdateMutation.mutate({
+				hostId: host.id,
+				autoUpdate: false,
+			});
+			return;
+		}
+
+		// If enabling and global is OFF, show confirmation dialog
+		if (!settings?.auto_update) {
+			setAutoUpdateDialog({
+				show: true,
+				hostId: host.id,
+				hostName: host.friendly_name || host.hostname,
+			});
+			return;
+		}
+
+		// Global is ON, just enable the host
+		toggleAutoUpdateMutation.mutate({
+			hostId: host.id,
+			autoUpdate: true,
+		});
+	};
+
+	// Handle dialog actions
+	const handleEnableBoth = () => {
+		// Enable global setting first, then host
+		enableGlobalAutoUpdateMutation.mutate(undefined, {
+			onSuccess: () => {
+				toggleAutoUpdateMutation.mutate({
+					hostId: autoUpdateDialog.hostId,
+					autoUpdate: true,
+				});
+				setAutoUpdateDialog({ show: false, hostId: null, hostName: null });
+			},
+		});
+	};
+
+	const handleEnableHostOnly = () => {
+		// Just enable the host (user acknowledges it won't work)
+		toggleAutoUpdateMutation.mutate({
+			hostId: autoUpdateDialog.hostId,
+			autoUpdate: true,
+		});
+		setAutoUpdateDialog({ show: false, hostId: null, hostName: null });
+	};
+
 	const bulkDeleteMutation = useMutation({
 		mutationFn: (hostIds) => adminHostsAPI.deleteBulk(hostIds),
-		onSuccess: (data) => {
-			console.log("Bulk delete success:", data);
+		onSuccess: () => {
 			queryClient.invalidateQueries(["hosts"]);
 			setSelectedHosts([]);
 			setShowBulkDeleteModal(false);
 		},
+	});
+
+	const bulkFetchReportMutation = useMutation({
+		mutationFn: (hostIds) =>
+			adminHostsAPI.fetchReportBulk(hostIds).then((res) => res.data),
+		onSuccess: (data) => {
+			queryClient.invalidateQueries(["hosts"]);
+			// Show success message
+			if (data?.successCount !== undefined) {
+				const message = `Report fetch queued for ${data.successCount} of ${data.totalRequested} host${data.totalRequested !== 1 ? "s" : ""}`;
+				setBulkFetchReportMessage({ text: message, type: "success" });
+				// Clear message after 5 seconds
+				setTimeout(
+					() => setBulkFetchReportMessage({ text: "", type: "success" }),
+					5000,
+				);
+			} else if (data?.message) {
+				setBulkFetchReportMessage({ text: data.message, type: "success" });
+				setTimeout(
+					() => setBulkFetchReportMessage({ text: "", type: "success" }),
+					5000,
+				);
+			}
+		},
 		onError: (error) => {
-			console.error("Bulk delete error:", error);
+			const errorMsg =
+				error.response?.data?.error ||
+				error.response?.data?.details ||
+				"Failed to fetch reports";
+			setBulkFetchReportMessage({ text: errorMsg, type: "error" });
+			setTimeout(
+				() => setBulkFetchReportMessage({ text: "", type: "error" }),
+				5000,
+			);
 		},
 	});
 
@@ -752,9 +826,13 @@ const Hosts = () => {
 		bulkDeleteMutation.mutate(selectedHosts);
 	};
 
+	const handleBulkFetchReport = () => {
+		bulkFetchReportMutation.mutate(selectedHosts);
+	};
+
 	// Table filtering and sorting logic
 	const filteredAndSortedHosts = useMemo(() => {
-		if (!hosts) return [];
+		if (!hosts || !Array.isArray(hosts)) return [];
 
 		const filtered = hosts.filter((host) => {
 			// Search filter
@@ -891,6 +969,16 @@ const Hosts = () => {
 					aValue = (a.notes || "").toLowerCase();
 					bValue = (b.notes || "").toLowerCase();
 					break;
+				case "integrations": {
+					// Sort by integration count: both=2, one=1, none=0
+					const aScore =
+						(a.docker_enabled ? 1 : 0) + (a.compliance_enabled ? 1 : 0);
+					const bScore =
+						(b.docker_enabled ? 1 : 0) + (b.compliance_enabled ? 1 : 0);
+					aValue = aScore;
+					bValue = bScore;
+					break;
+				}
 				default:
 					aValue = a[sortField];
 					bValue = b[sortField];
@@ -1042,18 +1130,19 @@ const Hosts = () => {
 				order: 8,
 			},
 			{ id: "ws_status", label: "Connection", visible: true, order: 9 },
-			{ id: "status", label: "Status", visible: true, order: 10 },
-			{ id: "needs_reboot", label: "Reboot", visible: true, order: 11 },
-			{ id: "updates", label: "Updates", visible: true, order: 12 },
+			{ id: "integrations", label: "Integrations", visible: true, order: 10 },
+			{ id: "status", label: "Status", visible: true, order: 11 },
+			{ id: "needs_reboot", label: "Reboot", visible: true, order: 12 },
+			{ id: "updates", label: "Updates", visible: true, order: 13 },
 			{
 				id: "security_updates",
 				label: "Security Updates",
 				visible: true,
-				order: 13,
+				order: 14,
 			},
-			{ id: "notes", label: "Notes", visible: false, order: 14 },
-			{ id: "last_update", label: "Last Update", visible: true, order: 15 },
-			{ id: "actions", label: "Actions", visible: true, order: 16 },
+			{ id: "notes", label: "Notes", visible: false, order: 15 },
+			{ id: "last_update", label: "Last Update", visible: true, order: 16 },
+			{ id: "actions", label: "Actions", visible: true, order: 17 },
 		];
 		updateColumnConfig(defaultConfig);
 	};
@@ -1159,17 +1248,23 @@ const Hosts = () => {
 				);
 			case "auto_update":
 				return (
-					<InlineToggle
-						value={host.auto_update}
-						onSave={(autoUpdate) =>
-							toggleAutoUpdateMutation.mutate({
-								hostId: host.id,
-								autoUpdate: autoUpdate,
-							})
-						}
-						trueLabel="Yes"
-						falseLabel="No"
-					/>
+					<div className="flex items-center gap-1">
+						<InlineToggle
+							value={host.auto_update}
+							onSave={(autoUpdate) => handleAutoUpdateToggle(host, autoUpdate)}
+							trueLabel="Yes"
+							falseLabel="No"
+						/>
+						{/* Warning badge when global auto-update is disabled */}
+						{!settings?.auto_update && host.auto_update && (
+							<span
+								className="text-amber-500 dark:text-amber-400"
+								title="Global auto-updates disabled in Settings → Agent Updates"
+							>
+								<AlertTriangle className="h-4 w-4" />
+							</span>
+						)}
+					</div>
 				);
 			case "ws_status": {
 				const wsStatus = wsStatusMap[host.api_id];
@@ -1207,6 +1302,32 @@ const Hosts = () => {
 					</span>
 				);
 			}
+			case "integrations":
+				return (
+					<div className="flex items-center gap-1">
+						{host.docker_enabled && (
+							<span
+								className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+								title="Docker monitoring enabled"
+							>
+								<Container className="h-3 w-3" />
+							</span>
+						)}
+						{host.compliance_enabled && (
+							<span
+								className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200"
+								title="Compliance scanning enabled"
+							>
+								<Shield className="h-3 w-3" />
+							</span>
+						)}
+						{!host.docker_enabled && !host.compliance_enabled && (
+							<span className="text-xs text-secondary-400 dark:text-secondary-500">
+								—
+							</span>
+						)}
+					</div>
+				);
 			case "status":
 				return (
 					<div className="text-sm text-secondary-900 dark:text-white">
@@ -1294,7 +1415,10 @@ const Hosts = () => {
 	const handleHostCreated = (newHost) => {
 		queryClient.invalidateQueries(["hosts"]);
 		// Navigate to host detail page to show credentials and setup instructions
-		navigate(`/hosts/${newHost.hostId}`);
+		// Pass the plaintext apiKey through navigation state (only available once from creation)
+		navigate(`/hosts/${newHost.hostId}`, {
+			state: { apiKey: newHost.apiKey, apiId: newHost.apiId },
+		});
 	};
 
 	// Stats card click handlers
@@ -1309,17 +1433,6 @@ const Hosts = () => {
 		setShowFilters(false);
 		// Clear URL parameters to ensure no filters are applied
 		navigate("/hosts", { replace: true });
-	};
-
-	const _handleUpToDateClick = () => {
-		// Filter to show only up-to-date hosts
-		setStatusFilter("active");
-		setShowFilters(true);
-		// Clear conflicting filters and set upToDate filter
-		const newSearchParams = new URLSearchParams(window.location.search);
-		newSearchParams.set("filter", "upToDate");
-		newSearchParams.delete("reboot"); // Clear reboot filter when switching to upToDate
-		navigate(`/hosts?${newSearchParams.toString()}`, { replace: true });
 	};
 
 	const handleNeedsUpdatesClick = () => {
@@ -1522,12 +1635,43 @@ const Hosts = () => {
 			<div className="card flex-1 flex flex-col md:overflow-hidden min-h-0">
 				<div className="px-4 py-4 sm:p-4 flex-1 flex flex-col md:overflow-hidden min-h-0">
 					<div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3 mb-4">
+						{bulkFetchReportMessage.text && (
+							<div
+								className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm ${
+									bulkFetchReportMessage.type === "success"
+										? "bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700 text-green-800 dark:text-green-200"
+										: "bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 text-red-800 dark:text-red-200"
+								}`}
+							>
+								{bulkFetchReportMessage.type === "success" ? (
+									<CheckCircle className="h-4 w-4" />
+								) : (
+									<AlertTriangle className="h-4 w-4" />
+								)}
+								<span>{bulkFetchReportMessage.text}</span>
+							</div>
+						)}
 						{selectedHosts.length > 0 && (
 							<div className="flex flex-wrap items-center gap-2 sm:gap-3">
 								<span className="text-sm text-secondary-600 dark:text-white/80 flex-shrink-0">
 									{selectedHosts.length} host
 									{selectedHosts.length !== 1 ? "s" : ""} selected
 								</span>
+								<button
+									type="button"
+									onClick={handleBulkFetchReport}
+									disabled={bulkFetchReportMutation.isPending}
+									className="btn-outline flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 min-h-[44px] text-xs sm:text-sm"
+									title="Fetch reports from selected hosts"
+								>
+									<Download
+										className={`h-4 w-4 flex-shrink-0 ${
+											bulkFetchReportMutation.isPending ? "animate-spin" : ""
+										}`}
+									/>
+									<span className="hidden sm:inline">Fetch Reports</span>
+									<span className="sm:hidden">Fetch</span>
+								</button>
 								<button
 									type="button"
 									onClick={() => setShowBulkAssignModal(true)}
@@ -2066,6 +2210,17 @@ const Hosts = () => {
 																				<Wifi className="h-3 w-3" />
 																				{column.label}
 																			</div>
+																		) : column.id === "integrations" ? (
+																			<button
+																				type="button"
+																				onClick={() =>
+																					handleSort("integrations")
+																				}
+																				className="flex items-center gap-2 hover:text-secondary-700 font-normal text-xs text-secondary-500 dark:text-secondary-300 normal-case tracking-wider"
+																			>
+																				{column.label}
+																				{getSortIcon("integrations")}
+																			</button>
 																		) : column.id === "status" ? (
 																			<button
 																				type="button"
@@ -2207,6 +2362,67 @@ const Hosts = () => {
 					onReorder={reorderColumns}
 					onReset={resetColumns}
 				/>
+			)}
+
+			{/* Auto-Update Confirmation Dialog */}
+			{autoUpdateDialog.show && (
+				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
+						<div className="p-6">
+							<div className="flex items-start gap-4">
+								<div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+									<AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+								</div>
+								<div className="flex-1">
+									<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+										Global Auto-Updates Disabled
+									</h3>
+									<p className="mt-2 text-sm text-secondary-600 dark:text-secondary-300">
+										The master auto-update setting is currently{" "}
+										<strong>disabled</strong> in Settings → Agent Updates.
+									</p>
+									<p className="mt-2 text-sm text-secondary-600 dark:text-secondary-300">
+										Enabling auto-update for{" "}
+										<strong>{autoUpdateDialog.hostName}</strong> won't take
+										effect until global auto-updates are enabled.
+									</p>
+								</div>
+							</div>
+						</div>
+						<div className="bg-secondary-50 dark:bg-secondary-700/50 px-6 py-4 flex flex-col sm:flex-row gap-3 sm:justify-end">
+							<button
+								type="button"
+								onClick={() =>
+									setAutoUpdateDialog({
+										show: false,
+										hostId: null,
+										hostName: null,
+									})
+								}
+								className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={handleEnableHostOnly}
+								className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
+							>
+								Enable Host Only
+							</button>
+							<button
+								type="button"
+								onClick={handleEnableBoth}
+								disabled={enableGlobalAutoUpdateMutation.isPending}
+								className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+							>
+								{enableGlobalAutoUpdateMutation.isPending
+									? "Enabling..."
+									: "Enable Both"}
+							</button>
+						</div>
+					</div>
+				</div>
 			)}
 		</div>
 	);

@@ -3,22 +3,21 @@ import axios from "axios";
 const API_BASE_URL = import.meta.env.VITE_API_URL || "/api/v1";
 
 // Create axios instance with default config
+// Uses httpOnly cookies for authentication (credentials: include)
 const api = axios.create({
 	baseURL: API_BASE_URL,
 	timeout: 10000, // 10 seconds
 	headers: {
 		"Content-Type": "application/json",
 	},
+	withCredentials: true, // Send cookies with requests for httpOnly token auth
 });
 
 // Request interceptor
 api.interceptors.request.use(
 	(config) => {
-		// Add auth token if available
-		const token = localStorage.getItem("token");
-		if (token) {
-			config.headers.Authorization = `Bearer ${token}`;
-		}
+		// Authentication is handled via httpOnly cookies (withCredentials: true)
+		// No need to add Authorization header - server reads from cookies
 
 		// Add device ID for TFA remember-me functionality
 		// This uniquely identifies the browser profile (normal vs incognito)
@@ -60,8 +59,8 @@ api.interceptors.response.use(
 			const isTfaError = error.config?.url?.includes("/verify-tfa");
 
 			if (currentPath !== "/login" && !isTfaError) {
-				// Handle unauthorized
-				localStorage.removeItem("token");
+				// Handle unauthorized - clear user state and redirect
+				// Note: Token is in httpOnly cookie (server clears on logout)
 				localStorage.removeItem("user");
 				window.location.href = "/login";
 			}
@@ -121,12 +120,22 @@ export const adminHostsAPI = {
 		api.put("/hosts/bulk/groups", { hostIds, groupIds }),
 	toggleAutoUpdate: (hostId, autoUpdate) =>
 		api.patch(`/hosts/${hostId}/auto-update`, { auto_update: autoUpdate }),
+	toggleHostDownAlerts: (hostId, enabled) =>
+		api.patch(`/hosts/${hostId}/host-down-alerts`, {
+			host_down_alerts_enabled: enabled,
+		}),
 	forceAgentUpdate: (hostId) => api.post(`/hosts/${hostId}/force-agent-update`),
+	refreshIntegrationStatus: (hostId) =>
+		api.post(`/hosts/${hostId}/refresh-integration-status`),
 	fetchReport: (hostId) => api.post(`/hosts/${hostId}/fetch-report`),
+	fetchReportBulk: (hostIds) =>
+		api.post("/hosts/bulk/fetch-report", { hostIds }),
 	updateFriendlyName: (hostId, friendlyName) =>
 		api.patch(`/hosts/${hostId}/friendly-name`, {
 			friendly_name: friendlyName,
 		}),
+	updateConnection: (hostId, connectionInfo) =>
+		api.patch(`/hosts/${hostId}/connection`, connectionInfo),
 	updateNotes: (hostId, notes) =>
 		api.patch(`/hosts/${hostId}/notes`, {
 			notes: notes,
@@ -135,6 +144,17 @@ export const adminHostsAPI = {
 	toggleIntegration: (hostId, integrationName, enabled) =>
 		api.post(`/hosts/${hostId}/integrations/${integrationName}/toggle`, {
 			enabled,
+		}),
+	getIntegrationSetupStatus: (hostId, integrationName) =>
+		api.get(`/hosts/${hostId}/integrations/${integrationName}/status`),
+	refreshDocker: (hostId) => api.post(`/hosts/${hostId}/refresh-docker`),
+	setComplianceMode: (hostId, mode) =>
+		api.post(`/hosts/${hostId}/integrations/compliance/mode`, {
+			mode: mode, // "disabled", "on-demand", or "enabled"
+		}),
+	setComplianceOnDemandOnly: (hostId, onDemandOnly) =>
+		api.post(`/hosts/${hostId}/compliance/on-demand-only`, {
+			on_demand_only: onDemandOnly,
 		}),
 };
 
@@ -151,6 +171,7 @@ export const hostGroupsAPI = {
 // Admin Users API (for user management)
 export const adminUsersAPI = {
 	list: () => api.get("/auth/admin/users"),
+	listForAssignment: () => api.get("/auth/users/for-assignment"), // Public endpoint for assignment dropdowns
 	create: (userData) => api.post("/auth/admin/users", userData),
 	update: (userId, userData) =>
 		api.put(`/auth/admin/users/${userId}`, userData),
@@ -172,6 +193,7 @@ export const permissionsAPI = {
 // Settings API
 export const settingsAPI = {
 	get: () => api.get("/settings"),
+	getPublic: () => api.get("/settings/public"), // Public endpoint for read-only settings (auto_update, etc.)
 	update: (settings) => api.put("/settings", settings),
 	getServerUrl: () => api.get("/settings/server-url"),
 };
@@ -402,6 +424,45 @@ export const formatRelativeTime = (date) => {
 // Search API
 export const searchAPI = {
 	global: (query) => api.get("/search", { params: { q: query } }),
+};
+
+// AI Terminal Assistant API
+export const aiAPI = {
+	getStatus: () => api.get("/ai/status"), // Available to all authenticated users
+	getProviders: () => api.get("/ai/providers"),
+	getSettings: () => api.get("/ai/settings"), // Admin only
+	updateSettings: (data) => api.put("/ai/settings", data),
+	testConnection: () => api.post("/ai/test"),
+	assist: (data) => api.post("/ai/assist", data),
+	complete: (data) => api.post("/ai/complete", data),
+};
+
+// Alerts API
+export const alertsAPI = {
+	getAlerts: (params = {}) => {
+		const queryString = new URLSearchParams(params).toString();
+		const url = `/alerts${queryString ? `?${queryString}` : ""}`;
+		return api.get(url);
+	},
+	getAlertStats: () => api.get("/alerts/stats"),
+	getAlert: (id) => api.get(`/alerts/${id}`),
+	getAlertHistory: (id) => api.get(`/alerts/${id}/history`),
+	getAvailableActions: () => api.get("/alerts/actions"),
+	performAlertAction: (id, action, metadata = null) =>
+		api.post(`/alerts/${id}/action`, { action, metadata }),
+	assignAlert: (id, userId) => api.post(`/alerts/${id}/assign`, { userId }),
+	unassignAlert: (id) => api.post(`/alerts/${id}/unassign`),
+	resolveAlert: (id) => api.put(`/alerts/${id}/resolve`),
+	getAlertConfig: () => api.get("/alerts/config"),
+	getAlertConfigByType: (alertType) => api.get(`/alerts/config/${alertType}`),
+	updateAlertConfig: (alertType, config) =>
+		api.put(`/alerts/config/${alertType}`, config),
+	bulkUpdateAlertConfig: (configs) =>
+		api.post("/alerts/config/bulk-update", { configs }),
+	previewCleanup: () => api.get("/alerts/cleanup/preview"),
+	triggerCleanup: () => api.post("/alerts/cleanup"),
+	deleteAlert: (id) => api.delete(`/alerts/${id}`),
+	bulkDeleteAlerts: (alertIds) => api.post("/alerts/bulk-delete", { alertIds }),
 };
 
 // Notification Channels API

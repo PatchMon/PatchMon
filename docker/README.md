@@ -180,7 +180,7 @@ When you do this, updating to a new version requires manually updating the image
 | `PORT`            | Backend API port                                                                                | `3001`                  |
 | `SERVER_PROTOCOL` | Frontend server protocol (`http` or `https`)                                                    | `http`                  |
 | `SERVER_HOST`     | Frontend server host                                                                            | `localhost`             |
-| `SERVER_PORT`     | Frontend server port                                                                            | `3000`                  |
+| `SERVER_PORT`     | Frontend server port                                                                            | `3000` (Change to 443 if using a FQDN in `SERVER_HOST` variable)|
 | `CORS_ORIGIN`     | CORS origin URL                                                                                 | `http://localhost:3000` |
 | `ENABLE_HSTS`     | Enable HTTP Strict Transport Security                                                           | `true`                  |
 | `TRUST_PROXY`     | Trust proxy headers - See [Express.js docs](https://expressjs.com/en/guide/behind-proxies.html) | `true`                  |
@@ -309,7 +309,7 @@ For development with live reload and source code mounting:
 1. Clone the repository:
    ```bash
    git clone https://github.com/PatchMon/PatchMon.git
-   cd patchmon.net
+   cd PatchMon
    ```
 
 2. Start development environment:
@@ -339,12 +339,12 @@ Both Dockerfiles use multi-stage builds with separate development and production
 
 ```bash
 # Build development images
-docker build -f docker/backend.Dockerfile --target development -t patchmon-backend:dev .
-docker build -f docker/frontend.Dockerfile --target development -t patchmon-frontend:dev .
+docker build -f docker/backend.Dockerfile --target development --provenance=false --sbom=false -t patchmon-backend:dev .
+docker build -f docker/frontend.Dockerfile --target development --provenance=false --sbom=false -t patchmon-frontend:dev .
 
 # Build production images (default target)
-docker build -f docker/backend.Dockerfile -t patchmon-backend:latest .
-docker build -f docker/frontend.Dockerfile -t patchmon-frontend:latest .
+docker build -f docker/backend.Dockerfile --provenance=false --sbom=false -t patchmon-backend:latest .
+docker build -f docker/frontend.Dockerfile --provenance=false --sbom=false -t patchmon-frontend:latest .
 ```
 
 ## Development Commands
@@ -385,7 +385,7 @@ The development setup exposes additional ports for debugging:
 1. **Initial Setup**: Clone repository and start development environment
    ```bash
    git clone https://github.com/PatchMon/PatchMon.git
-   cd patchmon.net
+   cd PatchMon
    docker compose -f docker/docker-compose.dev.yml up -d --build
    ```
 

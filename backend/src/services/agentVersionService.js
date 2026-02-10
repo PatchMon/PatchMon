@@ -1,10 +1,12 @@
 const axios = require("axios");
+const logger = require("../utils/logger");
 const fs = require("node:fs").promises;
 const path = require("node:path");
 const os = require("node:os");
 const { exec, spawn } = require("node:child_process");
 const { promisify } = require("node:util");
 const _execAsync = promisify(exec);
+const dns = require("node:dns").promises;
 
 // Simple semver comparison function
 function compareVersions(version1, version2) {
@@ -27,6 +29,7 @@ class AgentVersionService {
 	constructor() {
 		this.githubApiUrl =
 			"https://api.github.com/repos/PatchMon/PatchMon-agent/releases";
+		this.dnsDomain = "agent.vcheck.patchmon.net";
 		this.agentsDir = path.resolve(__dirname, "../../../agents");
 		this.supportedArchitectures = [
 			"linux-amd64",
@@ -45,43 +48,24 @@ class AgentVersionService {
 			// Ensure agents directory exists
 			await fs.mkdir(this.agentsDir, { recursive: true });
 
-			console.log("🔍 Testing GitHub API connectivity...");
+			logger.info("🔍 Testing DNS connectivity for agent version...");
 			try {
-				const testResponse = await axios.get(
-					"https://api.github.com/repos/PatchMon/PatchMon-agent/releases",
-					{
-						timeout: 5000,
-						headers: {
-							"User-Agent": "PatchMon-Server/1.0",
-							Accept: "application/vnd.github.v3+json",
-						},
-					},
-				);
-				console.log(
-					`✅ GitHub API accessible - found ${testResponse.data.length} releases`,
+				const testVersion = await this.checkVersionFromDNS(this.dnsDomain);
+				logger.info(
+					`✅ DNS lookup successful - latest agent version: ${testVersion}`,
 				);
 			} catch (testError) {
-				console.error("❌ GitHub API not accessible:", testError.message);
-				if (testError.response) {
-					console.error(
-						"❌ Status:",
-						testError.response.status,
-						testError.response.statusText,
-					);
-					if (testError.response.status === 403) {
-						console.log("⚠️ GitHub API rate limit exceeded - will retry later");
-					}
-				}
+				logger.error("❌ DNS lookup failed:", testError.message);
 			}
 
 			// Get current agent version by executing the binary
 			await this.getCurrentAgentVersion();
 
-			// Try to check for updates, but don't fail initialization if GitHub API is unavailable
+			// Try to check for updates, but don't fail initialization if DNS is unavailable
 			try {
 				await this.checkForUpdates();
 			} catch (updateError) {
-				console.log(
+				logger.info(
 					"⚠️ Failed to check for updates on startup, will retry later:",
 					updateError.message,
 				);
@@ -90,13 +74,13 @@ class AgentVersionService {
 			// Set up periodic checking
 			setInterval(() => {
 				this.checkForUpdates().catch((error) => {
-					console.log("⚠️ Periodic update check failed:", error.message);
+					logger.info("⚠️ Periodic update check failed:", error.message);
 				});
 			}, this.checkInterval);
 
-			console.log("✅ Agent Version Service initialized");
+			logger.info("✅ Agent Version Service initialized");
 		} catch (error) {
-			console.error(
+			logger.error(
 				"❌ Failed to initialize Agent Version Service:",
 				error.message,
 			);
@@ -105,7 +89,7 @@ class AgentVersionService {
 
 	async getCurrentAgentVersion() {
 		try {
-			console.log("🔍 Getting current agent version...");
+			logger.info("🔍 Getting current agent version...");
 
 			// Detect server architecture and map to Go architecture names
 			const serverArch = os.arch();
@@ -118,7 +102,7 @@ class AgentVersionService {
 			};
 			const serverGoArch = archMap[serverArch] || serverArch;
 
-			console.log(
+			logger.info(
 				`🔍 Detected server architecture: ${serverArch} -> ${serverGoArch}`,
 			);
 
@@ -134,7 +118,7 @@ class AgentVersionService {
 				try {
 					await fs.access(testPath);
 					agentPath = testPath;
-					console.log(`✅ Found agent binary at: ${testPath}`);
+					logger.info(`✅ Found agent binary at: ${testPath}`);
 					break;
 				} catch {
 					// Path doesn't exist, continue to next
@@ -142,10 +126,10 @@ class AgentVersionService {
 			}
 
 			if (!agentPath) {
-				console.log(
+				logger.info(
 					`⚠️ No agent binary found in agents/ folder for architecture ${serverGoArch}, current version will be unknown`,
 				);
-				console.log("💡 Use the Download Updates button to get agent binaries");
+				logger.info("💡 Use the Download Updates button to get agent binaries");
 				this.currentVersion = null;
 				return;
 			}
@@ -175,7 +159,7 @@ class AgentVersionService {
 				});
 
 				if (result.stderr) {
-					console.log("⚠️ Agent help stderr:", result.stderr);
+					logger.info("⚠️ Agent help stderr:", result.stderr);
 				}
 
 				// Parse version from help output (e.g., "PatchMon Agent v1.3.0")
@@ -184,60 +168,54 @@ class AgentVersionService {
 				);
 				if (versionMatch) {
 					this.currentVersion = versionMatch[1];
-					console.log(`✅ Current agent version: ${this.currentVersion}`);
+					logger.info(`✅ Current agent version: ${this.currentVersion}`);
 				} else {
-					console.log(
+					logger.info(
 						"⚠️ Could not parse version from agent help output:",
 						result.stdout,
 					);
 					this.currentVersion = null;
 				}
 			} catch (execError) {
-				console.error("❌ Failed to execute agent binary:", execError.message);
+				logger.error("❌ Failed to execute agent binary:", execError.message);
 				this.currentVersion = null;
 			}
 		} catch (error) {
-			console.error("❌ Failed to get current agent version:", error.message);
+			logger.error("❌ Failed to get current agent version:", error.message);
 			this.currentVersion = null;
+		}
+	}
+
+	async checkVersionFromDNS(domain) {
+		try {
+			const records = await dns.resolveTxt(domain);
+			if (!records || records.length === 0) {
+				throw new Error(`No TXT records found for ${domain}`);
+			}
+			// TXT records are arrays of strings, get first record's first string
+			const version = records[0][0].trim().replace(/^["']|["']$/g, "");
+			// Validate version format (semantic versioning)
+			if (!/^\d+\.\d+\.\d+/.test(version)) {
+				throw new Error(`Invalid version format: ${version}`);
+			}
+			return version;
+		} catch (error) {
+			logger.error(`DNS lookup failed for ${domain}:`, error.message);
+			throw error;
 		}
 	}
 
 	async checkForUpdates() {
 		try {
-			console.log("🔍 Checking for agent updates...");
+			logger.info("🔍 Checking for agent updates via DNS...");
 
-			const response = await axios.get(this.githubApiUrl, {
-				timeout: 10000,
-				headers: {
-					"User-Agent": "PatchMon-Server/1.0",
-					Accept: "application/vnd.github.v3+json",
-				},
-			});
-
-			console.log(`📡 GitHub API response status: ${response.status}`);
-			console.log(`📦 Found ${response.data.length} releases`);
-
-			const releases = response.data;
-			if (releases.length === 0) {
-				console.log("ℹ️ No releases found");
-				this.latestVersion = null;
-				this.lastChecked = new Date();
-				return {
-					latestVersion: null,
-					currentVersion: this.currentVersion,
-					hasUpdate: false,
-					lastChecked: this.lastChecked,
-				};
-			}
-
-			const latestRelease = releases[0];
-			this.latestVersion = latestRelease.tag_name.replace("v", ""); // Remove 'v' prefix
+			this.latestVersion = await this.checkVersionFromDNS(this.dnsDomain);
 			this.lastChecked = new Date();
 
-			console.log(`📦 Latest agent version: ${this.latestVersion}`);
+			logger.info(`📦 Latest agent version: ${this.latestVersion}`);
 
 			// Don't download binaries automatically - only when explicitly requested
-			console.log(
+			logger.info(
 				"ℹ️ Skipping automatic binary download - binaries will be downloaded on demand",
 			);
 
@@ -248,42 +226,29 @@ class AgentVersionService {
 				lastChecked: this.lastChecked,
 			};
 		} catch (error) {
-			console.error("❌ Failed to check for updates:", error.message);
-			if (error.response) {
-				console.error(
-					"❌ GitHub API error:",
-					error.response.status,
-					error.response.statusText,
-				);
-				console.error(
-					"❌ Rate limit info:",
-					error.response.headers["x-ratelimit-remaining"],
-					"/",
-					error.response.headers["x-ratelimit-limit"],
-				);
-			}
+			logger.error("❌ Failed to check for updates:", error.message);
 			throw error;
 		}
 	}
 
 	async downloadBinariesToAgentsFolder(release) {
 		try {
-			console.log(
+			logger.info(
 				`⬇️ Downloading binaries for version ${release.tag_name} to agents folder...`,
 			);
 
 			for (const arch of this.supportedArchitectures) {
-				const assetName = `patchmon-agent-${arch}`;
+				const assetName = `patchmon-agent-linux-${arch}`;
 				const asset = release.assets.find((a) => a.name === assetName);
 
 				if (!asset) {
-					console.warn(`⚠️ Binary not found for architecture: ${arch}`);
+					logger.warn(`⚠️ Binary not found for architecture: ${arch}`);
 					continue;
 				}
 
 				const binaryPath = path.join(this.agentsDir, assetName);
 
-				console.log(`⬇️ Downloading ${assetName}...`);
+				logger.info(`⬇️ Downloading ${assetName}...`);
 
 				const response = await axios.get(asset.browser_download_url, {
 					responseType: "stream",
@@ -301,10 +266,10 @@ class AgentVersionService {
 				// Make executable
 				await fs.chmod(binaryPath, "755");
 
-				console.log(`✅ Downloaded: ${assetName} to agents folder`);
+				logger.info(`✅ Downloaded: ${assetName} to agents folder`);
 			}
 		} catch (error) {
-			console.error(
+			logger.error(
 				"❌ Failed to download binaries to agents folder:",
 				error.message,
 			);
@@ -314,7 +279,7 @@ class AgentVersionService {
 
 	async downloadBinaryForVersion(version, architecture) {
 		try {
-			console.log(
+			logger.info(
 				`⬇️ Downloading binary for version ${version} architecture ${architecture}...`,
 			);
 
@@ -336,7 +301,7 @@ class AgentVersionService {
 				throw new Error(`Release ${version} not found`);
 			}
 
-			const assetName = `patchmon-agent-${architecture}`;
+			const assetName = `patchmon-agent-linux-${architecture}`;
 			const asset = release.assets.find((a) => a.name === assetName);
 
 			if (!asset) {
@@ -348,7 +313,7 @@ class AgentVersionService {
 				`${release.tag_name}-${assetName}`,
 			);
 
-			console.log(`⬇️ Downloading ${assetName}...`);
+			logger.info(`⬇️ Downloading ${assetName}...`);
 
 			const downloadResponse = await axios.get(asset.browser_download_url, {
 				responseType: "stream",
@@ -366,10 +331,10 @@ class AgentVersionService {
 			// Make executable
 			await fs.chmod(binaryPath, "755");
 
-			console.log(`✅ Downloaded: ${assetName}`);
+			logger.info(`✅ Downloaded: ${assetName}`);
 			return binaryPath;
 		} catch (error) {
-			console.error(
+			logger.error(
 				`❌ Failed to download binary ${version}-${architecture}:`,
 				error.message,
 			);
@@ -378,7 +343,7 @@ class AgentVersionService {
 	}
 
 	async getBinaryPath(version, architecture) {
-		const binaryName = `patchmon-agent-${architecture}`;
+		const binaryName = `patchmon-agent-linux-${architecture}`;
 		const binaryPath = path.join(this.agentsDir, binaryName);
 
 		try {
@@ -398,7 +363,7 @@ class AgentVersionService {
 			res.setHeader("Content-Type", "application/octet-stream");
 			res.setHeader(
 				"Content-Disposition",
-				`attachment; filename="patchmon-agent-${architecture}"`,
+				`attachment; filename="patchmon-agent-linux-${architecture}"`,
 			);
 			res.setHeader("Content-Length", stats.size);
 
@@ -410,7 +375,7 @@ class AgentVersionService {
 			stream.pipe(res);
 		} catch (_error) {
 			// Binary doesn't exist, try to download it
-			console.log(
+			logger.info(
 				`⬇️ Binary not found locally, attempting to download ${version}-${architecture}...`,
 			);
 			try {
@@ -422,7 +387,7 @@ class AgentVersionService {
 				res.setHeader("Content-Type", "application/octet-stream");
 				res.setHeader(
 					"Content-Disposition",
-					`attachment; filename="patchmon-agent-${architecture}"`,
+					`attachment; filename="patchmon-agent-linux-${architecture}"`,
 				);
 				res.setHeader("Content-Length", stats.size);
 				res.setHeader("Cache-Control", "public, max-age=3600");
@@ -431,7 +396,7 @@ class AgentVersionService {
 				const stream = require("node:fs").createReadStream(binaryPath);
 				stream.pipe(res);
 			} catch (downloadError) {
-				console.error(
+				logger.error(
 					`❌ Failed to download binary ${version}-${architecture}:`,
 					downloadError.message,
 				);
@@ -446,21 +411,19 @@ class AgentVersionService {
 		let hasUpdate = false;
 		let updateStatus = "unknown";
 
-		// Latest version should ALWAYS come from GitHub, not from local binaries
+		// Latest version comes from DNS TXT record
 		// currentVersion = what's installed locally
-		// latestVersion = what's available on GitHub
+		// latestVersion = what's available from DNS
 		if (this.latestVersion) {
-			console.log(`📦 Latest version from GitHub: ${this.latestVersion}`);
+			logger.info(`📦 Latest version from DNS: ${this.latestVersion}`);
 		} else {
-			console.log(
-				`⚠️ No GitHub release version available (API may be unavailable)`,
-			);
+			logger.info(`⚠️ No latest version available (DNS lookup may have failed)`);
 		}
 
 		if (this.currentVersion) {
-			console.log(`💾 Current local agent version: ${this.currentVersion}`);
+			logger.info(`💾 Current local agent version: ${this.currentVersion}`);
 		} else {
-			console.log(`⚠️ No local agent binary found`);
+			logger.info(`⚠️ No local agent binary found`);
 		}
 
 		// Determine update status by comparing current vs latest (from GitHub)
@@ -483,21 +446,21 @@ class AgentVersionService {
 			hasUpdate = true;
 			updateStatus = "no-agent";
 		} else if (this.currentVersion && !this.latestVersion) {
-			// We have a current version but no latest version (GitHub API unavailable)
+			// We have a current version but no latest version (DNS unavailable)
 			hasUpdate = false;
-			updateStatus = "github-unavailable";
+			updateStatus = "dns-unavailable";
 		} else if (!this.currentVersion && !this.latestVersion) {
 			updateStatus = "no-data";
 		}
 
 		return {
 			currentVersion: this.currentVersion,
-			latestVersion: this.latestVersion, // Always return GitHub version, not local
+			latestVersion: this.latestVersion, // Always return DNS version, not local
 			hasUpdate: hasUpdate,
 			updateStatus: updateStatus,
 			lastChecked: this.lastChecked,
 			supportedArchitectures: this.supportedArchitectures,
-			status: this.latestVersion ? "ready" : "no-releases",
+			status: this.latestVersion ? "ready" : "no-version",
 		};
 	}
 
@@ -508,7 +471,7 @@ class AgentVersionService {
 
 	async downloadLatestUpdate() {
 		try {
-			console.log("⬇️ Downloading latest agent update...");
+			logger.info("⬇️ Downloading latest agent update...");
 
 			// First check for updates to get the latest release info
 			const _updateInfo = await this.checkForUpdates();
@@ -533,29 +496,33 @@ class AgentVersionService {
 				throw new Error("No releases found");
 			}
 
-			console.log(
+			logger.info(
 				`⬇️ Downloading binaries for version ${latestRelease.tag_name}...`,
 			);
 
 			// Download binaries for all architectures directly to agents folder
 			await this.downloadBinariesToAgentsFolder(latestRelease);
 
-			console.log("✅ Latest update downloaded successfully");
+			// Refresh current version to reflect the newly downloaded binary
+			await this.getCurrentAgentVersion();
+
+			logger.info("✅ Latest update downloaded successfully");
 
 			return {
 				success: true,
 				version: this.latestVersion,
+				currentVersion: this.currentVersion,
 				downloadedArchitectures: this.supportedArchitectures,
 				message: `Successfully downloaded version ${this.latestVersion}`,
 			};
 		} catch (error) {
-			console.error("❌ Failed to download latest update:", error.message);
+			logger.error("❌ Failed to download latest update:", error.message);
 			throw error;
 		}
 	}
 
 	async getAvailableVersions() {
-		// No local caching - only return latest from GitHub
+		// No local caching - only return latest from DNS
 		if (this.latestVersion) {
 			return [this.latestVersion];
 		}
@@ -619,7 +586,7 @@ class AgentVersionService {
 	 */
 	async checkAndPushAgentUpdate(agentApiId, agentVersion, force = false) {
 		try {
-			console.log(
+			logger.info(
 				`🔍 Checking update for agent ${agentApiId} (version: ${agentVersion})`,
 			);
 
@@ -628,7 +595,7 @@ class AgentVersionService {
 			const prisma = getPrismaClient();
 			const settings = await prisma.settings.findFirst();
 			if (!settings || !settings.auto_update) {
-				console.log(
+				logger.info(
 					`⚠️ Auto-update is disabled in server settings, skipping update check for agent ${agentApiId}`,
 				);
 				return {
@@ -645,7 +612,7 @@ class AgentVersionService {
 			});
 
 			if (!host) {
-				console.log(
+				logger.info(
 					`⚠️ Host not found for agent ${agentApiId}, skipping update check`,
 				);
 				return {
@@ -656,7 +623,7 @@ class AgentVersionService {
 			}
 
 			if (!host.auto_update) {
-				console.log(
+				logger.info(
 					`⚠️ Auto-update is disabled for host ${agentApiId}, skipping update check`,
 				);
 				return {
@@ -670,7 +637,7 @@ class AgentVersionService {
 			const versionInfo = await this.getVersionInfo();
 
 			if (!versionInfo.latestVersion) {
-				console.log(`⚠️ No latest version available for agent ${agentApiId}`);
+				logger.info(`⚠️ No latest version available for agent ${agentApiId}`);
 				return {
 					needsUpdate: false,
 					reason: "no-latest-version",
@@ -686,7 +653,7 @@ class AgentVersionService {
 			const needsUpdate = force || comparison < 0;
 
 			if (needsUpdate) {
-				console.log(
+				logger.info(
 					`📤 Agent ${agentApiId} needs update: ${agentVersion} → ${versionInfo.latestVersion}`,
 				);
 
@@ -705,7 +672,7 @@ class AgentVersionService {
 				const pushed = pushUpdateNotification(agentApiId, updateInfo);
 
 				if (pushed) {
-					console.log(`✅ Update notification pushed to agent ${agentApiId}`);
+					logger.info(`✅ Update notification pushed to agent ${agentApiId}`);
 					return {
 						needsUpdate: true,
 						reason: force ? "force-update" : "version-outdated",
@@ -713,7 +680,7 @@ class AgentVersionService {
 						targetVersion: versionInfo.latestVersion,
 					};
 				} else {
-					console.log(
+					logger.info(
 						`⚠️ Failed to push update notification to agent ${agentApiId} (not connected)`,
 					);
 					return {
@@ -724,7 +691,7 @@ class AgentVersionService {
 					};
 				}
 			} else {
-				console.log(`✅ Agent ${agentApiId} is up to date: ${agentVersion}`);
+				logger.info(`✅ Agent ${agentApiId} is up to date: ${agentVersion}`);
 				return {
 					needsUpdate: false,
 					reason: "up-to-date",
@@ -732,7 +699,7 @@ class AgentVersionService {
 				};
 			}
 		} catch (error) {
-			console.error(
+			logger.error(
 				`❌ Failed to check update for agent ${agentApiId}:`,
 				error.message,
 			);
@@ -751,7 +718,7 @@ class AgentVersionService {
 	 */
 	async checkAndPushUpdatesToAll(force = false) {
 		try {
-			console.log(
+			logger.info(
 				`🔍 Checking updates for all connected agents (force: ${force})`,
 			);
 
@@ -760,7 +727,7 @@ class AgentVersionService {
 			const prisma = getPrismaClient();
 			const settings = await prisma.settings.findFirst();
 			if (!settings || !settings.auto_update) {
-				console.log(
+				logger.info(
 					`⚠️ Auto-update is disabled in server settings, skipping bulk update check`,
 				);
 				return {
@@ -796,9 +763,124 @@ class AgentVersionService {
 
 			const result = await pushUpdateNotificationToAll(updateInfo);
 
-			console.log(
+			logger.info(
 				`✅ Bulk update notification sent to ${result.notifiedCount} agents`,
 			);
+
+			// Create or update alert for agent update availability
+			try {
+				const alertService = require("./alertService");
+				const alertConfigService = require("./alertConfigService");
+				const { getPrismaClient } = require("../config/prisma");
+				const prismaClient = getPrismaClient();
+
+				// Check if alerts system is enabled
+				const alertsEnabled = await alertService.isAlertsEnabled();
+				if (!alertsEnabled) {
+					logger.info(
+						"⚠️ Alerts system is disabled, skipping agent update alert",
+					);
+					return {
+						success: true,
+						message: `Update notifications sent to ${result.notifiedCount} agents`,
+						updatedAgents: result.notifiedCount,
+						totalAgents: result.totalAgents,
+						targetVersion: versionInfo.latestVersion,
+					};
+				}
+
+				const alertType = "agent_update";
+				const isEnabled =
+					await alertConfigService.isAlertTypeEnabled(alertType);
+
+				if (isEnabled && result.notifiedCount > 0) {
+					const defaultSeverity =
+						await alertConfigService.getDefaultSeverity(alertType);
+
+					// Check if alert already exists for this version
+					const existingAlert = await prismaClient.alerts.findFirst({
+						where: {
+							type: alertType,
+							is_active: true,
+							metadata: {
+								path: ["latest_version"],
+								equals: versionInfo.latestVersion,
+							},
+						},
+					});
+
+					if (!existingAlert) {
+						// Create new alert
+						const alert = await alertService.createAlert(
+							alertType,
+							defaultSeverity,
+							"Agent Update Available",
+							`A new agent version (${versionInfo.latestVersion}) is available. ${result.notifiedCount} agent(s) need updates.`,
+							{
+								latest_version: versionInfo.latestVersion,
+								agents_needing_update: result.notifiedCount,
+								total_agents: result.totalAgents,
+							},
+						);
+
+						// Check auto-assignment
+						if (
+							await alertConfigService.shouldAutoAssign(alertType, {
+								severity: defaultSeverity,
+							})
+						) {
+							const assignUserId =
+								await alertConfigService.getAutoAssignUser(alertType);
+							if (assignUserId) {
+								await alertService.assignAlertToUser(
+									alert.id,
+									assignUserId,
+									null,
+								);
+							}
+						}
+
+						logger.info(`✅ Created agent update alert: ${alert.id}`);
+					} else {
+						// Update existing alert with new count
+						await prismaClient.alerts.update({
+							where: { id: existingAlert.id },
+							data: {
+								message: `A new agent version (${versionInfo.latestVersion}) is available. ${result.notifiedCount} agent(s) need updates.`,
+								metadata: {
+									...existingAlert.metadata,
+									agents_needing_update: result.notifiedCount,
+									total_agents: result.totalAgents,
+								},
+								updated_at: new Date(),
+							},
+						});
+					}
+				} else if (result.notifiedCount === 0 && result.totalAgents > 0) {
+					// All agents are up to date - resolve existing alerts
+					const existingAlert = await prismaClient.alerts.findFirst({
+						where: {
+							type: alertType,
+							is_active: true,
+						},
+					});
+
+					if (existingAlert) {
+						await alertService.performAlertAction(
+							null,
+							existingAlert.id,
+							"resolved",
+							{
+								reason: "all_agents_up_to_date",
+							},
+						);
+						logger.info(`✅ Resolved agent update alert: ${existingAlert.id}`);
+					}
+				}
+			} catch (alertError) {
+				// Don't fail the update check if alert creation fails
+				logger.error("Failed to create/update agent update alert:", alertError);
+			}
 
 			return {
 				success: true,
@@ -808,7 +890,7 @@ class AgentVersionService {
 				targetVersion: versionInfo.latestVersion,
 			};
 		} catch (error) {
-			console.error("❌ Failed to push updates to all agents:", error.message);
+			logger.error("❌ Failed to push updates to all agents:", error.message);
 			return {
 				success: false,
 				message: `Error pushing updates: ${error.message}`,

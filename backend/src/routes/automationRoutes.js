@@ -1,9 +1,84 @@
 const express = require("express");
+const logger = require("../utils/logger");
+const crypto = require("node:crypto");
 const { queueManager, QUEUE_NAMES } = require("../services/automation");
 const { getConnectedApiIds } = require("../services/agentWs");
-const { authenticateToken } = require("../middleware/auth");
+const { authenticateToken, requireAdmin } = require("../middleware/auth");
+const { redis } = require("../services/automation/shared/redis");
 
 const router = express.Router();
+
+// Bull Board Ticket - One-time use ticket for Bull Board authentication
+// SECURITY: Uses Redis-stored tickets instead of tokens in URLs to prevent exposure in logs
+const BULL_BOARD_TICKET_PREFIX = "bullboard:ticket:";
+const BULL_BOARD_TICKET_TTL = 30; // 30 seconds - very short-lived
+
+router.post(
+	"/bullboard-ticket",
+	authenticateToken,
+	requireAdmin,
+	async (req, res) => {
+		try {
+			// Generate a random ticket
+			const ticket = crypto.randomBytes(32).toString("hex");
+			const key = `${BULL_BOARD_TICKET_PREFIX}${ticket}`;
+
+			// Store ticket data in Redis with short TTL
+			const ticketData = JSON.stringify({
+				userId: req.user.id,
+				sessionId: req.session_id,
+				role: req.user.role,
+				createdAt: Date.now(),
+			});
+
+			await redis.setex(key, BULL_BOARD_TICKET_TTL, ticketData);
+
+			res.json({
+				ticket: ticket,
+				expiresIn: BULL_BOARD_TICKET_TTL,
+			});
+		} catch (error) {
+			logger.error("Bull Board ticket generation error:", error);
+			res.status(500).json({ error: "Failed to generate Bull Board ticket" });
+		}
+	},
+);
+
+// Validate and consume Bull Board ticket (exported for use in server.js)
+async function consumeBullBoardTicket(ticket) {
+	const key = `${BULL_BOARD_TICKET_PREFIX}${ticket}`;
+	const data = await redis.get(key);
+
+	if (!data) {
+		return { valid: false, reason: "Invalid or expired ticket" };
+	}
+
+	// Immediately delete the ticket (one-time use)
+	await redis.del(key);
+
+	try {
+		const ticketData = JSON.parse(data);
+
+		// Verify the ticket hasn't been tampered with
+		if (!ticketData.userId || !ticketData.role) {
+			return { valid: false, reason: "Malformed ticket data" };
+		}
+
+		// Check if admin role
+		if (ticketData.role !== "admin") {
+			return { valid: false, reason: "Admin access required" };
+		}
+
+		return {
+			valid: true,
+			userId: ticketData.userId,
+			sessionId: ticketData.sessionId,
+			role: ticketData.role,
+		};
+	} catch (_error) {
+		return { valid: false, reason: "Failed to parse ticket data" };
+	}
+}
 
 // Get all queue statistics
 router.get("/stats", authenticateToken, async (_req, res) => {
@@ -14,7 +89,7 @@ router.get("/stats", authenticateToken, async (_req, res) => {
 			data: stats,
 		});
 	} catch (error) {
-		console.error("Error fetching queue stats:", error);
+		logger.error("Error fetching queue stats:", error);
 		res.status(500).json({
 			success: false,
 			error: "Failed to fetch queue statistics",
@@ -40,7 +115,7 @@ router.get("/stats/:queueName", authenticateToken, async (req, res) => {
 			data: stats,
 		});
 	} catch (error) {
-		console.error("Error fetching queue stats:", error);
+		logger.error("Error fetching queue stats:", error);
 		res.status(500).json({
 			success: false,
 			error: "Failed to fetch queue statistics",
@@ -91,7 +166,7 @@ router.get("/jobs/:queueName", authenticateToken, async (req, res) => {
 			data: formattedJobs,
 		});
 	} catch (error) {
-		console.error("Error fetching recent jobs:", error);
+		logger.error("Error fetching recent jobs:", error);
 		res.status(500).json({
 			success: false,
 			error: "Failed to fetch recent jobs",
@@ -99,22 +174,22 @@ router.get("/jobs/:queueName", authenticateToken, async (req, res) => {
 	}
 });
 
-// Trigger manual GitHub update check
-router.post("/trigger/github-update", authenticateToken, async (_req, res) => {
+// Trigger manual version update check
+router.post("/trigger/version-update", authenticateToken, async (_req, res) => {
 	try {
-		const job = await queueManager.triggerGitHubUpdateCheck();
+		const job = await queueManager.triggerVersionUpdateCheck();
 		res.json({
 			success: true,
 			data: {
 				jobId: job.id,
-				message: "GitHub update check triggered successfully",
+				message: "Version update check triggered successfully",
 			},
 		});
 	} catch (error) {
-		console.error("Error triggering GitHub update check:", error);
+		logger.error("Error triggering version update check:", error);
 		res.status(500).json({
 			success: false,
-			error: "Failed to trigger GitHub update check",
+			error: "Failed to trigger version update check",
 		});
 	}
 });
@@ -134,7 +209,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Error triggering session cleanup:", error);
+			logger.error("Error triggering session cleanup:", error);
 			res.status(500).json({
 				success: false,
 				error: "Failed to trigger session cleanup",
@@ -162,7 +237,7 @@ router.post(
 			await queue.addBulk(jobs);
 			res.json({ success: true, data: { enqueued: jobs.length } });
 		} catch (error) {
-			console.error("Error triggering agent collection:", error);
+			logger.error("Error triggering agent collection:", error);
 			res
 				.status(500)
 				.json({ success: false, error: "Failed to trigger agent collection" });
@@ -185,7 +260,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Error triggering orphaned repository cleanup:", error);
+			logger.error("Error triggering orphaned repository cleanup:", error);
 			res.status(500).json({
 				success: false,
 				error: "Failed to trigger orphaned repository cleanup",
@@ -209,7 +284,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Error triggering orphaned package cleanup:", error);
+			logger.error("Error triggering orphaned package cleanup:", error);
 			res.status(500).json({
 				success: false,
 				error: "Failed to trigger orphaned package cleanup",
@@ -233,7 +308,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Error triggering Docker inventory cleanup:", error);
+			logger.error("Error triggering Docker inventory cleanup:", error);
 			res.status(500).json({
 				success: false,
 				error: "Failed to trigger Docker inventory cleanup",
@@ -257,7 +332,7 @@ router.post(
 				},
 			});
 		} catch (error) {
-			console.error("Error triggering system statistics collection:", error);
+			logger.error("Error triggering system statistics collection:", error);
 			res.status(500).json({
 				success: false,
 				error: "Failed to trigger system statistics collection",
@@ -301,7 +376,7 @@ router.get("/health", authenticateToken, async (_req, res) => {
 			data: health,
 		});
 	} catch (error) {
-		console.error("Error checking queue health:", error);
+		logger.error("Error checking queue health:", error);
 		res.status(500).json({
 			success: false,
 			error: "Failed to check queue health",
@@ -318,7 +393,7 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 
 		// Get recent jobs for each queue to show last run times
 		const recentJobs = await Promise.all([
-			queueManager.getRecentJobs(QUEUE_NAMES.GITHUB_UPDATE_CHECK, 1),
+			queueManager.getRecentJobs(QUEUE_NAMES.VERSION_UPDATE_CHECK, 1),
 			queueManager.getRecentJobs(QUEUE_NAMES.SESSION_CLEANUP, 1),
 			queueManager.getRecentJobs(QUEUE_NAMES.ORPHANED_REPO_CLEANUP, 1),
 			queueManager.getRecentJobs(QUEUE_NAMES.ORPHANED_PACKAGE_CLEANUP, 1),
@@ -330,7 +405,7 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 		// Calculate overview metrics
 		const overview = {
 			scheduledTasks:
-				stats[QUEUE_NAMES.GITHUB_UPDATE_CHECK].delayed +
+				stats[QUEUE_NAMES.VERSION_UPDATE_CHECK].delayed +
 				stats[QUEUE_NAMES.SESSION_CLEANUP].delayed +
 				stats[QUEUE_NAMES.ORPHANED_REPO_CLEANUP].delayed +
 				stats[QUEUE_NAMES.ORPHANED_PACKAGE_CLEANUP].delayed +
@@ -338,7 +413,7 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 				stats[QUEUE_NAMES.SYSTEM_STATISTICS].delayed,
 
 			runningTasks:
-				stats[QUEUE_NAMES.GITHUB_UPDATE_CHECK].active +
+				stats[QUEUE_NAMES.VERSION_UPDATE_CHECK].active +
 				stats[QUEUE_NAMES.SESSION_CLEANUP].active +
 				stats[QUEUE_NAMES.ORPHANED_REPO_CLEANUP].active +
 				stats[QUEUE_NAMES.ORPHANED_PACKAGE_CLEANUP].active +
@@ -346,7 +421,7 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 				stats[QUEUE_NAMES.SYSTEM_STATISTICS].active,
 
 			failedTasks:
-				stats[QUEUE_NAMES.GITHUB_UPDATE_CHECK].failed +
+				stats[QUEUE_NAMES.VERSION_UPDATE_CHECK].failed +
 				stats[QUEUE_NAMES.SESSION_CLEANUP].failed +
 				stats[QUEUE_NAMES.ORPHANED_REPO_CLEANUP].failed +
 				stats[QUEUE_NAMES.ORPHANED_PACKAGE_CLEANUP].failed +
@@ -367,9 +442,10 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 			// Automation details with last run times
 			automations: [
 				{
-					name: "GitHub Update Check",
-					queue: QUEUE_NAMES.GITHUB_UPDATE_CHECK,
-					description: "Checks for new PatchMon releases",
+					name: "Version Update Check",
+					queue: QUEUE_NAMES.VERSION_UPDATE_CHECK,
+					description:
+						"Checks for new PatchMon server and agent releases via DNS",
 					schedule: "Daily at midnight",
 					lastRun: recentJobs[0][0]?.finishedOn
 						? new Date(recentJobs[0][0].finishedOn).toLocaleString()
@@ -380,7 +456,7 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 						: recentJobs[0][0]
 							? "Success"
 							: "Never run",
-					stats: stats[QUEUE_NAMES.GITHUB_UPDATE_CHECK],
+					stats: stats[QUEUE_NAMES.VERSION_UPDATE_CHECK],
 				},
 				{
 					name: "Session Cleanup",
@@ -494,7 +570,7 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 			data: overview,
 		});
 	} catch (error) {
-		console.error("Error fetching automation overview:", error);
+		logger.error("Error fetching automation overview:", error);
 		res.status(500).json({
 			success: false,
 			error: "Failed to fetch automation overview",
@@ -503,3 +579,4 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 });
 
 module.exports = router;
+module.exports.consumeBullBoardTicket = consumeBullBoardTicket;

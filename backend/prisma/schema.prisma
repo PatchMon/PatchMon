@@ -22,14 +22,14 @@ model dashboard_preferences {
 }
 
 model host_groups {
-  id                      String                    @id
-  name                    String                    @unique
-  description             String?
-  color                   String?                   @default("#3B82F6")
-  created_at              DateTime                  @default(now())
-  updated_at              DateTime
-  host_group_memberships  host_group_memberships[]
-  auto_enrollment_tokens  auto_enrollment_tokens[]
+  id                     String                   @id
+  name                   String                   @unique
+  description            String?
+  color                  String?                  @default("#3B82F6")
+  created_at             DateTime                 @default(now())
+  updated_at             DateTime
+  host_group_memberships host_group_memberships[]
+  auto_enrollment_tokens auto_enrollment_tokens[]
 }
 
 model host_group_memberships {
@@ -78,54 +78,64 @@ model host_repositories {
   repositories  repositories @relation(fields: [repository_id], references: [id], onDelete: Cascade)
 
   @@unique([host_id, repository_id])
+  @@index([host_id])
+  @@index([repository_id])
+  @@index([is_enabled])
 }
 
 model hosts {
-  id                      String                    @id
-  machine_id              String?
-  friendly_name           String
-  ip                      String?
-  os_type                 String
-  os_version              String
-  architecture            String?
-  last_update             DateTime                  @default(now())
-  status                  String                    @default("active")
-  created_at              DateTime                  @default(now())
-  updated_at              DateTime
-  api_id                  String                    @unique
-  api_key                 String                    @unique
-  agent_version           String?
-  auto_update             Boolean                   @default(true)
-  cpu_cores               Int?
-  cpu_model               String?
-  disk_details            Json?
-  dns_servers             Json?
-  gateway_ip              String?
-  hostname                String?
-  kernel_version          String?
+  id                       String                   @id
+  machine_id               String?
+  friendly_name            String
+  ip                       String?
+  os_type                  String
+  os_version               String
+  architecture             String?
+  last_update              DateTime                 @default(now())
+  status                   String                   @default("active")
+  created_at               DateTime                 @default(now())
+  updated_at               DateTime
+  api_id                   String                   @unique
+  api_key                  String                   @unique
+  agent_version            String?
+  auto_update              Boolean                  @default(true)
+  cpu_cores                Int?
+  cpu_model                String?
+  disk_details             Json?
+  dns_servers              Json?
+  gateway_ip               String?
+  hostname                 String?
+  kernel_version           String?
   installed_kernel_version String?
   load_average             Json?
-  network_interfaces      Json?
-  ram_installed           Int?
-  selinux_status          String?
-  swap_size               Int?
-  system_uptime           String?
-  notes                   String?
-  needs_reboot            Boolean?                  @default(false)
-  reboot_reason           String?
-  docker_enabled          Boolean                   @default(false)
-  host_packages           host_packages[]
-  host_repositories       host_repositories[]
-  host_group_memberships  host_group_memberships[]
-  update_history          update_history[]
-  job_history             job_history[]
-  docker_volumes          docker_volumes[]
-  docker_networks         docker_networks[]
+  network_interfaces       Json?
+  ram_installed            Int?
+  selinux_status           String?
+  swap_size                Int?
+  system_uptime            String?
+  notes                    String?
+  needs_reboot             Boolean?                 @default(false)
+  reboot_reason            String?
+  docker_enabled           Boolean                  @default(false)
+  compliance_enabled       Boolean                  @default(false)
+  compliance_on_demand_only Boolean                 @default(true)
+  host_down_alerts_enabled Boolean?                 // null = inherit from global config, true = enabled, false = disabled
+  host_packages            host_packages[]
+  host_repositories        host_repositories[]
+  host_group_memberships   host_group_memberships[]
+  update_history           update_history[]
+  job_history              job_history[]
+  docker_volumes           docker_volumes[]
+  docker_networks          docker_networks[]
+  compliance_scans         compliance_scans[]
 
   @@index([machine_id])
   @@index([friendly_name])
   @@index([hostname])
   @@index([needs_reboot])
+  @@index([status])
+  @@index([status, api_id])
+  @@index([last_update])
 }
 
 model packages {
@@ -158,58 +168,69 @@ model repositories {
   host_repositories host_repositories[]
 
   @@unique([url, distribution, components])
+  @@index([is_active])
+  @@index([name])
 }
 
 model role_permissions {
-  id                  String   @id
-  role                String   @unique
-  can_view_dashboard  Boolean  @default(true)
-  can_view_hosts      Boolean  @default(true)
-  can_manage_hosts    Boolean  @default(false)
-  can_view_packages   Boolean  @default(true)
-  can_manage_packages Boolean  @default(false)
-  can_view_users      Boolean  @default(false)
-  can_manage_users    Boolean  @default(false)
-  can_view_reports    Boolean  @default(true)
-  can_export_data     Boolean  @default(false)
-  can_manage_settings Boolean  @default(false)
-  created_at          DateTime @default(now())
-  updated_at          DateTime
+  id                    String   @id
+  role                  String   @unique
+  can_view_dashboard    Boolean  @default(true)
+  can_view_hosts        Boolean  @default(true)
+  can_manage_hosts      Boolean  @default(false)
+  can_view_packages     Boolean  @default(true)
+  can_manage_packages   Boolean  @default(false)
+  can_view_users        Boolean  @default(false)
+  can_manage_users      Boolean  @default(false)
+  can_manage_superusers Boolean  @default(false)
+  can_view_reports      Boolean  @default(true)
+  can_export_data       Boolean  @default(false)
+  can_manage_settings   Boolean  @default(false)
+  created_at            DateTime @default(now())
+  updated_at            DateTime
 }
 
 model settings {
-  id                     String    @id
-  server_url             String    @default("http://localhost:3001")
-  server_protocol        String    @default("http")
-  server_host            String    @default("localhost")
-  server_port            Int       @default(3001)
-  created_at             DateTime  @default(now())
-  updated_at             DateTime
-  update_interval        Int       @default(60)
-  auto_update            Boolean   @default(false)
-  github_repo_url        String    @default("https://github.com/PatchMon/PatchMon.git")
-  ssh_key_path           String?
-  repository_type        String    @default("public")
-  last_update_check      DateTime?
-  latest_version         String?
-  update_available       Boolean   @default(false)
-  signup_enabled         Boolean   @default(false)
-  default_user_role      String    @default("user")
-  ignore_ssl_self_signed Boolean   @default(false)
-  logo_dark              String?   @default("/assets/logo_dark.png")
-  logo_light             String?   @default("/assets/logo_light.png")
-  favicon                String?   @default("/assets/logo_square.svg")
-  metrics_enabled        Boolean   @default(true)
-  metrics_anonymous_id   String?
-  metrics_last_sent      DateTime?
-  show_github_version_on_login Boolean @default(true)
+  id                           String    @id
+  server_url                   String    @default("http://localhost:3001")
+  server_protocol              String    @default("http")
+  server_host                  String    @default("localhost")
+  server_port                  Int       @default(3001)
+  created_at                   DateTime  @default(now())
+  updated_at                   DateTime
+  update_interval              Int       @default(60)
+  auto_update                  Boolean   @default(false)
+  default_compliance_mode      String   @default("on-demand") // "disabled", "on-demand", "enabled"
+  github_repo_url              String    @default("https://github.com/PatchMon/PatchMon.git")
+  ssh_key_path                 String?
+  repository_type              String    @default("public")
+  last_update_check            DateTime?
+  latest_version               String?
+  update_available             Boolean   @default(false)
+  signup_enabled               Boolean   @default(false)
+  default_user_role            String    @default("user")
+  ignore_ssl_self_signed       Boolean   @default(false)
+  logo_dark                    String?   @default("/assets/logo_dark.png")
+  logo_light                   String?   @default("/assets/logo_light.png")
+  favicon                      String?   @default("/assets/logo_square.svg")
+  metrics_enabled              Boolean   @default(true)
+  metrics_anonymous_id         String?
+  metrics_last_sent            DateTime?
+  show_github_version_on_login Boolean   @default(true)
+  // AI Terminal Assistant settings
+  ai_enabled                   Boolean   @default(false)
+  ai_provider                  String    @default("openrouter") // openrouter, anthropic, openai, gemini
+  ai_model                     String?
+  ai_api_key                   String?   // Encrypted API key
+  // Alerts system settings
+  alerts_enabled               Boolean   @default(true) // Master switch for alerts system
 }
 
 model update_history {
   id              String   @id
   host_id         String
   packages_count  Int
-  security_count   Int
+  security_count  Int
   total_packages  Int?
   payload_size_kb Float?
   execution_time  Float?
@@ -217,6 +238,11 @@ model update_history {
   status          String   @default("success")
   error_message   String?
   hosts           hosts    @relation(fields: [host_id], references: [id], onDelete: Cascade)
+
+  @@index([host_id])
+  @@index([timestamp])
+  @@index([status])
+  @@index([host_id, timestamp])
 }
 
 model system_statistics {
@@ -232,47 +258,56 @@ model system_statistics {
 }
 
 model users {
-  id                     String                   @id
-  username               String                   @unique
-  email                  String                   @unique
-  password_hash          String
-  role                   String                   @default("admin")
-  is_active              Boolean                  @default(true)
-  last_login             DateTime?
-  created_at             DateTime                 @default(now())
-  updated_at             DateTime
-  tfa_backup_codes       String?
-  tfa_enabled            Boolean                  @default(false)
-  tfa_secret             String?
-  first_name             String?
-  last_name              String?
-  theme_preference       String?                  @default("dark")
-  color_theme            String?                  @default("cyber_blue")
-  dashboard_preferences  dashboard_preferences[]
-  user_sessions          user_sessions[]
-  auto_enrollment_tokens auto_enrollment_tokens[]
+  id                        String                      @id
+  username                  String                      @unique
+  email                     String                      @unique
+  password_hash             String?
+  role                      String                      @default("admin")
+  is_active                 Boolean                     @default(true)
+  last_login                DateTime?
+  created_at                DateTime                    @default(now())
+  updated_at                DateTime
+  tfa_backup_codes          String?
+  tfa_enabled               Boolean                     @default(false)
+  tfa_secret                String?
+  first_name                String?
+  last_name                 String?
+  theme_preference          String?                     @default("dark")
+  color_theme               String?                     @default("cyber_blue")
+  oidc_sub                  String?                     @unique
+  oidc_provider             String?
+  avatar_url                String?
+  dashboard_preferences     dashboard_preferences[]
+  user_sessions             user_sessions[]
+  auto_enrollment_tokens    auto_enrollment_tokens[]
   notification_channels  notification_channels[]
   notification_rules     notification_rules[]
   release_notes_acceptances release_notes_acceptances[]
+  alerts_assigned           alerts[]                @relation("AlertAssignedTo")
+  alerts_resolved           alerts[]                 @relation("AlertResolvedBy")
+  alert_history             alert_history[]          @relation("AlertHistoryUser")
+  alert_config_auto_assign  alert_config[]           @relation("AlertConfigAutoAssign")
+
+  @@index([role])
 }
 
 model user_sessions {
-  id                String   @id
-  user_id           String
-  refresh_token     String   @unique
-  access_token_hash String?
-  ip_address        String?
-  user_agent        String?
+  id                 String    @id
+  user_id            String
+  refresh_token      String    @unique
+  access_token_hash  String?
+  ip_address         String?
+  user_agent         String?
   device_fingerprint String?
-  last_activity     DateTime @default(now())
-  expires_at        DateTime
-  created_at        DateTime @default(now())
-  is_revoked        Boolean  @default(false)
-  tfa_remember_me   Boolean  @default(false)
-  tfa_bypass_until  DateTime?
-  login_count       Int      @default(1)
-  last_login_ip     String?
-  users             users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  last_activity      DateTime  @default(now())
+  expires_at         DateTime
+  created_at         DateTime  @default(now())
+  is_revoked         Boolean   @default(false)
+  tfa_remember_me    Boolean   @default(false)
+  tfa_bypass_until   DateTime?
+  login_count        Int       @default(1)
+  last_login_ip      String?
+  users              users     @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@index([user_id])
   @@index([refresh_token])
@@ -307,21 +342,22 @@ model auto_enrollment_tokens {
 }
 
 model docker_containers {
-  id                String              @id
-  host_id           String
-  container_id      String
-  name              String
-  image_id          String?
-  image_name        String
-  image_tag         String              @default("latest")
-  status            String
-  state             String?
-  ports             Json?
-  created_at        DateTime
-  started_at        DateTime?
-  updated_at        DateTime
-  last_checked      DateTime            @default(now())
-  docker_images     docker_images?      @relation(fields: [image_id], references: [id], onDelete: SetNull)
+  id            String         @id
+  host_id       String
+  container_id  String
+  name          String
+  image_id      String?
+  image_name    String
+  image_tag     String         @default("latest")
+  status        String
+  state         String?
+  ports         Json?
+  labels        Json?
+  created_at    DateTime
+  started_at    DateTime?
+  updated_at    DateTime
+  last_checked  DateTime       @default(now())
+  docker_images docker_images? @relation(fields: [image_id], references: [id], onDelete: SetNull)
 
   @@unique([host_id, container_id])
   @@index([host_id])
@@ -331,18 +367,18 @@ model docker_containers {
 }
 
 model docker_images {
-  id                 String                 @id
-  repository         String
-  tag                String                 @default("latest")
-  image_id           String
-  digest             String?
-  size_bytes         BigInt?
-  source             String                 @default("docker-hub")
-  created_at         DateTime
-  last_pulled        DateTime?
-  last_checked       DateTime               @default(now())
-  updated_at         DateTime
-  docker_containers  docker_containers[]
+  id                   String                 @id
+  repository           String
+  tag                  String                 @default("latest")
+  image_id             String
+  digest               String?
+  size_bytes           BigInt?
+  source               String                 @default("docker-hub")
+  created_at           DateTime
+  last_pulled          DateTime?
+  last_checked         DateTime               @default(now())
+  updated_at           DateTime
+  docker_containers    docker_containers[]
   docker_image_updates docker_image_updates[]
 
   @@unique([repository, tag, image_id])
@@ -352,16 +388,16 @@ model docker_images {
 }
 
 model docker_image_updates {
-  id                String        @id
-  image_id          String
-  current_tag       String
-  available_tag     String
-  is_security_update Boolean      @default(false)
-  severity          String?
-  changelog_url     String?
-  created_at        DateTime      @default(now())
-  updated_at        DateTime
-  docker_images     docker_images @relation(fields: [image_id], references: [id], onDelete: Cascade)
+  id                 String        @id
+  image_id           String
+  current_tag        String
+  available_tag      String
+  is_security_update Boolean       @default(false)
+  severity           String?
+  changelog_url      String?
+  created_at         DateTime      @default(now())
+  updated_at         DateTime
+  docker_images      docker_images @relation(fields: [image_id], references: [id], onDelete: Cascade)
 
   @@unique([image_id, available_tag])
   @@index([image_id])
@@ -369,22 +405,22 @@ model docker_image_updates {
 }
 
 model docker_volumes {
-  id          String   @id
-  host_id     String
-  volume_id   String
-  name        String
-  driver      String
-  mountpoint  String?
-  renderer    String?
-  scope       String   @default("local")
-  labels      Json?
-  options     Json?
-  size_bytes  BigInt?
-  ref_count   Int      @default(0)
-  created_at  DateTime
-  updated_at  DateTime
+  id           String   @id
+  host_id      String
+  volume_id    String
+  name         String
+  driver       String
+  mountpoint   String?
+  renderer     String?
+  scope        String   @default("local")
+  labels       Json?
+  options      Json?
+  size_bytes   BigInt?
+  ref_count    Int      @default(0)
+  created_at   DateTime
+  updated_at   DateTime
   last_checked DateTime @default(now())
-  hosts       hosts    @relation(fields: [host_id], references: [id], onDelete: Cascade)
+  hosts        hosts    @relation(fields: [host_id], references: [id], onDelete: Cascade)
 
   @@unique([host_id, volume_id])
   @@index([host_id])
@@ -393,24 +429,24 @@ model docker_volumes {
 }
 
 model docker_networks {
-  id             String   @id
-  host_id        String
-  network_id     String
-  name           String
-  driver         String
-  scope          String   @default("local")
-  ipv6_enabled   Boolean  @default(false)
-  internal       Boolean  @default(false)
-  attachable     Boolean  @default(true)
-  ingress        Boolean  @default(false)
-  config_only    Boolean  @default(false)
-  labels         Json?
-  ipam           Json?    // IPAM configuration (driver, config, options)
-  container_count Int     @default(0)
-  created_at     DateTime?
-  updated_at     DateTime
-  last_checked   DateTime @default(now())
-  hosts          hosts    @relation(fields: [host_id], references: [id], onDelete: Cascade)
+  id              String    @id
+  host_id         String
+  network_id      String
+  name            String
+  driver          String
+  scope           String    @default("local")
+  ipv6_enabled    Boolean   @default(false)
+  internal        Boolean   @default(false)
+  attachable      Boolean   @default(true)
+  ingress         Boolean   @default(false)
+  config_only     Boolean   @default(false)
+  labels          Json?
+  ipam            Json? // IPAM configuration (driver, config, options)
+  container_count Int       @default(0)
+  created_at      DateTime?
+  updated_at      DateTime
+  last_checked    DateTime  @default(now())
+  hosts           hosts     @relation(fields: [host_id], references: [id], onDelete: Cascade)
 
   @@unique([host_id, network_id])
   @@index([host_id])
@@ -419,20 +455,20 @@ model docker_networks {
 }
 
 model job_history {
-  id            String   @id
-  job_id        String
-  queue_name    String
-  job_name      String
-  host_id       String?
-  api_id        String?
-  status        String
-  attempt_number Int     @default(1)
-  error_message String?
-  output        Json?
-  created_at    DateTime @default(now())
-  updated_at    DateTime
-  completed_at  DateTime?
-  hosts         hosts?   @relation(fields: [host_id], references: [id], onDelete: SetNull)
+  id             String    @id
+  job_id         String
+  queue_name     String
+  job_name       String
+  host_id        String?
+  api_id         String?
+  status         String
+  attempt_number Int       @default(1)
+  error_message  String?
+  output         Json?
+  created_at     DateTime  @default(now())
+  updated_at     DateTime
+  completed_at   DateTime?
+  hosts          hosts?    @relation(fields: [host_id], references: [id], onDelete: SetNull)
 
   @@index([job_id])
   @@index([queue_name])
@@ -525,13 +561,210 @@ model notification_history {
   @@index([status])
   @@index([event_type])
 model release_notes_acceptances {
-  id         String   @id @default(uuid())
-  user_id    String
-  version    String
+  id          String   @id @default(uuid())
+  user_id     String
+  version     String
   accepted_at DateTime @default(now())
-  users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  users       users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@unique([user_id, version])
   @@index([user_id])
   @@index([version])
+}
+
+model audit_logs {
+  id             String   @id @default(uuid())
+  event          String
+  user_id        String?
+  target_user_id String?
+  ip_address     String?
+  user_agent     String?
+  request_id     String?
+  details        String? // JSON stringified details
+  success        Boolean  @default(true)
+  created_at     DateTime @default(now())
+
+  @@index([event])
+  @@index([user_id])
+  @@index([target_user_id])
+  @@index([created_at])
+  @@index([success])
+}
+
+// ==========================================
+// Security Compliance Models
+// ==========================================
+
+model compliance_profiles {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  type        String // "openscap" or "docker-bench"
+  os_family   String? // "ubuntu", "rhel", "debian", null for docker
+  version     String?
+  description String?
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  compliance_scans compliance_scans[]
+  compliance_rules compliance_rules[]
+
+  @@index([type])
+  @@index([os_family])
+}
+
+model compliance_scans {
+  id            String    @id @default(uuid())
+  host_id       String
+  profile_id    String
+  started_at    DateTime
+  completed_at  DateTime?
+  status        String // "running", "completed", "failed"
+  total_rules   Int       @default(0)
+  passed        Int       @default(0)
+  failed        Int       @default(0)
+  warnings       Int       @default(0)
+  skipped        Int       @default(0)
+  not_applicable Int       @default(0)
+  score          Float? // Percentage 0-100
+  error_message String?   @db.Text // Error details when status is "failed"
+  raw_output    String?   @db.Text
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  hosts               hosts                @relation(fields: [host_id], references: [id], onDelete: Cascade)
+  compliance_profiles compliance_profiles  @relation(fields: [profile_id], references: [id], onDelete: Cascade)
+  compliance_results  compliance_results[]
+
+  @@index([host_id])
+  @@index([profile_id])
+  @@index([status])
+  @@index([started_at])
+  @@index([completed_at])
+  @@index([host_id, started_at])
+  @@index([host_id, profile_id])
+}
+
+model compliance_rules {
+  id          String  @id @default(uuid())
+  profile_id  String
+  rule_ref    String // Original rule ID from CIS/OpenSCAP
+  title       String
+  description String? @db.Text
+  rationale   String? @db.Text
+  severity    String? // "low", "medium", "high", "critical"
+  section     String? // CIS section number (e.g., "1.1.1")
+  remediation String? @db.Text
+
+  compliance_profiles compliance_profiles  @relation(fields: [profile_id], references: [id], onDelete: Cascade)
+  compliance_results  compliance_results[]
+
+  @@unique([profile_id, rule_ref])
+  @@index([profile_id])
+  @@index([severity])
+  @@index([section])
+}
+
+model compliance_results {
+  id          String   @id @default(uuid())
+  scan_id     String
+  rule_id     String
+  status      String // "pass", "fail", "warn", "skip", "notapplicable", "error"
+  finding     String?  @db.Text
+  actual      String?  @db.Text
+  expected    String?  @db.Text
+  remediation String?  @db.Text
+  created_at  DateTime @default(now())
+
+  compliance_scans compliance_scans @relation(fields: [scan_id], references: [id], onDelete: Cascade)
+  compliance_rules compliance_rules @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+
+  @@unique([scan_id, rule_id]) // Prevent duplicate results for same rule in a scan
+  @@index([scan_id])
+  @@index([rule_id])
+  @@index([status])
+  @@index([scan_id, status])
+}
+
+// ==========================================
+// Alerts System Models
+// ==========================================
+
+model alerts {
+  id                String         @id @default(uuid())
+  type              String         // e.g., "server_update", "agent_update", "host_down"
+  severity          String         // "informational", "warning", "error", "critical"
+  title             String
+  message           String
+  metadata          Json?
+  is_active         Boolean        @default(true)
+  assigned_to_user_id String?      @db.Text
+  resolved_at       DateTime?
+  resolved_by_user_id String?      @db.Text
+  created_at        DateTime       @default(now())
+  updated_at        DateTime       @updatedAt
+  alert_history     alert_history[]
+  users_assigned    users?         @relation("AlertAssignedTo", fields: [assigned_to_user_id], references: [id], onDelete: SetNull)
+  users_resolved    users?         @relation("AlertResolvedBy", fields: [resolved_by_user_id], references: [id], onDelete: SetNull)
+
+  @@index([type])
+  @@index([severity])
+  @@index([is_active])
+  @@index([assigned_to_user_id])
+  @@index([created_at])
+}
+
+model alert_history {
+  id        String   @id @default(uuid())
+  alert_id  String
+  user_id   String? // Made nullable for system actions like 'created'
+  action    String   // Action type: "done", "silenced", "unsilenced", "resolved", "created", "acknowledged", etc.
+  metadata  Json?
+  created_at DateTime @default(now())
+  alerts    alerts   @relation(fields: [alert_id], references: [id], onDelete: Cascade)
+  users     users?   @relation("AlertHistoryUser", fields: [user_id], references: [id], onDelete: Cascade) // Optional user relation
+
+  @@index([alert_id])
+  @@index([user_id])
+  @@index([action])
+  @@index([created_at])
+  @@index([alert_id, created_at])
+}
+
+model alert_actions {
+  id              String   @id @default(uuid())
+  name            String   @unique // Action identifier: "done", "silenced", "unsilenced", etc.
+  display_name    String   // Human-readable name: "Mark as Done", "Silence", etc.
+  description     String?  @db.Text
+  is_state_action Boolean  @default(false) // Whether this action represents a state change
+  severity_override String? // If this action changes severity (optional)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@index([name])
+  @@index([is_state_action])
+}
+
+model alert_config {
+  id                      String   @id @default(uuid())
+  alert_type              String   @unique // Alert type: "server_update", "agent_update", "host_down", etc.
+  is_enabled              Boolean  @default(true)
+  default_severity        String   @default("informational")
+  auto_assign_enabled     Boolean  @default(false)
+  auto_assign_user_id     String?  @db.Text
+  auto_assign_rule        String?
+  auto_assign_conditions  Json?
+  retention_days           Int?
+  auto_resolve_after_days  Int?
+  cleanup_resolved_only    Boolean  @default(true)
+  notification_enabled     Boolean  @default(true)
+  escalation_enabled       Boolean  @default(false)
+  escalation_after_hours   Int?
+  metadata                 Json?
+  created_at               DateTime @default(now())
+  updated_at               DateTime @updatedAt
+  users_auto_assign        users?   @relation("AlertConfigAutoAssign", fields: [auto_assign_user_id], references: [id], onDelete: SetNull)
+
+  @@index([alert_type])
+  @@index([is_enabled])
+  @@index([auto_assign_enabled])
 }

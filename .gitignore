@@ -121,6 +121,35 @@ frontend/.vite/
 
 # Agent specific
 agents/*.log
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
+
+# Go/Agent source code specific
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Code coverage profiles and other test artifacts
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Agent source code build directory
+agent-source-code/build/
+agent-source-code/dist/
 
 # SSL certificates
 *.pem
@@ -156,3 +185,7 @@ install-server.*
 notify-clients-upgrade.sh
 debug-agent.sh
 docker/compose_dev_*
+
+# Conductor agent prompts (keep local, not public)
+docs/conductor-prompts/
+.encryption_key

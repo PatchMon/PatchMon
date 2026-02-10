@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateApiToken } = require("../middleware/apiAuth");
 const { requireApiScope } = require("../middleware/apiScope");
@@ -14,6 +15,16 @@ const isUUID = (str) => {
 };
 
 // GET /api/v1/api/hosts - List hosts with IP and groups
+/* #swagger.tags = ['Scoped API - Hosts'] */
+/* #swagger.summary = 'List hosts with IP and groups' */
+/* #swagger.description = 'Retrieve a list of all hosts with their IP addresses and associated host groups. Requires Basic Auth with scoped credentials (host:get permission).' */
+/* #swagger.security = [{ "basicAuth": [] }] */
+/* #swagger.parameters['hostgroup'] = {
+    in: 'query',
+    type: 'string',
+    description: 'Filter by host group name(s) or UUID(s). Comma-separated for multiple groups.',
+    required: false
+} */
 router.get(
 	"/hosts",
 	authenticateApiToken("api"),
@@ -67,7 +78,7 @@ router.get(
 					);
 
 					if (notFoundNames.length > 0) {
-						console.warn(`Host groups not found: ${notFoundNames.join(", ")}`);
+						logger.warn(`Host groups not found: ${notFoundNames.join(", ")}`);
 					}
 				}
 
@@ -134,13 +145,17 @@ router.get(
 				filtered_by_groups: filterValues.length > 0 ? filterValues : undefined,
 			});
 		} catch (error) {
-			console.error("Error fetching hosts:", error);
+			logger.error("Error fetching hosts:", error);
 			res.status(500).json({ error: "Failed to fetch hosts" });
 		}
 	},
 );
 
 // GET /api/v1/api/hosts/:id/stats - Get host statistics
+/* #swagger.tags = ['Scoped API - Hosts'] */
+/* #swagger.summary = 'Get host statistics' */
+/* #swagger.description = 'Retrieve package and repository statistics for a specific host. Requires Basic Auth with scoped credentials (host:get permission).' */
+/* #swagger.security = [{ "basicAuth": [] }] */
 router.get(
 	"/hosts/:id/stats",
 	authenticateApiToken("api"),
@@ -203,13 +218,17 @@ router.get(
 				total_repos: totalRepos,
 			});
 		} catch (error) {
-			console.error("Error fetching host statistics:", error);
+			logger.error("Error fetching host statistics:", error);
 			res.status(500).json({ error: "Failed to fetch host statistics" });
 		}
 	},
 );
 
 // GET /api/v1/api/hosts/:id/info - Get detailed host information
+/* #swagger.tags = ['Scoped API - Hosts'] */
+/* #swagger.summary = 'Get detailed host information' */
+/* #swagger.description = 'Retrieve detailed information about a specific host including OS details, hostname, IP, and host groups. Requires Basic Auth with scoped credentials (host:get permission).' */
+/* #swagger.security = [{ "basicAuth": [] }] */
 router.get(
 	"/hosts/:id/info",
 	authenticateApiToken("api"),
@@ -261,13 +280,17 @@ router.get(
 				})),
 			});
 		} catch (error) {
-			console.error("Error fetching host info:", error);
+			logger.error("Error fetching host info:", error);
 			res.status(500).json({ error: "Failed to fetch host information" });
 		}
 	},
 );
 
 // GET /api/v1/api/hosts/:id/network - Get host network information
+/* #swagger.tags = ['Scoped API - Hosts'] */
+/* #swagger.summary = 'Get host network information' */
+/* #swagger.description = 'Retrieve network configuration details for a specific host including IP address, gateway, DNS servers, and network interfaces. Requires Basic Auth with scoped credentials (host:get permission).' */
+/* #swagger.security = [{ "basicAuth": [] }] */
 router.get(
 	"/hosts/:id/network",
 	authenticateApiToken("api"),
@@ -299,7 +322,7 @@ router.get(
 				network_interfaces: host.network_interfaces || [],
 			});
 		} catch (error) {
-			console.error("Error fetching host network info:", error);
+			logger.error("Error fetching host network info:", error);
 			res
 				.status(500)
 				.json({ error: "Failed to fetch host network information" });
@@ -308,6 +331,10 @@ router.get(
 );
 
 // GET /api/v1/api/hosts/:id/system - Get host system information
+/* #swagger.tags = ['Scoped API - Hosts'] */
+/* #swagger.summary = 'Get host system information' */
+/* #swagger.description = 'Retrieve system-level information for a specific host including architecture, kernel version, CPU, RAM, disk details, and reboot status. Requires Basic Auth with scoped credentials (host:get permission).' */
+/* #swagger.security = [{ "basicAuth": [] }] */
 router.get(
 	"/hosts/:id/system",
 	authenticateApiToken("api"),
@@ -357,7 +384,7 @@ router.get(
 				reboot_reason: host.reboot_reason,
 			});
 		} catch (error) {
-			console.error("Error fetching host system info:", error);
+			logger.error("Error fetching host system info:", error);
 			res
 				.status(500)
 				.json({ error: "Failed to fetch host system information" });
@@ -366,6 +393,16 @@ router.get(
 );
 
 // GET /api/v1/api/hosts/:id/package_reports - Get host package update reports
+/* #swagger.tags = ['Scoped API - Hosts'] */
+/* #swagger.summary = 'Get host package update reports' */
+/* #swagger.description = 'Retrieve package update history reports for a specific host. Requires Basic Auth with scoped credentials (host:get permission).' */
+/* #swagger.security = [{ "basicAuth": [] }] */
+/* #swagger.parameters['limit'] = {
+    in: 'query',
+    type: 'integer',
+    description: 'Maximum number of reports to return (default: 10)',
+    required: false
+} */
 router.get(
 	"/hosts/:id/package_reports",
 	authenticateApiToken("api"),
@@ -419,13 +456,23 @@ router.get(
 				total: reports.length,
 			});
 		} catch (error) {
-			console.error("Error fetching host package reports:", error);
+			logger.error("Error fetching host package reports:", error);
 			res.status(500).json({ error: "Failed to fetch host package reports" });
 		}
 	},
 );
 
 // GET /api/v1/api/hosts/:id/agent_queue - Get host agent queue status and jobs
+/* #swagger.tags = ['Scoped API - Hosts'] */
+/* #swagger.summary = 'Get host agent queue status and jobs' */
+/* #swagger.description = 'Retrieve agent queue status and job history for a specific host. Includes queue statistics (waiting, active, delayed, failed) and recent job history. Requires Basic Auth with scoped credentials (host:get permission).' */
+/* #swagger.security = [{ "basicAuth": [] }] */
+/* #swagger.parameters['limit'] = {
+    in: 'query',
+    type: 'integer',
+    description: 'Maximum number of jobs to return (default: 10)',
+    required: false
+} */
 router.get(
 	"/hosts/:id/agent_queue",
 	authenticateApiToken("api"),
@@ -474,7 +521,7 @@ router.get(
 			try {
 				// Try to get live queue stats from Bull/BullMQ if available
 				const { queueManager } = require("../services/automation");
-				if (queueManager && queueManager.getHostJobs) {
+				if (queueManager?.getHostJobs) {
 					const hostQueueData = await queueManager.getHostJobs(
 						host.api_id,
 						Number.parseInt(limit, 10),
@@ -487,7 +534,7 @@ router.get(
 					};
 				}
 			} catch (queueError) {
-				console.warn("Could not fetch live queue stats:", queueError.message);
+				logger.warn("Could not fetch live queue stats:", queueError.message);
 			}
 
 			res.json({
@@ -507,13 +554,17 @@ router.get(
 				total_jobs: jobs.length,
 			});
 		} catch (error) {
-			console.error("Error fetching host agent queue:", error);
+			logger.error("Error fetching host agent queue:", error);
 			res.status(500).json({ error: "Failed to fetch host agent queue" });
 		}
 	},
 );
 
 // GET /api/v1/api/hosts/:id/notes - Get host notes
+/* #swagger.tags = ['Scoped API - Hosts'] */
+/* #swagger.summary = 'Get host notes' */
+/* #swagger.description = 'Retrieve notes associated with a specific host. Requires Basic Auth with scoped credentials (host:get permission).' */
+/* #swagger.security = [{ "basicAuth": [] }] */
 router.get(
 	"/hosts/:id/notes",
 	authenticateApiToken("api"),
@@ -539,13 +590,17 @@ router.get(
 				notes: host.notes || "",
 			});
 		} catch (error) {
-			console.error("Error fetching host notes:", error);
+			logger.error("Error fetching host notes:", error);
 			res.status(500).json({ error: "Failed to fetch host notes" });
 		}
 	},
 );
 
 // GET /api/v1/api/hosts/:id/integrations - Get host integrations status
+/* #swagger.tags = ['Scoped API - Hosts'] */
+/* #swagger.summary = 'Get host integrations status' */
+/* #swagger.description = 'Retrieve integration status and details for a specific host (e.g., Docker containers, volumes, networks). Requires Basic Auth with scoped credentials (host:get permission).' */
+/* #swagger.security = [{ "basicAuth": [] }] */
 router.get(
 	"/hosts/:id/integrations",
 	authenticateApiToken("api"),
@@ -602,7 +657,7 @@ router.get(
 				},
 			});
 		} catch (error) {
-			console.error("Error fetching host integrations:", error);
+			logger.error("Error fetching host integrations:", error);
 			res.status(500).json({ error: "Failed to fetch host integrations" });
 		}
 	},

@@ -1,0 +1,8174 @@
+{
+	"swagger": "2.0",
+	"info": {
+		"version": "1.0.0",
+		"title": "PatchMon REST API",
+		"description": "PatchMon API documentation. For scoped credentials API documentation, see: https://docs.patchmon.net/books/patchmon-application-documentation/page/integration-api-documentation"
+	},
+	"host": "localhost:3000",
+	"basePath": "/api/v1",
+	"schemes": ["http", "https"],
+	"securityDefinitions": {
+		"basicAuth": {
+			"type": "basic",
+			"description": "Basic Authentication using API credentials (token_key:token_secret). Used for scoped API endpoints under /api/v1/api/*"
+		},
+		"bearerAuth": {
+			"type": "apiKey",
+			"name": "Authorization",
+			"in": "header",
+			"description": "JWT Bearer token authentication. Format: 'Bearer <token>'. Used for dashboard endpoints."
+		}
+	},
+	"paths": {
+		"/health": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					}
+				}
+			}
+		},
+		"/auth/check-admin-users": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/setup-admin": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"firstName": {
+									"example": "any"
+								},
+								"lastName": {
+									"example": "any"
+								},
+								"username": {
+									"example": "any"
+								},
+								"email": {
+									"example": "any"
+								},
+								"password": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"201": {
+						"description": "Created"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/admin/users": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "all",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "page",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "pageSize",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"username": {
+									"example": "any"
+								},
+								"email": {
+									"example": "any"
+								},
+								"password": {
+									"example": "any"
+								},
+								"first_name": {
+									"example": "any"
+								},
+								"last_name": {
+									"example": "any"
+								},
+								"role": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"201": {
+						"description": "Created"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"409": {
+						"description": "Conflict"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/admin/users/{userId}": {
+			"put": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "userId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"username": {
+									"example": "any"
+								},
+								"email": {
+									"example": "any"
+								},
+								"first_name": {
+									"example": "any"
+								},
+								"last_name": {
+									"example": "any"
+								},
+								"role": {
+									"example": "any"
+								},
+								"is_active": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"409": {
+						"description": "Conflict"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"delete": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "userId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/admin/users/{userId}/reset-password": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "userId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"newPassword": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/signup-enabled": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/signup": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"firstName": {
+									"example": "any"
+								},
+								"lastName": {
+									"example": "any"
+								},
+								"username": {
+									"example": "any"
+								},
+								"email": {
+									"example": "any"
+								},
+								"password": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"201": {
+						"description": "Created"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"409": {
+						"description": "Conflict"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/login": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"username": {
+									"example": "any"
+								},
+								"password": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"429": {
+						"description": "Too Many Requests"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/verify-tfa": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"username": {
+									"example": "any"
+								},
+								"token": {
+									"example": "any"
+								},
+								"remember_me": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"429": {
+						"description": "Too Many Requests"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/ws-token": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/ssh-ticket": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"hostId": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/profile": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"put": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"username": {
+									"example": "any"
+								},
+								"email": {
+									"example": "any"
+								},
+								"first_name": {
+									"example": "any"
+								},
+								"last_name": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"409": {
+						"description": "Conflict"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/change-password": {
+			"put": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"currentPassword": {
+									"example": "any"
+								},
+								"newPassword": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/logout": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/logout-all": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/refresh-token": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"refresh_token": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/sessions": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"delete": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/sessions/{session_id}": {
+			"delete": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "session_id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/oidc/config": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					}
+				}
+			}
+		},
+		"/auth/oidc/login": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"400": {
+						"description": "Bad Request"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auth/oidc/callback": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-forwarded-proto",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "code",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "state",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "error",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "error_description",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"400": {
+						"description": "Bad Request"
+					}
+				}
+			}
+		},
+		"/auth/oidc/logout": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"default": {
+						"description": ""
+					}
+				}
+			}
+		},
+		"/hosts/agent/download": {
+			"get": {
+				"description": "",
+				"produces": ["text/plain"],
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-key",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "force",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "arch",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/agent/version": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "arch",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "type",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "currentVersion",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "x-api-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-key",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/create": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"friendly_name": {
+									"example": "any"
+								},
+								"hostGroupIds": {
+									"example": "any"
+								},
+								"docker_enabled": {
+									"example": "any"
+								},
+								"compliance_enabled": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"201": {
+						"description": "Created"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/register": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"400": {
+						"description": "Bad Request"
+					}
+				}
+			}
+		},
+		"/hosts/update": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-key",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"machineId": {
+									"example": "any"
+								},
+								"osType": {
+									"example": "any"
+								},
+								"osVersion": {
+									"example": "any"
+								},
+								"hostname": {
+									"example": "any"
+								},
+								"ip": {
+									"example": "any"
+								},
+								"architecture": {
+									"example": "any"
+								},
+								"agentVersion": {
+									"example": "any"
+								},
+								"cpuModel": {
+									"example": "any"
+								},
+								"cpuCores": {
+									"example": "any"
+								},
+								"ramInstalled": {
+									"example": "any"
+								},
+								"swapSize": {
+									"example": "any"
+								},
+								"diskDetails": {
+									"example": "any"
+								},
+								"gatewayIp": {
+									"example": "any"
+								},
+								"dnsServers": {
+									"example": "any"
+								},
+								"networkInterfaces": {
+									"example": "any"
+								},
+								"kernelVersion": {
+									"example": "any"
+								},
+								"installedKernelVersion": {
+									"example": "any"
+								},
+								"selinuxStatus": {
+									"example": "any"
+								},
+								"systemUptime": {
+									"example": "any"
+								},
+								"loadAverage": {
+									"example": "any"
+								},
+								"needsReboot": {
+									"example": "any"
+								},
+								"rebootReason": {
+									"example": "any"
+								},
+								"packages": {
+									"example": "any"
+								},
+								"repositories": {
+									"example": "any"
+								},
+								"executionTime": {
+									"example": "any"
+								},
+								"req": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/info": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-key",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/integrations": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-key",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/integration-status": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-key",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"integration": {
+									"example": "any"
+								},
+								"enabled": {
+									"example": "any"
+								},
+								"status": {
+									"example": "any"
+								},
+								"message": {
+									"example": "any"
+								},
+								"components": {
+									"example": "any"
+								},
+								"scanner_info": {
+									"example": "any"
+								},
+								"req": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/ping": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-key",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"triggerCrontabUpdate": {
+									"example": "any"
+								},
+								"req": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/regenerate-credentials": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/bulk/groups": {
+			"put": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"hostIds": {
+									"example": "any"
+								},
+								"groupIds": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/groups": {
+			"put": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"groupIds": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/group": {
+			"put": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"hostGroupId": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/admin/list": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "all",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "page",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "pageSize",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/bulk": {
+			"delete": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"hostIds": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}": {
+			"delete": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/bulk/fetch-report": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"hostIds": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/fetch-report": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/auto-update": {
+			"patch": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"auto_update": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/force-agent-update": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/refresh-integration-status": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/refresh-docker": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/install": {
+			"get": {
+				"description": "",
+				"produces": ["text/plain"],
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-key",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "force",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "arch",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/bootstrap/exchange": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"token": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/remove": {
+			"get": {
+				"description": "",
+				"produces": ["text/plain"],
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/agent/info": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/agent/upload": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"scriptContent": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/agent/timestamp": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-key",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/settings": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-key",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/friendly-name": {
+			"patch": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"friendly_name": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/connection": {
+			"patch": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"ip": {
+									"example": "any"
+								},
+								"hostname": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/notes": {
+			"patch": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"notes": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/integrations": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/integrations/{integrationName}/status": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "integrationName",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/integrations/{integrationName}/toggle": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "integrationName",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"enabled": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					},
+					"503": {
+						"description": "Service Unavailable"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/integrations/compliance/mode": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"mode": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					},
+					"503": {
+						"description": "Service Unavailable"
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/compliance/on-demand-only": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"on_demand_only": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					},
+					"503": {
+						"description": "Service Unavailable"
+					}
+				}
+			}
+		},
+		"/host-groups/": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"name": {
+									"example": "any"
+								},
+								"description": {
+									"example": "any"
+								},
+								"color": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"201": {
+						"description": "Created"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/host-groups/{id}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"put": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"name": {
+									"example": "any"
+								},
+								"description": {
+									"example": "any"
+								},
+								"color": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"delete": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/host-groups/{id}/hosts": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/packages/": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "page",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "search",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "category",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "needsUpdate",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "isSecurityUpdate",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "host",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/packages/{packageId}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "packageId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/packages/{packageId}/hosts": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "packageId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "page",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "search",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "sortBy",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "sortOrder",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/dashboard/stats": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/dashboard/hosts": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/dashboard/packages": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/dashboard/hosts/{hostId}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "offset",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "include",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/dashboard/hosts/{hostId}/queue": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/dashboard/recent-users": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/dashboard/recent-collection": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/dashboard/package-trends": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "days",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "hostId",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/dashboard/package-spike-analysis": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "hostId",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "date",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "time",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "hours",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"0": {
+						"description": ""
+					},
+					"1": {
+						"description": ""
+					},
+					"2": {
+						"description": ""
+					},
+					"3": {
+						"description": ""
+					},
+					"4": {
+						"description": ""
+					},
+					"5": {
+						"description": ""
+					},
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/permissions/roles": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/permissions/roles/{role}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "role",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"put": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "role",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"can_view_dashboard": {
+									"example": "any"
+								},
+								"can_view_hosts": {
+									"example": "any"
+								},
+								"can_manage_hosts": {
+									"example": "any"
+								},
+								"can_view_packages": {
+									"example": "any"
+								},
+								"can_manage_packages": {
+									"example": "any"
+								},
+								"can_view_users": {
+									"example": "any"
+								},
+								"can_manage_users": {
+									"example": "any"
+								},
+								"can_manage_superusers": {
+									"example": "any"
+								},
+								"can_view_reports": {
+									"example": "any"
+								},
+								"can_export_data": {
+									"example": "any"
+								},
+								"can_manage_settings": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"delete": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "role",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/permissions/user-permissions": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/repositories/": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/repositories/host/{hostId}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/repositories/{repositoryId}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "repositoryId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"put": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "repositoryId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"name": {
+									"example": "any"
+								},
+								"description": {
+									"example": "any"
+								},
+								"isActive": {
+									"example": "any"
+								},
+								"priority": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"delete": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "repositoryId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/repositories/host/{hostId}/repository/{repositoryId}": {
+			"patch": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "repositoryId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"isEnabled": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/repositories/stats/summary": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/repositories/cleanup/orphaned": {
+			"delete": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/version/current": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/version/test-ssh-key": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"401": {
+						"description": "Unauthorized"
+					},
+					"410": {
+						"description": "Gone"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/version/check-updates": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/tfa/setup": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/tfa/verify-setup": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"token": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/tfa/disable": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"password": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/tfa/status": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/tfa/regenerate-backup-codes": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/tfa/verify": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"username": {
+									"example": "any"
+								},
+								"token": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/search/": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "q",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auto-enrollment/tokens": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"scopes": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"201": {
+						"description": "Created"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auto-enrollment/tokens/{tokenId}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "tokenId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"patch": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "tokenId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"token_name": {
+									"example": "any"
+								},
+								"is_active": {
+									"example": "any"
+								},
+								"max_hosts_per_day": {
+									"example": "any"
+								},
+								"allowed_ip_ranges": {
+									"example": "any"
+								},
+								"expires_at": {
+									"example": "any"
+								},
+								"default_host_group_id": {
+									"example": "any"
+								},
+								"scopes": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"delete": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "tokenId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auto-enrollment/script": {
+			"get": {
+				"description": "",
+				"produces": ["text/plain"],
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "token_key",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "token_secret",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "type",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "force",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auto-enrollment/enroll": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-auto-enrollment-key",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-auto-enrollment-secret",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"friendly_name": {
+									"example": "any"
+								},
+								"machine_id": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"201": {
+						"description": "Created"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"429": {
+						"description": "Too Many Requests"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/auto-enrollment/enroll/bulk": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-auto-enrollment-key",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-auto-enrollment-secret",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"hosts": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"201": {
+						"description": "Created"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"429": {
+						"description": "Too Many Requests"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/gethomepage/stats": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/gethomepage/health": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/automation/bullboard-ticket": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/automation/stats": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/automation/stats/{queueName}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "queueName",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/automation/jobs/{queueName}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "queueName",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/automation/trigger/github-update": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/automation/trigger/session-cleanup": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/automation/trigger/agent-collection": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/automation/trigger/orphaned-repo-cleanup": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/automation/trigger/orphaned-package-cleanup": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/automation/trigger/docker-inventory-cleanup": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/automation/trigger/system-statistics": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/automation/health": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/automation/overview": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/docker/dashboard": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/docker/containers": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "status",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "hostId",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "imageId",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "search",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "page",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/docker/containers/{id}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"delete": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/docker/images": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "source",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "search",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "page",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/docker/images/{id}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"delete": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/docker/hosts": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "page",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/docker/hosts/{id}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/docker/updates": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "page",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "securityOnly",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/docker/collect": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"apiId": {
+									"example": "any"
+								},
+								"apiKey": {
+									"example": "any"
+								},
+								"containers": {
+									"example": "any"
+								},
+								"images": {
+									"example": "any"
+								},
+								"updates": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/docker/volumes": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "driver",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "search",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "page",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/docker/volumes/{id}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"delete": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/docker/networks": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "driver",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "search",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "page",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/docker/networks/{id}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"delete": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/docker/agent": {
+			"get": {
+				"description": "",
+				"produces": ["text/x-shellscript"],
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/integrations/docker": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-key",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"containers": {
+									"example": "any"
+								},
+								"images": {
+									"example": "any"
+								},
+								"volumes": {
+									"example": "any"
+								},
+								"networks": {
+									"example": "any"
+								},
+								"updates": {
+									"example": "any"
+								},
+								"daemon_info": {
+									"example": "any"
+								},
+								"hostname": {
+									"example": "any"
+								},
+								"machine_id": {
+									"example": "any"
+								},
+								"agent_version": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ws/status": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "apiIds",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ws/status/{apiId}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "apiId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ws/status/{apiId}/stream": {
+			"get": {
+				"description": "",
+				"produces": ["text/event-stream"],
+				"parameters": [
+					{
+						"name": "apiId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "token",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ws/compliance-progress/{apiId}/stream": {
+			"get": {
+				"description": "",
+				"produces": ["text/event-stream"],
+				"parameters": [
+					{
+						"name": "apiId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "token",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/agent/test-github": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/agent/version": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/agent/version/refresh": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/agent/version/download": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/agent/version/check": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/agent/versions": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/agent/binary/{version}/{architecture}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "version",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "architecture",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/agent/download/{version}/{architecture}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "version",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "architecture",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/agent/latest/{architecture}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "architecture",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/agent/notify-update/{apiId}": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "apiId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"version": {
+									"example": "any"
+								},
+								"force": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/agent/notify-update-all": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"version": {
+									"example": "any"
+								},
+								"force": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/agent/check-update/{apiId}": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "apiId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"version": {
+									"example": "any"
+								},
+								"force": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/agent/push-updates-all": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"force": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/agent/report-version": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"apiId": {
+									"example": "any"
+								},
+								"version": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/metrics/": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"put": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"metrics_enabled": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/metrics/regenerate-id": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/metrics/send-now": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/user/preferences/": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"patch": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"theme_preference": {
+									"example": "any"
+								},
+								"color_theme": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "hostgroup",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/stats": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/info": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/network": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/system": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/package_reports": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/agent_queue": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/notes": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/integrations": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"403": {
+						"description": "Forbidden"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/release-notes/{version}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "version",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/release-notes/current": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/release-notes/": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/buy-me-a-coffee/supporter-count": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/scans": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "x-api-key",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"scans": {
+									"example": "any"
+								},
+								"profile_name": {
+									"example": "any"
+								},
+								"profile_type": {
+									"example": "any"
+								},
+								"results": {
+									"example": "any"
+								},
+								"started_at": {
+									"example": "any"
+								},
+								"completed_at": {
+									"example": "any"
+								},
+								"status": {
+									"example": "any"
+								},
+								"score": {
+									"example": "any"
+								},
+								"total_rules": {
+									"example": "any"
+								},
+								"passed": {
+									"example": "any"
+								},
+								"failed": {
+									"example": "any"
+								},
+								"warnings": {
+									"example": "any"
+								},
+								"skipped": {
+									"example": "any"
+								},
+								"not_applicable": {
+									"example": "any"
+								},
+								"error": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/profiles": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/dashboard": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/scans/active": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/scans/{hostId}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "offset",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/scans/{hostId}/latest": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "profile_type",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/scans/{hostId}/latest-by-type": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/results/{scanId}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "scanId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "status",
+						"in": "query",
+						"type": "string"
+					},
+					{
+						"name": "severity",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/trigger/bulk": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"hostIds": {
+									"example": "any"
+								},
+								"profile_type": {
+									"example": "any"
+								},
+								"profile_id": {
+									"example": "any"
+								},
+								"enable_remediation": {
+									"example": "any"
+								},
+								"fetch_remote_resources": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/trigger/{hostId}": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"profile_type": {
+									"example": "any"
+								},
+								"profile_id": {
+									"example": "any"
+								},
+								"enable_remediation": {
+									"example": "any"
+								},
+								"fetch_remote_resources": {
+									"example": "any"
+								},
+								"image_name": {
+									"example": "any"
+								},
+								"scan_all_images": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/upgrade-ssg/{hostId}": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/remediate/{hostId}": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"rule_id": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"404": {
+						"description": "Not Found"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/compliance/trends/{hostId}": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"type": "string"
+					},
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "days",
+						"in": "query",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/social-media-stats/": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ai/status": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ai/debug": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ai/providers": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ai/settings": {
+			"get": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			},
+			"put": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"ai_enabled": {
+									"example": "any"
+								},
+								"ai_provider": {
+									"example": "any"
+								},
+								"ai_model": {
+									"example": "any"
+								},
+								"ai_api_key": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ai/test": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ai/assist": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"question": {
+									"example": "any"
+								},
+								"context": {
+									"example": "any"
+								},
+								"history": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"429": {
+						"description": "Too Many Requests"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		},
+		"/ai/complete": {
+			"post": {
+				"description": "",
+				"parameters": [
+					{
+						"name": "x-request-id",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "authorization",
+						"in": "header",
+						"type": "string"
+					},
+					{
+						"name": "body",
+						"in": "body",
+						"schema": {
+							"type": "object",
+							"properties": {
+								"input": {
+									"example": "any"
+								},
+								"context": {
+									"example": "any"
+								}
+							}
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK"
+					},
+					"400": {
+						"description": "Bad Request"
+					},
+					"401": {
+						"description": "Unauthorized"
+					},
+					"429": {
+						"description": "Too Many Requests"
+					},
+					"500": {
+						"description": "Internal Server Error"
+					}
+				}
+			}
+		}
+	}
+}
