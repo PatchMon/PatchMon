@@ -90,6 +90,9 @@ const agentVersionRoutes = require("./routes/agentVersionRoutes");
 const metricsRoutes = require("./routes/metricsRoutes");
 const userPreferencesRoutes = require("./routes/userPreferencesRoutes");
 const apiHostsRoutes = require("./routes/apiHostsRoutes");
+const notificationChannelRoutes = require("./routes/notificationChannelRoutes");
+const notificationRuleRoutes = require("./routes/notificationRuleRoutes");
+const notificationHistoryRoutes = require("./routes/notificationHistoryRoutes");
 const releaseNotesRoutes = require("./routes/releaseNotesRoutes");
 const releaseNotesAcceptanceRoutes = require("./routes/releaseNotesAcceptanceRoutes");
 const buyMeACoffeeRoutes = require("./routes/buyMeACoffeeRoutes");
@@ -451,6 +454,9 @@ app.use(`/api/${apiVersion}/agent`, agentVersionRoutes);
 app.use(`/api/${apiVersion}/metrics`, metricsRoutes);
 app.use(`/api/${apiVersion}/user/preferences`, userPreferencesRoutes);
 app.use(`/api/${apiVersion}/api`, authLimiter, apiHostsRoutes);
+app.use(`/api/${apiVersion}/notifications/channels`, notificationChannelRoutes);
+app.use(`/api/${apiVersion}/notifications/rules`, notificationRuleRoutes);
+app.use(`/api/${apiVersion}/notifications/history`, notificationHistoryRoutes);
 app.use(`/api/${apiVersion}/release-notes`, releaseNotesRoutes);
 app.use(
 	`/api/${apiVersion}/release-notes-acceptance`,

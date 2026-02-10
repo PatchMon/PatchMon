@@ -141,7 +141,7 @@ const HostDetail = () => {
 				if (error.response?.status === 403 || error.response?.status === 401) {
 					try {
 						return await settingsAPI.get().then((res) => res.data);
-					} catch (e) {
+					} catch (_e) {
 						// If both fail, return minimal default
 						return { auto_update: false };
 					}

@@ -65,6 +65,12 @@ See [Security Compliance Installation Guide](docs/security-compliance/INSTALLATI
 | `COMPLIANCE_SCAN_INTERVAL` | `86400` | Seconds between scheduled scans |
 | `COMPLIANCE_ENABLED` | `true` | Enable/disable compliance feature |
 
+### Notifications & Alerting
+- Gotify integration for real-time push notifications
+- Flexible notification rules based on event types and host filters
+- Notification history and delivery tracking
+- Support for multiple Gotify instances
+
 ### Deployment & Operations
 - Docker installation & One‑line self‑host installer (Ubuntu/Debian)
 - systemd service for backend lifecycle
@@ -141,6 +147,134 @@ Should you perform a manual package update on your host and wish to see the resu
 ```
 
 This will send the results immediately to PatchMon.
+
+## Gotify Notifications Configuration
+
+PatchMon integrates with [Gotify](https://gotify.net/), a self-hosted notification service, to send real-time alerts about patch updates, security events, and system status changes.
+
+### Prerequisites
+
+- A running Gotify instance (self-hosted or cloud)
+- Gotify application token for authentication
+
+### Setting Up Gotify Notifications
+
+#### 1. Create a Gotify Application
+
+1. Log in to your Gotify instance
+2. Navigate to **Apps** → **Create Application**
+3. Give it a name (e.g., "PatchMon Alerts")
+4. Copy the generated token
+
+#### 2. Configure PatchMon Backend
+
+Add the following environment variables to your backend `.env` file:
+
+```bash
+# Enable Gotify notifications
+GOTIFY_NOTIFICATIONS_ENABLED=true
+
+# Default priority for notifications (0-10, where 10 is most urgent)
+GOTIFY_DEFAULT_PRIORITY=5
+
+# Request timeout in milliseconds
+GOTIFY_REQUEST_TIMEOUT_MS=10000
+
+# Number of retry attempts for failed deliveries
+GOTIFY_MAX_RETRIES=3
+```
+
+#### 3. Configure Notification Channels in PatchMon UI
+
+1. Log in to PatchMon as an administrator
+2. Navigate to **Settings** → **Notifications** → **Channels**
+3. Click **Add Channel**
+4. Fill in the following:
+   - **Channel Name**: A descriptive name (e.g., "Production Alerts")
+   - **Gotify Server URL**: Your Gotify instance URL (e.g., `https://gotify.example.com`)
+   - **Application Token**: The token you copied from Gotify
+5. Click **Test Connection** to verify the configuration
+6. Click **Save**
+
+#### 4. Create Notification Rules
+
+1. Navigate to **Settings** → **Notifications** → **Rules**
+2. Click **Create Rule**
+3. Configure the rule:
+   - **Rule Name**: A descriptive name (e.g., "Security Updates Alert")
+   - **Event Type**: Select the event that triggers the notification:
+     - Package Updates
+     - Security Updates
+     - Host Status Changes
+     - Agent Updates
+   - **Channels**: Select one or more Gotify channels to receive notifications
+   - **Host/Group Filter**: (Optional) Limit notifications to specific hosts or groups
+   - **Priority**: Set the Gotify message priority (0-10)
+   - **Message Title**: Custom title for the notification
+   - **Message Template**: Custom message body with event details
+4. Click **Save**
+
+#### 5. View Notification History
+
+1. Navigate to **Settings** → **Notifications** → **History**
+2. View all sent notifications with:
+   - Timestamp of delivery
+   - Event type that triggered the notification
+   - Destination channel
+   - Delivery status (sent/failed)
+   - Message content
+3. Use filters to search by date range, event type, channel, or status
+
+### Message Template Variables
+
+When creating notification rules, you can use the following variables in your message template:
+
+- `{hostName}`: Name of the affected host
+- `{eventType}`: Type of event (package-update, security-alert, etc.)
+- `{packageName}`: Name of the package (for package events)
+- `{packageVersion}`: Version of the package
+- `{timestamp}`: Time the event occurred
+- `{details}`: Additional event details
+
+### Example Notification Rules
+
+#### Security Updates Alert
+- **Event Type**: Security Updates
+- **Priority**: 10 (highest)
+- **Message Title**: 🔒 Security Update Available
+- **Message Template**: Security update available on {hostName}: {packageName} → {packageVersion}
+
+#### Host Status Change
+- **Event Type**: Host Status Changes
+- **Priority**: 8
+- **Message Title**: ⚠️ Host Status Changed
+- **Message Template**: Host {hostName} status changed at {timestamp}
+
+#### Package Updates
+- **Event Type**: Package Updates
+- **Priority**: 5
+- **Message Title**: 📦 Package Update Available
+- **Message Template**: Package update available on {hostName}: {packageName}
+
+### Troubleshooting
+
+#### Connection Test Fails
+- Verify the Gotify server URL is correct and accessible
+- Check that the application token is valid
+- Ensure your firewall allows outbound connections to the Gotify server
+- Check PatchMon logs for detailed error messages
+
+#### Notifications Not Sending
+- Verify the notification rule is enabled
+- Check that at least one channel is selected in the rule
+- Verify the event type matches the system events occurring
+- Check the notification history for delivery errors
+- Review PatchMon backend logs for errors
+
+#### Notifications Delayed
+- Check your Gotify server performance
+- Verify network connectivity between PatchMon and Gotify
+- Review the `GOTIFY_REQUEST_TIMEOUT_MS` setting if timeouts are occurring
 
 ## Communication Model
 

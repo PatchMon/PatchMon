@@ -465,4 +465,30 @@ export const alertsAPI = {
 	bulkDeleteAlerts: (alertIds) => api.post("/alerts/bulk-delete", { alertIds }),
 };
 
+// Notification Channels API
+export const notificationChannelsAPI = {
+	list: () => api.get("/notifications/channels"),
+	get: (channelId) => api.get(`/notifications/channels/${channelId}`),
+	create: (data) => api.post("/notifications/channels", data),
+	update: (channelId, data) =>
+		api.put(`/notifications/channels/${channelId}`, data),
+	delete: (channelId) => api.delete(`/notifications/channels/${channelId}`),
+	test: (channelId) => api.post(`/notifications/channels/${channelId}/test`),
+};
+
+// Notification Rules API
+export const notificationRulesAPI = {
+	list: () => api.get("/notifications/rules"),
+	get: (ruleId) => api.get(`/notifications/rules/${ruleId}`),
+	create: (data) => api.post("/notifications/rules", data),
+	update: (ruleId, data) => api.put(`/notifications/rules/${ruleId}`, data),
+	delete: (ruleId) => api.delete(`/notifications/rules/${ruleId}`),
+	toggle: (ruleId) => api.patch(`/notifications/rules/${ruleId}/toggle`),
+};
+
+// Notification History API
+export const notificationHistoryAPI = {
+	list: (params = {}) => api.get("/notifications/history", { params }),
+};
+
 export default api;
