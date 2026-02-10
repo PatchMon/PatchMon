@@ -1,5 +1,4 @@
-import * as fc from "fast-check";
-import { describe, expect, it } from "vitest";
+const fc = require("fast-check");
 
 /**
  * Property-Based Test Suite for NotificationService

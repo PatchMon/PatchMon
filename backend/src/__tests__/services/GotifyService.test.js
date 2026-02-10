@@ -1,10 +1,9 @@
-import axios from "axios";
-import * as fc from "fast-check";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import GotifyService from "../../services/GotifyService.js";
+const axios = require("axios");
+const fc = require("fast-check");
+const GotifyService = require("../../services/GotifyService");
 
 // Mock axios
-vi.mock("axios");
+jest.mock("axios");
 
 /**
  * Property-Based Test Suite for GotifyService
@@ -38,7 +37,7 @@ describe("GotifyService", () => {
 
 	beforeEach(() => {
 		service = new GotifyService();
-		vi.clearAllMocks();
+		jest.clearAllMocks();
 	});
 
 	/**
@@ -50,41 +49,37 @@ describe("GotifyService", () => {
 	 * error message, never silently fail or return ambiguous results.
 	 */
 	describe("validateConnection - Property 1: Channel Configuration Validation", () => {
-		it(
-			"should always return a valid response structure with either valid:true or valid:false",
-			{ timeout: 15000 },
-			async () => {
-				// Mock axios to always reject (simulating network error)
-				vi.mocked(axios.get).mockRejectedValue(new Error("Network error"));
+		it("should always return a valid response structure with either valid:true or valid:false", async () => {
+			// Mock axios to always reject (simulating network error)
+			axios.get.mockRejectedValue(new Error("Network error"));
 
-				await fc.assert(
-					fc.asyncProperty(
-						gotifyServerUrlArbitrary(),
-						tokenArbitrary(),
-						async (url, token) => {
-							const result = await service.validateConnection(url, token);
+			await fc.assert(
+				fc.asyncProperty(
+					gotifyServerUrlArbitrary(),
+					tokenArbitrary(),
+					async (url, token) => {
+						const result = await service.validateConnection(url, token);
 
-							// Result must have valid property
-							expect(result).toHaveProperty("valid");
-							expect(typeof result.valid).toBe("boolean");
+						// Result must have valid property
+						expect(result).toHaveProperty("valid");
+						expect(typeof result.valid).toBe("boolean");
 
-							// If valid is false, must have error message
-							if (!result.valid) {
-								expect(result).toHaveProperty("error");
-								expect(typeof result.error).toBe("string");
-								expect(result.error.length).toBeGreaterThan(0);
-							}
+						// If valid is false, must have error message
+						if (!result.valid) {
+							expect(result).toHaveProperty("error");
+							expect(typeof result.error).toBe("string");
+							expect(result.error.length).toBeGreaterThan(0);
+						}
 
-							// If valid is true, should not have error
-							if (result.valid) {
-								expect(result.error).toBeUndefined();
-							}
-						},
-					),
-					{ numRuns: 20 },
-				);
-			},
-		);
+						// If valid is true, should not have error
+						if (result.valid) {
+							expect(result.error).toBeUndefined();
+						}
+					},
+				),
+				{ numRuns: 20 },
+			);
+		}, 15000);
 
 		it("should reject invalid URL formats with descriptive error", async () => {
 			await fc.assert(
@@ -129,39 +124,35 @@ describe("GotifyService", () => {
 	 * Additional tests for sendMessage and getServerInfo methods
 	 */
 	describe("sendMessage", () => {
-		it(
-			"should always return a valid response structure with success property",
-			{ timeout: 15000 },
-			async () => {
-				// Mock axios to always reject (simulating network error)
-				vi.mocked(axios.post).mockRejectedValue(new Error("Network error"));
+		it("should always return a valid response structure with success property", async () => {
+			// Mock axios to always reject (simulating network error)
+			axios.post.mockRejectedValue(new Error("Network error"));
 
-				await fc.assert(
-					fc.asyncProperty(
-						gotifyServerUrlArbitrary(),
-						tokenArbitrary(),
-						async (url, token) => {
-							const result = await service.sendMessage(url, token, {
-								title: "Test",
-								message: "Test message",
-								priority: 5,
-							});
+			await fc.assert(
+				fc.asyncProperty(
+					gotifyServerUrlArbitrary(),
+					tokenArbitrary(),
+					async (url, token) => {
+						const result = await service.sendMessage(url, token, {
+							title: "Test",
+							message: "Test message",
+							priority: 5,
+						});
 
-							// Result must have success property
-							expect(result).toHaveProperty("success");
-							expect(typeof result.success).toBe("boolean");
+						// Result must have success property
+						expect(result).toHaveProperty("success");
+						expect(typeof result.success).toBe("boolean");
 
-							// If success is false, must have error message
-							if (!result.success) {
-								expect(result).toHaveProperty("error");
-								expect(typeof result.error).toBe("string");
-							}
-						},
-					),
-					{ numRuns: 20 },
-				);
-			},
-		);
+						// If success is false, must have error message
+						if (!result.success) {
+							expect(result).toHaveProperty("error");
+							expect(typeof result.error).toBe("string");
+						}
+					},
+				),
+				{ numRuns: 20 },
+			);
+		});
 
 		it("should reject invalid priority values", async () => {
 			await fc.assert(
@@ -186,30 +177,26 @@ describe("GotifyService", () => {
 	});
 
 	describe("getServerInfo", () => {
-		it(
-			"should always return a valid response structure",
-			{ timeout: 15000 },
-			async () => {
-				// Mock axios to always reject (simulating network error)
-				vi.mocked(axios.get).mockRejectedValue(new Error("Network error"));
+		it("should always return a valid response structure", async () => {
+			// Mock axios to always reject (simulating network error)
+			axios.get.mockRejectedValue(new Error("Network error"));
 
-				await fc.assert(
-					fc.asyncProperty(
-						gotifyServerUrlArbitrary(),
-						tokenArbitrary(),
-						async (url, token) => {
-							const result = await service.getServerInfo(url, token);
+			await fc.assert(
+				fc.asyncProperty(
+					gotifyServerUrlArbitrary(),
+					tokenArbitrary(),
+					async (url, token) => {
+						const result = await service.getServerInfo(url, token);
 
-							// Result must have either version or error
-							expect(
-								Object.hasOwn(result, "version") ||
-									Object.hasOwn(result, "error"),
-							).toBe(true);
-						},
-					),
-					{ numRuns: 20 },
-				);
-			},
-		);
+						// Result must have either version or error
+						expect(
+							Object.hasOwn(result, "version") ||
+								Object.hasOwn(result, "error"),
+						).toBe(true);
+					},
+				),
+				{ numRuns: 20 },
+			);
+		}, 15000);
 	});
 });
