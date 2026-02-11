@@ -38,11 +38,10 @@ router.get(
 	async (req, res) => {
 		try {
 			const { hostgroup, include } = req.query;
-			const includeStats =
-				include
-					?.split(",")
-					.map((s) => s.trim().toLowerCase())
-					.includes("stats");
+			const includeStats = include
+				?.split(",")
+				.map((s) => s.trim().toLowerCase())
+				.includes("stats");
 
 			let whereClause = {};
 			let filterValues = [];
