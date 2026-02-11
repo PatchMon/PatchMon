@@ -751,6 +751,10 @@ router.get(
 
 // GET /api/v1/api/hosts/:id/packages - Paketliste fuer einen Host
 // Optional: ?updates_only=true - nur Pakete mit verfuegbaren Updates
+/* #swagger.tags = ['Hosts'] */
+/* #swagger.summary = 'Get host packages' */
+/* #swagger.description = 'Retrieve the list of packages installed on a specific host. Use the optional query parameter ?updates_only=true to return only packages with available updates. Requires Basic Auth with scoped credentials (host:get permission).' */
+/* #swagger.security = [{ "basicAuth": [] }] */
 router.get(
 	"/hosts/:id/packages",
 	authenticateApiToken("api"),
