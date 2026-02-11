@@ -16,13 +16,19 @@ const isUUID = (str) => {
 
 // GET /api/v1/api/hosts - List hosts with IP and groups
 /* #swagger.tags = ['Scoped API - Hosts'] */
-/* #swagger.summary = 'List hosts with IP and groups' */
-/* #swagger.description = 'Retrieve a list of all hosts with their IP addresses and associated host groups. Requires Basic Auth with scoped credentials (host:get permission).' */
+/* #swagger.summary = 'List hosts with IP, groups, and optional stats' */
+/* #swagger.description = 'Retrieve a list of all hosts with their IP addresses and associated host groups. Use include=stats to add package update counts (updates_count, security_updates_count, total_packages) to each host. Requires Basic Auth with scoped credentials (host:get permission).' */
 /* #swagger.security = [{ "basicAuth": [] }] */
 /* #swagger.parameters['hostgroup'] = {
     in: 'query',
     type: 'string',
     description: 'Filter by host group name(s) or UUID(s). Comma-separated for multiple groups.',
+    required: false
+} */
+/* #swagger.parameters['include'] = {
+    in: 'query',
+    type: 'string',
+    description: 'Comma-separated list of additional data to include. Supported: "stats" (adds updates_count, security_updates_count, total_packages, needs_reboot, os_type, os_version, last_update, status to each host).',
     required: false
 } */
 router.get(
@@ -31,7 +37,11 @@ router.get(
 	requireApiScope("host", "get"),
 	async (req, res) => {
 		try {
-			const { hostgroup } = req.query;
+			const { hostgroup, include } = req.query;
+			const includeStats = include
+				?.split(",")
+				.map((s) => s.trim().toLowerCase())
+				.includes("stats");
 
 			let whereClause = {};
 			let filterValues = [];
@@ -103,41 +113,116 @@ router.get(
 				}
 			}
 
-			// Query hosts with groups
-			const hosts = await prisma.hosts.findMany({
-				where: whereClause,
-				select: {
-					id: true,
-					friendly_name: true,
-					hostname: true,
-					ip: true,
-					host_group_memberships: {
-						include: {
-							host_groups: {
-								select: {
-									id: true,
-									name: true,
-								},
+			// Build select based on whether stats are requested
+			const hostSelect = {
+				id: true,
+				friendly_name: true,
+				hostname: true,
+				ip: true,
+				host_group_memberships: {
+					include: {
+						host_groups: {
+							select: {
+								id: true,
+								name: true,
 							},
 						},
 					},
 				},
+			};
+
+			// Include additional fields when stats are requested
+			if (includeStats) {
+				hostSelect.os_type = true;
+				hostSelect.os_version = true;
+				hostSelect.last_update = true;
+				hostSelect.status = true;
+				hostSelect.needs_reboot = true;
+			}
+
+			// Query hosts with groups
+			const hosts = await prisma.hosts.findMany({
+				where: whereClause,
+				select: hostSelect,
 				orderBy: {
 					friendly_name: "asc",
 				},
 			});
 
+			// Batch-fetch update counts when stats are requested (efficient: 3 queries total)
+			let updateCountMap = new Map();
+			let securityUpdateCountMap = new Map();
+			let totalCountMap = new Map();
+
+			if (includeStats && hosts.length > 0) {
+				const hostIds = hosts.map((h) => h.id);
+
+				const [updateCounts, securityUpdateCounts, totalCounts] =
+					await Promise.all([
+						prisma.host_packages.groupBy({
+							by: ["host_id"],
+							where: {
+								host_id: { in: hostIds },
+								needs_update: true,
+							},
+							_count: { id: true },
+						}),
+						prisma.host_packages.groupBy({
+							by: ["host_id"],
+							where: {
+								host_id: { in: hostIds },
+								needs_update: true,
+								is_security_update: true,
+							},
+							_count: { id: true },
+						}),
+						prisma.host_packages.groupBy({
+							by: ["host_id"],
+							where: {
+								host_id: { in: hostIds },
+							},
+							_count: { id: true },
+						}),
+					]);
+
+				updateCountMap = new Map(
+					updateCounts.map((item) => [item.host_id, item._count.id]),
+				);
+				securityUpdateCountMap = new Map(
+					securityUpdateCounts.map((item) => [item.host_id, item._count.id]),
+				);
+				totalCountMap = new Map(
+					totalCounts.map((item) => [item.host_id, item._count.id]),
+				);
+			}
+
 			// Format response
-			const formattedHosts = hosts.map((host) => ({
-				id: host.id,
-				friendly_name: host.friendly_name,
-				hostname: host.hostname,
-				ip: host.ip,
-				host_groups: host.host_group_memberships.map((membership) => ({
-					id: membership.host_groups.id,
-					name: membership.host_groups.name,
-				})),
-			}));
+			const formattedHosts = hosts.map((host) => {
+				const base = {
+					id: host.id,
+					friendly_name: host.friendly_name,
+					hostname: host.hostname,
+					ip: host.ip,
+					host_groups: host.host_group_memberships.map((membership) => ({
+						id: membership.host_groups.id,
+						name: membership.host_groups.name,
+					})),
+				};
+
+				if (includeStats) {
+					base.os_type = host.os_type;
+					base.os_version = host.os_version;
+					base.last_update = host.last_update;
+					base.status = host.status;
+					base.needs_reboot = host.needs_reboot;
+					base.updates_count = updateCountMap.get(host.id) || 0;
+					base.security_updates_count =
+						securityUpdateCountMap.get(host.id) || 0;
+					base.total_packages = totalCountMap.get(host.id) || 0;
+				}
+
+				return base;
+			});
 
 			res.json({
 				hosts: formattedHosts,
@@ -659,6 +744,85 @@ router.get(
 		} catch (error) {
 			logger.error("Error fetching host integrations:", error);
 			res.status(500).json({ error: "Failed to fetch host integrations" });
+		}
+	},
+);
+
+// GET /api/v1/api/hosts/:id/packages - Paketliste fuer einen Host
+// Optional: ?updates_only=true - nur Pakete mit verfuegbaren Updates
+/* #swagger.tags = ['Hosts'] */
+/* #swagger.summary = 'Get host packages' */
+/* #swagger.description = 'Retrieve the list of packages installed on a specific host. Use the optional query parameter ?updates_only=true to return only packages with available updates. Requires Basic Auth with scoped credentials (host:get permission).' */
+/* #swagger.security = [{ "basicAuth": [] }] */
+router.get(
+	"/hosts/:id/packages",
+	authenticateApiToken("api"),
+	requireApiScope("host", "get"),
+	async (req, res) => {
+		try {
+			const { id } = req.params;
+			const { updates_only } = req.query;
+
+			// Host pruefen
+			const host = await prisma.hosts.findUnique({
+				where: { id },
+				select: { id: true, hostname: true, friendly_name: true },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			// Paketfilter
+			const whereClause = { host_id: id };
+			if (updates_only === "true") {
+				whereClause.needs_update = true;
+			}
+
+			const packages = await prisma.host_packages.findMany({
+				where: whereClause,
+				select: {
+					id: true,
+					current_version: true,
+					available_version: true,
+					needs_update: true,
+					is_security_update: true,
+					last_checked: true,
+					packages: {
+						select: {
+							name: true,
+							description: true,
+							category: true,
+						},
+					},
+				},
+				orderBy: [{ is_security_update: "desc" }, { needs_update: "desc" }],
+			});
+
+			const formattedPackages = packages.map((hp) => ({
+				id: hp.id,
+				name: hp.packages.name,
+				description: hp.packages.description,
+				category: hp.packages.category,
+				current_version: hp.current_version,
+				available_version: hp.available_version,
+				needs_update: hp.needs_update,
+				is_security_update: hp.is_security_update,
+				last_checked: hp.last_checked,
+			}));
+
+			res.json({
+				host: {
+					id: host.id,
+					hostname: host.hostname,
+					friendly_name: host.friendly_name,
+				},
+				packages: formattedPackages,
+				total: formattedPackages.length,
+			});
+		} catch (error) {
+			logger.error("Error fetching host packages:", error);
+			res.status(500).json({ error: "Failed to fetch host packages" });
 		}
 	},
 );
