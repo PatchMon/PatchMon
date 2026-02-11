@@ -20,7 +20,7 @@ import (
 
 	"patchmon-agent/internal/config"
 	"patchmon-agent/internal/utils"
-	"patchmon-agent/internal/version"
+	"patchmon-agent/internal/pkgversion"
 
 	"github.com/spf13/cobra"
 )
@@ -88,7 +88,7 @@ func checkVersion() error {
 		return fmt.Errorf("failed to check for updates: %w", err)
 	}
 
-	currentVersion := strings.TrimPrefix(version.Version, "v")
+	currentVersion := strings.TrimPrefix(pkgversion.Version, "v")
 	latestVersion := strings.TrimPrefix(versionInfo.LatestVersion, "v")
 
 	if versionInfo.HasUpdate {
@@ -142,7 +142,7 @@ func updateAgent() error {
 	}
 
 	// Get current version for comparison
-	currentVersion := strings.TrimPrefix(version.Version, "v")
+	currentVersion := strings.TrimPrefix(pkgversion.Version, "v")
 
 	// First, check server version info to see if update is needed
 	logger.Debug("Checking server for latest version...")
@@ -313,7 +313,7 @@ func getServerVersionInfo() (*ServerVersionInfo, error) {
 	credentials := cfgManager.GetCredentials()
 
 	architecture := getArchitecture()
-	currentVersion := strings.TrimPrefix(version.Version, "v")
+	currentVersion := strings.TrimPrefix(pkgversion.Version, "v")
 	url := fmt.Sprintf("%s/api/v1/hosts/agent/version?arch=%s&type=go&currentVersion=%s", cfg.PatchmonServer, architecture, currentVersion)
 
 	ctx, cancel := context.WithTimeout(context.Background(), versionCheckTimeout)
@@ -324,7 +324,7 @@ func getServerVersionInfo() (*ServerVersionInfo, error) {
 		return nil, err
 	}
 
-	req.Header.Set("User-Agent", fmt.Sprintf("patchmon-agent/%s", version.Version))
+	req.Header.Set("User-Agent", fmt.Sprintf("patchmon-agent/%s", pkgversion.Version))
 	req.Header.Set("X-API-ID", credentials.APIID)
 	req.Header.Set("X-API-KEY", credentials.APIKey)
 
@@ -405,7 +405,7 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 		return nil, err
 	}
 
-	req.Header.Set("User-Agent", fmt.Sprintf("patchmon-agent/%s", version.Version))
+	req.Header.Set("User-Agent", fmt.Sprintf("patchmon-agent/%s", pkgversion.Version))
 	req.Header.Set("X-API-ID", credentials.APIID)
 	req.Header.Set("X-API-KEY", credentials.APIKey)
 
@@ -475,7 +475,7 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 	hash := fmt.Sprintf("%x", sha256.Sum256(binaryData))
 
 	return &ServerVersionResponse{
-		Version:      version.Version, // We'll get the actual version from the server later
+		Version:      pkgversion.Version, // We'll get the actual version from the server later
 		Architecture: architecture,
 		Size:         int64(len(binaryData)),
 		Hash:         hash,

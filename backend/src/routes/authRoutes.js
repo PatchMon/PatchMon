@@ -3,7 +3,7 @@ const logger = require("../utils/logger");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const rateLimit = require("express-rate-limit");
-const { getPrismaClient } = require("../config/prisma");
+const { getPrismaClient, getTransactionOptions } = require("../config/prisma");
 const { body, validationResult } = require("express-validator");
 const { authenticateToken } = require("../middleware/auth");
 const {
@@ -489,7 +489,7 @@ router.post(
 					});
 
 					return newUser;
-				})
+				}, getTransactionOptions())
 				.catch((error) => {
 					if (error.message === "ADMIN_EXISTS") {
 						return {
@@ -758,7 +758,7 @@ router.post(
 						avatar_url: true,
 					},
 				});
-			});
+			}, getTransactionOptions());
 
 			// Create default dashboard preferences for the new user
 			await createDefaultDashboardPreferences(user.id, userRole);
@@ -1230,7 +1230,7 @@ router.post(
 						created_at: true,
 					},
 				});
-			});
+			}, getTransactionOptions());
 
 			// Create default dashboard preferences for the new user
 			await createDefaultDashboardPreferences(user.id, defaultRole);

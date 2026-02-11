@@ -437,16 +437,17 @@ const Hosts = () => {
 			{ id: "integrations", label: "Integrations", visible: true, order: 10 },
 			{ id: "status", label: "Status", visible: true, order: 11 },
 			{ id: "needs_reboot", label: "Reboot", visible: true, order: 12 },
-			{ id: "updates", label: "Updates", visible: true, order: 13 },
+			{ id: "uptime", label: "Uptime", visible: true, order: 13 },
+			{ id: "updates", label: "Updates", visible: true, order: 14 },
 			{
 				id: "security_updates",
 				label: "Security Updates",
 				visible: true,
-				order: 14,
+				order: 15,
 			},
-			{ id: "notes", label: "Notes", visible: false, order: 15 },
-			{ id: "last_update", label: "Last Update", visible: true, order: 16 },
-			{ id: "actions", label: "Actions", visible: true, order: 17 },
+			{ id: "notes", label: "Notes", visible: false, order: 16 },
+			{ id: "last_update", label: "Last Update", visible: true, order: 17 },
+			{ id: "actions", label: "Actions", visible: true, order: 18 },
 		];
 
 		const saved = localStorage.getItem("hosts-column-config");
@@ -961,6 +962,10 @@ const Hosts = () => {
 					aValue = a.needs_reboot ? 1 : 0;
 					bValue = b.needs_reboot ? 1 : 0;
 					break;
+				case "uptime":
+					aValue = (a.system_uptime || "").toLowerCase();
+					bValue = (b.system_uptime || "").toLowerCase();
+					break;
 				case "last_update":
 					aValue = new Date(a.last_update);
 					bValue = new Date(b.last_update);
@@ -1133,16 +1138,17 @@ const Hosts = () => {
 			{ id: "integrations", label: "Integrations", visible: true, order: 10 },
 			{ id: "status", label: "Status", visible: true, order: 11 },
 			{ id: "needs_reboot", label: "Reboot", visible: true, order: 12 },
-			{ id: "updates", label: "Updates", visible: true, order: 13 },
+			{ id: "uptime", label: "Uptime", visible: true, order: 13 },
+			{ id: "updates", label: "Updates", visible: true, order: 14 },
 			{
 				id: "security_updates",
 				label: "Security Updates",
 				visible: true,
-				order: 14,
+				order: 15,
 			},
-			{ id: "notes", label: "Notes", visible: false, order: 15 },
-			{ id: "last_update", label: "Last Update", visible: true, order: 16 },
-			{ id: "actions", label: "Actions", visible: true, order: 17 },
+			{ id: "notes", label: "Notes", visible: false, order: 16 },
+			{ id: "last_update", label: "Last Update", visible: true, order: 17 },
+			{ id: "actions", label: "Actions", visible: true, order: 18 },
 		];
 		updateColumnConfig(defaultConfig);
 	};
@@ -1349,6 +1355,12 @@ const Hosts = () => {
 								No
 							</span>
 						)}
+					</div>
+				);
+			case "uptime":
+				return (
+					<div className="text-sm text-secondary-900 dark:text-white">
+						{host.system_uptime || "N/A"}
 					</div>
 				);
 			case "updates":
@@ -2260,6 +2272,15 @@ const Hosts = () => {
 																			>
 																				{column.label}
 																				{getSortIcon("needs_reboot")}
+																			</button>
+																		) : column.id === "uptime" ? (
+																			<button
+																				type="button"
+																				onClick={() => handleSort("uptime")}
+																				className="flex items-center gap-2 hover:text-secondary-700 normal-case"
+																			>
+																				{column.label}
+																				{getSortIcon("uptime")}
 																			</button>
 																		) : column.id === "last_update" ? (
 																			<button

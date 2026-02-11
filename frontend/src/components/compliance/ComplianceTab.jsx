@@ -400,15 +400,14 @@ const ComplianceTab = ({
 			}, 10000); // Poll every 10 seconds instead of 5 to reduce load
 		}
 		return () => clearInterval(pollInterval);
-		// biome-ignore lint/correctness/useExhaustiveDependencies: React useState setters are stable and don't change
 	}, [
 		scanInProgress,
 		scanMessage?.startTime,
 		refetchLatest,
 		refetchHistory,
-		// @ts-expect-error - React useState setters are stable
+		// biome-ignore lint/correctness/useExhaustiveDependencies: React useState setters are stable
 		setScanInProgress,
-		// @ts-expect-error - React useState setters are stable
+		// biome-ignore lint/correctness/useExhaustiveDependencies: React useState setters are stable
 		setScanMessage,
 	]);
 
@@ -479,15 +478,14 @@ const ComplianceTab = ({
 			console.log("[Compliance SSE] Disconnecting");
 			eventSource.close();
 		};
-		// biome-ignore lint/correctness/useExhaustiveDependencies: React useState setters are stable and don't change
 	}, [
 		scanInProgress,
 		apiId,
 		refetchHistory, // Refetch data to get the latest results
 		refetchLatest, // Set scan as no longer in progress
-		// @ts-expect-error - React useState setters are stable
+		// biome-ignore lint/correctness/useExhaustiveDependencies: React useState setters are stable
 		setScanInProgress,
-		// @ts-expect-error - React useState setters are stable
+		// biome-ignore lint/correctness/useExhaustiveDependencies: React useState setters are stable
 		setScanMessage,
 	]);
 

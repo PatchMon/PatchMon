@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
 	AlertCircle,
 	CheckCircle,
+	ChevronDown,
 	Clock,
 	Download,
 	ExternalLink,
@@ -13,6 +14,8 @@ import api from "../../utils/api";
 
 const AgentManagementTab = () => {
 	const [toast, setToast] = useState(null);
+	const [showVersionSelector, setShowVersionSelector] = useState(false);
+	const [_selectedVersion, setSelectedVersion] = useState(null);
 
 	// Auto-hide toast after 5 seconds
 	useEffect(() => {
@@ -23,6 +26,34 @@ const AgentManagementTab = () => {
 			return () => clearTimeout(timer);
 		}
 	}, [toast]);
+
+	// Close version selector when clicking outside
+	useEffect(() => {
+		if (!showVersionSelector) return;
+
+		const handleClickOutside = (event) => {
+			const target = event.target;
+			// Check if click is outside the version selector
+			// Use a small delay to allow button clicks to register first
+			const selectorElement = document.querySelector("[data-version-selector]");
+			if (selectorElement && !selectorElement.contains(target)) {
+				setTimeout(() => {
+					setShowVersionSelector(false);
+					setSelectedVersion(null);
+				}, 100);
+			}
+		};
+
+		// Use a slight delay to avoid immediate closure
+		const timeoutId = setTimeout(() => {
+			document.addEventListener("mousedown", handleClickOutside);
+		}, 100);
+
+		return () => {
+			clearTimeout(timeoutId);
+			document.removeEventListener("mousedown", handleClickOutside);
+		};
+	}, [showVersionSelector]);
 
 	const showToast = (message, type = "success") => {
 		setToast({ message, type });
@@ -37,14 +68,8 @@ const AgentManagementTab = () => {
 	} = useQuery({
 		queryKey: ["agentVersion"],
 		queryFn: async () => {
-			try {
-				const response = await api.get("/agent/version");
-				console.log("🔍 Frontend received version info:", response.data);
-				return response.data;
-			} catch (error) {
-				console.error("Failed to fetch version info:", error);
-				throw error;
-			}
+			const response = await api.get("/agent/version");
+			return response.data;
 		},
 		refetchInterval: 5 * 60 * 1000, // Refetch every 5 minutes
 		enabled: true, // Always enabled
@@ -52,22 +77,17 @@ const AgentManagementTab = () => {
 	});
 
 	const {
-		data: _availableVersions,
-		isLoading: _versionsLoading,
-		error: _versionsError,
+		data: releasesData,
+		isLoading: releasesLoading,
+		error: releasesError,
+		refetch: refetchReleases,
 	} = useQuery({
-		queryKey: ["agentVersions"],
+		queryKey: ["agentReleases"],
 		queryFn: async () => {
-			try {
-				const response = await api.get("/agent/versions");
-				console.log("🔍 Frontend received available versions:", response.data);
-				return response.data;
-			} catch (error) {
-				console.error("Failed to fetch available versions:", error);
-				throw error;
-			}
+			const response = await api.get("/agent/releases");
+			return response.data;
 		},
-		enabled: true,
+		enabled: false, // Only fetch when needed
 		retry: 3,
 	});
 
@@ -83,44 +103,54 @@ const AgentManagementTab = () => {
 			showToast("Successfully checked for updates", "success");
 		},
 		onError: (error) => {
-			console.error("Check updates error:", error);
 			showToast(`Failed to check for updates: ${error.message}`, "error");
 		},
 	});
 
 	const downloadUpdateMutation = useMutation({
-		mutationFn: async () => {
-			// Download the latest binaries
-			const downloadResult = await api.post("/agent/version/download");
+		mutationFn: async (version) => {
+			// Download the specified version (or latest if no version provided)
+			const downloadResult = await api.post("/agent/version/download", {
+				version: version || null,
+			});
 			// Refresh current agent version detection after download
 			await api.post("/agent/version/refresh");
 			// Return the download result for success handling
 			return downloadResult;
 		},
 		onSuccess: (data) => {
-			console.log("Download completed:", data);
-			console.log("Download response data:", data.data);
 			refetchVersion();
+			setShowVersionSelector(false);
+			setSelectedVersion(null);
 			// Show success message
 			const message =
 				data.data?.message || "Agent binaries downloaded successfully";
 			showToast(message, "success");
 		},
 		onError: (error) => {
-			console.error("Download update error:", error);
-			showToast(`Download failed: ${error.message}`, "error");
+			showToast(
+				`Download failed: ${error.response?.data?.details || error.response?.data?.error || error.message}`,
+				"error",
+			);
 		},
 	});
 
-	const getVersionStatus = () => {
-		console.log("🔍 getVersionStatus called with:", {
-			versionError,
-			versionInfo,
-			versionLoading,
-		});
+	const handleDownloadClick = () => {
+		// Fetch releases and show selector
+		refetchReleases();
+		setShowVersionSelector(true);
+	};
 
+	const handleVersionSelect = (version) => {
+		setSelectedVersion(version);
+		// Close dropdown immediately to prevent click-outside handler from interfering
+		setShowVersionSelector(false);
+		// Trigger download
+		downloadUpdateMutation.mutate(version);
+	};
+
+	const getVersionStatus = () => {
 		if (versionError) {
-			console.log("❌ Version error detected:", versionError);
 			return {
 				status: "error",
 				message: "Failed to load version info",
@@ -130,7 +160,6 @@ const AgentManagementTab = () => {
 		}
 
 		if (!versionInfo || versionLoading) {
-			console.log("⏳ Loading state:", { versionInfo, versionLoading });
 			return {
 				status: "loading",
 				message: "Loading version info...",
@@ -391,31 +420,120 @@ const AgentManagementTab = () => {
 									? `A new agent version (${versionInfo.latestVersion}) is available. Download the latest binaries from GitHub.`
 									: "Download or redownload agent binaries from GitHub."}
 						</p>
-						<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-							<button
-								type="button"
-								onClick={() => downloadUpdateMutation.mutate()}
-								disabled={downloadUpdateMutation.isPending}
-								className="flex items-center justify-center px-4 md:px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-md hover:shadow-lg font-medium"
+						<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 relative">
+							<div
+								className="relative flex-1 sm:flex-initial"
+								data-version-selector
 							>
-								{downloadUpdateMutation.isPending ? (
-									<>
-										<RefreshCw className="h-5 w-5 mr-2 animate-spin" />
-										Downloading...
-									</>
-								) : (
-									<>
-										<Download className="h-5 w-5 mr-2" />
-										{!versionInfo?.currentVersion
-											? "Download Binaries"
-											: versionStatus.status === "update-available"
-												? "Download New Agent Version"
-												: "Redownload Binaries"}
-									</>
+								<button
+									type="button"
+									onClick={handleDownloadClick}
+									disabled={downloadUpdateMutation.isPending || releasesLoading}
+									className="w-full sm:w-auto flex items-center justify-center px-4 md:px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-md hover:shadow-lg font-medium"
+								>
+									{downloadUpdateMutation.isPending ? (
+										<>
+											<RefreshCw className="h-5 w-5 mr-2 animate-spin" />
+											Downloading...
+										</>
+									) : (
+										<>
+											<Download className="h-5 w-5 mr-2" />
+											{!versionInfo?.currentVersion
+												? "Download Binaries from GitHub"
+												: versionStatus.status === "update-available"
+													? "Download New Agent Version"
+													: "Redownload Binaries"}
+										</>
+									)}
+								</button>
+
+								{/* Version Selector Dropdown */}
+								{showVersionSelector && (
+									<div
+										className="absolute top-full left-0 mt-2 w-full sm:w-80 bg-white dark:bg-secondary-800 rounded-lg shadow-xl border border-secondary-200 dark:border-secondary-600 z-50 max-h-96 overflow-y-auto"
+										data-version-selector
+									>
+										<div className="p-3 border-b border-secondary-200 dark:border-secondary-600 flex items-center justify-between">
+											<h4 className="text-sm font-semibold text-secondary-900 dark:text-white">
+												Select Version to Download
+											</h4>
+											<button
+												type="button"
+												onClick={() => {
+													setShowVersionSelector(false);
+													setSelectedVersion(null);
+												}}
+												className="text-secondary-500 hover:text-secondary-700 dark:text-secondary-400 dark:hover:text-secondary-200"
+											>
+												<X className="h-4 w-4" />
+											</button>
+										</div>
+										<div className="p-2">
+											{releasesLoading ? (
+												<div className="p-4 text-center text-secondary-600 dark:text-secondary-400">
+													<RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2" />
+													Loading releases...
+												</div>
+											) : releasesError ? (
+												<div className="p-4 text-center text-red-600 dark:text-red-400">
+													<AlertCircle className="h-5 w-5 mx-auto mb-2" />
+													Failed to load releases
+												</div>
+											) : releasesData?.releases &&
+												releasesData.releases.length > 0 ? (
+												<div className="space-y-1">
+													{releasesData.releases.map((release) => (
+														<button
+															key={release.version}
+															type="button"
+															onClick={(e) => {
+																e.preventDefault();
+																e.stopPropagation();
+																handleVersionSelect(release.version);
+															}}
+															disabled={downloadUpdateMutation.isPending}
+															className="w-full text-left px-3 py-2 rounded-md hover:bg-secondary-100 dark:hover:bg-secondary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-between group"
+														>
+															<div className="flex-1 min-w-0">
+																<div className="flex items-center gap-2">
+																	<span className="font-medium text-secondary-900 dark:text-white">
+																		{release.tag_name}
+																	</span>
+																	{release.prerelease && (
+																		<span className="text-xs px-2 py-0.5 bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 rounded">
+																			Pre-release
+																		</span>
+																	)}
+																	{release.draft && (
+																		<span className="text-xs px-2 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded">
+																			Draft
+																		</span>
+																	)}
+																</div>
+																{release.published_at && (
+																	<div className="text-xs text-secondary-500 dark:text-secondary-400 mt-1">
+																		{new Date(
+																			release.published_at,
+																		).toLocaleDateString()}
+																	</div>
+																)}
+															</div>
+															<ChevronDown className="h-4 w-4 text-secondary-400 group-hover:text-secondary-600 dark:group-hover:text-secondary-300 transform rotate-[-90deg]" />
+														</button>
+													))}
+												</div>
+											) : (
+												<div className="p-4 text-center text-secondary-600 dark:text-secondary-400">
+													No releases available
+												</div>
+											)}
+										</div>
+									</div>
 								)}
-							</button>
+							</div>
 							<a
-								href="https://github.com/PatchMon/PatchMon/releases"
+								href="https://github.com/PatchMon/PatchMon-agent/releases"
 								target="_blank"
 								rel="noopener noreferrer"
 								className="flex items-center justify-center px-4 py-3 text-secondary-700 dark:text-secondary-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors duration-200 font-medium border border-secondary-300 dark:border-secondary-600 rounded-lg hover:bg-secondary-50 dark:hover:bg-secondary-700"

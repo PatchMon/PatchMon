@@ -74,6 +74,10 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-Host $host;
 
+        # Allow larger request bodies for logo/branding uploads (base64-encoded)
+        # Default nginx limit is 1MB which is too small for image uploads
+        client_max_body_size 10m;
+
 	# For the Websocket connection:
 	proxy_http_version 1.1;
 	proxy_set_header Upgrade $http_upgrade;

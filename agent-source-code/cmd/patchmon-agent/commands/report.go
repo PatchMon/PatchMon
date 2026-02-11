@@ -17,7 +17,7 @@ import (
 	"patchmon-agent/internal/packages"
 	"patchmon-agent/internal/repositories"
 	"patchmon-agent/internal/system"
-	"patchmon-agent/internal/version"
+	"patchmon-agent/internal/pkgversion"
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
@@ -181,7 +181,7 @@ func sendReport(outputJSON bool) error {
 		Hostname:               hostname,
 		IP:                     ipAddress,
 		Architecture:           architecture,
-		AgentVersion:           version.Version,
+		AgentVersion:           pkgversion.Version,
 		MachineID:              systemDetector.GetMachineID(),
 		KernelVersion:          systemInfo.KernelVersion,
 		InstalledKernelVersion: installedKernel,
@@ -391,7 +391,7 @@ func sendDockerData(httpClient *client.Client, integrationData *models.Integrati
 		DockerData:   *dockerData,
 		Hostname:     hostname,
 		MachineID:    machineID,
-		AgentVersion: version.Version,
+		AgentVersion: pkgversion.Version,
 	}
 
 	logger.WithFields(logrus.Fields{
@@ -437,7 +437,7 @@ func sendComplianceData(httpClient *client.Client, integrationData *models.Integ
 		ComplianceData: *complianceData,
 		Hostname:       hostname,
 		MachineID:      machineID,
-		AgentVersion:   version.Version,
+		AgentVersion:   pkgversion.Version,
 	}
 
 	totalRules := 0

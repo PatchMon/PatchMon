@@ -703,7 +703,7 @@ async function initializeDashboardPreferences() {
 						await tx.dashboard_preferences.createMany({
 							data: preferencesData,
 						});
-					});
+					}, getTransactionOptions());
 
 					updatedCount++;
 				}

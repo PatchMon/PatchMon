@@ -158,9 +158,53 @@ async function disconnectPrisma(prisma, maxRetries = 3) {
 	}
 }
 
+/**
+ * Get default transaction options from environment variables
+ * @param {Object} overrides - Optional overrides for maxWait or timeout
+ * @returns {Object} Transaction options object
+ */
+function getTransactionOptions(overrides = {}) {
+	const maxWait = parseInt(
+		overrides.maxWait || process.env.DB_TRANSACTION_MAX_WAIT || "10000",
+		10,
+	);
+	const timeout = parseInt(
+		overrides.timeout || process.env.DB_TRANSACTION_TIMEOUT || "30000",
+		10,
+	);
+
+	return {
+		maxWait,
+		timeout,
+	};
+}
+
+/**
+ * Get options for long-running transactions
+ * @param {Object} overrides - Optional overrides for maxWait or timeout
+ * @returns {Object} Transaction options object
+ */
+function getLongTransactionOptions(overrides = {}) {
+	const maxWait = parseInt(
+		overrides.maxWait || process.env.DB_TRANSACTION_MAX_WAIT || "10000",
+		10,
+	);
+	const timeout = parseInt(
+		overrides.timeout || process.env.DB_TRANSACTION_LONG_TIMEOUT || "60000",
+		10,
+	);
+
+	return {
+		maxWait,
+		timeout,
+	};
+}
+
 module.exports = {
 	getPrismaClient,
 	checkDatabaseConnection,
 	waitForDatabase,
 	disconnectPrisma,
+	getTransactionOptions,
+	getLongTransactionOptions,
 };

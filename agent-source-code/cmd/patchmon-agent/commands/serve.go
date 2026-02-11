@@ -27,7 +27,7 @@ import (
 	"patchmon-agent/internal/integrations/docker"
 	"patchmon-agent/internal/system"
 	"patchmon-agent/internal/utils"
-	"patchmon-agent/internal/version"
+	"patchmon-agent/internal/pkgversion"
 	"patchmon-agent/pkg/models"
 
 	"github.com/gorilla/websocket"
@@ -670,7 +670,7 @@ func refreshDockerInventory(ctx context.Context) {
 		DockerData:   *data,
 		Hostname:     hostname,
 		MachineID:    machineID,
-		AgentVersion: version.Version,
+		AgentVersion: pkgversion.Version,
 	}
 
 	logger.WithFields(map[string]interface{}{
@@ -1783,7 +1783,7 @@ func runComplianceScanWithOptions(options *models.ComplianceScanOptions) error {
 		ComplianceData: *complianceData,
 		Hostname:       hostname,
 		MachineID:      machineID,
-		AgentVersion:   version.Version,
+		AgentVersion:   pkgversion.Version,
 	}
 
 	// Debug: log what we're about to send
@@ -1933,7 +1933,7 @@ func runDockerImageScan(imageName, containerName string, scanAllImages bool) err
 		ComplianceData: *complianceData,
 		Hostname:       hostname,
 		MachineID:      machineID,
-		AgentVersion:   version.Version,
+		AgentVersion:   pkgversion.Version,
 	}
 
 	// Send to server
