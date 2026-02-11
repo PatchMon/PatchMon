@@ -10,6 +10,10 @@
 
 if [ -d "/usr/share/nginx/html/assets_backup" ]; then
     cp -a /usr/share/nginx/html/assets_backup/* /usr/share/nginx/html/assets/ 2>/dev/null || true
+    # Ensure all files in the shared volume are world-writable so the backend
+    # (running as node, UID 1000) can overwrite branding files (logos, favicon)
+    # that were copied here as the nginx user (UID 101) or root.
+    chmod -R a+w /usr/share/nginx/html/assets/ 2>/dev/null || true
 fi
 
 # Don't exec - let the entrypoint chain continue to process templates and start nginx

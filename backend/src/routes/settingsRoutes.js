@@ -621,7 +621,24 @@ router.post(
 			});
 		} catch (error) {
 			logger.error("Upload logo error:", error);
-			res.status(500).json({ error: "Failed to upload logo" });
+			// Provide actionable error messages for common Docker issues
+			if (error.code === "EACCES" || error.code === "EPERM") {
+				logger.error(
+					`Permission denied writing to assets directory. ` +
+						`Ensure the ASSETS_DIR (${process.env.ASSETS_DIR || "not set"}) is writable by the application user. ` +
+						`In Docker, run: docker exec -u root <container> chmod 1777 ${process.env.ASSETS_DIR || "/app/assets"}`,
+				);
+				res.status(500).json({
+					error:
+						"Failed to upload logo: permission denied writing to assets directory. Check container volume permissions.",
+				});
+			} else if (error.code === "ENOSPC") {
+				res.status(500).json({
+					error: "Failed to upload logo: no disk space available.",
+				});
+			} else {
+				res.status(500).json({ error: "Failed to upload logo" });
+			}
 		}
 	},
 );

@@ -80,23 +80,14 @@ export const AuthProvider = ({ children }) => {
 
 		const validateSession = async () => {
 			try {
-				console.log("🔐 [AUTH] Validating session via /api/v1/auth/profile");
 				// First, try to validate via API using httpOnly cookies
 				const response = await fetch("/api/v1/auth/profile", {
 					credentials: "include",
 					signal: abortController.signal,
 				});
 
-				console.log(
-					"🔐 [AUTH] Profile validation response status:",
-					response.status,
-				);
 				if (response.ok) {
 					const data = await response.json();
-					console.log(
-						"🔐 [AUTH] Profile validation successful, user:",
-						data.user?.username,
-					);
 					if (!abortController.signal.aborted) {
 						setUser(data.user);
 						// Fetch permissions

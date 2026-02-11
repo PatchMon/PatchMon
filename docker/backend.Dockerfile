@@ -22,6 +22,11 @@ COPY --chmod=755 docker/backend.docker-entrypoint.sh ./entrypoint.sh
 # Ensure /app directory is owned by node user and writable before switching users
 RUN chown -R node:node /app && chmod -R u+w /app
 
+# Create assets directory for custom branding (logos, favicons)
+# chmod 1777 (sticky + world-writable) because this volume is shared between
+# backend (node, UID 1000) and frontend/nginx (UID 101) containers
+RUN mkdir -p /app/assets && chown node:node /app/assets && chmod 1777 /app/assets
+
 USER node
 
 RUN npm install --workspace=backend --ignore-scripts && cd backend && npx prisma generate && \
@@ -85,6 +90,11 @@ COPY --chmod=755 docker/backend.docker-entrypoint.sh ./entrypoint.sh
 # Order: chown first (sets ownership), then chmod (sets permissions)
 RUN chown -R node:node /app/node_modules/@prisma/engines && \
     chmod -R u+w /app/node_modules/@prisma/engines
+
+# Create assets directory for custom branding (logos, favicons)
+# chmod 1777 (sticky + world-writable) because this volume is shared between
+# backend (node, UID 1000) and frontend/nginx (UID 101) containers
+RUN mkdir -p /app/assets && chown node:node /app/assets && chmod 1777 /app/assets
 
 USER node
 
