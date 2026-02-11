@@ -750,4 +750,82 @@ router.get(
 	},
 );
 
+// GET /api/v1/api/hosts/:id/packages - Paketliste fuer einen Host
+// Optional: ?updates_only=true - nur Pakete mit verfuegbaren Updates
+router.get(
+	"/hosts/:id/packages",
+	authenticateApiToken("api"),
+	requireApiScope("host", "get"),
+	async (req, res) => {
+		try {
+			const { id } = req.params;
+			const { updates_only } = req.query;
+
+			// Host pruefen
+			const host = await prisma.hosts.findUnique({
+				where: { id },
+				select: { id: true, hostname: true, friendly_name: true },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			// Paketfilter
+			const whereClause = { host_id: id };
+			if (updates_only === "true") {
+				whereClause.needs_update = true;
+			}
+
+			const packages = await prisma.host_packages.findMany({
+				where: whereClause,
+				select: {
+					id: true,
+					current_version: true,
+					available_version: true,
+					needs_update: true,
+					is_security_update: true,
+					last_checked: true,
+					packages: {
+						select: {
+							name: true,
+							description: true,
+							category: true,
+						},
+					},
+				},
+				orderBy: [
+					{ is_security_update: "desc" },
+					{ needs_update: "desc" },
+				],
+			});
+
+			const formattedPackages = packages.map((hp) => ({
+				id: hp.id,
+				name: hp.packages.name,
+				description: hp.packages.description,
+				category: hp.packages.category,
+				current_version: hp.current_version,
+				available_version: hp.available_version,
+				needs_update: hp.needs_update,
+				is_security_update: hp.is_security_update,
+				last_checked: hp.last_checked,
+			}));
+
+			res.json({
+				host: {
+					id: host.id,
+					hostname: host.hostname,
+					friendly_name: host.friendly_name,
+				},
+				packages: formattedPackages,
+				total: formattedPackages.length,
+			});
+		} catch (error) {
+			console.error("Error fetching host packages:", error);
+			res.status(500).json({ error: "Failed to fetch host packages" });
+		}
+	},
+);
+
 module.exports = router;
