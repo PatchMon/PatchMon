@@ -39,9 +39,8 @@ router.get(
 		try {
 			const { hostgroup, include } = req.query;
 			const includeStats =
-				include &&
 				include
-					.split(",")
+					?.split(",")
 					.map((s) => s.trim().toLowerCase())
 					.includes("stats");
 
@@ -794,10 +793,7 @@ router.get(
 						},
 					},
 				},
-				orderBy: [
-					{ is_security_update: "desc" },
-					{ needs_update: "desc" },
-				],
+				orderBy: [{ is_security_update: "desc" }, { needs_update: "desc" }],
 			});
 
 			const formattedPackages = packages.map((hp) => ({
