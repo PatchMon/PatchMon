@@ -5,7 +5,8 @@ url: ""  # Leave empty for local development, update for GitHub Pages
 baseurl: ""  # Leave empty if serving from /docs folder on GitHub Pages
 
 # Theme Settings
-theme: just-the-docs
+# Use remote_theme for GitHub Pages compatibility
+remote_theme: just-the-docs/just-the-docs
 
 # Just the Docs Configuration
 search_enabled: true
@@ -13,6 +14,12 @@ heading_anchors: true
 
 # Permalink structure (remove .html extension)
 permalink: pretty
+
+# Plugins (required for GitHub Pages)
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+  - jekyll-remote-theme
 
 # Navigation - uses _data/navigation.yml for custom sidebar
 nav_external_links:

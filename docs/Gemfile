@@ -1,0 +1,10 @@
+source "https://rubygems.org"
+
+# GitHub Pages dependencies
+gem "github-pages", group: :jekyll_plugins
+
+# Jekyll plugins (optional but recommended)
+gem "jekyll-feed", "~> 0.12"
+gem "jekyll-seo-tag", "~> 2.8"
+gem "jekyll-remote-theme", "~> 0.4"
+
