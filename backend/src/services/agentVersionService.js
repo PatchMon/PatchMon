@@ -28,7 +28,7 @@ const crypto = require("node:crypto");
 class AgentVersionService {
 	constructor() {
 		this.githubApiUrl =
-			"https://api.github.com/repos/PatchMon/PatchMon-agent/releases";
+			"https://api.github.com/repos/PatchMon/PatchMon/releases";
 		this.dnsDomain = "agent.vcheck.patchmon.net";
 		this.agentsDir = path.resolve(__dirname, "../../../agents");
 		this.supportedArchitectures = [
@@ -134,51 +134,83 @@ class AgentVersionService {
 				return;
 			}
 
-			// Execute the agent binary with help flag to get version info
-			try {
-				const child = spawn(agentPath, ["--help"], {
-					timeout: 10000,
-				});
+			// Execute the agent binary to get version info
+			// Try --version first, then --help as fallback
+			const versionCommands = ["--version", "version", "--help"];
+			let versionFound = false;
 
-				let stdout = "";
-				let stderr = "";
-
-				child.stdout.on("data", (data) => {
-					stdout += data.toString();
-				});
-
-				child.stderr.on("data", (data) => {
-					stderr += data.toString();
-				});
-
-				const result = await new Promise((resolve, reject) => {
-					child.on("close", (code) => {
-						resolve({ stdout, stderr, code });
+			for (const cmd of versionCommands) {
+				try {
+					logger.info(`🔍 Trying to get version with command: ${cmd}`);
+					const child = spawn(agentPath, [cmd], {
+						timeout: 10000,
 					});
-					child.on("error", reject);
-				});
 
-				if (result.stderr) {
-					logger.info("⚠️ Agent help stderr:", result.stderr);
-				}
+					let stdout = "";
+					let stderr = "";
 
-				// Parse version from help output (e.g., "PatchMon Agent v1.3.0")
-				const versionMatch = result.stdout.match(
-					/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
-				);
-				if (versionMatch) {
-					this.currentVersion = versionMatch[1];
-					logger.info(`✅ Current agent version: ${this.currentVersion}`);
-				} else {
-					logger.info(
-						"⚠️ Could not parse version from agent help output:",
-						result.stdout,
+					child.stdout.on("data", (data) => {
+						stdout += data.toString();
+					});
+
+					child.stderr.on("data", (data) => {
+						stderr += data.toString();
+					});
+
+					const _result = await new Promise((resolve, reject) => {
+						child.on("close", (code) => {
+							resolve({ stdout, stderr, code });
+						});
+						child.on("error", reject);
+					});
+
+					// Combine stdout and stderr for version parsing
+					const output = stdout + stderr;
+
+					if (output) {
+						logger.info(`📄 Agent output (${cmd}):`, output.substring(0, 500));
+					}
+
+					// Try multiple version patterns
+					const versionPatterns = [
+						/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
+						/patchmon-agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
+						/version ([0-9]+\.[0-9]+\.[0-9]+)/i,
+						/v([0-9]+\.[0-9]+\.[0-9]+)/i,
+						/([0-9]+\.[0-9]+\.[0-9]+)/,
+					];
+
+					for (const pattern of versionPatterns) {
+						const versionMatch = output.match(pattern);
+						if (versionMatch) {
+							this.currentVersion = versionMatch[1];
+							logger.info(
+								`✅ Current agent version: ${this.currentVersion} (found with ${cmd})`,
+							);
+							versionFound = true;
+							break;
+						}
+					}
+
+					if (versionFound) {
+						break;
+					}
+				} catch (execError) {
+					logger.warn(
+						`⚠️ Failed to execute agent binary with ${cmd}:`,
+						execError.message,
 					);
-					this.currentVersion = null;
+					// Continue to next command
 				}
-			} catch (execError) {
-				logger.error("❌ Failed to execute agent binary:", execError.message);
-				this.currentVersion = null;
+			}
+
+			if (!versionFound) {
+				logger.warn("⚠️ Could not determine agent version from binary output");
+				logger.info(
+					"💡 The binary was downloaded but version detection failed",
+				);
+				// Don't set to null - keep previous version if available
+				// this.currentVersion = null;
 			}
 		} catch (error) {
 			logger.error("❌ Failed to get current agent version:", error.message);
@@ -236,43 +268,210 @@ class AgentVersionService {
 			logger.info(
 				`⬇️ Downloading binaries for version ${release.tag_name} to agents folder...`,
 			);
+			logger.info(`📁 Agents directory: ${this.agentsDir}`);
+
+			// Ensure agents directory exists
+			await fs.mkdir(this.agentsDir, { recursive: true });
+			logger.info(`✅ Agents directory exists: ${this.agentsDir}`);
+
+			const downloadedFiles = [];
+			const failedDownloads = [];
 
 			for (const arch of this.supportedArchitectures) {
-				const assetName = `patchmon-agent-linux-${arch}`;
-				const asset = release.assets.find((a) => a.name === assetName);
+				// arch already includes "linux-", so just use it directly
+				const assetName = `patchmon-agent-${arch}`;
+				logger.info(`🔍 Looking for asset: ${assetName}`);
+
+				// List all available asset names for debugging
+				if (release.assets && release.assets.length > 0) {
+					logger.info(
+						`📋 Available assets in release:`,
+						release.assets.map((a) => a.name).join(", "),
+					);
+				} else {
+					logger.warn(`⚠️ Release has no assets!`);
+				}
+
+				const asset = release.assets?.find((a) => a.name === assetName);
 
 				if (!asset) {
 					logger.warn(`⚠️ Binary not found for architecture: ${arch}`);
+					logger.warn(`⚠️ Expected: ${assetName}`);
+					logger.warn(
+						`⚠️ Available assets:`,
+						release.assets?.map((a) => a.name).join(", ") || "none",
+					);
+					failedDownloads.push({
+						arch,
+						reason: `Asset "${assetName}" not found in release`,
+					});
 					continue;
 				}
 
+				logger.info(`✅ Found asset: ${asset.name} (${asset.size} bytes)`);
+
 				const binaryPath = path.join(this.agentsDir, assetName);
+				logger.info(
+					`⬇️ Downloading ${assetName} from ${asset.browser_download_url}...`,
+				);
+				logger.info(`📁 Target path: ${binaryPath}`);
 
-				logger.info(`⬇️ Downloading ${assetName}...`);
+				try {
+					logger.info(`🌐 Fetching ${assetName} from GitHub...`);
+					const response = await axios.get(asset.browser_download_url, {
+						responseType: "stream",
+						timeout: 120000, // Increased timeout for large files
+						maxContentLength: Infinity,
+						maxBodyLength: Infinity,
+					});
 
-				const response = await axios.get(asset.browser_download_url, {
-					responseType: "stream",
-					timeout: 60000,
-				});
+					logger.info(`📝 Creating write stream for ${binaryPath}...`);
+					const writer = require("node:fs").createWriteStream(binaryPath);
 
-				const writer = require("node:fs").createWriteStream(binaryPath);
-				response.data.pipe(writer);
+					// Track download progress
+					let downloadedBytes = 0;
 
-				await new Promise((resolve, reject) => {
-					writer.on("finish", resolve);
-					writer.on("error", reject);
-				});
+					// Set up error handlers before piping
+					response.data.on("error", (err) => {
+						logger.error(
+							`❌ Download stream error for ${assetName}:`,
+							err.message,
+						);
+						writer.destroy();
+					});
 
-				// Make executable
-				await fs.chmod(binaryPath, "755");
+					response.data.on("data", (chunk) => {
+						downloadedBytes += chunk.length;
+					});
 
-				logger.info(`✅ Downloaded: ${assetName} to agents folder`);
+					// Pipe the stream
+					response.data.pipe(writer);
+
+					// Wait for the stream to finish
+					await new Promise((resolve, reject) => {
+						let resolved = false;
+
+						writer.on("finish", () => {
+							if (!resolved) {
+								resolved = true;
+								logger.info(
+									`📥 Downloaded ${downloadedBytes} bytes for ${assetName}`,
+								);
+								resolve();
+							}
+						});
+
+						writer.on("close", () => {
+							if (!resolved) {
+								resolved = true;
+								logger.info(
+									`📥 Stream closed, downloaded ${downloadedBytes} bytes for ${assetName}`,
+								);
+								resolve();
+							}
+						});
+
+						writer.on("error", (err) => {
+							if (!resolved) {
+								resolved = true;
+								logger.error(`❌ Write error for ${assetName}:`, err.message);
+								reject(err);
+							}
+						});
+
+						response.data.on("error", (err) => {
+							if (!resolved) {
+								resolved = true;
+								logger.error(
+									`❌ Download error for ${assetName}:`,
+									err.message,
+								);
+								writer.destroy();
+								reject(err);
+							}
+						});
+					});
+
+					// Verify file was written
+					try {
+						const stats = await fs.stat(binaryPath);
+						logger.info(`✅ File verified: ${assetName} (${stats.size} bytes)`);
+
+						if (stats.size === 0) {
+							throw new Error(`Downloaded file is empty: ${assetName}`);
+						}
+					} catch (statError) {
+						logger.error(
+							`❌ File verification failed for ${assetName}:`,
+							statError.message,
+						);
+						throw new Error(`File verification failed: ${statError.message}`);
+					}
+
+					// Make executable
+					await fs.chmod(binaryPath, "755");
+
+					// Verify executable permission
+					const statsAfter = await fs.stat(binaryPath);
+					const isExecutable = (statsAfter.mode & 0o111) !== 0;
+					if (!isExecutable) {
+						logger.warn(`⚠️ File may not be executable: ${assetName}`);
+					}
+
+					downloadedFiles.push({
+						arch,
+						path: binaryPath,
+						size: statsAfter.size,
+					});
+					logger.info(`✅ Successfully downloaded and verified: ${assetName}`);
+				} catch (downloadError) {
+					logger.error(
+						`❌ Failed to download ${assetName}:`,
+						downloadError.message,
+					);
+					logger.error(`❌ Error stack for ${assetName}:`, downloadError.stack);
+					failedDownloads.push({
+						arch,
+						reason: downloadError.message,
+						stack: downloadError.stack,
+					});
+					// Continue with other architectures
+				}
 			}
+
+			// Summary
+			logger.info(
+				`📊 Download summary: ${downloadedFiles.length} successful, ${failedDownloads.length} failed`,
+			);
+
+			if (downloadedFiles.length === 0) {
+				const errorDetails = failedDownloads
+					.map((f) => `${f.arch}: ${f.reason}`)
+					.join("; ");
+				logger.error(`❌ All downloads failed. Details: ${errorDetails}`);
+				throw new Error(
+					`No binaries were successfully downloaded. Failures: ${errorDetails}`,
+				);
+			}
+
+			if (failedDownloads.length > 0) {
+				logger.warn(
+					`⚠️ Some downloads failed:`,
+					JSON.stringify(failedDownloads, null, 2),
+				);
+			}
+
+			return {
+				success: true,
+				downloaded: downloadedFiles,
+				failed: failedDownloads,
+			};
 		} catch (error) {
 			logger.error(
 				"❌ Failed to download binaries to agents folder:",
 				error.message,
 			);
+			logger.error("❌ Error stack:", error.stack);
 			throw error;
 		}
 	}
@@ -480,6 +679,19 @@ class AgentVersionService {
 				throw new Error("No latest version available to download");
 			}
 
+			// Download the specific version from DNS
+			return await this.downloadVersion(this.latestVersion);
+		} catch (error) {
+			logger.error("❌ Failed to download latest update:", error.message);
+			throw error;
+		}
+	}
+
+	async downloadVersion(version) {
+		try {
+			logger.info(`⬇️ Downloading agent version ${version}...`);
+			logger.info(`🌐 GitHub API URL: ${this.githubApiUrl}`);
+
 			// Get the release info from GitHub
 			const response = await axios.get(this.githubApiUrl, {
 				timeout: 10000,
@@ -490,43 +702,221 @@ class AgentVersionService {
 			});
 
 			const releases = response.data;
-			const latestRelease = releases[0];
+			logger.info(`📦 Found ${releases.length} releases on GitHub`);
 
-			if (!latestRelease) {
-				throw new Error("No releases found");
+			// Log first few releases for debugging
+			if (releases.length > 0) {
+				logger.info(
+					`📋 First 3 releases:`,
+					releases.slice(0, 3).map((r) => ({
+						tag_name: r.tag_name,
+						name: r.name,
+						assets_count: r.assets?.length || 0,
+						assets: r.assets?.map((a) => a.name) || [],
+					})),
+				);
+			}
+
+			// Normalize version (remove 'v' prefix for comparison)
+			const normalizedVersion = version.replace(/^v/, "").trim();
+			logger.info(
+				`🔍 Looking for version: ${normalizedVersion} (original: ${version})`,
+			);
+
+			// Find the release matching the requested version
+			// Try multiple matching strategies
+			let release = releases.find(
+				(r) => r.tag_name.replace(/^v/, "").trim() === normalizedVersion,
+			);
+
+			// If not found, try with 'v' prefix
+			if (!release) {
+				release = releases.find(
+					(r) =>
+						r.tag_name === `v${normalizedVersion}` ||
+						r.tag_name === normalizedVersion,
+				);
+			}
+
+			// If still not found, try case-insensitive
+			if (!release) {
+				release = releases.find(
+					(r) =>
+						r.tag_name.replace(/^v/, "").trim().toLowerCase() ===
+						normalizedVersion.toLowerCase(),
+				);
+			}
+
+			if (!release) {
+				const availableTags = releases
+					.slice(0, 10)
+					.map((r) => r.tag_name)
+					.join(", ");
+				logger.error(
+					`❌ Release ${version} not found. Available tags (first 10): ${availableTags}`,
+				);
+				throw new Error(
+					`Release ${version} not found on GitHub. Available releases: ${availableTags}`,
+				);
+			}
+
+			logger.info(`✅ Found release: ${release.tag_name}`);
+			logger.info(`📦 Release has ${release.assets?.length || 0} assets`);
+
+			// If release doesn't have assets, fetch the individual release
+			if (!release.assets || release.assets.length === 0) {
+				logger.info(
+					`⚠️ Release object doesn't have assets, fetching individual release...`,
+				);
+				const individualReleaseResponse = await axios.get(
+					`https://api.github.com/repos/PatchMon/PatchMon/releases/tags/${release.tag_name}`,
+					{
+						timeout: 10000,
+						headers: {
+							"User-Agent": "PatchMon-Server/1.0",
+							Accept: "application/vnd.github.v3+json",
+						},
+					},
+				);
+				release = individualReleaseResponse.data;
+				logger.info(
+					`✅ Fetched individual release, now has ${release.assets?.length || 0} assets`,
+				);
+			}
+
+			if (release.assets && release.assets.length > 0) {
+				logger.info(
+					`📋 Asset names:`,
+					release.assets.map((a) => a.name).join(", "),
+				);
+			} else {
+				throw new Error(`Release ${release.tag_name} has no assets`);
+			}
+
+			logger.info(`⬇️ Downloading binaries for version ${release.tag_name}...`);
+
+			// Download binaries for all architectures directly to agents folder
+			const downloadResult = await this.downloadBinariesToAgentsFolder(release);
+
+			if (!downloadResult.success || downloadResult.downloaded.length === 0) {
+				throw new Error(
+					`Failed to download binaries: ${downloadResult.failed?.map((f) => `${f.arch}: ${f.reason}`).join(", ") || "Unknown error"}`,
+				);
 			}
 
 			logger.info(
-				`⬇️ Downloading binaries for version ${latestRelease.tag_name}...`,
+				`✅ Downloaded ${downloadResult.downloaded.length} binaries successfully`,
 			);
 
-			// Download binaries for all architectures directly to agents folder
-			await this.downloadBinariesToAgentsFolder(latestRelease);
+			// Set the current version to the downloaded version
+			const downloadedVersion = version.replace(/^v/, "");
+			this.currentVersion = downloadedVersion;
+			logger.info(`✅ Set current version to: ${downloadedVersion}`);
 
-			// Refresh current version to reflect the newly downloaded binary
-			await this.getCurrentAgentVersion();
+			// Try to verify by executing the binary (but don't fail if it doesn't work)
+			try {
+				await this.getCurrentAgentVersion();
+				// If version detection worked, use that; otherwise keep the downloaded version
+				if (this.currentVersion && this.currentVersion !== downloadedVersion) {
+					logger.info(
+						`⚠️ Version mismatch: downloaded ${downloadedVersion}, detected ${this.currentVersion}. Using detected version.`,
+					);
+				} else if (!this.currentVersion) {
+					// If detection failed, keep the downloaded version
+					this.currentVersion = downloadedVersion;
+					logger.info(
+						`⚠️ Version detection failed, using downloaded version: ${downloadedVersion}`,
+					);
+				}
+			} catch (verifyError) {
+				logger.warn(
+					`⚠️ Could not verify downloaded version, using downloaded version: ${downloadedVersion}`,
+					verifyError.message,
+				);
+				// Keep the downloaded version
+				this.currentVersion = downloadedVersion;
+			}
 
-			logger.info("✅ Latest update downloaded successfully");
+			logger.info(`✅ Version ${version} downloaded successfully`);
 
 			return {
 				success: true,
-				version: this.latestVersion,
+				version: downloadedVersion,
 				currentVersion: this.currentVersion,
 				downloadedArchitectures: this.supportedArchitectures,
-				message: `Successfully downloaded version ${this.latestVersion}`,
+				message: `Successfully downloaded version ${downloadedVersion}`,
 			};
 		} catch (error) {
-			logger.error("❌ Failed to download latest update:", error.message);
+			logger.error(`❌ Failed to download version ${version}:`, error.message);
 			throw error;
 		}
 	}
 
 	async getAvailableVersions() {
-		// No local caching - only return latest from DNS
-		if (this.latestVersion) {
-			return [this.latestVersion];
+		try {
+			logger.info(`🌐 Fetching releases from GitHub: ${this.githubApiUrl}`);
+			// Fetch all releases from GitHub
+			const response = await axios.get(this.githubApiUrl, {
+				timeout: 10000,
+				headers: {
+					"User-Agent": "PatchMon-Server/1.0",
+					Accept: "application/vnd.github.v3+json",
+				},
+			});
+
+			const releases = response.data || [];
+			logger.info(`📦 Found ${releases.length} releases from GitHub`);
+
+			if (releases.length === 0) {
+				logger.warn("⚠️ No releases found in GitHub response");
+				throw new Error("No releases found in GitHub response");
+			}
+
+			// Extract version numbers from tag names (remove 'v' prefix if present)
+			// Filter out drafts and only include published releases
+			const versions = releases
+				.filter((release) => !release.draft) // Exclude draft releases
+				.map((release) => ({
+					version: release.tag_name.replace(/^v/, ""),
+					tag_name: release.tag_name,
+					published_at: release.published_at,
+					prerelease: release.prerelease,
+					draft: release.draft,
+					html_url: release.html_url,
+				}));
+
+			// Sort by version (newest first)
+			versions.sort((a, b) => {
+				return compareVersions(b.version, a.version);
+			});
+
+			logger.info(
+				`✅ Returning ${versions.length} available versions from GitHub`,
+			);
+			return versions;
+		} catch (error) {
+			logger.error(
+				"❌ Failed to get available versions from GitHub:",
+				error.message,
+			);
+			logger.error("❌ Error stack:", error.stack);
+			// Fallback to DNS version if GitHub fails - but log this clearly
+			if (this.latestVersion) {
+				logger.warn(`⚠️ Falling back to DNS version: ${this.latestVersion}`);
+				return [
+					{
+						version: this.latestVersion,
+						tag_name: `v${this.latestVersion}`,
+						published_at: null,
+						prerelease: false,
+						draft: false,
+						html_url: `https://github.com/PatchMon/PatchMon/releases/tag/v${this.latestVersion}`,
+					},
+				];
+			}
+			logger.warn("⚠️ No fallback version available");
+			return [];
 		}
-		return [];
 	}
 
 	async getBinaryInfo(version, architecture) {
