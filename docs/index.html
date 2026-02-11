@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PatchMon Documentation</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            display: flex;
+            background: #fff;
+        }
+        .sidebar {
+            width: 280px;
+            background: #f6f8fa;
+            border-right: 1px solid #e1e4e8;
+            padding: 20px;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+        }
+        .sidebar h1 {
+            font-size: 18px;
+            margin-bottom: 20px;
+            color: #24292e;
+        }
+        .sidebar ul {
+            list-style: none;
+        }
+        .sidebar ul ul {
+            margin-left: 15px;
+            margin-top: 8px;
+        }
+        .sidebar > ul > li {
+            margin-bottom: 15px;
+        }
+        .sidebar a {
+            color: #586069;
+            text-decoration: none;
+            display: block;
+            padding: 4px 0;
+            font-size: 14px;
+        }
+        .sidebar a:hover {
+            color: #0366d6;
+        }
+        .sidebar strong {
+            color: #24292e;
+            font-size: 14px;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .content {
+            margin-left: 280px;
+            padding: 40px;
+            max-width: 1000px;
+        }
+        .markdown-body {
+            box-sizing: border-box;
+            min-width: 200px;
+            max-width: 980px;
+            margin: 0 auto;
+            padding: 45px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="sidebar">
+        <h1>PatchMon Docs</h1>
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li>
+                <strong>Getting Started</strong>
+                <ul>
+                    <li><a href="getting-started/quick-start.html">Quick Start</a></li>
+                    <li><a href="getting-started/installation.html">Installation</a></li>
+                    <li><a href="getting-started/configuration.html">Configuration</a></li>
+                    <li><a href="getting-started/first-time-setup.html">First-Time Setup</a></li>
+                </ul>
+            </li>
+            <li>
+                <strong>User Guide</strong>
+                <ul>
+                    <li><a href="user-guide/dashboard.html">Dashboard</a></li>
+                    <li><a href="user-guide/hosts.html">Hosts</a></li>
+                    <li><a href="user-guide/packages.html">Packages</a></li>
+                    <li><a href="user-guide/agent-installation.html">Agent Installation</a></li>
+                </ul>
+            </li>
+            <li>
+                <strong>Admin</strong>
+                <ul>
+                    <li><a href="admin/deployment.html">Deployment</a></li>
+                    <li><a href="admin/database-setup.html">Database Setup</a></li>
+                    <li><a href="admin/scaling.html">Scaling</a></li>
+                    <li><a href="admin/environment-variables.html">Environment Variables</a></li>
+                    <li><a href="admin/rate-limiting.html">Rate Limiting</a></li>
+                </ul>
+            </li>
+            <li>
+                <strong>Integrations</strong>
+                <ul>
+                    <li><a href="integrations/api-reference.html">API Reference</a></li>
+                    <li><a href="integrations/integration-api.html">Integration API</a></li>
+                    <li><a href="integrations/proxmox-lxc.html">Proxmox LXC</a></li>
+                    <li><a href="integrations/gethomepage.html">GetHomepage</a></li>
+                    <li><a href="integrations/auto-enrollment.html">Auto-Enrollment</a></li>
+                </ul>
+            </li>
+            <li>
+                <strong>Security</strong>
+                <ul>
+                    <li><a href="security/authentication.html">Authentication</a></li>
+                    <li><a href="security/oidc.html">OIDC</a></li>
+                    <li><a href="security/compliance-scanning.html">Compliance Scanning</a></li>
+                </ul>
+            </li>
+            <li>
+                <strong>Development</strong>
+                <ul>
+                    <li><a href="development/contributing.html">Contributing</a></li>
+                    <li><a href="development/architecture.html">Architecture</a></li>
+                </ul>
+            </li>
+            <li><a href="troubleshooting.html">Troubleshooting</a></li>
+        </ul>
+    </nav>
+    <main class="content markdown-body" id="content">
+        <h1>PatchMon Documentation</h1>
+        <p>Welcome to the PatchMon documentation!</p>
+        <h2>Quick Start</h2>
+        <ul>
+            <li><a href="getting-started/installation.html">Install PatchMon</a></li>
+            <li><a href="getting-started/first-time-setup.html">Complete First-Time Setup</a></li>
+            <li><a href="user-guide/agent-installation.html">Install Agents</a></li>
+        </ul>
+        <h2>Documentation Sections</h2>
+        <p>Use the sidebar to navigate through the documentation.</p>
+    </main>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>
+        // Load markdown file if it exists
+        const path = window.location.pathname;
+        if (path.endsWith('.html') && path !== '/index.html') {
+            const mdPath = path.replace('.html', '.md');
+            fetch(mdPath)
+                .then(response => {
+                    if (response.ok) return response.text();
+                    throw new Error('Not found');
+                })
+                .then(markdown => {
+                    document.getElementById('content').innerHTML = marked.parse(markdown);
+                })
+                .catch(() => {
+                    // Keep default content if markdown not found
+                });
+        }
+    </script>
+</body>
+</html>
