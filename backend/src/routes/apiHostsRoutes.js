@@ -818,7 +818,7 @@ router.get(
 				total: formattedPackages.length,
 			});
 		} catch (error) {
-			console.error("Error fetching host packages:", error);
+			logger.error("Error fetching host packages:", error);
 			res.status(500).json({ error: "Failed to fetch host packages" });
 		}
 	},
