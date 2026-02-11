@@ -1081,6 +1081,8 @@ router.get(
 						spanGaps: true, // Connect lines across missing data
 						pointRadius: 3,
 						pointHoverRadius: 5,
+						order: 1, // Render first (lowest priority - behind)
+						borderWidth: 2,
 					},
 					{
 						label: needsAggregation
@@ -1093,6 +1095,8 @@ router.get(
 						spanGaps: true, // Connect lines across missing data
 						pointRadius: 3,
 						pointHoverRadius: 5,
+						order: 2, // Render second (medium priority)
+						borderWidth: 2,
 					},
 					{
 						label: needsAggregation
@@ -1103,8 +1107,10 @@ router.get(
 						backgroundColor: "rgba(239, 68, 68, 0.1)",
 						tension: 0.4,
 						spanGaps: true, // Connect lines across missing data
-						pointRadius: 3,
-						pointHoverRadius: 5,
+						pointRadius: 4, // Slightly larger points for visibility
+						pointHoverRadius: 6,
+						order: 3, // Render last (highest priority - on top)
+						borderWidth: 3, // Thicker line to ensure visibility when overlapping
 					},
 				],
 			};
