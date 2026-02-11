@@ -1,0 +1,75 @@
+# Main navigation for PatchMon Documentation
+# This file defines the sidebar navigation structure
+
+- title: Home
+  url: /
+
+- title: Getting Started
+  children:
+    - title: Quick Start
+      url: /getting-started/quick-start
+    - title: Installation
+      url: /getting-started/installation
+    - title: Configuration
+      url: /getting-started/configuration
+    - title: First-Time Setup
+      url: /getting-started/first-time-setup
+
+- title: User Guide
+  children:
+    - title: Dashboard
+      url: /user-guide/dashboard
+    - title: Hosts
+      url: /user-guide/hosts
+    - title: Packages
+      url: /user-guide/packages
+    - title: Agent Installation
+      url: /user-guide/agent-installation
+    - title: Patch Management
+      url: /user-guide/patch-management
+
+- title: Admin
+  children:
+    - title: Deployment
+      url: /admin/deployment
+    - title: Database Setup
+      url: /admin/database-setup
+    - title: Scaling
+      url: /admin/scaling
+    - title: Environment Variables
+      url: /admin/environment-variables
+    - title: Rate Limiting
+      url: /admin/rate-limiting
+
+- title: Integrations
+  children:
+    - title: API Reference
+      url: /integrations/api-reference
+    - title: Integration API
+      url: /integrations/integration-api
+    - title: Proxmox LXC
+      url: /integrations/proxmox-lxc
+    - title: GetHomepage
+      url: /integrations/gethomepage
+    - title: Auto-Enrollment
+      url: /integrations/auto-enrollment
+
+- title: Security
+  children:
+    - title: Authentication
+      url: /security/authentication
+    - title: OIDC
+      url: /security/oidc
+    - title: Compliance Scanning
+      url: /security/compliance-scanning
+
+- title: Development
+  children:
+    - title: Contributing
+      url: /development/contributing
+    - title: Architecture
+      url: /development/architecture
+
+- title: Troubleshooting
+  url: /troubleshooting
+

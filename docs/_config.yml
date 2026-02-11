@@ -1,0 +1,46 @@
+# Site Settings
+title: PatchMon Documentation
+description: Documentation for PatchMon - Linux Patch Management System
+url: ""  # Leave empty for local development, update for GitHub Pages
+baseurl: ""  # Leave empty if serving from /docs folder on GitHub Pages
+
+# Theme Settings
+theme: just-the-docs
+
+# Just the Docs Configuration
+search_enabled: true
+heading_anchors: true
+
+# Permalink structure (remove .html extension)
+permalink: pretty
+
+# Navigation - uses _data/navigation.yml for custom sidebar
+nav_external_links:
+  - title: GitHub Repository
+    url: https://github.com/PatchMon/PatchMon
+  - title: Discord Community
+    url: https://patchmon.net/discord
+  - title: Website
+    url: https://patchmon.net
+
+# Color scheme supports "light" (default) and "dark"
+color_scheme: light
+
+# Footer content
+footer_content: "Copyright &copy; 2025 PatchMon. Distributed under <a href=\"https://github.com/PatchMon/PatchMon/blob/main/LICENSE\">AGPLv3</a>."
+
+# Exclude from processing
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor/bundle/
+  - vendor/cache/
+  - vendor/gems/
+  - vendor/ruby/
+  - .bundle
+  - .jekyll-cache
+  - _site
+  - serve.sh
+  - .jekyll-clean
+
