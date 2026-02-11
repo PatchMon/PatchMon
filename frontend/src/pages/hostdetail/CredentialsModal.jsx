@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useId, useState } from "react";
 import { adminHostsAPI, settingsAPI } from "../../utils/api";
+import WaitingForConnection from "./WaitingForConnection";
 
 const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 	const [showApiKey, setShowApiKey] = useState(false);
@@ -17,6 +18,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 	const [forceInstall, setForceInstall] = useState(false);
 	const [regeneratedCredentials, setRegeneratedCredentials] = useState(null);
 	const [isRegenerating, setIsRegenerating] = useState(false);
+	const [showWaitingScreen, setShowWaitingScreen] = useState(false);
 	const apiIdInputId = useId();
 	const apiKeyInputId = useId();
 	const queryClient = useQueryClient();
@@ -114,6 +116,22 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 	};
 
 	if (!isOpen || !host) return null;
+
+	// Show waiting screen if enabled
+	if (showWaitingScreen) {
+		return (
+			<WaitingForConnection
+				host={host}
+				onBack={() => setShowWaitingScreen(false)}
+				onClose={onClose}
+				plaintextApiKey={effectiveApiKey}
+				serverUrl={serverUrl}
+				curlFlags={getCurlFlags()}
+				installUrl={getInstallUrl()}
+				shellCommand={getShellCommand()}
+			/>
+		);
+	}
 
 	return (
 		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -266,11 +284,14 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 								/>
 								<button
 									type="button"
-									onClick={() =>
-										copyToClipboard(
-											`curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`,
-										)
-									}
+									onClick={async () => {
+										const command = `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`;
+										await copyToClipboard(command);
+										// Show waiting screen after copying
+										if (!isApiKeyHash) {
+											setShowWaitingScreen(true);
+										}
+									}}
 									disabled={isApiKeyHash}
 									className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
 								>
