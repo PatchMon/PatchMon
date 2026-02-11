@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strings"
 
-	"patchmon-agent/internal/version"
+	"patchmon-agent/internal/pkgversion"
 
 	"github.com/spf13/cobra"
 )
@@ -70,7 +70,7 @@ func showConfig() error {
 	} else {
 		fmt.Printf("  Server: Not configured\n")
 	}
-	fmt.Printf("  Agent Version: %s\n", version.Version)
+	fmt.Printf("  Agent Version: %s\n", pkgversion.Version)
 	fmt.Printf("  Config File: %s\n", cfgManager.GetConfigFile())
 	fmt.Printf("  Credentials File: %s\n", cfg.CredentialsFile)
 	fmt.Printf("  Log File: %s\n", cfg.LogFile)

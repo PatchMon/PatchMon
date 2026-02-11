@@ -14,7 +14,7 @@ router.get(
 		try {
 			const axios = require("axios");
 			const response = await axios.get(
-				"https://api.github.com/repos/PatchMon/PatchMon-agent/releases",
+				"https://api.github.com/repos/PatchMon/PatchMon/releases",
 				{
 					timeout: 10000,
 					headers: {
@@ -100,20 +100,41 @@ router.post(
 	"/version/download",
 	authenticateToken,
 	requirePermission("can_manage_settings"),
-	async (_req, res) => {
+	async (req, res) => {
 		try {
-			logger.info("🔄 Downloading latest agent update...");
-			const downloadResult = await agentVersionService.downloadLatestUpdate();
+			const { version } = req.body;
 			logger.info(
-				"📊 Download result:",
-				JSON.stringify(downloadResult, null, 2),
+				`📥 Download request received. Body:`,
+				JSON.stringify(req.body),
 			);
-			res.json(downloadResult);
+			logger.info(`📥 Version parameter: ${version} (type: ${typeof version})`);
+
+			if (version) {
+				// Download specific version
+				logger.info(`🔄 Downloading agent version ${version}...`);
+				const downloadResult =
+					await agentVersionService.downloadVersion(version);
+				logger.info(
+					"📊 Download result:",
+					JSON.stringify(downloadResult, null, 2),
+				);
+				res.json(downloadResult);
+			} else {
+				// Download latest (from DNS)
+				logger.info("🔄 Downloading latest agent update (from DNS)...");
+				const downloadResult = await agentVersionService.downloadLatestUpdate();
+				logger.info(
+					"📊 Download result:",
+					JSON.stringify(downloadResult, null, 2),
+				);
+				res.json(downloadResult);
+			}
 		} catch (error) {
-			logger.error("❌ Failed to download latest update:", error.message);
+			logger.error("❌ Failed to download update:", error.message);
+			logger.error("❌ Error stack:", error.stack);
 			res.status(500).json({
 				success: false,
-				error: "Failed to download latest update",
+				error: "Failed to download update",
 				details: error.message,
 			});
 		}
@@ -153,6 +174,21 @@ router.get("/versions", authenticateToken, async (_req, res) => {
 	} catch (error) {
 		logger.error("❌ Failed to get available versions:", error.message);
 		res.status(500).json({ error: "Failed to get available versions" });
+	}
+});
+
+// Get all GitHub releases (for version selector)
+router.get("/releases", authenticateToken, async (_req, res) => {
+	try {
+		const releases = await agentVersionService.getAvailableVersions();
+		logger.info(
+			"📦 GitHub releases response:",
+			JSON.stringify(releases, null, 2),
+		);
+		res.json({ releases });
+	} catch (error) {
+		logger.error("❌ Failed to get GitHub releases:", error.message);
+		res.status(500).json({ error: "Failed to get GitHub releases" });
 	}
 });
 

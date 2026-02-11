@@ -8,7 +8,7 @@ import (
 	"patchmon-agent/internal/config"
 	"patchmon-agent/internal/constants"
 	"patchmon-agent/internal/utils"
-	"patchmon-agent/internal/version"
+	"patchmon-agent/internal/pkgversion"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -26,8 +26,8 @@ var (
 var rootCmd = &cobra.Command{
 	Use:     "patchmon-agent",
 	Short:   "PatchMon Agent for package monitoring",
-	Version: version.Version,
-	Long: `PatchMon Agent v` + version.Version + `
+	Version: pkgversion.Version,
+	Long: `PatchMon Agent v` + pkgversion.Version + `
 
 A monitoring agent that sends package information to PatchMon.`,
 	PersistentPreRun: func(cmd *cobra.Command, _ []string) {

@@ -150,6 +150,25 @@ export NODE_PATH="/app/node_modules:/app/backend/node_modules:$NODE_PATH"
 # Update agents (version-aware)
 update_agents
 
+# Check if ASSETS_DIR is set and writable (for custom branding support)
+if [ -n "$ASSETS_DIR" ]; then
+    if [ -d "$ASSETS_DIR" ]; then
+        if [ -w "$ASSETS_DIR" ]; then
+            log "✅ Assets directory is writable: $ASSETS_DIR"
+        else
+            log "⚠️  WARNING: Assets directory is NOT writable: $ASSETS_DIR"
+            log "   Custom branding (logo uploads) will fail with a 500 error."
+            log "   Fix: run 'docker exec -u root <container> chmod 1777 $ASSETS_DIR'"
+            log "   Or recreate the branding_assets volume to pick up correct permissions."
+        fi
+    else
+        log "⚠️  WARNING: Assets directory does not exist: $ASSETS_DIR"
+        log "   Attempting to create it..."
+        mkdir -p "$ASSETS_DIR" 2>/dev/null && log "✅ Created assets directory: $ASSETS_DIR" || \
+            log "❌ ERROR: Failed to create assets directory. Custom branding will not work."
+    fi
+fi
+
 log "Running database migrations..."
 cd /app/backend && npx prisma migrate deploy
 

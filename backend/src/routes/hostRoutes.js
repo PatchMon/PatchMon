@@ -1,5 +1,9 @@
 const express = require("express");
-const { getPrismaClient } = require("../config/prisma");
+const {
+	getPrismaClient,
+	getTransactionOptions,
+	getLongTransactionOptions,
+} = require("../config/prisma");
 const { body, validationResult } = require("express-validator");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("node:crypto");
@@ -825,202 +829,194 @@ router.post(
 			const totalPackages = packages.length;
 
 			// Process everything in a single transaction to avoid race conditions
-			await prisma.$transaction(
-				async (tx) => {
-					// Update host data
-					await tx.hosts.update({
-						where: { id: host.id },
-						data: updateData,
-					});
+			await prisma.$transaction(async (tx) => {
+				// Update host data
+				await tx.hosts.update({
+					where: { id: host.id },
+					data: updateData,
+				});
 
-					// Clear existing host packages to avoid duplicates
-					await tx.host_packages.deleteMany({
+				// Clear existing host packages to avoid duplicates
+				await tx.host_packages.deleteMany({
+					where: { host_id: host.id },
+				});
+
+				// Process packages in batches using createMany/updateMany
+				const packagesToCreate = [];
+				const packagesToUpdate = [];
+
+				// First pass: identify what needs to be created/updated
+				const existingPackages = await tx.packages.findMany({
+					where: {
+						name: { in: packages.map((p) => p.name) },
+					},
+				});
+
+				const existingPackageMap = new Map(
+					existingPackages.map((p) => [p.name, p]),
+				);
+
+				for (const packageData of packages) {
+					const existingPkg = existingPackageMap.get(packageData.name);
+
+					if (!existingPkg) {
+						// Package doesn't exist, create it
+						const newPkg = {
+							id: uuidv4(),
+							name: packageData.name,
+							description: packageData.description || null,
+							category: packageData.category || null,
+							latest_version:
+								packageData.availableVersion || packageData.currentVersion,
+							created_at: new Date(),
+							updated_at: new Date(),
+						};
+						packagesToCreate.push(newPkg);
+						existingPackageMap.set(packageData.name, newPkg);
+					} else {
+						// Package exists - check if we need to update version or metadata
+						if (
+							(packageData.availableVersion &&
+								packageData.availableVersion !== existingPkg.latest_version) ||
+							(packageData.description &&
+								packageData.description !== existingPkg.description) ||
+							(packageData.category &&
+								packageData.category !== existingPkg.category)
+						) {
+							packagesToUpdate.push({
+								id: existingPkg.id,
+								latest_version:
+									packageData.availableVersion || existingPkg.latest_version,
+								description: packageData.description || existingPkg.description,
+								category: packageData.category || existingPkg.category,
+							});
+						}
+					}
+				}
+
+				// Batch create new packages
+				if (packagesToCreate.length > 0) {
+					await tx.packages.createMany({
+						data: packagesToCreate,
+						skipDuplicates: true,
+					});
+				}
+
+				// Batch update existing packages
+				for (const update of packagesToUpdate) {
+					await tx.packages.update({
+						where: { id: update.id },
+						data: {
+							latest_version: update.latest_version,
+							description: update.description,
+							category: update.category,
+							updated_at: new Date(),
+						},
+					});
+				}
+
+				// Now process host_packages
+				for (const packageData of packages) {
+					const pkg = existingPackageMap.get(packageData.name);
+
+					await tx.host_packages.upsert({
+						where: {
+							host_id_package_id: {
+								host_id: host.id,
+								package_id: pkg.id,
+							},
+						},
+						update: {
+							current_version: packageData.currentVersion,
+							available_version: packageData.availableVersion || null,
+							needs_update: packageData.needsUpdate,
+							is_security_update: packageData.isSecurityUpdate || false,
+							last_checked: new Date(),
+						},
+						create: {
+							id: uuidv4(),
+							host_id: host.id,
+							package_id: pkg.id,
+							current_version: packageData.currentVersion,
+							available_version: packageData.availableVersion || null,
+							needs_update: packageData.needsUpdate,
+							is_security_update: packageData.isSecurityUpdate || false,
+							last_checked: new Date(),
+						},
+					});
+				}
+
+				// Process repositories if provided
+				if (repositories && Array.isArray(repositories)) {
+					// Clear existing host repositories
+					await tx.host_repositories.deleteMany({
 						where: { host_id: host.id },
 					});
 
-					// Process packages in batches using createMany/updateMany
-					const packagesToCreate = [];
-					const packagesToUpdate = [];
-
-					// First pass: identify what needs to be created/updated
-					const existingPackages = await tx.packages.findMany({
-						where: {
-							name: { in: packages.map((p) => p.name) },
-						},
-					});
-
-					const existingPackageMap = new Map(
-						existingPackages.map((p) => [p.name, p]),
-					);
-
-					for (const packageData of packages) {
-						const existingPkg = existingPackageMap.get(packageData.name);
-
-						if (!existingPkg) {
-							// Package doesn't exist, create it
-							const newPkg = {
-								id: uuidv4(),
-								name: packageData.name,
-								description: packageData.description || null,
-								category: packageData.category || null,
-								latest_version:
-									packageData.availableVersion || packageData.currentVersion,
-								created_at: new Date(),
-								updated_at: new Date(),
-							};
-							packagesToCreate.push(newPkg);
-							existingPackageMap.set(packageData.name, newPkg);
-						} else {
-							// Package exists - check if we need to update version or metadata
-							if (
-								(packageData.availableVersion &&
-									packageData.availableVersion !==
-										existingPkg.latest_version) ||
-								(packageData.description &&
-									packageData.description !== existingPkg.description) ||
-								(packageData.category &&
-									packageData.category !== existingPkg.category)
-							) {
-								packagesToUpdate.push({
-									id: existingPkg.id,
-									latest_version:
-										packageData.availableVersion || existingPkg.latest_version,
-									description:
-										packageData.description || existingPkg.description,
-									category: packageData.category || existingPkg.category,
-								});
-							}
+					// Deduplicate repositories by URL+distribution+components to avoid constraint violations
+					const uniqueRepos = new Map();
+					for (const repoData of repositories) {
+						const key = `${repoData.url}|${repoData.distribution}|${repoData.components}`;
+						if (!uniqueRepos.has(key)) {
+							uniqueRepos.set(key, repoData);
 						}
 					}
 
-					// Batch create new packages
-					if (packagesToCreate.length > 0) {
-						await tx.packages.createMany({
-							data: packagesToCreate,
-							skipDuplicates: true,
-						});
-					}
-
-					// Batch update existing packages
-					for (const update of packagesToUpdate) {
-						await tx.packages.update({
-							where: { id: update.id },
-							data: {
-								latest_version: update.latest_version,
-								description: update.description,
-								category: update.category,
-								updated_at: new Date(),
-							},
-						});
-					}
-
-					// Now process host_packages
-					for (const packageData of packages) {
-						const pkg = existingPackageMap.get(packageData.name);
-
-						await tx.host_packages.upsert({
+					// Process each unique repository
+					for (const repoData of uniqueRepos.values()) {
+						// Find or create repository
+						let repo = await tx.repositories.findFirst({
 							where: {
-								host_id_package_id: {
-									host_id: host.id,
-									package_id: pkg.id,
-								},
-							},
-							update: {
-								current_version: packageData.currentVersion,
-								available_version: packageData.availableVersion || null,
-								needs_update: packageData.needsUpdate,
-								is_security_update: packageData.isSecurityUpdate || false,
-								last_checked: new Date(),
-							},
-							create: {
-								id: uuidv4(),
-								host_id: host.id,
-								package_id: pkg.id,
-								current_version: packageData.currentVersion,
-								available_version: packageData.availableVersion || null,
-								needs_update: packageData.needsUpdate,
-								is_security_update: packageData.isSecurityUpdate || false,
-								last_checked: new Date(),
+								url: repoData.url,
+								distribution: repoData.distribution,
+								components: repoData.components,
 							},
 						});
-					}
 
-					// Process repositories if provided
-					if (repositories && Array.isArray(repositories)) {
-						// Clear existing host repositories
-						await tx.host_repositories.deleteMany({
-							where: { host_id: host.id },
-						});
-
-						// Deduplicate repositories by URL+distribution+components to avoid constraint violations
-						const uniqueRepos = new Map();
-						for (const repoData of repositories) {
-							const key = `${repoData.url}|${repoData.distribution}|${repoData.components}`;
-							if (!uniqueRepos.has(key)) {
-								uniqueRepos.set(key, repoData);
-							}
-						}
-
-						// Process each unique repository
-						for (const repoData of uniqueRepos.values()) {
-							// Find or create repository
-							let repo = await tx.repositories.findFirst({
-								where: {
+						if (!repo) {
+							repo = await tx.repositories.create({
+								data: {
+									id: uuidv4(),
+									name: repoData.name,
 									url: repoData.url,
 									distribution: repoData.distribution,
 									components: repoData.components,
-								},
-							});
-
-							if (!repo) {
-								repo = await tx.repositories.create({
-									data: {
-										id: uuidv4(),
-										name: repoData.name,
-										url: repoData.url,
-										distribution: repoData.distribution,
-										components: repoData.components,
-										repo_type: repoData.repoType,
-										is_active: true,
-										is_secure: repoData.isSecure || false,
-										description: `${repoData.repoType} repository for ${repoData.distribution}`,
-										updated_at: new Date(),
-									},
-								});
-							}
-
-							// Create host repository relationship
-							await tx.host_repositories.create({
-								data: {
-									id: uuidv4(),
-									host_id: host.id,
-									repository_id: repo.id,
-									is_enabled: repoData.isEnabled !== false, // Default to enabled
-									last_checked: new Date(),
+									repo_type: repoData.repoType,
+									is_active: true,
+									is_secure: repoData.isSecure || false,
+									description: `${repoData.repoType} repository for ${repoData.distribution}`,
+									updated_at: new Date(),
 								},
 							});
 						}
-					}
 
-					// Create update history record
-					await tx.update_history.create({
-						data: {
-							id: uuidv4(),
-							host_id: host.id,
-							packages_count: updatesCount,
-							security_count: securityCount,
-							total_packages: totalPackages,
-							payload_size_kb: payloadSizeKb,
-							execution_time: executionTime ? parseFloat(executionTime) : null,
-							status: "success",
-						},
-					});
-				},
-				{
-					maxWait: 30000, // Wait up to 30s for a transaction slot
-					timeout: 60000, // Allow transaction to run for up to 60s
-				},
-			);
+						// Create host repository relationship
+						await tx.host_repositories.create({
+							data: {
+								id: uuidv4(),
+								host_id: host.id,
+								repository_id: repo.id,
+								is_enabled: repoData.isEnabled !== false, // Default to enabled
+								last_checked: new Date(),
+							},
+						});
+					}
+				}
+
+				// Create update history record
+				await tx.update_history.create({
+					data: {
+						id: uuidv4(),
+						host_id: host.id,
+						packages_count: updatesCount,
+						security_count: securityCount,
+						total_packages: totalPackages,
+						payload_size_kb: payloadSizeKb,
+						execution_time: executionTime ? parseFloat(executionTime) : null,
+						status: "success",
+					},
+				});
+			}, getLongTransactionOptions());
 
 			// Agent auto-update is now handled client-side by the agent itself
 
@@ -1420,7 +1416,7 @@ router.put(
 				}
 
 				return results;
-			});
+			}, getTransactionOptions());
 
 			res.json({
 				message: `Successfully updated ${updatedHosts.length} host${updatedHosts.length !== 1 ? "s" : ""}`,
@@ -1510,7 +1506,7 @@ router.put(
 						},
 					},
 				});
-			});
+			}, getTransactionOptions());
 
 			res.json({
 				message: "Host groups updated successfully",
@@ -1597,7 +1593,7 @@ router.put(
 						},
 					},
 				});
-			});
+			}, getTransactionOptions());
 
 			res.json({
 				message: "Host group updated successfully",
@@ -1643,6 +1639,10 @@ router.get(
 					auto_update: true,
 					created_at: true,
 					notes: true,
+					system_uptime: true,
+					needs_reboot: true,
+					docker_enabled: true,
+					compliance_enabled: true,
 					host_group_memberships: {
 						include: {
 							host_groups: {

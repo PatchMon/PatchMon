@@ -89,7 +89,9 @@ const HostDetail = () => {
 		return () => {
 			isMountedRef.current = false;
 			// Clear all pending timeouts
-			timeoutRefs.current.forEach((timeoutId) => clearTimeout(timeoutId));
+			timeoutRefs.current.forEach((timeoutId) => {
+				clearTimeout(timeoutId);
+			});
 			timeoutRefs.current = [];
 		};
 	}, []);
@@ -141,7 +143,7 @@ const HostDetail = () => {
 				if (error.response?.status === 403 || error.response?.status === 401) {
 					try {
 						return await settingsAPI.get().then((res) => res.data);
-					} catch (e) {
+					} catch (_e) {
 						// If both fail, return minimal default
 						return { auto_update: false };
 					}
@@ -4093,24 +4095,22 @@ const HostDetail = () => {
 																				<div className="flex flex-wrap gap-1">
 																					{Object.entries(container.ports)
 																						.slice(0, 3)
-																						.map(
-																							([portKey, portValue], idx) => {
-																								// portKey is like "80/tcp" (private port), portValue is like "0.0.0.0:8080" (public binding)
-																								// Format: "0.0.0.0:8080->80/tcp" or just "80/tcp" if no public port
-																								const portStr = portValue
-																									? `${portValue}->${portKey}`
-																									: portKey;
-																								return (
-																									<span
-																										key={idx}
-																										className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs font-mono"
-																										title={portStr}
-																									>
-																										{portStr}
-																									</span>
-																								);
-																							},
-																						)}
+																						.map(([portKey, portValue]) => {
+																							// portKey is like "80/tcp" (private port), portValue is like "0.0.0.0:8080" (public binding)
+																							// Format: "0.0.0.0:8080->80/tcp" or just "80/tcp" if no public port
+																							const portStr = portValue
+																								? `${portValue}->${portKey}`
+																								: portKey;
+																							return (
+																								<span
+																									key={portKey}
+																									className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs font-mono"
+																									title={portStr}
+																								>
+																									{portStr}
+																								</span>
+																							);
+																						})}
 																					{Object.keys(container.ports).length >
 																						3 && (
 																						<span className="text-secondary-400">

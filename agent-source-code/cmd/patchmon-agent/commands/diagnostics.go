@@ -8,9 +8,9 @@ import (
 	"runtime"
 	"strings"
 
+	"patchmon-agent/internal/pkgversion"
 	"patchmon-agent/internal/system"
 	"patchmon-agent/internal/utils"
-	"patchmon-agent/internal/version"
 
 	"github.com/spf13/cobra"
 )
@@ -28,7 +28,7 @@ var diagnosticsCmd = &cobra.Command{
 func showDiagnostics() error {
 	cfg := cfgManager.GetConfig()
 
-	fmt.Printf("PatchMon Agent Diagnostics v%s\n\n", version.Version)
+	fmt.Printf("PatchMon Agent Diagnostics v%s\n\n", pkgversion.Version)
 
 	// System Information
 	fmt.Printf("System Information:\n")
@@ -59,7 +59,7 @@ func showDiagnostics() error {
 
 	// Agent Information
 	fmt.Printf("Agent Information:\n")
-	fmt.Printf("  Version: %s\n", version.Version)
+	fmt.Printf("  Version: %s\n", pkgversion.Version)
 	fmt.Printf("  Config File: %s\n", cfgManager.GetConfigFile())
 	fmt.Printf("  Credentials File: %s\n", cfg.CredentialsFile)
 	fmt.Printf("  Log File: %s\n", cfg.LogFile)

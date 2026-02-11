@@ -4,8 +4,6 @@ import {
 	ArrowDown,
 	ArrowUp,
 	ArrowUpDown,
-	CheckCircle,
-	Clock,
 	Info,
 	MoreVertical,
 	RefreshCw,
@@ -94,7 +92,7 @@ const Reporting = () => {
 					try {
 						const response = await adminUsersAPI.list();
 						return response.data.data || [];
-					} catch (e) {
+					} catch (_e) {
 						// If both fail, return empty array
 						return [];
 					}
