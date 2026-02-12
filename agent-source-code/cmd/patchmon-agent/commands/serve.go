@@ -1581,6 +1581,8 @@ func toggleIntegration(integrationName string, enabled bool) error {
 		// OpenRC is available (Alpine Linux)
 		// Since we're running inside the service, we can't stop ourselves directly
 		// Instead, we'll create a helper script that runs after we exit
+		// Note: The OpenRC service file uses supervisor=supervise-daemon which will
+		// automatically restart the agent if the helper script approach fails.
 		logger.Debug("Detected OpenRC, scheduling service restart via helper script")
 
 		// SECURITY: Ensure /etc/patchmon directory exists with restrictive permissions
@@ -1616,14 +1618,15 @@ rm -f "$0"
 		dirInfo, err := os.Lstat("/etc/patchmon")
 		if err == nil && dirInfo.Mode()&os.ModeSymlink != 0 {
 			logger.Warn("Security: /etc/patchmon is a symlink, refusing to create helper script")
-			os.Exit(0) // Fall through to exit approach
+			// supervise-daemon will restart the agent automatically
+			os.Exit(0)
 		}
 
 		// SECURITY: Use O_EXCL to atomically create file (fail if exists - prevents race conditions)
 		file, err := os.OpenFile(helperPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
 		if err != nil {
-			logger.WithError(err).Warn("Failed to create restart helper script, will exit and rely on OpenRC auto-restart")
-			// Fall through to exit approach
+			logger.WithError(err).Warn("Failed to create restart helper script, supervise-daemon will handle restart")
+			// Fall through to exit approach - supervise-daemon will restart
 		} else {
 			// Write the script content to the file
 			if _, err := file.WriteString(helperScript); err != nil {
@@ -1634,7 +1637,7 @@ rm -f "$0"
 				if err := os.Remove(helperPath); err != nil {
 					logger.WithError(err).Warn("Failed to remove helper script after write error")
 				}
-				// Fall through to exit approach
+				// Fall through to exit approach - supervise-daemon will restart
 			} else {
 				if err := file.Close(); err != nil {
 					logger.WithError(err).Warn("Failed to close restart helper script file")
@@ -1648,26 +1651,34 @@ rm -f "$0"
 					if err := os.Remove(helperPath); err != nil {
 						logger.WithError(err).Warn("Failed to remove tampered helper script")
 					}
+					// supervise-daemon will restart the agent automatically
 					os.Exit(0)
 				}
 
 				// Execute the helper script in background (detached from current process)
-				// SECURITY: Avoid shell interpretation by executing directly with nohup
-				cmd := exec.Command("nohup", helperPath)
+				// Try nohup first, fall back to direct /bin/sh with session detachment
+				var cmd *exec.Cmd
+				if _, nohupErr := exec.LookPath("nohup"); nohupErr == nil {
+					cmd = exec.Command("nohup", helperPath)
+				} else {
+					logger.Debug("nohup not available, using direct /bin/sh execution with session detachment")
+					cmd = exec.Command("/bin/sh", helperPath)
+				}
 				cmd.Stdout = nil
 				cmd.Stderr = nil
-				// Detach from parent process group to ensure script continues after we exit
+				// Create a new session to fully detach the child process
+				// Setsid is stronger than Setpgid — it creates a new session,
+				// ensuring the helper script survives even if the parent's cgroup is cleaned up
 				cmd.SysProcAttr = &syscall.SysProcAttr{
-					Setpgid: true,
-					Pgid:    0,
+					Setsid: true,
 				}
 				if err := cmd.Start(); err != nil {
-					logger.WithError(err).Warn("Failed to start restart helper script, will exit and rely on OpenRC auto-restart")
+					logger.WithError(err).Warn("Failed to start restart helper script, supervise-daemon will handle restart")
 					// Clean up script
 					if removeErr := os.Remove(helperPath); removeErr != nil {
 						logger.WithError(removeErr).Debug("Failed to remove helper script")
 					}
-					// Fall through to exit approach
+					// Fall through to exit approach - supervise-daemon will restart
 				} else {
 					logger.Info("Scheduled service restart via helper script, exiting now...")
 					// Give the helper script a moment to start
@@ -1678,23 +1689,115 @@ rm -f "$0"
 			}
 		}
 
-		// Fallback: If helper script approach failed, just exit and let OpenRC handle it
-		// OpenRC with command_background="yes" should restart on exit
-		logger.Info("Exiting to allow OpenRC to restart service with updated config...")
+		// Fallback: If helper script approach failed, just exit
+		// OpenRC with supervisor=supervise-daemon will automatically restart the agent after respawn_delay
+		logger.Info("Exiting to allow OpenRC supervise-daemon to restart service with updated config...")
 		os.Exit(0)
 		// os.Exit never returns, but we need this for code flow
 		return nil
 	}
 
-	logger.Warn("No known init system detected, attempting to restart via process signal")
-	// Try to find and kill the process, service manager should restart it
-	killCmd := exec.CommandContext(ctx, "pkill", "-HUP", "patchmon-agent")
-	if err := killCmd.Run(); err != nil {
-		logger.WithError(err).Warn("Failed to restart service (this is not critical)")
-		return fmt.Errorf("failed to restart service: no init system detected and pkill failed: %w", err)
+	// Fallback: No known init system detected (crontab-based or bare process)
+	// We MUST create a helper script to restart the agent, because:
+	// - There is no service manager watching the process
+	// - The @reboot crontab entry only runs on boot, not on process exit
+	// - Simply sending pkill -HUP would kill the agent with nothing to restart it
+	logger.Warn("No known init system detected, creating restart helper script for safe restart...")
+
+	// SECURITY: Ensure /etc/patchmon directory exists with restrictive permissions
+	if err := os.MkdirAll("/etc/patchmon", 0700); err != nil {
+		logger.WithError(err).Warn("Failed to create /etc/patchmon directory")
 	}
-	logger.Info("Sent HUP signal to agent process")
-	return nil
+
+	helperScript := `#!/bin/sh
+# Wait a moment for the current process to exit
+sleep 3
+# Kill any remaining patchmon-agent processes
+pkill -f 'patchmon-agent serve' 2>/dev/null || true
+sleep 1
+# Start the new binary in the background
+/usr/local/bin/patchmon-agent serve </dev/null >/dev/null 2>&1 &
+# Clean up this script
+rm -f "$0"
+`
+	// Generate random suffix to prevent predictable path attacks
+	randomBytes := make([]byte, 8)
+	if _, err := rand.Read(randomBytes); err != nil {
+		logger.WithError(err).Warn("Failed to generate random suffix, using fallback")
+		randomBytes = []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
+	}
+	helperPath := filepath.Join("/etc/patchmon", fmt.Sprintf("restart-%s.sh", hex.EncodeToString(randomBytes)))
+
+	// SECURITY: Verify the directory is not a symlink
+	dirInfo, err := os.Lstat("/etc/patchmon")
+	if err == nil && dirInfo.Mode()&os.ModeSymlink != 0 {
+		logger.Warn("Security: /etc/patchmon is a symlink, refusing to create helper script")
+		logger.Error("Cannot safely restart agent - manual restart required: /usr/local/bin/patchmon-agent serve &")
+		return fmt.Errorf("no init system and /etc/patchmon is a symlink - cannot safely restart")
+	}
+
+	// SECURITY: Use O_EXCL to atomically create file
+	file, err := os.OpenFile(helperPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
+	if err != nil {
+		logger.WithError(err).Error("Failed to create restart helper script")
+		logger.Error("Manual restart required: /usr/local/bin/patchmon-agent serve &")
+		return fmt.Errorf("no init system and failed to create helper script: %w", err)
+	}
+
+	if _, err := file.WriteString(helperScript); err != nil {
+		logger.WithError(err).Error("Failed to write restart helper script")
+		if closeErr := file.Close(); closeErr != nil {
+			logger.WithError(closeErr).Warn("Failed to close file after write error")
+		}
+		if removeErr := os.Remove(helperPath); removeErr != nil {
+			logger.WithError(removeErr).Warn("Failed to remove helper script after write error")
+		}
+		logger.Error("Manual restart required: /usr/local/bin/patchmon-agent serve &")
+		return fmt.Errorf("no init system and failed to write helper script: %w", err)
+	}
+
+	if err := file.Close(); err != nil {
+		logger.WithError(err).Warn("Failed to close restart helper script file")
+	}
+
+	// SECURITY: Verify the file we're about to execute is the one we created
+	fileInfo, err := os.Lstat(helperPath)
+	if err != nil || fileInfo.Mode()&os.ModeSymlink != 0 {
+		logger.Warn("Security: helper script may have been tampered with, refusing to execute")
+		if removeErr := os.Remove(helperPath); removeErr != nil {
+			logger.WithError(removeErr).Warn("Failed to remove tampered helper script")
+		}
+		logger.Error("Manual restart required: /usr/local/bin/patchmon-agent serve &")
+		return fmt.Errorf("no init system and helper script security check failed")
+	}
+
+	// Execute the helper script in background (detached from current process)
+	var cmd *exec.Cmd
+	if _, nohupErr := exec.LookPath("nohup"); nohupErr == nil {
+		cmd = exec.CommandContext(ctx, "nohup", "/bin/sh", helperPath)
+	} else {
+		logger.Debug("nohup not available, using direct /bin/sh execution with session detachment")
+		cmd = exec.CommandContext(ctx, "/bin/sh", helperPath)
+	}
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid: true,
+	}
+
+	if err := cmd.Start(); err != nil {
+		logger.WithError(err).Error("Failed to start restart helper script")
+		if removeErr := os.Remove(helperPath); removeErr != nil {
+			logger.WithError(removeErr).Debug("Failed to remove helper script")
+		}
+		logger.Error("Manual restart required: /usr/local/bin/patchmon-agent serve &")
+		return fmt.Errorf("no init system and failed to start helper script: %w", err)
+	}
+
+	logger.Info("Scheduled agent restart via helper script (no init system), exiting now...")
+	time.Sleep(500 * time.Millisecond)
+	os.Exit(0)
+	return nil // Unreachable, but satisfies function signature
 }
 
 // sendComplianceProgress sends a progress update via the global channel
