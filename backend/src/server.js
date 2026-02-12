@@ -59,6 +59,7 @@ const {
 	getPrismaClient,
 	waitForDatabase,
 	disconnectPrisma,
+	getTransactionOptions,
 } = require("./config/prisma");
 const winston = require("winston");
 

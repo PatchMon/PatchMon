@@ -962,10 +962,57 @@ const Hosts = () => {
 					aValue = a.needs_reboot ? 1 : 0;
 					bValue = b.needs_reboot ? 1 : 0;
 					break;
-				case "uptime":
-					aValue = (a.system_uptime || "").toLowerCase();
-					bValue = (b.system_uptime || "").toLowerCase();
+				case "uptime": {
+					// Parse uptime strings like "X days, Y hours, Z minutes" into total minutes for numeric sorting
+					const parseUptimeToMinutes = (uptimeStr) => {
+						// Handle null, undefined, empty string, or "Unknown"
+						if (
+							!uptimeStr ||
+							uptimeStr.trim() === "" ||
+							uptimeStr.toLowerCase() === "unknown"
+						) {
+							return null; // Use null as sentinel for invalid uptime
+						}
+
+						let total = 0;
+						// Match patterns: "X days", "X day", "X hours", "X hour", "X minutes", "X minute"
+						// Case insensitive, flexible whitespace
+						const daysMatch = uptimeStr.match(/(\d+)\s+days?/i);
+						const hoursMatch = uptimeStr.match(/(\d+)\s+hours?/i);
+						const minutesMatch = uptimeStr.match(/(\d+)\s+minutes?/i);
+
+						if (daysMatch) total += parseInt(daysMatch[1], 10) * 1440;
+						if (hoursMatch) total += parseInt(hoursMatch[1], 10) * 60;
+						if (minutesMatch) total += parseInt(minutesMatch[1], 10);
+
+						// If no matches found, return null to mark as invalid
+						return total > 0 ? total : null;
+					};
+					const aUptime = parseUptimeToMinutes(a.system_uptime);
+					const bUptime = parseUptimeToMinutes(b.system_uptime);
+
+					// Handle invalid uptime (null) - always sort to the end
+					if (aUptime === null && bUptime === null) {
+						aValue = 0;
+						bValue = 0;
+					} else if (aUptime === null) {
+						aValue =
+							sortDirection === "asc"
+								? Number.MAX_SAFE_INTEGER
+								: Number.MIN_SAFE_INTEGER;
+						bValue = bUptime;
+					} else if (bUptime === null) {
+						aValue = aUptime;
+						bValue =
+							sortDirection === "asc"
+								? Number.MAX_SAFE_INTEGER
+								: Number.MIN_SAFE_INTEGER;
+					} else {
+						aValue = aUptime;
+						bValue = bUptime;
+					}
 					break;
+				}
 				case "last_update":
 					aValue = new Date(a.last_update);
 					bValue = new Date(b.last_update);
