@@ -38,7 +38,7 @@ A major release with security compliance scanning, OIDC SSO, an alerting engine,
 
 ### 🔧 Other
 - **Superuser management permission** (`can_manage_superusers`) for finer-grained RBAC
-- **More stats** and details on hosts with added flags such as ```?include=stats``` or ```?updates_only=true```
+- **More Scoped API stats** and details on hosts with added flags such as ```?include=stats``` or ```?updates_only=true```
 
 
 #### Plus Much Much More

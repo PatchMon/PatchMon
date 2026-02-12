@@ -962,10 +962,36 @@ const Hosts = () => {
 					aValue = a.needs_reboot ? 1 : 0;
 					bValue = b.needs_reboot ? 1 : 0;
 					break;
-				case "uptime":
-					aValue = (a.system_uptime || "").toLowerCase();
-					bValue = (b.system_uptime || "").toLowerCase();
+				case "uptime": {
+					// Parse uptime strings like "X days, Y hours, Z minutes" into total minutes for numeric sorting
+					const parseUptimeToMinutes = (uptimeStr) => {
+						// Handle null, undefined, empty string, or "Unknown"
+						if (
+							!uptimeStr ||
+							uptimeStr.trim() === "" ||
+							uptimeStr.toLowerCase() === "unknown"
+						) {
+							return -1; // Sort invalid/missing uptime to the end
+						}
+
+						let total = 0;
+						// Match patterns: "X days", "X day", "X hours", "X hour", "X minutes", "X minute"
+						// Case insensitive, flexible whitespace
+						const daysMatch = uptimeStr.match(/(\d+)\s+days?/i);
+						const hoursMatch = uptimeStr.match(/(\d+)\s+hours?/i);
+						const minutesMatch = uptimeStr.match(/(\d+)\s+minutes?/i);
+
+						if (daysMatch) total += parseInt(daysMatch[1], 10) * 1440;
+						if (hoursMatch) total += parseInt(hoursMatch[1], 10) * 60;
+						if (minutesMatch) total += parseInt(minutesMatch[1], 10);
+
+						// If no matches found, return -1 to sort to the end
+						return total > 0 ? total : -1;
+					};
+					aValue = parseUptimeToMinutes(a.system_uptime);
+					bValue = parseUptimeToMinutes(b.system_uptime);
 					break;
+				}
 				case "last_update":
 					aValue = new Date(a.last_update);
 					bValue = new Date(b.last_update);
