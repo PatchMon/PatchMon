@@ -204,6 +204,19 @@ class HostStatusMonitor {
 			throw error;
 		}
 	}
+
+	/**
+	 * Manually trigger host status monitoring
+	 */
+	async triggerManual() {
+		const job = await this.queueManager.queues[this.queueName].add(
+			"host-status-monitor-manual",
+			{},
+			{ priority: 1 },
+		);
+		logger.info("✅ Manual host status monitor triggered");
+		return job;
+	}
 }
 
 module.exports = HostStatusMonitor;

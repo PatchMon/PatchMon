@@ -31,11 +31,20 @@ services:
       interval: 3s
       timeout: 5s
       retries: 7
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --requirepass ${REDIS_PASSWORD}
+    # Simple Redis configuration - no memory limits to prevent OOM errors
+    # If you need memory limits, set maxmemory-policy to 'allkeys-lru' instead of 'noeviction'
+    # to allow eviction rather than rejecting commands
+    # Debug logging: Use --loglevel debug for maximum verbosity, or --loglevel verbose for less output
+    command: redis-server --requirepass ${REDIS_PASSWORD} --loglevel debug
     volumes:
       - redis_data:/data
     networks:
@@ -45,6 +54,11 @@ services:
       interval: 3s
       timeout: 5s
       retries: 7
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   backend:
     image: ghcr.io/patchmon/patchmon-backend:latest
@@ -55,6 +69,8 @@ services:
       DATABASE_URL: postgresql://patchmon_user:${POSTGRES_PASSWORD}@database:5432/patchmon_db
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_DB: 0
       ASSETS_DIR: /app/assets
     volumes:
       - agent_files:/app/agents
@@ -66,6 +82,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   frontend:
     image: ghcr.io/patchmon/patchmon-frontend:latest
@@ -79,6 +100,11 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   postgres_data:

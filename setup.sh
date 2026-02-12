@@ -1153,6 +1153,14 @@ API_VERSION=v1
 # CORS Configuration
 CORS_ORIGIN="$SERVER_PROTOCOL_SEL://$FQDN"
 
+# Network Configuration
+# TRUST_PROXY: Trust proxy headers when behind a reverse proxy (nginx, Apache, etc.)
+# SECURITY: Setting this to 'true' allows IP spoofing. Use specific values instead:
+#   - '1' or 'loopback' for single trusted proxy (recommended for nginx setups)
+#   - 'false' if not behind a reverse proxy
+#   - See https://expressjs.com/en/guide/behind-proxies.html for advanced options
+TRUST_PROXY=1
+
 # Session Configuration
 SESSION_INACTIVITY_TIMEOUT_MINUTES=30
 
