@@ -827,4 +827,66 @@ router.get(
 	},
 );
 
+// DELETE /api/v1/api/hosts/:id - Delete a host
+/* #swagger.tags = ['Scoped API - Hosts'] */
+/* #swagger.summary = 'Delete a host' */
+/* #swagger.description = 'Delete a specific host and all related data (cascade). Requires Basic Auth with scoped credentials (host:delete permission).' */
+/* #swagger.security = [{ "basicAuth": [] }] */
+router.delete(
+	"/hosts/:id",
+	authenticateApiToken("api"),
+	requireApiScope("host", "delete"),
+	async (req, res) => {
+		try {
+			const { id } = req.params;
+
+			// Validate UUID format
+			if (!isUUID(id)) {
+				return res.status(400).json({ error: "Invalid host ID format" });
+			}
+
+			// Check if host exists first
+			const host = await prisma.hosts.findUnique({
+				where: { id },
+				select: { id: true, friendly_name: true, hostname: true },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			// Delete host and all related data (cascade)
+			await prisma.hosts.delete({ where: { id } });
+
+			res.json({
+				message: "Host deleted successfully",
+				deleted: {
+					id: host.id,
+					friendly_name: host.friendly_name,
+					hostname: host.hostname,
+				},
+			});
+		} catch (error) {
+			logger.error("Error deleting host via scoped API:", error);
+
+			// Handle specific Prisma errors
+			if (error.code === "P2025") {
+				return res.status(404).json({
+					error: "Host not found",
+					details: "The host may have been deleted or does not exist",
+				});
+			}
+
+			if (error.code === "P2003") {
+				return res.status(400).json({
+					error: "Cannot delete host due to foreign key constraints",
+					details: "The host has related data that prevents deletion",
+				});
+			}
+
+			res.status(500).json({ error: "Failed to delete host" });
+		}
+	},
+);
+
 module.exports = router;

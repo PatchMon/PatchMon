@@ -11,7 +11,8 @@
 			"!**/dist",
 			"!**/node_modules",
 			"!**/*.min.js",
-			"!**/*.css"
+			"!**/*.css",
+			"!**/swagger_output.json"
 		]
 	},
 	"formatter": {
