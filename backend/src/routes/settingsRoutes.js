@@ -130,6 +130,7 @@ router.get("/public", authenticateToken, async (_req, res) => {
 		// Return only public/read-only settings
 		res.json({
 			auto_update: settings.auto_update || false,
+			alerts_enabled: settings.alerts_enabled !== false,
 		});
 	} catch (error) {
 		logger.error("Public settings fetch error:", error);
@@ -229,6 +230,10 @@ router.put(
 			.optional()
 			.isBoolean()
 			.withMessage("Show GitHub version on login must be a boolean"),
+		body("alerts_enabled")
+			.optional()
+			.isBoolean()
+			.withMessage("Alerts enabled must be a boolean"),
 	],
 	async (req, res) => {
 		try {
@@ -256,6 +261,7 @@ router.put(
 				favicon,
 				colorTheme,
 				showGithubVersionOnLogin,
+				alerts_enabled,
 			} = req.body;
 
 			// Get current settings to check for update interval changes
@@ -292,6 +298,8 @@ router.put(
 			if (colorTheme !== undefined) updateData.color_theme = colorTheme;
 			if (showGithubVersionOnLogin !== undefined)
 				updateData.show_github_version_on_login = showGithubVersionOnLogin;
+			if (alerts_enabled !== undefined)
+				updateData.alerts_enabled = alerts_enabled;
 
 			const updatedSettings = await updateSettings(
 				currentSettings.id,

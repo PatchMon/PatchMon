@@ -341,6 +341,50 @@ router.post(
 	},
 );
 
+// Trigger manual alert cleanup
+router.post("/trigger/alert-cleanup", authenticateToken, async (_req, res) => {
+	try {
+		const job = await queueManager.triggerAlertCleanup();
+		res.json({
+			success: true,
+			data: {
+				jobId: job.id,
+				message: "Alert cleanup triggered successfully",
+			},
+		});
+	} catch (error) {
+		logger.error("Error triggering alert cleanup:", error);
+		res.status(500).json({
+			success: false,
+			error: "Failed to trigger alert cleanup",
+		});
+	}
+});
+
+// Trigger manual host status monitor
+router.post(
+	"/trigger/host-status-monitor",
+	authenticateToken,
+	async (_req, res) => {
+		try {
+			const job = await queueManager.triggerHostStatusMonitor();
+			res.json({
+				success: true,
+				data: {
+					jobId: job.id,
+					message: "Host status monitor triggered successfully",
+				},
+			});
+		} catch (error) {
+			logger.error("Error triggering host status monitor:", error);
+			res.status(500).json({
+				success: false,
+				error: "Failed to trigger host status monitor",
+			});
+		}
+	},
+);
+
 // Get queue health status
 router.get("/health", authenticateToken, async (_req, res) => {
 	try {
@@ -391,6 +435,8 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 		const { getSettings } = require("../services/settingsService");
 		const settings = await getSettings();
 
+		const alertsEnabled = settings.alerts_enabled !== false;
+
 		// Get recent jobs for each queue to show last run times
 		const recentJobs = await Promise.all([
 			queueManager.getRecentJobs(QUEUE_NAMES.VERSION_UPDATE_CHECK, 1),
@@ -400,6 +446,8 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 			queueManager.getRecentJobs(QUEUE_NAMES.DOCKER_INVENTORY_CLEANUP, 1),
 			queueManager.getRecentJobs(QUEUE_NAMES.AGENT_COMMANDS, 1),
 			queueManager.getRecentJobs(QUEUE_NAMES.SYSTEM_STATISTICS, 1),
+			queueManager.getRecentJobs(QUEUE_NAMES.ALERT_CLEANUP, 1),
+			queueManager.getRecentJobs(QUEUE_NAMES.HOST_STATUS_MONITOR, 1),
 		]);
 
 		// Calculate overview metrics
@@ -410,7 +458,9 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 				stats[QUEUE_NAMES.ORPHANED_REPO_CLEANUP].delayed +
 				stats[QUEUE_NAMES.ORPHANED_PACKAGE_CLEANUP].delayed +
 				stats[QUEUE_NAMES.DOCKER_INVENTORY_CLEANUP].delayed +
-				stats[QUEUE_NAMES.SYSTEM_STATISTICS].delayed,
+				stats[QUEUE_NAMES.SYSTEM_STATISTICS].delayed +
+				stats[QUEUE_NAMES.ALERT_CLEANUP].delayed +
+				stats[QUEUE_NAMES.HOST_STATUS_MONITOR].delayed,
 
 			runningTasks:
 				stats[QUEUE_NAMES.VERSION_UPDATE_CHECK].active +
@@ -418,7 +468,9 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 				stats[QUEUE_NAMES.ORPHANED_REPO_CLEANUP].active +
 				stats[QUEUE_NAMES.ORPHANED_PACKAGE_CLEANUP].active +
 				stats[QUEUE_NAMES.DOCKER_INVENTORY_CLEANUP].active +
-				stats[QUEUE_NAMES.SYSTEM_STATISTICS].active,
+				stats[QUEUE_NAMES.SYSTEM_STATISTICS].active +
+				stats[QUEUE_NAMES.ALERT_CLEANUP].active +
+				stats[QUEUE_NAMES.HOST_STATUS_MONITOR].active,
 
 			failedTasks:
 				stats[QUEUE_NAMES.VERSION_UPDATE_CHECK].failed +
@@ -426,7 +478,9 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 				stats[QUEUE_NAMES.ORPHANED_REPO_CLEANUP].failed +
 				stats[QUEUE_NAMES.ORPHANED_PACKAGE_CLEANUP].failed +
 				stats[QUEUE_NAMES.DOCKER_INVENTORY_CLEANUP].failed +
-				stats[QUEUE_NAMES.SYSTEM_STATISTICS].failed,
+				stats[QUEUE_NAMES.SYSTEM_STATISTICS].failed +
+				stats[QUEUE_NAMES.ALERT_CLEANUP].failed +
+				stats[QUEUE_NAMES.HOST_STATUS_MONITOR].failed,
 
 			totalAutomations: Object.values(stats).reduce((sum, queueStats) => {
 				return (
@@ -554,6 +608,44 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 							? "Success"
 							: "Never run",
 					stats: stats[QUEUE_NAMES.SYSTEM_STATISTICS],
+				},
+				{
+					name: "Alert Cleanup",
+					queue: QUEUE_NAMES.ALERT_CLEANUP,
+					description:
+						"Cleans up old alerts based on retention policies and auto-resolves expired alerts",
+					schedule: "Daily at 3 AM",
+					lastRun: recentJobs[7][0]?.finishedOn
+						? new Date(recentJobs[7][0].finishedOn).toLocaleString()
+						: "Never",
+					lastRunTimestamp: recentJobs[7][0]?.finishedOn || 0,
+					status: !alertsEnabled
+						? "Skipped (Disabled)"
+						: recentJobs[7][0]?.failedReason
+							? "Failed"
+							: recentJobs[7][0]
+								? "Success"
+								: "Never run",
+					stats: stats[QUEUE_NAMES.ALERT_CLEANUP],
+				},
+				{
+					name: "Host Status Monitor",
+					queue: QUEUE_NAMES.HOST_STATUS_MONITOR,
+					description:
+						"Monitors host status and creates alerts when hosts go offline",
+					schedule: "Every 5 minutes",
+					lastRun: recentJobs[8][0]?.finishedOn
+						? new Date(recentJobs[8][0].finishedOn).toLocaleString()
+						: "Never",
+					lastRunTimestamp: recentJobs[8][0]?.finishedOn || 0,
+					status: !alertsEnabled
+						? "Skipped (Disabled)"
+						: recentJobs[8][0]?.failedReason
+							? "Failed"
+							: recentJobs[8][0]
+								? "Success"
+								: "Never run",
+					stats: stats[QUEUE_NAMES.HOST_STATUS_MONITOR],
 				},
 			].sort((a, b) => {
 				// Sort by last run timestamp (most recent first)

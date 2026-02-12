@@ -490,6 +490,14 @@ class QueueManager {
 		return this.automations[QUEUE_NAMES.SOCIAL_MEDIA_STATS].triggerManual();
 	}
 
+	async triggerAlertCleanup() {
+		return this.automations[QUEUE_NAMES.ALERT_CLEANUP].triggerManual();
+	}
+
+	async triggerHostStatusMonitor() {
+		return this.automations[QUEUE_NAMES.HOST_STATUS_MONITOR].triggerManual();
+	}
+
 	/**
 	 * Get queue statistics
 	 */

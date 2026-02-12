@@ -26,7 +26,7 @@ const Integrations = () => {
 	const token_base64_id = useId();
 	const gethomepage_config_id = useId();
 
-	const [activeTab, setActiveTab] = useState("auto-enrollment");
+	const [activeTab, setActiveTab] = useState("proxmox");
 	const [tokens, setTokens] = useState([]);
 	const [host_groups, setHostGroups] = useState([]);
 	const [loading, setLoading] = useState(true);
@@ -37,8 +37,9 @@ const Integrations = () => {
 	const [show_secret, setShowSecret] = useState(false);
 	const [server_url, setServerUrl] = useState("");
 	const [force_proxmox_install, setForceProxmoxInstall] = useState(false);
-	const [usage_type, setUsageType] = useState("proxmox-lxc");
-	const [selected_script_type, setSelectedScriptType] = useState("proxmox-lxc");
+	const [_usage_type, setUsageType] = useState("proxmox-lxc");
+	const [_selected_script_type, setSelectedScriptType] =
+		useState("proxmox-lxc");
 	const [curl_flags, setCurlFlags] = useState("-s");
 
 	// Compliance mode settings state
@@ -65,7 +66,7 @@ const Integrations = () => {
 	const [copy_success, setCopySuccess] = useState({});
 
 	// Helper function to build enrollment URL with optional force flag and selected type
-	const getEnrollmentUrl = (scriptType = selected_script_type) => {
+	const getEnrollmentUrl = (scriptType = "proxmox-lxc") => {
 		const baseUrl = `${server_url}/api/v1/auto-enrollment/script?type=${scriptType}&token_key=${new_token.token_key}&token_secret=${new_token.token_secret}`;
 		return force_proxmox_install ? `${baseUrl}&force=true` : baseUrl;
 	};
@@ -192,13 +193,16 @@ const Integrations = () => {
 		e.preventDefault();
 
 		try {
-			// Determine integration type based on active tab or usage_type
+			// Determine integration type based on active tab
 			let integration_type = "proxmox-lxc";
 			if (activeTab === "gethomepage") {
 				integration_type = "gethomepage";
-			} else if (activeTab === "auto-enrollment") {
-				// Use the usage_type selected in the modal
-				integration_type = usage_type;
+			} else if (activeTab === "proxmox") {
+				integration_type = "proxmox-lxc";
+			} else if (activeTab === "auto-enrollment-direct") {
+				integration_type = "direct-host";
+			} else if (activeTab === "scoped-credentials") {
+				integration_type = "api";
 			}
 
 			const data = {
@@ -221,7 +225,7 @@ const Integrations = () => {
 			}
 
 			// Add scopes for API credentials
-			if (usage_type === "api" && form_data.scopes) {
+			if (integration_type === "api" && form_data.scopes) {
 				data.scopes = form_data.scopes;
 			}
 
@@ -422,15 +426,43 @@ const Integrations = () => {
 					<div className="md:hidden space-y-2 p-4">
 						<button
 							type="button"
-							onClick={() => handleTabChange("auto-enrollment")}
+							onClick={() => handleTabChange("proxmox")}
 							className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
-								activeTab === "auto-enrollment"
+								activeTab === "proxmox"
 									? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
 									: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
 							}`}
 						>
-							<span>Auto-Enrollment & API</span>
-							{activeTab === "auto-enrollment" && (
+							<span>Proxmox</span>
+							{activeTab === "proxmox" && (
+								<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+							)}
+						</button>
+						<button
+							type="button"
+							onClick={() => handleTabChange("auto-enrollment-direct")}
+							className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+								activeTab === "auto-enrollment-direct"
+									? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
+									: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+							}`}
+						>
+							<span>Auto-Enrollment (Direct)</span>
+							{activeTab === "auto-enrollment-direct" && (
+								<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+							)}
+						</button>
+						<button
+							type="button"
+							onClick={() => handleTabChange("scoped-credentials")}
+							className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+								activeTab === "scoped-credentials"
+									? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
+									: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+							}`}
+						>
+							<span>Scoped Credentials</span>
+							{activeTab === "scoped-credentials" && (
 								<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
 							)}
 						</button>
@@ -483,14 +515,36 @@ const Integrations = () => {
 						<div className="flex">
 							<button
 								type="button"
-								onClick={() => handleTabChange("auto-enrollment")}
+								onClick={() => handleTabChange("proxmox")}
 								className={`px-6 py-3 text-sm font-medium ${
-									activeTab === "auto-enrollment"
+									activeTab === "proxmox"
 										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
 										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
 								}`}
 							>
-								Auto-Enrollment & API
+								Proxmox
+							</button>
+							<button
+								type="button"
+								onClick={() => handleTabChange("auto-enrollment-direct")}
+								className={`px-6 py-3 text-sm font-medium ${
+									activeTab === "auto-enrollment-direct"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
+										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+								}`}
+							>
+								Auto-Enrollment (Direct)
+							</button>
+							<button
+								type="button"
+								onClick={() => handleTabChange("scoped-credentials")}
+								className={`px-6 py-3 text-sm font-medium ${
+									activeTab === "scoped-credentials"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
+										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+								}`}
+							>
+								Scoped Credentials
 							</button>
 							<button
 								type="button"
@@ -530,8 +584,8 @@ const Integrations = () => {
 
 					{/* Tab Content */}
 					<div className="p-4 md:p-6">
-						{/* Auto-Enrollment & API Tab */}
-						{activeTab === "auto-enrollment" && (
+						{/* Proxmox Tab */}
+						{activeTab === "proxmox" && (
 							<div className="space-y-6">
 								{/* Header with New Token Button */}
 								<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -541,11 +595,10 @@ const Integrations = () => {
 										</div>
 										<div className="min-w-0">
 											<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
-												Auto-Enrollment & API Credentials
+												Proxmox Auto-Enrollment
 											</h3>
 											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-												Manage tokens for Proxmox LXC auto-enrollment and API
-												access
+												Manage tokens for Proxmox LXC container auto-enrollment
 											</p>
 										</div>
 									</div>
@@ -566,14 +619,13 @@ const Integrations = () => {
 									</div>
 								) : tokens.filter(
 										(token) =>
-											token.metadata?.integration_type === "proxmox-lxc" ||
-											token.metadata?.integration_type === "api",
+											token.metadata?.integration_type === "proxmox-lxc",
 									).length === 0 ? (
 									<div className="text-center py-8 text-secondary-600 dark:text-secondary-400">
-										<p>No auto-enrollment or API tokens created yet.</p>
+										<p>No Proxmox tokens created yet.</p>
 										<p className="text-sm mt-2">
-											Create a token to enable Proxmox auto-enrollment or API
-											access.
+											Create a token to enable Proxmox LXC container
+											auto-enrollment.
 										</p>
 									</div>
 								) : (
@@ -581,8 +633,7 @@ const Integrations = () => {
 										{tokens
 											.filter(
 												(token) =>
-													token.metadata?.integration_type === "proxmox-lxc" ||
-													token.metadata?.integration_type === "api",
+													token.metadata?.integration_type === "proxmox-lxc",
 											)
 											.map((token) => (
 												<div
@@ -739,21 +790,431 @@ const Integrations = () => {
 									<h3 className="text-base md:text-lg font-semibold text-primary-900 dark:text-primary-200 mb-4">
 										Documentation
 									</h3>
-									<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-										{/* Proxmox Documentation */}
-										<div className="border border-primary-200 dark:border-primary-700 rounded-lg p-4 bg-white dark:bg-secondary-800">
-											<div className="flex items-center gap-2 mb-3">
-												<Server className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-												<h4 className="font-semibold text-secondary-900 dark:text-white">
-													Auto-enrollment
-												</h4>
-											</div>
-											<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-3">
-												Automatically discover and enroll hosts from Proxmox or
-												direct enrollment.
+									<div className="border border-primary-200 dark:border-primary-700 rounded-lg p-4 bg-white dark:bg-secondary-800">
+										<div className="flex items-center gap-2 mb-3">
+											<Server className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+											<h4 className="font-semibold text-secondary-900 dark:text-white">
+												Proxmox LXC Auto-Enrollment
+											</h4>
+										</div>
+										<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-3">
+											Automatically discover and enroll LXC containers from your
+											Proxmox hosts.
+										</p>
+										<a
+											href="https://docs.patchmon.net/books/patchmon-application-documentation/page/proxmox-lxc-auto-enrollment-guide"
+											target="_blank"
+											rel="noopener noreferrer"
+											className="inline-flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg text-sm transition-colors"
+										>
+											<BookOpen className="h-4 w-4" />
+											View Guide
+										</a>
+									</div>
+								</div>
+							</div>
+						)}
+
+						{/* Auto-Enrollment (Direct) Tab */}
+						{activeTab === "auto-enrollment-direct" && (
+							<div className="space-y-6">
+								{/* Header with New Token Button */}
+								<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+									<div className="flex items-center gap-3 flex-1 min-w-0">
+										<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
+											<Server className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+										</div>
+										<div className="min-w-0">
+											<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
+												Direct Host Auto-Enrollment
+											</h3>
+											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
+												Manage tokens for direct host enrollment without Proxmox
 											</p>
+										</div>
+									</div>
+									<button
+										type="button"
+										onClick={() => setShowCreateModal(true)}
+										className="btn-primary flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-start"
+									>
+										<Plus className="h-4 w-4" />
+										New Token
+									</button>
+								</div>
+
+								{/* Token List */}
+								{loading ? (
+									<div className="text-center py-8">
+										<div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+									</div>
+								) : tokens.filter(
+										(token) =>
+											token.metadata?.integration_type === "direct-host",
+									).length === 0 ? (
+									<div className="text-center py-8 text-secondary-600 dark:text-secondary-400">
+										<p>No direct enrollment tokens created yet.</p>
+										<p className="text-sm mt-2">
+											Create a token to enable direct host enrollment.
+										</p>
+									</div>
+								) : (
+									<div className="space-y-3">
+										{tokens
+											.filter(
+												(token) =>
+													token.metadata?.integration_type === "direct-host",
+											)
+											.map((token) => (
+												<div
+													key={token.id}
+													className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 hover:border-primary-300 dark:hover:border-primary-700 transition-colors"
+												>
+													<div className="flex justify-between items-start">
+														<div className="flex-1">
+															<div className="flex items-center gap-2 flex-wrap">
+																<h4 className="font-medium text-secondary-900 dark:text-white">
+																	{token.token_name}
+																</h4>
+																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+																	Direct Host
+																</span>
+																{token.is_active ? (
+																	<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+																		Active
+																	</span>
+																) : (
+																	<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
+																		Inactive
+																	</span>
+																)}
+															</div>
+															<div className="mt-2 space-y-1 text-sm text-secondary-600 dark:text-secondary-400">
+																<div className="flex items-center gap-2">
+																	<span className="font-mono text-xs bg-secondary-100 dark:bg-secondary-700 px-2 py-1 rounded">
+																		{token.token_key}
+																	</span>
+																	<button
+																		type="button"
+																		onClick={() =>
+																			copy_to_clipboard(
+																				token.token_key,
+																				`key-${token.id}`,
+																			)
+																		}
+																		className="text-primary-600 hover:text-primary-700 dark:text-primary-400"
+																	>
+																		{copy_success[`key-${token.id}`] ? (
+																			<CheckCircle className="h-4 w-4" />
+																		) : (
+																			<Copy className="h-4 w-4" />
+																		)}
+																	</button>
+																</div>
+																{token.metadata?.integration_type ===
+																	"direct-host" && (
+																	<p>
+																		Usage: {token.hosts_created_today}/
+																		{token.max_hosts_per_day} hosts today
+																	</p>
+																)}
+																{token.metadata?.integration_type ===
+																	"direct-host" &&
+																	token.host_groups && (
+																		<p>
+																			Default Group:{" "}
+																			<span
+																				className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+																				style={{
+																					backgroundColor: `${token.host_groups.color}20`,
+																					color: token.host_groups.color,
+																				}}
+																			>
+																				{token.host_groups.name}
+																			</span>
+																		</p>
+																	)}
+																{token.allowed_ip_ranges?.length > 0 && (
+																	<p>
+																		Allowed IPs:{" "}
+																		{token.allowed_ip_ranges.join(", ")}
+																	</p>
+																)}
+																<p>Created: {formatDate(token.created_at)}</p>
+																{token.last_used_at && (
+																	<p>
+																		Last Used: {formatDate(token.last_used_at)}
+																	</p>
+																)}
+																{token.expires_at && (
+																	<p>
+																		Expires: {formatDate(token.expires_at)}
+																		{new Date(token.expires_at) <
+																			new Date() && (
+																			<span className="ml-2 text-red-600 dark:text-red-400">
+																				(Expired)
+																			</span>
+																		)}
+																	</p>
+																)}
+															</div>
+														</div>
+														<div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+															<button
+																type="button"
+																onClick={() => open_edit_modal(token)}
+																className="px-3 py-1 text-xs md:text-sm rounded bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300 dark:hover:bg-blue-800"
+															>
+																Edit
+															</button>
+															<button
+																type="button"
+																onClick={() =>
+																	toggle_token_active(token.id, token.is_active)
+																}
+																className={`px-3 py-1 text-xs md:text-sm rounded ${
+																	token.is_active
+																		? "bg-secondary-100 text-secondary-700 hover:bg-secondary-200 dark:bg-secondary-700 dark:text-secondary-300"
+																		: "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900 dark:text-green-300"
+																}`}
+															>
+																{token.is_active ? "Disable" : "Enable"}
+															</button>
+															<button
+																type="button"
+																onClick={() =>
+																	delete_token(token.id, token.token_name)
+																}
+																className="text-red-600 hover:text-red-800 dark:text-red-400 p-2"
+															>
+																<Trash2 className="h-4 w-4" />
+															</button>
+														</div>
+													</div>
+												</div>
+											))}
+									</div>
+								)}
+
+								{/* Documentation Section */}
+								<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
+									<h3 className="text-base md:text-lg font-semibold text-primary-900 dark:text-primary-200 mb-4">
+										Documentation
+									</h3>
+									<div className="border border-primary-200 dark:border-primary-700 rounded-lg p-4 bg-white dark:bg-secondary-800">
+										<div className="flex items-center gap-2 mb-3">
+											<Server className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+											<h4 className="font-semibold text-secondary-900 dark:text-white">
+												Direct Host Enrollment
+											</h4>
+										</div>
+										<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-3">
+											Enroll individual hosts directly without Proxmox
+											infrastructure.
+										</p>
+										<a
+											href="https://docs.patchmon.net/books/patchmon-application-documentation/page/proxmox-lxc-auto-enrollment-guide"
+											target="_blank"
+											rel="noopener noreferrer"
+											className="inline-flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg text-sm transition-colors"
+										>
+											<BookOpen className="h-4 w-4" />
+											View Guide
+										</a>
+									</div>
+								</div>
+							</div>
+						)}
+
+						{/* Scoped Credentials Tab */}
+						{activeTab === "scoped-credentials" && (
+							<div className="space-y-6">
+								{/* Header with New Token Button */}
+								<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+									<div className="flex items-center gap-3 flex-1 min-w-0">
+										<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
+											<Shield className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+										</div>
+										<div className="min-w-0">
+											<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
+												Scoped API Credentials
+											</h3>
+											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
+												Manage API credentials with granular scope-based
+												permissions
+											</p>
+										</div>
+									</div>
+									<button
+										type="button"
+										onClick={() => setShowCreateModal(true)}
+										className="btn-primary flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-start"
+									>
+										<Plus className="h-4 w-4" />
+										New Credential
+									</button>
+								</div>
+
+								{/* Token List */}
+								{loading ? (
+									<div className="text-center py-8">
+										<div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+									</div>
+								) : tokens.filter(
+										(token) => token.metadata?.integration_type === "api",
+									).length === 0 ? (
+									<div className="text-center py-8 text-secondary-600 dark:text-secondary-400">
+										<p>No scoped credentials created yet.</p>
+										<p className="text-sm mt-2">
+											Create a credential to enable programmatic API access with
+											granular permissions.
+										</p>
+									</div>
+								) : (
+									<div className="space-y-3">
+										{tokens
+											.filter(
+												(token) => token.metadata?.integration_type === "api",
+											)
+											.map((token) => (
+												<div
+													key={token.id}
+													className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 hover:border-primary-300 dark:hover:border-primary-700 transition-colors"
+												>
+													<div className="flex justify-between items-start">
+														<div className="flex-1">
+															<div className="flex items-center gap-2 flex-wrap">
+																<h4 className="font-medium text-secondary-900 dark:text-white">
+																	{token.token_name}
+																</h4>
+																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+																	API
+																</span>
+																{token.is_active ? (
+																	<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+																		Active
+																	</span>
+																) : (
+																	<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
+																		Inactive
+																	</span>
+																)}
+															</div>
+															<div className="mt-2 space-y-1 text-sm text-secondary-600 dark:text-secondary-400">
+																<div className="flex items-center gap-2">
+																	<span className="font-mono text-xs bg-secondary-100 dark:bg-secondary-700 px-2 py-1 rounded">
+																		{token.token_key}
+																	</span>
+																	<button
+																		type="button"
+																		onClick={() =>
+																			copy_to_clipboard(
+																				token.token_key,
+																				`key-${token.id}`,
+																			)
+																		}
+																		className="text-primary-600 hover:text-primary-700 dark:text-primary-400"
+																	>
+																		{copy_success[`key-${token.id}`] ? (
+																			<CheckCircle className="h-4 w-4" />
+																		) : (
+																			<Copy className="h-4 w-4" />
+																		)}
+																	</button>
+																</div>
+																{token.metadata?.integration_type === "api" &&
+																	token.scopes && (
+																		<p>
+																			Scopes:{" "}
+																			{Object.entries(token.scopes)
+																				.map(
+																					([resource, actions]) =>
+																						`${resource}: ${Array.isArray(actions) ? actions.join(", ") : actions}`,
+																				)
+																				.join(" | ")}
+																		</p>
+																	)}
+																{token.allowed_ip_ranges?.length > 0 && (
+																	<p>
+																		Allowed IPs:{" "}
+																		{token.allowed_ip_ranges.join(", ")}
+																	</p>
+																)}
+																<p>Created: {formatDate(token.created_at)}</p>
+																{token.last_used_at && (
+																	<p>
+																		Last Used: {formatDate(token.last_used_at)}
+																	</p>
+																)}
+																{token.expires_at && (
+																	<p>
+																		Expires: {formatDate(token.expires_at)}
+																		{new Date(token.expires_at) <
+																			new Date() && (
+																			<span className="ml-2 text-red-600 dark:text-red-400">
+																				(Expired)
+																			</span>
+																		)}
+																	</p>
+																)}
+															</div>
+														</div>
+														<div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+															<button
+																type="button"
+																onClick={() => open_edit_modal(token)}
+																className="px-3 py-1 text-xs md:text-sm rounded bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300 dark:hover:bg-blue-800"
+															>
+																Edit
+															</button>
+															<button
+																type="button"
+																onClick={() =>
+																	toggle_token_active(token.id, token.is_active)
+																}
+																className={`px-3 py-1 text-xs md:text-sm rounded ${
+																	token.is_active
+																		? "bg-secondary-100 text-secondary-700 hover:bg-secondary-200 dark:bg-secondary-700 dark:text-secondary-300"
+																		: "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900 dark:text-green-300"
+																}`}
+															>
+																{token.is_active ? "Disable" : "Enable"}
+															</button>
+															<button
+																type="button"
+																onClick={() =>
+																	delete_token(token.id, token.token_name)
+																}
+																className="text-red-600 hover:text-red-800 dark:text-red-400 p-2"
+															>
+																<Trash2 className="h-4 w-4" />
+															</button>
+														</div>
+													</div>
+												</div>
+											))}
+									</div>
+								)}
+
+								{/* Documentation Section */}
+								<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
+									<h3 className="text-base md:text-lg font-semibold text-primary-900 dark:text-primary-200 mb-4">
+										Documentation
+									</h3>
+									<div className="border border-primary-200 dark:border-primary-700 rounded-lg p-4 bg-white dark:bg-secondary-800">
+										<div className="flex items-center gap-2 mb-3">
+											<Shield className="h-5 w-5 text-green-600 dark:text-green-400" />
+											<h4 className="font-semibold text-secondary-900 dark:text-white">
+												Scoped Credentials
+											</h4>
+										</div>
+										<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-3">
+											Programmatic access to PatchMon data with granular
+											scope-based permissions.
+										</p>
+										<div className="flex flex-wrap gap-2">
 											<a
-												href="https://docs.patchmon.net/books/patchmon-application-documentation/page/proxmox-lxc-auto-enrollment-guide"
+												href="https://docs.patchmon.net/books/patchmon-application-documentation/page/integration-api-documentation"
 												target="_blank"
 												rel="noopener noreferrer"
 												className="inline-flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg text-sm transition-colors"
@@ -761,40 +1222,15 @@ const Integrations = () => {
 												<BookOpen className="h-4 w-4" />
 												View Guide
 											</a>
-										</div>
-
-										{/* API Documentation */}
-										<div className="border border-primary-200 dark:border-primary-700 rounded-lg p-4 bg-white dark:bg-secondary-800">
-											<div className="flex items-center gap-2 mb-3">
-												<Server className="h-5 w-5 text-green-600 dark:text-green-400" />
-												<h4 className="font-semibold text-secondary-900 dark:text-white">
-													Scoped credentials
-												</h4>
-											</div>
-											<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-3">
-												Programmatic access to PatchMon data with granular
-												scope-based permissions.
-											</p>
-											<div className="flex flex-wrap gap-2">
-												<a
-													href="https://docs.patchmon.net/books/patchmon-application-documentation/page/integration-api-documentation"
-													target="_blank"
-													rel="noopener noreferrer"
-													className="inline-flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg text-sm transition-colors"
-												>
-													<BookOpen className="h-4 w-4" />
-													View Guide
-												</a>
-												<a
-													href="/api/v1/api-docs"
-													target="_blank"
-													rel="noopener noreferrer"
-													className="inline-flex items-center gap-2 px-3 py-2 bg-secondary-600 hover:bg-secondary-700 dark:bg-secondary-500 dark:hover:bg-secondary-600 text-white rounded-lg text-sm transition-colors"
-												>
-													<BookOpen className="h-4 w-4" />
-													Swagger documentation
-												</a>
-											</div>
+											<a
+												href="/api/v1/api-docs"
+												target="_blank"
+												rel="noopener noreferrer"
+												className="inline-flex items-center gap-2 px-3 py-2 bg-secondary-600 hover:bg-secondary-700 dark:bg-secondary-500 dark:hover:bg-secondary-600 text-white rounded-lg text-sm transition-colors"
+											>
+												<BookOpen className="h-4 w-4" />
+												Swagger documentation
+											</a>
 										</div>
 									</div>
 								</div>
@@ -1553,7 +1989,13 @@ const Integrations = () => {
 								<h2 className="text-lg md:text-xl font-bold text-secondary-900 dark:text-white">
 									{activeTab === "gethomepage"
 										? "Create GetHomepage API Key"
-										: "Create Token"}
+										: activeTab === "proxmox"
+											? "Create Proxmox Token"
+											: activeTab === "auto-enrollment-direct"
+												? "Create Direct Enrollment Token"
+												: activeTab === "scoped-credentials"
+													? "Create Scoped Credential"
+													: "Create Token"}
 								</h2>
 								<button
 									type="button"
@@ -1567,34 +2009,6 @@ const Integrations = () => {
 									<X className="h-5 w-5 md:h-6 md:w-6" />
 								</button>
 							</div>
-
-							{/* Tabs for Auto-enrollment modal */}
-							{activeTab === "auto-enrollment" && (
-								<div className="flex border-b border-secondary-200 dark:border-secondary-700 mb-4 md:mb-6 overflow-x-auto">
-									<button
-										type="button"
-										onClick={() => setUsageType("proxmox-lxc")}
-										className={`px-3 md:px-4 py-2 text-xs md:text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-											usage_type === "proxmox-lxc"
-												? "text-primary-600 dark:text-primary-400 border-primary-500"
-												: "text-secondary-500 dark:text-secondary-400 border-transparent hover:text-secondary-700 dark:hover:text-secondary-300"
-										}`}
-									>
-										Auto-enrollment
-									</button>
-									<button
-										type="button"
-										onClick={() => setUsageType("api")}
-										className={`px-3 md:px-4 py-2 text-xs md:text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-											usage_type === "api"
-												? "text-primary-600 dark:text-primary-400 border-primary-500"
-												: "text-secondary-500 dark:text-secondary-400 border-transparent hover:text-secondary-700 dark:hover:text-secondary-300"
-										}`}
-									>
-										Scoped credentials
-									</button>
-								</div>
-							)}
 
 							<form onSubmit={create_token} className="space-y-4">
 								<label className="block">
@@ -1611,69 +2025,73 @@ const Integrations = () => {
 										placeholder={
 											activeTab === "gethomepage"
 												? "e.g., GetHomepage Widget"
-												: usage_type === "api"
-													? "e.g., Ansible Inventory"
-													: "e.g., Proxmox Production"
+												: activeTab === "proxmox"
+													? "e.g., Proxmox Production"
+													: activeTab === "auto-enrollment-direct"
+														? "e.g., Direct Enrollment Token"
+														: activeTab === "scoped-credentials"
+															? "e.g., Ansible Inventory"
+															: "e.g., Token Name"
 										}
 										className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
 									/>
 								</label>
 
-								{usage_type === "proxmox-lxc" &&
-									activeTab === "auto-enrollment" && (
-										<>
-											<label className="block">
-												<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
-													Max Hosts Per Day
-												</span>
-												<input
-													type="number"
-													min="1"
-													max="1000"
-													value={form_data.max_hosts_per_day}
-													onChange={(e) =>
-														setFormData({
-															...form_data,
-															max_hosts_per_day: e.target.value,
-														})
-													}
-													className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
-												/>
-												<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
-													Maximum number of hosts that can be enrolled per day
-													using this token
-												</p>
-											</label>
+								{(activeTab === "proxmox" ||
+									activeTab === "auto-enrollment-direct") && (
+									<>
+										<label className="block">
+											<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+												Max Hosts Per Day
+											</span>
+											<input
+												type="number"
+												min="1"
+												max="1000"
+												value={form_data.max_hosts_per_day}
+												onChange={(e) =>
+													setFormData({
+														...form_data,
+														max_hosts_per_day: e.target.value,
+													})
+												}
+												className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+											/>
+											<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+												Maximum number of hosts that can be enrolled per day
+												using this token
+											</p>
+										</label>
 
-											<label className="block">
-												<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
-													Default Host Group (Optional)
-												</span>
-												<select
-													value={form_data.default_host_group_id}
-													onChange={(e) =>
-														setFormData({
-															...form_data,
-															default_host_group_id: e.target.value,
-														})
-													}
-													className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
-												>
-													<option value="">No default group</option>
-													{host_groups.map((group) => (
-														<option key={group.id} value={group.id}>
-															{group.name}
-														</option>
-													))}
-												</select>
-												<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
-													Auto-enrolled hosts will be assigned to this group
-												</p>
-											</label>
-										</>
-									)}
+										<label className="block">
+											<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+												Default Host Group (Optional)
+											</span>
+											<select
+												value={form_data.default_host_group_id}
+												onChange={(e) =>
+													setFormData({
+														...form_data,
+														default_host_group_id: e.target.value,
+													})
+												}
+												className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+											>
+												<option value="">No default group</option>
+												{host_groups.map((group) => (
+													<option key={group.id} value={group.id}>
+														{group.name}
+													</option>
+												))}
+											</select>
+											<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+												Auto-enrolled hosts will be assigned to this group
+											</p>
+										</label>
+									</>
+								)}
 
-								{usage_type === "api" && activeTab === "auto-enrollment" && (
+								{activeTab === "scoped-credentials" && (
 									<div className="block">
 										<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2">
 											Scopes *
@@ -1770,7 +2188,6 @@ const Integrations = () => {
 										type="button"
 										onClick={() => {
 											setShowCreateModal(false);
-											setUsageType("proxmox-lxc");
 										}}
 										className="flex-1 bg-secondary-100 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 py-2 px-4 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600 w-full sm:w-auto"
 									>
@@ -1796,9 +2213,13 @@ const Integrations = () => {
 										activeTab === "gethomepage"
 											? "API Key Created Successfully"
 											: new_token.metadata?.integration_type === "api" ||
-													usage_type === "api"
+													activeTab === "scoped-credentials"
 												? "API Credential Created Successfully"
-												: "Token Created Successfully"}
+												: new_token.metadata?.integration_type ===
+															"direct-host" ||
+														activeTab === "auto-enrollment-direct"
+													? "Direct Enrollment Token Created Successfully"
+													: "Token Created Successfully"}
 									</h2>
 								</div>
 								<button
@@ -1806,7 +2227,6 @@ const Integrations = () => {
 									onClick={() => {
 										setNewToken(null);
 										setShowSecret(false);
-										setUsageType("proxmox-lxc");
 										setSelectedScriptType("proxmox-lxc");
 									}}
 									className="text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200 flex-shrink-0"
@@ -1924,7 +2344,7 @@ const Integrations = () => {
 								</div>
 
 								{(new_token.metadata?.integration_type === "api" ||
-									usage_type === "api") &&
+									activeTab === "scoped-credentials") &&
 									new_token.scopes && (
 										<div className="mt-4">
 											<div className="block text-xs font-medium text-secondary-700 dark:text-secondary-300 mb-2">
@@ -1950,7 +2370,7 @@ const Integrations = () => {
 									)}
 
 								{(new_token.metadata?.integration_type === "api" ||
-									usage_type === "api") && (
+									activeTab === "scoped-credentials") && (
 									<div className="mt-6">
 										<div className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2">
 											Usage Examples
@@ -2024,42 +2444,15 @@ const Integrations = () => {
 								)}
 
 								{(new_token.metadata?.integration_type === "proxmox-lxc" ||
-									usage_type === "proxmox-lxc") && (
+									activeTab === "proxmox") && (
 									<div className="mt-6">
 										<div className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2">
-											Auto-Enrollment Command
-										</div>
-
-										{/* Script Type Toggle Buttons */}
-										<div className="flex gap-2 mb-3">
-											<button
-												type="button"
-												onClick={() => setSelectedScriptType("proxmox-lxc")}
-												className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-													selected_script_type === "proxmox-lxc"
-														? "bg-primary-600 text-white dark:bg-primary-500"
-														: "bg-secondary-200 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-300 hover:bg-secondary-300 dark:hover:bg-secondary-600"
-												}`}
-											>
-												Proxmox
-											</button>
-											<button
-												type="button"
-												onClick={() => setSelectedScriptType("direct-host")}
-												className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-													selected_script_type === "direct-host"
-														? "bg-primary-600 text-white dark:bg-primary-500"
-														: "bg-secondary-200 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-300 hover:bg-secondary-300 dark:hover:bg-secondary-600"
-												}`}
-											>
-												Direct Host
-											</button>
+											Proxmox Auto-Enrollment Command
 										</div>
 
 										<p className="text-xs text-secondary-600 dark:text-secondary-400 mb-2">
-											{selected_script_type === "proxmox-lxc"
-												? "Run this command on your Proxmox host to automatically discover and enroll all running LXC containers:"
-												: "Run this command on individual hosts to enroll them directly:"}
+											Run this command on your Proxmox host to automatically
+											discover and enroll all running LXC containers:
 										</p>
 
 										{/* Force Install Toggle */}
@@ -2086,7 +2479,7 @@ const Integrations = () => {
 										<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 											<input
 												type="text"
-												value={`curl ${curl_flags} "${getEnrollmentUrl()}" | ${selected_script_type === "proxmox-lxc" ? "bash" : "sh"}`}
+												value={`curl ${curl_flags} "${getEnrollmentUrl("proxmox-lxc")}" | bash`}
 												readOnly
 												className="flex-1 px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono text-xs break-all"
 											/>
@@ -2094,7 +2487,7 @@ const Integrations = () => {
 												type="button"
 												onClick={() =>
 													copy_to_clipboard(
-														`curl ${curl_flags} "${getEnrollmentUrl()}" | ${selected_script_type === "proxmox-lxc" ? "bash" : "sh"}`,
+														`curl ${curl_flags} "${getEnrollmentUrl("proxmox-lxc")}" | bash`,
 														"enrollment-command",
 													)
 												}
@@ -2113,16 +2506,79 @@ const Integrations = () => {
 												)}
 											</button>
 										</div>
+									</div>
+								)}
 
-										{/* Usage hint for direct-host */}
-										{selected_script_type === "direct-host" && (
-											<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-3 p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
-												💡 <strong>Tip:</strong> Specify a custom name:{" "}
-												<code className="text-xs bg-secondary-200 dark:bg-secondary-700 px-1 py-0.5 rounded">
-													FRIENDLY_NAME="My Server" sh
-												</code>
+								{(new_token.metadata?.integration_type === "direct-host" ||
+									activeTab === "auto-enrollment-direct") && (
+									<div className="mt-6">
+										<div className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2">
+											Direct Host Enrollment Command
+										</div>
+
+										<p className="text-xs text-secondary-600 dark:text-secondary-400 mb-2">
+											Run this command on individual hosts to enroll them
+											directly:
+										</p>
+
+										{/* Force Install Toggle */}
+										<div className="mb-3">
+											<label className="flex items-center gap-2 text-sm">
+												<input
+													type="checkbox"
+													checked={force_proxmox_install}
+													onChange={(e) =>
+														setForceProxmoxInstall(e.target.checked)
+													}
+													className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400 dark:bg-secondary-700"
+												/>
+												<span className="text-secondary-800 dark:text-secondary-200">
+													Force install (bypass broken packages)
+												</span>
+											</label>
+											<p className="text-xs text-secondary-600 dark:text-secondary-400 mt-1">
+												Enable this if hosts have broken packages (CloudPanel,
+												WHM, etc.) that block apt-get operations
 											</p>
-										)}
+										</div>
+
+										<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+											<input
+												type="text"
+												value={`curl ${curl_flags} "${getEnrollmentUrl("direct-host")}" | sh`}
+												readOnly
+												className="flex-1 px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono text-xs break-all"
+											/>
+											<button
+												type="button"
+												onClick={() =>
+													copy_to_clipboard(
+														`curl ${curl_flags} "${getEnrollmentUrl("direct-host")}" | sh`,
+														"direct-enrollment-command",
+													)
+												}
+												className="btn-primary flex items-center justify-center gap-1 px-3 py-2 whitespace-nowrap"
+											>
+												{copy_success["direct-enrollment-command"] ? (
+													<>
+														<CheckCircle className="h-4 w-4" />
+														Copied
+													</>
+												) : (
+													<>
+														<Copy className="h-4 w-4" />
+														Copy
+													</>
+												)}
+											</button>
+										</div>
+
+										<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-3 p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
+											💡 <strong>Tip:</strong> Specify a custom name:{" "}
+											<code className="text-xs bg-secondary-200 dark:bg-secondary-700 px-1 py-0.5 rounded">
+												FRIENDLY_NAME="My Server" sh
+											</code>
+										</p>
 									</div>
 								)}
 
@@ -2259,7 +2715,6 @@ const Integrations = () => {
 									onClick={() => {
 										setNewToken(null);
 										setShowSecret(false);
-										setUsageType("proxmox-lxc");
 										setSelectedScriptType("proxmox-lxc");
 									}}
 									className="w-full btn-primary py-2 px-4 rounded-md text-sm md:text-base"

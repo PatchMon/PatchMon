@@ -145,11 +145,11 @@ const HostDetail = () => {
 						return await settingsAPI.get().then((res) => res.data);
 					} catch (_e) {
 						// If both fail, return minimal default
-						return { auto_update: false };
+						return { auto_update: false, alerts_enabled: true };
 					}
 				}
 				// For other errors, return minimal default
-				return { auto_update: false };
+				return { auto_update: false, alerts_enabled: true };
 			}
 		},
 	});
@@ -1992,50 +1992,32 @@ const HostDetail = () => {
 					</div>
 
 					{/* Reporting Card */}
-					<div className="card p-4">
-						<h3 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4 flex items-center gap-2">
-							<AlertTriangle className="h-5 w-5 text-primary-600" />
-							Reporting
-						</h3>
-						<div className="space-y-4">
-							<p className="text-xs text-secondary-600 dark:text-secondary-300">
-								Control whether this host triggers alert entries when it goes
-								offline. When disabled, no alerts will be created for this host
-								even if the global setting is enabled.
-							</p>
+					{settings?.alerts_enabled !== false && (
+						<div className="card p-4">
+							<h3 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4 flex items-center gap-2">
+								<AlertTriangle className="h-5 w-5 text-primary-600" />
+								Reporting
+							</h3>
+							<div className="space-y-4">
+								<p className="text-xs text-secondary-600 dark:text-secondary-300">
+									Control whether this host triggers alert entries when it goes
+									offline. When disabled, no alerts will be created for this
+									host even if the global setting is enabled.
+								</p>
 
-							{/* Settings - Side by Side on larger mobile, stacked on small */}
-							<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-								{/* Current Setting */}
-								<div>
-									<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 mb-2 block">
-										Current Setting
-									</label>
-									<div className="text-sm text-secondary-900 dark:text-white">
-										{host?.host_down_alerts_enabled === null ? (
-											<span className="inline-flex items-center px-2 py-1 rounded bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-												Inherit from global settings
-											</span>
-										) : host?.host_down_alerts_enabled === true ? (
-											<span className="inline-flex items-center px-2 py-1 rounded bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-												Enabled
-											</span>
-										) : (
-											<span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
-												Disabled
-											</span>
-										)}
-									</div>
-								</div>
-
-								{/* Global Setting Reference */}
-								{hostDownAlertConfig && (
+								{/* Settings - Side by Side on larger mobile, stacked on small */}
+								<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+									{/* Current Setting */}
 									<div>
 										<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 mb-2 block">
-											Global Setting
+											Current Setting
 										</label>
-										<div className="text-sm text-secondary-600 dark:text-secondary-300">
-											{hostDownAlertConfig.is_enabled ? (
+										<div className="text-sm text-secondary-900 dark:text-white">
+											{host?.host_down_alerts_enabled === null ? (
+												<span className="inline-flex items-center px-2 py-1 rounded bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+													Inherit from global settings
+												</span>
+											) : host?.host_down_alerts_enabled === true ? (
 												<span className="inline-flex items-center px-2 py-1 rounded bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
 													Enabled
 												</span>
@@ -2044,79 +2026,104 @@ const HostDetail = () => {
 													Disabled
 												</span>
 											)}
-											{host?.host_down_alerts_enabled === null && (
-												<span className="ml-2 text-xs text-secondary-500 dark:text-secondary-400 block mt-1">
-													(currently inherited)
-												</span>
-											)}
 										</div>
+									</div>
+
+									{/* Global Setting Reference */}
+									{hostDownAlertConfig && (
+										<div>
+											<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 mb-2 block">
+												Global Setting
+											</label>
+											<div className="text-sm text-secondary-600 dark:text-secondary-300">
+												{settings?.alerts_enabled === false ? (
+													<span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+														Disabled (Master Switch Off)
+													</span>
+												) : hostDownAlertConfig.is_enabled ? (
+													<span className="inline-flex items-center px-2 py-1 rounded bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+														Enabled
+													</span>
+												) : (
+													<span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+														Disabled
+													</span>
+												)}
+												{host?.host_down_alerts_enabled === null &&
+													settings?.alerts_enabled !== false && (
+														<span className="ml-2 text-xs text-secondary-500 dark:text-secondary-400 block mt-1">
+															(currently inherited)
+														</span>
+													)}
+											</div>
+										</div>
+									)}
+								</div>
+
+								{/* Action Buttons */}
+								<div className="flex flex-wrap gap-2">
+									<button
+										type="button"
+										onClick={() => toggleHostDownAlertsMutation.mutate(null)}
+										disabled={
+											toggleHostDownAlertsMutation.isPending ||
+											host?.host_down_alerts_enabled === null
+										}
+										className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${
+											host?.host_down_alerts_enabled === null
+												? "bg-primary-600 text-white"
+												: "bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-300 hover:bg-secondary-300 dark:hover:bg-secondary-500"
+										} disabled:opacity-50 disabled:cursor-not-allowed`}
+									>
+										Inherit
+									</button>
+									<button
+										type="button"
+										onClick={() => toggleHostDownAlertsMutation.mutate(true)}
+										disabled={
+											toggleHostDownAlertsMutation.isPending ||
+											host?.host_down_alerts_enabled === true
+										}
+										className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${
+											host?.host_down_alerts_enabled === true
+												? "bg-green-600 text-white"
+												: "bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-300 hover:bg-secondary-300 dark:hover:bg-secondary-500"
+										} disabled:opacity-50 disabled:cursor-not-allowed`}
+									>
+										Enable
+									</button>
+									<button
+										type="button"
+										onClick={() => toggleHostDownAlertsMutation.mutate(false)}
+										disabled={
+											toggleHostDownAlertsMutation.isPending ||
+											host?.host_down_alerts_enabled === false
+										}
+										className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${
+											host?.host_down_alerts_enabled === false
+												? "bg-red-600 text-white"
+												: "bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-300 hover:bg-secondary-300 dark:hover:bg-secondary-500"
+										} disabled:opacity-50 disabled:cursor-not-allowed`}
+									>
+										Disable
+									</button>
+								</div>
+
+								{/* Success/Error Message */}
+								{updateMessage.text && (
+									<div
+										className={`text-sm ${
+											updateMessage.text.includes("successfully")
+												? "text-green-600 dark:text-green-400"
+												: "text-red-600 dark:text-red-400"
+										}`}
+									>
+										{updateMessage.text}
 									</div>
 								)}
 							</div>
-
-							{/* Action Buttons */}
-							<div className="flex flex-wrap gap-2">
-								<button
-									type="button"
-									onClick={() => toggleHostDownAlertsMutation.mutate(null)}
-									disabled={
-										toggleHostDownAlertsMutation.isPending ||
-										host?.host_down_alerts_enabled === null
-									}
-									className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${
-										host?.host_down_alerts_enabled === null
-											? "bg-primary-600 text-white"
-											: "bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-300 hover:bg-secondary-300 dark:hover:bg-secondary-500"
-									} disabled:opacity-50 disabled:cursor-not-allowed`}
-								>
-									Inherit
-								</button>
-								<button
-									type="button"
-									onClick={() => toggleHostDownAlertsMutation.mutate(true)}
-									disabled={
-										toggleHostDownAlertsMutation.isPending ||
-										host?.host_down_alerts_enabled === true
-									}
-									className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${
-										host?.host_down_alerts_enabled === true
-											? "bg-green-600 text-white"
-											: "bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-300 hover:bg-secondary-300 dark:hover:bg-secondary-500"
-									} disabled:opacity-50 disabled:cursor-not-allowed`}
-								>
-									Enable
-								</button>
-								<button
-									type="button"
-									onClick={() => toggleHostDownAlertsMutation.mutate(false)}
-									disabled={
-										toggleHostDownAlertsMutation.isPending ||
-										host?.host_down_alerts_enabled === false
-									}
-									className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${
-										host?.host_down_alerts_enabled === false
-											? "bg-red-600 text-white"
-											: "bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-300 hover:bg-secondary-300 dark:hover:bg-secondary-500"
-									} disabled:opacity-50 disabled:cursor-not-allowed`}
-								>
-									Disable
-								</button>
-							</div>
-
-							{/* Success/Error Message */}
-							{updateMessage.text && (
-								<div
-									className={`text-sm ${
-										updateMessage.text.includes("successfully")
-											? "text-green-600 dark:text-green-400"
-											: "text-red-600 dark:text-red-400"
-									}`}
-								>
-									{updateMessage.text}
-								</div>
-							)}
 						</div>
-					</div>
+					)}
 				</div>
 
 				{/* Desktop View - Tab Interface */}
@@ -2199,17 +2206,19 @@ const HostDetail = () => {
 						>
 							Integrations
 						</button>
-						<button
-							type="button"
-							onClick={() => handleTabChange("reporting")}
-							className={`px-4 py-2 text-sm font-medium ${
-								activeTab === "reporting"
-									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-									: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
-							}`}
-						>
-							Reporting
-						</button>
+						{settings?.alerts_enabled !== false && (
+							<button
+								type="button"
+								onClick={() => handleTabChange("reporting")}
+								className={`px-4 py-2 text-sm font-medium ${
+									activeTab === "reporting"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
+								}`}
+							>
+								Reporting
+							</button>
+						)}
 						{integrationsData?.data?.integrations?.docker && (
 							<button
 								type="button"
@@ -4483,7 +4492,11 @@ const HostDetail = () => {
 													Global Setting
 												</label>
 												<div className="text-sm text-secondary-600 dark:text-secondary-300">
-													{hostDownAlertConfig.is_enabled ? (
+													{settings?.alerts_enabled === false ? (
+														<span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+															Disabled (Master Switch Off)
+														</span>
+													) : hostDownAlertConfig.is_enabled ? (
 														<span className="inline-flex items-center px-2 py-1 rounded bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
 															Enabled
 														</span>
@@ -4492,11 +4505,12 @@ const HostDetail = () => {
 															Disabled
 														</span>
 													)}
-													{host?.host_down_alerts_enabled === null && (
-														<span className="ml-2 text-xs text-secondary-500 dark:text-secondary-400">
-															(currently inherited)
-														</span>
-													)}
+													{host?.host_down_alerts_enabled === null &&
+														settings?.alerts_enabled !== false && (
+															<span className="ml-2 text-xs text-secondary-500 dark:text-secondary-400">
+																(currently inherited)
+															</span>
+														)}
 												</div>
 											</div>
 										)}
