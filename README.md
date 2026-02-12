@@ -29,7 +29,7 @@ PatchMon is an enterprise-grade platform that gives operations teams a single pa
 
 Whether you manage ten servers or ten thousand, PatchMon provides the tooling, automation and auditability that modern infrastructure teams demand.
 
-![Dashboard Screenshot](https://raw.githubusercontent.com/PatchMon/PatchMon/main/dashboard.jpeg)
+![Dashboard Screenshot](https://raw.githubusercontent.com/PatchMon/PatchMon/main/dashboard.png)
 
 ---
 
