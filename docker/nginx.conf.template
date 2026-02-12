@@ -5,6 +5,10 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    # Disable access logging to reduce noise in Docker logs
+    # Enable this for debugging: access_log /dev/stdout;
+    access_log off;
+
     tcp_nopush on;
     gzip on;
     gzip_vary on;
