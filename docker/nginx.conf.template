@@ -109,8 +109,8 @@ server {
         add_header Access-Control-Allow-Origin *;
     }
 
-    # Static assets caching (exclude Bull Board assets)
-    location ~* ^/(?!bullboard).*\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+    # Static assets caching (exclude Bull Board and API assets like Swagger UI)
+    location ~* ^/(?!bullboard|api/).*\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
         expires 1y;
         add_header Cache-Control "public, immutable";
     }

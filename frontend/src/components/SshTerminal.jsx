@@ -8,6 +8,7 @@ import {
 	ChevronDown,
 	Copy,
 	Download,
+	Info,
 	Loader2,
 	PanelRightClose,
 	PanelRightOpen,
@@ -1019,6 +1020,15 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 									<span className="text-xs font-medium text-secondary-300 group-hover:text-secondary-200 transition-colors">
 										Proxy via Agent
 									</span>
+									<a
+										href="https://docs.patchmon.net/link/31#bkmrk-ssh-proxy-%28ssh-proxy"
+										target="_blank"
+										rel="noopener noreferrer"
+										title="SSH Proxy documentation"
+										className="text-secondary-500 hover:text-primary-400 transition-colors"
+									>
+										<Info className="h-3.5 w-3.5" />
+									</a>
 								</label>
 							</div>
 

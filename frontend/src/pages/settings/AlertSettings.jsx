@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw } from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { adminUsersAPI, alertsAPI, settingsAPI } from "../../utils/api";
 
@@ -246,24 +246,33 @@ const AlertSettings = () => {
 							Reporting page will be hidden.
 						</p>
 					</div>
-					<label className="relative inline-flex items-center cursor-pointer">
-						<input
-							type="checkbox"
-							checked={settings?.alerts_enabled !== false}
-							onChange={(e) => {
+					<div className="flex items-center gap-3">
+						<button
+							type="button"
+							onClick={() => {
 								updateSettingsMutation.mutate({
-									...settings,
-									alerts_enabled: e.target.checked,
+									alerts_enabled: !(settings?.alerts_enabled !== false),
 								});
 							}}
 							disabled={updateSettingsMutation.isPending}
-							className="sr-only peer"
-						/>
-						<div className="w-11 h-6 bg-secondary-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-300 dark:peer-focus:ring-primary-800 rounded-full peer dark:bg-secondary-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-secondary-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-secondary-600 peer-checked:bg-primary-600"></div>
-						<span className="ml-3 text-sm font-medium text-secondary-700 dark:text-secondary-300">
+							className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+								settings?.alerts_enabled !== false
+									? "bg-primary-600 dark:bg-primary-500"
+									: "bg-secondary-300 dark:bg-secondary-600"
+							} disabled:opacity-50 disabled:cursor-not-allowed`}
+						>
+							<span
+								className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+									settings?.alerts_enabled !== false
+										? "translate-x-4"
+										: "translate-x-0"
+								}`}
+							/>
+						</button>
+						<span className="text-sm font-medium text-secondary-700 dark:text-secondary-300">
 							{settings?.alerts_enabled !== false ? "Enabled" : "Disabled"}
 						</span>
-					</label>
+					</div>
 				</div>
 				{settings?.alerts_enabled === false && (
 					<div className="mt-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
@@ -395,16 +404,24 @@ const AlertTypeTableRow = ({ config, onUpdate, isSaving, usersData }) => {
 
 			{/* Enabled */}
 			<td className="px-6 py-4 whitespace-nowrap">
-				<label className="relative inline-flex items-center cursor-pointer">
-					<input
-						type="checkbox"
-						checked={localConfig.is_enabled}
-						onChange={(e) => handleFieldChange("is_enabled", e.target.checked)}
-						disabled={isSaving}
-						className="sr-only peer"
+				<button
+					type="button"
+					onClick={() =>
+						handleFieldChange("is_enabled", !localConfig.is_enabled)
+					}
+					disabled={isSaving}
+					className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+						localConfig.is_enabled
+							? "bg-primary-600 dark:bg-primary-500"
+							: "bg-secondary-300 dark:bg-secondary-600"
+					} disabled:opacity-50 disabled:cursor-not-allowed`}
+				>
+					<span
+						className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+							localConfig.is_enabled ? "translate-x-4" : "translate-x-0"
+						}`}
 					/>
-					<div className="w-9 h-5 bg-secondary-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary-300 dark:peer-focus:ring-primary-800 rounded-full peer dark:bg-secondary-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-secondary-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-secondary-600 peer-checked:bg-primary-600"></div>
-				</label>
+				</button>
 			</td>
 
 			{/* Default Severity */}
@@ -427,18 +444,29 @@ const AlertTypeTableRow = ({ config, onUpdate, isSaving, usersData }) => {
 			{/* Auto-Assign */}
 			<td className="px-6 py-4 whitespace-nowrap">
 				<div className="flex flex-col gap-2">
-					<label className="relative inline-flex items-center cursor-pointer">
-						<input
-							type="checkbox"
-							checked={localConfig.auto_assign_enabled}
-							onChange={(e) =>
-								handleFieldChange("auto_assign_enabled", e.target.checked)
-							}
-							disabled={isSaving || !localConfig.is_enabled}
-							className="sr-only peer disabled:opacity-50"
+					<button
+						type="button"
+						onClick={() =>
+							handleFieldChange(
+								"auto_assign_enabled",
+								!localConfig.auto_assign_enabled,
+							)
+						}
+						disabled={isSaving || !localConfig.is_enabled}
+						className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+							localConfig.auto_assign_enabled
+								? "bg-primary-600 dark:bg-primary-500"
+								: "bg-secondary-300 dark:bg-secondary-600"
+						} disabled:opacity-50 disabled:cursor-not-allowed`}
+					>
+						<span
+							className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+								localConfig.auto_assign_enabled
+									? "translate-x-4"
+									: "translate-x-0"
+							}`}
 						/>
-						<div className="w-9 h-5 bg-secondary-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary-300 dark:peer-focus:ring-primary-800 rounded-full peer dark:bg-secondary-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-secondary-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-secondary-600 peer-checked:bg-primary-600 disabled:opacity-50"></div>
-					</label>
+					</button>
 					{localConfig.auto_assign_enabled && localConfig.is_enabled && (
 						<select
 							value={localConfig.auto_assign_user_id || ""}
@@ -495,18 +523,29 @@ const AlertTypeTableRow = ({ config, onUpdate, isSaving, usersData }) => {
 
 			{/* Notifications */}
 			<td className="px-6 py-4 whitespace-nowrap">
-				<label className="relative inline-flex items-center cursor-pointer">
-					<input
-						type="checkbox"
-						checked={localConfig.notification_enabled}
-						onChange={(e) =>
-							handleFieldChange("notification_enabled", e.target.checked)
-						}
-						disabled={isSaving || !localConfig.is_enabled}
-						className="sr-only peer disabled:opacity-50"
+				<button
+					type="button"
+					onClick={() =>
+						handleFieldChange(
+							"notification_enabled",
+							!localConfig.notification_enabled,
+						)
+					}
+					disabled={isSaving || !localConfig.is_enabled}
+					className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+						localConfig.notification_enabled
+							? "bg-primary-600 dark:bg-primary-500"
+							: "bg-secondary-300 dark:bg-secondary-600"
+					} disabled:opacity-50 disabled:cursor-not-allowed`}
+				>
+					<span
+						className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+							localConfig.notification_enabled
+								? "translate-x-4"
+								: "translate-x-0"
+						}`}
 					/>
-					<div className="w-9 h-5 bg-secondary-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary-300 dark:peer-focus:ring-primary-800 rounded-full peer dark:bg-secondary-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-secondary-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-secondary-600 peer-checked:bg-primary-600 disabled:opacity-50"></div>
-				</label>
+				</button>
 			</td>
 		</tr>
 	);

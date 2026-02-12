@@ -1,34 +1,45 @@
-## 📝 ALERT : Auto-update of Agent issue
+## 🎉 PatchMon 1.4.0
 
-Versions <1.3.6 have an issue where the service does not restart after auto-update. OpenRC systems are unaffected and work correctly.
-This means you will unfortunately have to use `systemctl start patchmon-agent` on your systems to load up 1.3.7 agent when it auto-updates shortly.
+A major release with security compliance scanning, OIDC SSO, an alerting engine, web SSH terminal, and AI-assisted terminal support.
 
-Very sorry for this, future versions are fixed - I built this release notes notification feature specifically to notify you of this.
+### 🛡️ Security Compliance Scanning
+- **OpenSCAP CIS Benchmark scanning** directly from the agent (Level 1 / Level 2)
+- **Docker Bench for Security** when Docker integration is enabled
+- **Compliance dashboard** with fleet-wide scores, pass/fail breakdowns, and scan history
+- **Optional auto-remediation** of failed rules during scans
 
----
+### 🔐 OIDC Single Sign-On
+- **OpenID Connect authentication** with Authentik, Keycloak, Okta, or any OIDC provider
+- **Automatic user provisioning** on first OIDC login
+- **Group-based role mapping** from your identity provider to PatchMon roles
+- **Option to disable local auth** and enforce SSO-only login
 
-## 🎉 New Features & Improvements :
+### 🔔 Alerting & Reporting
+- **New Reporting page** with filtering by severity, type, status, and assignment
+- **Host Down alerts** real time view of host uptime
+- **Alert types** including server update, agent update, and host down
+- **Per-alert-type configuration** for default severity, auto-assignment, escalation, and retention
 
-**Mobile UI**: Mobile user interface improvements are mostly complete, providing a better experience on mobile devices.
+### 💻 Web SSH Terminal
+- **Browser-based SSH** to any host from the PatchMon UI
+- **Direct and proxy modes** (proxy mode routes through the agent, no SSH port exposure needed)
 
-**Systemctl Helper Script**: In future versions (1.3.7+), a systemctl helper script will be available to assist with auto-update service restarts.
+### 🤖 AI Terminal Assistant
+- **AI chat panel** inside the SSH terminal for command suggestions and troubleshooting
+- **Multiple providers** supported: OpenRouter, Anthropic, OpenAI, Google Gemini
+- **Context-aware** using your recent terminal output
 
-**Staggered Agent Intervals**: Agents now report at staggered times to prevent overwhelming the PatchMon server. If the agent report interval is set to 60 minutes, different hosts will report at different times. This is in the `config.yml` as "report_offset: nxyz"
+### 🖥️ UI Improvements
+- **Toast notifications** replacing disruptive `alert()` popups
+- **Error boundary** with crash recovery and a copyable error report
+- **"Waiting for Connection" screen** with real-time status when onboarding a new host
+- **Swagger / OpenAPI docs** served at `/api-docs` on the server
 
-**Reboot Detection Information**: Reboot detection information is now stored in the database. When the "Reboot Required" flag is displayed, hovering over it will show the specific reason why a reboot is needed (Reboot feature still needs work and it will be much better in 1.3.8)
 
-**JSON Report Output**: The `patchmon-agent report --json` command now outputs the complete report payload to the console in JSON format instead of sending it to the PatchMon server. This is very useful for integrating PatchMon agent data with other tools and for diagnostic purposes.
+### 🔧 Other
+- **Superuser management permission** (`can_manage_superusers`) for finer-grained RBAC
+- **More stats** and details on hosts with added flags such as ```?include=stats``` or ```?updates_only=true```
 
-**Persistent Docker Toggle**: Docker integration toggle state is now persisted in the database, eliminating in-memory configuration issues. No more losing Docker settings on container restarts (thanks to the community for initiating this feature).
 
-**Config.yml Synchronization**: The agent now writes and compares the `config.yml` file with the server configuration upon startup, ensuring better synchronization of settings between the agent and server.
-
-**Network Information Page**: Enhanced network information page to display IPv6 addresses and support multiple network interfaces, providing more comprehensive network details.
-
-**Auto-Update Logic Fix**: Fixed an issue where agents would auto-update even when per-host auto-update was disabled. The logic now properly honors both server-wide auto-update settings and per-host auto-update settings.
-
-**Prisma Version Fix**: Fixed Prisma version issues affecting Kubernetes deployments by statically setting the Prisma version in package.json files.
-
-**Hiding Github Version**: Added a toggle in Server Version settings to disable showing the github release notes on the login screen
-
+#### Plus Much Much More
 ---

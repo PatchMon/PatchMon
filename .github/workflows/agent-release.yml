@@ -43,6 +43,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarch == 'arm' && '6' || '' }}
           CGO_ENABLED: 0
         run: |
           OUTPUT_NAME="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"

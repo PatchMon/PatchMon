@@ -283,6 +283,7 @@ const Layout = ({ children }) => {
 					name: "Docker",
 					href: "/docker",
 					icon: Container,
+					beta: true,
 				});
 			}
 

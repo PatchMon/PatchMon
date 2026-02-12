@@ -119,7 +119,7 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -ldflags="-s -w" -o patchmon-agent-linux-amd64 ./cmd/patchmon-agent
           CGO_ENABLED=0 GOOS=linux GOARCH=386 go build -buildvcs=false -ldflags="-s -w" -o patchmon-agent-linux-386 ./cmd/patchmon-agent
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -ldflags="-s -w" -o patchmon-agent-linux-arm64 ./cmd/patchmon-agent
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm go build -buildvcs=false -ldflags="-s -w" -o patchmon-agent-linux-arm ./cmd/patchmon-agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 go build -buildvcs=false -ldflags="-s -w" -o patchmon-agent-linux-arm ./cmd/patchmon-agent
 
       - name: Verify binaries exist and are executable
         working-directory: agent-source-code

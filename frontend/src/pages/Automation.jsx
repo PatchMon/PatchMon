@@ -63,25 +63,31 @@ const Automation = () => {
 		switch (status) {
 			case "Success":
 				return (
-					<span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800">
+					<span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
 						Success
 					</span>
 				);
 			case "Failed":
 				return (
-					<span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-800">
+					<span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
 						Failed
+					</span>
+				);
+			case "Skipped (Disabled)":
+				return (
+					<span className="px-2 py-1 text-xs font-medium rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+						Skipped (Disabled)
 					</span>
 				);
 			case "Never run":
 				return (
-					<span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800">
+					<span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
 						Never run
 					</span>
 				);
 			default:
 				return (
-					<span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800">
+					<span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
 						{status}
 					</span>
 				);
@@ -179,6 +185,26 @@ const Automation = () => {
 				year: "numeric",
 			});
 		}
+		if (schedule === "Every 5 minutes") {
+			const now = new Date();
+			const nextRun = new Date(now);
+			// Round up to the next 5-minute mark
+			const minutes = now.getMinutes();
+			const nextFive = Math.ceil((minutes + 1) / 5) * 5;
+			if (nextFive >= 60) {
+				nextRun.setHours(nextRun.getHours() + 1, nextFive - 60, 0, 0);
+			} else {
+				nextRun.setMinutes(nextFive, 0, 0);
+			}
+			return nextRun.toLocaleString([], {
+				hour12: true,
+				hour: "numeric",
+				minute: "2-digit",
+				day: "numeric",
+				month: "numeric",
+				year: "numeric",
+			});
+		}
 		return "Unknown";
 	};
 
@@ -228,6 +254,18 @@ const Automation = () => {
 				nextRun.setMinutes(30, 0, 0);
 			} else {
 				nextRun.setHours(nextRun.getHours() + 1, 0, 0, 0);
+			}
+			return nextRun.getTime();
+		}
+		if (schedule === "Every 5 minutes") {
+			const now = new Date();
+			const nextRun = new Date(now);
+			const minutes = now.getMinutes();
+			const nextFive = Math.ceil((minutes + 1) / 5) * 5;
+			if (nextFive >= 60) {
+				nextRun.setHours(nextRun.getHours() + 1, nextFive - 60, 0, 0);
+			} else {
+				nextRun.setMinutes(nextFive, 0, 0);
 			}
 			return nextRun.getTime();
 		}
@@ -281,6 +319,10 @@ const Automation = () => {
 				endpoint = "/automation/trigger/agent-collection";
 			} else if (jobType === "system-statistics") {
 				endpoint = "/automation/trigger/system-statistics";
+			} else if (jobType === "alert-cleanup") {
+				endpoint = "/automation/trigger/alert-cleanup";
+			} else if (jobType === "host-status-monitor") {
+				endpoint = "/automation/trigger/host-status-monitor";
 			}
 
 			const _response = await api.post(endpoint, data);
@@ -564,6 +606,14 @@ const Automation = () => {
 															automation.queue.includes("system-statistics")
 														) {
 															triggerManualJob("system-statistics");
+														} else if (
+															automation.queue.includes("alert-cleanup")
+														) {
+															triggerManualJob("alert-cleanup");
+														} else if (
+															automation.queue.includes("host-status-monitor")
+														) {
+															triggerManualJob("host-status-monitor");
 														}
 													}}
 													className="inline-flex items-center justify-center w-8 h-8 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200 flex-shrink-0"
@@ -711,6 +761,16 @@ const Automation = () => {
 																	automation.queue.includes("system-statistics")
 																) {
 																	triggerManualJob("system-statistics");
+																} else if (
+																	automation.queue.includes("alert-cleanup")
+																) {
+																	triggerManualJob("alert-cleanup");
+																} else if (
+																	automation.queue.includes(
+																		"host-status-monitor",
+																	)
+																) {
+																	triggerManualJob("host-status-monitor");
 																}
 															}}
 															className="inline-flex items-center justify-center w-6 h-6 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200"
