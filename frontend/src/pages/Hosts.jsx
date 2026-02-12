@@ -971,7 +971,7 @@ const Hosts = () => {
 							uptimeStr.trim() === "" ||
 							uptimeStr.toLowerCase() === "unknown"
 						) {
-							return null; // Use null as sentinel for invalid uptime
+							return -1; // Sort invalid/missing uptime to the end
 						}
 
 						let total = 0;
@@ -985,32 +985,11 @@ const Hosts = () => {
 						if (hoursMatch) total += parseInt(hoursMatch[1], 10) * 60;
 						if (minutesMatch) total += parseInt(minutesMatch[1], 10);
 
-						// If no matches found, return null to mark as invalid
-						return total > 0 ? total : null;
+						// If no matches found, return -1 to sort to the end
+						return total > 0 ? total : -1;
 					};
-					const aUptime = parseUptimeToMinutes(a.system_uptime);
-					const bUptime = parseUptimeToMinutes(b.system_uptime);
-
-					// Handle invalid uptime (null) - always sort to the end
-					if (aUptime === null && bUptime === null) {
-						aValue = 0;
-						bValue = 0;
-					} else if (aUptime === null) {
-						aValue =
-							sortDirection === "asc"
-								? Number.MAX_SAFE_INTEGER
-								: Number.MIN_SAFE_INTEGER;
-						bValue = bUptime;
-					} else if (bUptime === null) {
-						aValue = aUptime;
-						bValue =
-							sortDirection === "asc"
-								? Number.MAX_SAFE_INTEGER
-								: Number.MIN_SAFE_INTEGER;
-					} else {
-						aValue = aUptime;
-						bValue = bUptime;
-					}
+					aValue = parseUptimeToMinutes(a.system_uptime);
+					bValue = parseUptimeToMinutes(b.system_uptime);
 					break;
 				}
 				case "last_update":
