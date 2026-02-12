@@ -150,22 +150,37 @@ export NODE_PATH="/app/node_modules:/app/backend/node_modules:$NODE_PATH"
 # Update agents (version-aware)
 update_agents
 
-# Check if ASSETS_DIR is set and writable (for custom branding support)
+# Check if ASSETS_DIR is set and ensure it's writable (for custom branding support)
 if [ -n "$ASSETS_DIR" ]; then
     if [ -d "$ASSETS_DIR" ]; then
+        # Automatically fix permissions if directory exists but isn't writable
+        if [ ! -w "$ASSETS_DIR" ]; then
+            log "⚠️  Assets directory is NOT writable: $ASSETS_DIR"
+            log "   Attempting to fix permissions automatically..."
+            # Try to make directory writable (works if we own it or it's world-writable)
+            # Note: We run as user 1000, so we can't chown, but we can chmod if we have access
+            chmod -R u+w "$ASSETS_DIR" 2>/dev/null || \
+                chmod -R a+w "$ASSETS_DIR" 2>/dev/null || true
+        fi
+        # Final check - verify it's now writable
         if [ -w "$ASSETS_DIR" ]; then
             log "✅ Assets directory is writable: $ASSETS_DIR"
         else
-            log "⚠️  WARNING: Assets directory is NOT writable: $ASSETS_DIR"
-            log "   Custom branding (logo uploads) will fail with a 500 error."
-            log "   Fix: run 'docker exec -u root <container> chmod 1777 $ASSETS_DIR'"
-            log "   Or recreate the branding_assets volume to pick up correct permissions."
+            log "⚠️  WARNING: Assets directory is still NOT writable: $ASSETS_DIR"
+            log "   Custom branding (logo uploads) may fail."
+            log "   The frontend container should fix this on startup, or manually run:"
+            log "   docker exec -u root <backend-container> chown -R 1000:1000 $ASSETS_DIR && chmod 755 $ASSETS_DIR"
         fi
     else
         log "⚠️  WARNING: Assets directory does not exist: $ASSETS_DIR"
         log "   Attempting to create it..."
-        mkdir -p "$ASSETS_DIR" 2>/dev/null && log "✅ Created assets directory: $ASSETS_DIR" || \
+        if mkdir -p "$ASSETS_DIR" 2>/dev/null; then
+            log "✅ Created assets directory: $ASSETS_DIR"
+            # Set correct permissions on newly created directory (we own it, so this works)
+            chmod 755 "$ASSETS_DIR" 2>/dev/null || true
+        else
             log "❌ ERROR: Failed to create assets directory. Custom branding will not work."
+        fi
     fi
 fi
 

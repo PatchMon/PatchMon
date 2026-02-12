@@ -46,12 +46,13 @@ COPY --from=builder /app/frontend/dist /usr/share/nginx/html
 USER root
 RUN cp -a /usr/share/nginx/html/assets /usr/share/nginx/html/assets_backup && \
     chown -R 101:101 /usr/share/nginx/html/assets_backup
-USER 101
 
 COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
 # Add init script to nginx-unprivileged's entrypoint.d (runs before template processing)
+# Script runs as root (we don't switch to USER 101) so it can fix volume permissions
 COPY --chmod=755 docker/frontend.docker-entrypoint.sh /docker-entrypoint.d/10-init-assets.sh
 
 EXPOSE 3000
 
+# Note: We stay as root here, but nginx-unprivileged's entrypoint will run nginx as user 101
 CMD ["nginx", "-g", "daemon off;"]
