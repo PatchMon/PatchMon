@@ -125,7 +125,7 @@ const Layout = ({ children }) => {
 		queryKey: ["alert-stats", "sidebar"],
 		queryFn: () => alertsAPI.getAlertStats().then((res) => res.data.data || {}),
 		enabled: canViewReports() && settings?.alerts_enabled !== false,
-		refetchInterval: 5000, // Refresh every 5 seconds for real-time updates
+		refetchInterval: 30000, // Refresh every 30 seconds to reduce API load
 		staleTime: 0, // Always consider stale
 	});
 

@@ -1,4 +1,5 @@
 const IORedis = require("ioredis");
+const logger = require("../../utils/logger");
 
 // Build TLS configuration if enabled
 function getTlsConfig() {
@@ -22,11 +23,11 @@ const redisConnection = {
 	// TLS configuration (set REDIS_TLS=true to enable)
 	tls: getTlsConfig(),
 	// Connection pooling settings
-	lazyConnect: true,
+	lazyConnect: false, // Connect immediately to ensure Redis is ready before commands
 	keepAlive: 30000,
-	connectTimeout: 30000, // Increased from 10s to 30s
-	commandTimeout: 30000, // Increased from 5s to 30s
-	enableReadyCheck: false,
+	connectTimeout: parseInt(process.env.REDIS_CONNECT_TIMEOUT_MS, 10) || 60000, // Default: 60s for slow networks
+	commandTimeout: parseInt(process.env.REDIS_COMMAND_TIMEOUT_MS, 10) || 60000, // Default: 60s to handle slow Redis operations
+	enableReadyCheck: true, // CRITICAL: Wait for Redis to be ready before sending commands - prevents command queueing and timeouts
 	// Reduce connection churn
 	family: 4, // Force IPv4
 	// Retry settings
@@ -42,7 +43,51 @@ let redisInstance = null;
 
 function getRedisConnection() {
 	if (!redisInstance) {
+		// Log connection attempt (without password)
+		const hasPassword = !!process.env.REDIS_PASSWORD;
+		logger.info(
+			`Connecting to Redis at ${redisConnection.host}:${redisConnection.port} (password: ${hasPassword ? "set" : "NOT SET"})`,
+		);
+
 		redisInstance = new IORedis(redisConnection);
+
+		// Connection event handlers for debugging
+		redisInstance.on("connect", () => {
+			logger.info("Redis connection established");
+		});
+
+		redisInstance.on("ready", () => {
+			logger.info("Redis connection ready - commands can now be sent");
+		});
+
+		redisInstance.on("error", (error) => {
+			logger.error(`Redis connection error: ${error.message}`);
+			// Log specific error types
+			if (error.message.includes("ECONNREFUSED")) {
+				logger.error(
+					"Redis connection refused - check if Redis is running and accessible",
+				);
+			} else if (
+				error.message.includes("NOAUTH") ||
+				error.message.includes("invalid password")
+			) {
+				logger.error(
+					"Redis authentication failed - check REDIS_PASSWORD environment variable",
+				);
+			} else if (error.message.includes("timeout")) {
+				logger.error(
+					"Redis command timeout - check Redis performance, memory usage, and connection pool limits",
+				);
+			}
+		});
+
+		redisInstance.on("close", () => {
+			logger.warn("Redis connection closed");
+		});
+
+		redisInstance.on("reconnecting", (delay) => {
+			logger.info(`Redis reconnecting in ${delay}ms`);
+		});
 
 		// Handle graceful shutdown
 		process.on("beforeExit", async () => {

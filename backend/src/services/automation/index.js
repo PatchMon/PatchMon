@@ -133,10 +133,23 @@ class QueueManager {
 	 * Initialize all workers
 	 */
 	async initializeWorkers() {
+		// Lock duration settings (in milliseconds)
+		// Default: 120 seconds - increased to handle network latency and slow Redis operations
+		// Must be significantly longer than lockRenewTime to allow for timeouts
+		const lockDuration =
+			parseInt(process.env.BULLMQ_LOCK_DURATION_MS, 10) || 120000;
+		// Lock renewal time (in milliseconds) - should be less than lockDuration and commandTimeout
+		// Default: 20 seconds - renews lock well before it expires, giving time for slow Redis operations
+		const lockRenewTime =
+			parseInt(process.env.BULLMQ_LOCK_RENEW_TIME_MS, 10) || 20000;
+
 		// Optimized worker options to reduce Redis connections
 		const workerOptions = {
 			connection: redisConnection,
 			concurrency: 1, // Keep concurrency low to reduce connections
+			// Lock settings - critical for preventing "Missing lock" errors
+			lockDuration: lockDuration, // How long a job can run before lock expires
+			lockRenewTime: lockRenewTime, // How often to renew the lock
 			// Connection optimization
 			maxStalledCount: 1,
 			stalledInterval: 30000,
@@ -146,6 +159,10 @@ class QueueManager {
 				maxStalledCount: 1,
 			},
 		};
+
+		logger.info(
+			`Worker lock configuration: lockDuration=${lockDuration}ms, lockRenewTime=${lockRenewTime}ms`,
+		);
 
 		// Version Update Check Worker
 		this.workers[QUEUE_NAMES.VERSION_UPDATE_CHECK] = new Worker(

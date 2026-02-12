@@ -123,7 +123,7 @@ const Compliance = () => {
 	const { data: activeScansData } = useQuery({
 		queryKey: ["compliance-active-scans"],
 		queryFn: () => complianceAPI.getActiveScans().then((res) => res.data),
-		refetchInterval: 5000, // Refresh every 5 seconds for active scans
+		refetchInterval: 30000, // Refresh every 30 seconds to reduce API load
 	});
 
 	// Fetch all hosts for bulk scan selection
