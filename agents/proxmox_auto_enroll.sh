@@ -179,8 +179,8 @@ while IFS= read -r line; do
     
     debug "  Detected architecture: $arch_raw -> $architecture"
     
-    # Get machine ID from container
-    machine_id=$(timeout 5 pct exec "$vmid" -- bash -c "cat /etc/machine-id 2>/dev/null || cat /var/lib/dbus/machine-id 2>/dev/null || echo 'proxmox-lxc-$vmid-'$(cat /proc/sys/kernel/random/uuid)" </dev/null 2>/dev/null || echo "proxmox-lxc-$vmid-unknown")
+    # Get machine ID from container (use sh -c for POSIX compatibility with Alpine/ash)
+    machine_id=$(timeout 5 pct exec "$vmid" -- sh -c "cat /etc/machine-id 2>/dev/null || cat /var/lib/dbus/machine-id 2>/dev/null || echo 'proxmox-lxc-$vmid-'$(cat /proc/sys/kernel/random/uuid)" </dev/null 2>/dev/null || echo "proxmox-lxc-$vmid-unknown")
 
     friendly_name="${HOST_PREFIX}${hostname}"
 
@@ -199,9 +199,9 @@ while IFS= read -r line; do
 
     # Check if agent is already installed and working BEFORE enrollment
     info "  Checking if agent is already configured..."
-    config_check=$(timeout 10 pct exec "$vmid" -- bash -c "
-        if [[ -f /etc/patchmon/config.yml ]] && [[ -f /etc/patchmon/credentials.yml ]]; then
-            if [[ -f /usr/local/bin/patchmon-agent ]]; then
+    config_check=$(timeout 10 pct exec "$vmid" -- sh -c "
+        if [ -f /etc/patchmon/config.yml ] && [ -f /etc/patchmon/credentials.yml ]; then
+            if [ -f /usr/local/bin/patchmon-agent ]; then
                 # Try to ping using existing configuration
                 if /usr/local/bin/patchmon-agent ping >/dev/null 2>&1; then
                     echo 'ping_success'
@@ -266,13 +266,13 @@ while IFS= read -r line; do
 
         # Ensure curl is installed in the container
         info "  Checking for curl in container..."
-        curl_check=$(timeout 10 pct exec "$vmid" -- bash -c "command -v curl >/dev/null 2>&1 && echo 'installed' || echo 'missing'" 2>/dev/null </dev/null || echo "error")
+        curl_check=$(timeout 10 pct exec "$vmid" -- sh -c "command -v curl >/dev/null 2>&1 && echo 'installed' || echo 'missing'" 2>/dev/null </dev/null || echo "error")
         
         if [[ "$curl_check" == "missing" ]]; then
             info "  Installing curl in container..."
             
             # Detect package manager and install curl
-            curl_install_output=$(timeout 60 pct exec "$vmid" -- bash -c "
+            curl_install_output=$(timeout 60 pct exec "$vmid" -- sh -c "
                 if command -v apt-get >/dev/null 2>&1; then
                     export DEBIAN_FRONTEND=noninteractive
                     apt-get update -qq && apt-get install -y -qq curl
@@ -318,7 +318,8 @@ while IFS= read -r line; do
         
         # Download and execute in separate steps to avoid stdin issues with piping
         # Pass CURL_FLAGS as environment variable to container
-        install_output=$(timeout 180 pct exec "$vmid" -- bash -c "
+        # Use sh -c for POSIX compatibility (Alpine uses ash, not bash)
+        install_output=$(timeout 180 pct exec "$vmid" -- sh -c "
             export CURL_FLAGS='$CURL_FLAGS'
             cd /tmp
             curl \$CURL_FLAGS \
@@ -326,7 +327,7 @@ while IFS= read -r line; do
                 -H \"X-API-KEY: $api_key\" \
                 -o patchmon-install.sh \
                 '$install_url' && \
-            bash patchmon-install.sh && \
+            sh patchmon-install.sh && \
             rm -f patchmon-install.sh
         " 2>&1 </dev/null) || install_exit_code=$?
 
@@ -459,7 +460,7 @@ if [[ ${#dpkg_error_containers[@]} -gt 0 ]]; then
                 
                 install_exit_code=0
                 # Pass CURL_FLAGS as environment variable to container
-                install_output=$(timeout 180 pct exec "$vmid" -- bash -c "
+                install_output=$(timeout 180 pct exec "$vmid" -- sh -c "
                     export CURL_FLAGS='$CURL_FLAGS'
                     cd /tmp
                     curl \$CURL_FLAGS \
@@ -467,7 +468,7 @@ if [[ ${#dpkg_error_containers[@]} -gt 0 ]]; then
                         -H \"X-API-KEY: $api_key\" \
                         -o patchmon-install.sh \
                         '$PATCHMON_URL/api/v1/hosts/install?arch=$architecture' && \
-                    bash patchmon-install.sh && \
+                    sh patchmon-install.sh && \
                     rm -f patchmon-install.sh
                 " 2>&1 </dev/null) || install_exit_code=$?
                 
