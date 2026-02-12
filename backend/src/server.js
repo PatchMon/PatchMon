@@ -909,8 +909,15 @@ async function startServer() {
 		// Schedule recurring jobs
 		await queueManager.scheduleAllJobs();
 
-		// Trigger social media stats collection on boot
-		await queueManager.triggerSocialMediaStats();
+		// Trigger social media stats collection on boot (non-blocking)
+		// Don't await - let it run in background so server can start immediately
+		queueManager.triggerSocialMediaStats().catch((error) => {
+			logger.error(
+				"Failed to trigger social media stats collection on startup:",
+				error.message,
+			);
+			// Don't block startup if this fails
+		});
 
 		// Set up Bull Board for queue monitoring
 		const serverAdapter = new ExpressAdapter();
