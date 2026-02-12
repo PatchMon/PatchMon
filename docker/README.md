@@ -20,7 +20,7 @@ PatchMon is a containerised application that monitors system patches and updates
 - `x.y.z`: Full version tags (e.g. `1.2.3`) - Use this for exact version pinning.
 - `x.y`: Minor version tags (e.g. `1.2`) - Use this to get the latest patch release in a minor version series.
 - `x`: Major version tags (e.g. `1`) - Use this to get the latest minor and patch release in a major version series.
-- `edge`: The latest development build with the most recent features and fixes. This tag may often be unstable and is intended only for testing and development purposes.
+- `edge`: The latest development build in main branch. This tag may often be unstable and is intended only for testing and development purposes.
 
 These tags are available for both backend and frontend images as they are versioned together.
 
@@ -28,42 +28,35 @@ These tags are available for both backend and frontend images as they are versio
 
 ### Production Deployment
 
-1. Download the [Docker Compose file](docker-compose.yml)
-2. Set a database password in the file where it says:
-   ```yaml
-   environment:
-     POSTGRES_PASSWORD: # CREATE A STRONG PASSWORD AND PUT IT HERE
-   ```
-3. Update the corresponding `DATABASE_URL` with your password in the backend service where it says:
-   ```yaml
-   environment:
-     DATABASE_URL: postgresql://patchmon_user:REPLACE_YOUR_POSTGRES_PASSWORD_HERE@database:5432/patchmon_db
-   ```
-4. Set a Redis password in the Redis service command where it says:
-   ```yaml
-   command: redis-server --requirepass your-redis-password-here
-   ```
-   Note: The Redis service uses a hardcoded password in the command line for better reliability and to avoid environment variable parsing issues.
-5. Update the corresponding `REDIS_PASSWORD` in the backend service where it says:
-   ```yaml
-   environment:
-     REDIS_PASSWORD: your-redis-password-here
-   ```
-6. Generate a strong JWT secret. You can do this like so:
+1. Download the Docker Compose file and environment example:
    ```bash
-   openssl rand -hex 64
+   mkdir patchmon && cd patchmon
+   curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/docker-compose.yml
+   curl -fsSL -o env.example https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/env.example
    ```
-7. Set a JWT secret in the backend service where it says:
-   ```yaml
-   environment:
-     JWT_SECRET: # CREATE A STRONG SECRET AND PUT IT HERE
+
+2. Create your `.env` file from the example:
+   ```bash
+   cp env.example .env
    ```
-8. Configure environment variables (see [Configuration](#configuration) section)
-9. Start the application:
+
+3. Generate and insert the three required secrets:
+   ```bash
+   sed -i "s/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=$(openssl rand -hex 32)/" .env
+   sed -i "s/^REDIS_PASSWORD=$/REDIS_PASSWORD=$(openssl rand -hex 32)/" .env
+   sed -i "s/^JWT_SECRET=$/JWT_SECRET=$(openssl rand -hex 64)/" .env
+   ```
+
+4. Edit `.env` and configure your server access settings (`SERVER_PROTOCOL`, `SERVER_HOST`, `SERVER_PORT`, `CORS_ORIGIN`). The defaults are set for `http://localhost:3000`.
+
+5. Start the application:
    ```bash
    docker compose up -d
    ```
-10. Access the application at `http://localhost:3000`
+
+6. Access the application at `http://localhost:3000`
+
+The `docker-compose.yml` reads all configuration from your `.env` file. You do not need to edit the compose file itself.
 
 ## Updating
 
@@ -72,7 +65,8 @@ By default, the compose file uses the `latest` tag for both backend and frontend
 This means you can update PatchMon to the latest version as easily as:
 
 ```bash
-docker compose up -d --pull
+docker compose pull
+docker compose up -d
 ```
 
 This command will:
@@ -99,7 +93,8 @@ When you do this, updating to a new version requires manually updating the image
 
 2. Then run the update command:
    ```bash
-   docker compose up -d --pull
+   docker compose pull
+   docker compose up -d
    ```
 
 > [!TIP]
@@ -107,44 +102,40 @@ When you do this, updating to a new version requires manually updating the image
 
 ## Configuration
 
-### Environment Variables
+All configuration is managed through the `.env` file. See `env.example` for a full list of available variables.
 
-#### Database Service
+### Required Variables
 
-| Variable            | Description       | Default          |
-| ------------------- | ----------------- | ---------------- |
-| `POSTGRES_DB`       | Database name     | `patchmon_db`    |
-| `POSTGRES_USER`     | Database user     | `patchmon_user`  |
-| `POSTGRES_PASSWORD` | Database password | **MUST BE SET!** |
+| Variable | Description |
+| -------- | ----------- |
+| `POSTGRES_PASSWORD` | Database password |
+| `REDIS_PASSWORD` | Redis password |
+| `JWT_SECRET` | JWT signing secret - Generate with `openssl rand -hex 64` |
+| `SERVER_PROTOCOL` | Protocol for agent connections (`http` or `https`) |
+| `SERVER_HOST` | Hostname for agent connections |
+| `SERVER_PORT` | Port for agent connections |
+| `CORS_ORIGIN` | Full URL used to access PatchMon in the browser |
 
-#### Redis Service
+### Optional Variables
 
-| Variable       | Description        | Default          |
-| -------------- | ------------------ | ---------------- |
-| `REDIS_PASSWORD` | Redis password    | **MUST BE SET!** |
+The `.env` file also supports optional variables for fine-tuning. These have sensible defaults and do not need to be changed for most deployments:
 
-> [!NOTE]
-> The Redis service uses a hardcoded password in the command line (`redis-server --requirepass your-password`) instead of environment variables or configuration files. This approach eliminates parsing issues and provides better reliability. The password must be set in both the Redis command and the backend service environment variables.
+- **Authentication**: `JWT_EXPIRES_IN`, `JWT_REFRESH_EXPIRES_IN`, `SESSION_INACTIVITY_TIMEOUT_MINUTES`, `DEFAULT_USER_ROLE`
+- **Account lockout**: `MAX_LOGIN_ATTEMPTS`, `LOCKOUT_DURATION_MINUTES`
+- **Password policy**: `PASSWORD_MIN_LENGTH`, `PASSWORD_REQUIRE_UPPERCASE`, `PASSWORD_REQUIRE_LOWERCASE`, `PASSWORD_REQUIRE_NUMBER`, `PASSWORD_REQUIRE_SPECIAL`
+- **Two-Factor Authentication**: `MAX_TFA_ATTEMPTS`, `TFA_LOCKOUT_DURATION_MINUTES`, `TFA_REMEMBER_ME_EXPIRES_IN`, `TFA_MAX_REMEMBER_SESSIONS`
+- **OIDC / SSO**: `OIDC_ENABLED`, `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI`, `OIDC_SCOPES`, and more
+- **Encryption**: `AI_ENCRYPTION_KEY`, `SESSION_SECRET`
+- **Database pool (Prisma)**: `DB_CONNECTION_LIMIT`, `DB_POOL_TIMEOUT`, `DB_CONNECT_TIMEOUT`, `DB_IDLE_TIMEOUT`, `DB_MAX_LIFETIME`
+- **Database transaction timeouts**: `DB_TRANSACTION_MAX_WAIT`, `DB_TRANSACTION_TIMEOUT`, `DB_TRANSACTION_LONG_TIMEOUT`
+- **Database connection retry**: `PM_DB_CONN_MAX_ATTEMPTS`, `PM_DB_CONN_WAIT_INTERVAL`
+- **Rate limiting**: `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX`, `AUTH_RATE_LIMIT_WINDOW_MS`, `AUTH_RATE_LIMIT_MAX`, `AGENT_RATE_LIMIT_WINDOW_MS`, `AGENT_RATE_LIMIT_MAX`
+- **Logging**: `LOG_LEVEL`, `ENABLE_LOGGING`, `PM_LOG_TO_CONSOLE`, `PRISMA_LOG_QUERIES`
+- **Network**: `ENABLE_HSTS`, `TRUST_PROXY`, `CORS_ORIGINS`
+- **Body size limits**: `JSON_BODY_LIMIT`, `AGENT_UPDATE_BODY_LIMIT`
+- **Timezone**: `TZ`
 
-#### Backend Service
-
-##### Database Configuration
-
-| Variable                   | Description                                          | Default                                          |
-| -------------------------- | ---------------------------------------------------- | ------------------------------------------------ |
-| `DATABASE_URL`             | PostgreSQL connection string                         | **MUST BE UPDATED WITH YOUR POSTGRES_PASSWORD!** |
-| `PM_DB_CONN_MAX_ATTEMPTS`  | Maximum database connection attempts                 | `30`                                             |
-| `PM_DB_CONN_WAIT_INTERVAL` | Wait interval between connection attempts in seconds | `2`                                              |
-
-##### Database Connection Pool Configuration (Prisma)
-
-| Variable              | Description                                                | Default |
-| --------------------- | ---------------------------------------------------------- | ------- |
-| `DB_CONNECTION_LIMIT` | Maximum number of database connections per instance        | `30`    |
-| `DB_POOL_TIMEOUT`     | Seconds to wait for an available connection before timeout | `20`    |
-| `DB_CONNECT_TIMEOUT`  | Seconds to wait for initial database connection            | `10`    |
-| `DB_IDLE_TIMEOUT`     | Seconds before closing idle connections                    | `300`   |
-| `DB_MAX_LIFETIME`     | Maximum lifetime of a connection in seconds                | `1800`  |
+See `env.example` for the full list with defaults and descriptions.
 
 > [!TIP]
 > The connection pool limit should be adjusted based on your deployment size:
@@ -154,74 +145,19 @@ When you do this, updating to a new version requires manually updating the image
 > 
 > Each connection pool serves one backend instance. If you have concurrent operations (multiple users, background jobs, agent checkins), increase the pool size accordingly.
 
-##### Redis Configuration
-
-| Variable        | Description                    | Default |
-| --------------- | ------------------------------ | ------- |
-| `REDIS_HOST`    | Redis server hostname          | `redis` |
-| `REDIS_PORT`    | Redis server port              | `6379`  |
-| `REDIS_PASSWORD` | Redis authentication password | **MUST BE UPDATED WITH YOUR REDIS_PASSWORD!** |
-| `REDIS_DB`      | Redis database number          | `0`     |
-
-##### Authentication & Security
-
-| Variable                             | Description                                               | Default          |
-| ------------------------------------ | --------------------------------------------------------- | ---------------- |
-| `JWT_SECRET`                         | JWT signing secret - Generate with `openssl rand -hex 64` | **MUST BE SET!** |
-| `JWT_EXPIRES_IN`                     | JWT token expiration time                                 | `1h`             |
-| `JWT_REFRESH_EXPIRES_IN`             | JWT refresh token expiration time                         | `7d`             |
-| `SESSION_INACTIVITY_TIMEOUT_MINUTES` | Session inactivity timeout in minutes                     | `30`             |
-| `DEFAULT_USER_ROLE`                  | Default role for new users                                | `user`           |
-
-##### Server & Network Configuration
-
-| Variable          | Description                                                                                     | Default                 |
-| ----------------- | ----------------------------------------------------------------------------------------------- | ----------------------- |
-| `PORT`            | Backend API port                                                                                | `3001`                  |
-| `SERVER_PROTOCOL` | Frontend server protocol (`http` or `https`)                                                    | `http`                  |
-| `SERVER_HOST`     | Frontend server host                                                                            | `localhost`             |
-| `SERVER_PORT`     | Frontend server port                                                                            | `3000` (Change to 443 if using a FQDN in `SERVER_HOST` variable)|
-| `CORS_ORIGIN`     | CORS origin URL                                                                                 | `http://localhost:3000` |
-| `ENABLE_HSTS`     | Enable HTTP Strict Transport Security                                                           | `true`                  |
-| `TRUST_PROXY`     | Trust proxy headers - See [Express.js docs](https://expressjs.com/en/guide/behind-proxies.html) | `true`                  |
-
-##### Rate Limiting
-
-| Variable                     | Description                                         | Default  |
-| ---------------------------- | --------------------------------------------------- | -------- |
-| `RATE_LIMIT_WINDOW_MS`       | Rate limiting window in milliseconds                | `900000` |
-| `RATE_LIMIT_MAX`             | Maximum requests per window                         | `5000`   |
-| `AUTH_RATE_LIMIT_WINDOW_MS`  | Authentication rate limiting window in milliseconds | `600000` |
-| `AUTH_RATE_LIMIT_MAX`        | Maximum authentication requests per window          | `500`    |
-| `AGENT_RATE_LIMIT_WINDOW_MS` | Agent API rate limiting window in milliseconds      | `60000`  |
-| `AGENT_RATE_LIMIT_MAX`       | Maximum agent requests per window                   | `1000`   |
-
-##### Logging
-
-| Variable         | Description                                      | Default |
-| ---------------- | ------------------------------------------------ | ------- |
-| `LOG_LEVEL`      | Logging level (`debug`, `info`, `warn`, `error`) | `info`  |
-| `ENABLE_LOGGING` | Enable application logging                       | `true`  |
-
-#### Frontend Service
-
-| Variable       | Description              | Default   |
-| -------------- | ------------------------ | --------- |
-| `BACKEND_HOST` | Backend service hostname | `backend` |
-| `BACKEND_PORT` | Backend service port     | `3001`    |
-
 ### Volumes
 
-The compose file creates three Docker volumes:
+The compose file creates four Docker volumes:
 
 * `postgres_data`: PostgreSQL's data directory.
 * `redis_data`: Redis's data directory.
 * `agent_files`: PatchMon's agent files.
+* `branding_assets`: Custom branding files (logos, favicons) - optional, new in 1.4.0.
 
-If you wish to bind either if their respective container paths to a host path rather than a Docker volume, you can do so in the Docker Compose file.
+If you wish to bind any of their respective container paths to a host path rather than a Docker volume, you can do so in the Docker Compose file.
 
 > [!TIP]
-> The backend container runs as user & group ID 1000. If you plan to re-bind the agent files directory, ensure that the same user and/or group ID has permission to write to the host path to which it's bound.
+> The backend container runs as user & group ID 1000. If you plan to rebind the agent files or branding assets directory, ensure that the same user and/or group ID has permission to write to the host path to which it's bound.
 
 ---
 
