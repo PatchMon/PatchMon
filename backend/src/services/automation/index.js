@@ -15,7 +15,6 @@ const DockerInventoryCleanup = require("./dockerInventoryCleanup");
 const DockerImageUpdateCheck = require("./dockerImageUpdateCheck");
 const MetricsReporting = require("./metricsReporting");
 const SystemStatistics = require("./systemStatistics");
-const SocialMediaStats = require("./socialMediaStats");
 const AlertCleanup = require("./alertCleanup");
 const HostStatusMonitor = require("./hostStatusMonitor");
 
@@ -29,7 +28,6 @@ const QUEUE_NAMES = {
 	DOCKER_IMAGE_UPDATE_CHECK: "docker-image-update-check",
 	METRICS_REPORTING: "metrics-reporting",
 	SYSTEM_STATISTICS: "system-statistics",
-	SOCIAL_MEDIA_STATS: "social-media-stats",
 	AGENT_COMMANDS: "agent-commands",
 	ALERT_CLEANUP: "alert-cleanup",
 	HOST_STATUS_MONITOR: "host-status-monitor",
@@ -116,9 +114,6 @@ class QueueManager {
 			this,
 		);
 		this.automations[QUEUE_NAMES.SYSTEM_STATISTICS] = new SystemStatistics(
-			this,
-		);
-		this.automations[QUEUE_NAMES.SOCIAL_MEDIA_STATS] = new SocialMediaStats(
 			this,
 		);
 		this.automations[QUEUE_NAMES.ALERT_CLEANUP] = new AlertCleanup(this);
@@ -232,15 +227,6 @@ class QueueManager {
 			QUEUE_NAMES.SYSTEM_STATISTICS,
 			this.automations[QUEUE_NAMES.SYSTEM_STATISTICS].process.bind(
 				this.automations[QUEUE_NAMES.SYSTEM_STATISTICS],
-			),
-			workerOptions,
-		);
-
-		// Social Media Stats Worker
-		this.workers[QUEUE_NAMES.SOCIAL_MEDIA_STATS] = new Worker(
-			QUEUE_NAMES.SOCIAL_MEDIA_STATS,
-			this.automations[QUEUE_NAMES.SOCIAL_MEDIA_STATS].process.bind(
-				this.automations[QUEUE_NAMES.SOCIAL_MEDIA_STATS],
 			),
 			workerOptions,
 		);
@@ -457,7 +443,6 @@ class QueueManager {
 		await this.automations[QUEUE_NAMES.DOCKER_IMAGE_UPDATE_CHECK].schedule();
 		await this.automations[QUEUE_NAMES.METRICS_REPORTING].schedule();
 		await this.automations[QUEUE_NAMES.SYSTEM_STATISTICS].schedule();
-		await this.automations[QUEUE_NAMES.SOCIAL_MEDIA_STATS].schedule();
 		await this.automations[QUEUE_NAMES.ALERT_CLEANUP].schedule();
 		await this.automations[QUEUE_NAMES.HOST_STATUS_MONITOR].schedule();
 	}
@@ -501,10 +486,6 @@ class QueueManager {
 
 	async triggerMetricsReporting() {
 		return this.automations[QUEUE_NAMES.METRICS_REPORTING].triggerManual();
-	}
-
-	async triggerSocialMediaStats() {
-		return this.automations[QUEUE_NAMES.SOCIAL_MEDIA_STATS].triggerManual();
 	}
 
 	async triggerAlertCleanup() {

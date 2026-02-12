@@ -1,5 +1,5 @@
 const IORedis = require("ioredis");
-const logger = require("../../utils/logger");
+const logger = require("../../../utils/logger");
 
 // Build TLS configuration if enabled
 function getTlsConfig() {
