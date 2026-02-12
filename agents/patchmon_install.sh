@@ -709,6 +709,9 @@ elif [ -d /etc/init.d ] && command -v rc-service >/dev/null 2>&1; then
     fi
     
     # Create OpenRC service file
+    # Use supervise-daemon for automatic restart on crash/exit (available in OpenRC 0.35+, Alpine 3.9+)
+    # This is critical for auto-updates: the agent exits after replacing its binary,
+    # and supervise-daemon automatically restarts it with the new binary.
     cat > /etc/init.d/patchmon-agent << 'EOF'
 #!/sbin/openrc-run
 
@@ -718,8 +721,11 @@ command="/usr/local/bin/patchmon-agent"
 command_args="serve"
 command_user="root"
 pidfile="/var/run/patchmon-agent.pid"
-command_background="yes"
-working_dir="/etc/patchmon"
+supervisor=supervise-daemon
+supervise_daemon_args="--chdir /etc/patchmon"
+respawn_delay=10
+respawn_max=5
+respawn_period=60
 
 depend() {
     need net
