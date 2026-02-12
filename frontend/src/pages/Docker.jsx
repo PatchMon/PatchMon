@@ -752,6 +752,7 @@ const Docker = () => {
 								<option value="exited">Exited</option>
 								<option value="paused">Paused</option>
 								<option value="restarting">Restarting</option>
+								<option value="removed">Removed</option>
 							</select>
 						)}
 						{activeTab === "images" && (
