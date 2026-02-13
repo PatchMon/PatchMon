@@ -44,7 +44,7 @@ services:
     # If you need memory limits, set maxmemory-policy to 'allkeys-lru' instead of 'noeviction'
     # to allow eviction rather than rejecting commands
     # Debug logging: Use --loglevel debug for maximum verbosity, or --loglevel verbose for less output
-    command: redis-server --requirepass ${REDIS_PASSWORD} --loglevel debug
+    command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
     networks:
