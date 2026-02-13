@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"sync"
 	"time"
 
@@ -15,9 +16,9 @@ import (
 	"patchmon-agent/internal/integrations/docker"
 	"patchmon-agent/internal/network"
 	"patchmon-agent/internal/packages"
+	"patchmon-agent/internal/pkgversion"
 	"patchmon-agent/internal/repositories"
 	"patchmon-agent/internal/system"
-	"patchmon-agent/internal/pkgversion"
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
@@ -48,6 +49,9 @@ func sendReport(outputJSON bool) error {
 	// Start tracking execution time
 	startTime := time.Now()
 	logger.Debug("Starting report process")
+
+	// OPTIMIZATION: Force garbage collection before starting to free up memory
+	runtime.GC()
 
 	// Load API credentials only if we're sending the report (not just outputting JSON)
 	if !outputJSON {
@@ -124,7 +128,9 @@ func sendReport(outputJSON bool) error {
 	// Count packages for debug logging
 	needsUpdateCount := 0
 	securityUpdateCount := 0
-	for _, pkg := range packageList {
+	logger.WithField("count", len(packageList)).Info("Found packages")
+	for i := range packageList {
+		pkg := &packageList[i]
 		if pkg.NeedsUpdate {
 			needsUpdateCount++
 		}

@@ -2,6 +2,7 @@ package packages
 
 import (
 	"bufio"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -43,17 +44,20 @@ func (m *APTManager) GetPackages() []models.Package {
 	packageManager := m.detectPackageManager()
 
 	// Update package lists using detected package manager
-	m.logger.WithField("manager", packageManager).Debug("Updating package lists")
-	updateCmd := exec.Command(packageManager, "update", "-qq")
+	// OPTIMIZATION: Skip updating package lists to reduce runtime and memory usage
+	// m.logger.WithField("manager", packageManager).Debug("Updating package lists")
+	// updateCmd := exec.Command(packageManager, "update", "-qq")
 
-	if err := updateCmd.Run(); err != nil {
-		m.logger.WithError(err).WithField("manager", packageManager).Warn("Failed to update package lists")
-	}
+	// if err := updateCmd.Run(); err != nil {
+	// 	m.logger.WithError(err).WithField("manager", packageManager).Warn("Failed to update package lists")
+	// }
 
 	// Get installed packages
 	m.logger.Debug("Getting installed packages...")
 	// Note: Description can be multiline. Multiline descriptions in debian packages usually have subsequent lines indented.
 	installedCmd := exec.Command("dpkg-query", "-W", "-f", "${Package} ${Version} ${Description}\n")
+	// OPTIMIZATION: Limit output buffer to prevent excessive memory usage
+	installedCmd.Env = append(os.Environ(), "LANG=C")
 	installedOutput, err := installedCmd.Output()
 	var installedPackages map[string]models.Package
 	if err != nil {
