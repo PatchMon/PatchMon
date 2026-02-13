@@ -96,8 +96,50 @@ func (d *Detector) parseOSRelease() (*OSReleaseInfo, error) {
 	return info, nil
 }
 
+// isFreeBSD checks if running on FreeBSD using uname -s
+func (d *Detector) isFreeBSD() bool {
+	cmd := exec.Command("uname", "-s")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(output)) == "FreeBSD"
+}
+
+// getFreeBSDInfo gets FreeBSD OS type and version
+func (d *Detector) getFreeBSDInfo() (osType, osVersion string, err error) {
+	osType = "FreeBSD"
+
+	// Use freebsd-version for accurate version info
+	cmd := exec.Command("freebsd-version")
+	output, err := cmd.Output()
+	if err != nil {
+		d.logger.WithError(err).Warn("Failed to get FreeBSD version, falling back to uname -r")
+		// Fallback to uname -r
+		cmd = exec.Command("uname", "-r")
+		output, err = cmd.Output()
+		if err != nil {
+			return osType, "Unknown", nil
+		}
+	}
+
+	osVersion = strings.TrimSpace(string(output))
+
+	d.logger.WithFields(logrus.Fields{
+		"os_type":    osType,
+		"os_version": osVersion,
+	}).Debug("Detected FreeBSD system")
+
+	return osType, osVersion, nil
+}
+
 // DetectOS detects the operating system and version using /etc/os-release
 func (d *Detector) DetectOS() (osType, osVersion string, err error) {
+	// Check for FreeBSD first (doesn't have /etc/os-release)
+	if d.isFreeBSD() {
+		return d.getFreeBSDInfo()
+	}
+
 	// Try to parse /etc/os-release first
 	osReleaseInfo, err := d.parseOSRelease()
 	if err != nil {
@@ -243,6 +285,11 @@ func (d *Detector) GetKernelVersion() string {
 
 // getSELinuxStatus gets SELinux status using file reading
 func (d *Detector) getSELinuxStatus() string {
+	// FreeBSD doesn't use SELinux (uses MAC framework instead)
+	if d.isFreeBSD() {
+		return constants.SELinuxDisabled
+	}
+
 	// Try getenforce command first
 	if cmd := exec.Command("getenforce"); cmd != nil {
 		if output, err := cmd.Output(); err == nil {

@@ -300,10 +300,8 @@ func updateAgent() error {
 
 // getServerVersionInfo fetches version information from the PatchMon server
 func getServerVersionInfo() (*ServerVersionInfo, error) {
-	cfgManager := config.New()
-	if err := cfgManager.LoadConfig(); err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
-	}
+	// Use the global cfgManager that was initialized with CLI flags
+	// instead of creating a new one
 	cfg := cfgManager.GetConfig()
 
 	// Load credentials for API authentication
