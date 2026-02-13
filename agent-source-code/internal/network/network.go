@@ -62,23 +62,23 @@ func (m *Manager) getGatewayIP() string {
 
 // getIPv4GatewayIP gets the default gateway IP from IPv4 routing table
 func (m *Manager) getIPv4GatewayIP() string {
-	// Read /proc/net/route to find default gateway
+	// Try reading /proc/net/route first (Linux)
 	data, err := os.ReadFile("/proc/net/route")
-	if err != nil {
-		// Log as debug because on an IPv6-only system, this file might exist but be irrelevant, or fail cleanly
-		m.logger.WithError(err).Debug("Failed to read /proc/net/route")
-		return ""
-	}
-
-	for line := range strings.SplitSeq(string(data), "\n") {
-		fields := strings.Fields(line)
-		// Field 1 is Destination, Field 2 is Gateway
-		if len(fields) >= 3 && fields[1] == "00000000" { // Default route
-			// Convert hex gateway to IP
-			if gateway := m.hexToIPv4(fields[2]); gateway != "" {
-				return gateway
+	if err == nil {
+		for line := range strings.SplitSeq(string(data), "\n") {
+			fields := strings.Fields(line)
+			// Field 1 is Destination, Field 2 is Gateway
+			if len(fields) >= 3 && fields[1] == "00000000" { // Default route
+				// Convert hex gateway to IP
+				if gateway := m.hexToIPv4(fields[2]); gateway != "" {
+					return gateway
+				}
 			}
 		}
+	} else {
+		// Fallback to netstat for non-Linux systems (FreeBSD, macOS, etc.)
+		m.logger.WithError(err).Debug("Failed to read /proc/net/route, trying netstat")
+		return m.getGatewayViaNetstat(false)
 	}
 
 	return ""
@@ -86,11 +86,11 @@ func (m *Manager) getIPv4GatewayIP() string {
 
 // getIPv6GatewayIP gets the default gateway IP from IPv6 routing table
 func (m *Manager) getIPv6GatewayIP() string {
-	// Read /proc/net/ipv6_route to find default gateway
+	// Try reading /proc/net/ipv6_route first (Linux)
 	data, err := os.ReadFile("/proc/net/ipv6_route")
 	if err != nil {
-		m.logger.WithError(err).Debug("Failed to read /proc/net/ipv6_route")
-		return ""
+		m.logger.WithError(err).Debug("Failed to read /proc/net/ipv6_route, trying netstat")
+		return m.getGatewayViaNetstat(true)
 	}
 
 	// Format of /proc/net/ipv6_route:
@@ -114,6 +114,53 @@ func (m *Manager) getIPv6GatewayIP() string {
 				// but usually we want the router address.
 				if gatewayHex != "00000000000000000000000000000000" {
 					return m.hexToIPv6(gatewayHex)
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
+// getGatewayViaNetstat gets the default gateway using netstat command
+// Works on FreeBSD, macOS, and other BSD-like systems
+// ipv6 indicates whether to get IPv6 gateway (true) or IPv4 gateway (false)
+func (m *Manager) getGatewayViaNetstat(ipv6 bool) string {
+	var cmd *exec.Cmd
+
+	if ipv6 {
+		// Get IPv6 default gateway
+		cmd = exec.Command("netstat", "-rn", "-f", "inet6")
+	} else {
+		// Get IPv4 default gateway
+		cmd = exec.Command("netstat", "-rn", "-f", "inet")
+	}
+
+	output, err := cmd.Output()
+	if err != nil {
+		m.logger.WithError(err).Debug("Failed to run netstat command")
+		return ""
+	}
+
+	// Parse netstat output
+	// Format: Destination  Gateway  Flags  Netif Expire
+	// Look for default route
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		// Check for default route
+		// IPv4: "default" or "0.0.0.0"
+		// IPv6: "default" or "::/0"
+		if fields[0] == "default" || fields[0] == "0.0.0.0" || fields[0] == "::/0" {
+			gateway := fields[1]
+			// Skip if gateway is link-local or link#
+			if !strings.HasPrefix(gateway, "link#") && !strings.HasPrefix(gateway, "fe80:") {
+				// Validate it's an IP address
+				if net.ParseIP(gateway) != nil {
+					return gateway
 				}
 			}
 		}

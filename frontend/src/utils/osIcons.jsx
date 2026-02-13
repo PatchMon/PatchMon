@@ -10,6 +10,7 @@ import {
 	SiDeepin,
 	SiElementary,
 	SiFedora,
+	SiFreebsd,
 	SiGentoo,
 	SiKalilinux,
 	SiLinux,
@@ -110,7 +111,7 @@ export const getOSIcon = (osType) => {
 	if (os.includes("mac") || os.includes("darwin")) return SiMacos;
 
 	// FreeBSD
-	if (os.includes("freebsd")) return Server;
+	if (os.includes("freebsd")) return SiFreebsd;
 
 	// Default fallback
 	return Monitor;

@@ -3,6 +3,7 @@ package packages
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"patchmon-agent/pkg/models"
 
@@ -11,11 +12,12 @@ import (
 
 // Manager handles package information collection
 type Manager struct {
-	logger        *logrus.Logger
-	aptManager    *APTManager
-	dnfManager    *DNFManager
-	apkManager    *APKManager
-	pacmanManager *PacmanManager
+	logger          *logrus.Logger
+	aptManager      *APTManager
+	dnfManager      *DNFManager
+	apkManager      *APKManager
+	pacmanManager   *PacmanManager
+	freebsdManager  *FreeBSDManager
 }
 
 // New creates a new package manager
@@ -24,13 +26,15 @@ func New(logger *logrus.Logger) *Manager {
 	dnfManager := NewDNFManager(logger)
 	apkManager := NewAPKManager(logger)
 	pacmanManager := NewPacmanManager(logger)
+	freebsdManager := NewFreeBSDManager(logger)
 
 	return &Manager{
-		logger:        logger,
-		aptManager:    aptManager,
-		dnfManager:    dnfManager,
-		apkManager:    apkManager,
-		pacmanManager: pacmanManager,
+		logger:         logger,
+		aptManager:     aptManager,
+		dnfManager:     dnfManager,
+		apkManager:     apkManager,
+		pacmanManager:  pacmanManager,
+		freebsdManager: freebsdManager,
 	}
 }
 
@@ -49,6 +53,8 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 		return m.apkManager.GetPackages(), nil
 	case "pacman":
 		return m.pacmanManager.GetPackages()
+	case "pkg":
+		return m.freebsdManager.GetPackages()
 	default:
 		return nil, fmt.Errorf("unsupported package manager: %s", packageManager)
 	}
@@ -56,7 +62,18 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 
 // detectPackageManager detects which package manager is available on the system
 func (m *Manager) detectPackageManager() string {
-	// Check for APK first (Alpine Linux)
+	// Check for FreeBSD pkg first (avoid confusion with other 'pkg' tools)
+	// FreeBSD's pkg is at /usr/sbin/pkg or /usr/local/sbin/pkg
+	if _, err := exec.LookPath("pkg"); err == nil {
+		// Verify it's FreeBSD by checking uname
+		if output, err := exec.Command("uname", "-s").Output(); err == nil {
+			if strings.TrimSpace(string(output)) == "FreeBSD" {
+				return "pkg"
+			}
+		}
+	}
+
+	// Check for APK (Alpine Linux)
 	if _, err := exec.LookPath("apk"); err == nil {
 		return "apk"
 	}
