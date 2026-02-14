@@ -183,14 +183,16 @@ router.get("/login", async (_req, res) => {
 		await storeOIDCSession(state, {
 			codeVerifier,
 			nonce,
+			state,
 			createdAt: Date.now(),
 		});
 
 		// Set state in a secure cookie as backup validation
+		// Use 'lax' instead of 'strict' so the cookie is sent on cross-origin redirects from the IdP
 		res.cookie("oidc_state", state, {
 			httpOnly: true,
 			secure: process.env.NODE_ENV === "production",
-			sameSite: "strict",
+			sameSite: "lax",
 			maxAge: OIDC_SESSION_TTL * 1000,
 		});
 
@@ -255,10 +257,12 @@ router.get("/callback", async (req, res) => {
 		res.clearCookie("oidc_state");
 
 		// Exchange code for tokens and get user info (with nonce validation)
+		// Pass full query params so openid-client can validate iss, session_state, etc.
 		const userInfo = await handleCallback(
-			code,
+			req.query,
 			session.codeVerifier,
 			session.nonce,
+			state,
 		);
 
 		// Find existing user by OIDC subject or email

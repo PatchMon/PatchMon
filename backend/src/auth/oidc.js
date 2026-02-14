@@ -109,26 +109,40 @@ function getAuthorizationUrl() {
 
 /**
  * Handle the callback from the IdP
- * @param {string} code - Authorization code from the IdP
+ * @param {Object} callbackParams - The full query parameters from the callback URL
  * @param {string} codeVerifier - PKCE code verifier from the initial request
  * @param {string} expectedNonce - Expected nonce value for validation
+ * @param {string} expectedState - Expected state value for validation
  * @returns {Object} User claims from the ID token
  */
-async function handleCallback(code, codeVerifier, expectedNonce) {
+async function handleCallback(
+	callbackParams,
+	codeVerifier,
+	expectedNonce,
+	expectedState,
+) {
 	if (!oidcClient) {
 		throw new Error("OIDC client not initialized");
 	}
 
 	const redirectUri = process.env.OIDC_REDIRECT_URI;
 
-	// Exchange the authorization code for tokens
+	// Build the checks object for openid-client validation
+	const checks = {
+		code_verifier: codeVerifier,
+		nonce: expectedNonce,
+	};
+
+	// Only include state in checks if provided (openid-client validates it)
+	if (expectedState) {
+		checks.state = expectedState;
+	}
+
+	// Pass full callback params so openid-client can validate iss, state, etc.
 	const tokenSet = await oidcClient.callback(
 		redirectUri,
-		{ code },
-		{
-			code_verifier: codeVerifier,
-			nonce: expectedNonce,
-		},
+		callbackParams,
+		checks,
 	);
 
 	// Validate that we received an ID token
@@ -154,15 +168,8 @@ async function handleCallback(code, codeVerifier, expectedNonce) {
 		throw new Error('ID token missing required "email" claim');
 	}
 
-	// Validate nonce matches (defense in depth - openid-client also validates this)
-	if (expectedNonce && claims.nonce !== expectedNonce) {
-		throw new Error("Nonce mismatch - possible replay attack");
-	}
-
-	// Validate issuer matches (defense in depth)
-	if (claims.iss !== oidcIssuer.metadata.issuer) {
-		throw new Error("Issuer mismatch - token may be from wrong IdP");
-	}
+	// Note: nonce, issuer, and state validation are already handled by openid-client
+	// in the callback() method above. No need for manual re-validation.
 
 	// Extract groups from various possible claim names (Authentik uses different names)
 	// Authentik may use: groups, ak_groups, or groups in the access token
