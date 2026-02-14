@@ -2,6 +2,7 @@ package packages
 
 import (
 	"bufio"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -50,6 +51,8 @@ func (m *DNFManager) GetPackages() []models.Package {
 	// Get installed packages
 	m.logger.Debug("Getting installed packages...")
 	listCmd := exec.Command(packageManager, "list", "--installed")
+	// OPTIMIZATION: Set minimal environment to reduce overhead
+	listCmd.Env = append(os.Environ(), "LANG=C")
 	installedOutput, err := listCmd.Output()
 	var installedPackages map[string]models.Package
 	if err != nil {
