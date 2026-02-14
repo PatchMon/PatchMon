@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"patchmon-agent/internal/config"
-	"patchmon-agent/internal/utils"
 	"patchmon-agent/internal/pkgversion"
+	"patchmon-agent/internal/utils"
 
 	"github.com/spf13/cobra"
 )
@@ -311,8 +311,9 @@ func getServerVersionInfo() (*ServerVersionInfo, error) {
 	credentials := cfgManager.GetCredentials()
 
 	architecture := getArchitecture()
+	platform := getPlatform()
 	currentVersion := strings.TrimPrefix(pkgversion.Version, "v")
-	url := fmt.Sprintf("%s/api/v1/hosts/agent/version?arch=%s&type=go&currentVersion=%s", cfg.PatchmonServer, architecture, currentVersion)
+	url := fmt.Sprintf("%s/api/v1/hosts/agent/version?arch=%s&os=%s&type=go&currentVersion=%s", cfg.PatchmonServer, architecture, platform, currentVersion)
 
 	ctx, cancel := context.WithTimeout(context.Background(), versionCheckTimeout)
 	defer cancel()
@@ -487,6 +488,16 @@ func getArchitecture() string {
 	return runtime.GOARCH
 }
 
+// getPlatform returns "linux" or "freebsd" for the version/download API (server uses this to pick the right binary)
+func getPlatform() string {
+	switch runtime.GOOS {
+	case "freebsd":
+		return "freebsd"
+	default:
+		return "linux"
+	}
+}
+
 // copyFile copies a file from src to dst
 func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src)
@@ -611,10 +622,67 @@ func markRecentUpdate() {
 	logger.Debug("Marked recent update to prevent update loops")
 }
 
-// restartService restarts the patchmon-agent service (supports systemd and OpenRC)
+// restartService restarts the patchmon-agent service (supports systemd, OpenRC, and FreeBSD rc.d)
 func restartService(_ string, _ string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+
+	// FreeBSD / pfSense: use service patchmon_agent restart (rc.d)
+	if runtime.GOOS == "freebsd" {
+		logger.Debug("Detected FreeBSD, scheduling service restart via helper script")
+		if err := os.MkdirAll("/etc/patchmon", 0700); err != nil {
+			logger.WithError(err).Warn("Failed to create /etc/patchmon directory, will try anyway")
+		}
+		helperScript := `#!/bin/sh
+sleep 2
+service patchmon_agent restart 2>&1 || service patchmon_agent start 2>&1
+rm -f "$0"
+`
+		randomBytes := make([]byte, 8)
+		if _, err := rand.Read(randomBytes); err != nil {
+			randomBytes = []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
+		}
+		helperPath := filepath.Join("/etc/patchmon", fmt.Sprintf("restart-%s.sh", hex.EncodeToString(randomBytes)))
+		dirInfo, err := os.Lstat("/etc/patchmon")
+		if err == nil && dirInfo.Mode()&os.ModeSymlink != 0 {
+			logger.Warn("Security: /etc/patchmon is a symlink, refusing to create helper script")
+			os.Exit(0)
+		}
+		file, err := os.OpenFile(helperPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
+		if err != nil {
+			logger.WithError(err).Warn("Failed to create restart helper script, exiting to let daemon -r respawn")
+			os.Exit(0)
+		}
+		if _, err := file.WriteString(helperScript); err != nil {
+			_ = file.Close()
+			_ = os.Remove(helperPath)
+			os.Exit(0)
+		}
+		_ = file.Close()
+		fileInfo, err := os.Lstat(helperPath)
+		if err != nil || fileInfo.Mode()&os.ModeSymlink != 0 {
+			_ = os.Remove(helperPath)
+			os.Exit(0)
+		}
+		var cmd *exec.Cmd
+		if _, nohupErr := exec.LookPath("nohup"); nohupErr == nil {
+			cmd = exec.Command("nohup", helperPath)
+		} else {
+			cmd = exec.Command("/bin/sh", helperPath)
+		}
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := cmd.Start(); err != nil {
+			_ = os.Remove(helperPath)
+			logger.WithError(err).Warn("Failed to start restart helper, exiting to let daemon -r respawn")
+			os.Exit(0)
+		}
+		logger.Info("Scheduled service restart via helper script (FreeBSD), exiting now...")
+		time.Sleep(500 * time.Millisecond)
+		os.Exit(0)
+		return nil
+	}
 
 	// Detect init system and use appropriate restart command
 	if _, err := exec.LookPath("systemctl"); err == nil {

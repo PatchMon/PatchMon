@@ -177,6 +177,7 @@ router.get("/login", async (_req, res) => {
 				.json({ error: "OIDC authentication is not enabled" });
 		}
 
+		logger.debug("OIDC: login initiated, redirecting to IdP");
 		const { url, state, codeVerifier, nonce } = getAuthorizationUrl();
 
 		// Store state, code verifier, and nonce in Redis for validation in callback
@@ -215,6 +216,10 @@ router.get("/callback", async (req, res) => {
 
 		const { code, state, error, error_description } = req.query;
 
+		logger.debug(
+			`OIDC callback: code=${code ? "present" : "missing"}, state=${state ? "present" : "missing"}, error=${error || "none"}`,
+		);
+
 		// Check for errors from the IdP
 		if (error) {
 			// Log error details for debugging (error_description provides context)
@@ -250,6 +255,9 @@ router.get("/callback", async (req, res) => {
 			logger.error("OIDC state not found or expired");
 			return res.redirect("/login?error=Session+expired");
 		}
+		logger.debug(
+			"OIDC: session retrieved from Redis, exchanging code for tokens",
+		);
 
 		// Clear the state cookie
 		res.clearCookie("oidc_state");
@@ -267,6 +275,9 @@ router.get("/callback", async (req, res) => {
 				OR: [{ oidc_sub: userInfo.sub }, { email: userInfo.email }],
 			},
 		});
+		logger.debug(
+			`OIDC: user lookup by sub/email: ${user ? user.email : "not found"}, autoCreate=${process.env.OIDC_AUTO_CREATE_USERS === "true"}`,
+		);
 
 		// Create new user if auto-creation is enabled
 		if (!user && process.env.OIDC_AUTO_CREATE_USERS === "true") {
@@ -429,8 +440,8 @@ router.get("/callback", async (req, res) => {
 		const useSecureCookies = isSecure && isProduction;
 		const sameSiteValue = isProduction ? "strict" : "lax";
 
-		logger.info(
-			`OIDC: Setting cookies - Secure: ${useSecureCookies}, SameSite: ${sameSiteValue}, IsHTTPS: ${isSecure}`,
+		logger.debug(
+			`OIDC: setting cookies - Secure: ${useSecureCookies}, SameSite: ${sameSiteValue}, IsHTTPS: ${isSecure}`,
 		);
 
 		const cookieOptions = {
@@ -466,6 +477,9 @@ router.get("/callback", async (req, res) => {
 
 		// Redirect to frontend with success indicator (no tokens in URL)
 		const frontendUrl = process.env.CORS_ORIGIN || "http://localhost:3000";
+		logger.debug(
+			`OIDC: login success for ${user.email}, redirecting to ${frontendUrl}/login?oidc=success`,
+		);
 		res.redirect(`${frontendUrl}/login?oidc=success`);
 	} catch (error) {
 		logger.error("OIDC callback error:", error);
@@ -492,6 +506,7 @@ router.get("/logout", async (_req, res) => {
 			return res.redirect("/login");
 		}
 
+		logger.debug("OIDC: logout initiated");
 		// Get the OIDC logout URL
 		const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
 		const logoutUrl = getLogoutUrl(`${frontendUrl}/login`);

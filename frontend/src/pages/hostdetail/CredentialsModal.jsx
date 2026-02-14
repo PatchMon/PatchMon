@@ -82,9 +82,12 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 		return qs ? `${base}?${qs}` : base;
 	};
 
-	// Helper function to build the shell command suffix (sudo sh with optional --force)
-	const getShellCommand = () =>
-		forceInstall ? "sudo sh -s -- --force" : "sudo sh";
+	// Helper function to build the shell command suffix (no sudo on FreeBSD/pfSense)
+	const getShellCommand = () => {
+		const use_sudo = host?.expected_platform !== "freebsd";
+		const base = use_sudo ? "sudo sh" : "sh";
+		return forceInstall ? `${base} -s -- --force` : base;
+	};
 
 	const copyToClipboard = async (text) => {
 		try {
@@ -283,7 +286,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 									value={
 										isApiKeyHash
 											? "API key not available - click Regenerate above"
-											: `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`
+											: `curl ${getCurlFlags()} "${getInstallUrl()}" -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`
 									}
 									readOnly
 									disabled={isApiKeyHash}
@@ -292,7 +295,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 								<button
 									type="button"
 									onClick={async () => {
-										const command = `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`;
+										const command = `curl ${getCurlFlags()} "${getInstallUrl()}" -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`;
 										await copyToClipboard(command);
 										// Show waiting screen after copying
 										if (!isApiKeyHash) {

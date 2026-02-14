@@ -88,8 +88,11 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 		return qs ? `${base}?${qs}` : base;
 	};
 
-	const getShellCommand = (force) =>
-		force ? "sudo sh -s -- --force" : "sudo sh";
+	const getShellCommand = (force) => {
+		const use_sudo = platform !== "freebsd";
+		const base = use_sudo ? "sudo sh" : "sh";
+		return force ? `${base} -s -- --force` : base;
+	};
 
 	// Poll for connection (steps 4–7)
 	useEffect(() => {
@@ -224,7 +227,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 	const handleCopy = async () => {
 		const forceInstall = false;
 		const installUrl = buildInstallUrl(forceInstall);
-		const command = `curl ${curlFlags} ${installUrl} -H "X-API-ID: ${createdHost.api_id}" -H "X-API-KEY: ${plaintextApiKey}" | ${getShellCommand(forceInstall)}`;
+		const command = `curl ${curlFlags} "${installUrl}" -H "X-API-ID: ${createdHost.api_id}" -H "X-API-KEY: ${plaintextApiKey}" | ${getShellCommand(forceInstall)}`;
 		try {
 			if (navigator.clipboard && window.isSecureContext) {
 				await navigator.clipboard.writeText(command);
@@ -524,7 +527,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 							<input
 								type="text"
 								readOnly
-								value={`curl ${curlFlags} ${buildInstallUrl()} -H "X-API-ID: ${createdHost.api_id}" -H "X-API-KEY: ${plaintextApiKey}" | sudo sh`}
+								value={`curl ${curlFlags} "${buildInstallUrl()}" -H "X-API-ID: ${createdHost.api_id}" -H "X-API-KEY: ${plaintextApiKey}" | ${getShellCommand(false)}`}
 								className="w-full px-3 py-2 border-2 border-secondary-300 dark:border-secondary-600 rounded-lg bg-secondary-50 dark:bg-secondary-900 text-xs font-mono break-all"
 							/>
 							<button

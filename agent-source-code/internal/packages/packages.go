@@ -2,7 +2,9 @@ package packages
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"patchmon-agent/pkg/models"
@@ -62,10 +64,17 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 
 // detectPackageManager detects which package manager is available on the system
 func (m *Manager) detectPackageManager() string {
-	// Check for FreeBSD pkg first (avoid confusion with other 'pkg' tools)
-	// FreeBSD's pkg is at /usr/sbin/pkg or /usr/local/sbin/pkg
+	// Check for FreeBSD pkg first (avoid confusion with other 'pkg' tools).
+	// When the agent runs as an rc.d service, PATH may be minimal, so also check
+	// standard FreeBSD paths explicitly so package reports still work on pfSense/FreeBSD.
+	if runtime.GOOS == "freebsd" {
+		for _, pkgPath := range []string{"/usr/sbin/pkg", "/usr/local/sbin/pkg"} {
+			if info, err := os.Stat(pkgPath); err == nil && info.Mode().IsRegular() && (info.Mode()&0111) != 0 {
+				return "pkg"
+			}
+		}
+	}
 	if _, err := exec.LookPath("pkg"); err == nil {
-		// Verify it's FreeBSD by checking uname
 		if output, err := exec.Command("uname", "-s").Output(); err == nil {
 			if strings.TrimSpace(string(output)) == "FreeBSD" {
 				return "pkg"

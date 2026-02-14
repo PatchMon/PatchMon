@@ -104,6 +104,9 @@ function getAuthorizationUrl() {
 		code_challenge_method: "S256",
 	});
 
+	logger.debug(
+		`OIDC: authorization URL generated, state=${state.slice(0, 8)}..., scopes=${scopes}`,
+	);
 	return { url, state, codeVerifier, nonce };
 }
 
@@ -121,6 +124,7 @@ async function handleCallback(code, codeVerifier, expectedNonce) {
 
 	const redirectUri = process.env.OIDC_REDIRECT_URI;
 
+	logger.debug("OIDC: exchanging authorization code for tokens");
 	// Exchange the authorization code for tokens
 	const tokenSet = await oidcClient.callback(
 		redirectUri,
@@ -139,10 +143,12 @@ async function handleCallback(code, codeVerifier, expectedNonce) {
 	// Get the claims from the ID token
 	const claims = tokenSet.claims();
 
-	// Debug: Log all claims received from IdP
-	logger.info(
+	logger.debug(
 		"OIDC claims received from IdP:",
 		JSON.stringify(claims, null, 2),
+	);
+	logger.info(
+		`OIDC claims received for: ${claims.email || claims.sub || "unknown"}`,
 	);
 
 	// Validate required claims
@@ -176,9 +182,8 @@ async function handleCallback(code, codeVerifier, expectedNonce) {
 			: [claims.ak_groups];
 	}
 
-	// Log groups for debugging
 	if (groups.length > 0) {
-		logger.info(`OIDC groups found: ${JSON.stringify(groups)}`);
+		logger.debug(`OIDC groups: ${JSON.stringify(groups)}`);
 	} else {
 		logger.warn(
 			`No groups found in OIDC token. Available claims: ${Object.keys(claims).join(", ")}`,

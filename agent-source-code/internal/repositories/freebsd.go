@@ -26,6 +26,19 @@ func NewFreeBSDManager(logger *logrus.Logger) *FreeBSDManager {
 	}
 }
 
+// getPkgPath returns the path to the pkg binary (works when PATH is minimal, e.g. under rc.d)
+func (m *FreeBSDManager) getPkgPath() string {
+	if path, err := exec.LookPath("pkg"); err == nil {
+		return path
+	}
+	for _, p := range []string{"/usr/sbin/pkg", "/usr/local/sbin/pkg"} {
+		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() && (info.Mode()&0111) != 0 {
+			return p
+		}
+	}
+	return "pkg"
+}
+
 // GetRepositories gets FreeBSD repository information
 // Sources: pkg -vv output, /etc/pkg/*.conf, /usr/local/etc/pkg/repos/*.conf
 func (m *FreeBSDManager) GetRepositories() ([]models.Repository, error) {
@@ -58,7 +71,7 @@ func (m *FreeBSDManager) GetRepositories() ([]models.Repository, error) {
 func (m *FreeBSDManager) getPkgRepositories() ([]models.Repository, error) {
 	var repositories []models.Repository
 
-	cmd := exec.Command("pkg", "-vv")
+	cmd := exec.Command(m.getPkgPath(), "-vv")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err

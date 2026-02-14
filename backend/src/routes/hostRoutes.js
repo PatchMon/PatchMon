@@ -211,9 +211,17 @@ router.get("/agent/download", async (req, res) => {
 				}
 			});
 		} else {
-			// Serve Go binary for new agents (OS-aware: linux or freebsd)
+			// Serve Go binary for new agents (OS-aware: linux or freebsd). When os is missing (old agents), infer from host.os_type.
 			const architecture = req.query.arch || "amd64";
-			const os = req.query.os || "linux";
+			let os = req.query.os;
+			if (!os && host?.os_type) {
+				const reported = String(host.os_type).toLowerCase();
+				os =
+					reported.includes("freebsd") || reported.includes("pfsense")
+						? "freebsd"
+						: "linux";
+			}
+			os = os || "linux";
 
 			const validOss = ["linux", "freebsd"];
 			if (!validOss.includes(os)) {
@@ -332,12 +340,24 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 				agentType: "legacy",
 			});
 		} else {
-			// Go agent version check (OS-aware: use host.expected_platform for FreeBSD)
+			// Go agent version check: prefer agent-reported os (query param), else infer from host.os_type (agent-reported), else expected_platform, else linux
 			const { execFile } = require("node:child_process");
 			const { promisify } = require("node:util");
 			const execFileAsync = promisify(execFile);
 
-			const os = host?.expected_platform === "freebsd" ? "freebsd" : "linux";
+			const query_os = req.query.os;
+			const valid_os = ["linux", "freebsd"];
+			let os = query_os && valid_os.includes(query_os) ? query_os : null;
+			if (!os && host?.os_type) {
+				const reported = String(host.os_type).toLowerCase();
+				os =
+					reported.includes("freebsd") || reported.includes("pfsense")
+						? "freebsd"
+						: "linux";
+			}
+			if (!os) {
+				os = host?.expected_platform === "freebsd" ? "freebsd" : "linux";
+			}
 			const validArchitecturesLinux = ["amd64", "386", "arm64", "arm"];
 			const validArchitecturesFreebsd = ["amd64", "arm64"];
 			const validArchitectures =
@@ -359,41 +379,38 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 				// Binary exists in server's agents folder - use its version
 				let serverVersion = null;
 
-				// Try method 1: Execute binary directly (works for same architecture)
-				// Using execFile instead of exec to prevent shell injection
-				try {
-					const { stdout } = await execFileAsync(binaryPath, ["--help"], {
-						timeout: 10000,
-					});
+				// Only execute the binary if it matches the server's platform (don't run FreeBSD binary on Linux)
+				const server_platform = process.platform;
+				const binary_matches_server =
+					(os === "linux" && server_platform === "linux") ||
+					(os === "freebsd" && server_platform === "freebsd");
 
-					// Parse version from help output (e.g., "PatchMon Agent v1.3.1")
-					const versionMatch = stdout.match(
-						/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
-					);
-
-					if (versionMatch) {
-						serverVersion = versionMatch[1];
+				if (binary_matches_server) {
+					try {
+						const { stdout } = await execFileAsync(binaryPath, ["--help"], {
+							timeout: 10000,
+						});
+						const versionMatch = stdout.match(
+							/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
+						);
+						if (versionMatch) serverVersion = versionMatch[1];
+					} catch (execError) {
+						logger.warn(
+							`Failed to execute binary ${binaryName} to get version: ${execError.message}`,
+						);
 					}
-				} catch (execError) {
-					// Execution failed (likely cross-architecture) - try alternative method
-					logger.warn(
-						`Failed to execute binary ${binaryName} to get version (may be cross-architecture): ${execError.message}`,
-					);
+				}
 
-					// Try method 2: Extract version using strings command (works for cross-architecture)
-					// Using execFile with strings command to avoid shell injection
+				if (!serverVersion) {
 					try {
 						const { stdout: stringsOutput } = await execFileAsync(
 							"strings",
 							[binaryPath],
 							{ timeout: 10000, maxBuffer: 10 * 1024 * 1024 },
 						);
-
-						// Filter in Node.js instead of piping through grep
 						const versionMatch = stringsOutput.match(
 							/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
 						);
-
 						if (versionMatch) {
 							serverVersion = versionMatch[1];
 							logger.info(

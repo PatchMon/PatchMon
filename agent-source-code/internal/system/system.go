@@ -106,6 +106,33 @@ func (d *Detector) isFreeBSD() bool {
 	return strings.TrimSpace(string(output)) == "FreeBSD"
 }
 
+// isPfSense checks if running on pfSense (FreeBSD-based firewall)
+func (d *Detector) isPfSense() bool {
+	// pfSense uses /cf/conf/config.xml for its config; vanilla FreeBSD does not
+	_, err := os.Stat("/cf/conf/config.xml")
+	return err == nil
+}
+
+// getPfSenseInfo gets pfSense OS type and version
+func (d *Detector) getPfSenseInfo() (osType, osVersion string, err error) {
+	osType = "pfSense"
+	// pfSense stores its version in /etc/version (e.g. "2.5.2-RELEASE")
+	data, err := os.ReadFile("/etc/version")
+	if err != nil {
+		d.logger.WithError(err).Debug("Failed to read /etc/version, using Unknown")
+		return osType, "Unknown", nil
+	}
+	osVersion = strings.TrimSpace(string(data))
+	if osVersion == "" {
+		osVersion = "Unknown"
+	}
+	d.logger.WithFields(logrus.Fields{
+		"os_type":    osType,
+		"os_version": osVersion,
+	}).Debug("Detected pfSense system")
+	return osType, osVersion, nil
+}
+
 // getFreeBSDInfo gets FreeBSD OS type and version
 func (d *Detector) getFreeBSDInfo() (osType, osVersion string, err error) {
 	osType = "FreeBSD"
@@ -137,6 +164,9 @@ func (d *Detector) getFreeBSDInfo() (osType, osVersion string, err error) {
 func (d *Detector) DetectOS() (osType, osVersion string, err error) {
 	// Check for FreeBSD first (doesn't have /etc/os-release)
 	if d.isFreeBSD() {
+		if d.isPfSense() {
+			return d.getPfSenseInfo()
+		}
 		return d.getFreeBSDInfo()
 	}
 

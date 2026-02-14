@@ -156,7 +156,7 @@ const WaitingForConnection = ({
 	}, [connectionStage, hasNavigated, navigate, host?.id, queryClient, onClose]);
 
 	const copyCommand = async () => {
-		const command = `curl ${curlFlags} ${installUrl} -H "X-API-ID: ${host.api_id}" -H "X-API-KEY: ${plaintextApiKey}" | ${shellCommand}`;
+		const command = `curl ${curlFlags} "${installUrl}" -H "X-API-ID: ${host.api_id}" -H "X-API-KEY: ${plaintextApiKey}" | ${shellCommand}`;
 		try {
 			if (navigator.clipboard && window.isSecureContext) {
 				await navigator.clipboard.writeText(command);

@@ -2,6 +2,7 @@ package packages
 
 import (
 	"bufio"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -48,11 +49,25 @@ func (m *FreeBSDManager) GetPackages() ([]models.Package, error) {
 	return allPackages, nil
 }
 
+// getPkgPath returns the path to the pkg binary (works when PATH is minimal, e.g. under rc.d)
+func (m *FreeBSDManager) getPkgPath() string {
+	if path, err := exec.LookPath("pkg"); err == nil {
+		return path
+	}
+	for _, p := range []string{"/usr/sbin/pkg", "/usr/local/sbin/pkg"} {
+		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() && (info.Mode()&0111) != 0 {
+			return p
+		}
+	}
+	return "pkg"
+}
+
 // getPkgPackages gets installed and upgradable packages from pkg
 func (m *FreeBSDManager) getPkgPackages() ([]models.Package, error) {
+	pkgPath := m.getPkgPath()
 	// Get installed packages: pkg info
 	m.logger.Debug("Getting installed packages with pkg info...")
-	installedCmd := exec.Command("pkg", "info")
+	installedCmd := exec.Command(pkgPath, "info")
 	installedOutput, err := installedCmd.Output()
 
 	var installedPackages map[string]string
@@ -66,7 +81,7 @@ func (m *FreeBSDManager) getPkgPackages() ([]models.Package, error) {
 
 	// Get upgradable packages: pkg upgrade -n
 	m.logger.Debug("Checking for package upgrades...")
-	upgradeCmd := exec.Command("pkg", "upgrade", "-n")
+	upgradeCmd := exec.Command(pkgPath, "upgrade", "-n")
 	upgradeOutput, err := upgradeCmd.Output()
 
 	var upgradablePackages []models.Package
@@ -187,17 +202,18 @@ func (m *FreeBSDManager) parseUpgradeOutput(output string, _ map[string]string) 
 
 // markSecurityVulnerabilities uses pkg audit to mark packages with known vulnerabilities
 func (m *FreeBSDManager) markSecurityVulnerabilities(packages []models.Package) {
+	pkgPath := m.getPkgPath()
 	// Run pkg audit (fetch vulnerability database if needed)
 	m.logger.Debug("Running pkg audit to check for vulnerabilities...")
 
 	// First update the vulnerability database
-	fetchCmd := exec.Command("pkg", "audit", "-F")
+	fetchCmd := exec.Command(pkgPath, "audit", "-F")
 	if err := fetchCmd.Run(); err != nil {
 		m.logger.WithError(err).Debug("Failed to fetch vulnerability database (may require root)")
 	}
 
 	// Run the audit
-	auditCmd := exec.Command("pkg", "audit")
+	auditCmd := exec.Command(pkgPath, "audit")
 	auditOutput, err := auditCmd.CombinedOutput()
 
 	if err != nil {

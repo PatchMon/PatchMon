@@ -1,7 +1,9 @@
 package repositories
 
 import (
+	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"patchmon-agent/pkg/models"
@@ -57,9 +59,15 @@ func (m *Manager) GetRepositories() ([]models.Repository, error) {
 
 // detectPackageManager detects which package manager is available on the system
 func (m *Manager) detectPackageManager() string {
-	// Check for FreeBSD pkg first
+	// Check for FreeBSD pkg first. When the agent runs as rc.d service, PATH may be minimal.
+	if runtime.GOOS == "freebsd" {
+		for _, pkgPath := range []string{"/usr/sbin/pkg", "/usr/local/sbin/pkg"} {
+			if info, err := os.Stat(pkgPath); err == nil && info.Mode().IsRegular() && (info.Mode()&0111) != 0 {
+				return "pkg"
+			}
+		}
+	}
 	if _, err := exec.LookPath("pkg"); err == nil {
-		// Verify it's FreeBSD by checking uname
 		if output, err := exec.Command("uname", "-s").Output(); err == nil {
 			if strings.TrimSpace(string(output)) == "FreeBSD" {
 				return "pkg"

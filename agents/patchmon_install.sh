@@ -471,6 +471,21 @@ elif command -v apk >/dev/null 2>&1; then
     echo ""
     info "Installing jq, curl, and bc..."
     install_apk_packages jq curl bc
+elif [ "$(uname -s 2>/dev/null)" = "FreeBSD" ] || [ "$PATCHMON_OS" = "freebsd" ]; then
+    # FreeBSD/pfSense: only curl is required; agent does not use jq/bc. Skip pkg if curl already present
+    # (on pfSense, pkg repos may be unconfigured and "pkg install curl" can fail with "no match")
+    info "Detected FreeBSD (pkg)"
+    echo ""
+    if ! command -v curl >/dev/null 2>&1; then
+        info "Ensuring curl is installed..."
+        if command -v pkg >/dev/null 2>&1; then
+            pkg install -y curl >/dev/null 2>&1 || true
+        fi
+        if ! command -v curl >/dev/null 2>&1; then
+            warning "curl not found. On FreeBSD: pkg install curl"
+            warning "On pfSense: install curl from System > Package Manager, or enable FreeBSD pkg repos."
+        fi
+    fi
 else
     warning "Could not detect package manager. Please ensure 'jq', 'curl', and 'bc' are installed manually."
 fi
@@ -877,7 +892,11 @@ printf "%b\n" "${GREEN}Installation Summary:${NC}"
 echo "   • Configuration directory: /etc/patchmon"
 echo "   • Agent binary installed: /usr/local/bin/patchmon-agent"
 echo "   • Architecture: $ARCHITECTURE"
-echo "   • Dependencies installed: jq, curl, bc"
+if [ "$(uname -s 2>/dev/null)" = "FreeBSD" ] || [ "$PATCHMON_OS" = "freebsd" ]; then
+    echo "   • Dependencies installed: curl"
+else
+    echo "   • Dependencies installed: jq, curl, bc"
+fi
 if [ "$SERVICE_TYPE" = "systemd" ]; then
     echo "   • Systemd service configured and running"
 elif [ "$SERVICE_TYPE" = "openrc" ]; then
