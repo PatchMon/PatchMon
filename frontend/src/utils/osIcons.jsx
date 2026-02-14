@@ -1,4 +1,4 @@
-import { Monitor, Server } from "lucide-react";
+import { Monitor } from "lucide-react";
 import { DiWindows } from "react-icons/di";
 // Import OS icons from react-icons Simple Icons - using only confirmed available icons
 import {

@@ -224,9 +224,13 @@ router.post(
 	authenticateToken,
 	async (_req, res) => {
 		try {
+			logger.info("🧹 Collect host statistics triggered (manual run)");
 			const queue = queueManager.queues[QUEUE_NAMES.AGENT_COMMANDS];
 			const apiIds = getConnectedApiIds();
 			if (!apiIds || apiIds.length === 0) {
+				logger.info(
+					"Collect host statistics: no connected agents; nothing enqueued",
+				);
 				return res.json({ success: true, data: { enqueued: 0 } });
 			}
 			const jobs = apiIds.map((apiId) => ({
@@ -235,6 +239,9 @@ router.post(
 				opts: { attempts: 3, backoff: { type: "fixed", delay: 2000 } },
 			}));
 			await queue.addBulk(jobs);
+			logger.info(
+				`Collect host statistics: enqueued ${jobs.length} report_now job(s) for connected agents`,
+			);
 			res.json({ success: true, data: { enqueued: jobs.length } });
 		} catch (error) {
 			logger.error("Error triggering agent collection:", error);

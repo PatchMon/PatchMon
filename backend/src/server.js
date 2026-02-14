@@ -1,4 +1,7 @@
-require("dotenv").config();
+// Load .env from backend directory so it works regardless of process cwd (e.g. when started from repo root)
+require("dotenv").config({
+	path: require("node:path").join(__dirname, "..", ".env"),
+});
 
 // Global error handlers for unhandled rejections and exceptions
 process.on("unhandledRejection", (reason, promise) => {
@@ -61,7 +64,7 @@ const {
 	disconnectPrisma,
 	getTransactionOptions,
 } = require("./config/prisma");
-const winston = require("winston");
+const logger = require("./utils/logger");
 
 const swaggerUi = require("swagger-ui-express");
 const swaggerDocument = require("./swagger_output.json");
@@ -112,65 +115,8 @@ const { ExpressAdapter } = require("@bull-board/express");
 // Initialize Prisma client with optimized connection pooling for multiple instances
 const prisma = getPrismaClient();
 
-// Initialize logger - only if logging is enabled
-const logger =
-	process.env.ENABLE_LOGGING === "true"
-		? winston.createLogger({
-				level: process.env.LOG_LEVEL || "info",
-				format: winston.format.combine(
-					winston.format.timestamp(),
-					winston.format.errors({ stack: true }),
-					winston.format.json(),
-				),
-				transports: [],
-			})
-		: {
-				info: () => {},
-				error: () => {},
-				warn: () => {},
-				debug: () => {},
-			};
-
-// Configure transports based on PM_LOG_TO_CONSOLE environment variable
-if (process.env.ENABLE_LOGGING === "true") {
-	const logToConsole =
-		process.env.PM_LOG_TO_CONSOLE === "1" ||
-		process.env.PM_LOG_TO_CONSOLE === "true";
-
-	if (logToConsole) {
-		// Log to stdout/stderr instead of files
-		logger.add(
-			new winston.transports.Console({
-				format: winston.format.combine(
-					winston.format.timestamp(),
-					winston.format.errors({ stack: true }),
-					winston.format.printf(({ timestamp, level, message, stack }) => {
-						return `${timestamp} [${level.toUpperCase()}]: ${stack || message}`;
-					}),
-				),
-				stderrLevels: ["error", "warn"],
-			}),
-		);
-	} else {
-		// Log to files (default behavior)
-		logger.add(
-			new winston.transports.File({
-				filename: "logs/error.log",
-				level: "error",
-			}),
-		);
-		logger.add(new winston.transports.File({ filename: "logs/combined.log" }));
-
-		// Also add console logging for non-production environments
-		if (process.env.NODE_ENV !== "production") {
-			logger.add(
-				new winston.transports.Console({
-					format: winston.format.simple(),
-				}),
-			);
-		}
-	}
-}
+// Use shared logger (configured via ENABLE_LOGGING, LOG_LEVEL, LOG_TO_CONSOLE in .env)
+// See backend/src/utils/logger.js
 
 const app = express();
 const PORT = process.env.PORT || 3001;

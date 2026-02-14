@@ -72,8 +72,15 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 		return settings?.ignore_ssl_self_signed ? "-sk" : "-s";
 	};
 
-	// Helper function to get the install URL
-	const getInstallUrl = () => `${serverUrl}/api/v1/hosts/install`;
+	// Helper function to get the install URL (OS-specific for FreeBSD)
+	const getInstallUrl = () => {
+		const base = `${serverUrl}/api/v1/hosts/install`;
+		const params = new URLSearchParams();
+		if (host?.expected_platform === "freebsd") params.set("os", "freebsd");
+		if (forceInstall) params.set("force", "true");
+		const qs = params.toString();
+		return qs ? `${base}?${qs}` : base;
+	};
 
 	// Helper function to build the shell command suffix (sudo sh with optional --force)
 	const getShellCommand = () =>

@@ -130,7 +130,7 @@ func (m *FreeBSDManager) parseInstalledPackages(output string) map[string]string
 // Installed packages to be UPGRADED:
 //         curl: 8.9.1 -> 8.10.0
 //         git: 2.46.0 -> 2.46.1
-func (m *FreeBSDManager) parseUpgradeOutput(output string, installedPackages map[string]string) []models.Package {
+func (m *FreeBSDManager) parseUpgradeOutput(output string, _ map[string]string) []models.Package {
 	var packages []models.Package
 
 	// Regex to match upgrade lines: packagename: oldversion -> newversion

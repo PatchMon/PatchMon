@@ -11,6 +11,7 @@ const {
 	handleSshProxyMessage,
 } = require("./sshTerminalWs");
 const { verifyApiKey } = require("../utils/apiKeyUtils");
+const { reject_upgrade } = require("../utils/wsUpgradeReject");
 
 // Lazy load alert services to avoid circular dependencies
 let alertService = null;
@@ -61,7 +62,7 @@ function init(server, prismaClient) {
 		try {
 			const { pathname } = url.parse(request.url);
 			if (!pathname) {
-				socket.destroy();
+				reject_upgrade(socket, 400, "Missing path");
 				return;
 			}
 
@@ -75,7 +76,7 @@ function init(server, prismaClient) {
 				const authHeader = request.headers.authorization;
 
 				if (!sessionCookie && !authHeader) {
-					socket.destroy();
+					reject_upgrade(socket, 401, "Authentication required");
 					return;
 				}
 
@@ -124,28 +125,28 @@ function init(server, prismaClient) {
 
 			// Handle agent WebSocket connections
 			if (!pathname.startsWith("/api/")) {
-				socket.destroy();
+				reject_upgrade(socket, 404, "Not found");
 				return;
 			}
 
 			// Expected path: /api/{v}/agents/ws
 			const parts = pathname.split("/").filter(Boolean); // [api, v1, agents, ws]
 			if (parts.length !== 4 || parts[2] !== "agents" || parts[3] !== "ws") {
-				socket.destroy();
+				reject_upgrade(socket, 404, "Not found");
 				return;
 			}
 
 			const apiId = request.headers["x-api-id"];
 			const apiKey = request.headers["x-api-key"];
 			if (!apiId || !apiKey) {
-				socket.destroy();
+				reject_upgrade(socket, 401, "Missing or invalid credentials");
 				return;
 			}
 
 			// Validate credentials
 			const host = await prisma.hosts.findUnique({ where: { api_id: apiId } });
 			if (!host) {
-				socket.destroy();
+				reject_upgrade(socket, 401, "Invalid credentials");
 				return;
 			}
 
@@ -153,7 +154,7 @@ function init(server, prismaClient) {
 			const isValidKey = await verifyApiKey(apiKey, host.api_key);
 			if (!isValidKey) {
 				logger.info(`[agent-ws] invalid API key for api_id=${apiId}`);
-				socket.destroy();
+				reject_upgrade(socket, 401, "Invalid credentials");
 				return;
 			}
 
@@ -587,11 +588,7 @@ function init(server, prismaClient) {
 				safeSend(ws, JSON.stringify({ type: "connected" }));
 			});
 		} catch (_err) {
-			try {
-				socket.destroy();
-			} catch {
-				/* ignore */
-			}
+			reject_upgrade(socket, 500, "Internal server error");
 		}
 	});
 }

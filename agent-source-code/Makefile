@@ -11,10 +11,10 @@ BUILD_FLAGS=-buildvcs=false
 # Go variables
 GOBASE=$(shell pwd)
 GOBIN=$(GOBASE)/$(BUILD_DIR)
-# Use full path to go binary to avoid PATH issues when running as root
-GO_CMD=/usr/local/go/bin/go
-# Use full path to golangci-lint binary to avoid PATH issues when running as root
-GOLANGCI_LINT_CMD=/root/go/bin/golangci-lint
+# Prefer go from PATH; fallback to /usr/local/go/bin for environments that need it
+GO_CMD ?= $(shell command -v go 2>/dev/null || echo /usr/local/go/bin/go)
+# Prefer golangci-lint from PATH when available
+GOLANGCI_LINT_CMD ?= $(shell command -v golangci-lint 2>/dev/null || echo /root/go/bin/golangci-lint)
 
 # Default target
 .PHONY: all
@@ -27,15 +27,25 @@ build:
 	@mkdir -p $(BUILD_DIR)
 	@CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME) ./cmd/patchmon-agent
 
-# Build for multiple architectures
-.PHONY: build-all
-build-all:
-	@echo "Building for multiple architectures..."
+# Build Linux binaries only (amd64, 386, arm64, arm)
+.PHONY: build-linux
+build-linux:
 	@mkdir -p $(BUILD_DIR)
 	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-linux-amd64 ./cmd/patchmon-agent
 	@GOOS=linux GOARCH=386 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-linux-386 ./cmd/patchmon-agent
 	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-linux-arm64 ./cmd/patchmon-agent
 	@GOOS=linux GOARCH=arm GOARM=6 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-linux-arm ./cmd/patchmon-agent
+
+# Build FreeBSD binaries only (amd64, arm64)
+.PHONY: build-freebsd
+build-freebsd:
+	@mkdir -p $(BUILD_DIR)
+	@GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-freebsd-amd64 ./cmd/patchmon-agent
+	@GOOS=freebsd GOARCH=arm64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-freebsd-arm64 ./cmd/patchmon-agent
+
+# Build for multiple architectures (Linux + FreeBSD)
+.PHONY: build-all
+build-all: build-linux build-freebsd
 
 # Install dependencies
 .PHONY: deps
@@ -88,7 +98,9 @@ install: build
 help:
 	@echo "Available targets:"
 	@echo "  build         Build the application"
-	@echo "  build-all     Build for multiple architectures"
+	@echo "  build-linux   Build Linux binaries (amd64, 386, arm64, arm)"
+	@echo "  build-freebsd Build FreeBSD binaries (amd64, arm64)"
+	@echo "  build-all     Build Linux + FreeBSD (all architectures)"
 	@echo "  deps          Install dependencies"
 	@echo "  test          Run tests"
 	@echo "  test-coverage Run tests with coverage"

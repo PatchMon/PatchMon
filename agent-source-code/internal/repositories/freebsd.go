@@ -194,7 +194,7 @@ func (m *FreeBSDManager) parseConfigFile(filename string) ([]models.Repository, 
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var currentRepo *models.Repository
 
