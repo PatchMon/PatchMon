@@ -50,20 +50,20 @@ const Reporting = () => {
 			const response = await alertsAPI.getAlerts(params);
 			return response.data.data || [];
 		},
-		refetchInterval: 5000, // Refresh every 5 seconds for real-time updates
+		refetchInterval: 30000, // Refresh every 30 seconds to reduce API load
 		refetchOnWindowFocus: true, // Refetch when user returns to tab
 		refetchOnMount: true, // Always refetch on mount
 		staleTime: 0, // Data is immediately stale, always refetch
 	});
 
-	// Fetch alert stats - with aggressive polling for real-time updates
+	// Fetch alert stats - polling for updates
 	const { data: statsData, isLoading: statsLoading } = useQuery({
 		queryKey: ["alert-stats"],
 		queryFn: async () => {
 			const response = await alertsAPI.getAlertStats();
 			return response.data.data || {};
 		},
-		refetchInterval: 5000, // Refresh every 5 seconds for real-time updates
+		refetchInterval: 30000, // Refresh every 30 seconds to reduce API load
 		refetchOnWindowFocus: true, // Refetch when user returns to tab
 		refetchOnMount: true, // Always refetch on mount
 		staleTime: 0, // Data is immediately stale, always refetch

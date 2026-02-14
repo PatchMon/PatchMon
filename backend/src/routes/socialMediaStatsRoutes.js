@@ -1,21 +1,18 @@
 const express = require("express");
 const logger = require("../utils/logger");
-const {
-	socialMediaStatsCache,
-} = require("../services/automation/socialMediaStats");
 
 const router = express.Router();
 
-// Get social media statistics from cache
+// Get social media statistics (hard-coded values)
 router.get("/", async (_req, res) => {
 	try {
 		res.json({
-			github_stars: socialMediaStatsCache.github_stars,
-			discord_members: socialMediaStatsCache.discord_members,
-			buymeacoffee_supporters: socialMediaStatsCache.buymeacoffee_supporters,
-			youtube_subscribers: socialMediaStatsCache.youtube_subscribers,
-			linkedin_followers: socialMediaStatsCache.linkedin_followers,
-			last_updated: socialMediaStatsCache.last_updated,
+			github_stars: 2100, // 2.1K
+			discord_members: 500,
+			buymeacoffee_supporters: 60,
+			youtube_subscribers: 100,
+			linkedin_followers: 250,
+			last_updated: new Date(),
 		});
 	} catch (error) {
 		logger.error("Error fetching social media stats:", error);
