@@ -425,6 +425,14 @@ router.get("/callback", async (req, res) => {
 			req,
 		);
 
+		// Store the OIDC id_token in Redis for RP-initiated logout (id_token_hint)
+		// Keyed by user ID so we can retrieve it at logout time
+		if (userInfo.idToken) {
+			const idTokenKey = `oidc:id_token:${user.id}`;
+			// Store for 7 days (matching refresh token lifetime)
+			await redis.setex(idTokenKey, 7 * 24 * 60 * 60, userInfo.idToken);
+		}
+
 		// Set tokens in secure HTTP-only cookies instead of URL parameters
 		// Check if we're actually using HTTPS (not just NODE_ENV)
 		const isSecure = req.secure || req.headers["x-forwarded-proto"] === "https";
@@ -490,15 +498,25 @@ router.get("/callback", async (req, res) => {
  * GET /api/v1/auth/oidc/logout
  * Handles OIDC RP-initiated logout
  */
-router.get("/logout", async (_req, res) => {
+router.get("/logout", async (req, res) => {
 	try {
 		if (!isOIDCEnabled()) {
 			return res.redirect("/login");
 		}
 
-		// Get the OIDC logout URL
+		// Retrieve the stored id_token for id_token_hint (RP-initiated logout)
+		let idTokenHint = null;
+		if (req.user?.id) {
+			const idTokenKey = `oidc:id_token:${req.user.id}`;
+			idTokenHint = await redis.get(idTokenKey);
+			if (idTokenHint) {
+				await redis.del(idTokenKey);
+			}
+		}
+
+		// Get the OIDC logout URL with id_token_hint
 		const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
-		const logoutUrl = getLogoutUrl(`${frontendUrl}/login`);
+		const logoutUrl = getLogoutUrl(`${frontendUrl}/login`, idTokenHint);
 
 		// Clear session cookies
 		res.clearCookie("token", { path: "/" });
