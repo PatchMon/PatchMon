@@ -794,8 +794,38 @@ elif [ "$(uname -s 2>/dev/null)" = "FreeBSD" ] || [ "$PATCHMON_OS" = "freebsd" ]
 
 name="patchmon_agent"
 rcvar="${name}_enable"
-command="/usr/local/bin/patchmon-agent"
-command_args="serve"
+pidfile="/var/run/${name}.pid"
+
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
+
+patchmon_agent_start()
+{
+    echo "Starting ${name}."
+    /usr/sbin/daemon -f -P ${pidfile} -r /usr/local/bin/patchmon-agent serve
+}
+
+patchmon_agent_stop()
+{
+    if [ -f ${pidfile} ]; then
+        echo "Stopping ${name}."
+        kill $(cat ${pidfile}) 2>/dev/null
+        rm -f ${pidfile}
+    else
+        echo "${name} is not running."
+    fi
+}
+
+patchmon_agent_status()
+{
+    if [ -f ${pidfile} ] && kill -0 $(cat ${pidfile}) 2>/dev/null; then
+        echo "${name} is running as pid $(cat ${pidfile})."
+    else
+        echo "${name} is not running."
+        return 1
+    fi
+}
 
 load_rc_config $name
 run_rc_command "$1"
@@ -804,6 +834,7 @@ EOF
     if command -v service >/dev/null 2>&1; then
         service patchmon_agent enable 2>/dev/null || true
         service patchmon_agent start
+        sleep 1
         if service patchmon_agent status 2>/dev/null | grep -q "running"; then
             success "PatchMon Agent service started successfully"
             info "WebSocket connection established"
