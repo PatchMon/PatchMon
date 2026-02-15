@@ -2,7 +2,7 @@
 
 # PatchMon
 
-### Enterprise-Grade Linux Patch Monitoring & Server Management
+### Enterprise-Grade Linux & Windows Patch Monitoring & Server Management
 
 [![Website](https://img.shields.io/badge/Website-patchmon.net-blue?style=for-the-badge)](https://patchmon.net)
 [![Cloud](https://img.shields.io/badge/Cloud-patchmon.net%2Fcloud-purple?style=for-the-badge)](https://patchmon.net)
@@ -25,7 +25,7 @@ This project represents hundreds of hours of development work. If PatchMon has s
 
 ## What is PatchMon?
 
-PatchMon is an enterprise-grade platform that gives operations teams a single pane of glass to monitor, manage and secure their entire Linux fleet. Lightweight agents communicate outbound-only to the PatchMon server on your schedule - no inbound ports required on monitored hosts - delivering real-time visibility into package health, compliance posture and system status across environments of any scale.
+PatchMon is an enterprise-grade platform that gives operations teams a single pane of glass to monitor, manage and secure their entire Linux and Windows fleet. Lightweight agents communicate outbound-only to the PatchMon server on your schedule - no inbound ports required on monitored hosts - delivering real-time visibility into package health, compliance posture and system status across environments of any scale.
 
 Whether you manage ten servers or ten thousand, PatchMon provides the tooling, automation and auditability that modern infrastructure teams demand.
 
@@ -96,6 +96,8 @@ docker compose up -d
 ```
 
 Once all containers are healthy, open your browser at `http://localhost:3000` or the configured URL you have chosen and complete the first-time admin setup.
+
+**Windows hosts:** The agent can be installed on Windows Server and Windows 10/11. See **[WINDOWS.md](WINDOWS.md)** for requirements, installation, and uninstall steps.
 
 #### Native Install (Ubuntu / Debian)
 
