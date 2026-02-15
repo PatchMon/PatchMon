@@ -915,34 +915,25 @@ router.post(
 					});
 				}
 
-				// Now process host_packages
-				for (const packageData of packages) {
+				// Now process host_packages - batch create since we already deleted all
+				const hostPackagesToCreate = packages.map((packageData) => {
 					const pkg = existingPackageMap.get(packageData.name);
+					return {
+						id: uuidv4(),
+						host_id: host.id,
+						package_id: pkg.id,
+						current_version: packageData.currentVersion,
+						available_version: packageData.availableVersion || null,
+						needs_update: packageData.needsUpdate,
+						is_security_update: packageData.isSecurityUpdate || false,
+						last_checked: new Date(),
+					};
+				});
 
-					await tx.host_packages.upsert({
-						where: {
-							host_id_package_id: {
-								host_id: host.id,
-								package_id: pkg.id,
-							},
-						},
-						update: {
-							current_version: packageData.currentVersion,
-							available_version: packageData.availableVersion || null,
-							needs_update: packageData.needsUpdate,
-							is_security_update: packageData.isSecurityUpdate || false,
-							last_checked: new Date(),
-						},
-						create: {
-							id: uuidv4(),
-							host_id: host.id,
-							package_id: pkg.id,
-							current_version: packageData.currentVersion,
-							available_version: packageData.availableVersion || null,
-							needs_update: packageData.needsUpdate,
-							is_security_update: packageData.isSecurityUpdate || false,
-							last_checked: new Date(),
-						},
+				if (hostPackagesToCreate.length > 0) {
+					await tx.host_packages.createMany({
+						data: hostPackagesToCreate,
+						skipDuplicates: true,
 					});
 				}
 

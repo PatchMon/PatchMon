@@ -19,6 +19,7 @@ const scanSubmitLimiter = rateLimit({
 	message: { error: "Too many scan submissions, please try again later" },
 	standardHeaders: true,
 	legacyHeaders: false,
+	validate: { trustProxy: false },
 });
 
 // ==========================================

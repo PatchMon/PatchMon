@@ -48,6 +48,7 @@ const passwordOperationLimiter = rateLimit({
 		const userId = req.user?.id || "unauthenticated";
 		return `password:${ip}:${userId}`;
 	},
+	validate: { trustProxy: false },
 });
 
 /**
