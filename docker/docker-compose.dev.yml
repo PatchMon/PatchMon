@@ -88,10 +88,6 @@ services:
       REDIS_DB: 0
       # Assets directory for custom branding (logos, favicons)
       ASSETS_DIR: /app/assets
-      # Guacamole (RDP viewer for Windows hosts)
-      GUACAMOLE_URL: http://guacamole:8080
-      GUACAMOLE_PUBLIC_URL: http://192.168.1.142:8080
-      GUACAMOLE_JSON_SECRET_KEY: "1a2b3c4d5e6f7890abcdef1234567890"
     ports:
       - "3001:3001"
     volumes:
@@ -129,7 +125,6 @@ services:
     environment:
       BACKEND_HOST: backend
       BACKEND_PORT: 3001
-      GUACAMOLE_URL: http://guacamole:8080
     ports:
       - "3000:3000"
     volumes:
@@ -154,60 +149,6 @@ services:
           path: ../frontend/package.json
         - action: rebuild
           path: ../frontend/vite.config.js
-
-  # ---------------------------------------------------------------------------
-  # Guacamole - RDP viewer for Windows hosts (embedded in PatchMon UI)
-  # ---------------------------------------------------------------------------
-  guacamole-db:
-    image: postgres:17-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: guacamole_db
-      POSTGRES_USER: guacamole_user
-      # WARNING: Insecure development password - DO NOT use in production
-      POSTGRES_PASSWORD: 1NS3CU6E_DEV_GUAC_PASS
-    volumes:
-      - ./compose_dev_data/guacamole_db:/var/lib/postgresql/data
-    networks:
-      - patchmon-internal
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U guacamole_user -d guacamole_db"]
-      interval: 3s
-      timeout: 5s
-      retries: 7
-
-  guacd:
-    image: guacamole/guacd
-    restart: unless-stopped
-    network_mode: host
-    # Use host network so RDP connections originate from host IP (192.168.1.x)
-    # instead of Docker bridge (172.x) - can fix auth with some Windows configs
-
-  guacamole:
-    image: guacamole/guacamole
-    restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    environment:
-      GUACD_HOSTNAME: host.docker.internal
-      POSTGRESQL_HOSTNAME: guacamole-db
-      POSTGRESQL_DATABASE: guacamole_db
-      POSTGRESQL_USER: guacamole_user
-      POSTGRESQL_PASSWORD: 1NS3CU6E_DEV_GUAC_PASS
-      # JSON auth: PatchMon creates connections on-the-fly (128-bit hex key)
-      JSON_ENABLED: "true"
-      JSON_SECRET_KEY: "1a2b3c4d5e6f7890abcdef1234567890"
-      # Ignore RDP server certs (self-signed) - fixes "SSL/TLS connection failed"
-      RDP_IGNORE_CERT: "true"
-    ports:
-      - "8080:8080"
-    networks:
-      - patchmon-internal
-    depends_on:
-      guacd:
-        condition: service_started
-      guacamole-db:
-        condition: service_healthy
 
 networks:
   patchmon-internal:

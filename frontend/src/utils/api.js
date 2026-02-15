@@ -395,13 +395,6 @@ export const authAPI = {
 			firstName,
 			lastName,
 		}),
-	rdpTicket: (hostId, username, password, domain = "") =>
-		api.post("/auth/rdp-ticket", {
-			hostId,
-			username,
-			password,
-			domain,
-		}),
 };
 
 // TFA API

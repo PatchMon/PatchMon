@@ -33,7 +33,6 @@ import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import SshTerminal from "../components/SshTerminal";
 
-import RdpViewer from "../components/RdpViewer";
 import {
 	adminHostsAPI,
 	alertsAPI,
@@ -2256,11 +2255,7 @@ const HostDetail = () => {
 									: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
 							}`}
 						>
-							{(host?.os_type || "")
-								.toLowerCase()
-								.includes("windows")
-								? "Remote Desktop"
-								: "Terminal"}
+							Terminal
 						</button>
 					</div>
 
@@ -3188,23 +3183,12 @@ const HostDetail = () => {
 										</div>
 									}
 								>
-									{(host.os_type || "")
-										.toLowerCase()
-										.includes("windows") ? (
-										<RdpViewer
+									<SshTerminal
 											host={host}
 											isOpen={true}
 											onClose={() => handleTabChange("host")}
 											embedded={true}
-										/>
-									) : (
-										<SshTerminal
-											host={host}
-											isOpen={true}
-											onClose={() => handleTabChange("host")}
-											embedded={true}
-										/>
-									)}
+									/>
 								</Suspense>
 							</div>
 						)}

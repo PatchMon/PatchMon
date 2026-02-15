@@ -59,13 +59,6 @@ export default defineConfig({
 				changeOrigin: true,
 				secure: false,
 			},
-			// Proxy Guacamole web client (iframe) - same-origin for embedded RDP
-			"/guacamole": {
-				target: process.env.GUACAMOLE_URL || "http://guacamole:8080",
-				changeOrigin: true,
-				secure: false,
-				ws: true,
-			},
 		},
 	},
 	build: {
