@@ -9,6 +9,7 @@ const { authenticateToken } = require("../middleware/auth");
 const {
 	requireViewUsers,
 	requireManageUsers,
+	requireManageHosts,
 } = require("../middleware/permissions");
 const { v4: uuidv4 } = require("uuid");
 const {
@@ -1888,6 +1889,150 @@ async function consumeSshTicket(ticket, expectedHostId) {
 
 // Export for use in other modules
 router.consumeSshTicket = consumeSshTicket;
+
+// RDP Ticket - Guacamole JSON auth for Windows hosts
+// POSTs to Guacamole /api/tokens, gets authToken, returns direct client URL for Windows desktop
+const {
+	signAndEncrypt,
+	createRdpAuthJson,
+	getRdpClientPath,
+} = require("../utils/guacamoleAuth");
+const axios = require("axios");
+
+router.post(
+	"/rdp-ticket",
+	authenticateToken,
+	requireManageHosts,
+	[
+		body("hostId").notEmpty().withMessage("Host ID is required"),
+		body("username").notEmpty().withMessage("Username is required"),
+		body("password").notEmpty().withMessage("Password is required"),
+		body("domain").optional().isString(),
+	],
+	async (req, res) => {
+		try {
+			const errors = validationResult(req);
+			if (!errors.isEmpty()) {
+				return res.status(400).json({
+					error: "Validation failed",
+					errors: errors.array(),
+				});
+			}
+
+			const { hostId, username, password, domain = "" } = req.body;
+
+			const host = await prisma.hosts.findUnique({
+				where: { id: hostId },
+				select: { id: true, ip: true, hostname: true, os_type: true },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			const osType = (host.os_type || "").toLowerCase();
+			if (!osType.includes("windows")) {
+				return res.status(400).json({
+					error: "RDP is only available for Windows hosts",
+				});
+			}
+
+			const hostname = host.ip || host.hostname;
+			if (!hostname) {
+				return res.status(400).json({
+					error: "Host has no IP address or hostname configured",
+				});
+			}
+
+			const secretKey = process.env.GUACAMOLE_JSON_SECRET_KEY;
+			if (!secretKey || secretKey.length !== 32) {
+				logger.error(
+					"[rdp-ticket] GUACAMOLE_JSON_SECRET_KEY must be 32 hex chars",
+				);
+				return res.status(503).json({
+					error: "RDP service not configured",
+				});
+			}
+
+			const guacamoleInternalUrl =
+				process.env.GUACAMOLE_URL || "http://guacamole:8080";
+			const guacamolePublicUrl =
+				process.env.GUACAMOLE_PUBLIC_URL ||
+				`${process.env.SERVER_PROTOCOL || "http"}://${process.env.SERVER_HOST || "localhost"}:8080`;
+			const tokensUrl = guacamoleInternalUrl.replace(/\/$/, "") + "/guacamole/api/tokens";
+
+			// Use Vite proxy (/guacamole) when same-origin - tunnel goes through Vite, no backend auth
+			const allowedOrigins = (process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || "http://localhost:3000")
+				.split(",")
+				.map((o) => o.trim())
+				.filter(Boolean);
+			const requestOrigin = req.get("Origin");
+			const guacamoleBaseUrl =
+				requestOrigin && allowedOrigins.includes(requestOrigin)
+					? requestOrigin.replace(/\/$/, "") + "/guacamole"
+					: guacamolePublicUrl.replace(/\/$/, "") + "/guacamole";
+
+			// Pass domain and username separately (Guacamole/FreeRDP NLA works with this)
+			const authJson = createRdpAuthJson({
+				hostname,
+				username: username.trim(),
+				password,
+				domain: (domain || "").trim(),
+				port: 3389,
+			});
+
+			const data = signAndEncrypt(authJson, secretKey);
+
+			// POST to Guacamole to get authToken; use token + direct client path for immediate RDP
+			let authToken;
+			try {
+				const tokenRes = await axios.post(
+					tokensUrl,
+					new URLSearchParams({ data }).toString(),
+					{
+						headers: { "Content-Type": "application/x-www-form-urlencoded" },
+						timeout: 10000,
+					},
+				);
+				authToken = tokenRes.data?.authToken;
+			} catch (tokenErr) {
+				logger.error(
+					"[rdp-ticket] Guacamole /api/tokens failed:",
+					tokenErr.response?.status,
+					tokenErr.message,
+				);
+				return res.status(503).json({
+					error: "RDP service unavailable",
+				});
+			}
+
+			if (!authToken) {
+				logger.error("[rdp-ticket] Guacamole /api/tokens did not return authToken");
+				return res.status(503).json({
+					error: "RDP service unavailable",
+				});
+			}
+
+			const clientPath = getRdpClientPath();
+			// guacamoleBaseUrl: tunnel at /guacamole/tunnel (Vite proxy when same-origin)
+			// guacamoleUrl: for "open in new tab" - full client URL
+			const guacamoleUrl = `${guacamoleBaseUrl}/#/client/${clientPath}?token=${encodeURIComponent(authToken)}`;
+			const params = authJson.connections["PatchMon-RDP"].parameters;
+
+			res.json({
+				guacamoleUrl,
+				guacamoleBaseUrl,
+				authToken,
+				clientPath,
+				width: Number(params.width) || 1366,
+				height: Number(params.height) || 768,
+			});
+		} catch (error) {
+			logger.error("RDP ticket generation error:", error);
+			res.status(500).json({ error: "Failed to generate RDP ticket" });
+		}
+	},
+);
 
 // Get current user profile
 router.get("/profile", authenticateToken, async (req, res) => {

@@ -12,6 +12,7 @@ const AgentUpdatesTab = () => {
 		autoUpdate: false,
 		ignoreSslSelfSigned: false,
 	});
+	const [uninstallOs, setUninstallOs] = useState("linux");
 	const [errors, setErrors] = useState({});
 	const [isDirty, setIsDirty] = useState(false);
 	const [toast, setToast] = useState(null);
@@ -491,97 +492,213 @@ const AgentUpdatesTab = () => {
 			<div className="bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded-md p-4">
 				<div className="flex">
 					<Shield className="h-5 w-5 text-red-400 dark:text-red-300" />
-					<div className="ml-3">
+					<div className="ml-3 flex-1">
 						<h3 className="text-sm font-medium text-red-800 dark:text-red-200">
 							Agent Uninstall Command
 						</h3>
 						<div className="mt-2 text-sm text-red-700 dark:text-red-300">
 							<p className="mb-3">To completely remove PatchMon from a host:</p>
 
-							{/* Agent Removal Script - Standard */}
-							<div className="mb-3">
-								<div className="space-y-2">
-									<div className="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">
-										Standard Removal (preserves backups):
-									</div>
-									<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-										<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
-											curl {formData.ignoreSslSelfSigned ? "-sk" : "-s"}{" "}
-											{window.location.origin}/api/v1/hosts/remove | sudo sh
-										</div>
-										<button
-											type="button"
-											onClick={async () => {
-												try {
-													const curlFlags = formData.ignoreSslSelfSigned
-														? "-sk"
-														: "-s";
-													await copyToClipboard(
-														`curl ${curlFlags} ${window.location.origin}/api/v1/hosts/remove | sudo sh`,
-													);
-													showToast(
-														"Standard removal command copied!",
-														"success",
-													);
-												} catch (err) {
-													console.error("Failed to copy:", err);
-													showToast("Failed to copy to clipboard", "error");
-												}
-											}}
-											className="px-3 py-2 bg-red-200 dark:bg-red-700 text-red-800 dark:text-red-200 rounded text-xs hover:bg-red-300 dark:hover:bg-red-600 transition-colors flex-shrink-0 whitespace-nowrap"
-										>
-											Copy
-										</button>
-									</div>
-								</div>
+							{/* OS Selector */}
+							<div className="mb-3 flex gap-2">
+								<button
+									type="button"
+									onClick={() => setUninstallOs("linux")}
+									className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+										uninstallOs === "linux"
+											? "bg-red-500 text-white"
+											: "bg-red-200 dark:bg-red-800 text-red-800 dark:text-red-200 hover:bg-red-300 dark:hover:bg-red-700"
+									}`}
+								>
+									Linux / Unix
+								</button>
+								<button
+									type="button"
+									onClick={() => setUninstallOs("windows")}
+									className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+										uninstallOs === "windows"
+											? "bg-red-500 text-white"
+											: "bg-red-200 dark:bg-red-800 text-red-800 dark:text-red-200 hover:bg-red-300 dark:hover:bg-red-700"
+									}`}
+								>
+									Windows
+								</button>
 							</div>
 
-							{/* Agent Removal Script - Complete */}
-							<div className="mb-3">
-								<div className="space-y-2">
-									<div className="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">
-										Complete Removal (includes backups):
-									</div>
-									<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-										<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
-											curl {formData.ignoreSslSelfSigned ? "-sk" : "-s"}{" "}
-											{window.location.origin}/api/v1/hosts/remove | sudo
-											REMOVE_BACKUPS=1 sh
+							{uninstallOs === "linux" && (
+								<>
+									{/* Linux - Standard Removal */}
+									<div className="mb-3">
+										<div className="space-y-2">
+											<div className="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">
+												Standard Removal (preserves backups):
+											</div>
+											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+												<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
+													curl {formData.ignoreSslSelfSigned ? "-sk" : "-s"}{" "}
+													{window.location.origin}/api/v1/hosts/remove | sudo
+													sh
+												</div>
+												<button
+													type="button"
+													onClick={async () => {
+														try {
+															const curlFlags = formData.ignoreSslSelfSigned
+																? "-sk"
+																: "-s";
+															await copyToClipboard(
+																`curl ${curlFlags} ${window.location.origin}/api/v1/hosts/remove | sudo sh`,
+															);
+															showToast(
+																"Standard removal command copied!",
+																"success",
+															);
+														} catch (err) {
+															showToast("Failed to copy to clipboard", "error");
+														}
+													}}
+													className="px-3 py-2 bg-red-200 dark:bg-red-700 text-red-800 dark:text-red-200 rounded text-xs hover:bg-red-300 dark:hover:bg-red-600 transition-colors flex-shrink-0 whitespace-nowrap"
+												>
+													Copy
+												</button>
+											</div>
 										</div>
-										<button
-											type="button"
-											onClick={async () => {
-												try {
-													const curlFlags = formData.ignoreSslSelfSigned
-														? "-sk"
-														: "-s";
-													await copyToClipboard(
-														`curl ${curlFlags} ${window.location.origin}/api/v1/hosts/remove | sudo REMOVE_BACKUPS=1 sh`,
-													);
-													showToast(
-														"Complete removal command copied!",
-														"success",
-													);
-												} catch (err) {
-													console.error("Failed to copy:", err);
-													showToast("Failed to copy to clipboard", "error");
-												}
-											}}
-											className="px-3 py-2 bg-red-200 dark:bg-red-700 text-red-800 dark:text-red-200 rounded text-xs hover:bg-red-300 dark:hover:bg-red-600 transition-colors flex-shrink-0 whitespace-nowrap"
-										>
-											Copy
-										</button>
 									</div>
-									<div className="text-xs text-red-600 dark:text-red-400">
-										This removes: binaries, systemd/OpenRC services,
-										configuration files, logs, crontab entries, and backup files
+
+									{/* Linux - Complete Removal */}
+									<div className="mb-3">
+										<div className="space-y-2">
+											<div className="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">
+												Complete Removal (includes backups):
+											</div>
+											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+												<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
+													curl {formData.ignoreSslSelfSigned ? "-sk" : "-s"}{" "}
+													{window.location.origin}/api/v1/hosts/remove | sudo
+													REMOVE_BACKUPS=1 sh
+												</div>
+												<button
+													type="button"
+													onClick={async () => {
+														try {
+															const curlFlags = formData.ignoreSslSelfSigned
+																? "-sk"
+																: "-s";
+															await copyToClipboard(
+																`curl ${curlFlags} ${window.location.origin}/api/v1/hosts/remove | sudo REMOVE_BACKUPS=1 sh`,
+															);
+															showToast(
+																"Complete removal command copied!",
+																"success",
+															);
+														} catch (err) {
+															showToast("Failed to copy to clipboard", "error");
+														}
+													}}
+													className="px-3 py-2 bg-red-200 dark:bg-red-700 text-red-800 dark:text-red-200 rounded text-xs hover:bg-red-300 dark:hover:bg-red-600 transition-colors flex-shrink-0 whitespace-nowrap"
+												>
+													Copy
+												</button>
+											</div>
+											<div className="text-xs text-red-600 dark:text-red-400">
+												Removes: binaries, systemd/OpenRC services,
+												configuration files, logs, crontab entries, and backup
+												files
+											</div>
+										</div>
 									</div>
-								</div>
-							</div>
+								</>
+							)}
+
+							{uninstallOs === "windows" && (
+								<>
+									<div className="text-xs text-red-600 dark:text-red-400 mb-2">
+										Run PowerShell as Administrator.
+									</div>
+									{/* Windows - Standard Removal */}
+									<div className="mb-3">
+										<div className="space-y-2">
+											<div className="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">
+												Standard Removal (preserves config/logs):
+											</div>
+											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+												<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
+													$script = Invoke-WebRequest -Uri &quot;
+													{window.location.origin}/api/v1/hosts/remove?os=windows
+													&quot; -UseBasicParsing; $script.Content | Out-File
+													-FilePath &quot;$env:TEMP\patchmon-remove.ps1&quot;
+													-Encoding utf8; powershell.exe -ExecutionPolicy
+													Bypass -File &quot;$env:TEMP\patchmon-remove.ps1&quot;
+												</div>
+												<button
+													type="button"
+													onClick={async () => {
+														try {
+															const cmd = `$script = Invoke-WebRequest -Uri "${window.location.origin}/api/v1/hosts/remove?os=windows" -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-remove.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-remove.ps1"`;
+															await copyToClipboard(cmd);
+															showToast(
+																"Standard removal command copied!",
+																"success",
+															);
+														} catch (err) {
+															showToast("Failed to copy to clipboard", "error");
+														}
+													}}
+													className="px-3 py-2 bg-red-200 dark:bg-red-700 text-red-800 dark:text-red-200 rounded text-xs hover:bg-red-300 dark:hover:bg-red-600 transition-colors flex-shrink-0 whitespace-nowrap"
+												>
+													Copy
+												</button>
+											</div>
+										</div>
+									</div>
+
+									{/* Windows - Complete Removal */}
+									<div className="mb-3">
+										<div className="space-y-2">
+											<div className="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">
+												Complete Removal (config + logs):
+											</div>
+											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+												<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
+													$script = Invoke-WebRequest -Uri &quot;
+													{window.location.origin}/api/v1/hosts/remove?os=windows
+													&quot; -UseBasicParsing; $script.Content | Out-File
+													-FilePath &quot;$env:TEMP\patchmon-remove.ps1&quot;
+													-Encoding utf8; powershell.exe -ExecutionPolicy
+													Bypass -File &quot;$env:TEMP\patchmon-remove.ps1&quot;
+													-RemoveAll -Force
+												</div>
+												<button
+													type="button"
+													onClick={async () => {
+														try {
+															const cmd = `$script = Invoke-WebRequest -Uri "${window.location.origin}/api/v1/hosts/remove?os=windows" -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-remove.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-remove.ps1" -RemoveAll -Force`;
+															await copyToClipboard(cmd);
+															showToast(
+																"Complete removal command copied!",
+																"success",
+															);
+														} catch (err) {
+															showToast("Failed to copy to clipboard", "error");
+														}
+													}}
+													className="px-3 py-2 bg-red-200 dark:bg-red-700 text-red-800 dark:text-red-200 rounded text-xs hover:bg-red-300 dark:hover:bg-red-600 transition-colors flex-shrink-0 whitespace-nowrap"
+												>
+													Copy
+												</button>
+											</div>
+											<div className="text-xs text-red-600 dark:text-red-400">
+												Removes: Windows Service, binaries, configuration,
+												logs, and backup files
+											</div>
+										</div>
+									</div>
+								</>
+							)}
 
 							<p className="mt-2 text-xs text-red-700 dark:text-red-400">
-								⚠️ Standard removal preserves backup files for safety. Use
-								complete removal to delete everything.
+								⚠️ Standard removal preserves backup files (and config/logs on
+								Windows). Use complete removal to delete everything.
 							</p>
 						</div>
 					</div>

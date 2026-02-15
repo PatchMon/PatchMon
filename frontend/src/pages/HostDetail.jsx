@@ -26,12 +26,14 @@ import {
 	Wifi,
 	X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import ComplianceTab from "../components/compliance/ComplianceTab";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import SshTerminal from "../components/SshTerminal";
+
+import RdpViewer from "../components/RdpViewer";
 import {
 	adminHostsAPI,
 	alertsAPI,
@@ -2254,7 +2256,11 @@ const HostDetail = () => {
 									: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
 							}`}
 						>
-							Terminal
+							{(host?.os_type || "")
+								.toLowerCase()
+								.includes("windows")
+								? "Remote Desktop"
+								: "Terminal"}
 						</button>
 					</div>
 
@@ -3168,13 +3174,38 @@ const HostDetail = () => {
 
 						{/* Terminal - Always mounted and open to preserve connection, hidden when not active */}
 						{host && (
-							<div className={activeTab === "terminal" ? "" : "hidden"}>
-								<SshTerminal
-									host={host}
-									isOpen={true}
-									onClose={() => handleTabChange("host")}
-									embedded={true}
-								/>
+							<div
+								className={
+									activeTab === "terminal"
+										? "min-h-[calc(100vh-14rem)]"
+										: "hidden"
+								}
+							>
+								<Suspense
+									fallback={
+										<div className="flex items-center justify-center py-12 text-secondary-500">
+											Loading...
+										</div>
+									}
+								>
+									{(host.os_type || "")
+										.toLowerCase()
+										.includes("windows") ? (
+										<RdpViewer
+											host={host}
+											isOpen={true}
+											onClose={() => handleTabChange("host")}
+											embedded={true}
+										/>
+									) : (
+										<SshTerminal
+											host={host}
+											isOpen={true}
+											onClose={() => handleTabChange("host")}
+											embedded={true}
+										/>
+									)}
+								</Suspense>
 							</div>
 						)}
 

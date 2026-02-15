@@ -2359,9 +2359,14 @@ router.get("/install", async (req, res) => {
 		const fs = require("node:fs");
 		const path = require("node:path");
 
-		// Detect OS from User-Agent header
+		// Detect OS: explicit ?os=windows query param takes precedence, else User-Agent
+		const osParam = req.query.os?.toLowerCase();
 		const userAgent = (req.headers["user-agent"] || "").toLowerCase();
-		const isWindows = userAgent.includes("windows") || userAgent.includes("powershell");
+		const isWindows = osParam === "windows"
+			? true
+			: osParam === "linux"
+				? false
+				: userAgent.includes("windows") || userAgent.includes("powershell");
 
 		// Get the configured server URL from settings
 		// Use SERVER_HOST and SERVER_PORT from environment, or fall back to settings
@@ -2556,9 +2561,14 @@ router.get("/remove", async (req, res) => {
 		const fs = require("node:fs");
 		const path = require("node:path");
 
-		// Detect OS from User-Agent header
+		// Detect OS: explicit ?os=windows takes precedence, else User-Agent
+		const osParam = req.query.os?.toLowerCase();
 		const userAgent = (req.headers["user-agent"] || "").toLowerCase();
-		const isWindows = userAgent.includes("windows") || userAgent.includes("powershell");
+		const isWindows = osParam === "windows"
+			? true
+			: osParam === "linux"
+				? false
+				: userAgent.includes("windows") || userAgent.includes("powershell");
 
 		if (isWindows) {
 			// Serve PowerShell script for Windows

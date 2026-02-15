@@ -282,9 +282,11 @@ if ($RemoveLogs) {
     Write-Host "  • Log files: Preserved" -ForegroundColor Gray
 }
 
-Write-Host ""
-Write-Info "To completely remove all files (config and logs), run:"
-Write-Host "  .\patchmon_remove_windows.ps1 -RemoveAll" -ForegroundColor Cyan
+if (-not $RemoveAll) {
+    Write-Host ""
+    Write-Info "To completely remove config and logs, run with -RemoveAll"
+    Write-Host "  .\patchmon_remove_windows.ps1 -RemoveAll -Force" -ForegroundColor Cyan
+}
 
 Write-Host ""
 

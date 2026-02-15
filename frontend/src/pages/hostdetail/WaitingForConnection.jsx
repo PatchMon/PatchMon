@@ -35,6 +35,7 @@ const WaitingForConnection = ({
 	curlFlags,
 	installUrl,
 	shellCommand,
+	installOs = "linux",
 }) => {
 	const [_wsStatus, setWsStatus] = useState(null);
 	const [connectionStage, setConnectionStage] = useState("waiting"); // waiting, connected, receiving, done
@@ -156,7 +157,10 @@ const WaitingForConnection = ({
 	}, [connectionStage, hasNavigated, navigate, host?.id, queryClient, onClose]);
 
 	const copyCommand = async () => {
-		const command = `curl ${curlFlags} ${installUrl} -H "X-API-ID: ${host.api_id}" -H "X-API-KEY: ${plaintextApiKey}" | ${shellCommand}`;
+		const command =
+			installOs === "windows"
+				? `$script = Invoke-WebRequest -Uri "${installUrl}" -Headers @{"X-API-ID"="${host.api_id}"; "X-API-KEY"="${plaintextApiKey}"} -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-install.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-install.ps1"`
+				: `curl ${curlFlags} ${installUrl} -H "X-API-ID: ${host.api_id}" -H "X-API-KEY: ${plaintextApiKey}" | ${shellCommand}`;
 		try {
 			if (navigator.clipboard && window.isSecureContext) {
 				await navigator.clipboard.writeText(command);

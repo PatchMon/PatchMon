@@ -15,6 +15,7 @@ import WaitingForConnection from "./WaitingForConnection";
 const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 	const [showApiKey, setShowApiKey] = useState(false);
 	const [activeTab, setActiveTab] = useState("quick-install");
+	const [installOs, setInstallOs] = useState("linux");
 	const [forceInstall, setForceInstall] = useState(false);
 	const [regeneratedCredentials, setRegeneratedCredentials] = useState(null);
 	const [isRegenerating, setIsRegenerating] = useState(false);
@@ -72,10 +73,13 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 		return settings?.ignore_ssl_self_signed ? "-sk" : "-s";
 	};
 
-	// Helper function to get the install URL (with optional force flag)
-	const getInstallUrl = () => {
+	// Helper function to get the install URL (os=windows forces PowerShell script, force is Linux-only)
+	const getInstallUrl = (os) => {
 		const baseUrl = `${serverUrl}/api/v1/hosts/install`;
-		return forceInstall ? `${baseUrl}?force=true` : baseUrl;
+		const params = [];
+		if (os === "windows") params.push("os=windows");
+		if (forceInstall && os !== "windows") params.push("force=true");
+		return params.length ? `${baseUrl}?${params.join("&")}` : baseUrl;
 	};
 
 	// Helper function to build the shell command suffix (sudo sh with optional --force)
@@ -130,8 +134,9 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 				plaintextApiKey={effectiveApiKey}
 				serverUrl={serverUrl}
 				curlFlags={getCurlFlags()}
-				installUrl={getInstallUrl()}
+				installUrl={getInstallUrl(installOs)}
 				shellCommand={getShellCommand()}
+				installOs={installOs}
 			/>
 		);
 	}
@@ -225,7 +230,34 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 								serves the correct installation script:
 							</p>
 
-							{/* Force Install Toggle */}
+							{/* OS Selector - Linux | Windows */}
+							<div className="mb-3 flex gap-2">
+								<button
+									type="button"
+									onClick={() => setInstallOs("linux")}
+									className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+										installOs === "linux"
+											? "bg-primary-500 text-white"
+											: "bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-300 hover:bg-secondary-300 dark:hover:bg-secondary-500"
+									}`}
+								>
+									Linux / Unix
+								</button>
+								<button
+									type="button"
+									onClick={() => setInstallOs("windows")}
+									className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+										installOs === "windows"
+											? "bg-primary-500 text-white"
+											: "bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-300 hover:bg-secondary-300 dark:hover:bg-secondary-500"
+									}`}
+								>
+									Windows
+								</button>
+							</div>
+
+							{/* Force Install Toggle - Linux only */}
+							{installOs === "linux" && (
 							<div className="mb-3">
 								<label className="flex items-center gap-2 text-xs md:text-sm">
 									<input
@@ -243,6 +275,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 									(CloudPanel, WHM, etc.) that block apt-get operations
 								</p>
 							</div>
+							)}
 
 							{isApiKeyHash && (
 								<div className="mb-3 p-3 bg-warning-50 dark:bg-warning-900/20 border border-warning-200 dark:border-warning-700 rounded-lg">
@@ -274,7 +307,8 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 								</div>
 							)}
 
-							{/* Linux/Unix Installation Command */}
+							{/* Linux/Unix Installation Command - shown when Linux selected */}
+							{installOs === "linux" && (
 							<div className="mb-4">
 								<label className="block text-xs md:text-sm font-medium text-primary-900 dark:text-primary-200 mb-2">
 									For Linux/Unix (run with bash or sh):
@@ -308,8 +342,10 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 									</button>
 								</div>
 							</div>
+							)}
 
-							{/* Windows Installation Command */}
+							{/* Windows Installation Command - shown when Windows selected */}
+							{installOs === "windows" && (
 							<div>
 								<label className="block text-xs md:text-sm font-medium text-primary-900 dark:text-primary-200 mb-2">
 									For Windows (run PowerShell as Administrator):
@@ -320,7 +356,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 										value={
 											isApiKeyHash
 												? "API key not available - click Regenerate above"
-												: `$script = Invoke-WebRequest -Uri "${getInstallUrl()}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-install.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-install.ps1"`
+												: `$script = Invoke-WebRequest -Uri "${getInstallUrl("windows")}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-install.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-install.ps1"`
 										}
 										readOnly
 										disabled={isApiKeyHash}
@@ -329,7 +365,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 									<button
 										type="button"
 										onClick={async () => {
-											const command = `$script = Invoke-WebRequest -Uri "${getInstallUrl()}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-install.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-install.ps1"`;
+											const command = `$script = Invoke-WebRequest -Uri "${getInstallUrl("windows")}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-install.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-install.ps1"`;
 											await copyToClipboard(command);
 											if (!isApiKeyHash) {
 												setShowWaitingScreen(true);
@@ -347,6 +383,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 									PowerShell as Administrator.
 								</p>
 							</div>
+							)}
 						</div>
 					</div>
 				)}

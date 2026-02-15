@@ -343,6 +343,28 @@ The development setup exposes additional ports for debugging:
    ```
    Otherwise logs are shown automatically in attached modes (`up`, `up --watch`).
 
+### Guacamole (RDP Viewer)
+
+The development compose includes Apache Guacamole for in-browser RDP access to Windows hosts. One-time setup:
+
+1. Start Guacamole database and wait for it to be healthy:
+   ```bash
+   docker compose -f docker/docker-compose.dev.yml up -d guacamole-db
+   sleep 5
+   ```
+
+2. Initialize the Guacamole schema:
+   ```bash
+   ./docker/guacamole-init-db.sh
+   ```
+
+3. Start Guacamole and guacd:
+   ```bash
+   docker compose -f docker/docker-compose.dev.yml up -d guacd guacamole
+   ```
+
+Guacamole will be available at `http://localhost:8080/guacamole/` (default login: guacadmin/guacadmin). PatchMon will embed the RDP client for Windows hosts.
+
 ### Features in Development Mode
 
 - **Hot Reload**: Automatic code synchronization and service restarts

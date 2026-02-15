@@ -111,9 +111,9 @@ try {
     
     try {
         if ($headers.Count -gt 0) {
-            Invoke-WebRequest -Uri $downloadURL -OutFile $tempPath -Headers $headers -UseBasicParsing
+            Invoke-WebRequest -Uri $downloadURL -OutFile $tempPath -Headers $headers -UseBasicParsing -TimeoutSec 300
         } else {
-            Invoke-WebRequest -Uri $downloadURL -OutFile $tempPath -UseBasicParsing
+            Invoke-WebRequest -Uri $downloadURL -OutFile $tempPath -UseBasicParsing -TimeoutSec 300
         }
         Write-Host "Download completed from server." -ForegroundColor Green
     } catch {
@@ -122,7 +122,7 @@ try {
             Write-Host "Server download failed (binary may not be available on server), trying GitHub..." -ForegroundColor Yellow
             $githubURL = "https://github.com/PatchMon/PatchMon-agent/releases/latest/download/patchmon-agent-windows-${arch}.exe"
             try {
-                Invoke-WebRequest -Uri $githubURL -OutFile $tempPath -UseBasicParsing
+                Invoke-WebRequest -Uri $githubURL -OutFile $tempPath -UseBasicParsing -TimeoutSec 300
                 Write-Host "Download completed from GitHub." -ForegroundColor Green
             } catch {
                 Write-Error "Failed to download from both server and GitHub: $_"
@@ -136,6 +136,16 @@ try {
     Write-Error "Failed to download agent: $_"
     exit 1
 }
+
+# Stop existing agent if running (so we can replace the binary)
+$serviceName = "PatchMonAgent"
+if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
+    Write-Host "Stopping existing PatchMon Agent service..." -ForegroundColor Yellow
+    Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+}
+Get-Process -Name "patchmon-agent" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
 
 # Copy to installation directory
 Write-Host "Installing agent to $targetPath..." -ForegroundColor Yellow
@@ -169,7 +179,7 @@ if ($currentPath -notlike "*$InstallPath*") {
 # Configure credentials if provided
 if ($ServerURL -and $APIID -and $APIKey) {
     Write-Host "Configuring API credentials..." -ForegroundColor Yellow
-    & $targetPath config set-api $APIID $APIKey $ServerURL
+    & $targetPath --config (Join-Path $ConfigPath "config.yml") config set-api $APIID $APIKey $ServerURL
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Credentials configured successfully." -ForegroundColor Green
     } else {
@@ -185,7 +195,7 @@ if ($ServerURL -and $APIID -and $APIKey) {
 # Test the installation
 Write-Host ""
 Write-Host "Testing installation..." -ForegroundColor Yellow
-& $targetPath ping
+& $targetPath --config (Join-Path $ConfigPath "config.yml") ping
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Installation test failed. Please check the installation manually."
     exit 1
@@ -212,10 +222,11 @@ if ($existingService) {
     Start-Sleep -Seconds 2
 }
 
-# Create the service
+# Create the service (agent uses Windows default paths: C:\ProgramData\PatchMon\)
 Write-Host "Creating Windows Service..." -ForegroundColor Cyan
 $servicePath = $targetPath
 $serviceArgs = "serve"
+$serviceStarted = $false
 
 try {
     # Use New-Service cmdlet (more reliable than sc.exe in PowerShell)
@@ -241,6 +252,7 @@ try {
     $service = Get-Service -Name $serviceName
     if ($service.Status -eq "Running") {
         Write-Host "Service started successfully!" -ForegroundColor Green
+        $serviceStarted = $true
     } else {
         Write-Warning "Service was created but is not running. Status: $($service.Status)"
         Write-Host "You can start it manually with: Start-Service -Name $serviceName" -ForegroundColor Yellow
@@ -257,17 +269,43 @@ try {
 }
 
 Write-Host ""
-Write-Host "Installation complete!" -ForegroundColor Green
+if ($serviceStarted) {
+    Write-Host "PatchMon Agent installation completed successfully!" -ForegroundColor Green
+} else {
+    Write-Host "PatchMon Agent installation completed with warnings." -ForegroundColor Yellow
+    Write-Host "The agent binary and credentials are installed, but the Windows Service could not be started." -ForegroundColor Yellow
 Write-Host ""
-Write-Host "Service Status:" -ForegroundColor Cyan
-Get-Service -Name $serviceName -ErrorAction SilentlyContinue | Format-Table -AutoSize
+Write-Host "Installation Summary:" -ForegroundColor Green
+Write-Host "   • Configuration directory: $ConfigPath" -ForegroundColor Gray
+Write-Host "   • Agent binary installed: $InstallPath\patchmon-agent.exe" -ForegroundColor Gray
+Write-Host "   • Architecture: $arch" -ForegroundColor Gray
+$svc = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+if ($svc -and $svc.Status -eq "Running") {
+    Write-Host "   • Windows Service: configured and running" -ForegroundColor Gray
+} elseif ($svc) {
+    Write-Host "   • Windows Service: configured (Status: $($svc.Status))" -ForegroundColor Gray
+} else {
+    Write-Host "   • Windows Service: not configured (run manually: patchmon-agent.exe serve)" -ForegroundColor Gray
+}
+Write-Host "   • API credentials configured and tested" -ForegroundColor Gray
+Write-Host "   • Logs: $ConfigPath\patchmon-agent.log" -ForegroundColor Gray
 
 Write-Host ""
-Write-Host "Useful commands:" -ForegroundColor Cyan
-Write-Host "  Get-Service -Name $serviceName          # Check service status" -ForegroundColor Gray
-Write-Host "  Start-Service -Name $serviceName        # Start the service" -ForegroundColor Gray
-Write-Host "  Stop-Service -Name $serviceName         # Stop the service" -ForegroundColor Gray
-Write-Host "  Restart-Service -Name $serviceName      # Restart the service" -ForegroundColor Gray
-Write-Host "  patchmon-agent.exe ping                 # Test connectivity" -ForegroundColor Gray
-Write-Host "  patchmon-agent.exe report               # Send manual report" -ForegroundColor Gray
+Write-Host "Management Commands:" -ForegroundColor Cyan
+Write-Host "   • Test connection: patchmon-agent ping" -ForegroundColor Gray
+Write-Host "   • Manual report: patchmon-agent report" -ForegroundColor Gray
+Write-Host "   • Check status: patchmon-agent diagnostics" -ForegroundColor Gray
+Write-Host "   • Service status: Get-Service -Name $serviceName" -ForegroundColor Gray
+Write-Host "   • Service logs: Get-Content `"$ConfigPath\patchmon-agent.log`" -Tail 50 -Wait" -ForegroundColor Gray
+Write-Host "   • Restart service: Restart-Service -Name $serviceName" -ForegroundColor Gray
+
+Write-Host ""
+if ($serviceStarted) {
+    Write-Host "Your system is now being monitored by PatchMon!" -ForegroundColor Green
+} else {
+    Write-Host "To start monitoring, run the agent manually:" -ForegroundColor Yellow
+    Write-Host "  cd `"$InstallPath`"; .\patchmon-agent.exe serve" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Or run as a background task:" -ForegroundColor Yellow
+    Write-Host "  Start-Process -FilePath `"$targetPath`" -ArgumentList 'serve' -WindowStyle Hidden" -ForegroundColor Cyan
 
