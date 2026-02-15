@@ -258,23 +258,23 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 
 							{/* Force Install Toggle - Linux only */}
 							{installOs === "linux" && (
-							<div className="mb-3">
-								<label className="flex items-center gap-2 text-xs md:text-sm">
-									<input
-										type="checkbox"
-										checked={forceInstall}
-										onChange={(e) => setForceInstall(e.target.checked)}
-										className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400 dark:bg-secondary-700"
-									/>
-									<span className="text-primary-800 dark:text-primary-200">
-										Force install (bypass broken packages)
-									</span>
-								</label>
-								<p className="text-xs text-primary-600 dark:text-primary-400 mt-1">
-									Enable this if the target host has broken packages
-									(CloudPanel, WHM, etc.) that block apt-get operations
-								</p>
-							</div>
+								<div className="mb-3">
+									<label className="flex items-center gap-2 text-xs md:text-sm">
+										<input
+											type="checkbox"
+											checked={forceInstall}
+											onChange={(e) => setForceInstall(e.target.checked)}
+											className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400 dark:bg-secondary-700"
+										/>
+										<span className="text-primary-800 dark:text-primary-200">
+											Force install (bypass broken packages)
+										</span>
+									</label>
+									<p className="text-xs text-primary-600 dark:text-primary-400 mt-1">
+										Enable this if the target host has broken packages
+										(CloudPanel, WHM, etc.) that block apt-get operations
+									</p>
+								</div>
 							)}
 
 							{isApiKeyHash && (
@@ -309,80 +309,80 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 
 							{/* Linux/Unix Installation Command - shown when Linux selected */}
 							{installOs === "linux" && (
-							<div className="mb-4">
-								<label className="block text-xs md:text-sm font-medium text-primary-900 dark:text-primary-200 mb-2">
-									For Linux/Unix (run with bash or sh):
-								</label>
-								<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-									<input
-										type="text"
-										value={
-											isApiKeyHash
-												? "API key not available - click Regenerate above"
-												: `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`
-										}
-										readOnly
-										disabled={isApiKeyHash}
-										className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-primary-300 dark:border-primary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
-									/>
-									<button
-										type="button"
-										onClick={async () => {
-											const command = `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`;
-											await copyToClipboard(command);
-											if (!isApiKeyHash) {
-												setShowWaitingScreen(true);
+								<div className="mb-4">
+									<label className="block text-xs md:text-sm font-medium text-primary-900 dark:text-primary-200 mb-2">
+										For Linux/Unix (run with bash or sh):
+									</label>
+									<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+										<input
+											type="text"
+											value={
+												isApiKeyHash
+													? "API key not available - click Regenerate above"
+													: `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`
 											}
-										}}
-										disabled={isApiKeyHash}
-										className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
-									>
-										<Copy className="h-4 w-4" />
-										Copy
-									</button>
+											readOnly
+											disabled={isApiKeyHash}
+											className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-primary-300 dark:border-primary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
+										/>
+										<button
+											type="button"
+											onClick={async () => {
+												const command = `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`;
+												await copyToClipboard(command);
+												if (!isApiKeyHash) {
+													setShowWaitingScreen(true);
+												}
+											}}
+											disabled={isApiKeyHash}
+											className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+										>
+											<Copy className="h-4 w-4" />
+											Copy
+										</button>
+									</div>
 								</div>
-							</div>
 							)}
 
 							{/* Windows Installation Command - shown when Windows selected */}
 							{installOs === "windows" && (
-							<div>
-								<label className="block text-xs md:text-sm font-medium text-primary-900 dark:text-primary-200 mb-2">
-									For Windows (run PowerShell as Administrator):
-								</label>
-								<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-									<input
-										type="text"
-										value={
-											isApiKeyHash
-												? "API key not available - click Regenerate above"
-												: `$script = Invoke-WebRequest -Uri "${getInstallUrl("windows")}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-install.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-install.ps1"`
-										}
-										readOnly
-										disabled={isApiKeyHash}
-										className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-primary-300 dark:border-primary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
-									/>
-									<button
-										type="button"
-										onClick={async () => {
-											const command = `$script = Invoke-WebRequest -Uri "${getInstallUrl("windows")}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-install.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-install.ps1"`;
-											await copyToClipboard(command);
-											if (!isApiKeyHash) {
-												setShowWaitingScreen(true);
+								<div>
+									<label className="block text-xs md:text-sm font-medium text-primary-900 dark:text-primary-200 mb-2">
+										For Windows (run PowerShell as Administrator):
+									</label>
+									<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+										<input
+											type="text"
+											value={
+												isApiKeyHash
+													? "API key not available - click Regenerate above"
+													: `$script = Invoke-WebRequest -Uri "${getInstallUrl("windows")}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-install.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-install.ps1"`
 											}
-										}}
-										disabled={isApiKeyHash}
-										className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
-									>
-										<Copy className="h-4 w-4" />
-										Copy
-									</button>
+											readOnly
+											disabled={isApiKeyHash}
+											className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-primary-300 dark:border-primary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
+										/>
+										<button
+											type="button"
+											onClick={async () => {
+												const command = `$script = Invoke-WebRequest -Uri "${getInstallUrl("windows")}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-install.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-install.ps1"`;
+												await copyToClipboard(command);
+												if (!isApiKeyHash) {
+													setShowWaitingScreen(true);
+												}
+											}}
+											disabled={isApiKeyHash}
+											className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+										>
+											<Copy className="h-4 w-4" />
+											Copy
+										</button>
+									</div>
+									<p className="text-xs text-primary-600 dark:text-primary-400 mt-2">
+										Downloads the script, saves to a temp file, then executes.
+										Run PowerShell as Administrator.
+									</p>
 								</div>
-								<p className="text-xs text-primary-600 dark:text-primary-400 mt-2">
-									Downloads the script, saves to a temp file, then executes. Run
-									PowerShell as Administrator.
-								</p>
-							</div>
 							)}
 						</div>
 					</div>

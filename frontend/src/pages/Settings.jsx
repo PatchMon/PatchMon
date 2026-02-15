@@ -1208,7 +1208,8 @@ const Settings = () => {
 																	</div>
 																	<div className="flex items-center gap-2">
 																		<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1">
-																			curl {getCurlFlags()} {window.location.origin}
+																			curl {getCurlFlags()}{" "}
+																			{window.location.origin}
 																			/api/v1/hosts/remove | sudo sh
 																		</div>
 																		<button
@@ -1222,7 +1223,7 @@ const Settings = () => {
 																						"Standard removal command copied!",
 																						"success",
 																					);
-																				} catch (err) {
+																				} catch (_err) {
 																					showToast(
 																						"Failed to copy to clipboard",
 																						"error",
@@ -1245,9 +1246,10 @@ const Settings = () => {
 																	</div>
 																	<div className="flex items-center gap-2">
 																		<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1">
-																			curl {getCurlFlags()} {window.location.origin}
-																			/api/v1/hosts/remove | sudo REMOVE_BACKUPS=1
-																			sh
+																			curl {getCurlFlags()}{" "}
+																			{window.location.origin}
+																			/api/v1/hosts/remove | sudo
+																			REMOVE_BACKUPS=1 sh
 																		</div>
 																		<button
 																			type="button"
@@ -1260,7 +1262,7 @@ const Settings = () => {
 																						"Complete removal command copied!",
 																						"success",
 																					);
-																				} catch (err) {
+																				} catch (_err) {
 																					showToast(
 																						"Failed to copy to clipboard",
 																						"error",
@@ -1274,8 +1276,8 @@ const Settings = () => {
 																	</div>
 																	<div className="text-xs text-red-600 dark:text-red-400">
 																		Removes: binaries, systemd/OpenRC services,
-																		configuration files, logs, crontab entries, and
-																		backup files
+																		configuration files, logs, crontab entries,
+																		and backup files
 																	</div>
 																</div>
 															</div>
@@ -1296,12 +1298,14 @@ const Settings = () => {
 																	<div className="flex items-center gap-2">
 																		<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all">
 																			$script = Invoke-WebRequest -Uri &quot;
-																			{window.location.origin}/api/v1/hosts/remove?os=windows
-																			&quot; -UseBasicParsing; $script.Content |
+																			{window.location.origin}
+																			/api/v1/hosts/remove?os=windows &quot;
+																			-UseBasicParsing; $script.Content |
 																			Out-File -FilePath
-																			&quot;$env:TEMP\patchmon-remove.ps1&quot; -Encoding
-																			utf8; powershell.exe -ExecutionPolicy Bypass
-																			-File &quot;$env:TEMP\patchmon-remove.ps1&quot;
+																			&quot;$env:TEMP\patchmon-remove.ps1&quot;
+																			-Encoding utf8; powershell.exe
+																			-ExecutionPolicy Bypass -File
+																			&quot;$env:TEMP\patchmon-remove.ps1&quot;
 																		</div>
 																		<button
 																			type="button"
@@ -1313,7 +1317,7 @@ const Settings = () => {
 																						"Standard removal command copied!",
 																						"success",
 																					);
-																				} catch (err) {
+																				} catch (_err) {
 																					showToast(
 																						"Failed to copy to clipboard",
 																						"error",
@@ -1337,12 +1341,14 @@ const Settings = () => {
 																	<div className="flex items-center gap-2">
 																		<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all">
 																			$script = Invoke-WebRequest -Uri &quot;
-																			{window.location.origin}/api/v1/hosts/remove?os=windows
-																			&quot; -UseBasicParsing; $script.Content |
+																			{window.location.origin}
+																			/api/v1/hosts/remove?os=windows &quot;
+																			-UseBasicParsing; $script.Content |
 																			Out-File -FilePath
-																			&quot;$env:TEMP\patchmon-remove.ps1&quot; -Encoding
-																			utf8; powershell.exe -ExecutionPolicy Bypass
-																			-File &quot;$env:TEMP\patchmon-remove.ps1&quot;
+																			&quot;$env:TEMP\patchmon-remove.ps1&quot;
+																			-Encoding utf8; powershell.exe
+																			-ExecutionPolicy Bypass -File
+																			&quot;$env:TEMP\patchmon-remove.ps1&quot;
 																			-RemoveAll -Force
 																		</div>
 																		<button
@@ -1355,7 +1361,7 @@ const Settings = () => {
 																						"Complete removal command copied!",
 																						"success",
 																					);
-																				} catch (err) {
+																				} catch (_err) {
 																					showToast(
 																						"Failed to copy to clipboard",
 																						"error",

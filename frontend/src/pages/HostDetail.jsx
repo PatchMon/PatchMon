@@ -3184,10 +3184,10 @@ const HostDetail = () => {
 									}
 								>
 									<SshTerminal
-											host={host}
-											isOpen={true}
-											onClose={() => handleTabChange("host")}
-											embedded={true}
+										host={host}
+										isOpen={true}
+										onClose={() => handleTabChange("host")}
+										embedded={true}
 									/>
 								</Suspense>
 							</div>

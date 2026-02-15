@@ -9,7 +9,6 @@ const { authenticateToken } = require("../middleware/auth");
 const {
 	requireViewUsers,
 	requireManageUsers,
-	requireManageHosts,
 } = require("../middleware/permissions");
 const { v4: uuidv4 } = require("uuid");
 const {

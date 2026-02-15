@@ -536,8 +536,7 @@ const AgentUpdatesTab = () => {
 											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 												<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
 													curl {formData.ignoreSslSelfSigned ? "-sk" : "-s"}{" "}
-													{window.location.origin}/api/v1/hosts/remove | sudo
-													sh
+													{window.location.origin}/api/v1/hosts/remove | sudo sh
 												</div>
 												<button
 													type="button"
@@ -553,7 +552,7 @@ const AgentUpdatesTab = () => {
 																"Standard removal command copied!",
 																"success",
 															);
-														} catch (err) {
+														} catch (_err) {
 															showToast("Failed to copy to clipboard", "error");
 														}
 													}}
@@ -591,7 +590,7 @@ const AgentUpdatesTab = () => {
 																"Complete removal command copied!",
 																"success",
 															);
-														} catch (err) {
+														} catch (_err) {
 															showToast("Failed to copy to clipboard", "error");
 														}
 													}}
@@ -624,11 +623,12 @@ const AgentUpdatesTab = () => {
 											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 												<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
 													$script = Invoke-WebRequest -Uri &quot;
-													{window.location.origin}/api/v1/hosts/remove?os=windows
-													&quot; -UseBasicParsing; $script.Content | Out-File
-													-FilePath &quot;$env:TEMP\patchmon-remove.ps1&quot;
-													-Encoding utf8; powershell.exe -ExecutionPolicy
-													Bypass -File &quot;$env:TEMP\patchmon-remove.ps1&quot;
+													{window.location.origin}
+													/api/v1/hosts/remove?os=windows &quot;
+													-UseBasicParsing; $script.Content | Out-File -FilePath
+													&quot;$env:TEMP\patchmon-remove.ps1&quot; -Encoding
+													utf8; powershell.exe -ExecutionPolicy Bypass -File
+													&quot;$env:TEMP\patchmon-remove.ps1&quot;
 												</div>
 												<button
 													type="button"
@@ -640,7 +640,7 @@ const AgentUpdatesTab = () => {
 																"Standard removal command copied!",
 																"success",
 															);
-														} catch (err) {
+														} catch (_err) {
 															showToast("Failed to copy to clipboard", "error");
 														}
 													}}
@@ -661,12 +661,13 @@ const AgentUpdatesTab = () => {
 											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 												<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
 													$script = Invoke-WebRequest -Uri &quot;
-													{window.location.origin}/api/v1/hosts/remove?os=windows
-													&quot; -UseBasicParsing; $script.Content | Out-File
-													-FilePath &quot;$env:TEMP\patchmon-remove.ps1&quot;
-													-Encoding utf8; powershell.exe -ExecutionPolicy
-													Bypass -File &quot;$env:TEMP\patchmon-remove.ps1&quot;
-													-RemoveAll -Force
+													{window.location.origin}
+													/api/v1/hosts/remove?os=windows &quot;
+													-UseBasicParsing; $script.Content | Out-File -FilePath
+													&quot;$env:TEMP\patchmon-remove.ps1&quot; -Encoding
+													utf8; powershell.exe -ExecutionPolicy Bypass -File
+													&quot;$env:TEMP\patchmon-remove.ps1&quot; -RemoveAll
+													-Force
 												</div>
 												<button
 													type="button"
@@ -678,7 +679,7 @@ const AgentUpdatesTab = () => {
 																"Complete removal command copied!",
 																"success",
 															);
-														} catch (err) {
+														} catch (_err) {
 															showToast("Failed to copy to clipboard", "error");
 														}
 													}}
@@ -688,8 +689,8 @@ const AgentUpdatesTab = () => {
 												</button>
 											</div>
 											<div className="text-xs text-red-600 dark:text-red-400">
-												Removes: Windows Service, binaries, configuration,
-												logs, and backup files
+												Removes: Windows Service, binaries, configuration, logs,
+												and backup files
 											</div>
 										</div>
 									</div>

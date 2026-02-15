@@ -224,11 +224,12 @@ router.get("/agent/download", async (req, res) => {
 
 			// Determine OS (default to linux for backward compatibility)
 			const os = req.query.os || "linux";
-			
+
 			// Determine binary name based on OS
-			const binaryName = os === "windows" 
-				? `patchmon-agent-windows-${architecture}.exe`
-				: `patchmon-agent-linux-${architecture}`;
+			const binaryName =
+				os === "windows"
+					? `patchmon-agent-windows-${architecture}.exe`
+					: `patchmon-agent-linux-${architecture}`;
 			const binaryPath = path.join(__dirname, "../../../agents", binaryName);
 
 			if (!fs.existsSync(binaryPath)) {
@@ -2362,18 +2363,20 @@ router.get("/install", async (req, res) => {
 		// Detect OS: explicit ?os=windows query param takes precedence, else User-Agent
 		const osParam = req.query.os?.toLowerCase();
 		const userAgent = (req.headers["user-agent"] || "").toLowerCase();
-		const isWindows = osParam === "windows"
-			? true
-			: osParam === "linux"
-				? false
-				: userAgent.includes("windows") || userAgent.includes("powershell");
+		const isWindows =
+			osParam === "windows"
+				? true
+				: osParam === "linux"
+					? false
+					: userAgent.includes("windows") || userAgent.includes("powershell");
 
 		// Get the configured server URL from settings
 		// Use SERVER_HOST and SERVER_PORT from environment, or fall back to settings
-		let serverUrl = process.env.SERVER_HOST && process.env.SERVER_PORT
-			? `${process.env.SERVER_PROTOCOL || "http"}://${process.env.SERVER_HOST}:${process.env.SERVER_PORT}`
-			: "http://localhost:3001";
-		
+		let serverUrl =
+			process.env.SERVER_HOST && process.env.SERVER_PORT
+				? `${process.env.SERVER_PROTOCOL || "http"}://${process.env.SERVER_HOST}:${process.env.SERVER_PORT}`
+				: "http://localhost:3001";
+
 		try {
 			const settings = await prisma.settings.findFirst();
 			if (settings?.server_url) {
@@ -2394,7 +2397,9 @@ router.get("/install", async (req, res) => {
 			);
 
 			if (!fs.existsSync(scriptPath)) {
-				return res.status(404).json({ error: "Windows installation script not found" });
+				return res
+					.status(404)
+					.json({ error: "Windows installation script not found" });
 			}
 
 			// Generate bootstrap token (same secure flow as Linux - no embedding of API key)
@@ -2464,7 +2469,8 @@ router.get("/install", async (req, res) => {
 			} catch (_) {}
 
 			// Check for --force parameter
-			const forceInstall = req.query.force === "true" || req.query.force === "1";
+			const forceInstall =
+				req.query.force === "true" || req.query.force === "1";
 
 			// Get architecture parameter (only set if explicitly provided, otherwise let script auto-detect)
 			const architecture = req.query.arch;
@@ -2564,11 +2570,12 @@ router.get("/remove", async (req, res) => {
 		// Detect OS: explicit ?os=windows takes precedence, else User-Agent
 		const osParam = req.query.os?.toLowerCase();
 		const userAgent = (req.headers["user-agent"] || "").toLowerCase();
-		const isWindows = osParam === "windows"
-			? true
-			: osParam === "linux"
-				? false
-				: userAgent.includes("windows") || userAgent.includes("powershell");
+		const isWindows =
+			osParam === "windows"
+				? true
+				: osParam === "linux"
+					? false
+					: userAgent.includes("windows") || userAgent.includes("powershell");
 
 		if (isWindows) {
 			// Serve PowerShell script for Windows
@@ -2578,7 +2585,9 @@ router.get("/remove", async (req, res) => {
 			);
 
 			if (!fs.existsSync(scriptPath)) {
-				return res.status(404).json({ error: "Windows removal script not found" });
+				return res
+					.status(404)
+					.json({ error: "Windows removal script not found" });
 			}
 
 			const script = fs.readFileSync(scriptPath, "utf8");

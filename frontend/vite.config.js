@@ -19,9 +19,9 @@ export default defineConfig({
 		proxy: {
 			"/api": {
 				target: `http://${process.env.BACKEND_HOST || "localhost"}:${process.env.BACKEND_PORT || "3001"}`,
-			changeOrigin: true,
-			secure: false,
-			ws: true, // Enable WebSocket proxy
+				changeOrigin: true,
+				secure: false,
+				ws: true, // Enable WebSocket proxy
 				// Configure HTTP agent to support more concurrent connections
 				// Fixes 1000ms timeout issue when using HTTP (not HTTPS) with multiple hosts
 				agent: new HttpAgent({
