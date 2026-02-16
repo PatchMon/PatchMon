@@ -34,7 +34,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Global variables
-SCRIPT_VERSION="self-hosting-install.sh v1.3.3-selfhost-2025-11-07"
+SCRIPT_VERSION="self-hosting-install.sh v1.4.1-selfhost-2026-02-16"
 DEFAULT_GITHUB_REPO="https://github.com/PatchMon/PatchMon.git"
 FQDN=""
 CUSTOM_FQDN=""
@@ -1214,7 +1214,7 @@ TFA_SUSPICIOUS_ACTIVITY_THRESHOLD=3
 EOF
 
     # Frontend .env (VITE_API_URL must match CORS/base URL so dashboard can reach backend)
-    local app_version="1.4.0"
+    local app_version="1.4.1"
     if [ -f "backend/package.json" ]; then
         app_version=$(grep '"version"' backend/package.json | head -1 | sed 's/.*"version": "\([^"]*\)".*/\1/')
     fi
@@ -1857,46 +1857,22 @@ EOF
     print_status "Server settings populated successfully"
 }
 
-# Create agent version
+# Create agent version (ensure agent binaries are executable)
 create_agent_version() {
     echo -e "${BLUE}🤖 Creating agent version...${NC}"
     log_message "Creating agent version in database..."
     cd $APP_DIR/backend
-    
-    # Priority 1: Get version from agent script (most accurate for agent versions)
-    local current_version="N/A"
-    if [ -f "$APP_DIR/agents/patchmon-agent.sh" ]; then
-        current_version=$(grep '^AGENT_VERSION=' "$APP_DIR/agents/patchmon-agent.sh" | cut -d'"' -f2 2>/dev/null || echo "N/A")
-        if [ "$current_version" != "N/A" ] && [ -n "$current_version" ]; then
-            print_info "Detected agent version from script: $current_version"
-        fi
-    fi
-    
-    # Priority 2: Use fallback version if not found
-    if [ "$current_version" = "N/A" ] || [ -z "$current_version" ]; then
-        current_version="1.3.0"
-        print_warning "Could not determine version, using fallback: $current_version"
-    fi
-    
-    print_info "Creating/updating agent version: $current_version"
-    print_info "This will ensure the latest agent script is available in the database"
-    
+
     # Test connection before creating agent version
     if ! PGPASSWORD="$DB_PASS" psql -h localhost -U "$DB_USER" -d "$DB_NAME" -c "SELECT 1;" >/dev/null 2>&1; then
         print_error "Cannot connect to database before creating agent version"
         exit 1
     fi
-    
-    # Copy agent script to backend directory
-    if [ -f "$APP_DIR/agents/patchmon-agent.sh" ]; then
-        cp "$APP_DIR/agents/patchmon-agent.sh" "$APP_DIR/backend/"
-        
-        print_status "Agent version management removed - using file-based approach"
-    fi
-    
+
     # Make agent binaries executable
     if [ -d "$APP_DIR/agents" ]; then
         chmod +x "$APP_DIR/agents/patchmon-agent-linux-"* 2>/dev/null || true
+        chmod +x "$APP_DIR/agents/patchmon-agent-freebsd-"* 2>/dev/null || true
         print_status "Agent binaries made executable"
     fi
 
@@ -3062,7 +3038,7 @@ update_frontend_env_file() {
     local base_url="${cors_origin%/}"
     local vite_api_url="$base_url/api/v1"
     
-    local app_version="1.3.1"
+    local app_version="1.4.1"
     if [ -f "$instance_dir/backend/package.json" ]; then
         app_version=$(grep '"version"' "$instance_dir/backend/package.json" | head -1 | sed 's/.*"version": "\([^"]*\)".*/\1/')
     fi
