@@ -72,7 +72,15 @@ Fully managed PatchMon hosting with zero infrastructure overhead. We handle prov
 
 ### Self-Hosted Installation
 
-#### Docker (recommended)
+Three deployment methods are available:
+
+1. **Docker** (supported and preferred)
+2. **Proxmox Community Script** – one-command LXC deployment
+3. **Bare metal scripted installation** (`setup.sh`) – Ubuntu / Debian
+
+---
+
+#### 1) Docker (Supported and preferred)
 
 The quickest way to get running. See the full guide on our documentation site:
 
@@ -97,7 +105,23 @@ docker compose up -d
 
 Once all containers are healthy, open your browser at `http://localhost:3000` or the configured URL you have chosen and complete the first-time admin setup.
 
-#### Native Install (Ubuntu / Debian)
+---
+
+#### 2) Proxmox Community Script
+
+Deploy PatchMon as an LXC container on Proxmox VE using the [Proxmox VE Helper-Scripts](https://community-scripts.github.io/ProxmoxVE/scripts?id=patchmon) community script.
+
+**Quick start:**
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/patchmon.sh)"
+```
+
+Script details and options: **[PatchMon – Proxmox VE Helper-Scripts](https://community-scripts.github.io/ProxmoxVE/scripts?id=patchmon)**
+
+---
+
+#### 3) Bare metal scripted installation (setup.sh)
 
 For a bare-metal or VM install without Docker, see the documentation:
 

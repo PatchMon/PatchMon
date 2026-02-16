@@ -75,9 +75,7 @@ const authenticateToken = async (req, res, next) => {
 		req.user = validation.user;
 		req.session_id = decoded.sessionId;
 		req.tfa_bypassed = tfa_bypassed;
-		logger.debug(
-			`Auth: session valid for user ${validation.user.username} (id=${validation.user.id})`,
-		);
+		// Do not log successful auth on every request - would spam logs (every API call is authenticated)
 		next();
 	} catch (error) {
 		if (error.name === "JsonWebTokenError") {

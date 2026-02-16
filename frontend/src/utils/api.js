@@ -207,7 +207,6 @@ export const userPreferencesAPI = {
 // Agent File Management API
 export const agentFileAPI = {
 	getInfo: () => api.get("/hosts/agent/info"),
-	upload: (scriptContent) => api.post("/hosts/agent/upload", { scriptContent }),
 	download: () => api.get("/hosts/agent/download", { responseType: "blob" }),
 };
 
