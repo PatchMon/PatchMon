@@ -225,12 +225,12 @@ const HostDetail = () => {
 		setActiveTab(tabName);
 	};
 
-	// Auto-show credentials modal for new/pending hosts
+	// Auto-show credentials modal for new/pending hosts (skip if just arrived from Add Host wizard)
 	useEffect(() => {
-		if (host && host.status === "pending") {
+		if (host && host.status === "pending" && !location.state?.fromWizard) {
 			setShowCredentialsModal(true);
 		}
-	}, [host]);
+	}, [host, location.state?.fromWizard]);
 
 	// Sync notes state with host data
 	useEffect(() => {
@@ -1213,6 +1213,109 @@ const HostDetail = () => {
 											/>
 										);
 									})()}
+								</div>
+
+								<div>
+									<p className="text-xs text-secondary-500 dark:text-secondary-300 mb-1.5">
+										Integrations
+									</p>
+									<ul className="space-y-0 border border-secondary-200 dark:border-secondary-600 rounded-lg divide-y divide-secondary-200 dark:divide-secondary-600 overflow-hidden">
+										<li className="flex items-center justify-between gap-3 px-3 py-2.5 bg-white dark:bg-secondary-700/50">
+											<div className="flex items-center gap-2 min-w-0">
+												<Container className="h-4 w-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+												<span className="text-sm font-medium text-secondary-900 dark:text-white truncate">
+													Docker
+												</span>
+											</div>
+											<button
+												type="button"
+												onClick={() =>
+													toggleIntegrationMutation.mutate({
+														integrationName: "docker",
+														enabled:
+															!integrationsData?.data?.integrations?.docker,
+													})
+												}
+												disabled={
+													toggleIntegrationMutation.isPending ||
+													!wsStatus?.connected
+												}
+												title={
+													integrationsData?.data?.integrations?.docker
+														? "Disable Docker"
+														: "Enable Docker"
+												}
+												className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+													integrationsData?.data?.integrations?.docker
+														? "bg-primary-600 dark:bg-primary-500"
+														: "bg-secondary-200 dark:bg-secondary-600"
+												} ${
+													toggleIntegrationMutation.isPending ||
+													!wsStatus?.connected
+														? "opacity-50 cursor-not-allowed"
+														: ""
+												}`}
+											>
+												<span
+													className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+														integrationsData?.data?.integrations?.docker
+															? "translate-x-5"
+															: "translate-x-1"
+													}`}
+												/>
+											</button>
+										</li>
+										<li className="flex items-center justify-between gap-3 px-3 py-2.5 bg-white dark:bg-secondary-700/50">
+											<div className="flex items-center gap-2 min-w-0">
+												<Shield className="h-4 w-4 text-purple-600 dark:text-purple-400 flex-shrink-0" />
+												<span className="text-sm font-medium text-secondary-900 dark:text-white truncate">
+													Compliance
+												</span>
+											</div>
+											<button
+												type="button"
+												onClick={() =>
+													toggleIntegrationMutation.mutate({
+														integrationName: "compliance",
+														enabled:
+															!integrationsData?.data?.integrations?.compliance,
+													})
+												}
+												disabled={
+													toggleIntegrationMutation.isPending ||
+													!wsStatus?.connected
+												}
+												title={
+													integrationsData?.data?.integrations?.compliance
+														? "Disable Compliance"
+														: "Enable Compliance"
+												}
+												className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+													integrationsData?.data?.integrations?.compliance
+														? "bg-primary-600 dark:bg-primary-500"
+														: "bg-secondary-200 dark:bg-secondary-600"
+												} ${
+													toggleIntegrationMutation.isPending ||
+													!wsStatus?.connected
+														? "opacity-50 cursor-not-allowed"
+														: ""
+												}`}
+											>
+												<span
+													className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+														integrationsData?.data?.integrations?.compliance
+															? "translate-x-5"
+															: "translate-x-1"
+													}`}
+												/>
+											</button>
+										</li>
+									</ul>
+									{!wsStatus?.connected && (
+										<p className="text-xs text-amber-600 dark:text-amber-400 mt-1.5">
+											Agent must be connected to toggle
+										</p>
+									)}
 								</div>
 
 								<div>
@@ -2371,6 +2474,110 @@ const HostDetail = () => {
 												/>
 											);
 										})()}
+									</div>
+
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-secondary-300 mb-1.5">
+											Integrations
+										</p>
+										<ul className="space-y-0 border border-secondary-200 dark:border-secondary-600 rounded-lg divide-y divide-secondary-200 dark:divide-secondary-600 overflow-hidden">
+											<li className="flex items-center justify-between gap-3 px-3 py-2.5 bg-white dark:bg-secondary-700/50">
+												<div className="flex items-center gap-2 min-w-0">
+													<Database className="h-4 w-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+													<span className="text-sm font-medium text-secondary-900 dark:text-white truncate">
+														Docker
+													</span>
+												</div>
+												<button
+													type="button"
+													onClick={() =>
+														toggleIntegrationMutation.mutate({
+															integrationName: "docker",
+															enabled:
+																!integrationsData?.data?.integrations?.docker,
+														})
+													}
+													disabled={
+														toggleIntegrationMutation.isPending ||
+														!wsStatus?.connected
+													}
+													title={
+														integrationsData?.data?.integrations?.docker
+															? "Disable Docker"
+															: "Enable Docker"
+													}
+													className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+														integrationsData?.data?.integrations?.docker
+															? "bg-primary-600 dark:bg-primary-500"
+															: "bg-secondary-200 dark:bg-secondary-600"
+													} ${
+														toggleIntegrationMutation.isPending ||
+														!wsStatus?.connected
+															? "opacity-50 cursor-not-allowed"
+															: ""
+													}`}
+												>
+													<span
+														className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+															integrationsData?.data?.integrations?.docker
+																? "translate-x-5"
+																: "translate-x-1"
+														}`}
+													/>
+												</button>
+											</li>
+											<li className="flex items-center justify-between gap-3 px-3 py-2.5 bg-white dark:bg-secondary-700/50">
+												<div className="flex items-center gap-2 min-w-0">
+													<Shield className="h-4 w-4 text-purple-600 dark:text-purple-400 flex-shrink-0" />
+													<span className="text-sm font-medium text-secondary-900 dark:text-white truncate">
+														Compliance
+													</span>
+												</div>
+												<button
+													type="button"
+													onClick={() =>
+														toggleIntegrationMutation.mutate({
+															integrationName: "compliance",
+															enabled:
+																!integrationsData?.data?.integrations
+																	?.compliance,
+														})
+													}
+													disabled={
+														toggleIntegrationMutation.isPending ||
+														!wsStatus?.connected
+													}
+													title={
+														integrationsData?.data?.integrations?.compliance
+															? "Disable Compliance"
+															: "Enable Compliance"
+													}
+													className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+														integrationsData?.data?.integrations?.compliance
+															? "bg-primary-600 dark:bg-primary-500"
+															: "bg-secondary-200 dark:bg-secondary-600"
+													} ${
+														toggleIntegrationMutation.isPending ||
+														!wsStatus?.connected
+															? "opacity-50 cursor-not-allowed"
+															: ""
+													}`}
+												>
+													<span
+														className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+															integrationsData?.data?.integrations?.compliance
+																? "translate-x-5"
+																: "translate-x-1"
+														}`}
+													/>
+												</button>
+											</li>
+										</ul>
+										{!wsStatus?.connected && (
+											<p className="text-xs text-amber-600 dark:text-amber-400 mt-1.5">
+												Agent must be connected to toggle
+											</p>
+										)}
 									</div>
 
 									<div>

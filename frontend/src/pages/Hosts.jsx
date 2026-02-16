@@ -7,7 +7,6 @@ import {
 	CheckCircle,
 	CheckSquare,
 	ChevronDown,
-	ChevronUp,
 	Clock,
 	Columns,
 	Container,
@@ -31,6 +30,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import AddHostWizard from "../components/AddHostWizard";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import InlineToggle from "../components/InlineToggle";
@@ -42,277 +42,6 @@ import {
 	settingsAPI,
 } from "../utils/api";
 import { getOSDisplayName, OSIcon } from "../utils/osIcons.jsx";
-
-// Add Host Modal Component
-const AddHostModal = ({ isOpen, onClose, onSuccess }) => {
-	const friendlyNameId = useId();
-	const [formData, setFormData] = useState({
-		friendly_name: "",
-		hostGroupIds: [], // Changed to array for multiple selection
-		docker_enabled: false, // Integration states
-		compliance_enabled: false,
-	});
-	const [isSubmitting, setIsSubmitting] = useState(false);
-	const [error, setError] = useState("");
-	const [integrationsExpanded, setIntegrationsExpanded] = useState(false);
-
-	// Fetch host groups for selection
-	const { data: hostGroups } = useQuery({
-		queryKey: ["hostGroups"],
-		queryFn: () => hostGroupsAPI.list().then((res) => res.data),
-		enabled: isOpen,
-	});
-
-	const handleSubmit = async (e) => {
-		e.preventDefault();
-		setIsSubmitting(true);
-		setError("");
-
-		try {
-			const response = await adminHostsAPI.create(formData);
-			onSuccess(response.data);
-			setFormData({
-				friendly_name: "",
-				hostGroupIds: [],
-				docker_enabled: false,
-				compliance_enabled: false,
-			});
-			setIntegrationsExpanded(false);
-			onClose();
-		} catch (err) {
-			let errorMessage = "Failed to create host";
-
-			if (err.response?.data?.errors) {
-				// Validation errors
-				errorMessage = err.response.data.errors.map((e) => e.msg).join(", ");
-			} else if (err.response?.data?.error) {
-				// Single error message
-				errorMessage = err.response.data.error;
-			} else if (err.message) {
-				// Network or other error
-				errorMessage = err.message;
-			}
-
-			setError(errorMessage);
-		} finally {
-			setIsSubmitting(false);
-		}
-	};
-
-	if (!isOpen) return null;
-
-	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-			<div className="bg-white dark:bg-secondary-800 rounded-lg p-4 sm:p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
-				<div className="flex justify-between items-center mb-4">
-					<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
-						Add New Host
-					</h3>
-					<button
-						type="button"
-						onClick={onClose}
-						className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
-					>
-						<X className="h-5 w-5" />
-					</button>
-				</div>
-
-				<form onSubmit={handleSubmit} className="space-y-6">
-					<div>
-						<label
-							htmlFor={friendlyNameId}
-							className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2"
-						>
-							Friendly Name *
-						</label>
-						<input
-							type="text"
-							id={friendlyNameId}
-							required
-							value={formData.friendly_name}
-							onChange={(e) =>
-								setFormData({ ...formData, friendly_name: e.target.value })
-							}
-							className="block w-full px-3 py-3 sm:py-2.5 text-base border-2 border-secondary-300 dark:border-secondary-600 rounded-lg shadow-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white transition-all duration-200 min-h-[44px]"
-							placeholder="server.example.com"
-						/>
-						<p className="mt-2 text-sm text-secondary-500 dark:text-secondary-400">
-							System information (OS, IP, architecture) will be automatically
-							detected when the agent connects.
-						</p>
-					</div>
-
-					<div>
-						<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-3">
-							Host Groups
-						</span>
-						<div className="space-y-2 max-h-48 overflow-y-auto">
-							{/* Host Group Options */}
-							{hostGroups?.map((group) => (
-								<label
-									key={group.id}
-									className={`flex items-center gap-3 p-3 border-2 rounded-lg transition-all duration-200 cursor-pointer ${
-										formData.hostGroupIds.includes(group.id)
-											? "border-primary-500 bg-primary-50 dark:bg-primary-900/30"
-											: "border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 hover:border-secondary-400 dark:hover:border-secondary-500"
-									}`}
-								>
-									<input
-										type="checkbox"
-										checked={formData.hostGroupIds.includes(group.id)}
-										onChange={(e) => {
-											if (e.target.checked) {
-												setFormData({
-													...formData,
-													hostGroupIds: [...formData.hostGroupIds, group.id],
-												});
-											} else {
-												setFormData({
-													...formData,
-													hostGroupIds: formData.hostGroupIds.filter(
-														(id) => id !== group.id,
-													),
-												});
-											}
-										}}
-										className="w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-									/>
-									<div className="flex items-center gap-2 flex-1">
-										{group.color && (
-											<div
-												className="w-3 h-3 rounded-full border border-secondary-300 dark:border-secondary-500 flex-shrink-0"
-												style={{ backgroundColor: group.color }}
-											></div>
-										)}
-										<div className="text-sm font-medium text-secondary-700 dark:text-secondary-200">
-											{group.name}
-										</div>
-									</div>
-								</label>
-							))}
-						</div>
-						<p className="mt-2 text-sm text-secondary-500 dark:text-secondary-400">
-							Optional: Select one or more groups to assign this host to for
-							better organization.
-						</p>
-					</div>
-
-					{/* Integrations Section */}
-					<div className="border-2 border-secondary-200 dark:border-secondary-700 rounded-lg">
-						<button
-							type="button"
-							onClick={() => setIntegrationsExpanded(!integrationsExpanded)}
-							className="w-full flex items-center justify-between p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors rounded-t-lg"
-						>
-							<div className="flex items-center gap-2">
-								<span className="text-sm font-medium text-secondary-700 dark:text-secondary-200">
-									Integrations
-								</span>
-								<span className="text-xs text-secondary-500 dark:text-secondary-400">
-									(Optional)
-								</span>
-							</div>
-							{integrationsExpanded ? (
-								<ChevronUp className="h-5 w-5 text-secondary-400 dark:text-secondary-500" />
-							) : (
-								<ChevronDown className="h-5 w-5 text-secondary-400 dark:text-secondary-500" />
-							)}
-						</button>
-
-						{integrationsExpanded && (
-							<div className="p-4 pt-0 space-y-4 border-t border-secondary-200 dark:border-secondary-700">
-								{/* Docker Integration */}
-								<label className="flex items-center justify-between p-3 border-2 rounded-lg transition-all duration-200 cursor-pointer bg-white dark:bg-secondary-700 hover:border-secondary-400 dark:hover:border-secondary-500 border-secondary-300 dark:border-secondary-600">
-									<div className="flex items-center gap-3">
-										<div className="flex-shrink-0">
-											<Server className="h-5 w-5 text-secondary-600 dark:text-secondary-400" />
-										</div>
-										<div>
-											<div className="text-sm font-medium text-secondary-700 dark:text-secondary-200">
-												Docker Integration
-											</div>
-											<div className="text-xs text-secondary-500 dark:text-secondary-400">
-												Enable Docker container monitoring for this host
-											</div>
-										</div>
-									</div>
-									<input
-										type="checkbox"
-										checked={formData.docker_enabled}
-										onChange={(e) =>
-											setFormData({
-												...formData,
-												docker_enabled: e.target.checked,
-											})
-										}
-										className="w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-									/>
-								</label>
-
-								{/* Compliance Integration */}
-								<label className="flex items-center justify-between p-3 border-2 rounded-lg transition-all duration-200 cursor-pointer bg-white dark:bg-secondary-700 hover:border-secondary-400 dark:hover:border-secondary-500 border-secondary-300 dark:border-secondary-600">
-									<div className="flex items-center gap-3">
-										<div className="flex-shrink-0">
-											<Shield className="h-5 w-5 text-secondary-600 dark:text-secondary-400" />
-										</div>
-										<div>
-											<div className="text-sm font-medium text-secondary-700 dark:text-secondary-200">
-												Compliance Integration
-											</div>
-											<div className="text-xs text-secondary-500 dark:text-secondary-400">
-												Enable compliance scanning and reporting for this host
-											</div>
-										</div>
-									</div>
-									<input
-										type="checkbox"
-										checked={formData.compliance_enabled}
-										onChange={(e) =>
-											setFormData({
-												...formData,
-												compliance_enabled: e.target.checked,
-											})
-										}
-										className="w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-									/>
-								</label>
-								<p className="text-xs text-secondary-500 dark:text-secondary-400">
-									Integration settings will be synced to the agent's config.yml
-									during installation.
-								</p>
-							</div>
-						)}
-					</div>
-
-					{error && (
-						<div className="bg-danger-50 dark:bg-danger-900 border border-danger-200 dark:border-danger-700 rounded-md p-3">
-							<p className="text-sm text-danger-700 dark:text-danger-300">
-								{error}
-							</p>
-						</div>
-					)}
-
-					<div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-2">
-						<button
-							type="button"
-							onClick={onClose}
-							className="px-6 py-3 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-700 border-2 border-secondary-300 dark:border-secondary-600 rounded-lg hover:bg-secondary-50 dark:hover:bg-secondary-600 transition-all duration-200 min-h-[44px] w-full sm:w-auto"
-						>
-							Cancel
-						</button>
-						<button
-							type="submit"
-							disabled={isSubmitting}
-							className="px-6 py-3 text-sm font-medium text-white bg-primary-600 border-2 border-transparent rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-all duration-200 min-h-[44px] w-full sm:w-auto"
-						>
-							{isSubmitting ? "Creating..." : "Create Host"}
-						</button>
-					</div>
-				</form>
-			</div>
-		</div>
-	);
-};
 
 const Hosts = () => {
 	const hostGroupFilterId = useId();
@@ -1450,15 +1179,6 @@ const Hosts = () => {
 		}
 	};
 
-	const handleHostCreated = (newHost) => {
-		queryClient.invalidateQueries(["hosts"]);
-		// Navigate to host detail page to show credentials and setup instructions
-		// Pass the plaintext apiKey through navigation state (only available once from creation)
-		navigate(`/hosts/${newHost.hostId}`, {
-			state: { apiKey: newHost.apiKey, apiId: newHost.apiId },
-		});
-	};
-
 	// Stats card click handlers
 	const handleTotalHostsClick = () => {
 		// Clear all filters to show all hosts
@@ -2372,10 +2092,10 @@ const Hosts = () => {
 			</div>
 
 			{/* Modals */}
-			<AddHostModal
+			<AddHostWizard
 				isOpen={showAddModal}
 				onClose={() => setShowAddModal(false)}
-				onSuccess={handleHostCreated}
+				onSuccess={() => queryClient.invalidateQueries(["hosts"])}
 			/>
 
 			{/* Bulk Assign Modal */}

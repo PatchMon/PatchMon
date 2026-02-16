@@ -1,4 +1,4 @@
-import { Monitor, Server } from "lucide-react";
+import { Monitor } from "lucide-react";
 import { DiWindows } from "react-icons/di";
 // Import OS icons from react-icons Simple Icons - using only confirmed available icons
 import {
@@ -10,6 +10,7 @@ import {
 	SiDeepin,
 	SiElementary,
 	SiFedora,
+	SiFreebsd,
 	SiGentoo,
 	SiKalilinux,
 	SiLinux,
@@ -19,6 +20,7 @@ import {
 	SiOpensuse,
 	SiOracle,
 	SiParrotsecurity,
+	SiPfsense,
 	SiPopos,
 	SiRedhat,
 	SiRockylinux,
@@ -109,8 +111,11 @@ export const getOSIcon = (osType) => {
 	// macOS
 	if (os.includes("mac") || os.includes("darwin")) return SiMacos;
 
+	// pfSense (FreeBSD-based) – check before FreeBSD
+	if (os.includes("pfsense")) return SiPfsense;
+
 	// FreeBSD
-	if (os.includes("freebsd")) return Server;
+	if (os.includes("freebsd")) return SiFreebsd;
 
 	// Default fallback
 	return Monitor;
@@ -217,6 +222,9 @@ export const getOSDisplayName = (osType) => {
 
 	// macOS
 	if (os.includes("mac") || os.includes("darwin")) return "macOS";
+
+	// pfSense (FreeBSD-based) – check before FreeBSD
+	if (os.includes("pfsense")) return "pfSense";
 
 	// FreeBSD
 	if (os.includes("freebsd")) return "FreeBSD";

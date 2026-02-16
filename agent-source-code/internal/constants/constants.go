@@ -36,11 +36,12 @@ const (
 
 // Repository type constants
 const (
-	RepoTypeDeb    = "deb"
-	RepoTypeDebSrc = "deb-src"
-	RepoTypeRPM    = "rpm"
-	RepoTypeAPK    = "apk"
-	RepoTypePacman = "pacman"
+	RepoTypeDeb     = "deb"
+	RepoTypeDebSrc  = "deb-src"
+	RepoTypeRPM     = "rpm"
+	RepoTypeAPK     = "apk"
+	RepoTypePacman  = "pacman"
+	RepoTypeFreeBSD = "freebsd"
 )
 
 // Log level constants

@@ -91,9 +91,10 @@ class AgentVersionService {
 		try {
 			logger.info("🔍 Getting current agent version...");
 
-			// Detect server architecture and map to Go architecture names
+			// Server runs on Linux: only consider the Linux agent binary for "current version"
+			// (Settings/UI, refresh, download flow). FreeBSD binaries are for per-host update
+			// checks only in hostRoutes.js /agent/version.
 			const serverArch = os.arch();
-			// Map Node.js architecture to Go architecture names
 			const archMap = {
 				x64: "amd64",
 				ia32: "386",
@@ -106,7 +107,7 @@ class AgentVersionService {
 				`🔍 Detected server architecture: ${serverArch} -> ${serverGoArch}`,
 			);
 
-			// Try to find the agent binary in agents/ folder based on server architecture
+			// Linux binary only (server arch); do not consider FreeBSD or other OS binaries
 			const possiblePaths = [
 				path.join(this.agentsDir, `patchmon-agent-linux-${serverGoArch}`),
 				path.join(this.agentsDir, "patchmon-agent-linux-amd64"), // Fallback

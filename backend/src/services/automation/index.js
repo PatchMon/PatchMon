@@ -289,6 +289,9 @@ class QueueManager {
 					// Send command via WebSocket based on type
 					if (type === "report_now") {
 						agentWs.pushReportNow(api_id);
+						logger.info(
+							`Collect host statistics: report_now sent to agent ${api_id}`,
+						);
 					} else if (type === "settings_update") {
 						// For settings update, we need additional data
 						const { update_interval } = job.data;

@@ -123,6 +123,9 @@ function getAuthorizationUrl() {
 		code_challenge_method: "S256",
 	});
 
+	logger.debug(
+		`OIDC: authorization URL generated, state=${state.slice(0, 8)}..., scopes=${scopes}`,
+	);
 	return { url, state, codeVerifier, nonce };
 }
 

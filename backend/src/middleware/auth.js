@@ -15,6 +15,7 @@ const authenticateToken = async (req, res, next) => {
 		// Check for token in cookies first (preferred for XSS protection)
 		// Then fall back to Authorization header for API clients
 		let token = req.cookies?.token;
+		const fromCookie = !!token;
 
 		if (!token) {
 			const authHeader = req.headers.authorization;
@@ -22,8 +23,13 @@ const authenticateToken = async (req, res, next) => {
 		}
 
 		if (!token) {
+			logger.debug("Auth: no token (cookie or Authorization header)");
 			return res.status(401).json({ error: "Access token required" });
 		}
+
+		logger.debug(
+			`Auth: token from ${fromCookie ? "cookie" : "Authorization header"}`,
+		);
 
 		// Verify token
 		if (!process.env.JWT_SECRET) {
@@ -34,6 +40,7 @@ const authenticateToken = async (req, res, next) => {
 		// Validate session and check inactivity timeout
 		const validation = await validate_session(decoded.sessionId, token);
 		if (!validation.valid) {
+			logger.debug(`Auth: session invalid - ${validation.reason}`);
 			const error_messages = {
 				"Session not found": "Session not found",
 				"Session revoked": "Session has been revoked",
@@ -68,12 +75,17 @@ const authenticateToken = async (req, res, next) => {
 		req.user = validation.user;
 		req.session_id = decoded.sessionId;
 		req.tfa_bypassed = tfa_bypassed;
+		logger.debug(
+			`Auth: session valid for user ${validation.user.username} (id=${validation.user.id})`,
+		);
 		next();
 	} catch (error) {
 		if (error.name === "JsonWebTokenError") {
+			logger.debug("Auth: invalid token (JsonWebTokenError)");
 			return res.status(401).json({ error: "Invalid token" });
 		}
 		if (error.name === "TokenExpiredError") {
+			logger.debug("Auth: token expired");
 			return res.status(401).json({ error: "Token expired" });
 		}
 		logger.error("Auth middleware error:", error);
