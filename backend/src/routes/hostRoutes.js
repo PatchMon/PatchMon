@@ -170,103 +170,61 @@ router.get("/agent/download", async (req, res) => {
 		const fs = require("node:fs");
 		const path = require("node:path");
 
-		// Check if this is a legacy agent (bash script) requesting update
-		// Legacy agents will have agent_version < 1.2.9 (excluding 1.2.9 itself)
-		// But allow forcing binary download for fresh installations
-		const forceBinary = req.query.force === "binary";
-		const isLegacyAgent =
-			!forceBinary &&
-			host.agent_version &&
-			((host.agent_version.startsWith("1.2.") &&
-				host.agent_version !== "1.2.9") ||
-				host.agent_version.startsWith("1.1.") ||
-				host.agent_version.startsWith("1.0."));
+		// Serve Go agent binary (OS-aware: linux or freebsd). When os is missing (old agents), infer from host.os_type.
+		const architecture = req.query.arch || "amd64";
+		let os = req.query.os;
+		if (!os && host?.os_type) {
+			const reported = String(host.os_type).toLowerCase();
+			os =
+				reported.includes("freebsd") || reported.includes("pfsense")
+					? "freebsd"
+					: "linux";
+		}
+		os = os || "linux";
 
-		if (isLegacyAgent) {
-			// Serve migration script for legacy agents
-			const migrationScriptPath = path.join(
-				__dirname,
-				"../../../agents/patchmon-agent.sh",
-			);
-
-			if (!fs.existsSync(migrationScriptPath)) {
-				return res.status(404).json({ error: "Migration script not found" });
-			}
-
-			// Set appropriate headers for script download
-			res.setHeader("Content-Type", "text/plain");
-			res.setHeader(
-				"Content-Disposition",
-				'attachment; filename="patchmon-agent.sh"',
-			);
-
-			// Stream the migration script
-			const fileStream = fs.createReadStream(migrationScriptPath);
-			fileStream.pipe(res);
-
-			fileStream.on("error", (error) => {
-				logger.error("Migration script stream error:", error);
-				if (!res.headersSent) {
-					res.status(500).json({ error: "Failed to stream migration script" });
-				}
-			});
-		} else {
-			// Serve Go binary for new agents (OS-aware: linux or freebsd). When os is missing (old agents), infer from host.os_type.
-			const architecture = req.query.arch || "amd64";
-			let os = req.query.os;
-			if (!os && host?.os_type) {
-				const reported = String(host.os_type).toLowerCase();
-				os =
-					reported.includes("freebsd") || reported.includes("pfsense")
-						? "freebsd"
-						: "linux";
-			}
-			os = os || "linux";
-
-			const validOss = ["linux", "freebsd"];
-			if (!validOss.includes(os)) {
-				return res.status(400).json({
-					error: "Invalid os. Must be one of: linux, freebsd",
-				});
-			}
-
-			const validArchitecturesLinux = ["amd64", "386", "arm64", "arm"];
-			const validArchitecturesFreebsd = ["amd64", "arm64"];
-			const validArchitectures =
-				os === "freebsd" ? validArchitecturesFreebsd : validArchitecturesLinux;
-			if (!validArchitectures.includes(architecture)) {
-				return res.status(400).json({
-					error: `Invalid architecture for ${os}. Must be one of: ${validArchitectures.join(", ")}`,
-				});
-			}
-
-			const binaryName = `patchmon-agent-${os}-${architecture}`;
-			const binaryPath = path.join(__dirname, "../../../agents", binaryName);
-
-			if (!fs.existsSync(binaryPath)) {
-				return res.status(404).json({
-					error: `Agent binary not found for architecture: ${architecture}`,
-				});
-			}
-
-			// Set appropriate headers for binary download
-			res.setHeader("Content-Type", "application/octet-stream");
-			res.setHeader(
-				"Content-Disposition",
-				`attachment; filename="${binaryName}"`,
-			);
-
-			// Stream the binary file
-			const fileStream = fs.createReadStream(binaryPath);
-			fileStream.pipe(res);
-
-			fileStream.on("error", (error) => {
-				logger.error("Binary stream error:", error);
-				if (!res.headersSent) {
-					res.status(500).json({ error: "Failed to stream agent binary" });
-				}
+		const validOss = ["linux", "freebsd"];
+		if (!validOss.includes(os)) {
+			return res.status(400).json({
+				error: "Invalid os. Must be one of: linux, freebsd",
 			});
 		}
+
+		const validArchitecturesLinux = ["amd64", "386", "arm64", "arm"];
+		const validArchitecturesFreebsd = ["amd64", "arm64"];
+		const validArchitectures =
+			os === "freebsd" ? validArchitecturesFreebsd : validArchitecturesLinux;
+		if (!validArchitectures.includes(architecture)) {
+			return res.status(400).json({
+				error: `Invalid architecture for ${os}. Must be one of: ${validArchitectures.join(", ")}`,
+			});
+		}
+
+		const binaryName = `patchmon-agent-${os}-${architecture}`;
+		const binaryPath = path.join(__dirname, "../../../agents", binaryName);
+
+		if (!fs.existsSync(binaryPath)) {
+			return res.status(404).json({
+				error: `Agent binary not found for architecture: ${architecture}`,
+			});
+		}
+
+		// Set appropriate headers for binary download
+		res.setHeader("Content-Type", "application/octet-stream");
+		res.setHeader(
+			"Content-Disposition",
+			`attachment; filename="${binaryName}"`,
+		);
+
+		// Stream the binary file
+		const fileStream = fs.createReadStream(binaryPath);
+		fileStream.pipe(res);
+
+		fileStream.on("error", (error) => {
+			logger.error("Binary stream error:", error);
+			if (!res.headersSent) {
+				res.status(500).json({ error: "Failed to stream agent binary" });
+			}
+		});
 	} catch (error) {
 		logger.error("Agent download error:", error);
 		res.status(500).json({ error: "Failed to serve agent" });
@@ -302,190 +260,150 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 
 		// Get architecture parameter (default to amd64 for Go agents)
 		const architecture = req.query.arch || "amd64";
-		const agentType = req.query.type || "go"; // "go" or "legacy"
 
-		if (agentType === "legacy") {
-			// Legacy agent version check (bash script)
-			const agentPath = path.join(
-				__dirname,
-				"../../../agents/patchmon-agent.sh",
-			);
+		// Go agent version check: prefer agent-reported os (query param), else infer from host.os_type (agent-reported), else expected_platform, else linux
+		const { execFile } = require("node:child_process");
+		const { promisify } = require("node:util");
+		const execFileAsync = promisify(execFile);
 
-			if (!fs.existsSync(agentPath)) {
-				return res.status(404).json({ error: "Legacy agent script not found" });
-			}
-
-			const scriptContent = fs.readFileSync(agentPath, "utf8");
-			const versionMatch = scriptContent.match(/AGENT_VERSION="([^"]+)"/);
-
-			if (!versionMatch) {
-				return res
-					.status(500)
-					.json({ error: "Could not extract version from agent script" });
-			}
-
-			const currentVersion = versionMatch[1];
-
-			res.json({
-				currentVersion: currentVersion,
-				latestVersion: currentVersion,
-				hasUpdate: false,
-				autoUpdateDisabled: autoUpdateDisabled,
-				autoUpdateDisabledReason: autoUpdateDisabled
-					? autoUpdateDisabledReason
-					: null,
-				downloadUrl: `/api/v1/hosts/agent/download`,
-				releaseNotes: `PatchMon Agent v${currentVersion}`,
-				minServerVersion: null,
-				agentType: "legacy",
-			});
-		} else {
-			// Go agent version check: prefer agent-reported os (query param), else infer from host.os_type (agent-reported), else expected_platform, else linux
-			const { execFile } = require("node:child_process");
-			const { promisify } = require("node:util");
-			const execFileAsync = promisify(execFile);
-
-			const query_os = req.query.os;
-			const valid_os = ["linux", "freebsd"];
-			let os = query_os && valid_os.includes(query_os) ? query_os : null;
-			if (!os && host?.os_type) {
-				const reported = String(host.os_type).toLowerCase();
-				os =
-					reported.includes("freebsd") || reported.includes("pfsense")
-						? "freebsd"
-						: "linux";
-			}
-			if (!os) {
-				os = host?.expected_platform === "freebsd" ? "freebsd" : "linux";
-			}
-			const validArchitecturesLinux = ["amd64", "386", "arm64", "arm"];
-			const validArchitecturesFreebsd = ["amd64", "arm64"];
-			const validArchitectures =
-				os === "freebsd" ? validArchitecturesFreebsd : validArchitecturesLinux;
-			if (!validArchitectures.includes(architecture)) {
-				return res.status(400).json({
-					error: `Invalid architecture for ${os}. Must be one of: ${validArchitectures.join(", ")}`,
-				});
-			}
-			const binaryName = `patchmon-agent-${os}-${architecture}`;
-			if (binaryName.includes("..")) {
-				return res
-					.status(400)
-					.json({ error: "Invalid architecture specified" });
-			}
-			const binaryPath = path.join(__dirname, "../../../agents", binaryName);
-
-			if (fs.existsSync(binaryPath)) {
-				// Binary exists in server's agents folder - use its version
-				let serverVersion = null;
-
-				// Only execute the binary if it matches the server's platform (don't run FreeBSD binary on Linux)
-				const server_platform = process.platform;
-				const binary_matches_server =
-					(os === "linux" && server_platform === "linux") ||
-					(os === "freebsd" && server_platform === "freebsd");
-
-				if (binary_matches_server) {
-					try {
-						const { stdout } = await execFileAsync(binaryPath, ["--help"], {
-							timeout: 10000,
-						});
-						const versionMatch = stdout.match(
-							/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
-						);
-						if (versionMatch) serverVersion = versionMatch[1];
-					} catch (execError) {
-						logger.warn(
-							`Failed to execute binary ${binaryName} to get version: ${execError.message}`,
-						);
-					}
-				}
-
-				if (!serverVersion) {
-					try {
-						const { stdout: stringsOutput } = await execFileAsync(
-							"strings",
-							[binaryPath],
-							{ timeout: 10000, maxBuffer: 10 * 1024 * 1024 },
-						);
-						const versionMatch = stringsOutput.match(
-							/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
-						);
-						if (versionMatch) {
-							serverVersion = versionMatch[1];
-							logger.info(
-								`✅ Extracted version ${serverVersion} from binary using strings command`,
-							);
-						}
-					} catch (stringsError) {
-						logger.warn(
-							`Failed to extract version using strings command: ${stringsError.message}`,
-						);
-					}
-				}
-
-				// If we successfully got the version, return it
-				if (serverVersion) {
-					const agentVersion = req.query.currentVersion || serverVersion;
-
-					// Proper semantic version comparison: only update if server version is NEWER
-					const hasUpdate = compareVersions(serverVersion, agentVersion) > 0;
-
-					// Calculate SHA256 hash of the binary for integrity verification
-					// This allows agents to verify the downloaded binary matches the expected hash
-					let binaryHash = null;
-					try {
-						const binaryContent = fs.readFileSync(binaryPath);
-						binaryHash = crypto
-							.createHash("sha256")
-							.update(binaryContent)
-							.digest("hex");
-					} catch (hashErr) {
-						logger.warn(
-							`Failed to calculate hash for binary ${binaryName}: ${hashErr.message}`,
-						);
-					}
-
-					// Return update info, but indicate if auto-update is disabled
-					return res.json({
-						currentVersion: agentVersion,
-						latestVersion: serverVersion,
-						hasUpdate: hasUpdate && !autoUpdateDisabled, // Only true if update available AND auto-update enabled
-						autoUpdateDisabled: autoUpdateDisabled,
-						autoUpdateDisabledReason: autoUpdateDisabled
-							? autoUpdateDisabledReason
-							: null,
-						downloadUrl: `/api/v1/hosts/agent/download?arch=${architecture}&os=${os}`,
-						releaseNotes: `PatchMon Agent v${serverVersion}`,
-						minServerVersion: null,
-						architecture: architecture,
-						agentType: "go",
-						hash: binaryHash, // SHA256 hash for integrity verification
-					});
-				}
-
-				// If we couldn't get version, fall through to error response
-				logger.warn(
-					`Could not determine version for binary ${binaryName} using any method`,
-				);
-			}
-
-			// Binary doesn't exist or couldn't get version - return error
-			// Don't fall back to GitHub - the server's agents folder is the source of truth
-			const agentVersion = req.query.currentVersion || "unknown";
-			return res.status(404).json({
-				error: `Agent binary not found for architecture: ${architecture}. Please ensure the binary is in the server's agents folder.`,
-				currentVersion: agentVersion,
-				latestVersion: null,
-				hasUpdate: false,
-				autoUpdateDisabled: autoUpdateDisabled,
-				autoUpdateDisabledReason: autoUpdateDisabled
-					? autoUpdateDisabledReason
-					: null,
-				architecture: architecture,
-				agentType: "go",
+		const query_os = req.query.os;
+		const valid_os = ["linux", "freebsd"];
+		let os = query_os && valid_os.includes(query_os) ? query_os : null;
+		if (!os && host?.os_type) {
+			const reported = String(host.os_type).toLowerCase();
+			os =
+				reported.includes("freebsd") || reported.includes("pfsense")
+					? "freebsd"
+					: "linux";
+		}
+		if (!os) {
+			os = host?.expected_platform === "freebsd" ? "freebsd" : "linux";
+		}
+		const validArchitecturesLinux = ["amd64", "386", "arm64", "arm"];
+		const validArchitecturesFreebsd = ["amd64", "arm64"];
+		const validArchitectures =
+			os === "freebsd" ? validArchitecturesFreebsd : validArchitecturesLinux;
+		if (!validArchitectures.includes(architecture)) {
+			return res.status(400).json({
+				error: `Invalid architecture for ${os}. Must be one of: ${validArchitectures.join(", ")}`,
 			});
 		}
+		const binaryName = `patchmon-agent-${os}-${architecture}`;
+		if (binaryName.includes("..")) {
+			return res.status(400).json({ error: "Invalid architecture specified" });
+		}
+		const binaryPath = path.join(__dirname, "../../../agents", binaryName);
+
+		if (fs.existsSync(binaryPath)) {
+			// Binary exists in server's agents folder - use its version
+			let serverVersion = null;
+
+			// Only execute the binary if it matches the server's platform (don't run FreeBSD binary on Linux)
+			const server_platform = process.platform;
+			const binary_matches_server =
+				(os === "linux" && server_platform === "linux") ||
+				(os === "freebsd" && server_platform === "freebsd");
+
+			if (binary_matches_server) {
+				try {
+					const { stdout } = await execFileAsync(binaryPath, ["--help"], {
+						timeout: 10000,
+					});
+					const versionMatch = stdout.match(
+						/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
+					);
+					if (versionMatch) serverVersion = versionMatch[1];
+				} catch (execError) {
+					logger.warn(
+						`Failed to execute binary ${binaryName} to get version: ${execError.message}`,
+					);
+				}
+			}
+
+			if (!serverVersion) {
+				try {
+					const { stdout: stringsOutput } = await execFileAsync(
+						"strings",
+						[binaryPath],
+						{ timeout: 10000, maxBuffer: 10 * 1024 * 1024 },
+					);
+					const versionMatch = stringsOutput.match(
+						/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
+					);
+					if (versionMatch) {
+						serverVersion = versionMatch[1];
+						logger.info(
+							`✅ Extracted version ${serverVersion} from binary using strings command`,
+						);
+					}
+				} catch (stringsError) {
+					logger.warn(
+						`Failed to extract version using strings command: ${stringsError.message}`,
+					);
+				}
+			}
+
+			// If we successfully got the version, return it
+			if (serverVersion) {
+				const agentVersion = req.query.currentVersion || serverVersion;
+
+				// Proper semantic version comparison: only update if server version is NEWER
+				const hasUpdate = compareVersions(serverVersion, agentVersion) > 0;
+
+				// Calculate SHA256 hash of the binary for integrity verification
+				// This allows agents to verify the downloaded binary matches the expected hash
+				let binaryHash = null;
+				try {
+					const binaryContent = fs.readFileSync(binaryPath);
+					binaryHash = crypto
+						.createHash("sha256")
+						.update(binaryContent)
+						.digest("hex");
+				} catch (hashErr) {
+					logger.warn(
+						`Failed to calculate hash for binary ${binaryName}: ${hashErr.message}`,
+					);
+				}
+
+				// Return update info, but indicate if auto-update is disabled
+				return res.json({
+					currentVersion: agentVersion,
+					latestVersion: serverVersion,
+					hasUpdate: hasUpdate && !autoUpdateDisabled, // Only true if update available AND auto-update enabled
+					autoUpdateDisabled: autoUpdateDisabled,
+					autoUpdateDisabledReason: autoUpdateDisabled
+						? autoUpdateDisabledReason
+						: null,
+					downloadUrl: `/api/v1/hosts/agent/download?arch=${architecture}&os=${os}`,
+					releaseNotes: `PatchMon Agent v${serverVersion}`,
+					minServerVersion: null,
+					architecture: architecture,
+					agentType: "go",
+					hash: binaryHash, // SHA256 hash for integrity verification
+				});
+			}
+
+			// If we couldn't get version, fall through to error response
+			logger.warn(
+				`Could not determine version for binary ${binaryName} using any method`,
+			);
+		}
+
+		// Binary doesn't exist or couldn't get version - return error
+		// Don't fall back to GitHub - the server's agents folder is the source of truth
+		const agentVersion = req.query.currentVersion || "unknown";
+		return res.status(404).json({
+			error: `Agent binary not found for architecture: ${architecture}. Please ensure the binary is in the server's agents folder.`,
+			currentVersion: agentVersion,
+			latestVersion: null,
+			hasUpdate: false,
+			autoUpdateDisabled: autoUpdateDisabled,
+			autoUpdateDisabledReason: autoUpdateDisabled
+				? autoUpdateDisabledReason
+				: null,
+			architecture: architecture,
+			agentType: "go",
+		});
 	} catch (error) {
 		logger.error("Version check error:", error);
 		res.status(500).json({ error: "Failed to get agent version" });
@@ -956,25 +874,34 @@ router.post(
 					});
 				}
 
-				// Now process host_packages - batch create since we already deleted all
-				const hostPackagesToCreate = packages.map((packageData) => {
+				// Now process host_packages
+				for (const packageData of packages) {
 					const pkg = existingPackageMap.get(packageData.name);
-					return {
-						id: uuidv4(),
-						host_id: host.id,
-						package_id: pkg.id,
-						current_version: packageData.currentVersion,
-						available_version: packageData.availableVersion || null,
-						needs_update: packageData.needsUpdate,
-						is_security_update: packageData.isSecurityUpdate || false,
-						last_checked: new Date(),
-					};
-				});
 
-				if (hostPackagesToCreate.length > 0) {
-					await tx.host_packages.createMany({
-						data: hostPackagesToCreate,
-						skipDuplicates: true,
+					await tx.host_packages.upsert({
+						where: {
+							host_id_package_id: {
+								host_id: host.id,
+								package_id: pkg.id,
+							},
+						},
+						update: {
+							current_version: packageData.currentVersion,
+							available_version: packageData.availableVersion || null,
+							needs_update: packageData.needsUpdate,
+							is_security_update: packageData.isSecurityUpdate || false,
+							last_checked: new Date(),
+						},
+						create: {
+							id: uuidv4(),
+							host_id: host.id,
+							package_id: pkg.id,
+							current_version: packageData.currentVersion,
+							available_version: packageData.availableVersion || null,
+							needs_update: packageData.needsUpdate,
+							is_security_update: packageData.isSecurityUpdate || false,
+							last_checked: new Date(),
+						},
 					});
 				}
 
@@ -1285,8 +1212,7 @@ router.post("/ping", validateApiCredentials, async (req, res) => {
 			);
 			response.crontabUpdate = {
 				shouldUpdate: true,
-				message:
-					"Update interval changed, please run: /usr/local/bin/patchmon-agent.sh update-crontab",
+				message: "Update interval changed. Restart the agent service to apply.",
 				command: "update-crontab",
 			};
 		}
@@ -2580,49 +2506,76 @@ router.get("/remove", async (_req, res) => {
 
 // ==================== AGENT FILE MANAGEMENT ====================
 
-// Get agent file information (admin only)
+// Get agent binary information (admin only). Returns info for the Go agent binary in agents/.
 router.get(
 	"/agent/info",
 	authenticateToken,
 	requireManageSettings,
 	async (_req, res) => {
 		try {
-			const fs = require("node:fs").promises;
+			const fs = require("node:fs");
+			const fsPromises = require("node:fs").promises;
 			const path = require("node:path");
+			const { execFile } = require("node:child_process");
+			const { promisify } = require("node:util");
+			const execFileAsync = promisify(execFile);
 
-			const agentPath = path.join(
-				__dirname,
-				"../../../agents/patchmon-agent.sh",
-			);
+			const agentsDir = path.join(__dirname, "../../../agents");
+			const platform =
+				process.platform === "linux"
+					? "linux"
+					: process.platform === "freebsd"
+						? "freebsd"
+						: "linux";
+			// Prefer binary matching server platform (e.g. patchmon-agent-linux-amd64)
+			const preferredName = `patchmon-agent-${platform}-amd64`;
+			const preferredPath = path.join(agentsDir, preferredName);
 
-			try {
-				const stats = await fs.stat(agentPath);
-				const content = await fs.readFile(agentPath, "utf8");
-
-				// Extract version from agent script (look for AGENT_VERSION= line)
-				const versionMatch = content.match(/^AGENT_VERSION="([^"]+)"/m);
-				const version = versionMatch ? versionMatch[1] : "unknown";
-
-				res.json({
-					exists: true,
-					version,
-					lastModified: stats.mtime,
-					size: stats.size,
-					sizeFormatted: `${(stats.size / 1024).toFixed(1)} KB`,
-				});
-			} catch (error) {
-				if (error.code === "ENOENT") {
-					res.json({
-						exists: false,
-						version: null,
-						lastModified: null,
-						size: 0,
-						sizeFormatted: "0 KB",
-					});
-				} else {
-					throw error;
-				}
+			let binaryPath = null;
+			if (fs.existsSync(preferredPath)) {
+				binaryPath = preferredPath;
+			} else {
+				const entries = await fsPromises.readdir(agentsDir).catch(() => []);
+				const binary = entries.find(
+					(e) =>
+						e.startsWith("patchmon-agent-") &&
+						!e.endsWith(".sh") &&
+						e !== "patchmon-agent.sh",
+				);
+				if (binary) binaryPath = path.join(agentsDir, binary);
 			}
+
+			if (!binaryPath || !fs.existsSync(binaryPath)) {
+				return res.json({
+					exists: false,
+					version: null,
+					lastModified: null,
+					size: 0,
+					sizeFormatted: "0 KB",
+				});
+			}
+
+			const stats = await fsPromises.stat(binaryPath);
+			let version = "unknown";
+			try {
+				const { stdout } = await execFileAsync(binaryPath, ["--help"], {
+					timeout: 5000,
+				});
+				const versionMatch = stdout.match(
+					/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
+				);
+				if (versionMatch) version = versionMatch[1];
+			} catch (_) {
+				// ignore
+			}
+
+			res.json({
+				exists: true,
+				version,
+				lastModified: stats.mtime,
+				size: stats.size,
+				sizeFormatted: `${(stats.size / 1024).toFixed(1)} KB`,
+			});
 		} catch (error) {
 			logger.error("Get agent info error:", error);
 			res.status(500).json({ error: "Failed to get agent information" });
@@ -2630,72 +2583,9 @@ router.get(
 	},
 );
 
-// Update agent file (admin only)
-router.post(
-	"/agent/upload",
-	authenticateToken,
-	requireManageSettings,
-	async (req, res) => {
-		try {
-			const { scriptContent } = req.body;
-
-			if (!scriptContent || typeof scriptContent !== "string") {
-				return res.status(400).json({ error: "Script content is required" });
-			}
-
-			// Basic validation - check if it looks like a shell script
-			if (!scriptContent.trim().startsWith("#!/")) {
-				return res.status(400).json({
-					error: "Invalid script format - must start with shebang (#!/...)",
-				});
-			}
-
-			const fs = require("node:fs").promises;
-			const path = require("node:path");
-
-			const agentPath = path.join(
-				__dirname,
-				"../../../agents/patchmon-agent.sh",
-			);
-
-			// Create backup of existing file
-			try {
-				const backupPath = `${agentPath}.backup.${Date.now()}`;
-				await fs.copyFile(agentPath, backupPath);
-				logger.info(`Created backup: ${backupPath}`);
-			} catch (error) {
-				// Ignore if original doesn't exist
-				if (error.code !== "ENOENT") {
-					logger.warn("Failed to create backup:", error.message);
-				}
-			}
-
-			// Write new agent script
-			await fs.writeFile(agentPath, scriptContent, { mode: 0o755 });
-
-			// Get updated file info
-			const stats = await fs.stat(agentPath);
-			const versionMatch = scriptContent.match(/^AGENT_VERSION="([^"]+)"/m);
-			const version = versionMatch ? versionMatch[1] : "unknown";
-
-			res.json({
-				message: "Agent script updated successfully",
-				version,
-				lastModified: stats.mtime,
-				size: stats.size,
-				sizeFormatted: `${(stats.size / 1024).toFixed(1)} KB`,
-			});
-		} catch (error) {
-			logger.error("Upload agent error:", error);
-			res.status(500).json({ error: "Failed to update agent script" });
-		}
-	},
-);
-
-// Get agent file timestamp for update checking (requires API credentials)
+// Get agent binary timestamp for update checking (requires API credentials)
 router.get("/agent/timestamp", async (req, res) => {
 	try {
-		// Check for API credentials
 		const apiId = req.headers["x-api-id"];
 		const apiKey = req.headers["x-api-key"];
 
@@ -2703,7 +2593,6 @@ router.get("/agent/timestamp", async (req, res) => {
 			return res.status(401).json({ error: "API credentials required" });
 		}
 
-		// Verify API credentials
 		const host = await prisma.hosts.findUnique({
 			where: { api_id: apiId },
 		});
@@ -2712,43 +2601,54 @@ router.get("/agent/timestamp", async (req, res) => {
 			return res.status(401).json({ error: "Invalid API credentials" });
 		}
 
-		// Verify API key using bcrypt (or timing-safe comparison for legacy keys)
 		const isValidKey = await verifyApiKey(apiKey, host.api_key);
 		if (!isValidKey) {
 			return res.status(401).json({ error: "Invalid API credentials" });
 		}
 
-		const fs = require("node:fs").promises;
+		const fs = require("node:fs");
+		const fsPromises = require("node:fs").promises;
 		const path = require("node:path");
 
-		const agentPath = path.join(__dirname, "../../../agents/patchmon-agent.sh");
+		const agentsDir = path.join(__dirname, "../../../agents");
+		const platform =
+			process.platform === "linux"
+				? "linux"
+				: process.platform === "freebsd"
+					? "freebsd"
+					: "linux";
+		const preferredPath = path.join(
+			agentsDir,
+			`patchmon-agent-${platform}-amd64`,
+		);
 
-		try {
-			const stats = await fs.stat(agentPath);
-			const content = await fs.readFile(agentPath, "utf8");
-
-			// Extract version from agent script
-			const versionMatch = content.match(/^AGENT_VERSION="([^"]+)"/m);
-			const version = versionMatch ? versionMatch[1] : "unknown";
-
-			res.json({
-				version,
-				lastModified: stats.mtime,
-				timestamp: Math.floor(stats.mtime.getTime() / 1000), // Unix timestamp
-				exists: true,
-			});
-		} catch (error) {
-			if (error.code === "ENOENT") {
-				res.json({
-					version: null,
-					lastModified: null,
-					timestamp: 0,
-					exists: false,
-				});
-			} else {
-				throw error;
-			}
+		let binaryPath = null;
+		if (fs.existsSync(preferredPath)) {
+			binaryPath = preferredPath;
+		} else {
+			const entries = await fsPromises.readdir(agentsDir).catch(() => []);
+			const binary = entries.find(
+				(e) => e.startsWith("patchmon-agent-") && !e.endsWith(".sh"),
+			);
+			if (binary) binaryPath = path.join(agentsDir, binary);
 		}
+
+		if (!binaryPath || !fs.existsSync(binaryPath)) {
+			return res.json({
+				version: null,
+				lastModified: null,
+				timestamp: 0,
+				exists: false,
+			});
+		}
+
+		const stats = await fsPromises.stat(binaryPath);
+		res.json({
+			version: null,
+			lastModified: stats.mtime,
+			timestamp: Math.floor(stats.mtime.getTime() / 1000),
+			exists: true,
+		});
 	} catch (error) {
 		logger.error("Get agent timestamp error:", error);
 		res.status(500).json({ error: "Failed to get agent timestamp" });
