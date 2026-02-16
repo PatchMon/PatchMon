@@ -28,7 +28,7 @@ import {
 	Wifi,
 	X,
 } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import AddHostWizard from "../components/AddHostWizard";
 import InlineEdit from "../components/InlineEdit";
@@ -40,6 +40,7 @@ import {
 	formatRelativeTime,
 	hostGroupsAPI,
 	settingsAPI,
+	userPreferencesAPI,
 } from "../utils/api";
 import { getOSDisplayName, OSIcon } from "../utils/osIcons.jsx";
 
@@ -145,9 +146,9 @@ const Hosts = () => {
 		}
 	}, [searchParams, navigate]);
 
-	// Column configuration
-	const [columnConfig, setColumnConfig] = useState(() => {
-		const defaultConfig = [
+	// Default column config (shared for initial state and reset)
+	const default_column_config = useMemo(
+		() => [
 			{ id: "select", label: "Select", visible: true, order: 0 },
 			{ id: "host", label: "Friendly Name", visible: true, order: 1 },
 			{ id: "hostname", label: "System Hostname", visible: true, order: 2 },
@@ -177,61 +178,94 @@ const Hosts = () => {
 			{ id: "notes", label: "Notes", visible: false, order: 16 },
 			{ id: "last_update", label: "Last Update", visible: true, order: 17 },
 			{ id: "actions", label: "Actions", visible: true, order: 18 },
-		];
+		],
+		[],
+	);
 
-		const saved = localStorage.getItem("hosts-column-config");
-		if (saved) {
-			try {
-				const savedConfig = JSON.parse(saved);
-
-				// Check if we have old camelCase column IDs that need to be migrated
-				const hasOldColumns = savedConfig.some(
-					(col) =>
-						col.id === "agentVersion" ||
-						col.id === "autoUpdate" ||
-						col.id === "osVersion" ||
-						col.id === "lastUpdate",
-				);
-
-				if (hasOldColumns) {
-					// Clear the old configuration and use the default snake_case configuration
-					localStorage.removeItem("hosts-column-config");
-					return defaultConfig;
-				} else {
-					// Merge saved config with defaults to handle new columns
-					// This preserves user's visibility preferences while adding new columns
-					const mergedConfig = defaultConfig.map((defaultCol) => {
-						const savedCol = savedConfig.find(
-							(col) => col.id === defaultCol.id,
-						);
-						if (savedCol) {
-							// Use saved visibility preference, but keep default order and label
-							return {
-								...defaultCol,
-								visible: savedCol.visible,
-							};
-						}
-						// New column not in saved config, use default
-						return defaultCol;
-					});
-
-					// Ensure ws_status column is visible
-					const updatedConfig = mergedConfig.map((col) =>
-						col.id === "ws_status" ? { ...col, visible: true } : col,
-					);
-					return updatedConfig;
-				}
-			} catch {
-				// If there's an error parsing the config, clear it and use default
-				localStorage.removeItem("hosts-column-config");
-				return defaultConfig;
-			}
-		}
-
-		return defaultConfig;
-	});
+	// Column configuration: server-backed so it persists across browsers
+	const [columnConfig, setColumnConfig] = useState(default_column_config);
 
 	const queryClient = useQueryClient();
+
+	// Fetch user preferences (includes hosts_column_config from server)
+	const { data: user_preferences, isFetched: user_preferences_fetched } =
+		useQuery({
+			queryKey: ["userPreferences"],
+			queryFn: () => userPreferencesAPI.get().then((res) => res.data),
+			staleTime: 2 * 60 * 1000,
+		});
+
+	// Apply server or localStorage config once preferences fetch has settled (so server wins)
+	const column_config_initialized = useRef(false);
+	useEffect(() => {
+		if (column_config_initialized.current) return;
+		if (!user_preferences_fetched) return;
+		// Prefer server config; if request failed or no config on server, fall back to localStorage
+		const server_config = user_preferences?.hosts_column_config;
+		const defaultConfig = default_column_config;
+		let saved_config = null;
+		if (server_config?.length) {
+			saved_config = server_config;
+		} else {
+			const from_storage = localStorage.getItem("hosts-column-config");
+			if (from_storage) {
+				try {
+					const parsed = JSON.parse(from_storage);
+					const has_old_columns = parsed.some(
+						(col) =>
+							col.id === "agentVersion" ||
+							col.id === "autoUpdate" ||
+							col.id === "osVersion" ||
+							col.id === "lastUpdate",
+					);
+					if (!has_old_columns) saved_config = parsed;
+					else localStorage.removeItem("hosts-column-config");
+				} catch {
+					localStorage.removeItem("hosts-column-config");
+				}
+			}
+		}
+		column_config_initialized.current = true;
+		if (!saved_config) return;
+		const merged = defaultConfig.map((defaultCol) => {
+			const savedCol = saved_config.find((col) => col.id === defaultCol.id);
+			if (savedCol) {
+				const order =
+					typeof savedCol.order === "number"
+						? savedCol.order
+						: defaultCol.order;
+				return { ...defaultCol, visible: savedCol.visible, order };
+			}
+			return defaultCol;
+		});
+		const sorted = merged
+			.slice()
+			.sort((a, b) => a.order - b.order)
+			.map((col, index) => ({ ...col, order: index }));
+		const updated = sorted.map((col) =>
+			col.id === "ws_status" ? { ...col, visible: true } : col,
+		);
+		setColumnConfig(updated);
+		// If we had only localStorage and no server config, persist to server for cross-browser sync
+		if (!server_config?.length) {
+			const payload = updated.map((col) => ({
+				id: col.id,
+				visible: col.visible,
+				order: col.order,
+			}));
+			userPreferencesAPI
+				.update({ hosts_column_config: payload })
+				.catch(() => {})
+				.then(() =>
+					queryClient.invalidateQueries({ queryKey: ["userPreferences"] }),
+				);
+		}
+	}, [
+		user_preferences,
+		user_preferences_fetched,
+		default_column_config,
+		queryClient,
+	]);
 
 	const {
 		data: hosts,
@@ -847,10 +881,21 @@ const Hosts = () => {
 		);
 	};
 
-	// Column management functions
+	// Column management functions (persist to server so config is shared across browsers)
 	const updateColumnConfig = (newConfig) => {
 		setColumnConfig(newConfig);
 		localStorage.setItem("hosts-column-config", JSON.stringify(newConfig));
+		const payload = newConfig.map((col) => ({
+			id: col.id,
+			visible: col.visible,
+			order: col.order,
+		}));
+		userPreferencesAPI
+			.update({ hosts_column_config: payload })
+			.catch(() => {})
+			.then(() =>
+				queryClient.invalidateQueries({ queryKey: ["userPreferences"] }),
+			);
 	};
 
 	const toggleColumnVisibility = (columnId) => {
@@ -874,38 +919,7 @@ const Hosts = () => {
 	};
 
 	const resetColumns = () => {
-		const defaultConfig = [
-			{ id: "select", label: "Select", visible: true, order: 0 },
-			{ id: "host", label: "Friendly Name", visible: true, order: 1 },
-			{ id: "hostname", label: "System Hostname", visible: true, order: 2 },
-			{ id: "ip", label: "IP Address", visible: false, order: 3 },
-			{ id: "group", label: "Group", visible: true, order: 4 },
-			{ id: "os", label: "OS", visible: true, order: 5 },
-			{ id: "os_version", label: "OS Version", visible: false, order: 6 },
-			{ id: "agent_version", label: "Agent Version", visible: true, order: 7 },
-			{
-				id: "auto_update",
-				label: "Agent Auto-Update",
-				visible: true,
-				order: 8,
-			},
-			{ id: "ws_status", label: "Connection", visible: true, order: 9 },
-			{ id: "integrations", label: "Integrations", visible: true, order: 10 },
-			{ id: "status", label: "Status", visible: true, order: 11 },
-			{ id: "needs_reboot", label: "Reboot", visible: true, order: 12 },
-			{ id: "uptime", label: "Uptime", visible: true, order: 13 },
-			{ id: "updates", label: "Updates", visible: true, order: 14 },
-			{
-				id: "security_updates",
-				label: "Security Updates",
-				visible: true,
-				order: 15,
-			},
-			{ id: "notes", label: "Notes", visible: false, order: 16 },
-			{ id: "last_update", label: "Last Update", visible: true, order: 17 },
-			{ id: "actions", label: "Actions", visible: true, order: 18 },
-		];
-		updateColumnConfig(defaultConfig);
+		updateColumnConfig([...default_column_config]);
 	};
 
 	// Get visible columns in order
