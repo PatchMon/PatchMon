@@ -181,6 +181,7 @@ describe("OIDC Routes", () => {
 			name: "Test User",
 			emailVerified: true,
 			groups: [],
+			idToken: "mock-id-token",
 		};
 
 		const mockUser = {
@@ -331,6 +332,18 @@ describe("OIDC Routes", () => {
 
 			expect(redis.del).toHaveBeenCalledWith(
 				expect.stringContaining("oidc:session:"),
+			);
+		});
+
+		it("should store id_token in Redis for logout", async () => {
+			await request(app)
+				.get("/api/v1/auth/oidc/callback")
+				.query({ code: "auth-code", state: "mock-state" });
+
+			expect(redis.setex).toHaveBeenCalledWith(
+				expect.stringContaining("oidc:id_token:"),
+				7 * 24 * 60 * 60,
+				"mock-id-token",
 			);
 		});
 	});

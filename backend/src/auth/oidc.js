@@ -3,6 +3,14 @@
  *
  * Handles OpenID Connect authentication flow with external identity providers.
  * Supports Authentik, Keycloak, Okta, and other OIDC-compliant providers.
+ *
+ * Best practices implemented:
+ * - ID token used only for authentication (sub, nonce validation)
+ * - User profile data (email, name, groups) fetched from UserInfo endpoint
+ * - PKCE with S256 for authorization code exchange
+ * - No sensitive claims logged (PII protection)
+ * - id_token_hint used for RP-initiated logout
+ * - email_verified enforced before account linking
  */
 
 const { Issuer, generators } = require("openid-client");
@@ -40,6 +48,14 @@ async function initializeOIDC() {
 		logger.info(`Discovering OIDC configuration from: ${issuerUrl}`);
 		oidcIssuer = await Issuer.discover(issuerUrl);
 		logger.info(`OIDC Issuer discovered: ${oidcIssuer.metadata.issuer}`);
+
+		// Verify UserInfo endpoint is available
+		if (!oidcIssuer.metadata.userinfo_endpoint) {
+			logger.warn(
+				"OIDC issuer does not advertise a userinfo_endpoint. " +
+					"Profile data will fall back to ID token claims.",
+			);
+		}
 
 		// Create the OIDC client
 		oidcClient = new oidcIssuer.Client({
@@ -94,6 +110,9 @@ function getAuthorizationUrl() {
 	// Generate nonce for replay attack protection
 	const nonce = generators.nonce();
 
+	// Scopes: openid is required; email, profile, groups control what the
+	// UserInfo endpoint returns. The actual data is fetched from UserInfo,
+	// not extracted from the ID token.
 	const scopes = process.env.OIDC_SCOPES || "openid email profile groups";
 
 	const url = oidcClient.authorizationUrl({
@@ -111,28 +130,70 @@ function getAuthorizationUrl() {
 }
 
 /**
+ * Extract groups from claims, checking various provider-specific claim names.
+ * @param {Object} claims - Claims object (from UserInfo or ID token)
+ * @returns {string[]} Array of group names
+ */
+function extractGroups(claims) {
+	// Standard claim name
+	if (claims.groups) {
+		return Array.isArray(claims.groups) ? claims.groups : [claims.groups];
+	}
+	// Authentik-specific claim name
+	if (claims.ak_groups) {
+		return Array.isArray(claims.ak_groups)
+			? claims.ak_groups
+			: [claims.ak_groups];
+	}
+	return [];
+}
+
+/**
  * Handle the callback from the IdP
- * @param {string} code - Authorization code from the IdP
+ *
+ * Best practice flow:
+ * 1. Exchange authorization code for tokens (with PKCE + nonce validation)
+ * 2. Validate the ID token (sub, nonce, issuer — handled by openid-client)
+ * 3. Use the access token to fetch user profile from the UserInfo endpoint
+ * 4. Return normalized user info
+ *
+ * The ID token is used solely for authentication (verifying the user's identity
+ * via `sub` and `nonce`). Profile data (email, name, groups, picture) is fetched
+ * from the UserInfo endpoint using the access token, per OIDC best practice.
+ *
+ * @param {Object} callbackParams - The full query parameters from the callback URL
  * @param {string} codeVerifier - PKCE code verifier from the initial request
  * @param {string} expectedNonce - Expected nonce value for validation
- * @returns {Object} User claims from the ID token
+ * @param {string} expectedState - Expected state value for validation
+ * @returns {Object} Normalized user info
  */
-async function handleCallback(code, codeVerifier, expectedNonce) {
+async function handleCallback(
+	callbackParams,
+	codeVerifier,
+	expectedNonce,
+	expectedState,
+) {
 	if (!oidcClient) {
 		throw new Error("OIDC client not initialized");
 	}
 
 	const redirectUri = process.env.OIDC_REDIRECT_URI;
 
-	logger.debug("OIDC: exchanging authorization code for tokens");
-	// Exchange the authorization code for tokens
+	// Build the checks object for openid-client validation
+	const checks = {
+		code_verifier: codeVerifier,
+		nonce: expectedNonce,
+	};
+
+	// Only include state in checks if provided (openid-client validates it)
+	if (expectedState) {
+		checks.state = expectedState;
+	}
+
 	const tokenSet = await oidcClient.callback(
 		redirectUri,
-		{ code },
-		{
-			code_verifier: codeVerifier,
-			nonce: expectedNonce,
-		},
+		callbackParams,
+		checks,
 	);
 
 	// Validate that we received an ID token
@@ -140,67 +201,91 @@ async function handleCallback(code, codeVerifier, expectedNonce) {
 		throw new Error("No ID token received from IdP");
 	}
 
-	// Get the claims from the ID token
-	const claims = tokenSet.claims();
+	// Validate that we received an access token (needed for UserInfo)
+	if (!tokenSet.access_token) {
+		throw new Error("No access token received from IdP");
+	}
 
-	logger.debug(
-		"OIDC claims received from IdP:",
-		JSON.stringify(claims, null, 2),
-	);
-	logger.info(
-		`OIDC claims received for: ${claims.email || claims.sub || "unknown"}`,
-	);
+	// Get the claims from the ID token — used only for authentication (sub)
+	const idClaims = tokenSet.claims();
 
-	// Validate required claims
-	if (!claims.sub) {
+	if (!idClaims.sub) {
 		throw new Error('ID token missing required "sub" claim');
 	}
 
-	if (!claims.email) {
-		throw new Error('ID token missing required "email" claim');
-	}
+	logger.info(`OIDC authentication successful for sub: ${idClaims.sub}`);
 
-	// Validate nonce matches (defense in depth - openid-client also validates this)
-	if (expectedNonce && claims.nonce !== expectedNonce) {
-		throw new Error("Nonce mismatch - possible replay attack");
-	}
+	// Fetch user profile from the UserInfo endpoint using the access token.
+	let userInfoClaims = {};
+	try {
+		userInfoClaims = await oidcClient.userinfo(tokenSet.access_token);
+		logger.info(
+			`OIDC UserInfo fetched successfully for sub: ${userInfoClaims.sub || idClaims.sub}`,
+		);
 
-	// Validate issuer matches (defense in depth)
-	if (claims.iss !== oidcIssuer.metadata.issuer) {
-		throw new Error("Issuer mismatch - token may be from wrong IdP");
-	}
-
-	// Extract groups from various possible claim names (Authentik uses different names)
-	// Authentik may use: groups, ak_groups, or groups in the access token
-	let groups = [];
-	if (claims.groups) {
-		groups = Array.isArray(claims.groups) ? claims.groups : [claims.groups];
-	} else if (claims.ak_groups) {
-		// Authentik-specific claim name
-		groups = Array.isArray(claims.ak_groups)
-			? claims.ak_groups
-			: [claims.ak_groups];
-	}
-
-	if (groups.length > 0) {
-		logger.debug(`OIDC groups: ${JSON.stringify(groups)}`);
-	} else {
+		// Verify the UserInfo `sub` matches the ID token `sub`
+		if (userInfoClaims.sub && userInfoClaims.sub !== idClaims.sub) {
+			throw new Error(
+				"UserInfo sub does not match ID token sub — possible token substitution attack",
+			);
+		}
+	} catch (error) {
+		if (error.message.includes("token substitution")) {
+			throw error;
+		}
+		// If UserInfo endpoint is unavailable, fall back to ID token claims
 		logger.warn(
-			`No groups found in OIDC token. Available claims: ${Object.keys(claims).join(", ")}`,
+			`Failed to fetch UserInfo, falling back to ID token claims: ${error.message}`,
+		);
+		userInfoClaims = idClaims;
+	}
+
+	// Merge: prefer UserInfo claims over ID token claims for profile data
+	const email = userInfoClaims.email || idClaims.email;
+	const emailVerified =
+		userInfoClaims.email_verified ?? idClaims.email_verified ?? false;
+
+	if (!email) {
+		throw new Error(
+			'No email found in UserInfo or ID token. Ensure the "email" scope is requested ' +
+				"and the provider is configured to release the email claim.",
 		);
 	}
 
+	// Extract groups from UserInfo (preferred) or fall back to ID token
+	const groups =
+		extractGroups(userInfoClaims).length > 0
+			? extractGroups(userInfoClaims)
+			: extractGroups(idClaims);
+
+	if (groups.length > 0) {
+		logger.info(
+			`OIDC groups resolved for sub ${idClaims.sub}: ${groups.length} group(s)`,
+		);
+	} else {
+		logger.warn(
+			`No groups found in UserInfo or ID token for sub: ${idClaims.sub}. ` +
+				'Ensure the "groups" scope is requested and the provider releases group claims.',
+		);
+	}
+
+	const name =
+		userInfoClaims.name ||
+		userInfoClaims.preferred_username ||
+		idClaims.name ||
+		idClaims.preferred_username ||
+		email.split("@")[0];
+
 	return {
-		sub: claims.sub,
-		email: claims.email,
-		name:
-			claims.name || claims.preferred_username || claims.email.split("@")[0],
-		givenName: claims.given_name || null,
-		familyName: claims.family_name || null,
-		emailVerified: claims.email_verified || false,
+		sub: idClaims.sub,
+		email: email,
+		name: name,
+		givenName: userInfoClaims.given_name || idClaims.given_name || null,
+		familyName: userInfoClaims.family_name || idClaims.family_name || null,
+		emailVerified: emailVerified,
 		groups: groups,
-		picture: claims.picture || null,
-		raw: claims,
+		picture: userInfoClaims.picture || idClaims.picture || null,
+		idToken: tokenSet.id_token,
 	};
 }
 
@@ -219,9 +304,10 @@ function getOIDCConfig() {
 /**
  * Get the OIDC logout URL if available
  * @param {string} postLogoutRedirectUri - Where to redirect after logout
+ * @param {string} [idTokenHint] - The ID token to hint the IdP about the session to end
  * @returns {string|null} The logout URL or null if not available
  */
-function getLogoutUrl(postLogoutRedirectUri) {
+function getLogoutUrl(postLogoutRedirectUri, idTokenHint) {
 	if (!oidcIssuer || !isOIDCEnabled()) {
 		return null;
 	}
@@ -239,6 +325,11 @@ function getLogoutUrl(postLogoutRedirectUri) {
 			process.env.FRONTEND_URL ||
 			"http://localhost:5173",
 	});
+
+	// Include id_token_hint per OIDC RP-Initiated Logout spec
+	if (idTokenHint) {
+		params.set("id_token_hint", idTokenHint);
+	}
 
 	return `${endSessionEndpoint}?${params.toString()}`;
 }
