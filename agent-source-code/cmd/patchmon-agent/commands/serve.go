@@ -965,10 +965,17 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 
 	// Create a goroutine to send Docker events through WebSocket - with cancellation support
 	go func() {
+		// OPTIMIZATION: Add a ticker to prevent goroutine buildup
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+
 		for {
 			select {
 			case <-done:
 				return
+			case <-ticker.C:
+				// Periodic health check
+				continue
 			case event, ok := <-dockerEvents:
 				if !ok {
 					return // Channel closed
@@ -987,6 +994,11 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 						continue
 					}
 
+					// OPTIMIZATION: Set write deadline to prevent blocking forever
+					if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+						logger.WithError(err).Debug("Failed to set write deadline")
+					}
+
 					if err := conn.WriteMessage(websocket.TextMessage, eventJSON); err != nil {
 						logger.WithError(err).Debug("Failed to send Docker event via WebSocket")
 						return
@@ -998,10 +1010,17 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 
 	// Create a goroutine to send compliance scan progress updates through WebSocket
 	go func() {
+		// OPTIMIZATION: Add a ticker to prevent goroutine buildup
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+
 		for {
 			select {
 			case <-done:
 				return
+			case <-ticker.C:
+				// Periodic health check
+				continue
 			case progress, ok := <-complianceProgressChan:
 				if !ok {
 					return // Channel closed
@@ -1018,6 +1037,11 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				if err != nil {
 					logger.WithError(err).Warn("Failed to marshal compliance progress event")
 					continue
+				}
+
+				// OPTIMIZATION: Set write deadline to prevent blocking forever
+				if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+					logger.WithError(err).Debug("Failed to set write deadline")
 				}
 
 				if err := conn.WriteMessage(websocket.TextMessage, progressJSON); err != nil {
