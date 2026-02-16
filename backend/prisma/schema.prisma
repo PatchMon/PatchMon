@@ -275,6 +275,7 @@ model users {
   last_name                 String?
   theme_preference          String?                     @default("dark")
   color_theme               String?                     @default("cyber_blue")
+  ui_preferences            Json?                       // e.g. { hosts_column_config: [...] }
   oidc_sub                  String?                     @unique
   oidc_provider             String?
   avatar_url                String?

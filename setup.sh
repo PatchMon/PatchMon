@@ -59,6 +59,8 @@ APP_DIR=""
 USE_LETSENCRYPT="false"  # Will be set based on user input
 SERVER_PROTOCOL_SEL="https"
 SERVER_PORT_SEL=""  # Will be set to BACKEND_PORT in init_instance_vars
+# Port that appears in the browser URL (e.g. 1234 when NAT 1234→80). Empty = use default (443/https or backend port/http).
+CORS_URL_PORT=""
 SETUP_NGINX="true"
 UPDATE_MODE="false"
 SELECTED_INSTANCE=""
@@ -399,6 +401,11 @@ interactive_setup() {
         EMAIL=""
     fi
     
+    echo ""
+    print_info "Port in browser URL (optional):"
+    print_info "   • If users reach the dashboard via a custom port (e.g. firewall NAT 1234→80), enter that port."
+    print_info "   • Leave blank for default: 443 (HTTPS) or backend port (HTTP direct)."
+    read_input "Port number in browser URL (blank for default)" CORS_URL_PORT ""
     
     # Select branch
     echo ""
@@ -411,6 +418,9 @@ interactive_setup() {
     echo "  SSL Enabled: $SSL_ENABLED"
     if [ "$SSL_ENABLED" = "y" ]; then
         echo "  Email: $EMAIL"
+    fi
+    if [ -n "$CORS_URL_PORT" ]; then
+        echo "  Port in browser URL: $CORS_URL_PORT"
     fi
     echo "  Branch: $DEPLOYMENT_BRANCH"
     echo ""
@@ -1124,6 +1134,17 @@ create_env_files() {
     
     cd "$APP_DIR"
     
+    # Base URL for CORS and frontend API: must be the URL the browser sees (so API calls work).
+    # Use CORS_URL_PORT when set (e.g. NAT 1234→80); else HTTPS no port, HTTP use backend port.
+    local base_url
+    if [ -n "$CORS_URL_PORT" ]; then
+        base_url="$SERVER_PROTOCOL_SEL://$FQDN:$CORS_URL_PORT"
+    elif [ "$SERVER_PROTOCOL_SEL" = "https" ]; then
+        base_url="$SERVER_PROTOCOL_SEL://$FQDN"
+    else
+        base_url="$SERVER_PROTOCOL_SEL://$FQDN:$BACKEND_PORT"
+    fi
+    
     # Backend .env
     cat > backend/.env << EOF
 # Database Configuration
@@ -1151,7 +1172,7 @@ NODE_ENV=production
 API_VERSION=v1
 
 # CORS Configuration
-CORS_ORIGIN="$SERVER_PROTOCOL_SEL://$FQDN"
+CORS_ORIGIN="$base_url"
 
 # Network Configuration
 # TRUST_PROXY: Trust proxy headers when behind a reverse proxy (nginx, Apache, etc.)
@@ -1192,11 +1213,15 @@ TFA_MAX_REMEMBER_SESSIONS=5
 TFA_SUSPICIOUS_ACTIVITY_THRESHOLD=3
 EOF
 
-    # Frontend .env
+    # Frontend .env (VITE_API_URL must match CORS/base URL so dashboard can reach backend)
+    local app_version="1.4.0"
+    if [ -f "backend/package.json" ]; then
+        app_version=$(grep '"version"' backend/package.json | head -1 | sed 's/.*"version": "\([^"]*\)".*/\1/')
+    fi
     cat > frontend/.env << EOF
-VITE_API_URL=$SERVER_PROTOCOL_SEL://$FQDN/api/v1
+VITE_API_URL=$base_url/api/v1
 VITE_APP_NAME=PatchMon
-VITE_APP_VERSION=1.3.1
+VITE_APP_VERSION=$app_version
 EOF
 
     print_status "Environment files created"
@@ -2772,11 +2797,18 @@ update_env_file() {
     # API
     : ${API_VERSION:=v1}
     
-    # CORS (preserve existing or use current FQDN)
+    # CORS (preserve existing or use current FQDN; include port for HTTP so dashboard can reach backend)
     if [ -z "$CORS_ORIGIN" ]; then
-        # Determine protocol from existing URL or default to https
+        local backend_port="${PORT:-}"
+        if [ -z "$backend_port" ]; then
+            backend_port=$(grep '^PORT=' "$env_file" 2>/dev/null | cut -d'=' -f2 | tr -d ' "')
+        fi
         if echo "$DATABASE_URL" | grep -q "localhost"; then
-            CORS_ORIGIN="http://$SELECTED_INSTANCE"
+            if [ -n "$backend_port" ]; then
+                CORS_ORIGIN="http://$SELECTED_INSTANCE:$backend_port"
+            else
+                CORS_ORIGIN="http://$SELECTED_INSTANCE"
+            fi
         else
             CORS_ORIGIN="https://$SELECTED_INSTANCE"
         fi
@@ -3004,6 +3036,46 @@ EOF
     fi
     
     return 0
+}
+
+# Update frontend .env so VITE_API_URL matches backend CORS (including port if present).
+# Ensures the dashboard can reach the backend after an update. Call after update_env_file().
+update_frontend_env_file() {
+    local backend_env="$instance_dir/backend/.env"
+    local frontend_env="$instance_dir/frontend/.env"
+    
+    if [ ! -f "$backend_env" ]; then
+        print_warning "Backend .env not found, skipping frontend .env update"
+        return 0
+    fi
+    
+    # CORS_ORIGIN is the base URL (e.g. https://patchmon.example.com or http://patchmon.internal:3847)
+    local cors_origin
+    cors_origin=$(grep '^CORS_ORIGIN=' "$backend_env" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    
+    if [ -z "$cors_origin" ]; then
+        print_warning "CORS_ORIGIN not set in backend .env, skipping frontend .env update"
+        return 0
+    fi
+    
+    # VITE_API_URL must match the same origin (with /api/v1) so the built frontend can reach the API
+    local base_url="${cors_origin%/}"
+    local vite_api_url="$base_url/api/v1"
+    
+    local app_version="1.3.1"
+    if [ -f "$instance_dir/backend/package.json" ]; then
+        app_version=$(grep '"version"' "$instance_dir/backend/package.json" | head -1 | sed 's/.*"version": "\([^"]*\)".*/\1/')
+    fi
+    
+    # Write frontend .env (ensures correct API URL and version after update)
+    mkdir -p "$(dirname "$frontend_env")"
+    cat > "$frontend_env" << EOF
+VITE_API_URL=$vite_api_url
+VITE_APP_NAME=PatchMon
+VITE_APP_VERSION=$app_version
+EOF
+    
+    print_status "Frontend .env updated: VITE_API_URL=$vite_api_url"
 }
 
 # Update nginx configuration for existing installation
@@ -3294,6 +3366,19 @@ update_installation() {
     
     # Update .env file with any missing variables (preserve existing values)
     update_env_file
+    
+    # Sync frontend .env VITE_API_URL from backend CORS_ORIGIN (including port) so dashboard can reach backend
+    update_frontend_env_file
+    
+    # Rebuild frontend so the updated VITE_API_URL is baked into the bundle
+    print_info "Rebuilding frontend with updated API URL..."
+    cd "$instance_dir/frontend"
+    if npm run build; then
+        print_status "Frontend rebuilt successfully"
+    else
+        print_warning "Frontend rebuild failed - dashboard may use old API URL until rebuilt manually"
+    fi
+    cd - >/dev/null
     
     # Update nginx configuration with latest improvements
     update_nginx_configuration
