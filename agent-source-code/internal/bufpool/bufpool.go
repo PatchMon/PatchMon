@@ -1,4 +1,5 @@
-package utils
+// Package bufpool provides sync.Pool-based buffer and byte-slice pools for reuse and reduced allocations.
+package bufpool
 
 import (
 	"bytes"
