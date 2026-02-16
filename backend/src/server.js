@@ -131,8 +131,15 @@ if (process.env.TRUST_PROXY) {
 	const trustProxyValue = process.env.TRUST_PROXY;
 
 	// Parse the trust proxy setting according to Express documentation
+	// IMPORTANT: Avoid using "true" - it's a security risk. Use a number or IP/subnet instead.
 	if (trustProxyValue === "true") {
-		app.set("trust proxy", true);
+		// Default to trusting private IP ranges (common for Docker/Kubernetes/nginx)
+		// This is much safer than "true" which trusts all proxies
+		console.warn(
+			"⚠️  TRUST_PROXY=true is not recommended. Defaulting to private IP ranges. Set TRUST_PROXY=1 or specific IP/subnet for better security.",
+		);
+		// Trust common private IP ranges: loopback, Docker, Kubernetes, and RFC1918 private networks
+		app.set("trust proxy", ["loopback", "linklocal", "uniquelocal"]);
 	} else if (trustProxyValue === "false") {
 		app.set("trust proxy", false);
 	} else if (/^\d+$/.test(trustProxyValue)) {
@@ -174,6 +181,8 @@ const limiter = rateLimit({
 	legacyHeaders: false,
 	skipSuccessfulRequests: false, // Count all requests for proper rate limiting
 	skipFailedRequests: false, // Also count failed requests
+	// Disable trust proxy validation - we handle it explicitly above
+	validate: { trustProxy: false },
 });
 
 // Middleware
@@ -354,6 +363,7 @@ const authLimiter = rateLimit({
 	standardHeaders: true,
 	legacyHeaders: false,
 	skipSuccessfulRequests: false, // Count all requests for proper rate limiting
+	validate: { trustProxy: false },
 });
 const agentLimiter = rateLimit({
 	windowMs: parseInt(process.env.AGENT_RATE_LIMIT_WINDOW_MS, 10) || 60 * 1000,
@@ -368,6 +378,7 @@ const agentLimiter = rateLimit({
 	standardHeaders: true,
 	legacyHeaders: false,
 	skipSuccessfulRequests: false, // Count all requests for proper rate limiting
+	validate: { trustProxy: false },
 });
 
 app.use(`/api/${apiVersion}/auth`, authLimiter, authRoutes);
