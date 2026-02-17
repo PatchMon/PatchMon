@@ -29,6 +29,8 @@ export const AuthProvider = ({ children }) => {
 	const [token, setToken] = useState(null);
 	const [permissions, setPermissions] = useState(null);
 	const [needsFirstTimeSetup, setNeedsFirstTimeSetup] = useState(false);
+	// When non-null, setup check failed (backend/DB down or rate limited) - do not show first-time setup
+	const [setupCheckError, setSetupCheckError] = useState(null);
 
 	// Authentication state machine phases
 	const [authPhase, setAuthPhase] = useState(AUTH_PHASES.INITIALISING);
@@ -111,6 +113,7 @@ export const AuthProvider = ({ children }) => {
 			localStorage.removeItem("token");
 
 			// No valid session, check if setup is needed
+			setSetupCheckError(null);
 			setAuthPhase(AUTH_PHASES.CHECKING_SETUP);
 		};
 
@@ -479,7 +482,9 @@ export const AuthProvider = ({ children }) => {
 
 	// Check if any admin users exist (for first-time setup)
 	// Also checks if OIDC is configured to bypass the welcome page
+	// Only set needsFirstTimeSetup when we get a successful 200 with hasAdminUsers; otherwise show backend/rate-limit error
 	const checkAdminUsersExist = useCallback(async () => {
+		setSetupCheckError(null);
 		try {
 			const response = await fetch("/api/v1/auth/check-admin-users", {
 				method: "GET",
@@ -502,16 +507,24 @@ export const AuthProvider = ({ children }) => {
 					setNeedsFirstTimeSetup(!data.hasAdminUsers);
 				}
 
+				setSetupCheckError(null);
 				setAuthPhase(AUTH_PHASES.READY); // Setup check complete, move to ready phase
+			} else if (response.status === 429) {
+				// Rate limited - do not show first-time setup
+				setSetupCheckError("rate_limited");
+				setNeedsFirstTimeSetup(false);
+				setAuthPhase(AUTH_PHASES.READY);
 			} else {
-				// If endpoint doesn't exist or fails, assume setup is needed
-				setNeedsFirstTimeSetup(true);
+				// 5xx, 4xx (e.g. 500 DB error, 503 unavailable) - backend/DB not accessible
+				setSetupCheckError("backend_unavailable");
+				setNeedsFirstTimeSetup(false);
 				setAuthPhase(AUTH_PHASES.READY);
 			}
 		} catch (error) {
 			console.error("Error checking admin users:", error);
-			// If there's an error, assume setup is needed
-			setNeedsFirstTimeSetup(true);
+			// Network error or backend unreachable - do not show first-time setup
+			setSetupCheckError("backend_unavailable");
+			setNeedsFirstTimeSetup(false);
 			setAuthPhase(AUTH_PHASES.READY);
 		}
 	}, []);
@@ -522,6 +535,11 @@ export const AuthProvider = ({ children }) => {
 			checkAdminUsersExist();
 		}
 	}, [authPhase, checkAdminUsersExist]);
+
+	const retrySetupCheck = useCallback(() => {
+		setSetupCheckError(null);
+		setAuthPhase(AUTH_PHASES.CHECKING_SETUP);
+	}, []);
 
 	const setAuthState = (authToken, authUser) => {
 		// Use flushSync to ensure all state updates are applied synchronously
@@ -571,6 +589,8 @@ export const AuthProvider = ({ children }) => {
 		permissions,
 		isLoading,
 		needsFirstTimeSetup,
+		setupCheckError,
+		retrySetupCheck,
 		authPhase,
 		login,
 		logout,

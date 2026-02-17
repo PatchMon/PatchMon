@@ -334,7 +334,9 @@ const Layout = ({ children }) => {
 
 	const navigation = buildNavigation();
 
-	const isActive = (path) => location.pathname === path;
+	const isActive = (path) =>
+		location.pathname === path ||
+		(path !== "/" && location.pathname.startsWith(`${path}/`));
 
 	// Get page title based on current route
 	const getPageTitle = () => {
@@ -350,7 +352,8 @@ const Layout = ({ children }) => {
 		if (path === "/docker") return "Docker";
 		if (path === "/pro-action") return "Pro-Action";
 		if (path === "/automation") return "Automation";
-		if (path === "/compliance") return "Compliance";
+		if (path === "/compliance" || path.startsWith("/compliance/"))
+			return "Compliance";
 		if (path === "/users") return "Users";
 		if (path === "/permissions") return "Permissions";
 		if (path === "/settings") return "Settings";
@@ -1605,6 +1608,7 @@ const Layout = ({ children }) => {
 								"/docker",
 							].includes(location.pathname) &&
 								!location.pathname.startsWith("/hosts/") &&
+								!location.pathname.startsWith("/compliance/") &&
 								!location.pathname.startsWith("/docker/") &&
 								!location.pathname.startsWith("/packages/") &&
 								!location.pathname.startsWith("/settings/") && (
@@ -1617,7 +1621,7 @@ const Layout = ({ children }) => {
 
 							{/* Global Search Bar */}
 							<div
-								className={`flex items-center min-w-0 ${["/", "/hosts", "/repositories", "/packages", "/reporting", "/automation", "/compliance", "/docker"].includes(location.pathname) || location.pathname.startsWith("/hosts/") || location.pathname.startsWith("/docker/") || location.pathname.startsWith("/packages/") || location.pathname.startsWith("/settings/") ? "flex-1 max-w-none" : "flex-1 md:flex-none md:max-w-sm"}`}
+								className={`flex items-center min-w-0 ${["/", "/hosts", "/repositories", "/packages", "/reporting", "/automation", "/compliance", "/docker"].includes(location.pathname) || location.pathname.startsWith("/hosts/") || location.pathname.startsWith("/compliance/") || location.pathname.startsWith("/docker/") || location.pathname.startsWith("/packages/") || location.pathname.startsWith("/settings/") ? "flex-1 max-w-none" : "flex-1 md:flex-none md:max-w-sm"}`}
 							>
 								<GlobalSearch />
 							</div>

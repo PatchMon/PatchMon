@@ -8,10 +8,10 @@ import {
 	CheckCircle,
 	CheckCircle2,
 	Clock,
-	Container,
 	Cpu,
 	Database,
 	Download,
+	ExternalLink,
 	HardDrive,
 	Key,
 	MemoryStick,
@@ -28,7 +28,6 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import ComplianceTab from "../components/compliance/ComplianceTab";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import SshTerminal from "../components/SshTerminal";
@@ -198,20 +197,6 @@ const HostDetail = () => {
 		enabled: !!hostId,
 	});
 
-	// Fetch latest compliance scan for quick view (only if compliance might be enabled)
-	const { data: complianceLatest, isLoading: _isLoadingCompliance } = useQuery({
-		queryKey: ["compliance-latest-quickview", hostId],
-		queryFn: () =>
-			complianceAPI
-				.getLatestScan(hostId)
-				.then((res) => res.data)
-				.catch(() => null),
-		staleTime: 2 * 60 * 1000, // 2 minutes
-		refetchOnWindowFocus: false,
-		enabled: !!hostId,
-		retry: false, // Don't retry if compliance not enabled
-	});
-
 	// Fetch host groups for multi-select
 	const { data: hostGroups } = useQuery({
 		queryKey: ["host-groups"],
@@ -224,6 +209,29 @@ const HostDetail = () => {
 	const handleTabChange = (tabName) => {
 		setActiveTab(tabName);
 	};
+
+	// Open requested tab when navigating with state (e.g. from Compliance page link)
+	useEffect(() => {
+		const requestedTab = location.state?.tab;
+		if (
+			requestedTab &&
+			[
+				"host",
+				"network",
+				"system",
+				"history",
+				"queue",
+				"notes",
+				"integrations",
+				"reporting",
+				"docker",
+				"compliance",
+				"terminal",
+			].includes(requestedTab)
+		) {
+			setActiveTab(requestedTab);
+		}
+	}, [location.state?.tab]);
 
 	// Auto-show credentials modal for new/pending hosts (skip if just arrived from Add Host wizard)
 	useEffect(() => {
@@ -488,7 +496,21 @@ const HostDetail = () => {
 		enabled: !!hostId, // Always fetch to control tab visibility
 	});
 
-	// Poll for compliance setup status when compliance is enabled
+	// Fetch latest compliance scan for quick view (after integrationsData so enabled can use it); reuse same key as ComplianceTab
+	const { data: complianceLatest, isLoading: _isLoadingCompliance } = useQuery({
+		queryKey: ["compliance-latest", hostId, null],
+		queryFn: () =>
+			complianceAPI
+				.getLatestScan(hostId)
+				.then((res) => res.data)
+				.catch(() => null),
+		staleTime: 2 * 60 * 1000, // 2 minutes
+		refetchOnWindowFocus: false,
+		enabled: !!hostId && !!integrationsData?.data?.integrations?.compliance,
+		retry: false, // Don't retry if compliance not enabled
+	});
+
+	// Poll for compliance setup status only when compliance integration is enabled
 	const { data: complianceSetupStatus, refetch: refetchComplianceStatus } =
 		useQuery({
 			queryKey: ["compliance-setup-status", hostId],
@@ -496,7 +518,7 @@ const HostDetail = () => {
 				adminHostsAPI
 					.getIntegrationSetupStatus(hostId, "compliance")
 					.then((res) => res.data),
-			staleTime: 5 * 1000, // 5 seconds
+			staleTime: 60 * 1000, // 1 min when not installing/removing
 			refetchInterval: (query) => {
 				// Poll every 2 seconds while status is "installing" or "removing"
 				const status = query.state?.data?.status?.status;
@@ -506,8 +528,7 @@ const HostDetail = () => {
 				return false; // Stop polling when done
 			},
 			refetchOnWindowFocus: false,
-			// Always enable for hosts - we need to catch status updates
-			enabled: !!hostId,
+			enabled: !!hostId && !!integrationsData?.data?.integrations?.compliance,
 		});
 
 	// Fetch Docker data for this host
@@ -865,25 +886,6 @@ const HostDetail = () => {
 									Reboot Required
 								</span>
 							)}
-							{/* Integration Badges */}
-							{integrationsData?.data?.integrations?.compliance && (
-								<span
-									className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200"
-									title="Compliance scanning enabled"
-								>
-									<Shield className="h-3 w-3" />
-									Compliance
-								</span>
-							)}
-							{integrationsData?.data?.integrations?.docker && (
-								<span
-									className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
-									title="Docker monitoring enabled"
-								>
-									<Container className="h-3 w-3" />
-									Docker
-								</span>
-							)}
 						</div>
 						{/* Info row with uptime and last updated */}
 						<div className="flex items-center gap-4 text-sm text-secondary-600 dark:text-white">
@@ -1052,85 +1054,6 @@ const HostDetail = () => {
 				</button>
 			</div>
 
-			{/* Compliance Quick View - Only shows when compliance is enabled and has scan data */}
-			{integrationsData?.data?.integrations?.compliance &&
-				complianceLatest &&
-				complianceLatest.score !== undefined && (
-					<div className="mb-6">
-						<button
-							type="button"
-							onClick={() => handleTabChange("compliance")}
-							className="card p-4 w-full cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left"
-							title="View compliance details"
-						>
-							<div className="flex items-center justify-between">
-								<div className="flex items-center gap-4">
-									<div className="flex-shrink-0">
-										<div
-											className={`w-12 h-12 rounded-full flex items-center justify-center ${
-												complianceLatest.score >= 80
-													? "bg-green-100 dark:bg-green-900/30"
-													: complianceLatest.score >= 60
-														? "bg-yellow-100 dark:bg-yellow-900/30"
-														: "bg-red-100 dark:bg-red-900/30"
-											}`}
-										>
-											<span
-												className={`text-lg font-bold ${
-													complianceLatest.score >= 80
-														? "text-green-600 dark:text-green-400"
-														: complianceLatest.score >= 60
-															? "text-yellow-600 dark:text-yellow-400"
-															: "text-red-600 dark:text-red-400"
-												}`}
-											>
-												{Math.round(complianceLatest.score)}%
-											</span>
-										</div>
-									</div>
-									<div>
-										<div className="flex items-center gap-2">
-											<Shield className="h-4 w-4 text-primary-600 dark:text-primary-400" />
-											<p className="text-sm font-medium text-secondary-900 dark:text-white">
-												Compliance Score
-											</p>
-										</div>
-										<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-0.5">
-											{complianceLatest.compliance_profiles?.name ||
-												"Security Profile"}
-											{complianceLatest.completed_at && (
-												<span className="ml-2">
-													• {formatRelativeTime(complianceLatest.completed_at)}
-												</span>
-											)}
-										</p>
-									</div>
-								</div>
-								<div className="flex items-center gap-4 text-sm">
-									<div className="flex items-center gap-1.5">
-										<CheckCircle className="h-4 w-4 text-green-500" />
-										<span className="text-secondary-700 dark:text-secondary-300">
-											{complianceLatest.passed || 0}
-										</span>
-									</div>
-									<div className="flex items-center gap-1.5">
-										<X className="h-4 w-4 text-red-500" />
-										<span className="text-secondary-700 dark:text-secondary-300">
-											{complianceLatest.failed || 0}
-										</span>
-									</div>
-									<div className="flex items-center gap-1.5">
-										<AlertTriangle className="h-4 w-4 text-yellow-500" />
-										<span className="text-secondary-700 dark:text-secondary-300">
-											{complianceLatest.warnings || 0}
-										</span>
-									</div>
-								</div>
-							</div>
-						</button>
-					</div>
-				)}
-
 			{/* Main Content - Full Width */}
 			<div className="flex-1 md:overflow-hidden">
 				{/* Mobile View - All sections as cards stacked vertically */}
@@ -1219,103 +1142,13 @@ const HostDetail = () => {
 									<p className="text-xs text-secondary-500 dark:text-secondary-300 mb-1.5">
 										Integrations
 									</p>
-									<ul className="space-y-0 border border-secondary-200 dark:border-secondary-600 rounded-lg divide-y divide-secondary-200 dark:divide-secondary-600 overflow-hidden">
-										<li className="flex items-center justify-between gap-3 px-3 py-2.5 bg-white dark:bg-secondary-700/50">
-											<div className="flex items-center gap-2 min-w-0">
-												<Container className="h-4 w-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
-												<span className="text-sm font-medium text-secondary-900 dark:text-white truncate">
-													Docker
-												</span>
-											</div>
-											<button
-												type="button"
-												onClick={() =>
-													toggleIntegrationMutation.mutate({
-														integrationName: "docker",
-														enabled:
-															!integrationsData?.data?.integrations?.docker,
-													})
-												}
-												disabled={
-													toggleIntegrationMutation.isPending ||
-													!wsStatus?.connected
-												}
-												title={
-													integrationsData?.data?.integrations?.docker
-														? "Disable Docker"
-														: "Enable Docker"
-												}
-												className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
-													integrationsData?.data?.integrations?.docker
-														? "bg-primary-600 dark:bg-primary-500"
-														: "bg-secondary-200 dark:bg-secondary-600"
-												} ${
-													toggleIntegrationMutation.isPending ||
-													!wsStatus?.connected
-														? "opacity-50 cursor-not-allowed"
-														: ""
-												}`}
-											>
-												<span
-													className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-														integrationsData?.data?.integrations?.docker
-															? "translate-x-5"
-															: "translate-x-1"
-													}`}
-												/>
-											</button>
-										</li>
-										<li className="flex items-center justify-between gap-3 px-3 py-2.5 bg-white dark:bg-secondary-700/50">
-											<div className="flex items-center gap-2 min-w-0">
-												<Shield className="h-4 w-4 text-purple-600 dark:text-purple-400 flex-shrink-0" />
-												<span className="text-sm font-medium text-secondary-900 dark:text-white truncate">
-													Compliance
-												</span>
-											</div>
-											<button
-												type="button"
-												onClick={() =>
-													toggleIntegrationMutation.mutate({
-														integrationName: "compliance",
-														enabled:
-															!integrationsData?.data?.integrations?.compliance,
-													})
-												}
-												disabled={
-													toggleIntegrationMutation.isPending ||
-													!wsStatus?.connected
-												}
-												title={
-													integrationsData?.data?.integrations?.compliance
-														? "Disable Compliance"
-														: "Enable Compliance"
-												}
-												className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
-													integrationsData?.data?.integrations?.compliance
-														? "bg-primary-600 dark:bg-primary-500"
-														: "bg-secondary-200 dark:bg-secondary-600"
-												} ${
-													toggleIntegrationMutation.isPending ||
-													!wsStatus?.connected
-														? "opacity-50 cursor-not-allowed"
-														: ""
-												}`}
-											>
-												<span
-													className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-														integrationsData?.data?.integrations?.compliance
-															? "translate-x-5"
-															: "translate-x-1"
-													}`}
-												/>
-											</button>
-										</li>
-									</ul>
-									{!wsStatus?.connected && (
-										<p className="text-xs text-amber-600 dark:text-amber-400 mt-1.5">
-											Agent must be connected to toggle
-										</p>
-									)}
+									<button
+										type="button"
+										onClick={() => handleTabChange("integrations")}
+										className="text-sm text-primary-600 dark:text-primary-400 hover:underline"
+									>
+										Manage in Integrations tab →
+									</button>
 								</div>
 
 								<div>
@@ -2480,104 +2313,13 @@ const HostDetail = () => {
 										<p className="text-xs text-secondary-500 dark:text-secondary-300 mb-1.5">
 											Integrations
 										</p>
-										<ul className="space-y-0 border border-secondary-200 dark:border-secondary-600 rounded-lg divide-y divide-secondary-200 dark:divide-secondary-600 overflow-hidden">
-											<li className="flex items-center justify-between gap-3 px-3 py-2.5 bg-white dark:bg-secondary-700/50">
-												<div className="flex items-center gap-2 min-w-0">
-													<Database className="h-4 w-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
-													<span className="text-sm font-medium text-secondary-900 dark:text-white truncate">
-														Docker
-													</span>
-												</div>
-												<button
-													type="button"
-													onClick={() =>
-														toggleIntegrationMutation.mutate({
-															integrationName: "docker",
-															enabled:
-																!integrationsData?.data?.integrations?.docker,
-														})
-													}
-													disabled={
-														toggleIntegrationMutation.isPending ||
-														!wsStatus?.connected
-													}
-													title={
-														integrationsData?.data?.integrations?.docker
-															? "Disable Docker"
-															: "Enable Docker"
-													}
-													className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
-														integrationsData?.data?.integrations?.docker
-															? "bg-primary-600 dark:bg-primary-500"
-															: "bg-secondary-200 dark:bg-secondary-600"
-													} ${
-														toggleIntegrationMutation.isPending ||
-														!wsStatus?.connected
-															? "opacity-50 cursor-not-allowed"
-															: ""
-													}`}
-												>
-													<span
-														className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-															integrationsData?.data?.integrations?.docker
-																? "translate-x-5"
-																: "translate-x-1"
-														}`}
-													/>
-												</button>
-											</li>
-											<li className="flex items-center justify-between gap-3 px-3 py-2.5 bg-white dark:bg-secondary-700/50">
-												<div className="flex items-center gap-2 min-w-0">
-													<Shield className="h-4 w-4 text-purple-600 dark:text-purple-400 flex-shrink-0" />
-													<span className="text-sm font-medium text-secondary-900 dark:text-white truncate">
-														Compliance
-													</span>
-												</div>
-												<button
-													type="button"
-													onClick={() =>
-														toggleIntegrationMutation.mutate({
-															integrationName: "compliance",
-															enabled:
-																!integrationsData?.data?.integrations
-																	?.compliance,
-														})
-													}
-													disabled={
-														toggleIntegrationMutation.isPending ||
-														!wsStatus?.connected
-													}
-													title={
-														integrationsData?.data?.integrations?.compliance
-															? "Disable Compliance"
-															: "Enable Compliance"
-													}
-													className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
-														integrationsData?.data?.integrations?.compliance
-															? "bg-primary-600 dark:bg-primary-500"
-															: "bg-secondary-200 dark:bg-secondary-600"
-													} ${
-														toggleIntegrationMutation.isPending ||
-														!wsStatus?.connected
-															? "opacity-50 cursor-not-allowed"
-															: ""
-													}`}
-												>
-													<span
-														className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-															integrationsData?.data?.integrations?.compliance
-																? "translate-x-5"
-																: "translate-x-1"
-														}`}
-													/>
-												</button>
-											</li>
-										</ul>
-										{!wsStatus?.connected && (
-											<p className="text-xs text-amber-600 dark:text-amber-400 mt-1.5">
-												Agent must be connected to toggle
-											</p>
-										)}
+										<button
+											type="button"
+											onClick={() => handleTabChange("integrations")}
+											className="text-sm text-primary-600 dark:text-primary-400 hover:underline"
+										>
+											Manage in Integrations tab →
+										</button>
 									</div>
 
 									<div>
@@ -3745,7 +3487,7 @@ const HostDetail = () => {
 																	</div>
 																	<p className="text-xs text-secondary-600 dark:text-secondary-400">
 																		{complianceSetupStatus.status.message ||
-																			"Some components failed to install"}
+																			"Some components failed to install. Install OpenSCAP (and optionally Docker) on this host. See the Compliance Installation guide in the documentation."}
 																	</p>
 																	{complianceSetupStatus.status.components && (
 																		<div className="flex flex-wrap gap-2">
@@ -3794,6 +3536,35 @@ const HostDetail = () => {
 																	</p>
 																</div>
 															)}
+
+															{/* Not ready / missing components: show actionable message */}
+															{complianceSetupStatus?.status?.status &&
+																![
+																	"ready",
+																	"installing",
+																	"removing",
+																	"partial",
+																].includes(
+																	complianceSetupStatus?.status?.status,
+																) && (
+																	<div className="space-y-2">
+																		<p className="text-sm text-secondary-700 dark:text-secondary-300">
+																			Install OpenSCAP (and optionally Docker
+																			for Docker Bench) on this host. Verify
+																			with{" "}
+																			<code className="text-xs bg-secondary-200 dark:bg-secondary-700 px-1 rounded">
+																				oscap --version
+																			</code>{" "}
+																			and that SCAP content is present.
+																		</p>
+																		<p className="text-xs text-secondary-500 dark:text-secondary-400">
+																			See the Compliance{" "}
+																			<strong>Getting started</strong> or{" "}
+																			<strong>Installation</strong> guide in the
+																			documentation.
+																		</p>
+																	</div>
+																)}
 
 															{/* Fallback: Compliance enabled but no status in cache - assume ready */}
 															{!complianceSetupStatus?.status?.status &&
@@ -4641,15 +4412,93 @@ const HostDetail = () => {
 							</div>
 						)}
 
-						{/* Compliance */}
+						{/* Compliance — summary card linking to full compliance page */}
 						{activeTab === "compliance" && (
-							<ComplianceTab
-								hostId={hostId}
-								apiId={host?.api_id}
-								isConnected={wsStatus?.connected}
-								complianceEnabled={host?.compliance_enabled}
-								dockerEnabled={host?.docker_enabled}
-							/>
+							<div className="space-y-4">
+								<div className="card p-6">
+									<div className="flex items-start justify-between mb-4">
+										<div>
+											<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+												Security Compliance
+											</h3>
+											<p className="text-sm text-secondary-500 dark:text-secondary-400 mt-1">
+												View detailed compliance reports, scan history, results
+												and trends for this host.
+											</p>
+										</div>
+										{complianceLatest?.score != null && (
+											<div
+												className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-semibold ${
+													Number(complianceLatest.score) >= 80
+														? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
+														: Number(complianceLatest.score) >= 60
+															? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300"
+															: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300"
+												}`}
+											>
+												{Math.round(complianceLatest.score)}%
+											</div>
+										)}
+									</div>
+									{complianceLatest ? (
+										<div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+											<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 text-center">
+												<p className="text-xs text-secondary-500 dark:text-secondary-400">
+													Passed
+												</p>
+												<p className="text-lg font-bold text-green-600 dark:text-green-400">
+													{complianceLatest.passed ?? "—"}
+												</p>
+											</div>
+											<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 text-center">
+												<p className="text-xs text-secondary-500 dark:text-secondary-400">
+													Failed
+												</p>
+												<p className="text-lg font-bold text-red-600 dark:text-red-400">
+													{complianceLatest.failed ?? "—"}
+												</p>
+											</div>
+											<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 text-center">
+												<p className="text-xs text-secondary-500 dark:text-secondary-400">
+													Skipped
+												</p>
+												<p className="text-lg font-bold text-secondary-600 dark:text-secondary-400">
+													{(complianceLatest.skipped ?? 0) +
+														(complianceLatest.not_applicable ?? 0) || "—"}
+												</p>
+											</div>
+											<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 text-center">
+												<p className="text-xs text-secondary-500 dark:text-secondary-400">
+													Last Scan
+												</p>
+												<p className="text-sm font-medium text-secondary-900 dark:text-white">
+													{complianceLatest.completed_at
+														? new Date(
+																complianceLatest.completed_at,
+															).toLocaleDateString()
+														: "—"}
+												</p>
+											</div>
+										</div>
+									) : (
+										<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-4 mb-4 text-center">
+											<p className="text-sm text-secondary-500 dark:text-secondary-400">
+												{host?.compliance_enabled
+													? "No scans have been run yet. View the full compliance page to run your first scan."
+													: "Compliance is not enabled for this host. Enable it in the Integrations tab."}
+											</p>
+										</div>
+									)}
+									<Link
+										to={`/compliance/hosts/${hostId}`}
+										className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-lg transition-colors"
+									>
+										<Shield className="h-4 w-4" />
+										View Full Compliance Details
+										<ExternalLink className="h-3.5 w-3.5" />
+									</Link>
+								</div>
+							</div>
 						)}
 
 						{/* Reporting */}

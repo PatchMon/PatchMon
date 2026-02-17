@@ -55,6 +55,8 @@ const mockPrisma = {
 		create: jest.fn(),
 		createMany: jest.fn(),
 		findMany: jest.fn(),
+		count: jest.fn(),
+		groupBy: jest.fn(),
 		upsert: jest.fn(),
 	},
 	$queryRaw: jest.fn(),
@@ -366,7 +368,13 @@ describe("Compliance Routes", () => {
 	});
 
 	describe("GET /api/v1/compliance/results/:scanId", () => {
-		it("should return results for a scan", async () => {
+		beforeEach(() => {
+			mockPrisma.compliance_results.count.mockResolvedValue(2);
+			mockPrisma.compliance_results.groupBy.mockResolvedValue([]);
+			mockPrisma.$queryRaw.mockResolvedValue([]);
+		});
+
+		it("should return paginated results for a scan", async () => {
 			const mockResults = [
 				{
 					id: "f1a2b3c4-d5e6-7890-abcd-ef1234567895",
@@ -386,7 +394,14 @@ describe("Compliance Routes", () => {
 				.get(`/api/v1/compliance/results/${VALID_SCAN_ID}`)
 				.expect(200);
 
-			expect(response.body).toHaveLength(2);
+			expect(response.body.results).toHaveLength(2);
+			expect(response.body.pagination).toEqual(
+				expect.objectContaining({
+					total: 2,
+					limit: 50,
+					offset: 0,
+				}),
+			);
 		});
 
 		it("should filter by status", async () => {
@@ -399,6 +414,8 @@ describe("Compliance Routes", () => {
 			expect(mockPrisma.compliance_results.findMany).toHaveBeenCalledWith(
 				expect.objectContaining({
 					where: { scan_id: VALID_SCAN_ID, status: "fail" },
+					take: 50,
+					skip: 0,
 				}),
 			);
 		});

@@ -21,9 +21,11 @@ export const complianceAPI = {
 	getLatestScansByType: (hostId) =>
 		api.get(`/compliance/scans/${hostId}/latest-by-type`),
 
-	// Get detailed results for a scan
+	// Get detailed results for a scan (paginated: limit, offset, status, severity)
 	getScanResults: (scanId, params = {}) =>
-		api.get(`/compliance/results/${scanId}`, { params }),
+		api
+			.get(`/compliance/results/${scanId}`, { params })
+			.then((res) => res.data),
 
 	// Trigger a compliance scan with options
 	triggerScan: (hostId, options = {}) =>
@@ -36,6 +38,9 @@ export const complianceAPI = {
 			image_name: options.imageName || null,
 			scan_all_images: options.scanAllImages || false,
 		}),
+
+	// Request the agent to cancel the currently running compliance scan (runs in background; cancel is optional)
+	cancelScan: (hostId) => api.post(`/compliance/cancel/${hostId}`),
 
 	// Get compliance score trends
 	getTrends: (hostId, days = 30) =>
@@ -64,4 +69,12 @@ export const complianceAPI = {
 			enable_remediation: options.enableRemediation || false,
 			fetch_remote_resources: options.fetchRemoteResources || false,
 		}),
+
+	// Get rules with aggregated cross-host pass/fail/warn counts
+	getRules: (params = {}) =>
+		api.get("/compliance/rules", { params }).then((res) => res.data),
+
+	// Get detailed rule info plus affected hosts
+	getRuleDetail: (ruleId) =>
+		api.get(`/compliance/rules/${ruleId}`).then((res) => res.data),
 };

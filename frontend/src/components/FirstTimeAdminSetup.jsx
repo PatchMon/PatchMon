@@ -9,6 +9,25 @@ const isDev = import.meta.env.DEV;
 const devLog = (...args) => isDev && console.log(...args);
 const devError = (...args) => isDev && console.error(...args);
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const USERNAME_MIN_LENGTH = 2;
+
+// Password rules (match backend defaults; backend may enforce stricter via env)
+const get_password_checks = (password) => ({
+	length: password.length >= 8,
+	uppercase: /[A-Z]/.test(password),
+	lowercase: /[a-z]/.test(password),
+	number: /[0-9]/.test(password),
+	special: /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password),
+});
+const password_strength = (password) => {
+	if (!password.length) return 0;
+	const c = get_password_checks(password);
+	return [c.length, c.uppercase, c.lowercase, c.number, c.special].filter(
+		Boolean,
+	).length;
+};
+
 const FirstTimeAdminSetup = () => {
 	const { login, setAuthState } = useAuth();
 	const navigate = useNavigate();
@@ -26,54 +45,145 @@ const FirstTimeAdminSetup = () => {
 		firstName: "",
 		lastName: "",
 	});
+	const [_touched, setTouched] = useState({});
+	const [field_errors, setFieldErrors] = useState({});
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState("");
 	const [success, setSuccess] = useState(false);
 
 	const handleInputChange = (e) => {
 		const { name, value } = e.target;
-		setFormData((prev) => ({
-			...prev,
-			[name]: value,
-		}));
-		// Clear error when user starts typing
+		setFormData((prev) => ({ ...prev, [name]: value }));
 		if (error) setError("");
+		// Clear this field's error when user types
+		setFieldErrors((prev) => {
+			const next = { ...prev };
+			delete next[name];
+			return next;
+		});
 	};
 
+	const handleBlur = (e) => {
+		const { name } = e.target;
+		setTouched((prev) => ({ ...prev, [name]: true }));
+		// Run inline validation for this field
+		run_field_validation(name);
+	};
+
+	const run_field_validation = (field_name) => {
+		const d = formData;
+		setFieldErrors((prev) => {
+			const next = { ...prev };
+			switch (field_name) {
+				case "firstName":
+					next.firstName = !d.firstName.trim() ? "First name is required" : "";
+					break;
+				case "lastName":
+					next.lastName = !d.lastName.trim() ? "Last name is required" : "";
+					break;
+				case "username": {
+					const u = d.username.trim();
+					if (!u) next.username = "Username is required";
+					else if (u.length < USERNAME_MIN_LENGTH)
+						next.username = `Username must be at least ${USERNAME_MIN_LENGTH} characters`;
+					else next.username = "";
+					break;
+				}
+				case "email": {
+					const e = d.email.trim();
+					if (!e) next.email = "Email address is required";
+					else if (!EMAIL_REGEX.test(e))
+						next.email = "Enter a valid email (e.g. you@example.com)";
+					else next.email = "";
+					break;
+				}
+				case "password": {
+					const checks = get_password_checks(d.password);
+					if (!d.password) next.password = "Password is required";
+					else if (!checks.length)
+						next.password = "Password must be at least 8 characters";
+					else {
+						const missing = [];
+						if (!checks.uppercase) missing.push("one uppercase letter");
+						if (!checks.lowercase) missing.push("one lowercase letter");
+						if (!checks.number) missing.push("one number");
+						if (!checks.special) missing.push("one special character");
+						next.password =
+							missing.length > 0 ? `Add ${missing.join(", ")}` : "";
+					}
+					break;
+				}
+				case "confirmPassword":
+					if (!d.confirmPassword)
+						next.confirmPassword = "Please confirm your password";
+					else if (d.password !== d.confirmPassword)
+						next.confirmPassword = "Passwords do not match";
+					else next.confirmPassword = "";
+					break;
+				default:
+					break;
+			}
+			if (next[field_name] === "") delete next[field_name];
+			return next;
+		});
+	};
+
+	// Inline messages for fields (show when touched or after submit)
+	const get_field_error = (name) => field_errors[name] ?? "";
+	const input_error_class = (name) =>
+		get_field_error(name)
+			? "input w-full border-danger-500 dark:border-danger-400 focus:ring-danger-500"
+			: "input w-full";
+
+	const password_checks = get_password_checks(formData.password);
+	const password_strength_level = password_strength(formData.password);
+	const passwords_match =
+		!formData.confirmPassword || formData.password === formData.confirmPassword;
+	const confirm_error = formData.confirmPassword && !passwords_match;
+
 	const validateForm = () => {
-		if (!formData.firstName.trim()) {
-			setError("First name is required");
-			return false;
+		const d = formData;
+		const next_errors = {};
+		if (!d.firstName.trim()) next_errors.firstName = "First name is required";
+		if (!d.lastName.trim()) next_errors.lastName = "Last name is required";
+		const u = d.username.trim();
+		if (!u) next_errors.username = "Username is required";
+		else if (u.length < USERNAME_MIN_LENGTH)
+			next_errors.username = `Username must be at least ${USERNAME_MIN_LENGTH} characters`;
+		const em = d.email.trim();
+		if (!em) next_errors.email = "Email address is required";
+		else if (!EMAIL_REGEX.test(em))
+			next_errors.email = "Enter a valid email (e.g. you@example.com)";
+		const pc = get_password_checks(d.password);
+		if (!d.password) next_errors.password = "Password is required";
+		else if (!pc.length)
+			next_errors.password = "Password must be at least 8 characters";
+		else {
+			const missing = [];
+			if (!pc.uppercase) missing.push("one uppercase letter");
+			if (!pc.lowercase) missing.push("one lowercase letter");
+			if (!pc.number) missing.push("one number");
+			if (!pc.special) missing.push("one special character");
+			if (missing.length) next_errors.password = `Add ${missing.join(", ")}`;
 		}
-		if (!formData.lastName.trim()) {
-			setError("Last name is required");
-			return false;
-		}
-		if (!formData.username.trim()) {
-			setError("Username is required");
-			return false;
-		}
-		if (!formData.email.trim()) {
-			setError("Email address is required");
-			return false;
-		}
-
-		// Enhanced email validation
-		const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-		if (!emailRegex.test(formData.email.trim())) {
-			setError("Please enter a valid email address (e.g., user@example.com)");
-			return false;
-		}
-
-		if (formData.password.length < 8) {
-			setError("Password must be at least 8 characters for security");
-			return false;
-		}
-		if (formData.password !== formData.confirmPassword) {
-			setError("Passwords do not match");
-			return false;
-		}
-		return true;
+		if (!d.confirmPassword)
+			next_errors.confirmPassword = "Please confirm your password";
+		else if (d.password !== d.confirmPassword)
+			next_errors.confirmPassword = "Passwords do not match";
+		setFieldErrors(next_errors);
+		setTouched(
+			Object.fromEntries(
+				[
+					"firstName",
+					"lastName",
+					"username",
+					"email",
+					"password",
+					"confirmPassword",
+				].map((n) => [n, true]),
+			),
+		);
+		return Object.keys(next_errors).length === 0;
 	};
 
 	const handleSubmit = async (e) => {
@@ -130,7 +240,6 @@ const FirstTimeAdminSetup = () => {
 				// Handle HTTP error responses (like 500 CORS errors)
 				devLog("HTTP error response:", response.status, data);
 
-				// Check if this is a CORS error based on the response data
 				if (
 					data.message?.includes("Not allowed by CORS") ||
 					data.message?.includes("CORS") ||
@@ -139,6 +248,25 @@ const FirstTimeAdminSetup = () => {
 					setError(
 						"CORS_ORIGIN mismatch - please set your URL in your environment variable",
 					);
+				} else if (data.details && Array.isArray(data.details)) {
+					// Map backend validation details to field errors
+					const by_field = {};
+					for (const item of data.details) {
+						const path = item.path || item.param;
+						if (path) by_field[path] = item.msg || item.message;
+					}
+					setFieldErrors(by_field);
+					setError(data.error || "Please fix the errors below.");
+				} else if (
+					data.error &&
+					(data.error.includes("already exists") ||
+						data.error.includes("Username or email"))
+				) {
+					setError(data.error);
+					setFieldErrors({
+						username: "Username or email may already be in use",
+						email: "Username or email may already be in use",
+					});
 				} else {
 					setError(data.error || "Failed to create admin user");
 				}
@@ -235,11 +363,17 @@ const FirstTimeAdminSetup = () => {
 									name="firstName"
 									value={formData.firstName}
 									onChange={handleInputChange}
-									className="input w-full"
+									onBlur={handleBlur}
+									className={input_error_class("firstName")}
 									placeholder="Enter your first name"
 									required
 									disabled={isLoading}
 								/>
+								{get_field_error("firstName") && (
+									<p className="mt-1 text-sm text-danger-600 dark:text-danger-400">
+										{get_field_error("firstName")}
+									</p>
+								)}
 							</div>
 							<div>
 								<label
@@ -254,11 +388,17 @@ const FirstTimeAdminSetup = () => {
 									name="lastName"
 									value={formData.lastName}
 									onChange={handleInputChange}
-									className="input w-full"
+									onBlur={handleBlur}
+									className={input_error_class("lastName")}
 									placeholder="Enter your last name"
 									required
 									disabled={isLoading}
 								/>
+								{get_field_error("lastName") && (
+									<p className="mt-1 text-sm text-danger-600 dark:text-danger-400">
+										{get_field_error("lastName")}
+									</p>
+								)}
 							</div>
 						</div>
 
@@ -275,11 +415,17 @@ const FirstTimeAdminSetup = () => {
 								name="username"
 								value={formData.username}
 								onChange={handleInputChange}
-								className="input w-full"
-								placeholder="Enter your username"
+								onBlur={handleBlur}
+								className={input_error_class("username")}
+								placeholder="At least 2 characters"
 								required
 								disabled={isLoading}
 							/>
+							{get_field_error("username") && (
+								<p className="mt-1 text-sm text-danger-600 dark:text-danger-400">
+									{get_field_error("username")}
+								</p>
+							)}
 						</div>
 
 						<div>
@@ -295,11 +441,17 @@ const FirstTimeAdminSetup = () => {
 								name="email"
 								value={formData.email}
 								onChange={handleInputChange}
-								className="input w-full"
-								placeholder="Enter your email"
+								onBlur={handleBlur}
+								className={input_error_class("email")}
+								placeholder="you@example.com"
 								required
 								disabled={isLoading}
 							/>
+							{get_field_error("email") && (
+								<p className="mt-1 text-sm text-danger-600 dark:text-danger-400">
+									{get_field_error("email")}
+								</p>
+							)}
 						</div>
 
 						<div>
@@ -315,11 +467,118 @@ const FirstTimeAdminSetup = () => {
 								name="password"
 								value={formData.password}
 								onChange={handleInputChange}
-								className="input w-full"
-								placeholder="Enter your password (min 8 characters)"
+								onBlur={handleBlur}
+								className={input_error_class("password")}
+								placeholder="Enter your password"
 								required
 								disabled={isLoading}
 							/>
+							{/* Strength bar: 5 segments for length, upper, lower, number, special */}
+							<div className="mt-1.5 flex gap-0.5">
+								{[1, 2, 3, 4, 5].map((level) => (
+									<div
+										key={level}
+										className="h-1 flex-1 rounded-full transition-colors"
+										style={{
+											backgroundColor:
+												password_strength_level >= level
+													? level <= 2
+														? "var(--color-danger-500, #ef4444)"
+														: level <= 4
+															? "var(--color-warning-500, #eab308)"
+															: "var(--color-success-500, #22c55e)"
+													: "var(--color-secondary-200, #e5e7eb)",
+										}}
+									/>
+								))}
+							</div>
+							<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+								Strength:{" "}
+								{password_strength_level === 0
+									? "none"
+									: password_strength_level <= 2
+										? "weak"
+										: password_strength_level <= 4
+											? "good"
+											: "strong"}
+							</p>
+							<ul className="mt-1.5 space-y-0.5 text-xs text-secondary-600 dark:text-secondary-400">
+								<li
+									className={
+										password_checks.length
+											? "text-success-600 dark:text-success-400"
+											: ""
+									}
+								>
+									{password_checks.length ? (
+										<CheckCircle className="inline h-3.5 w-3.5 mr-1 align-middle" />
+									) : (
+										<span className="inline-block w-3.5 h-3.5 mr-1 align-middle rounded-full border border-current" />
+									)}
+									At least 8 characters
+								</li>
+								<li
+									className={
+										password_checks.uppercase
+											? "text-success-600 dark:text-success-400"
+											: ""
+									}
+								>
+									{password_checks.uppercase ? (
+										<CheckCircle className="inline h-3.5 w-3.5 mr-1 align-middle" />
+									) : (
+										<span className="inline-block w-3.5 h-3.5 mr-1 align-middle rounded-full border border-current" />
+									)}
+									One uppercase letter
+								</li>
+								<li
+									className={
+										password_checks.lowercase
+											? "text-success-600 dark:text-success-400"
+											: ""
+									}
+								>
+									{password_checks.lowercase ? (
+										<CheckCircle className="inline h-3.5 w-3.5 mr-1 align-middle" />
+									) : (
+										<span className="inline-block w-3.5 h-3.5 mr-1 align-middle rounded-full border border-current" />
+									)}
+									One lowercase letter
+								</li>
+								<li
+									className={
+										password_checks.number
+											? "text-success-600 dark:text-success-400"
+											: ""
+									}
+								>
+									{password_checks.number ? (
+										<CheckCircle className="inline h-3.5 w-3.5 mr-1 align-middle" />
+									) : (
+										<span className="inline-block w-3.5 h-3.5 mr-1 align-middle rounded-full border border-current" />
+									)}
+									One number
+								</li>
+								<li
+									className={
+										password_checks.special
+											? "text-success-600 dark:text-success-400"
+											: ""
+									}
+								>
+									{password_checks.special ? (
+										<CheckCircle className="inline h-3.5 w-3.5 mr-1 align-middle" />
+									) : (
+										<span className="inline-block w-3.5 h-3.5 mr-1 align-middle rounded-full border border-current" />
+									)}
+									One special character (!@#$%...)
+								</li>
+							</ul>
+							{get_field_error("password") && (
+								<p className="mt-1 text-sm text-danger-600 dark:text-danger-400">
+									{get_field_error("password")}
+								</p>
+							)}
 						</div>
 
 						<div>
@@ -335,11 +594,26 @@ const FirstTimeAdminSetup = () => {
 								name="confirmPassword"
 								value={formData.confirmPassword}
 								onChange={handleInputChange}
-								className="input w-full"
+								onBlur={handleBlur}
+								className={
+									confirm_error
+										? "input w-full border-danger-500 dark:border-danger-400 focus:ring-danger-500"
+										: "input w-full"
+								}
 								placeholder="Confirm your password"
 								required
 								disabled={isLoading}
 							/>
+							{confirm_error && (
+								<p className="mt-1 text-sm text-danger-600 dark:text-danger-400">
+									Passwords do not match
+								</p>
+							)}
+							{get_field_error("confirmPassword") && !confirm_error && (
+								<p className="mt-1 text-sm text-danger-600 dark:text-danger-400">
+									{get_field_error("confirmPassword")}
+								</p>
+							)}
 						</div>
 
 						<button

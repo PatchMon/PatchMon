@@ -6,6 +6,7 @@ import {
 	CheckCircle,
 	Clock,
 	Container,
+	ListChecks,
 	PieChart as PieChartIcon,
 	Play,
 	RefreshCw,
@@ -14,14 +15,13 @@ import {
 	ShieldAlert,
 	ShieldCheck,
 	ShieldOff,
-	ShieldX,
-	TrendingDown,
+	Users,
 	Wifi,
 	WifiOff,
 	X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import {
 	Bar,
 	BarChart,
@@ -33,7 +33,15 @@ import {
 	XAxis,
 	YAxis,
 } from "recharts";
-import ComplianceScore from "../components/compliance/ComplianceScore";
+import ScanResultsTab from "../components/compliance/ScanResultsTab";
+import {
+	ComplianceProfilesPie,
+	ComplianceTrendLinePlaceholder,
+	FailuresBySeverityDoughnut,
+	HostComplianceStatusBar,
+	LastScanAgeBar,
+	OpenSCAPDistributionDoughnut,
+} from "../components/compliance/widgets";
 import { useToast } from "../contexts/ToastContext";
 import { adminHostsAPI } from "../utils/api";
 import { complianceAPI } from "../utils/complianceApi";
@@ -95,9 +103,31 @@ const CustomTooltip = ({ active, payload, label, type }) => {
 	);
 };
 
+const COMPLIANCE_TABS = [
+	{ id: "overview", label: "Overview", icon: BarChart3 },
+	{ id: "hosts", label: "Hosts", icon: Users },
+	{ id: "scan-results", label: "Scan Results", icon: ListChecks },
+];
+
 const Compliance = () => {
 	const queryClient = useQueryClient();
 	const toast = useToast();
+	const location = useLocation();
+	const [activeTab, setActiveTab] = useState(() => {
+		const requested = location.state?.complianceTab;
+		if (requested && COMPLIANCE_TABS.some((t) => t.id === requested))
+			return requested;
+		return "overview";
+	});
+
+	// Handle tab navigation from external links (e.g. back from RuleDetail)
+	useEffect(() => {
+		const requested = location.state?.complianceTab;
+		if (requested && COMPLIANCE_TABS.some((t) => t.id === requested)) {
+			setActiveTab(requested);
+		}
+	}, [location.state?.complianceTab]);
+
 	const [showBulkScanModal, setShowBulkScanModal] = useState(false);
 	const [selectedHosts, setSelectedHosts] = useState([]);
 	const [bulkScanOptions, setBulkScanOptions] = useState({
@@ -108,6 +138,20 @@ const Compliance = () => {
 	const [pendingScans, setPendingScans] = useState([]); // Hosts where scan was triggered but not yet in database
 	const prevActiveScanIds = useRef(new Set());
 	const [profileTypeFilter, setProfileTypeFilter] = useState("all"); // "all", "openscap", "docker-bench"
+	const [tableFilter, setTableFilter] = useState(null); // null = compliance-enabled only, 'never-scanned' = only never-scanned hosts
+
+	// Fetch active/running scans first so we can use it for dashboard refetch rate
+	const { data: activeScansData } = useQuery({
+		queryKey: ["compliance-active-scans"],
+		queryFn: () => complianceAPI.getActiveScans().then((res) => res.data),
+		staleTime: 30 * 1000,
+		refetchInterval: (query) => {
+			const active = query.state?.data?.activeScans?.length > 0;
+			return active ? 30000 : 120000; // 30s when scans running, 2 min when idle
+		},
+	});
+
+	const hasActiveScans = (activeScansData?.activeScans?.length ?? 0) > 0;
 
 	const {
 		data: dashboard,
@@ -116,14 +160,8 @@ const Compliance = () => {
 	} = useQuery({
 		queryKey: ["compliance-dashboard"],
 		queryFn: () => complianceAPI.getDashboard().then((res) => res.data),
-		refetchInterval: 30000,
-	});
-
-	// Fetch active/running scans
-	const { data: activeScansData } = useQuery({
-		queryKey: ["compliance-active-scans"],
-		queryFn: () => complianceAPI.getActiveScans().then((res) => res.data),
-		refetchInterval: 30000, // Refresh every 30 seconds to reduce API load
+		staleTime: 60 * 1000, // 60s - avoid refetch on tab switch
+		refetchInterval: hasActiveScans ? 30000 : 120000, // 30s when scans running, 2 min when idle
 	});
 
 	// Fetch all hosts for bulk scan selection
@@ -247,6 +285,32 @@ const Compliance = () => {
 		},
 	});
 
+	// Single-host scan trigger (for RUN column in hosts table)
+	const triggerSingleScanMutation = useMutation({
+		mutationFn: ({ hostId }) =>
+			complianceAPI.triggerScan(hostId, { profile_type: "all" }),
+		onSuccess: (_, { hostId, hostName }) => {
+			queryClient.invalidateQueries(["compliance-active-scans"]);
+			setPendingScans((prev) => [
+				...prev,
+				{
+					id: `pending-${hostId}`,
+					hostId,
+					hostName: hostName || "Host",
+					profileType: "all",
+					startedAt: new Date().toISOString(),
+					isPending: true,
+					connected: true,
+				},
+			]);
+			toast.success(`Scan started for ${hostName || "host"}`);
+		},
+		onError: (error, { hostName }) => {
+			const errorMsg = error.response?.data?.error || error.message;
+			toast.error(`Scan failed for ${hostName || "host"}: ${errorMsg}`);
+		},
+	});
+
 	if (isLoading) {
 		return (
 			<div className="flex items-center justify-center h-64">
@@ -266,16 +330,23 @@ const Compliance = () => {
 	const {
 		summary,
 		recent_scans,
+		hosts_with_latest_scan,
 		worst_hosts,
 		top_failing_rules,
 		top_warning_rules,
-		profile_distribution,
+		_profile_distribution,
 		_severity_breakdown,
 		severity_by_profile_type,
 		docker_bench_by_section,
 		scan_age_distribution,
 		profile_type_stats,
 	} = dashboard || {};
+
+	const allHostsTableRows = hosts_with_latest_scan || [];
+	const hostsTableRows =
+		tableFilter === "never-scanned"
+			? allHostsTableRows.filter((row) => row.last_scan_date == null)
+			: allHostsTableRows.filter((row) => row.compliance_enabled);
 
 	// Combine real active scans with pending scans for display
 	const realActiveScans = activeScansData?.activeScans || [];
@@ -321,19 +392,19 @@ const Compliance = () => {
 			return scan.compliance_profiles?.type === profileTypeFilter;
 		}) || [];
 
-	const filteredWorstHosts =
+	const _filteredWorstHosts =
 		worst_hosts?.filter((host) => {
 			if (profileTypeFilter === "all") return true;
 			return host.compliance_profiles?.type === profileTypeFilter;
 		}) || [];
 
-	const filteredTopFailingRules =
+	const _filteredTopFailingRules =
 		top_failing_rules?.filter((rule) => {
 			if (profileTypeFilter === "all") return true;
 			return rule.profile_type === profileTypeFilter;
 		}) || [];
 
-	const filteredTopWarningRules =
+	const _filteredTopWarningRules =
 		top_warning_rules?.filter((rule) => {
 			if (profileTypeFilter === "all") return true;
 			return rule.profile_type === profileTypeFilter;
@@ -372,64 +443,411 @@ const Compliance = () => {
 		});
 	};
 
-	const openBulkScanModal = () => {
+	const _openBulkScanModal = () => {
 		setBulkScanResult(null);
 		setShowBulkScanModal(true);
 	};
 
 	return (
 		<div className="space-y-6">
-			{/* Header */}
-			<div className="flex items-center justify-between">
-				<div className="flex items-center gap-3">
-					<Shield className="h-8 w-8 text-primary-400" />
-					<h1 className="text-2xl font-bold text-white">Security Compliance</h1>
+			{/* Page Header */}
+			<div className="mb-6">
+				<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
+					Security Compliance
+				</h1>
+				<p className="text-sm text-secondary-600 dark:text-secondary-400 mt-1">
+					Monitor and manage compliance across your hosts
+				</p>
+			</div>
+
+			{/* Top: 5 host status cards - same layout/style as Hosts page */}
+			<div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 mb-6">
+				<div className="card p-4 cursor-default text-left w-full">
+					<div className="flex items-center">
+						<Server className="h-5 w-5 text-primary-600 mr-2" />
+						<div>
+							<p className="text-sm text-secondary-500 dark:text-white">
+								Total hosts
+							</p>
+							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+								{(summary?.total_hosts ?? 0) + (summary?.unscanned ?? 0) || 0}
+							</p>
+						</div>
+					</div>
+				</div>
+				<div className="card p-4 cursor-default text-left w-full">
+					<div className="flex items-center">
+						<ShieldCheck className="h-5 w-5 text-green-600 mr-2" />
+						<div>
+							<p className="text-sm text-secondary-500 dark:text-white">
+								Compliant
+							</p>
+							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+								{summary?.hosts_compliant ?? 0}
+							</p>
+						</div>
+					</div>
+				</div>
+				<div className="card p-4 cursor-default text-left w-full">
+					<div className="flex items-center">
+						<AlertTriangle className="h-5 w-5 text-yellow-600 mr-2" />
+						<div>
+							<p className="text-sm text-secondary-500 dark:text-white">
+								Warning
+							</p>
+							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+								{summary?.hosts_warning ?? 0}
+							</p>
+						</div>
+					</div>
+				</div>
+				<div className="card p-4 cursor-default text-left w-full">
+					<div className="flex items-center">
+						<ShieldAlert className="h-5 w-5 text-red-600 mr-2" />
+						<div>
+							<p className="text-sm text-secondary-500 dark:text-white">
+								Critical
+							</p>
+							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+								{summary?.hosts_critical ?? 0}
+							</p>
+						</div>
+					</div>
 				</div>
 				<button
-					onClick={openBulkScanModal}
-					className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium transition-colors"
+					type="button"
+					onClick={() => {
+						setTableFilter((prev) =>
+							prev === "never-scanned" ? null : "never-scanned",
+						);
+						setActiveTab("hosts");
+					}}
+					className={`card p-4 text-left w-full transition-shadow duration-200 ${
+						tableFilter === "never-scanned"
+							? "ring-2 ring-primary-500 dark:ring-primary-400 bg-primary-50 dark:bg-primary-900/20"
+							: "cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark"
+					}`}
 				>
-					<Play className="h-4 w-4" />
-					Bulk Scan
+					<div className="flex items-center">
+						<ShieldOff className="h-5 w-5 text-secondary-600 mr-2" />
+						<div>
+							<p className="text-sm text-secondary-500 dark:text-white">
+								Never scanned
+							</p>
+							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+								{summary?.unscanned ?? 0}
+							</p>
+							{tableFilter === "never-scanned" && (
+								<p className="text-xs text-primary-600 dark:text-primary-400 mt-1">
+									Filtered in Hosts tab
+								</p>
+							)}
+						</div>
+					</div>
 				</button>
 			</div>
 
-			{/* Profile Type Filter Tabs */}
-			<div className="flex items-center gap-2 bg-secondary-800 p-1 rounded-lg border border-secondary-700 w-fit">
-				<button
-					onClick={() => setProfileTypeFilter("all")}
-					className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors ${
-						profileTypeFilter === "all"
-							? "bg-primary-600 text-white"
-							: "text-secondary-400 hover:text-white hover:bg-secondary-700"
-					}`}
-				>
-					<Shield className="h-4 w-4" />
-					All Scans
-				</button>
-				<button
-					onClick={() => setProfileTypeFilter("openscap")}
-					className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors ${
-						profileTypeFilter === "openscap"
-							? "bg-green-600 text-white"
-							: "text-secondary-400 hover:text-white hover:bg-secondary-700"
-					}`}
-				>
-					<Server className="h-4 w-4" />
-					OpenSCAP
-				</button>
-				<button
-					onClick={() => setProfileTypeFilter("docker-bench")}
-					className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors ${
-						profileTypeFilter === "docker-bench"
-							? "bg-blue-600 text-white"
-							: "text-secondary-400 hover:text-white hover:bg-secondary-700"
-					}`}
-				>
-					<Container className="h-4 w-4" />
-					Docker Bench
-				</button>
+			{/* Tab Navigation - same pattern as Docker page */}
+			<div className="border-b border-secondary-200 dark:border-secondary-600">
+				<nav className="-mb-px flex space-x-8 px-4" aria-label="Tabs">
+					{COMPLIANCE_TABS.map((tab) => {
+						const Icon = tab.icon;
+						return (
+							<button
+								key={tab.id}
+								type="button"
+								onClick={() => setActiveTab(tab.id)}
+								className={`${
+									activeTab === tab.id
+										? "border-primary-500 text-primary-600 dark:text-primary-400"
+										: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-secondary-400 dark:hover:text-secondary-300"
+								} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
+							>
+								<Icon className="h-4 w-4 mr-2" />
+								{tab.label}
+							</button>
+						);
+					})}
+				</nav>
 			</div>
+
+			{/* ==================== HOSTS TAB ==================== */}
+			{activeTab === "hosts" && (
+				<>
+					{/* Hosts table (3/4) + Recent activity (1/3) */}
+					<div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+						{/* Hosts table - 3/4 width = 2/3 of grid */}
+						<div className="lg:col-span-2">
+							<div className="card p-4 md:p-6">
+								{tableFilter === "never-scanned" && (
+									<p className="text-sm text-primary-600 dark:text-primary-400 mb-4">
+										Showing never-scanned hosts only. Click the Never scanned
+										card again to clear.
+									</p>
+								)}
+								<div className="overflow-x-auto">
+									<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+										<thead className="bg-secondary-50 dark:bg-secondary-700">
+											<tr>
+												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 whitespace-nowrap w-16">
+													Run
+												</th>
+												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+													Host name
+												</th>
+												<th
+													className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 w-12"
+													title="Compliance status"
+												>
+													Status
+												</th>
+												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+													Last scan date
+												</th>
+												<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300">
+													Passed
+												</th>
+												<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300">
+													Failed
+												</th>
+												<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300">
+													Skipped
+												</th>
+												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+													Scanner status
+												</th>
+												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+													Mode
+												</th>
+												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+													Scanners
+												</th>
+											</tr>
+										</thead>
+										<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600 text-sm">
+											{hostsTableRows.length === 0 ? (
+												<tr>
+													<td
+														colSpan={10}
+														className="px-4 py-8 text-center text-secondary-500 dark:text-secondary-400"
+													>
+														No hosts
+													</td>
+												</tr>
+											) : (
+												hostsTableRows.map((row) => (
+													<tr
+														key={row.host_id}
+														className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
+													>
+														<td className="px-4 py-2 whitespace-nowrap">
+															<button
+																type="button"
+																onClick={() =>
+																	triggerSingleScanMutation.mutate({
+																		hostId: row.host_id,
+																		hostName:
+																			row.friendly_name ||
+																			row.hostname ||
+																			"Host",
+																	})
+																}
+																disabled={
+																	triggerSingleScanMutation.isPending ||
+																	activeScans.some(
+																		(s) => s.hostId === row.host_id,
+																	)
+																}
+																className="inline-flex items-center justify-center w-6 h-6 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+																title="Run compliance scan"
+															>
+																<Play className="h-3 w-3" />
+															</button>
+														</td>
+														<td className="px-4 py-2 whitespace-nowrap">
+															<Link
+																to={`/compliance/hosts/${row.host_id}`}
+																className="text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 hover:underline font-medium"
+															>
+																{row.friendly_name || row.hostname || "—"}
+															</Link>
+														</td>
+														<td className="px-4 py-2 whitespace-nowrap">
+															{row.score != null ? (
+																Number(row.score) >= 80 ? (
+																	<ShieldCheck
+																		className="h-5 w-5 text-green-600 dark:text-green-400"
+																		title="Compliant"
+																	/>
+																) : Number(row.score) >= 60 ? (
+																	<AlertTriangle
+																		className="h-5 w-5 text-yellow-600 dark:text-yellow-400"
+																		title="Warning"
+																	/>
+																) : (
+																	<ShieldAlert
+																		className="h-5 w-5 text-red-600 dark:text-red-400"
+																		title="Critical"
+																	/>
+																)
+															) : (
+																<ShieldOff
+																	className="h-5 w-5 text-secondary-400"
+																	title="Not scanned"
+																/>
+															)}
+														</td>
+														<td className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-secondary-300">
+															{row.last_scan_date
+																? formatDistanceToNow(
+																		new Date(row.last_scan_date),
+																		{ addSuffix: true },
+																	)
+																: "—"}
+														</td>
+														<td className="px-4 py-2 text-right whitespace-nowrap text-green-600 dark:text-green-400">
+															{row.passed != null ? row.passed : "—"}
+														</td>
+														<td className="px-4 py-2 text-right whitespace-nowrap text-red-600 dark:text-red-400">
+															{row.failed != null ? row.failed : "—"}
+														</td>
+														<td className="px-4 py-2 text-right whitespace-nowrap text-secondary-600 dark:text-secondary-400">
+															{row.skipped != null ? row.skipped : "—"}
+														</td>
+														<td className="px-4 py-2 whitespace-nowrap">
+															<span
+																className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+																	row.scanner_status === "Scanned"
+																		? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+																		: row.scanner_status === "Enabled"
+																			? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
+																			: "bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-400"
+																}`}
+															>
+																{row.scanner_status}
+															</span>
+														</td>
+														<td className="px-4 py-2 whitespace-nowrap">
+															{row.compliance_mode === "disabled" ? (
+																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-400">
+																	Disabled
+																</span>
+															) : (
+																<span
+																	className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+																		row.compliance_mode === "on-demand"
+																			? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+																			: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
+																	}`}
+																>
+																	{row.compliance_mode === "on-demand"
+																		? "On-demand"
+																		: "Scheduled"}
+																</span>
+															)}
+														</td>
+														<td className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-secondary-300">
+															{row.compliance_enabled && row.docker_enabled
+																? "OpenSCAP, Docker"
+																: row.compliance_enabled
+																	? "OpenSCAP"
+																	: row.docker_enabled
+																		? "Docker"
+																		: "—"}
+														</td>
+													</tr>
+												))
+											)}
+										</tbody>
+									</table>
+								</div>
+							</div>
+						</div>
+
+						{/* Recent activity - 1/3 width */}
+						<div className="lg:col-span-1">
+							<div className="card p-4 md:p-6">
+								<h3 className="text-secondary-900 dark:text-white font-medium mb-4">
+									Recent activity
+								</h3>
+								<div className="space-y-3 max-h-[400px] overflow-y-auto">
+									{!recent_scans || recent_scans.length === 0 ? (
+										<p className="text-sm text-secondary-500 dark:text-secondary-400">
+											No recent scans
+										</p>
+									) : (
+										recent_scans.slice(0, 15).map((scan) => (
+											<div
+												key={scan.id}
+												className="text-sm border-b border-secondary-200 dark:border-secondary-600 pb-3 last:border-0 last:pb-0"
+											>
+												<Link
+													to={`/compliance/hosts/${scan.host_id}`}
+													className="text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 hover:underline font-medium"
+												>
+													{scan.host?.friendly_name ||
+														scan.host?.hostname ||
+														"Host"}
+												</Link>
+												<p className="text-secondary-600 dark:text-secondary-400 mt-0.5">
+													{scan.compliance_profiles?.name || scan.profile?.name}{" "}
+													· Score{" "}
+													{scan.score != null
+														? `${Number(scan.score).toFixed(0)}%`
+														: "—"}{" "}
+													·{" "}
+													{scan.completed_at
+														? formatDistanceToNow(new Date(scan.completed_at), {
+																addSuffix: true,
+															})
+														: "—"}
+												</p>
+											</div>
+										))
+									)}
+								</div>
+							</div>
+						</div>
+					</div>
+
+					{/* Profile Type Filter Tabs */}
+					<div className="flex items-center gap-2 bg-secondary-800 p-1 rounded-lg border border-secondary-700 w-fit">
+						<button
+							onClick={() => setProfileTypeFilter("all")}
+							className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors ${
+								profileTypeFilter === "all"
+									? "bg-primary-600 text-white"
+									: "text-secondary-400 hover:text-white hover:bg-secondary-700"
+							}`}
+						>
+							<Shield className="h-4 w-4" />
+							All Scans
+						</button>
+						<button
+							onClick={() => setProfileTypeFilter("openscap")}
+							className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors ${
+								profileTypeFilter === "openscap"
+									? "bg-green-600 text-white"
+									: "text-secondary-400 hover:text-white hover:bg-secondary-700"
+							}`}
+						>
+							<Server className="h-4 w-4" />
+							OpenSCAP
+						</button>
+						<button
+							onClick={() => setProfileTypeFilter("docker-bench")}
+							className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors ${
+								profileTypeFilter === "docker-bench"
+									? "bg-blue-600 text-white"
+									: "text-secondary-400 hover:text-white hover:bg-secondary-700"
+							}`}
+						>
+							<Container className="h-4 w-4" />
+							Docker Bench
+						</button>
+					</div>
+				</>
+			)}
 
 			{/* Bulk Scan Modal */}
 			{showBulkScanModal && (
@@ -610,2257 +1028,882 @@ const Compliance = () => {
 				</div>
 			)}
 
-			{/* Active Scans Section - Only show if there are running scans */}
-			{activeScans.length > 0 && (
-				<div className="bg-blue-900/30 border border-blue-700/50 rounded-lg p-4">
-					<div className="flex items-center gap-2 mb-3">
-						<RefreshCw className="h-5 w-5 text-blue-400 animate-spin" />
-						<h2 className="text-lg font-semibold text-blue-300">
-							Scans in Progress ({activeScans.length})
-						</h2>
+			{/* ==================== OVERVIEW TAB ==================== */}
+			{activeTab === "overview" && (
+				<>
+					{/* Compliance dashboard widgets - same 6 cards as main Dashboard */}
+					<div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 mb-6">
+						<FailuresBySeverityDoughnut data={dashboard} />
+						<OpenSCAPDistributionDoughnut data={dashboard} />
+						<ComplianceProfilesPie data={dashboard} />
+						<LastScanAgeBar data={dashboard} />
+						<ComplianceTrendLinePlaceholder />
+						<HostComplianceStatusBar data={dashboard} />
 					</div>
-					<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-						{activeScans.map((scan) => (
-							<Link
-								key={scan.id}
-								to={`/hosts/${scan.hostId}`}
-								className={`rounded-lg p-3 border transition-colors ${
-									scan.isPending
-										? "bg-yellow-900/30 border-yellow-700/50 hover:border-yellow-500"
-										: scan.profileType === "docker-bench"
-											? "bg-blue-900/20 border-blue-700/50 hover:border-blue-500"
-											: "bg-green-900/20 border-green-700/50 hover:border-green-500"
-								}`}
-							>
-								<div className="flex items-center justify-between mb-2">
-									<span className="font-medium text-white truncate">
-										{scan.hostName}
-									</span>
-									{scan.isPending ? (
-										<Clock
-											className="h-4 w-4 text-yellow-400 animate-pulse"
-											title="Triggering..."
-										/>
-									) : scan.connected ? (
-										<Wifi
-											className="h-4 w-4 text-green-400"
-											title="Connected"
-										/>
-									) : (
-										<WifiOff
-											className="h-4 w-4 text-red-400"
-											title="Disconnected"
-										/>
-									)}
-								</div>
-								<div className="flex items-center gap-2 text-sm text-secondary-400">
-									<span
-										className={`px-2 py-0.5 rounded text-xs ${
+
+					{/* Active Scans Section - Only show if there are running scans */}
+					{activeScans.length > 0 && (
+						<div className="card p-4 border-blue-700/50 bg-blue-900/20">
+							<div className="flex items-center gap-2 mb-3">
+								<RefreshCw className="h-5 w-5 text-blue-400 animate-spin" />
+								<h2 className="text-lg font-semibold text-blue-300">
+									Scans in Progress ({activeScans.length})
+								</h2>
+							</div>
+							<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+								{activeScans.map((scan) => (
+									<Link
+										key={scan.id}
+										to={`/compliance/hosts/${scan.hostId}`}
+										className={`rounded-lg p-3 border transition-colors ${
 											scan.isPending
-												? "bg-yellow-900/50 text-yellow-300"
+												? "bg-yellow-900/30 border-yellow-700/50 hover:border-yellow-500"
 												: scan.profileType === "docker-bench"
-													? "bg-blue-900/50 text-blue-300"
-													: "bg-green-900/50 text-green-300"
+													? "bg-blue-900/20 border-blue-700/50 hover:border-blue-500"
+													: "bg-green-900/20 border-green-700/50 hover:border-green-500"
 										}`}
 									>
-										{scan.isPending
-											? "Triggering..."
-											: scan.profileType === "docker-bench"
-												? "Docker Bench"
-												: scan.profileType === "openscap"
-													? "OpenSCAP"
-													: scan.profileType || "Scanning..."}
-									</span>
-									<span className="text-xs">
-										Started{" "}
-										{formatDistanceToNow(new Date(scan.startedAt), {
-											addSuffix: true,
-										})}
-									</span>
-								</div>
-							</Link>
-						))}
-					</div>
-				</div>
-			)}
-
-			{/* ==================== OVERVIEW SECTION ==================== */}
-			{profileTypeFilter === "all" && filteredSummary && (
-				<>
-					<div className="flex items-center gap-3 pt-2">
-						<div className="flex items-center gap-2">
-							<BarChart3 className="h-5 w-5 text-primary-400" />
-							<h2 className="text-lg font-semibold text-white">Overview</h2>
-						</div>
-						<div className="flex-1 h-px bg-secondary-700" />
-					</div>
-
-					{/* HOST STATUS - Shows unique hosts by their worst score */}
-					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-5">
-						<div className="flex items-center gap-2 mb-4">
-							<Server className="h-4 w-4 text-primary-400" />
-							<h3 className="text-white font-medium">Host Status</h3>
-							<span className="text-xs text-secondary-500">
-								(based on worst score per host)
-							</span>
-						</div>
-						<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
-							<div className="text-center">
-								<div className="flex items-center justify-center gap-2 mb-2">
-									<Server className="h-4 w-4 text-secondary-400" />
-									<span className="text-xs text-secondary-400 uppercase tracking-wide">
-										Total
-									</span>
-								</div>
-								<p className="text-3xl font-bold text-white">
-									{summary?.total_hosts || 0}
-								</p>
-								<p className="text-xs text-secondary-500 mt-1">hosts scanned</p>
-							</div>
-							<div className="text-center">
-								<div className="flex items-center justify-center gap-2 mb-2">
-									<ShieldCheck className="h-4 w-4 text-green-400" />
-									<span className="text-xs text-green-400 uppercase tracking-wide">
-										Compliant
-									</span>
-								</div>
-								<p className="text-3xl font-bold text-green-400">
-									{summary?.hosts_compliant || 0}
-								</p>
-								<p className="text-xs text-secondary-500 mt-1">
-									all scans ≥80%
-								</p>
-							</div>
-							<div className="text-center">
-								<div className="flex items-center justify-center gap-2 mb-2">
-									<ShieldAlert className="h-4 w-4 text-yellow-400" />
-									<span className="text-xs text-yellow-400 uppercase tracking-wide">
-										Warning
-									</span>
-								</div>
-								<p className="text-3xl font-bold text-yellow-400">
-									{summary?.hosts_warning || 0}
-								</p>
-								<p className="text-xs text-secondary-500 mt-1">worst 60-80%</p>
-							</div>
-							<div className="text-center">
-								<div className="flex items-center justify-center gap-2 mb-2">
-									<ShieldX className="h-4 w-4 text-red-400" />
-									<span className="text-xs text-red-400 uppercase tracking-wide">
-										Critical
-									</span>
-								</div>
-								<p className="text-3xl font-bold text-red-400">
-									{summary?.hosts_critical || 0}
-								</p>
-								<p className="text-xs text-secondary-500 mt-1">
-									any scan &lt;60%
-								</p>
-							</div>
-							<div className="text-center">
-								<div className="flex items-center justify-center gap-2 mb-2">
-									<ShieldOff className="h-4 w-4 text-secondary-500" />
-									<span className="text-xs text-secondary-500 uppercase tracking-wide">
-										Unscanned
-									</span>
-								</div>
-								<p className="text-3xl font-bold text-secondary-500">
-									{summary?.unscanned || 0}
-								</p>
-								<p className="text-xs text-secondary-500 mt-1">no data</p>
-							</div>
-						</div>
-					</div>
-
-					{/* SCAN TYPE BREAKDOWN - OpenSCAP vs Docker Bench */}
-					<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-						{/* OpenSCAP Summary */}
-						<div className="bg-secondary-800 rounded-lg border-2 border-green-700/50 overflow-hidden">
-							<div className="px-4 py-3 bg-green-900/20 border-b border-green-700/30 flex items-center justify-between">
-								<div className="flex items-center gap-2">
-									<Server className="h-4 w-4 text-green-400" />
-									<span className="text-green-400 font-bold">OpenSCAP</span>
-									<span className="text-secondary-400 text-sm">
-										CIS Benchmark
-									</span>
-								</div>
-								{openscapStats?.average_score != null && (
-									<span
-										className={`text-lg font-bold ${
-											openscapStats.average_score >= 80
-												? "text-green-400"
-												: openscapStats.average_score >= 60
-													? "text-yellow-400"
-													: "text-red-400"
-										}`}
-									>
-										{Math.round(openscapStats.average_score)}%
-									</span>
-								)}
-							</div>
-							<div className="p-4">
-								{openscapStats ? (
-									<>
-										<div className="grid grid-cols-4 gap-2 text-center text-sm">
-											<div>
-												<p className="text-xl font-bold text-white">
-													{openscapStats.hosts_scanned}
-												</p>
-												<p className="text-xs text-secondary-400">Hosts</p>
-											</div>
-											<div>
-												<p className="text-xl font-bold text-green-400">
-													{openscapStats.total_passed?.toLocaleString()}
-												</p>
-												<p className="text-xs text-green-400">Passed</p>
-											</div>
-											<div>
-												<p className="text-xl font-bold text-red-400">
-													{openscapStats.total_failed?.toLocaleString()}
-												</p>
-												<p className="text-xs text-red-400">Failed</p>
-											</div>
-											<div>
-												<p className="text-xl font-bold text-white">
-													{openscapStats.total_rules?.toLocaleString()}
-												</p>
-												<p className="text-xs text-secondary-400">Rules</p>
-											</div>
+										<div className="flex items-center justify-between mb-2">
+											<span className="font-medium text-white truncate">
+												{scan.hostName}
+											</span>
+											{scan.isPending ? (
+												<Clock
+													className="h-4 w-4 text-yellow-400 animate-pulse"
+													title="Triggering..."
+												/>
+											) : scan.connected ? (
+												<Wifi
+													className="h-4 w-4 text-green-400"
+													title="Connected"
+												/>
+											) : (
+												<WifiOff
+													className="h-4 w-4 text-red-400"
+													title="Disconnected"
+												/>
+											)}
 										</div>
-										<div className="mt-3 h-2 bg-secondary-700 rounded-full overflow-hidden flex">
-											<div
-												className="h-full bg-green-500"
-												style={{
-													width: `${(openscapStats.total_passed / openscapStats.total_rules) * 100}%`,
-												}}
-											/>
-											<div
-												className="h-full bg-red-500"
-												style={{
-													width: `${(openscapStats.total_failed / openscapStats.total_rules) * 100}%`,
-												}}
-											/>
+										<div className="flex items-center gap-2 text-sm text-secondary-400">
+											<span
+												className={`px-2 py-0.5 rounded text-xs ${
+													scan.isPending
+														? "bg-yellow-900/50 text-yellow-300"
+														: scan.profileType === "docker-bench"
+															? "bg-blue-900/50 text-blue-300"
+															: "bg-green-900/50 text-green-300"
+												}`}
+											>
+												{scan.isPending
+													? "Triggering..."
+													: scan.profileType === "docker-bench"
+														? "Docker Bench"
+														: scan.profileType === "openscap"
+															? "OpenSCAP"
+															: scan.profileType || "Scanning..."}
+											</span>
+											<span className="text-xs">
+												Started{" "}
+												{formatDistanceToNow(new Date(scan.startedAt), {
+													addSuffix: true,
+												})}
+											</span>
 										</div>
-										<p className="text-xs text-secondary-500 mt-2 text-center">
-											{openscapStats.total_rules -
-												openscapStats.total_passed -
-												openscapStats.total_failed}{" "}
-											skipped/N/A
-										</p>
-									</>
-								) : (
-									<p className="text-secondary-500 text-sm text-center py-4">
-										No OpenSCAP scans yet
-									</p>
-								)}
+									</Link>
+								))}
 							</div>
 						</div>
+					)}
 
-						{/* Docker Bench Summary */}
-						<div className="bg-secondary-800 rounded-lg border-2 border-blue-700/50 overflow-hidden">
-							<div className="px-4 py-3 bg-blue-900/20 border-b border-blue-700/30 flex items-center justify-between">
-								<div className="flex items-center gap-2">
-									<Container className="h-4 w-4 text-blue-400" />
-									<span className="text-blue-400 font-bold">Docker Bench</span>
-									<span className="text-secondary-400 text-sm">
-										Container Security
-									</span>
-								</div>
-								{dockerBenchStats?.average_score != null && (
-									<span
-										className={`text-lg font-bold ${
-											dockerBenchStats.average_score >= 80
-												? "text-green-400"
-												: dockerBenchStats.average_score >= 60
-													? "text-yellow-400"
-													: "text-red-400"
-										}`}
-									>
-										{Math.round(dockerBenchStats.average_score)}%
-									</span>
-								)}
-							</div>
-							<div className="p-4">
-								{dockerBenchStats ? (
-									<>
-										<div className="grid grid-cols-4 gap-2 text-center text-sm">
-											<div>
-												<p className="text-xl font-bold text-white">
-													{dockerBenchStats.hosts_scanned}
-												</p>
-												<p className="text-xs text-secondary-400">Hosts</p>
-											</div>
-											<div>
-												<p className="text-xl font-bold text-green-400">
-													{dockerBenchStats.total_passed?.toLocaleString()}
-												</p>
-												<p className="text-xs text-green-400">Passed</p>
-											</div>
-											<div>
-												<p className="text-xl font-bold text-yellow-400">
-													{dockerBenchStats.total_warnings?.toLocaleString()}
-												</p>
-												<p className="text-xs text-yellow-400">Warnings</p>
-											</div>
-											<div>
-												<p className="text-xl font-bold text-white">
-													{dockerBenchStats.total_rules?.toLocaleString()}
-												</p>
-												<p className="text-xs text-secondary-400">Rules</p>
-											</div>
-										</div>
-										<div className="mt-3 h-2 bg-secondary-700 rounded-full overflow-hidden flex">
-											<div
-												className="h-full bg-green-500"
-												style={{
-													width: `${(dockerBenchStats.total_passed / dockerBenchStats.total_rules) * 100}%`,
-												}}
-											/>
-											<div
-												className="h-full bg-yellow-500"
-												style={{
-													width: `${(dockerBenchStats.total_warnings / dockerBenchStats.total_rules) * 100}%`,
-												}}
-											/>
-										</div>
-										<p className="text-xs text-secondary-500 mt-2 text-center">
-											{dockerBenchStats.total_rules -
-												dockerBenchStats.total_passed -
-												dockerBenchStats.total_warnings}{" "}
-											skipped/N/A
-										</p>
-									</>
-								) : (
-									<p className="text-secondary-500 text-sm text-center py-4">
-										No Docker Bench scans yet
-									</p>
-								)}
-							</div>
-						</div>
-					</div>
-				</>
-			)}
-
-			{/* ==================== SPECIFIC SCAN TYPE STATS (OpenSCAP or Docker Bench tabs) ==================== */}
-			{profileTypeFilter !== "all" && filteredSummary && (
-				<>
-					<div className="flex items-center gap-3 pt-2">
-						<div className="flex items-center gap-2">
-							{profileTypeFilter === "openscap" ? (
-								<Server className="h-5 w-5 text-green-400" />
-							) : (
-								<Container className="h-5 w-5 text-blue-400" />
-							)}
-							<h2 className="text-lg font-semibold text-white">
-								{getFilterDisplayName()} Statistics
-							</h2>
-						</div>
-						<div className="flex-1 h-px bg-secondary-700" />
-					</div>
-
-					{/* Compact Stats Card for specific scan type */}
-					<div
-						className={`bg-secondary-800 rounded-lg border-2 p-5 ${
-							profileTypeFilter === "openscap"
-								? "border-green-700/50"
-								: "border-blue-700/50"
-						}`}
-					>
-						<div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6">
-							<div className="text-center">
-								<p className="text-xs text-secondary-400 uppercase tracking-wide mb-1">
-									Hosts
-								</p>
-								<p className="text-3xl font-bold text-white">
-									{filteredSummary.total_hosts || 0}
-								</p>
-							</div>
-							<div className="text-center">
-								<p className="text-xs text-secondary-400 uppercase tracking-wide mb-1">
-									Avg Score
-								</p>
-								<p
-									className={`text-3xl font-bold ${
-										filteredSummary.average_score >= 80
-											? "text-green-400"
-											: filteredSummary.average_score >= 60
-												? "text-yellow-400"
-												: "text-red-400"
-									}`}
-								>
-									{filteredSummary.average_score?.toFixed(1) || 0}%
-								</p>
-							</div>
-							<div className="text-center">
-								<p className="text-xs text-green-400 uppercase tracking-wide mb-1">
-									Passed
-								</p>
-								<p className="text-3xl font-bold text-green-400">
-									{filteredSummary.total_passed_rules?.toLocaleString() || 0}
-								</p>
-							</div>
-							{profileTypeFilter === "docker-bench" ? (
-								<div className="text-center">
-									<p className="text-xs text-yellow-400 uppercase tracking-wide mb-1">
-										Warnings
-									</p>
-									<p className="text-3xl font-bold text-yellow-400">
-										{filteredSummary.total_warnings?.toLocaleString() || 0}
-									</p>
-								</div>
-							) : (
-								<div className="text-center">
-									<p className="text-xs text-red-400 uppercase tracking-wide mb-1">
-										Failed
-									</p>
-									<p className="text-3xl font-bold text-red-400">
-										{filteredSummary.total_failed_rules?.toLocaleString() || 0}
-									</p>
-								</div>
-							)}
-							<div className="text-center">
-								<p className="text-xs text-secondary-400 uppercase tracking-wide mb-1">
-									Total Rules
-								</p>
-								<p className="text-3xl font-bold text-white">
-									{filteredSummary.total_rules?.toLocaleString() || 0}
-								</p>
-							</div>
-							<div className="text-center">
-								<p className="text-xs text-secondary-400 uppercase tracking-wide mb-1">
-									Pass Rate
-								</p>
-								<p className="text-3xl font-bold text-white">
-									{filteredSummary.total_rules > 0
-										? (
-												(filteredSummary.total_passed_rules /
-													filteredSummary.total_rules) *
-												100
-											).toFixed(1)
-										: 0}
-									%
-								</p>
-							</div>
-						</div>
-						{profileTypeFilter === "docker-bench" &&
-							filteredSummary.total_rules > 0 && (
-								<div className="mt-4 pt-4 border-t border-secondary-700 text-center">
-									<span className="text-sm text-secondary-400">
-										Warning Rate:{" "}
-									</span>
-									<span className="text-sm font-bold text-yellow-400">
-										{(
-											(filteredSummary.total_warnings /
-												filteredSummary.total_rules) *
-											100
-										).toFixed(1)}
-										%
-									</span>
-								</div>
-							)}
-					</div>
-				</>
-			)}
-
-			{/* No data message */}
-			{!filteredSummary && (
-				<div className="bg-secondary-800 rounded-lg p-8 border border-secondary-700 text-center">
-					<p className="text-secondary-400">
-						No {getFilterDisplayName()} scan data available
-					</p>
-				</div>
-			)}
-
-			{/* ==================== ANALYSIS SECTION ==================== */}
-			{profileTypeFilter === "all" &&
-				summary &&
-				(summary.total_hosts > 0 || summary.unscanned > 0) &&
-				(() => {
-					// Use HOST-LEVEL counts (based on worst score per host)
-					const _hostDistribution = [
-						{
-							name: "Compliant Hosts",
-							value: summary.hosts_compliant || 0,
-							color: "#22c55e",
-						},
-						{
-							name: "Warning Hosts",
-							value: summary.hosts_warning || 0,
-							color: "#eab308",
-						},
-						{
-							name: "Critical Hosts",
-							value: summary.hosts_critical || 0,
-							color: "#ef4444",
-						},
-						{
-							name: "Unscanned Hosts",
-							value: summary.unscanned || 0,
-							color: "#6b7280",
-						},
-					].filter((d) => d.value > 0);
-
-					// OpenSCAP scans for score distribution
-					const openscapScans =
-						recent_scans?.filter(
-							(s) => s.compliance_profiles?.type === "openscap",
-						) || [];
-					const openscapScoreRanges = [
-						{
-							range: "90-100%",
-							count: openscapScans.filter((s) => s.score >= 90).length,
-							color: "#22c55e",
-						},
-						{
-							range: "80-89%",
-							count: openscapScans.filter((s) => s.score >= 80 && s.score < 90)
-								.length,
-							color: "#84cc16",
-						},
-						{
-							range: "70-79%",
-							count: openscapScans.filter((s) => s.score >= 70 && s.score < 80)
-								.length,
-							color: "#eab308",
-						},
-						{
-							range: "60-69%",
-							count: openscapScans.filter((s) => s.score >= 60 && s.score < 70)
-								.length,
-							color: "#f97316",
-						},
-						{
-							range: "<60%",
-							count: openscapScans.filter((s) => s.score < 60).length,
-							color: "#ef4444",
-						},
-					];
-
-					// Docker Bench scans for score distribution
-					const dockerScans =
-						recent_scans?.filter(
-							(s) => s.compliance_profiles?.type === "docker-bench",
-						) || [];
-					const dockerScoreRanges = [
-						{
-							range: "90-100%",
-							count: dockerScans.filter((s) => s.score >= 90).length,
-							color: "#22c55e",
-						},
-						{
-							range: "80-89%",
-							count: dockerScans.filter((s) => s.score >= 80 && s.score < 90)
-								.length,
-							color: "#84cc16",
-						},
-						{
-							range: "70-79%",
-							count: dockerScans.filter((s) => s.score >= 70 && s.score < 80)
-								.length,
-							color: "#eab308",
-						},
-						{
-							range: "60-69%",
-							count: dockerScans.filter((s) => s.score >= 60 && s.score < 70)
-								.length,
-							color: "#f97316",
-						},
-						{
-							range: "<60%",
-							count: dockerScans.filter((s) => s.score < 60).length,
-							color: "#ef4444",
-						},
-					];
-
-					// OpenSCAP rule breakdown (pass/fail)
-					const openscapRuleData = openscapStats
-						? [
-								{
-									name: "Passed",
-									value: openscapStats.total_passed || 0,
-									color: "#22c55e",
-								},
-								{
-									name: "Failed",
-									value: openscapStats.total_failed || 0,
-									color: "#ef4444",
-								},
-							].filter((d) => d.value > 0)
-						: [];
-
-					// Docker Bench rule breakdown (pass/warn)
-					const dockerRuleData = dockerBenchStats
-						? [
-								{
-									name: "Passed",
-									value: dockerBenchStats.total_passed || 0,
-									color: "#22c55e",
-								},
-								{
-									name: "Warnings",
-									value: dockerBenchStats.total_warnings || 0,
-									color: "#eab308",
-								},
-							].filter((d) => d.value > 0)
-						: [];
-
-					return (
+					{/* ==================== SPECIFIC SCAN TYPE STATS (OpenSCAP or Docker Bench tabs) ==================== */}
+					{profileTypeFilter !== "all" && filteredSummary && (
 						<>
-							<div className="flex items-center gap-3 pt-4">
+							<div className="flex items-center gap-3 pt-2">
 								<div className="flex items-center gap-2">
-									<PieChartIcon className="h-5 w-5 text-primary-400" />
-									<h2 className="text-lg font-semibold text-white">Analysis</h2>
+									{profileTypeFilter === "openscap" ? (
+										<Server className="h-5 w-5 text-green-400" />
+									) : (
+										<Container className="h-5 w-5 text-blue-400" />
+									)}
+									<h2 className="text-lg font-semibold text-white">
+										{getFilterDisplayName()} Statistics
+									</h2>
 								</div>
 								<div className="flex-1 h-px bg-secondary-700" />
 							</div>
 
-							{/* Host Compliance Distribution with Scan Type Breakdown */}
-							<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
-								<h3 className="text-white font-medium mb-1 flex items-center gap-2">
-									<PieChartIcon className="h-4 w-4 text-primary-400" />
-									Host Compliance Status
-								</h3>
-								<p className="text-xs text-secondary-500 mb-3">
-									Unique hosts by worst score - showing which scan type caused
-									the status
-								</p>
-
-								{/* Stacked Bar Chart showing scan type breakdown */}
-								{(() => {
-									const statusData = summary.host_status_by_scan_type || {};
-									const chartData = [
-										{
-											name: "Compliant",
-											openscap: statusData.compliant?.openscap || 0,
-											dockerBench: statusData.compliant?.["docker-bench"] || 0,
-											total: summary.hosts_compliant || 0,
-										},
-										{
-											name: "Warning",
-											openscap: statusData.warning?.openscap || 0,
-											dockerBench: statusData.warning?.["docker-bench"] || 0,
-											total: summary.hosts_warning || 0,
-										},
-										{
-											name: "Critical",
-											openscap: statusData.critical?.openscap || 0,
-											dockerBench: statusData.critical?.["docker-bench"] || 0,
-											total: summary.hosts_critical || 0,
-										},
-									].filter((d) => d.total > 0);
-
-									return chartData.length > 0 ? (
-										<>
-											<div className="h-48">
-												<ResponsiveContainer width="100%" height="100%">
-													<BarChart data={chartData} layout="vertical">
-														<XAxis
-															type="number"
-															stroke="#6b7280"
-															fontSize={12}
-														/>
-														<YAxis
-															type="category"
-															dataKey="name"
-															stroke="#6b7280"
-															fontSize={12}
-															width={70}
-														/>
-														<Tooltip
-															content={<CustomTooltip type="hostStatus" />}
-														/>
-														<Bar
-															dataKey="openscap"
-															stackId="a"
-															fill="#22c55e"
-															name="openscap"
-															radius={[0, 0, 0, 0]}
-														/>
-														<Bar
-															dataKey="dockerBench"
-															stackId="a"
-															fill="#3b82f6"
-															name="dockerBench"
-															radius={[0, 4, 4, 0]}
-														/>
-													</BarChart>
-												</ResponsiveContainer>
-											</div>
-											<div className="flex justify-center gap-6 mt-2">
-												<div className="flex items-center gap-2 text-sm">
-													<div className="w-3 h-3 rounded bg-green-500" />
-													<span className="text-green-400">OpenSCAP</span>
-												</div>
-												<div className="flex items-center gap-2 text-sm">
-													<div className="w-3 h-3 rounded bg-blue-500" />
-													<span className="text-blue-400">Docker Bench</span>
-												</div>
-											</div>
-											{/* Detailed breakdown */}
-											<div className="mt-4 pt-3 border-t border-secondary-700 grid grid-cols-3 gap-2 text-center text-xs">
-												{chartData.map((status) => (
-													<div key={status.name} className="space-y-1">
-														<p
-															className={`font-medium ${
-																status.name === "Compliant"
-																	? "text-green-400"
-																	: status.name === "Warning"
-																		? "text-yellow-400"
-																		: "text-red-400"
-															}`}
-														>
-															{status.name}
-														</p>
-														<p className="text-secondary-400">
-															{status.openscap > 0 && (
-																<span className="text-green-400">
-																	{status.openscap} OpenSCAP
-																</span>
-															)}
-															{status.openscap > 0 &&
-																status.dockerBench > 0 &&
-																" + "}
-															{status.dockerBench > 0 && (
-																<span className="text-blue-400">
-																	{status.dockerBench} Docker
-																</span>
-															)}
-														</p>
-													</div>
-												))}
-											</div>
-										</>
-									) : (
-										<div className="h-48 flex items-center justify-center text-secondary-500">
-											No host status data available
+							{/* Compact Stats Card for specific scan type */}
+							<div
+								className={`card p-4 sm:p-5 border-2 ${
+									profileTypeFilter === "openscap"
+										? "border-green-700/50"
+										: "border-blue-700/50"
+								}`}
+							>
+								<div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6">
+									<div className="text-center">
+										<p className="text-xs text-secondary-400 uppercase tracking-wide mb-1">
+											Hosts
+										</p>
+										<p className="text-3xl font-bold text-white">
+											{filteredSummary.total_hosts || 0}
+										</p>
+									</div>
+									<div className="text-center">
+										<p className="text-xs text-secondary-400 uppercase tracking-wide mb-1">
+											Avg Score
+										</p>
+										<p
+											className={`text-3xl font-bold ${
+												filteredSummary.average_score >= 80
+													? "text-green-400"
+													: filteredSummary.average_score >= 60
+														? "text-yellow-400"
+														: "text-red-400"
+											}`}
+										>
+											{filteredSummary.average_score?.toFixed(1) || 0}%
+										</p>
+									</div>
+									<div className="text-center">
+										<p className="text-xs text-green-400 uppercase tracking-wide mb-1">
+											Passed
+										</p>
+										<p className="text-3xl font-bold text-green-400">
+											{filteredSummary.total_passed_rules?.toLocaleString() ||
+												0}
+										</p>
+									</div>
+									{profileTypeFilter === "docker-bench" ? (
+										<div className="text-center">
+											<p className="text-xs text-yellow-400 uppercase tracking-wide mb-1">
+												Warnings
+											</p>
+											<p className="text-3xl font-bold text-yellow-400">
+												{filteredSummary.total_warnings?.toLocaleString() || 0}
+											</p>
 										</div>
-									);
-								})()}
-							</div>
-
-							{/* Scan Type Analysis - Side by Side */}
-							<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-								{/* OpenSCAP Analysis */}
-								<div className="bg-secondary-800 rounded-lg border border-green-700/50 overflow-hidden">
-									<div className="px-4 py-3 bg-green-900/20 border-b border-green-700/30 flex items-center gap-2">
-										<span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs font-bold rounded-full border border-green-500/30">
-											OpenSCAP
-										</span>
-										<span className="text-white font-medium text-sm">
-											CIS Benchmark Analysis
-										</span>
+									) : (
+										<div className="text-center">
+											<p className="text-xs text-red-400 uppercase tracking-wide mb-1">
+												Failed
+											</p>
+											<p className="text-3xl font-bold text-red-400">
+												{filteredSummary.total_failed_rules?.toLocaleString() ||
+													0}
+											</p>
+										</div>
+									)}
+									<div className="text-center">
+										<p className="text-xs text-secondary-400 uppercase tracking-wide mb-1">
+											Total Rules
+										</p>
+										<p className="text-3xl font-bold text-white">
+											{filteredSummary.total_rules?.toLocaleString() || 0}
+										</p>
 									</div>
-									<div className="p-4">
-										{openscapStats && openscapRuleData.length > 0 ? (
-											<>
-												{/* Rule Distribution Pie */}
-												<div className="h-40">
-													<ResponsiveContainer width="100%" height="100%">
-														<PieChart>
-															<Pie
-																data={openscapRuleData}
-																cx="50%"
-																cy="50%"
-																innerRadius={30}
-																outerRadius={55}
-																dataKey="value"
-																label={({ value }) => value.toLocaleString()}
-																labelLine={false}
-															>
-																{openscapRuleData.map((entry, index) => (
-																	<Cell
-																		key={`cell-${index}-${entry.color || entry.severity || ""}`}
-																		fill={entry.color}
-																	/>
-																))}
-															</Pie>
-															<Tooltip
-																content={<CustomTooltip type="ruleStatus" />}
-															/>
-														</PieChart>
-													</ResponsiveContainer>
-												</div>
-												<div className="flex justify-center gap-6 mt-2 text-sm">
-													<div className="flex items-center gap-2">
-														<div className="w-3 h-3 rounded-full bg-green-500" />
-														<span className="text-green-400">
-															Passed:{" "}
-															{openscapStats.total_passed?.toLocaleString()}
-														</span>
-													</div>
-													<div className="flex items-center gap-2">
-														<div className="w-3 h-3 rounded-full bg-red-500" />
-														<span className="text-red-400">
-															Failed:{" "}
-															{openscapStats.total_failed?.toLocaleString()}
-														</span>
-													</div>
-												</div>
-												{/* Score Distribution */}
-												{openscapScans.length > 0 && (
-													<div className="mt-4 pt-4 border-t border-secondary-700">
-														<p className="text-xs text-secondary-400 mb-2">
-															Score Distribution
-														</p>
-														<div className="h-24">
-															<ResponsiveContainer width="100%" height="100%">
-																<BarChart
-																	data={openscapScoreRanges}
-																	layout="vertical"
-																>
-																	<XAxis
-																		type="number"
-																		stroke="#6b7280"
-																		fontSize={10}
-																	/>
-																	<YAxis
-																		type="category"
-																		dataKey="range"
-																		stroke="#6b7280"
-																		fontSize={10}
-																		width={50}
-																	/>
-																	<Tooltip
-																		content={
-																			<CustomTooltip type="scoreRange" />
-																		}
-																	/>
-																	<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-																		{openscapScoreRanges.map((entry, index) => (
-																			<Cell
-																				key={`cell-${index}-${entry.color || entry.severity || ""}`}
-																				fill={entry.color}
-																			/>
-																		))}
-																	</Bar>
-																</BarChart>
-															</ResponsiveContainer>
-														</div>
-													</div>
-												)}
-											</>
-										) : (
-											<div className="h-40 flex items-center justify-center text-secondary-500">
-												No OpenSCAP data available
-											</div>
-										)}
+									<div className="text-center">
+										<p className="text-xs text-secondary-400 uppercase tracking-wide mb-1">
+											Pass Rate
+										</p>
+										<p className="text-3xl font-bold text-white">
+											{filteredSummary.total_rules > 0
+												? (
+														(filteredSummary.total_passed_rules /
+															filteredSummary.total_rules) *
+														100
+													).toFixed(1)
+												: 0}
+											%
+										</p>
 									</div>
 								</div>
-
-								{/* Docker Bench Analysis */}
-								<div className="bg-secondary-800 rounded-lg border border-blue-700/50 overflow-hidden">
-									<div className="px-4 py-3 bg-blue-900/20 border-b border-blue-700/30 flex items-center gap-2">
-										<span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs font-bold rounded-full border border-blue-500/30">
-											Docker Bench
-										</span>
-										<span className="text-white font-medium text-sm">
-											Container Security Analysis
-										</span>
-									</div>
-									<div className="p-4">
-										{dockerBenchStats && dockerRuleData.length > 0 ? (
-											<>
-												{/* Rule Distribution Pie */}
-												<div className="h-40">
-													<ResponsiveContainer width="100%" height="100%">
-														<PieChart>
-															<Pie
-																data={dockerRuleData}
-																cx="50%"
-																cy="50%"
-																innerRadius={30}
-																outerRadius={55}
-																dataKey="value"
-																label={({ value }) => value.toLocaleString()}
-																labelLine={false}
-															>
-																{dockerRuleData.map((entry, index) => (
-																	<Cell
-																		key={`cell-${index}-${entry.color || entry.severity || ""}`}
-																		fill={entry.color}
-																	/>
-																))}
-															</Pie>
-															<Tooltip
-																content={<CustomTooltip type="ruleStatus" />}
-															/>
-														</PieChart>
-													</ResponsiveContainer>
-												</div>
-												<div className="flex justify-center gap-6 mt-2 text-sm">
-													<div className="flex items-center gap-2">
-														<div className="w-3 h-3 rounded-full bg-green-500" />
-														<span className="text-green-400">
-															Passed:{" "}
-															{dockerBenchStats.total_passed?.toLocaleString()}
-														</span>
-													</div>
-													<div className="flex items-center gap-2">
-														<div className="w-3 h-3 rounded-full bg-yellow-500" />
-														<span className="text-yellow-400">
-															Warnings:{" "}
-															{dockerBenchStats.total_warnings?.toLocaleString()}
-														</span>
-													</div>
-												</div>
-												{/* Score Distribution */}
-												{dockerScans.length > 0 && (
-													<div className="mt-4 pt-4 border-t border-secondary-700">
-														<p className="text-xs text-secondary-400 mb-2">
-															Score Distribution
-														</p>
-														<div className="h-24">
-															<ResponsiveContainer width="100%" height="100%">
-																<BarChart
-																	data={dockerScoreRanges}
-																	layout="vertical"
-																>
-																	<XAxis
-																		type="number"
-																		stroke="#6b7280"
-																		fontSize={10}
-																	/>
-																	<YAxis
-																		type="category"
-																		dataKey="range"
-																		stroke="#6b7280"
-																		fontSize={10}
-																		width={50}
-																	/>
-																	<Tooltip
-																		content={
-																			<CustomTooltip type="scoreRange" />
-																		}
-																	/>
-																	<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-																		{dockerScoreRanges.map((entry, index) => (
-																			<Cell
-																				key={`cell-${index}-${entry.color || entry.severity || ""}`}
-																				fill={entry.color}
-																			/>
-																		))}
-																	</Bar>
-																</BarChart>
-															</ResponsiveContainer>
-														</div>
-													</div>
-												)}
-											</>
-										) : (
-											<div className="h-40 flex items-center justify-center text-secondary-500">
-												No Docker Bench data available
-											</div>
-										)}
-									</div>
-								</div>
+								{profileTypeFilter === "docker-bench" &&
+									filteredSummary.total_rules > 0 && (
+										<div className="mt-4 pt-4 border-t border-secondary-700 text-center">
+											<span className="text-sm text-secondary-400">
+												Warning Rate:{" "}
+											</span>
+											<span className="text-sm font-bold text-yellow-400">
+												{(
+													(filteredSummary.total_warnings /
+														filteredSummary.total_rules) *
+													100
+												).toFixed(1)}
+												%
+											</span>
+										</div>
+									)}
 							</div>
 						</>
-					);
-				})()}
+					)}
 
-			{/* ==================== OpenSCAP Tab Analysis ==================== */}
-			{profileTypeFilter === "openscap" && filteredSummary && (
-				<>
-					<div className="flex items-center gap-3 pt-4">
-						<div className="flex items-center gap-2">
-							<PieChartIcon className="h-5 w-5 text-green-400" />
-							<h2 className="text-lg font-semibold text-white">
-								OpenSCAP Analysis
-							</h2>
+					{/* No data message */}
+					{!filteredSummary && (
+						<div className="card p-8 text-center">
+							<p className="text-secondary-400">
+								No {getFilterDisplayName()} scan data available
+							</p>
 						</div>
-						<div className="flex-1 h-px bg-green-700/50" />
-					</div>
+					)}
 
-					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-						{/* Rule Pass/Fail Breakdown */}
-						{openscapStats && (
-							<div className="bg-secondary-800 rounded-lg border border-green-700/50 p-4">
-								<h3 className="text-white font-medium mb-1 flex items-center gap-2">
-									<CheckCircle className="h-4 w-4 text-green-400" />
-									Rule Results
-								</h3>
-								<p className="text-xs text-secondary-500 mb-3">
-									{(
-										openscapStats.total_passed + openscapStats.total_failed
-									).toLocaleString()}{" "}
-									rules evaluated
-								</p>
-								<div className="h-40">
-									<ResponsiveContainer width="100%" height="100%">
-										<PieChart>
-											<Pie
-												data={[
-													{
-														name: "Passed",
-														value: openscapStats.total_passed || 0,
-														color: "#22c55e",
-													},
-													{
-														name: "Failed",
-														value: openscapStats.total_failed || 0,
-														color: "#ef4444",
-													},
-												].filter((d) => d.value > 0)}
-												cx="50%"
-												cy="50%"
-												innerRadius={35}
-												outerRadius={60}
-												dataKey="value"
-												label={({ value }) => `${value.toLocaleString()}`}
-												labelLine={false}
-											>
-												<Cell fill="#22c55e" />
-												<Cell fill="#ef4444" />
-											</Pie>
-											<Tooltip content={<CustomTooltip type="ruleStatus" />} />
-										</PieChart>
-									</ResponsiveContainer>
-								</div>
-								<div className="flex justify-center gap-6 mt-2 text-sm">
-									<div className="flex items-center gap-2">
-										<div className="w-3 h-3 rounded-full bg-green-500" />
-										<span className="text-green-400">
-											Passed: {openscapStats.total_passed?.toLocaleString()}
-										</span>
-									</div>
-									<div className="flex items-center gap-2">
-										<div className="w-3 h-3 rounded-full bg-red-500" />
-										<span className="text-red-400">
-											Failed: {openscapStats.total_failed?.toLocaleString()}
-										</span>
-									</div>
-								</div>
-							</div>
-						)}
-
-						{/* Failures by Severity */}
-						{severity_by_profile_type &&
-							severity_by_profile_type.filter(
-								(s) => s.profile_type === "openscap",
-							).length > 0 &&
-							(() => {
-								const openscapSeverity = severity_by_profile_type.filter(
-									(s) => s.profile_type === "openscap",
-								);
-								const totalFailures = openscapSeverity.reduce(
-									(sum, s) => sum + s.count,
-									0,
-								);
-								const severityOrder = ["critical", "high", "medium", "low"];
-								const severityColors = {
-									critical: "#ef4444",
-									high: "#f97316",
-									medium: "#eab308",
-									low: "#22c55e",
-								};
-								const chartData = severityOrder
-									.map((sev) => {
-										const count =
-											openscapSeverity.find((s) => s.severity === sev)?.count ||
-											0;
-										if (count === 0) return null;
-										return {
-											name: sev.charAt(0).toUpperCase() + sev.slice(1),
-											count,
-											color: severityColors[sev],
-										};
-									})
-									.filter(Boolean);
-
-								return (
-									<div className="bg-secondary-800 rounded-lg border border-green-700/50 p-4">
-										<h3 className="text-white font-medium mb-1 flex items-center gap-2">
-											<AlertTriangle className="h-4 w-4 text-red-400" />
-											Failures by Severity
-										</h3>
-										<p className="text-xs text-secondary-500 mb-3">
-											{totalFailures.toLocaleString()} total failures
-										</p>
-										<div className="h-40">
-											<ResponsiveContainer width="100%" height="100%">
-												<BarChart data={chartData} layout="vertical">
-													<XAxis type="number" stroke="#6b7280" fontSize={12} />
-													<YAxis
-														type="category"
-														dataKey="name"
-														stroke="#6b7280"
-														fontSize={12}
-														width={70}
-													/>
-													<Tooltip
-														content={<CustomTooltip type="severity" />}
-													/>
-													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-														{chartData.map((entry, index) => (
-															<Cell
-																key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
-																fill={entry.color}
-															/>
-														))}
-													</Bar>
-												</BarChart>
-											</ResponsiveContainer>
-										</div>
-									</div>
-								);
-							})()}
-
-						{/* Score Distribution */}
-						{filteredScans &&
-							filteredScans.length > 0 &&
-							(() => {
-								const scoreRanges = [
-									{
-										range: "90-100%",
-										count: filteredScans.filter((s) => s.score >= 90).length,
-										color: "#22c55e",
-									},
-									{
-										range: "80-89%",
-										count: filteredScans.filter(
-											(s) => s.score >= 80 && s.score < 90,
-										).length,
-										color: "#84cc16",
-									},
-									{
-										range: "70-79%",
-										count: filteredScans.filter(
-											(s) => s.score >= 70 && s.score < 80,
-										).length,
-										color: "#eab308",
-									},
-									{
-										range: "60-69%",
-										count: filteredScans.filter(
-											(s) => s.score >= 60 && s.score < 70,
-										).length,
-										color: "#f97316",
-									},
-									{
-										range: "<60%",
-										count: filteredScans.filter((s) => s.score < 60).length,
-										color: "#ef4444",
-									},
-								];
-								return (
-									<div className="bg-secondary-800 rounded-lg border border-green-700/50 p-4">
-										<h3 className="text-white font-medium mb-1 flex items-center gap-2">
-											<BarChart3 className="h-4 w-4 text-green-400" />
-											Score Distribution
-										</h3>
-										<p className="text-xs text-secondary-500 mb-3">
-											{filteredScans.length} scans
-										</p>
-										<div className="h-40">
-											<ResponsiveContainer width="100%" height="100%">
-												<BarChart data={scoreRanges} layout="vertical">
-													<XAxis type="number" stroke="#6b7280" fontSize={12} />
-													<YAxis
-														type="category"
-														dataKey="range"
-														stroke="#6b7280"
-														fontSize={12}
-														width={60}
-													/>
-													<Tooltip
-														content={<CustomTooltip type="scoreRange" />}
-													/>
-													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-														{scoreRanges.map((entry, index) => (
-															<Cell
-																key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
-																fill={entry.color}
-															/>
-														))}
-													</Bar>
-												</BarChart>
-											</ResponsiveContainer>
-										</div>
-									</div>
-								);
-							})()}
-
-						{/* Last Scan Age - OpenSCAP only */}
-						{scan_age_distribution &&
-							(() => {
-								const chartData = [
-									{
-										name: "Today",
-										count: scan_age_distribution.today?.openscap || 0,
-										color: "#22c55e",
-									},
-									{
-										name: "This Week",
-										count: scan_age_distribution.this_week?.openscap || 0,
-										color: "#84cc16",
-									},
-									{
-										name: "This Month",
-										count: scan_age_distribution.this_month?.openscap || 0,
-										color: "#eab308",
-									},
-									{
-										name: "Older",
-										count: scan_age_distribution.older?.openscap || 0,
-										color: "#ef4444",
-									},
-								].filter((d) => d.count > 0);
-								const totalScans = chartData.reduce(
-									(sum, d) => sum + d.count,
-									0,
-								);
-
-								if (totalScans === 0) return null;
-
-								return (
-									<div className="bg-secondary-800 rounded-lg border border-green-700/50 p-4">
-										<h3 className="text-white font-medium mb-1 flex items-center gap-2">
-											<Clock className="h-4 w-4 text-green-400" />
-											Scan Freshness
-										</h3>
-										<p className="text-xs text-secondary-500 mb-3">
-											{totalScans} OpenSCAP scans
-										</p>
-										<div className="h-40">
-											<ResponsiveContainer width="100%" height="100%">
-												<BarChart data={chartData} layout="vertical">
-													<XAxis type="number" stroke="#6b7280" fontSize={12} />
-													<YAxis
-														type="category"
-														dataKey="name"
-														stroke="#6b7280"
-														fontSize={11}
-														width={80}
-													/>
-													<Tooltip content={<CustomTooltip type="scanAge" />} />
-													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-														{chartData.map((entry, index) => (
-															<Cell
-																key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
-																fill={entry.color}
-															/>
-														))}
-													</Bar>
-												</BarChart>
-											</ResponsiveContainer>
-										</div>
-									</div>
-								);
-							})()}
-					</div>
-				</>
-			)}
-
-			{/* ==================== Docker Bench Tab Analysis ==================== */}
-			{profileTypeFilter === "docker-bench" && filteredSummary && (
-				<>
-					<div className="flex items-center gap-3 pt-4">
-						<div className="flex items-center gap-2">
-							<PieChartIcon className="h-5 w-5 text-blue-400" />
-							<h2 className="text-lg font-semibold text-white">
-								Docker Bench Analysis
-							</h2>
-						</div>
-						<div className="flex-1 h-px bg-blue-700/50" />
-					</div>
-
-					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-						{/* Rule Pass/Warn Breakdown */}
-						{dockerBenchStats && (
-							<div className="bg-secondary-800 rounded-lg border border-blue-700/50 p-4">
-								<h3 className="text-white font-medium mb-1 flex items-center gap-2">
-									<CheckCircle className="h-4 w-4 text-blue-400" />
-									Rule Results
-								</h3>
-								<p className="text-xs text-secondary-500 mb-3">
-									{(
-										dockerBenchStats.total_passed +
-										dockerBenchStats.total_warnings
-									).toLocaleString()}{" "}
-									rules evaluated
-								</p>
-								<div className="h-40">
-									<ResponsiveContainer width="100%" height="100%">
-										<PieChart>
-											<Pie
-												data={[
-													{
-														name: "Passed",
-														value: dockerBenchStats.total_passed || 0,
-														color: "#22c55e",
-													},
-													{
-														name: "Warnings",
-														value: dockerBenchStats.total_warnings || 0,
-														color: "#eab308",
-													},
-												].filter((d) => d.value > 0)}
-												cx="50%"
-												cy="50%"
-												innerRadius={35}
-												outerRadius={60}
-												dataKey="value"
-												label={({ value }) => `${value.toLocaleString()}`}
-												labelLine={false}
-											>
-												<Cell fill="#22c55e" />
-												<Cell fill="#eab308" />
-											</Pie>
-											<Tooltip content={<CustomTooltip type="ruleStatus" />} />
-										</PieChart>
-									</ResponsiveContainer>
-								</div>
-								<div className="flex justify-center gap-6 mt-2 text-sm">
-									<div className="flex items-center gap-2">
-										<div className="w-3 h-3 rounded-full bg-green-500" />
-										<span className="text-green-400">
-											Passed: {dockerBenchStats.total_passed?.toLocaleString()}
-										</span>
-									</div>
-									<div className="flex items-center gap-2">
-										<div className="w-3 h-3 rounded-full bg-yellow-500" />
-										<span className="text-yellow-400">
-											Warnings:{" "}
-											{dockerBenchStats.total_warnings?.toLocaleString()}
-										</span>
-									</div>
-								</div>
-							</div>
-						)}
-
-						{/* Warnings by Section */}
-						{docker_bench_by_section &&
-							docker_bench_by_section.length > 0 &&
-							(() => {
-								const totalWarnings = docker_bench_by_section.reduce(
-									(sum, s) => sum + s.count,
-									0,
-								);
-								const sectionColors = {
-									"Host Configuration": "#ef4444",
-									"Docker Daemon Configuration": "#f97316",
-									"Docker Daemon Configuration Files": "#eab308",
-									"Container Images and Build File": "#84cc16",
-									"Container Runtime": "#22c55e",
-									"Docker Security Operations": "#3b82f6",
-									"Docker Swarm Configuration": "#8b5cf6",
-								};
-								const chartData = docker_bench_by_section.map((s) => ({
-									name: s.section,
-									shortName:
-										s.section.length > 20
-											? `${s.section.slice(0, 17)}...`
-											: s.section,
-									count: s.count,
-									color: sectionColors[s.section] || "#6b7280",
-								}));
-
-								return (
-									<div className="bg-secondary-800 rounded-lg border border-blue-700/50 p-4">
-										<h3 className="text-white font-medium mb-1 flex items-center gap-2">
-											<Container className="h-4 w-4 text-yellow-400" />
-											Warnings by Section
-										</h3>
-										<p className="text-xs text-secondary-500 mb-3">
-											{totalWarnings.toLocaleString()} total warnings
-										</p>
-										<div className="h-40">
-											<ResponsiveContainer width="100%" height="100%">
-												<BarChart data={chartData} layout="vertical">
-													<XAxis type="number" stroke="#6b7280" fontSize={12} />
-													<YAxis
-														type="category"
-														dataKey="shortName"
-														stroke="#6b7280"
-														fontSize={10}
-														width={85}
-													/>
-													<Tooltip
-														content={({ active, payload }) => {
-															if (!active || !payload || payload.length === 0)
-																return null;
-															const data = payload[0].payload;
-															return (
-																<div className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 shadow-lg max-w-xs">
-																	<p className="text-white font-medium text-sm mb-1">
-																		{data.name}
-																	</p>
-																	<div className="flex items-center gap-2 text-sm">
-																		<div
-																			className="w-2.5 h-2.5 rounded"
-																			style={{ backgroundColor: data.color }}
-																		/>
-																		<span className="text-gray-300">
-																			Warnings:
-																		</span>
-																		<span className="text-white font-medium">
-																			{data.count.toLocaleString()}
-																		</span>
-																	</div>
-																</div>
-															);
-														}}
-													/>
-													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-														{chartData.map((entry, index) => (
-															<Cell
-																key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
-																fill={entry.color}
-															/>
-														))}
-													</Bar>
-												</BarChart>
-											</ResponsiveContainer>
-										</div>
-									</div>
-								);
-							})()}
-
-						{/* Score Distribution */}
-						{filteredScans &&
-							filteredScans.length > 0 &&
-							(() => {
-								const scoreRanges = [
-									{
-										range: "90-100%",
-										count: filteredScans.filter((s) => s.score >= 90).length,
-										color: "#22c55e",
-									},
-									{
-										range: "80-89%",
-										count: filteredScans.filter(
-											(s) => s.score >= 80 && s.score < 90,
-										).length,
-										color: "#84cc16",
-									},
-									{
-										range: "70-79%",
-										count: filteredScans.filter(
-											(s) => s.score >= 70 && s.score < 80,
-										).length,
-										color: "#eab308",
-									},
-									{
-										range: "60-69%",
-										count: filteredScans.filter(
-											(s) => s.score >= 60 && s.score < 70,
-										).length,
-										color: "#f97316",
-									},
-									{
-										range: "<60%",
-										count: filteredScans.filter((s) => s.score < 60).length,
-										color: "#ef4444",
-									},
-								];
-								return (
-									<div className="bg-secondary-800 rounded-lg border border-blue-700/50 p-4">
-										<h3 className="text-white font-medium mb-1 flex items-center gap-2">
-											<BarChart3 className="h-4 w-4 text-blue-400" />
-											Score Distribution
-										</h3>
-										<p className="text-xs text-secondary-500 mb-3">
-											{filteredScans.length} scans
-										</p>
-										<div className="h-40">
-											<ResponsiveContainer width="100%" height="100%">
-												<BarChart data={scoreRanges} layout="vertical">
-													<XAxis type="number" stroke="#6b7280" fontSize={12} />
-													<YAxis
-														type="category"
-														dataKey="range"
-														stroke="#6b7280"
-														fontSize={12}
-														width={60}
-													/>
-													<Tooltip
-														content={<CustomTooltip type="scoreRange" />}
-													/>
-													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-														{scoreRanges.map((entry, index) => (
-															<Cell
-																key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
-																fill={entry.color}
-															/>
-														))}
-													</Bar>
-												</BarChart>
-											</ResponsiveContainer>
-										</div>
-									</div>
-								);
-							})()}
-
-						{/* Last Scan Age - Docker Bench only */}
-						{scan_age_distribution &&
-							(() => {
-								const chartData = [
-									{
-										name: "Today",
-										count: scan_age_distribution.today?.["docker-bench"] || 0,
-										color: "#22c55e",
-									},
-									{
-										name: "This Week",
-										count:
-											scan_age_distribution.this_week?.["docker-bench"] || 0,
-										color: "#84cc16",
-									},
-									{
-										name: "This Month",
-										count:
-											scan_age_distribution.this_month?.["docker-bench"] || 0,
-										color: "#eab308",
-									},
-									{
-										name: "Older",
-										count: scan_age_distribution.older?.["docker-bench"] || 0,
-										color: "#ef4444",
-									},
-								].filter((d) => d.count > 0);
-								const totalScans = chartData.reduce(
-									(sum, d) => sum + d.count,
-									0,
-								);
-
-								if (totalScans === 0) return null;
-
-								return (
-									<div className="bg-secondary-800 rounded-lg border border-blue-700/50 p-4">
-										<h3 className="text-white font-medium mb-1 flex items-center gap-2">
-											<Clock className="h-4 w-4 text-blue-400" />
-											Scan Freshness
-										</h3>
-										<p className="text-xs text-secondary-500 mb-3">
-											{totalScans} Docker Bench scans
-										</p>
-										<div className="h-40">
-											<ResponsiveContainer width="100%" height="100%">
-												<BarChart data={chartData} layout="vertical">
-													<XAxis type="number" stroke="#6b7280" fontSize={12} />
-													<YAxis
-														type="category"
-														dataKey="name"
-														stroke="#6b7280"
-														fontSize={11}
-														width={80}
-													/>
-													<Tooltip content={<CustomTooltip type="scanAge" />} />
-													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-														{chartData.map((entry, index) => (
-															<Cell
-																key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
-																fill={entry.color}
-															/>
-														))}
-													</Bar>
-												</BarChart>
-											</ResponsiveContainer>
-										</div>
-									</div>
-								);
-							})()}
-					</div>
-				</>
-			)}
-
-			{/* Additional Charts - Severity (OpenSCAP), Section (Docker Bench) & Profile Distribution - Only for "All Scans" tab */}
-			{profileTypeFilter === "all" &&
-				((severity_by_profile_type && severity_by_profile_type.length > 0) ||
-					(docker_bench_by_section && docker_bench_by_section.length > 0) ||
-					(profile_distribution && profile_distribution.length > 0)) && (
-					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-						{/* OpenSCAP Failures by Severity - OpenSCAP only (has real severity data) */}
-						{severity_by_profile_type &&
-							severity_by_profile_type.filter(
-								(s) => s.profile_type === "openscap",
-							).length > 0 &&
-							(() => {
-								// Filter to OpenSCAP only - Docker Bench doesn't have severity
-								const openscapSeverity = severity_by_profile_type.filter(
-									(s) => s.profile_type === "openscap",
-								);
-								const totalFailures = openscapSeverity.reduce(
-									(sum, s) => sum + s.count,
-									0,
-								);
-
-								// Build chart data - OpenSCAP only
-								const severityOrder = ["critical", "high", "medium", "low"];
-								const severityColors = {
-									critical: "#ef4444",
-									high: "#f97316",
-									medium: "#eab308",
-									low: "#22c55e",
-								};
-								const chartData = severityOrder
-									.map((sev) => {
-										const count =
-											openscapSeverity.find((s) => s.severity === sev)?.count ||
-											0;
-										if (count === 0) return null;
-
-										return {
-											name: sev.charAt(0).toUpperCase() + sev.slice(1),
-											severity: sev,
-											count,
-											color: severityColors[sev],
-										};
-									})
-									.filter(Boolean);
-
-								return (
-									<div className="bg-secondary-800 rounded-lg border border-green-700/50 p-4">
-										<div className="flex items-center gap-2 mb-1">
-											<span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs font-bold rounded-full border border-green-500/30">
-												OpenSCAP
-											</span>
-											<h3 className="text-white font-medium flex items-center gap-2">
-												<AlertTriangle className="h-4 w-4 text-red-400" />
-												Failures by Severity
-											</h3>
-										</div>
-										<p className="text-xs text-secondary-500 mb-3">
-											{totalFailures.toLocaleString()} total CIS benchmark
-											failures
-										</p>
-										<div className="h-40">
-											<ResponsiveContainer width="100%" height="100%">
-												<BarChart data={chartData} layout="vertical">
-													<XAxis type="number" stroke="#6b7280" fontSize={12} />
-													<YAxis
-														type="category"
-														dataKey="name"
-														stroke="#6b7280"
-														fontSize={12}
-														width={70}
-													/>
-													<Tooltip
-														content={<CustomTooltip type="severity" />}
-													/>
-													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-														{chartData.map((entry, index) => (
-															<Cell
-																key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
-																fill={entry.color}
-															/>
-														))}
-													</Bar>
-												</BarChart>
-											</ResponsiveContainer>
-										</div>
-										{/* Breakdown summary */}
-										<div className="mt-3 pt-3 border-t border-secondary-700 flex justify-center gap-4 text-xs">
-											{chartData.map((item) => (
-												<div
-													key={item.name}
-													className="flex items-center gap-1.5"
-												>
-													<div
-														className="w-2.5 h-2.5 rounded"
-														style={{ backgroundColor: item.color }}
-													/>
-													<span className="text-secondary-400">
-														{item.name}:
-													</span>
-													<span className="text-white font-medium">
-														{item.count.toLocaleString()}
-													</span>
-												</div>
-											))}
-										</div>
-									</div>
-								);
-							})()}
-
-						{/* Docker Bench Warnings by Section - Docker Bench only (doesn't have severity) */}
-						{docker_bench_by_section &&
-							docker_bench_by_section.length > 0 &&
-							(() => {
-								const totalWarnings = docker_bench_by_section.reduce(
-									(sum, s) => sum + s.count,
-									0,
-								);
-
-								// Section colors
-								const sectionColors = {
-									"Host Configuration": "#ef4444",
-									"Docker Daemon Configuration": "#f97316",
-									"Docker Daemon Configuration Files": "#eab308",
-									"Container Images and Build File": "#84cc16",
-									"Container Runtime": "#22c55e",
-									"Docker Security Operations": "#3b82f6",
-									"Docker Swarm Configuration": "#8b5cf6",
-								};
-
-								const chartData = docker_bench_by_section.map((s) => ({
-									name: s.section,
-									shortName:
-										s.section.length > 25
-											? `${s.section.slice(0, 22)}...`
-											: s.section,
-									count: s.count,
-									color: sectionColors[s.section] || "#6b7280",
-								}));
-
-								return (
-									<div className="bg-secondary-800 rounded-lg border border-blue-700/50 p-4">
-										<div className="flex items-center gap-2 mb-1">
-											<span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs font-bold rounded-full border border-blue-500/30">
-												Docker Bench
-											</span>
-											<h3 className="text-white font-medium flex items-center gap-2">
-												<Container className="h-4 w-4 text-yellow-400" />
-												Warnings by Section
-											</h3>
-										</div>
-										<p className="text-xs text-secondary-500 mb-3">
-											{totalWarnings.toLocaleString()} total container security
-											warnings
-										</p>
-										<div className="h-40">
-											<ResponsiveContainer width="100%" height="100%">
-												<BarChart data={chartData} layout="vertical">
-													<XAxis type="number" stroke="#6b7280" fontSize={12} />
-													<YAxis
-														type="category"
-														dataKey="shortName"
-														stroke="#6b7280"
-														fontSize={10}
-														width={100}
-													/>
-													<Tooltip
-														content={({ active, payload }) => {
-															if (!active || !payload || payload.length === 0)
-																return null;
-															const data = payload[0].payload;
-															return (
-																<div className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 shadow-lg max-w-xs">
-																	<p className="text-white font-medium text-sm mb-1">
-																		{data.name}
-																	</p>
-																	<div className="flex items-center gap-2 text-sm">
-																		<div
-																			className="w-2.5 h-2.5 rounded"
-																			style={{ backgroundColor: data.color }}
-																		/>
-																		<span className="text-gray-300">
-																			Warnings:
-																		</span>
-																		<span className="text-white font-medium">
-																			{data.count.toLocaleString()}
-																		</span>
-																	</div>
-																</div>
-															);
-														}}
-													/>
-													<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-														{chartData.map((entry, index) => (
-															<Cell
-																key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
-																fill={entry.color}
-															/>
-														))}
-													</Bar>
-												</BarChart>
-											</ResponsiveContainer>
-										</div>
-										{/* Section legend */}
-										<div className="mt-3 pt-3 border-t border-secondary-700">
-											<div className="grid grid-cols-2 gap-1 text-xs">
-												{chartData.slice(0, 4).map((item) => (
-													<div
-														key={item.name}
-														className="flex items-center gap-1.5 truncate"
-													>
-														<div
-															className="w-2 h-2 rounded flex-shrink-0"
-															style={{ backgroundColor: item.color }}
-														/>
-														<span className="text-secondary-400 truncate">
-															{item.shortName}
-														</span>
-													</div>
-												))}
-											</div>
-										</div>
-									</div>
-								);
-							})()}
-
-						{/* Profile Distribution */}
-						{profile_distribution && profile_distribution.length > 0 && (
-							<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
-								<h3 className="text-white font-medium mb-1 flex items-center gap-2">
-									<Shield className="h-4 w-4 text-primary-400" />
-									Compliance Profiles in Use
-								</h3>
-								<p className="text-xs text-secondary-500 mb-3">
-									Number of hosts scanned with each profile
-								</p>
-								<div className="h-48">
-									<ResponsiveContainer width="100%" height="100%">
-										<BarChart data={profile_distribution} layout="vertical">
-											<XAxis type="number" stroke="#6b7280" fontSize={12} />
-											<YAxis
-												type="category"
-												dataKey="name"
-												stroke="#6b7280"
-												fontSize={11}
-												width={140}
-												tickFormatter={(value) =>
-													value.length > 20 ? `${value.slice(0, 20)}...` : value
-												}
-											/>
-											<Tooltip content={<CustomTooltip type="profile" />} />
-											<Bar
-												dataKey="host_count"
-												fill="#6366f1"
-												radius={[0, 4, 4, 0]}
-											/>
-										</BarChart>
-									</ResponsiveContainer>
-								</div>
-							</div>
-						)}
-
-						{/* Last Scan Age - How fresh is the compliance data by scan type */}
-						{scan_age_distribution &&
-							summary?.total_hosts > 0 &&
-							(() => {
-								const chartData = [
-									{
-										name: "Today",
-										openscap: scan_age_distribution.today?.openscap || 0,
-										dockerBench:
-											scan_age_distribution.today?.["docker-bench"] || 0,
-										total:
-											(scan_age_distribution.today?.openscap || 0) +
-											(scan_age_distribution.today?.["docker-bench"] || 0),
-									},
-									{
-										name: "This Week",
-										openscap: scan_age_distribution.this_week?.openscap || 0,
-										dockerBench:
-											scan_age_distribution.this_week?.["docker-bench"] || 0,
-										total:
-											(scan_age_distribution.this_week?.openscap || 0) +
-											(scan_age_distribution.this_week?.["docker-bench"] || 0),
-									},
-									{
-										name: "This Month",
-										openscap: scan_age_distribution.this_month?.openscap || 0,
-										dockerBench:
-											scan_age_distribution.this_month?.["docker-bench"] || 0,
-										total:
-											(scan_age_distribution.this_month?.openscap || 0) +
-											(scan_age_distribution.this_month?.["docker-bench"] || 0),
-									},
-									{
-										name: "Older",
-										openscap: scan_age_distribution.older?.openscap || 0,
-										dockerBench:
-											scan_age_distribution.older?.["docker-bench"] || 0,
-										total:
-											(scan_age_distribution.older?.openscap || 0) +
-											(scan_age_distribution.older?.["docker-bench"] || 0),
-									},
-								].filter((d) => d.total > 0);
-
-								const totalScans = chartData.reduce(
-									(sum, d) => sum + d.total,
-									0,
-								);
-
-								return (
-									<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-4">
-										<h3 className="text-white font-medium mb-1 flex items-center gap-2">
-											<Clock className="h-4 w-4 text-primary-400" />
-											Last Scan Age
-										</h3>
-										<p className="text-xs text-secondary-500 mb-3">
-											How fresh is your compliance data ({totalScans} scans)
-										</p>
-										<div className="h-40">
-											<ResponsiveContainer width="100%" height="100%">
-												<BarChart data={chartData} layout="vertical">
-													<XAxis type="number" stroke="#6b7280" fontSize={12} />
-													<YAxis
-														type="category"
-														dataKey="name"
-														stroke="#6b7280"
-														fontSize={11}
-														width={80}
-													/>
-													<Tooltip content={<CustomTooltip type="scanAge" />} />
-													<Bar
-														dataKey="openscap"
-														stackId="a"
-														fill="#22c55e"
-														name="openscap"
-														radius={[0, 0, 0, 0]}
-													/>
-													<Bar
-														dataKey="dockerBench"
-														stackId="a"
-														fill="#3b82f6"
-														name="dockerBench"
-														radius={[0, 4, 4, 0]}
-													/>
-												</BarChart>
-											</ResponsiveContainer>
-										</div>
-										{/* Legend */}
-										<div className="flex justify-center gap-6 mt-2">
-											<div className="flex items-center gap-2 text-sm">
-												<div className="w-3 h-3 rounded bg-green-500" />
-												<span className="text-green-400">OpenSCAP</span>
-											</div>
-											<div className="flex items-center gap-2 text-sm">
-												<div className="w-3 h-3 rounded bg-blue-500" />
-												<span className="text-blue-400">Docker Bench</span>
-											</div>
-										</div>
-										{/* Summary */}
-										<div className="mt-3 pt-3 border-t border-secondary-700 grid grid-cols-2 md:grid-cols-4 gap-2 text-center text-xs">
-											{chartData.map((item) => (
-												<div key={item.name} className="space-y-1">
-													<p
-														className={`font-medium ${
-															item.name === "Today"
-																? "text-green-400"
-																: item.name === "This Week"
-																	? "text-lime-400"
-																	: item.name === "This Month"
-																		? "text-yellow-400"
-																		: "text-red-400"
-														}`}
-													>
-														{item.name}: {item.total}
-													</p>
-													<p className="text-secondary-500">
-														{item.openscap > 0 && (
-															<span className="text-green-400">
-																{item.openscap} OS
-															</span>
-														)}
-														{item.openscap > 0 && item.dockerBench > 0 && " / "}
-														{item.dockerBench > 0 && (
-															<span className="text-blue-400">
-																{item.dockerBench} DB
-															</span>
-														)}
-													</p>
-												</div>
-											))}
-										</div>
-									</div>
-								);
-							})()}
-					</div>
-				)}
-
-			{/* ==================== ISSUES SECTION ==================== */}
-			{((profileTypeFilter === "all" || profileTypeFilter === "openscap") &&
-				filteredTopFailingRules?.length > 0) ||
-			((profileTypeFilter === "all" || profileTypeFilter === "docker-bench") &&
-				filteredTopWarningRules?.length > 0) ? (
-				<div className="flex items-center gap-3 pt-4">
-					<div className="flex items-center gap-2">
-						<AlertTriangle className="h-5 w-5 text-primary-400" />
-						<h2 className="text-lg font-semibold text-white">Issues</h2>
-					</div>
-					<div className="flex-1 h-px bg-secondary-700" />
-				</div>
-			) : null}
-
-			{/* Top Failing Rules - OpenSCAP (show on All Scans and OpenSCAP tabs) */}
-			{(profileTypeFilter === "all" || profileTypeFilter === "openscap") &&
-				filteredTopFailingRules &&
-				filteredTopFailingRules.length > 0 && (
-					<div className="bg-secondary-800 rounded-lg border border-green-700/50 overflow-hidden">
-						<div className="px-4 py-3 border-b border-secondary-700 bg-green-900/20 flex items-center justify-between">
-							<div className="flex items-center gap-3">
-								<span className="px-2 py-1 bg-green-500/20 text-green-400 text-xs font-bold rounded-full border border-green-500/30">
-									OpenSCAP
-								</span>
-								<div>
-									<h2 className="text-white font-semibold">
-										Top Failing Rules
+					{/* ==================== OpenSCAP Tab Analysis ==================== */}
+					{profileTypeFilter === "openscap" && filteredSummary && (
+						<>
+							<div className="flex items-center gap-3 pt-4">
+								<div className="flex items-center gap-2">
+									<PieChartIcon className="h-5 w-5 text-green-400" />
+									<h2 className="text-lg font-semibold text-white">
+										OpenSCAP Analysis
 									</h2>
-									<p className="text-xs text-secondary-400">
-										CIS Benchmark compliance failures
-									</p>
 								</div>
+								<div className="flex-1 h-px bg-green-700/50" />
 							</div>
-							<span className="px-3 py-1 bg-red-500/20 text-red-400 text-sm font-bold rounded-full border border-red-500/30">
-								{
-									filteredTopFailingRules.filter(
-										(r) =>
-											r.profile_type === "openscap" ||
-											profileTypeFilter === "openscap",
-									).length
-								}{" "}
-								rules
-							</span>
-						</div>
-						<div className="divide-y divide-secondary-700">
-							{filteredTopFailingRules
-								.filter(
-									(r) =>
-										r.profile_type === "openscap" ||
-										profileTypeFilter === "openscap",
-								)
-								.map((rule) => {
-									const severityColors = {
-										critical: "bg-red-500/20 text-red-400 border-red-500/30",
-										high: "bg-orange-500/20 text-orange-400 border-orange-500/30",
-										medium:
-											"bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-										low: "bg-green-500/20 text-green-400 border-green-500/30",
-									};
-									const severityClass =
-										severityColors[rule.severity] ||
-										"bg-secondary-700 text-secondary-400 border-secondary-600";
 
-									return (
-										<div
-											key={rule.rule_id}
-											className="flex items-center justify-between px-4 py-3 hover:bg-secondary-700/30 transition-colors"
-										>
-											<div className="flex-1 min-w-0">
-												<p className="text-white font-medium truncate">
-													{rule.title}
-												</p>
-												<p className="text-sm text-secondary-400 truncate">
-													{rule.rule_id}
-												</p>
-											</div>
-											<div className="flex items-center gap-3 ml-4">
-												<span
-													className={`px-2 py-0.5 rounded text-xs font-medium border ${severityClass}`}
-												>
-													{rule.severity}
+							<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+								{/* Rule Pass/Fail Breakdown */}
+								{openscapStats && (
+									<div className="card p-4 border border-green-700/50">
+										<h3 className="text-white font-medium mb-1 flex items-center gap-2">
+											<CheckCircle className="h-4 w-4 text-green-400" />
+											Rule Results
+										</h3>
+										<p className="text-xs text-secondary-500 mb-3">
+											{(
+												openscapStats.total_passed + openscapStats.total_failed
+											).toLocaleString()}{" "}
+											rules evaluated
+										</p>
+										<div className="h-40">
+											<ResponsiveContainer width="100%" height="100%">
+												<PieChart>
+													<Pie
+														data={[
+															{
+																name: "Passed",
+																value: openscapStats.total_passed || 0,
+																color: "#22c55e",
+															},
+															{
+																name: "Failed",
+																value: openscapStats.total_failed || 0,
+																color: "#ef4444",
+															},
+														].filter((d) => d.value > 0)}
+														cx="50%"
+														cy="50%"
+														innerRadius={35}
+														outerRadius={60}
+														dataKey="value"
+														label={({ value }) => `${value.toLocaleString()}`}
+														labelLine={false}
+													>
+														<Cell fill="#22c55e" />
+														<Cell fill="#ef4444" />
+													</Pie>
+													<Tooltip
+														content={<CustomTooltip type="ruleStatus" />}
+													/>
+												</PieChart>
+											</ResponsiveContainer>
+										</div>
+										<div className="flex justify-center gap-6 mt-2 text-sm">
+											<div className="flex items-center gap-2">
+												<div className="w-3 h-3 rounded-full bg-green-500" />
+												<span className="text-green-400">
+													Passed: {openscapStats.total_passed?.toLocaleString()}
 												</span>
-												<span className="text-red-400 font-bold whitespace-nowrap">
-													{rule.fail_count}{" "}
-													{rule.fail_count === 1 ? "host" : "hosts"}
+											</div>
+											<div className="flex items-center gap-2">
+												<div className="w-3 h-3 rounded-full bg-red-500" />
+												<span className="text-red-400">
+													Failed: {openscapStats.total_failed?.toLocaleString()}
 												</span>
 											</div>
 										</div>
-									);
-								})}
-						</div>
-					</div>
-				)}
+									</div>
+								)}
 
-			{/* Top Warning Rules - Docker Bench (show on All Scans and Docker Bench tabs) */}
-			{(profileTypeFilter === "all" || profileTypeFilter === "docker-bench") &&
-				filteredTopWarningRules &&
-				filteredTopWarningRules.length > 0 && (
-					<div className="bg-secondary-800 rounded-lg border border-blue-700/50 overflow-hidden">
-						<div className="px-4 py-3 border-b border-secondary-700 bg-blue-900/20 flex items-center justify-between">
-							<div className="flex items-center gap-3">
-								<span className="px-2 py-1 bg-blue-500/20 text-blue-400 text-xs font-bold rounded-full border border-blue-500/30">
-									Docker Bench
-								</span>
-								<div>
-									<h2 className="text-white font-semibold">Top Warnings</h2>
-									<p className="text-xs text-secondary-400">
-										Container security issues
-									</p>
+								{/* Failures by Severity */}
+								{severity_by_profile_type &&
+									severity_by_profile_type.filter(
+										(s) => s.profile_type === "openscap",
+									).length > 0 &&
+									(() => {
+										const openscapSeverity = severity_by_profile_type.filter(
+											(s) => s.profile_type === "openscap",
+										);
+										const totalFailures = openscapSeverity.reduce(
+											(sum, s) => sum + s.count,
+											0,
+										);
+										const severityOrder = ["critical", "high", "medium", "low"];
+										const severityColors = {
+											critical: "#ef4444",
+											high: "#f97316",
+											medium: "#eab308",
+											low: "#22c55e",
+										};
+										const chartData = severityOrder
+											.map((sev) => {
+												const count =
+													openscapSeverity.find((s) => s.severity === sev)
+														?.count || 0;
+												if (count === 0) return null;
+												return {
+													name: sev.charAt(0).toUpperCase() + sev.slice(1),
+													count,
+													color: severityColors[sev],
+												};
+											})
+											.filter(Boolean);
+
+										return (
+											<div className="card p-4 border border-green-700/50">
+												<h3 className="text-white font-medium mb-1 flex items-center gap-2">
+													<AlertTriangle className="h-4 w-4 text-red-400" />
+													Failures by Severity
+												</h3>
+												<p className="text-xs text-secondary-500 mb-3">
+													{totalFailures.toLocaleString()} total failures
+												</p>
+												<div className="h-40">
+													<ResponsiveContainer width="100%" height="100%">
+														<BarChart data={chartData} layout="vertical">
+															<XAxis
+																type="number"
+																stroke="#6b7280"
+																fontSize={12}
+															/>
+															<YAxis
+																type="category"
+																dataKey="name"
+																stroke="#6b7280"
+																fontSize={12}
+																width={70}
+															/>
+															<Tooltip
+																content={<CustomTooltip type="severity" />}
+															/>
+															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+																{chartData.map((entry, index) => (
+																	<Cell
+																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		fill={entry.color}
+																	/>
+																))}
+															</Bar>
+														</BarChart>
+													</ResponsiveContainer>
+												</div>
+											</div>
+										);
+									})()}
+
+								{/* Score Distribution */}
+								{filteredScans &&
+									filteredScans.length > 0 &&
+									(() => {
+										const scoreRanges = [
+											{
+												range: "90-100%",
+												count: filteredScans.filter((s) => s.score >= 90)
+													.length,
+												color: "#22c55e",
+											},
+											{
+												range: "80-89%",
+												count: filteredScans.filter(
+													(s) => s.score >= 80 && s.score < 90,
+												).length,
+												color: "#84cc16",
+											},
+											{
+												range: "70-79%",
+												count: filteredScans.filter(
+													(s) => s.score >= 70 && s.score < 80,
+												).length,
+												color: "#eab308",
+											},
+											{
+												range: "60-69%",
+												count: filteredScans.filter(
+													(s) => s.score >= 60 && s.score < 70,
+												).length,
+												color: "#f97316",
+											},
+											{
+												range: "<60%",
+												count: filteredScans.filter((s) => s.score < 60).length,
+												color: "#ef4444",
+											},
+										];
+										return (
+											<div className="card p-4 border border-green-700/50">
+												<h3 className="text-white font-medium mb-1 flex items-center gap-2">
+													<BarChart3 className="h-4 w-4 text-green-400" />
+													Score Distribution
+												</h3>
+												<p className="text-xs text-secondary-500 mb-3">
+													{filteredScans.length} scans
+												</p>
+												<div className="h-40">
+													<ResponsiveContainer width="100%" height="100%">
+														<BarChart data={scoreRanges} layout="vertical">
+															<XAxis
+																type="number"
+																stroke="#6b7280"
+																fontSize={12}
+															/>
+															<YAxis
+																type="category"
+																dataKey="range"
+																stroke="#6b7280"
+																fontSize={12}
+																width={60}
+															/>
+															<Tooltip
+																content={<CustomTooltip type="scoreRange" />}
+															/>
+															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+																{scoreRanges.map((entry, index) => (
+																	<Cell
+																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		fill={entry.color}
+																	/>
+																))}
+															</Bar>
+														</BarChart>
+													</ResponsiveContainer>
+												</div>
+											</div>
+										);
+									})()}
+
+								{/* Last Scan Age - OpenSCAP only */}
+								{scan_age_distribution &&
+									(() => {
+										const chartData = [
+											{
+												name: "Today",
+												count: scan_age_distribution.today?.openscap || 0,
+												color: "#22c55e",
+											},
+											{
+												name: "This Week",
+												count: scan_age_distribution.this_week?.openscap || 0,
+												color: "#84cc16",
+											},
+											{
+												name: "This Month",
+												count: scan_age_distribution.this_month?.openscap || 0,
+												color: "#eab308",
+											},
+											{
+												name: "Older",
+												count: scan_age_distribution.older?.openscap || 0,
+												color: "#ef4444",
+											},
+										].filter((d) => d.count > 0);
+										const totalScans = chartData.reduce(
+											(sum, d) => sum + d.count,
+											0,
+										);
+
+										if (totalScans === 0) return null;
+
+										return (
+											<div className="card p-4 border border-green-700/50">
+												<h3 className="text-white font-medium mb-1 flex items-center gap-2">
+													<Clock className="h-4 w-4 text-green-400" />
+													Scan Freshness
+												</h3>
+												<p className="text-xs text-secondary-500 mb-3">
+													{totalScans} OpenSCAP scans
+												</p>
+												<div className="h-40">
+													<ResponsiveContainer width="100%" height="100%">
+														<BarChart data={chartData} layout="vertical">
+															<XAxis
+																type="number"
+																stroke="#6b7280"
+																fontSize={12}
+															/>
+															<YAxis
+																type="category"
+																dataKey="name"
+																stroke="#6b7280"
+																fontSize={11}
+																width={80}
+															/>
+															<Tooltip
+																content={<CustomTooltip type="scanAge" />}
+															/>
+															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+																{chartData.map((entry, index) => (
+																	<Cell
+																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		fill={entry.color}
+																	/>
+																))}
+															</Bar>
+														</BarChart>
+													</ResponsiveContainer>
+												</div>
+											</div>
+										);
+									})()}
+							</div>
+						</>
+					)}
+
+					{/* ==================== Docker Bench Tab Analysis ==================== */}
+					{profileTypeFilter === "docker-bench" && filteredSummary && (
+						<>
+							<div className="flex items-center gap-3 pt-4">
+								<div className="flex items-center gap-2">
+									<PieChartIcon className="h-5 w-5 text-blue-400" />
+									<h2 className="text-lg font-semibold text-white">
+										Docker Bench Analysis
+									</h2>
 								</div>
+								<div className="flex-1 h-px bg-blue-700/50" />
 							</div>
-							<span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 text-sm font-bold rounded-full border border-yellow-500/30">
-								{
-									filteredTopWarningRules.filter(
-										(r) =>
-											r.profile_type === "docker-bench" ||
-											profileTypeFilter === "docker-bench",
-									).length
-								}{" "}
-								rules
-							</span>
-						</div>
-						<div className="divide-y divide-secondary-700">
-							{filteredTopWarningRules
-								.filter(
-									(r) =>
-										r.profile_type === "docker-bench" ||
-										profileTypeFilter === "docker-bench",
-								)
-								.map((rule) => {
-									return (
-										<div
-											key={rule.rule_id}
-											className="flex items-center justify-between px-4 py-3 hover:bg-secondary-700/30 transition-colors"
-										>
-											<div className="flex-1 min-w-0">
-												<p className="text-white font-medium truncate">
-													{rule.title}
-												</p>
-												<p className="text-sm text-secondary-400 truncate">
-													{rule.rule_id}
-												</p>
-											</div>
-											<div className="flex items-center gap-3 ml-4">
-												<span className="px-2 py-0.5 rounded text-xs font-medium border bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
-													warning
-												</span>
-												<span className="text-yellow-400 font-bold whitespace-nowrap">
-													{rule.warn_count}{" "}
-													{rule.warn_count === 1 ? "host" : "hosts"}
-												</span>
-											</div>
-										</div>
-									);
-								})}
-						</div>
-					</div>
-				)}
 
-			{/* ==================== ACTIVITY SECTION ==================== */}
-			<div className="flex items-center gap-3 pt-4">
-				<div className="flex items-center gap-2">
-					<Clock className="h-5 w-5 text-primary-400" />
-					<h2 className="text-lg font-semibold text-white">Activity</h2>
-				</div>
-				<div className="flex-1 h-px bg-secondary-700" />
-			</div>
-
-			<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-				{/* Recent Scans */}
-				<div className="bg-secondary-800 rounded-lg border border-secondary-700">
-					<div className="px-4 py-3 border-b border-secondary-700">
-						<h2 className="text-lg font-semibold text-white flex items-center gap-2">
-							{profileTypeFilter === "openscap" ? (
-								<Server className="h-5 w-5 text-green-400" />
-							) : profileTypeFilter === "docker-bench" ? (
-								<Container className="h-5 w-5 text-blue-400" />
-							) : (
-								<Clock className="h-5 w-5 text-secondary-400" />
-							)}
-							Recent Scans - {getFilterDisplayName()}
-						</h2>
-					</div>
-					<div className="divide-y divide-secondary-700">
-						{filteredScans?.map((scan) => {
-							const isDockerBench =
-								scan.compliance_profiles?.type === "docker-bench";
-							return (
-								<Link
-									key={scan.id}
-									to={`/hosts/${scan.host?.id}`}
-									className="flex items-center justify-between px-4 py-3 hover:bg-secondary-700/50 transition-colors"
-								>
-									<div className="flex items-center gap-3">
-										<div className="flex flex-col items-center">
-											{isDockerBench ? (
-												<Container className="h-4 w-4 text-blue-400 flex-shrink-0" />
-											) : (
-												<Server className="h-4 w-4 text-green-400 flex-shrink-0" />
-											)}
+							<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+								{/* Rule Pass/Warn Breakdown */}
+								{dockerBenchStats && (
+									<div className="card p-4 border border-blue-700/50">
+										<h3 className="text-white font-medium mb-1 flex items-center gap-2">
+											<CheckCircle className="h-4 w-4 text-blue-400" />
+											Rule Results
+										</h3>
+										<p className="text-xs text-secondary-500 mb-3">
+											{(
+												dockerBenchStats.total_passed +
+												dockerBenchStats.total_warnings
+											).toLocaleString()}{" "}
+											rules evaluated
+										</p>
+										<div className="h-40">
+											<ResponsiveContainer width="100%" height="100%">
+												<PieChart>
+													<Pie
+														data={[
+															{
+																name: "Passed",
+																value: dockerBenchStats.total_passed || 0,
+																color: "#22c55e",
+															},
+															{
+																name: "Warnings",
+																value: dockerBenchStats.total_warnings || 0,
+																color: "#eab308",
+															},
+														].filter((d) => d.value > 0)}
+														cx="50%"
+														cy="50%"
+														innerRadius={35}
+														outerRadius={60}
+														dataKey="value"
+														label={({ value }) => `${value.toLocaleString()}`}
+														labelLine={false}
+													>
+														<Cell fill="#22c55e" />
+														<Cell fill="#eab308" />
+													</Pie>
+													<Tooltip
+														content={<CustomTooltip type="ruleStatus" />}
+													/>
+												</PieChart>
+											</ResponsiveContainer>
 										</div>
-										<div>
-											<p className="text-white font-medium">
-												{scan.host?.friendly_name || scan.host?.hostname}
-											</p>
+										<div className="flex justify-center gap-6 mt-2 text-sm">
 											<div className="flex items-center gap-2">
-												<span
-													className={`px-1.5 py-0.5 text-xs rounded ${
-														isDockerBench
-															? "bg-blue-900/30 text-blue-400"
-															: "bg-green-900/30 text-green-400"
-													}`}
-												>
-													{isDockerBench ? "Docker" : "OpenSCAP"}
-												</span>
-												<span className="text-sm text-secondary-400">
-													{scan.profile?.name}
+												<div className="w-3 h-3 rounded-full bg-green-500" />
+												<span className="text-green-400">
+													Passed:{" "}
+													{dockerBenchStats.total_passed?.toLocaleString()}
 												</span>
 											</div>
-										</div>
-									</div>
-									<div className="flex items-center gap-3">
-										<ComplianceScore score={scan.score} size="sm" />
-										<span className="text-xs text-secondary-500">
-											{new Date(scan.completed_at).toLocaleDateString()}
-										</span>
-									</div>
-								</Link>
-							);
-						})}
-						{(!filteredScans || filteredScans.length === 0) && (
-							<div className="px-4 py-8 text-center text-secondary-400">
-								No {getFilterDisplayName()} scans found
-							</div>
-						)}
-					</div>
-				</div>
-
-				{/* Worst Performing Hosts */}
-				<div className="bg-secondary-800 rounded-lg border border-secondary-700">
-					<div className="px-4 py-3 border-b border-secondary-700">
-						<h2 className="text-lg font-semibold text-white flex items-center gap-2">
-							{profileTypeFilter === "openscap" ? (
-								<Server className="h-5 w-5 text-green-400" />
-							) : profileTypeFilter === "docker-bench" ? (
-								<Container className="h-5 w-5 text-blue-400" />
-							) : (
-								<TrendingDown className="h-5 w-5 text-red-400" />
-							)}
-							Needs Attention - {getFilterDisplayName()}
-						</h2>
-					</div>
-					<div className="divide-y divide-secondary-700">
-						{filteredWorstHosts?.map((scan) => {
-							const isDockerBench =
-								scan.compliance_profiles?.type === "docker-bench";
-							return (
-								<Link
-									key={scan.id}
-									to={`/hosts/${scan.host?.id}`}
-									className="flex items-center justify-between px-4 py-3 hover:bg-secondary-700/50 transition-colors"
-								>
-									<div className="flex items-center gap-3">
-										{isDockerBench ? (
-											<Container className="h-4 w-4 text-blue-400 flex-shrink-0" />
-										) : (
-											<Server className="h-4 w-4 text-green-400 flex-shrink-0" />
-										)}
-										<div>
-											<p className="text-white font-medium">
-												{scan.host?.friendly_name || scan.host?.hostname}
-											</p>
 											<div className="flex items-center gap-2">
-												<span
-													className={`px-1.5 py-0.5 text-xs rounded ${
-														isDockerBench
-															? "bg-blue-900/30 text-blue-400"
-															: "bg-green-900/30 text-green-400"
-													}`}
-												>
-													{isDockerBench ? "Docker" : "OpenSCAP"}
-												</span>
-												<span className="text-sm text-secondary-400">
-													{scan.profile?.name}
+												<div className="w-3 h-3 rounded-full bg-yellow-500" />
+												<span className="text-yellow-400">
+													Warnings:{" "}
+													{dockerBenchStats.total_warnings?.toLocaleString()}
 												</span>
 											</div>
 										</div>
 									</div>
-									<ComplianceScore score={scan.score} size="sm" />
-								</Link>
-							);
-						})}
-						{(!filteredWorstHosts || filteredWorstHosts.length === 0) && (
-							<div className="px-4 py-8 text-center text-secondary-400">
-								No {getFilterDisplayName()} hosts with low scores
+								)}
+
+								{/* Warnings by Section */}
+								{docker_bench_by_section &&
+									docker_bench_by_section.length > 0 &&
+									(() => {
+										const totalWarnings = docker_bench_by_section.reduce(
+											(sum, s) => sum + s.count,
+											0,
+										);
+										const sectionColors = {
+											"Host Configuration": "#ef4444",
+											"Docker Daemon Configuration": "#f97316",
+											"Docker Daemon Configuration Files": "#eab308",
+											"Container Images and Build File": "#84cc16",
+											"Container Runtime": "#22c55e",
+											"Docker Security Operations": "#3b82f6",
+											"Docker Swarm Configuration": "#8b5cf6",
+										};
+										const chartData = docker_bench_by_section.map((s) => ({
+											name: s.section,
+											shortName:
+												s.section.length > 20
+													? `${s.section.slice(0, 17)}...`
+													: s.section,
+											count: s.count,
+											color: sectionColors[s.section] || "#6b7280",
+										}));
+
+										return (
+											<div className="card p-4 border border-blue-700/50">
+												<h3 className="text-white font-medium mb-1 flex items-center gap-2">
+													<Container className="h-4 w-4 text-yellow-400" />
+													Warnings by Section
+												</h3>
+												<p className="text-xs text-secondary-500 mb-3">
+													{totalWarnings.toLocaleString()} total warnings
+												</p>
+												<div className="h-40">
+													<ResponsiveContainer width="100%" height="100%">
+														<BarChart data={chartData} layout="vertical">
+															<XAxis
+																type="number"
+																stroke="#6b7280"
+																fontSize={12}
+															/>
+															<YAxis
+																type="category"
+																dataKey="shortName"
+																stroke="#6b7280"
+																fontSize={10}
+																width={85}
+															/>
+															<Tooltip
+																content={({ active, payload }) => {
+																	if (
+																		!active ||
+																		!payload ||
+																		payload.length === 0
+																	)
+																		return null;
+																	const data = payload[0].payload;
+																	return (
+																		<div className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 shadow-lg max-w-xs">
+																			<p className="text-white font-medium text-sm mb-1">
+																				{data.name}
+																			</p>
+																			<div className="flex items-center gap-2 text-sm">
+																				<div
+																					className="w-2.5 h-2.5 rounded"
+																					style={{
+																						backgroundColor: data.color,
+																					}}
+																				/>
+																				<span className="text-gray-300">
+																					Warnings:
+																				</span>
+																				<span className="text-white font-medium">
+																					{data.count.toLocaleString()}
+																				</span>
+																			</div>
+																		</div>
+																	);
+																}}
+															/>
+															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+																{chartData.map((entry, index) => (
+																	<Cell
+																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		fill={entry.color}
+																	/>
+																))}
+															</Bar>
+														</BarChart>
+													</ResponsiveContainer>
+												</div>
+											</div>
+										);
+									})()}
+
+								{/* Score Distribution */}
+								{filteredScans &&
+									filteredScans.length > 0 &&
+									(() => {
+										const scoreRanges = [
+											{
+												range: "90-100%",
+												count: filteredScans.filter((s) => s.score >= 90)
+													.length,
+												color: "#22c55e",
+											},
+											{
+												range: "80-89%",
+												count: filteredScans.filter(
+													(s) => s.score >= 80 && s.score < 90,
+												).length,
+												color: "#84cc16",
+											},
+											{
+												range: "70-79%",
+												count: filteredScans.filter(
+													(s) => s.score >= 70 && s.score < 80,
+												).length,
+												color: "#eab308",
+											},
+											{
+												range: "60-69%",
+												count: filteredScans.filter(
+													(s) => s.score >= 60 && s.score < 70,
+												).length,
+												color: "#f97316",
+											},
+											{
+												range: "<60%",
+												count: filteredScans.filter((s) => s.score < 60).length,
+												color: "#ef4444",
+											},
+										];
+										return (
+											<div className="card p-4 border border-blue-700/50">
+												<h3 className="text-white font-medium mb-1 flex items-center gap-2">
+													<BarChart3 className="h-4 w-4 text-blue-400" />
+													Score Distribution
+												</h3>
+												<p className="text-xs text-secondary-500 mb-3">
+													{filteredScans.length} scans
+												</p>
+												<div className="h-40">
+													<ResponsiveContainer width="100%" height="100%">
+														<BarChart data={scoreRanges} layout="vertical">
+															<XAxis
+																type="number"
+																stroke="#6b7280"
+																fontSize={12}
+															/>
+															<YAxis
+																type="category"
+																dataKey="range"
+																stroke="#6b7280"
+																fontSize={12}
+																width={60}
+															/>
+															<Tooltip
+																content={<CustomTooltip type="scoreRange" />}
+															/>
+															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+																{scoreRanges.map((entry, index) => (
+																	<Cell
+																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		fill={entry.color}
+																	/>
+																))}
+															</Bar>
+														</BarChart>
+													</ResponsiveContainer>
+												</div>
+											</div>
+										);
+									})()}
+
+								{/* Last Scan Age - Docker Bench only */}
+								{scan_age_distribution &&
+									(() => {
+										const chartData = [
+											{
+												name: "Today",
+												count:
+													scan_age_distribution.today?.["docker-bench"] || 0,
+												color: "#22c55e",
+											},
+											{
+												name: "This Week",
+												count:
+													scan_age_distribution.this_week?.["docker-bench"] ||
+													0,
+												color: "#84cc16",
+											},
+											{
+												name: "This Month",
+												count:
+													scan_age_distribution.this_month?.["docker-bench"] ||
+													0,
+												color: "#eab308",
+											},
+											{
+												name: "Older",
+												count:
+													scan_age_distribution.older?.["docker-bench"] || 0,
+												color: "#ef4444",
+											},
+										].filter((d) => d.count > 0);
+										const totalScans = chartData.reduce(
+											(sum, d) => sum + d.count,
+											0,
+										);
+
+										if (totalScans === 0) return null;
+
+										return (
+											<div className="card p-4 border border-blue-700/50">
+												<h3 className="text-white font-medium mb-1 flex items-center gap-2">
+													<Clock className="h-4 w-4 text-blue-400" />
+													Scan Freshness
+												</h3>
+												<p className="text-xs text-secondary-500 mb-3">
+													{totalScans} Docker Bench scans
+												</p>
+												<div className="h-40">
+													<ResponsiveContainer width="100%" height="100%">
+														<BarChart data={chartData} layout="vertical">
+															<XAxis
+																type="number"
+																stroke="#6b7280"
+																fontSize={12}
+															/>
+															<YAxis
+																type="category"
+																dataKey="name"
+																stroke="#6b7280"
+																fontSize={11}
+																width={80}
+															/>
+															<Tooltip
+																content={<CustomTooltip type="scanAge" />}
+															/>
+															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
+																{chartData.map((entry, index) => (
+																	<Cell
+																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		fill={entry.color}
+																	/>
+																))}
+															</Bar>
+														</BarChart>
+													</ResponsiveContainer>
+												</div>
+											</div>
+										);
+									})()}
 							</div>
-						)}
-					</div>
-				</div>
-			</div>
+						</>
+					)}
+				</>
+			)}
+
+			{/* ==================== SCAN RESULTS TAB ==================== */}
+			{activeTab === "scan-results" && (
+				<ScanResultsTab profileTypeFilter={profileTypeFilter} />
+			)}
 		</div>
 	);
 };
