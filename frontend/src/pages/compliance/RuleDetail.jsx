@@ -3,8 +3,9 @@ import {
 	AlertTriangle,
 	ArrowLeft,
 	BookOpen,
+	Check,
 	CheckCircle,
-	ExternalLink,
+	Copy,
 	Info,
 	RefreshCw,
 	Shield,
@@ -15,7 +16,7 @@ import {
 	Wrench,
 	XCircle,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { complianceAPI } from "../../utils/complianceApi";
 
@@ -69,8 +70,55 @@ const STATUS_CONFIG = {
 	},
 };
 
+function fallback_copy(text, on_success) {
+	const textarea = document.createElement("textarea");
+	textarea.value = text;
+	textarea.style.position = "fixed";
+	textarea.style.left = "-9999px";
+	textarea.style.top = "0";
+	document.body.appendChild(textarea);
+	textarea.focus();
+	textarea.select();
+	try {
+		const ok = document.execCommand("copy");
+		if (ok) on_success();
+	} finally {
+		document.body.removeChild(textarea);
+	}
+}
+
+function get_what_fix_does(remediation, title) {
+	if (!remediation?.trim()) return null;
+	const r = remediation.trim();
+	const t = (title || "").toLowerCase();
+	if (r.includes("sysctl") || r.includes("/proc/sys"))
+		return "This fix will modify kernel parameters to enable the required security setting. Changes are applied immediately and persist across reboots.";
+	if (r.includes("chmod") || r.includes("chown"))
+		return "This fix will update file permissions or ownership to meet the required security standard. This restricts unauthorized access to sensitive files.";
+	if (r.includes("apt") || r.includes("yum") || r.includes("dnf"))
+		return "This fix will install, update, or remove packages as needed to meet the security requirement.";
+	if (r.includes("systemctl") || r.includes("service"))
+		return "This fix will enable, disable, or configure a system service to meet the security requirement.";
+	if (r.includes("/etc/ssh"))
+		return "This fix will update SSH daemon configuration to harden remote access security.";
+	if (r.includes("audit") || r.includes("auditd"))
+		return "This fix will configure audit logging to track security-relevant system events.";
+	if (r.includes("pam") || r.includes("/etc/pam"))
+		return "This fix will configure authentication modules to enforce stronger access controls.";
+	if (t.includes("password"))
+		return "This fix will update password policy settings to require stronger passwords or enforce better credential management.";
+	if (
+		t.includes("firewall") ||
+		r.includes("iptables") ||
+		r.includes("nftables")
+	)
+		return "This fix will configure firewall rules to restrict network access and improve security.";
+	return "This fix will apply the recommended configuration change to bring your system into compliance with the security benchmark.";
+}
+
 export default function RuleDetail() {
 	const { id: ruleId } = useParams();
+	const [remediation_copied, set_remediation_copied] = useState(false);
 	const { data, isLoading, isError, error, refetch } = useQuery({
 		queryKey: ["compliance-rule-detail", ruleId],
 		queryFn: () => complianceAPI.getRuleDetail(ruleId),
@@ -104,6 +152,28 @@ export default function RuleDetail() {
 	}
 
 	const { rule, affected_hosts = [] } = data;
+
+	const copy_remediation = () => {
+		if (!rule.remediation) return;
+		const text = rule.remediation;
+
+		const do_feedback = () => {
+			set_remediation_copied(true);
+			setTimeout(() => set_remediation_copied(false), 2000);
+		};
+
+		if (navigator.clipboard?.writeText) {
+			navigator.clipboard
+				.writeText(text)
+				.then(do_feedback)
+				.catch(() => {
+					fallback_copy(text, do_feedback);
+				});
+		} else {
+			fallback_copy(text, do_feedback);
+		}
+	};
+
 	const counts = affected_hosts.reduce((acc, h) => {
 		acc[h.status] = (acc[h.status] || 0) + 1;
 		return acc;
@@ -225,245 +295,177 @@ export default function RuleDetail() {
 				</div>
 			</div>
 
-			{/* Rule Details */}
-			<div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-				{/* Left column - Details */}
-				<div className="lg:col-span-2 space-y-4">
+			{/* Rule Details: Description (left 1/2) + Remediation (right 1/2), Why under Description */}
+			<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+				{/* Left 1/2: Description then Why this failed (Rationale) */}
+				<div className="space-y-4">
 					{/* Description */}
-					{rule.description && (
-						<div className="card p-5">
-							<div className="flex items-center gap-2 mb-3">
-								<BookOpen className="h-4 w-4 text-primary-400" />
-								<h2 className="text-sm font-semibold text-secondary-900 dark:text-white">
-									Description
-								</h2>
-							</div>
-							<p className="text-sm text-secondary-600 dark:text-secondary-300 whitespace-pre-wrap leading-relaxed">
-								{rule.description}
-							</p>
+					<div className="card p-5">
+						<div className="flex items-center gap-2 mb-3">
+							<BookOpen className="h-4 w-4 text-primary-400" />
+							<h2 className="text-sm font-semibold text-secondary-900 dark:text-white">
+								Description
+							</h2>
 						</div>
-					)}
+						<p className="text-sm text-secondary-600 dark:text-secondary-300 whitespace-pre-wrap leading-relaxed">
+							{rule.description || "—"}
+						</p>
+					</div>
 
-					{/* Rationale */}
-					{rule.rationale && (
-						<div className="card p-5">
-							<div className="flex items-center gap-2 mb-3">
-								<Info className="h-4 w-4 text-blue-400" />
-								<h2 className="text-sm font-semibold text-secondary-900 dark:text-white">
-									Rationale
-								</h2>
-							</div>
-							<p className="text-sm text-secondary-600 dark:text-secondary-300 whitespace-pre-wrap leading-relaxed">
-								{rule.rationale}
-							</p>
+					{/* Why this failed / Rationale - under Description */}
+					<div className="card p-5">
+						<div className="flex items-center gap-2 mb-3">
+							<Info className="h-4 w-4 text-blue-400" />
+							<h2 className="text-sm font-semibold text-secondary-900 dark:text-white">
+								Why this failed
+							</h2>
 						</div>
-					)}
+						<p className="text-sm text-secondary-600 dark:text-secondary-300 whitespace-pre-wrap leading-relaxed">
+							{rule.rationale || "No rationale provided."}
+						</p>
+					</div>
+				</div>
 
-					{/* Remediation - render as markdown (CIS/OpenSCAP often use headers, lists, code blocks) */}
-					{rule.remediation && (
-						<div className="card p-5">
-							<div className="flex items-center gap-2 mb-3">
+				{/* Right 1/2: What the fix does + Remediation */}
+				<div className="space-y-4">
+					{/* What the fix does - plain-language explanation */}
+					{(() => {
+						const what_fix = get_what_fix_does(rule.remediation, rule.title);
+						return what_fix ? (
+							<div className="card p-5 bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800/50">
+								<div className="flex items-center gap-2 mb-2">
+									<Wrench className="h-4 w-4 text-amber-500 dark:text-amber-400" />
+									<h2 className="text-sm font-semibold text-secondary-900 dark:text-white">
+										What the fix does
+									</h2>
+								</div>
+								<p className="text-sm text-secondary-700 dark:text-secondary-300 leading-relaxed">
+									{what_fix}
+								</p>
+							</div>
+						) : null;
+					})()}
+					{/* Remediation script */}
+					<div className="card p-5">
+						<div className="flex items-center justify-between gap-2 mb-3">
+							<div className="flex items-center gap-2">
 								<Wrench className="h-4 w-4 text-amber-400" />
 								<h2 className="text-sm font-semibold text-secondary-900 dark:text-white">
 									Remediation
 								</h2>
 							</div>
-							<div className="remediation-markdown text-sm text-secondary-600 dark:text-secondary-300 leading-relaxed">
-								<ReactMarkdown
-									components={{
-										p: ({ node, ...props }) => (
-											<p className="mb-2 last:mb-0" {...props} />
-										),
-										ul: ({ node, ...props }) => (
-											<ul
-												className="list-disc list-inside mb-2 ml-2 space-y-1"
-												{...props}
-											/>
-										),
-										ol: ({ node, ...props }) => (
-											<ol
-												className="list-decimal list-inside mb-2 ml-2 space-y-1"
-												{...props}
-											/>
-										),
-										li: ({ node, ...props }) => (
-											<li className="ml-1" {...props} />
-										),
-										strong: ({ node, ...props }) => (
-											<strong
-												className="font-semibold text-secondary-900 dark:text-white"
-												{...props}
-											/>
-										),
-										code: ({ node, className, ...props }) => {
-											const is_block = className?.startsWith("language-");
-											return is_block ? (
-												<code
-													className="block bg-secondary-100 dark:bg-secondary-700 rounded-lg p-3 font-mono text-xs overflow-x-auto whitespace-pre"
-													{...props}
-												/>
-											) : (
-												<code
-													className="bg-secondary-100 dark:bg-secondary-700 px-1 py-0.5 rounded font-mono text-xs"
-													{...props}
-												/>
-											);
-										},
-										pre: ({ node, ...props }) => (
-											<div
-												className="my-2 overflow-x-auto rounded-lg"
-												{...props}
-											/>
-										),
-										h1: ({ node, ...props }) => (
-											<h1
-												className="text-base font-semibold text-secondary-900 dark:text-white mt-3 mb-1 first:mt-0"
-												{...props}
-											/>
-										),
-										h2: ({ node, ...props }) => (
-											<h2
-												className="text-sm font-semibold text-secondary-900 dark:text-white mt-3 mb-1 first:mt-0"
-												{...props}
-											/>
-										),
-										h3: ({ node, ...props }) => (
-											<h3
-												className="text-sm font-medium text-secondary-900 dark:text-white mt-2 mb-1"
-												{...props}
-											/>
-										),
-									}}
+							{rule.remediation && (
+								<button
+									type="button"
+									onClick={copy_remediation}
+									className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-secondary-100 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 hover:bg-secondary-200 dark:hover:bg-secondary-600 border border-secondary-200 dark:border-secondary-600 transition-colors"
 								>
-									{rule.remediation}
-								</ReactMarkdown>
-							</div>
+									{remediation_copied ? (
+										<>
+											<Check className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
+											Copied
+										</>
+									) : (
+										<>
+											<Copy className="h-3.5 w-3.5" />
+											Copy
+										</>
+									)}
+								</button>
+							)}
 						</div>
-					)}
-				</div>
-
-				{/* Right column - Affected Hosts */}
-				<div>
-					<div className="card overflow-hidden">
-						<div className="px-4 py-3 border-b border-secondary-200 dark:border-secondary-700">
-							<h2 className="text-sm font-semibold text-secondary-900 dark:text-white">
-								Affected Hosts ({affected_hosts.length})
-							</h2>
-						</div>
-						{affected_hosts.length === 0 ? (
-							<div className="p-6 text-center text-secondary-400 text-sm">
-								No hosts have been scanned with this rule yet
-							</div>
+						{rule.remediation ? (
+							<pre className="text-xs font-mono text-secondary-700 dark:text-secondary-300 bg-secondary-100 dark:bg-secondary-700/50 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 overflow-x-auto whitespace-pre-wrap leading-relaxed">
+								{rule.remediation}
+							</pre>
 						) : (
-							<div className="divide-y divide-secondary-200 dark:divide-secondary-700">
+							<p className="text-sm text-secondary-500 dark:text-secondary-400">
+								No remediation steps available.
+							</p>
+						)}
+					</div>
+				</div>
+			</div>
+
+			{/* Affected Hosts table - same design as Hosts page */}
+			<div className="card p-4 md:p-6 overflow-hidden">
+				<h2 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+					Hosts this rule affects ({affected_hosts.length})
+				</h2>
+				{affected_hosts.length === 0 ? (
+					<div className="py-8 text-center text-secondary-500 dark:text-secondary-400 text-sm">
+						No hosts have been scanned with this rule yet
+					</div>
+				) : (
+					<div className="overflow-x-auto">
+						<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+							<thead className="bg-secondary-50 dark:bg-secondary-700">
+								<tr>
+									<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider whitespace-nowrap">
+										Host
+									</th>
+									<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider whitespace-nowrap w-24">
+										Status
+									</th>
+									<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 whitespace-nowrap">
+										Why (this host)
+									</th>
+								</tr>
+							</thead>
+							<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600 text-sm">
 								{affected_hosts.map((host) => {
 									const config =
 										STATUS_CONFIG[host.status] || STATUS_CONFIG.skip;
 									const StatusIcon = config.icon;
-									const is_fail_or_warn =
-										host.status === "fail" || host.status === "warn";
-									const has_why_info =
+									const why_text =
 										host.finding ||
-										host.actual ||
-										(rule.description && rule.description.length > 10);
-									const show_why = is_fail_or_warn && has_why_info;
-
+										(host.actual
+											? `Current: ${host.actual}${host.expected ? ` → Required: ${host.expected}` : ""}`
+											: null);
 									return (
-										<div
+										<tr
 											key={host.host_id}
-											className="px-4 py-3 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
+											className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
 										>
-											<Link
-												to={`/compliance/hosts/${host.host_id}`}
-												className="flex items-center justify-between gap-2"
-											>
-												<div className="flex items-center gap-3 min-w-0">
-													<StatusIcon
-														className={`h-4 w-4 shrink-0 ${config.color}`}
-													/>
-													<div className="min-w-0">
-														<p className="text-sm font-medium text-secondary-900 dark:text-white truncate">
-															{host.friendly_name || host.hostname || "Host"}
-														</p>
-														{host.hostname &&
-															host.friendly_name &&
-															host.hostname !== host.friendly_name && (
-																<p className="text-xs text-secondary-500 dark:text-secondary-400 truncate">
-																	{host.hostname}
-																</p>
-															)}
-													</div>
-												</div>
-												<span
-													className={`shrink-0 px-2 py-0.5 rounded text-xs font-medium ${config.bg} ${config.color}`}
+											<td className="px-4 py-2 whitespace-nowrap">
+												<Link
+													to={`/compliance/hosts/${host.host_id}`}
+													className="text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 hover:underline font-medium"
 												>
+													{host.friendly_name || host.hostname || "Host"}
+												</Link>
+												{host.hostname &&
+													host.friendly_name &&
+													host.hostname !== host.friendly_name && (
+														<p className="text-xs text-secondary-500 dark:text-secondary-400 truncate">
+															{host.hostname}
+														</p>
+													)}
+											</td>
+											<td className="px-4 py-2 whitespace-nowrap">
+												<span
+													className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium ${config.bg} ${config.color}`}
+												>
+													<StatusIcon className="h-3.5 w-3.5" />
 													{config.label}
 												</span>
-												<ExternalLink className="h-3.5 w-3.5 shrink-0 text-secondary-400" />
-											</Link>
-											{show_why && (
-												<div
-													className={`mt-2 pt-2 border-t border-secondary-200 dark:border-secondary-600 text-xs ${
-														host.status === "warn"
-															? "text-yellow-700 dark:text-yellow-300/90"
-															: "text-red-700 dark:text-red-300/90"
-													}`}
-												>
-													<p className="font-medium mb-1">
-														{host.status === "warn"
-															? "Why this warning"
-															: "Why this failed"}
-													</p>
-													<div className="space-y-2">
-														{host.finding && (
-															<p className="leading-relaxed">{host.finding}</p>
-														)}
-														{!host.finding && host.actual && (
-															<>
-																<p>The check found a non-compliant value:</p>
-																<div className="mt-1.5 grid grid-cols-1 gap-1.5">
-																	<div className="bg-red-100 dark:bg-red-900/30 rounded p-2">
-																		<span className="text-red-700 dark:text-red-300 text-xs font-medium">
-																			Current:
-																		</span>
-																		<code className="block mt-0.5 text-red-800 dark:text-red-200 break-all font-mono">
-																			{host.actual}
-																		</code>
-																	</div>
-																	{host.expected && (
-																		<div className="bg-green-100 dark:bg-green-900/30 rounded p-2">
-																			<span className="text-green-700 dark:text-green-300 text-xs font-medium">
-																				Required:
-																			</span>
-																			<code className="block mt-0.5 text-green-800 dark:text-green-200 break-all font-mono">
-																				{host.expected}
-																			</code>
-																		</div>
-																	)}
-																</div>
-															</>
-														)}
-														{!host.finding &&
-															!host.actual &&
-															rule.description && (
-																<p className="leading-relaxed">
-																	{rule.description
-																		.replace(/\s+/g, " ")
-																		.trim()
-																		.substring(0, 300)}
-																	{rule.description.length > 300 ? "…" : ""}
-																</p>
-															)}
-													</div>
-												</div>
-											)}
-										</div>
+											</td>
+											<td className="px-4 py-2 text-secondary-600 dark:text-secondary-400 max-w-md">
+												{why_text ? (
+													<span className="line-clamp-2 text-xs">
+														{why_text}
+													</span>
+												) : (
+													<span className="text-secondary-400">—</span>
+												)}
+											</td>
+										</tr>
 									);
 								})}
-							</div>
-						)}
+							</tbody>
+						</table>
 					</div>
-				</div>
+				)}
 			</div>
 		</div>
 	);

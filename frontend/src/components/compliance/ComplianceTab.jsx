@@ -452,8 +452,10 @@ const ComplianceTab = ({
 	]);
 
 	// SSE connection for real-time compliance scan progress.
-	// Effect depends only on scanInProgress and apiId so we open one connection per scan;
-	// refetch/setters are read via refs to avoid re-running effect on every render (which caused connect/disconnect storms).
+	// Effect MUST depend only on scanInProgress and apiId. Including setScanInProgress/setScanMessage
+	// (wrapper functions recreated each render) caused the effect to re-run every render → new
+	// EventSource and cleanup of the previous one → connect/disconnect storm on the server.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: wrapper setters are recreated each render and would cause SSE connect/disconnect storms
 	useEffect(() => {
 		if (!scanInProgress || !apiId) {
 			setScanProgress(null);
@@ -515,14 +517,7 @@ const ComplianceTab = ({
 		return () => {
 			eventSource.close();
 		};
-	}, [
-		scanInProgress,
-		apiId,
-		// biome-ignore lint/correctness/useExhaustiveDependencies: wrapper functions are stable within this component
-		setScanInProgress,
-		// biome-ignore lint/correctness/useExhaustiveDependencies: wrapper functions are stable within this component
-		setScanMessage,
-	]);
+	}, [scanInProgress, apiId]);
 
 	const triggerScan = useMutation({
 		mutationFn: (options) => complianceAPI.triggerScan(hostId, options),
@@ -2404,6 +2399,207 @@ const ComplianceTab = ({
 																					</p>
 																				</div>
 																			)}
+																			{/* Why this failed / Why this warning - same as flat view */}
+																			{(result.status === "fail" ||
+																				result.status === "warn") && (
+																				<div
+																					className={`${result.status === "warn" ? "bg-yellow-900/20 border-yellow-800/50" : "bg-red-900/20 border-red-800/50"} border rounded-lg p-3`}
+																				>
+																					<p
+																						className={`${result.status === "warn" ? "text-yellow-400" : "text-red-400"} font-medium mb-2 flex items-center gap-1`}
+																					>
+																						<XCircle className="h-3.5 w-3.5" />
+																						{result.status === "warn"
+																							? "Why This Warning"
+																							: "Why This Failed"}
+																					</p>
+																					<div
+																						className={`${result.status === "warn" ? "text-yellow-200/90" : "text-red-200/90"} text-sm space-y-2`}
+																					>
+																						{result.finding ? (
+																							<p>{result.finding}</p>
+																						) : result.actual ? (
+																							<>
+																								<p>
+																									The check found a
+																									non-compliant value:
+																								</p>
+																								<div className="mt-2 grid grid-cols-1 gap-2">
+																									<div className="bg-red-800/30 rounded p-2">
+																										<span className="text-red-300 text-xs font-medium">
+																											Current setting:
+																										</span>
+																										<code className="block mt-1 text-red-200 break-all">
+																											{result.actual}
+																										</code>
+																									</div>
+																									{result.expected && (
+																										<div className="bg-green-800/30 rounded p-2">
+																											<span className="text-green-300 text-xs font-medium">
+																												Required setting:
+																											</span>
+																											<code className="block mt-1 text-green-200 break-all">
+																												{result.expected}
+																											</code>
+																										</div>
+																									)}
+																								</div>
+																							</>
+																						) : (
+																							<p className="text-secondary-300">
+																								{result.compliance_rules
+																									?.rationale ||
+																									result.rule?.rationale ||
+																									result.rationale ||
+																									result.compliance_rules
+																										?.description ||
+																									result.rule?.description ||
+																									result.description ||
+																									"The system does not meet this requirement. See remediation below."}
+																							</p>
+																						)}
+																					</div>
+																				</div>
+																			)}
+																			{(result.compliance_rules?.rationale ||
+																				result.rule?.rationale ||
+																				result.rationale) && (
+																				<div>
+																					<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+																						<BookOpen className="h-3.5 w-3.5" />
+																						Why This Matters
+																					</p>
+																					<p className="text-secondary-300 text-sm leading-relaxed">
+																						{result.compliance_rules
+																							?.rationale ||
+																							result.rule?.rationale ||
+																							result.rationale}
+																					</p>
+																				</div>
+																			)}
+																			{(result.actual || result.expected) && (
+																				<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+																					{result.actual && (
+																						<div className="bg-secondary-700/50 rounded p-2">
+																							<p className="text-secondary-400 text-xs font-medium mb-1">
+																								Current Value
+																							</p>
+																							<code className="text-red-300 text-xs break-all">
+																								{result.actual}
+																							</code>
+																						</div>
+																					)}
+																					{result.expected && (
+																						<div className="bg-secondary-700/50 rounded p-2">
+																							<p className="text-secondary-400 text-xs font-medium mb-1">
+																								Required Value
+																							</p>
+																							<code className="text-green-300 text-xs break-all">
+																								{result.expected}
+																							</code>
+																						</div>
+																					)}
+																				</div>
+																			)}
+																			{/* What the fix does - for fail/warn with remediation */}
+																			{(result.status === "fail" ||
+																				result.status === "warn") &&
+																				(result.compliance_rules?.remediation ||
+																					result.rule?.remediation ||
+																					result.remediation) && (
+																					<div className="bg-orange-900/20 border border-orange-800/50 rounded-lg p-3">
+																						<p className="text-orange-400 font-medium mb-2 flex items-center gap-1">
+																							<Wrench className="h-3.5 w-3.5" />
+																							What the Fix Does
+																						</p>
+																						<p className="text-orange-200/90 text-sm">
+																							{(() => {
+																								const remediation =
+																									result.compliance_rules
+																										?.remediation ||
+																									result.rule?.remediation ||
+																									result.remediation ||
+																									"";
+																								const title =
+																									result.compliance_rules
+																										?.title ||
+																									result.rule?.title ||
+																									result.title ||
+																									"";
+																								if (
+																									remediation.includes(
+																										"sysctl",
+																									) ||
+																									remediation.includes(
+																										"/proc/sys",
+																									)
+																								)
+																									return "This fix will modify kernel parameters to enable the required security setting.";
+																								if (
+																									remediation.includes(
+																										"chmod",
+																									) ||
+																									remediation.includes("chown")
+																								)
+																									return "This fix will update file permissions or ownership to meet the required security standard.";
+																								if (
+																									remediation.includes("apt") ||
+																									remediation.includes("yum") ||
+																									remediation.includes("dnf")
+																								)
+																									return "This fix will install, update, or remove packages as needed to meet the security requirement.";
+																								if (
+																									remediation.includes(
+																										"systemctl",
+																									) ||
+																									remediation.includes(
+																										"service",
+																									)
+																								)
+																									return "This fix will enable, disable, or configure a system service to meet the security requirement.";
+																								if (
+																									remediation.includes(
+																										"/etc/ssh",
+																									)
+																								)
+																									return "This fix will update SSH daemon configuration to harden remote access security.";
+																								if (
+																									remediation.includes(
+																										"audit",
+																									) ||
+																									remediation.includes("auditd")
+																								)
+																									return "This fix will configure audit logging to track security-relevant system events.";
+																								if (
+																									remediation.includes("pam") ||
+																									remediation.includes(
+																										"/etc/pam",
+																									)
+																								)
+																									return "This fix will configure authentication modules to enforce stronger access controls.";
+																								if (
+																									title
+																										.toLowerCase()
+																										.includes("password")
+																								)
+																									return "This fix will update password policy settings to require stronger passwords or enforce better credential management.";
+																								if (
+																									remediation.includes(
+																										"iptables",
+																									) ||
+																									remediation.includes(
+																										"nftables",
+																									) ||
+																									title
+																										.toLowerCase()
+																										.includes("firewall")
+																								)
+																									return "This fix will configure firewall rules to restrict network access and improve security.";
+																								return "This fix will apply the recommended configuration change to bring your system into compliance with the security benchmark.";
+																							})()}
+																						</p>
+																					</div>
+																				)}
 																			{(result.compliance_rules?.remediation ||
 																				result.rule?.remediation ||
 																				result.remediation) && (

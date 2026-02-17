@@ -2026,7 +2026,7 @@ router.get("/rules/:ruleId", async (req, res) => {
 		const latest_scan_ids = latest_scans_raw.map((s) => s.id);
 		const _scan_map = new Map(latest_scans_raw.map((s) => [s.id, s]));
 
-		// Get results for this rule from those latest scans
+		// Get results for this rule from those latest scans (include remediation for fallback)
 		const results = await prisma.compliance_results.findMany({
 			where: {
 				rule_id: ruleId,
@@ -2037,6 +2037,7 @@ router.get("/rules/:ruleId", async (req, res) => {
 				finding: true,
 				actual: true,
 				expected: true,
+				remediation: true,
 				scan_id: true,
 				compliance_scans: {
 					select: {
@@ -2080,16 +2081,53 @@ router.get("/rules/:ruleId", async (req, res) => {
 			(a, b) => (status_order[a.status] ?? 99) - (status_order[b.status] ?? 99),
 		);
 
+		// When rule has no rationale, derive "why this failed" from first fail/warn host that has content
+		// (affected_hosts already sorted: fail first, then warn, then pass)
+		const fail_warn_hosts = affected_hosts.filter(
+			(h) => h.status === "fail" || h.status === "warn" || h.status === "error",
+		);
+		let rationale_display = rule.rationale?.trim() || null;
+		if (!rationale_display && fail_warn_hosts.length > 0) {
+			const with_content = fail_warn_hosts.find(
+				(h) => h.finding?.trim() || h.actual?.trim() || h.expected?.trim(),
+			);
+			const src = with_content || fail_warn_hosts[0];
+			if (src.finding?.trim()) {
+				rationale_display = src.finding.trim();
+			} else if (src.actual?.trim() || src.expected?.trim()) {
+				const parts = [];
+				if (src.actual?.trim()) parts.push(`Actual: ${src.actual.trim()}`);
+				if (src.expected?.trim())
+					parts.push(`Expected: ${src.expected.trim()}`);
+				rationale_display = parts.join("\n");
+			} else {
+				// No finding/actual/expected on any fail/warn result: use rule description or title
+				rationale_display =
+					rule.description?.trim() ||
+					rule.title ||
+					"This check did not meet the benchmark requirement on one or more hosts. See the table below for per-host status.";
+			}
+		}
+
+		// When rule has no remediation, use first result that has remediation (same as host page)
+		let remediation_display = rule.remediation?.trim() || null;
+		if (!remediation_display && results.length > 0) {
+			const with_remediation = results.find((r) => r.remediation?.trim());
+			if (with_remediation?.remediation?.trim()) {
+				remediation_display = with_remediation.remediation.trim();
+			}
+		}
+
 		res.json({
 			rule: {
 				id: rule.id,
 				rule_ref: rule.rule_ref,
 				title: rule.title,
 				description: rule.description,
-				rationale: rule.rationale,
+				rationale: rationale_display ?? rule.rationale,
 				severity: rule.severity,
 				section: rule.section,
-				remediation: rule.remediation,
+				remediation: remediation_display ?? rule.remediation,
 				profile_id: rule.profile_id,
 				profile_type: rule.compliance_profiles?.type,
 				profile_name: rule.compliance_profiles?.name,

@@ -11,7 +11,6 @@ import {
 	Play,
 	RefreshCw,
 	Server,
-	Shield,
 	ShieldAlert,
 	ShieldCheck,
 	ShieldOff,
@@ -137,7 +136,7 @@ const Compliance = () => {
 	const [bulkScanResult, setBulkScanResult] = useState(null);
 	const [pendingScans, setPendingScans] = useState([]); // Hosts where scan was triggered but not yet in database
 	const prevActiveScanIds = useRef(new Set());
-	const [profileTypeFilter, setProfileTypeFilter] = useState("all"); // "all", "openscap", "docker-bench"
+	const [profileTypeFilter, _setProfileTypeFilter] = useState("all"); // "all", "openscap", "docker-bench"
 	const [tableFilter, setTableFilter] = useState(null); // null = compliance-enabled only, 'never-scanned' = only never-scanned hosts
 
 	// Fetch active/running scans first so we can use it for dashboard refetch rate
@@ -635,128 +634,138 @@ const Compliance = () => {
 													</td>
 												</tr>
 											) : (
-												hostsTableRows.map((row) => (
-													<tr
-														key={row.host_id}
-														className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
-													>
-														<td className="px-4 py-2 whitespace-nowrap">
-															<button
-																type="button"
-																onClick={() =>
-																	triggerSingleScanMutation.mutate({
-																		hostId: row.host_id,
-																		hostName:
-																			row.friendly_name ||
-																			row.hostname ||
-																			"Host",
-																	})
-																}
-																disabled={
-																	triggerSingleScanMutation.isPending ||
-																	activeScans.some(
-																		(s) => s.hostId === row.host_id,
+												hostsTableRows.map((row) => {
+													const is_scanning =
+														activeScans.some((s) => s.hostId === row.host_id) ||
+														(triggerSingleScanMutation.isPending &&
+															triggerSingleScanMutation.variables?.hostId ===
+																row.host_id);
+													return (
+														<tr
+															key={row.host_id}
+															className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
+														>
+															<td className="px-4 py-2 whitespace-nowrap">
+																<button
+																	type="button"
+																	onClick={() =>
+																		triggerSingleScanMutation.mutate({
+																			hostId: row.host_id,
+																			hostName:
+																				row.friendly_name ||
+																				row.hostname ||
+																				"Host",
+																		})
+																	}
+																	disabled={is_scanning}
+																	className="inline-flex items-center justify-center w-6 h-6 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+																	title={
+																		is_scanning
+																			? "Scan in progress"
+																			: "Run compliance scan"
+																	}
+																>
+																	{is_scanning ? (
+																		<RefreshCw className="h-3 w-3 animate-spin" />
+																	) : (
+																		<Play className="h-3 w-3" />
+																	)}
+																</button>
+															</td>
+															<td className="px-4 py-2 whitespace-nowrap">
+																<Link
+																	to={`/compliance/hosts/${row.host_id}`}
+																	className="text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 hover:underline font-medium"
+																>
+																	{row.friendly_name || row.hostname || "—"}
+																</Link>
+															</td>
+															<td className="px-4 py-2 whitespace-nowrap">
+																{row.score != null ? (
+																	Number(row.score) >= 80 ? (
+																		<ShieldCheck
+																			className="h-5 w-5 text-green-600 dark:text-green-400"
+																			title="Compliant"
+																		/>
+																	) : Number(row.score) >= 60 ? (
+																		<AlertTriangle
+																			className="h-5 w-5 text-yellow-600 dark:text-yellow-400"
+																			title="Warning"
+																		/>
+																	) : (
+																		<ShieldAlert
+																			className="h-5 w-5 text-red-600 dark:text-red-400"
+																			title="Critical"
+																		/>
 																	)
-																}
-																className="inline-flex items-center justify-center w-6 h-6 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-																title="Run compliance scan"
-															>
-																<Play className="h-3 w-3" />
-															</button>
-														</td>
-														<td className="px-4 py-2 whitespace-nowrap">
-															<Link
-																to={`/compliance/hosts/${row.host_id}`}
-																className="text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 hover:underline font-medium"
-															>
-																{row.friendly_name || row.hostname || "—"}
-															</Link>
-														</td>
-														<td className="px-4 py-2 whitespace-nowrap">
-															{row.score != null ? (
-																Number(row.score) >= 80 ? (
-																	<ShieldCheck
-																		className="h-5 w-5 text-green-600 dark:text-green-400"
-																		title="Compliant"
-																	/>
-																) : Number(row.score) >= 60 ? (
-																	<AlertTriangle
-																		className="h-5 w-5 text-yellow-600 dark:text-yellow-400"
-																		title="Warning"
-																	/>
 																) : (
-																	<ShieldAlert
-																		className="h-5 w-5 text-red-600 dark:text-red-400"
-																		title="Critical"
+																	<ShieldOff
+																		className="h-5 w-5 text-secondary-400"
+																		title="Not scanned"
 																	/>
-																)
-															) : (
-																<ShieldOff
-																	className="h-5 w-5 text-secondary-400"
-																	title="Not scanned"
-																/>
-															)}
-														</td>
-														<td className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-secondary-300">
-															{row.last_scan_date
-																? formatDistanceToNow(
-																		new Date(row.last_scan_date),
-																		{ addSuffix: true },
-																	)
-																: "—"}
-														</td>
-														<td className="px-4 py-2 text-right whitespace-nowrap text-green-600 dark:text-green-400">
-															{row.passed != null ? row.passed : "—"}
-														</td>
-														<td className="px-4 py-2 text-right whitespace-nowrap text-red-600 dark:text-red-400">
-															{row.failed != null ? row.failed : "—"}
-														</td>
-														<td className="px-4 py-2 text-right whitespace-nowrap text-secondary-600 dark:text-secondary-400">
-															{row.skipped != null ? row.skipped : "—"}
-														</td>
-														<td className="px-4 py-2 whitespace-nowrap">
-															<span
-																className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-																	row.scanner_status === "Scanned"
-																		? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-																		: row.scanner_status === "Enabled"
-																			? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
-																			: "bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-400"
-																}`}
-															>
-																{row.scanner_status}
-															</span>
-														</td>
-														<td className="px-4 py-2 whitespace-nowrap">
-															{row.compliance_mode === "disabled" ? (
-																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-400">
-																	Disabled
-																</span>
-															) : (
+																)}
+															</td>
+															<td className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-secondary-300">
+																{row.last_scan_date
+																	? formatDistanceToNow(
+																			new Date(row.last_scan_date),
+																			{ addSuffix: true },
+																		)
+																	: "—"}
+															</td>
+															<td className="px-4 py-2 text-right whitespace-nowrap text-green-600 dark:text-green-400">
+																{row.passed != null ? row.passed : "—"}
+															</td>
+															<td className="px-4 py-2 text-right whitespace-nowrap text-red-600 dark:text-red-400">
+																{row.failed != null ? row.failed : "—"}
+															</td>
+															<td className="px-4 py-2 text-right whitespace-nowrap text-secondary-600 dark:text-secondary-400">
+																{row.skipped != null ? row.skipped : "—"}
+															</td>
+															<td className="px-4 py-2 whitespace-nowrap">
 																<span
 																	className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-																		row.compliance_mode === "on-demand"
-																			? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
-																			: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
+																		row.scanner_status === "Scanned"
+																			? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+																			: row.scanner_status === "Enabled"
+																				? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
+																				: "bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-400"
 																	}`}
 																>
-																	{row.compliance_mode === "on-demand"
-																		? "On-demand"
-																		: "Scheduled"}
+																	{row.scanner_status}
 																</span>
-															)}
-														</td>
-														<td className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-secondary-300">
-															{row.compliance_enabled && row.docker_enabled
-																? "OpenSCAP, Docker"
-																: row.compliance_enabled
-																	? "OpenSCAP"
-																	: row.docker_enabled
-																		? "Docker"
-																		: "—"}
-														</td>
-													</tr>
-												))
+															</td>
+															<td className="px-4 py-2 whitespace-nowrap">
+																{row.compliance_mode === "disabled" ? (
+																	<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-400">
+																		Disabled
+																	</span>
+																) : (
+																	<span
+																		className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+																			row.compliance_mode === "on-demand"
+																				? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+																				: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
+																		}`}
+																	>
+																		{row.compliance_mode === "on-demand"
+																			? "On-demand"
+																			: "Scheduled"}
+																	</span>
+																)}
+															</td>
+															<td className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-secondary-300">
+																{row.compliance_enabled && row.docker_enabled
+																	? "OpenSCAP, Docker"
+																	: row.compliance_enabled
+																		? "OpenSCAP"
+																		: row.docker_enabled
+																			? "Docker"
+																			: "—"}
+															</td>
+														</tr>
+													);
+												})
 											)}
 										</tbody>
 									</table>
@@ -808,43 +817,6 @@ const Compliance = () => {
 								</div>
 							</div>
 						</div>
-					</div>
-
-					{/* Profile Type Filter Tabs */}
-					<div className="flex items-center gap-2 bg-secondary-800 p-1 rounded-lg border border-secondary-700 w-fit">
-						<button
-							onClick={() => setProfileTypeFilter("all")}
-							className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors ${
-								profileTypeFilter === "all"
-									? "bg-primary-600 text-white"
-									: "text-secondary-400 hover:text-white hover:bg-secondary-700"
-							}`}
-						>
-							<Shield className="h-4 w-4" />
-							All Scans
-						</button>
-						<button
-							onClick={() => setProfileTypeFilter("openscap")}
-							className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors ${
-								profileTypeFilter === "openscap"
-									? "bg-green-600 text-white"
-									: "text-secondary-400 hover:text-white hover:bg-secondary-700"
-							}`}
-						>
-							<Server className="h-4 w-4" />
-							OpenSCAP
-						</button>
-						<button
-							onClick={() => setProfileTypeFilter("docker-bench")}
-							className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors ${
-								profileTypeFilter === "docker-bench"
-									? "bg-blue-600 text-white"
-									: "text-secondary-400 hover:text-white hover:bg-secondary-700"
-							}`}
-						>
-							<Container className="h-4 w-4" />
-							Docker Bench
-						</button>
 					</div>
 				</>
 			)}
