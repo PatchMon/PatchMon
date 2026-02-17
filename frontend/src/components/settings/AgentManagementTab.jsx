@@ -27,7 +27,9 @@ const AgentManagementTab = () => {
 				}, 5000);
 			});
 			return () => {
-				timers.forEach((timer) => clearTimeout(timer));
+				timers.forEach((timer) => {
+					clearTimeout(timer);
+				});
 			};
 		}
 	}, [toasts]);
