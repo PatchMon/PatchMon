@@ -95,7 +95,88 @@ router.post(
 	},
 );
 
-// Download latest update
+// Download latest update with SSE progress
+router.get(
+	"/version/download-stream",
+	authenticateToken,
+	requirePermission("can_manage_settings"),
+	async (req, res) => {
+		// Set up SSE headers
+		res.setHeader("Content-Type", "text/event-stream");
+		res.setHeader("Cache-Control", "no-cache");
+		res.setHeader("Connection", "keep-alive");
+		res.flushHeaders();
+
+		const { version } = req.query;
+
+		// Send SSE event helper
+		const sendEvent = (data) => {
+			res.write(`data: ${JSON.stringify(data)}\n\n`);
+		};
+
+		try {
+			logger.info(
+				`📥 Download stream request received. Version: ${version || "latest"}`,
+			);
+
+			// Progress callback for SSE updates
+			const progressCallback = (progress) => {
+				sendEvent(progress);
+			};
+
+			if (version) {
+				// Download specific version
+				logger.info(`🔄 Downloading agent version ${version}...`);
+				sendEvent({
+					status: "starting",
+					message: `Starting download of version ${version}...`,
+					total: agentVersionService.supportedArchitectures.length,
+				});
+
+				const downloadResult = await agentVersionService.downloadVersion(
+					version,
+					progressCallback,
+				);
+
+				sendEvent({
+					status: "finished",
+					message: "Download completed successfully",
+					result: downloadResult,
+				});
+			} else {
+				// Download latest (from DNS)
+				logger.info("🔄 Downloading latest agent update (from DNS)...");
+				sendEvent({
+					status: "starting",
+					message: "Starting download of latest version...",
+					total: agentVersionService.supportedArchitectures.length,
+				});
+
+				const downloadResult =
+					await agentVersionService.downloadLatestUpdate(progressCallback);
+
+				sendEvent({
+					status: "finished",
+					message: "Download completed successfully",
+					result: downloadResult,
+				});
+			}
+
+			res.end();
+		} catch (error) {
+			logger.error("❌ Failed to download update:", error.message);
+			logger.error("❌ Error stack:", error.stack);
+			sendEvent({
+				status: "error",
+				message: "Download failed",
+				error: error.message,
+			});
+			res.end();
+		}
+	},
+);
+
+// Download latest update (legacy endpoint - kept for backwards compatibility)
 router.post(
 	"/version/download",
 	authenticateToken,

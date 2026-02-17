@@ -1878,7 +1878,7 @@ const Hosts = () => {
 												</div>
 
 												{/* Desktop Table Layout */}
-												<div className="hidden md:block overflow-x-auto">
+												<div className="hidden md:block">
 													<table
 														className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600"
 														style={{ minWidth: "max-content" }}

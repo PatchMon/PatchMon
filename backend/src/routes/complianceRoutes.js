@@ -430,14 +430,15 @@ router.get("/dashboard", async (_req, res) => {
 			return res.json(dashboard_cache.data);
 		}
 
-		// Run initial queries in parallel
+		// Run initial queries in parallel (include profile name for "last activity" title)
 		const [latestScansRows, profileTypeQuery, unscanned, allHostsRows] =
 			await Promise.all([
 				prisma.$queryRaw`
-        SELECT DISTINCT ON (host_id, profile_id) *
-        FROM compliance_scans
-        WHERE status = 'completed'
-        ORDER BY host_id, profile_id, completed_at DESC
+        SELECT DISTINCT ON (cs.host_id, cs.profile_id) cs.*, cp.name as profile_name
+        FROM compliance_scans cs
+        JOIN compliance_profiles cp ON cs.profile_id = cp.id
+        WHERE cs.status = 'completed'
+        ORDER BY cs.host_id, cs.profile_id, cs.completed_at DESC
       `,
 				prisma.compliance_profiles.findMany({
 					select: { id: true, type: true },
@@ -480,6 +481,7 @@ router.get("/dashboard", async (_req, res) => {
 					hostname: h.hostname,
 					friendly_name: h.friendly_name,
 					last_scan_date: scan?.completed_at ?? null,
+					last_activity_title: scan?.profile_name ?? null,
 					passed: scan != null ? Number(scan.passed) || 0 : null,
 					failed: scan != null ? Number(scan.failed) || 0 : null,
 					skipped:

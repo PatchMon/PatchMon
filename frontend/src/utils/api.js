@@ -196,6 +196,7 @@ export const settingsAPI = {
 	getPublic: () => api.get("/settings/public"), // Public endpoint for read-only settings (auto_update, etc.)
 	update: (settings) => api.put("/settings", settings),
 	getServerUrl: () => api.get("/settings/server-url"),
+	getEnvConfig: () => api.get("/settings/env-config"),
 };
 
 // User Preferences API

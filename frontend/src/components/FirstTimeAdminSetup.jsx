@@ -1,5 +1,5 @@
 import { AlertCircle, CheckCircle, Shield, UserPlus } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { isCorsError } from "../utils/api";
@@ -12,20 +12,37 @@ const devError = (...args) => isDev && console.error(...args);
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const USERNAME_MIN_LENGTH = 2;
 
-// Password rules (match backend defaults; backend may enforce stricter via env)
-const get_password_checks = (password) => ({
-	length: password.length >= 8,
-	uppercase: /[A-Z]/.test(password),
-	lowercase: /[a-z]/.test(password),
-	number: /[0-9]/.test(password),
-	special: /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password),
+// Default policy (fallback when backend has no password_policy or before fetch)
+const DEFAULT_PASSWORD_POLICY = {
+	min_length: 8,
+	require_uppercase: true,
+	require_lowercase: true,
+	require_number: true,
+	require_special: true,
+};
+
+// Non-alphanumeric (match backend) so any symbol counts
+const SPECIAL_REGEX = /[^A-Za-z0-9]/;
+
+const get_password_checks = (password, policy = DEFAULT_PASSWORD_POLICY) => ({
+	length: password.length >= (policy.min_length || 8),
+	uppercase: !policy.require_uppercase || /[A-Z]/.test(password),
+	lowercase: !policy.require_lowercase || /[a-z]/.test(password),
+	number: !policy.require_number || /[0-9]/.test(password),
+	special: !policy.require_special || SPECIAL_REGEX.test(password),
 });
-const password_strength = (password) => {
+
+const password_strength = (password, policy = DEFAULT_PASSWORD_POLICY) => {
 	if (!password.length) return 0;
-	const c = get_password_checks(password);
-	return [c.length, c.uppercase, c.lowercase, c.number, c.special].filter(
-		Boolean,
-	).length;
+	const c = get_password_checks(password, policy);
+	const requirements = [
+		c.length,
+		policy.require_uppercase && c.uppercase,
+		policy.require_lowercase && c.lowercase,
+		policy.require_number && c.number,
+		policy.require_special && c.special,
+	].filter((x) => x === true);
+	return requirements.length;
 };
 
 const FirstTimeAdminSetup = () => {
@@ -50,6 +67,34 @@ const FirstTimeAdminSetup = () => {
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState("");
 	const [success, setSuccess] = useState(false);
+	const [password_policy, set_password_policy] = useState(
+		DEFAULT_PASSWORD_POLICY,
+	);
+
+	useEffect(() => {
+		let cancelled = false;
+		fetch("/api/v1/settings/login-settings")
+			.then((res) => (res.ok ? res.json() : {}))
+			.then((data) => {
+				if (cancelled) return;
+				if (
+					data.password_policy &&
+					typeof data.password_policy.min_length === "number"
+				) {
+					set_password_policy({
+						min_length: data.password_policy.min_length,
+						require_uppercase: data.password_policy.require_uppercase !== false,
+						require_lowercase: data.password_policy.require_lowercase !== false,
+						require_number: data.password_policy.require_number !== false,
+						require_special: data.password_policy.require_special !== false,
+					});
+				}
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
 	const handleInputChange = (e) => {
 		const { name, value } = e.target;
@@ -98,16 +143,20 @@ const FirstTimeAdminSetup = () => {
 					break;
 				}
 				case "password": {
-					const checks = get_password_checks(d.password);
+					const checks = get_password_checks(d.password, password_policy);
 					if (!d.password) next.password = "Password is required";
 					else if (!checks.length)
-						next.password = "Password must be at least 8 characters";
+						next.password = `Password must be at least ${password_policy.min_length} characters`;
 					else {
 						const missing = [];
-						if (!checks.uppercase) missing.push("one uppercase letter");
-						if (!checks.lowercase) missing.push("one lowercase letter");
-						if (!checks.number) missing.push("one number");
-						if (!checks.special) missing.push("one special character");
+						if (password_policy.require_uppercase && !checks.uppercase)
+							missing.push("one uppercase letter");
+						if (password_policy.require_lowercase && !checks.lowercase)
+							missing.push("one lowercase letter");
+						if (password_policy.require_number && !checks.number)
+							missing.push("one number");
+						if (password_policy.require_special && !checks.special)
+							missing.push("one special character");
 						next.password =
 							missing.length > 0 ? `Add ${missing.join(", ")}` : "";
 					}
@@ -135,8 +184,14 @@ const FirstTimeAdminSetup = () => {
 			? "input w-full border-danger-500 dark:border-danger-400 focus:ring-danger-500"
 			: "input w-full";
 
-	const password_checks = get_password_checks(formData.password);
-	const password_strength_level = password_strength(formData.password);
+	const password_checks = get_password_checks(
+		formData.password,
+		password_policy,
+	);
+	const password_strength_level = password_strength(
+		formData.password,
+		password_policy,
+	);
 	const passwords_match =
 		!formData.confirmPassword || formData.password === formData.confirmPassword;
 	const confirm_error = formData.confirmPassword && !passwords_match;
@@ -154,16 +209,20 @@ const FirstTimeAdminSetup = () => {
 		if (!em) next_errors.email = "Email address is required";
 		else if (!EMAIL_REGEX.test(em))
 			next_errors.email = "Enter a valid email (e.g. you@example.com)";
-		const pc = get_password_checks(d.password);
+		const pc = get_password_checks(d.password, password_policy);
 		if (!d.password) next_errors.password = "Password is required";
 		else if (!pc.length)
-			next_errors.password = "Password must be at least 8 characters";
+			next_errors.password = `Password must be at least ${password_policy.min_length} characters`;
 		else {
 			const missing = [];
-			if (!pc.uppercase) missing.push("one uppercase letter");
-			if (!pc.lowercase) missing.push("one lowercase letter");
-			if (!pc.number) missing.push("one number");
-			if (!pc.special) missing.push("one special character");
+			if (password_policy.require_uppercase && !pc.uppercase)
+				missing.push("one uppercase letter");
+			if (password_policy.require_lowercase && !pc.lowercase)
+				missing.push("one lowercase letter");
+			if (password_policy.require_number && !pc.number)
+				missing.push("one number");
+			if (password_policy.require_special && !pc.special)
+				missing.push("one special character");
 			if (missing.length) next_errors.password = `Add ${missing.join(", ")}`;
 		}
 		if (!d.confirmPassword)
@@ -249,11 +308,20 @@ const FirstTimeAdminSetup = () => {
 						"CORS_ORIGIN mismatch - please set your URL in your environment variable",
 					);
 				} else if (data.details && Array.isArray(data.details)) {
-					// Map backend validation details to field errors
+					// Map backend validation details to field errors (param/path from express-validator)
 					const by_field = {};
 					for (const item of data.details) {
-						const path = item.path || item.param;
-						if (path) by_field[path] = item.msg || item.message;
+						const path = item.path ?? item.param;
+						const msg = item.msg ?? item.message;
+						if (path && msg) by_field[path] = msg;
+						// If this looks like a password error but key differs, ensure it shows on password field
+						if (
+							msg &&
+							/password must/i.test(String(msg)) &&
+							!by_field.password
+						) {
+							by_field.password = msg;
+						}
 					}
 					setFieldErrors(by_field);
 					setError(data.error || "Please fix the errors below.");
@@ -515,64 +583,72 @@ const FirstTimeAdminSetup = () => {
 									) : (
 										<span className="inline-block w-3.5 h-3.5 mr-1 align-middle rounded-full border border-current" />
 									)}
-									At least 8 characters
+									At least {password_policy.min_length} characters
 								</li>
-								<li
-									className={
-										password_checks.uppercase
-											? "text-success-600 dark:text-success-400"
-											: ""
-									}
-								>
-									{password_checks.uppercase ? (
-										<CheckCircle className="inline h-3.5 w-3.5 mr-1 align-middle" />
-									) : (
-										<span className="inline-block w-3.5 h-3.5 mr-1 align-middle rounded-full border border-current" />
-									)}
-									One uppercase letter
-								</li>
-								<li
-									className={
-										password_checks.lowercase
-											? "text-success-600 dark:text-success-400"
-											: ""
-									}
-								>
-									{password_checks.lowercase ? (
-										<CheckCircle className="inline h-3.5 w-3.5 mr-1 align-middle" />
-									) : (
-										<span className="inline-block w-3.5 h-3.5 mr-1 align-middle rounded-full border border-current" />
-									)}
-									One lowercase letter
-								</li>
-								<li
-									className={
-										password_checks.number
-											? "text-success-600 dark:text-success-400"
-											: ""
-									}
-								>
-									{password_checks.number ? (
-										<CheckCircle className="inline h-3.5 w-3.5 mr-1 align-middle" />
-									) : (
-										<span className="inline-block w-3.5 h-3.5 mr-1 align-middle rounded-full border border-current" />
-									)}
-									One number
-								</li>
-								<li
-									className={
-										password_checks.special
-											? "text-success-600 dark:text-success-400"
-											: ""
-									}
-								>
-									{password_checks.special ? (
-										<CheckCircle className="inline h-3.5 w-3.5 mr-1 align-middle" />
-									) : (
-										<span className="inline-block w-3.5 h-3.5 mr-1 align-middle rounded-full border border-current" />
-									)}
-									One special character (!@#$%...)
-								</li>
+								{password_policy.require_uppercase && (
+									<li
+										className={
+											password_checks.uppercase
+												? "text-success-600 dark:text-success-400"
+												: ""
+										}
+									>
+										{password_checks.uppercase ? (
+											<CheckCircle className="inline h-3.5 w-3.5 mr-1 align-middle" />
+										) : (
+											<span className="inline-block w-3.5 h-3.5 mr-1 align-middle rounded-full border border-current" />
+										)}
+										One uppercase letter
+									</li>
+								)}
+								{password_policy.require_lowercase && (
+									<li
+										className={
+											password_checks.lowercase
+												? "text-success-600 dark:text-success-400"
+												: ""
+										}
+									>
+										{password_checks.lowercase ? (
+											<CheckCircle className="inline h-3.5 w-3.5 mr-1 align-middle" />
+										) : (
+											<span className="inline-block w-3.5 h-3.5 mr-1 align-middle rounded-full border border-current" />
+										)}
+										One lowercase letter
+									</li>
+								)}
+								{password_policy.require_number && (
+									<li
+										className={
+											password_checks.number
+												? "text-success-600 dark:text-success-400"
+												: ""
+										}
+									>
+										{password_checks.number ? (
+											<CheckCircle className="inline h-3.5 w-3.5 mr-1 align-middle" />
+										) : (
+											<span className="inline-block w-3.5 h-3.5 mr-1 align-middle rounded-full border border-current" />
+										)}
+										One number
+									</li>
+								)}
+								{password_policy.require_special && (
+									<li
+										className={
+											password_checks.special
+												? "text-success-600 dark:text-success-400"
+												: ""
+										}
+									>
+										{password_checks.special ? (
+											<CheckCircle className="inline h-3.5 w-3.5 mr-1 align-middle" />
+										) : (
+											<span className="inline-block w-3.5 h-3.5 mr-1 align-middle rounded-full border border-current" />
+										)}
+										One special character
+									</li>
+								)}
 							</ul>
 							{get_field_error("password") && (
 								<p className="mt-1 text-sm text-danger-600 dark:text-danger-400">

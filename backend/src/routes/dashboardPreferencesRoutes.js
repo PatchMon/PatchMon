@@ -254,13 +254,15 @@ router.put(
 				where: { user_id: userId },
 			});
 
-			// Create new preferences
-			const newPreferences = preferences.map((pref) => ({
-				id: require("uuid").v4(),
+			// Create new preferences (ensure order is integer for persistence)
+			const newPreferences = preferences.map((pref, index) => ({
+				id: uuidv4(),
 				user_id: userId,
 				card_id: pref.cardId,
 				enabled: pref.enabled,
-				order: pref.order,
+				order: Number.isInteger(Number(pref.order))
+					? Number(pref.order)
+					: index,
 				updated_at: new Date(),
 			}));
 

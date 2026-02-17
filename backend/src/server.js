@@ -440,7 +440,7 @@ app.use(`/bullboard`, (_req, res, next) => {
 	// Note: 'unsafe-inline' and 'unsafe-eval' are required for Bull Board's React app
 	res.setHeader(
 		"Content-Security-Policy",
-		"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; object-src 'none';",
+		"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; object-src 'none';",
 	);
 
 	next();
@@ -586,7 +586,11 @@ process.on("uncaughtException", (error) => {
 	process.exit(1);
 });
 
-// Initialize dashboard preferences for all users
+// Initialize dashboard preferences for all users.
+// For users with no preferences, create a full set from permissions.
+// For users with existing preferences, incrementally add any new cards
+// and remove any cards the user no longer has permission for, while
+// preserving the user's custom order and enabled state.
 async function initializeDashboardPreferences() {
 	try {
 		// Get all users
@@ -598,7 +602,10 @@ async function initializeDashboardPreferences() {
 				role: true,
 				dashboard_preferences: {
 					select: {
+						id: true,
 						card_id: true,
+						order: true,
+						enabled: true,
 					},
 				},
 			},
@@ -618,10 +625,9 @@ async function initializeDashboardPreferences() {
 			const expectedPreferences = await getPermissionBasedPreferences(
 				user.role,
 			);
-			const expectedCardCount = expectedPreferences.length;
 
 			if (!hasPreferences) {
-				// User has no preferences - create them
+				// User has no preferences — create a full set from defaults
 				const preferencesData = expectedPreferences.map((pref) => ({
 					id: require("uuid").v4(),
 					user_id: user.id,
@@ -638,35 +644,63 @@ async function initializeDashboardPreferences() {
 
 				initializedCount++;
 			} else {
-				// User already has preferences - check if they need updating
-				const currentCardCount = user.dashboard_preferences.length;
+				// User has existing preferences — do an incremental sync.
+				// Preserve existing order and enabled state.
+				const existingCardIds = new Set(
+					user.dashboard_preferences.map((p) => p.card_id),
+				);
+				const expectedCardIds = new Set(
+					expectedPreferences.map((p) => p.cardId),
+				);
 
-				if (currentCardCount !== expectedCardCount) {
-					// Use transaction to prevent race condition
-					await prisma.$transaction(async (tx) => {
-						// Delete existing preferences
+				// Find cards that need to be added (new cards the user doesn't have yet)
+				const cardsToAdd = expectedPreferences.filter(
+					(p) => !existingCardIds.has(p.cardId),
+				);
+
+				// Find cards that need to be removed (user no longer has permission)
+				const cardIdsToRemove = user.dashboard_preferences
+					.filter((p) => !expectedCardIds.has(p.card_id))
+					.map((p) => p.id);
+
+				if (cardsToAdd.length === 0 && cardIdsToRemove.length === 0) {
+					continue; // Nothing to change for this user
+				}
+
+				await prisma.$transaction(async (tx) => {
+					// Remove cards the user no longer has permission for
+					if (cardIdsToRemove.length > 0) {
 						await tx.dashboard_preferences.deleteMany({
-							where: { user_id: user.id },
+							where: {
+								id: { in: cardIdsToRemove },
+							},
 						});
+					}
 
-						// Create new preferences based on permissions
-						const preferencesData = expectedPreferences.map((pref) => ({
+					// Add newly available cards at the end of the user's existing order
+					if (cardsToAdd.length > 0) {
+						const maxOrder = Math.max(
+							...user.dashboard_preferences.map((p) => p.order),
+							-1,
+						);
+
+						const newPreferencesData = cardsToAdd.map((pref, idx) => ({
 							id: require("uuid").v4(),
 							user_id: user.id,
 							card_id: pref.cardId,
-							enabled: pref.enabled,
-							order: pref.order,
+							enabled: true,
+							order: maxOrder + 1 + idx,
 							created_at: new Date(),
 							updated_at: new Date(),
 						}));
 
 						await tx.dashboard_preferences.createMany({
-							data: preferencesData,
+							data: newPreferencesData,
 						});
-					}, getTransactionOptions());
+					}
+				}, getTransactionOptions());
 
-					updatedCount++;
-				}
+				updatedCount++;
 			}
 		}
 
@@ -732,7 +766,9 @@ async function getPermissionBasedPreferences(userRole) {
 	// Get user's actual permissions
 	const permissions = await getUserPermissions(userRole);
 
-	// Define all possible dashboard cards with their required permissions
+	// Define all possible dashboard cards with their required permissions.
+	// IMPORTANT: This list must stay in sync with createDefaultDashboardPreferences
+	// in dashboardPreferencesRoutes.js and the /defaults endpoint.
 	const allCards = [
 		// Host-related cards
 		{ cardId: "totalHosts", requiredPermission: "can_view_hosts", order: 0 },
@@ -761,54 +797,91 @@ async function getPermissionBasedPreferences(userRole) {
 			order: 4,
 		},
 		{ cardId: "upToDateHosts", requiredPermission: "can_view_hosts", order: 5 },
+		{
+			cardId: "hostsNeedingReboot",
+			requiredPermission: "can_view_hosts",
+			order: 6,
+		},
 
 		// Repository-related cards
-		{ cardId: "totalRepos", requiredPermission: "can_view_hosts", order: 6 }, // Repos are host-related
+		{ cardId: "totalRepos", requiredPermission: "can_view_hosts", order: 7 },
 
 		// User management cards (admin only)
-		{ cardId: "totalUsers", requiredPermission: "can_view_users", order: 7 },
+		{ cardId: "totalUsers", requiredPermission: "can_view_users", order: 8 },
 
 		// System/Report cards
 		{
 			cardId: "osDistribution",
 			requiredPermission: "can_view_reports",
-			order: 8,
+			order: 9,
 		},
 		{
 			cardId: "osDistributionBar",
 			requiredPermission: "can_view_reports",
-			order: 9,
+			order: 10,
 		},
 		{
 			cardId: "osDistributionDoughnut",
 			requiredPermission: "can_view_reports",
-			order: 10,
+			order: 11,
 		},
 		{
 			cardId: "recentCollection",
 			requiredPermission: "can_view_hosts",
-			order: 11,
-		}, // Collection is host-related
+			order: 12,
+		},
 		{
 			cardId: "updateStatus",
 			requiredPermission: "can_view_reports",
-			order: 12,
+			order: 13,
 		},
 		{
 			cardId: "packagePriority",
 			requiredPermission: "can_view_packages",
-			order: 13,
+			order: 14,
 		},
 		{
 			cardId: "packageTrends",
 			requiredPermission: "can_view_packages",
-			order: 14,
+			order: 15,
 		},
-		{ cardId: "recentUsers", requiredPermission: "can_view_users", order: 15 },
+		{ cardId: "recentUsers", requiredPermission: "can_view_users", order: 16 },
 		{
 			cardId: "quickStats",
 			requiredPermission: "can_view_dashboard",
-			order: 16,
+			order: 17,
+		},
+
+		// Compliance cards
+		{
+			cardId: "complianceHostStatus",
+			requiredPermission: "can_view_hosts",
+			order: 18,
+		},
+		{
+			cardId: "complianceOpenSCAPDistribution",
+			requiredPermission: "can_view_hosts",
+			order: 19,
+		},
+		{
+			cardId: "complianceFailuresBySeverity",
+			requiredPermission: "can_view_hosts",
+			order: 20,
+		},
+		{
+			cardId: "complianceProfilesInUse",
+			requiredPermission: "can_view_hosts",
+			order: 21,
+		},
+		{
+			cardId: "complianceLastScanAge",
+			requiredPermission: "can_view_hosts",
+			order: 22,
+		},
+		{
+			cardId: "complianceTrendLine",
+			requiredPermission: "can_view_hosts",
+			order: 23,
 		},
 	];
 
@@ -820,7 +893,7 @@ async function getPermissionBasedPreferences(userRole) {
 	return allowedCards.map((card) => ({
 		cardId: card.cardId,
 		enabled: true,
-		order: card.order, // Preserve original order from allCards
+		order: card.order,
 	}));
 }
 

@@ -47,6 +47,17 @@ import AgentQueueTab from "./hostdetail/AgentQueueTab";
 import CredentialsModal from "./hostdetail/CredentialsModal";
 import DeleteConfirmationModal from "./hostdetail/DeleteConfirmationModal";
 
+/**
+ * Format a memory size (in GiB from the agent) for display.
+ * Shows 2 decimal places with the GiB unit label.
+ */
+const format_memory_gib = (value) => {
+	if (value == null) return null;
+	const num = Number(value);
+	if (Number.isNaN(num)) return null;
+	return `${num.toFixed(2)} GiB`;
+};
+
 const HostDetail = () => {
 	const { hostId } = useParams();
 	const navigate = useNavigate();
@@ -1533,13 +1544,13 @@ const HostDetail = () => {
 											</div>
 										)}
 
-										{host.ram_installed && (
+										{host.ram_installed != null && (
 											<div>
 												<p className="text-xs text-secondary-500 dark:text-secondary-300">
 													RAM Installed
 												</p>
 												<p className="font-medium text-secondary-900 dark:text-white text-sm">
-													{host.ram_installed} GB
+													{format_memory_gib(host.ram_installed)}
 												</p>
 											</div>
 										)}
@@ -1551,7 +1562,7 @@ const HostDetail = () => {
 														Swap Size
 													</p>
 													<p className="font-medium text-secondary-900 dark:text-white text-sm">
-														{host.swap_size} GB
+														{format_memory_gib(host.swap_size)}
 													</p>
 												</div>
 											)}
@@ -2717,7 +2728,7 @@ const HostDetail = () => {
 											)}
 
 											{/* RAM Installed */}
-											{host.ram_installed && (
+											{host.ram_installed != null && (
 												<div className="bg-secondary-50 dark:bg-secondary-700 p-4 rounded-lg">
 													<div className="flex items-center gap-2 mb-2">
 														<MemoryStick className="h-4 w-4 text-primary-600 dark:text-primary-400" />
@@ -2726,7 +2737,7 @@ const HostDetail = () => {
 														</p>
 													</div>
 													<p className="font-medium text-secondary-900 dark:text-white text-sm">
-														{host.ram_installed} GB
+														{format_memory_gib(host.ram_installed)}
 													</p>
 												</div>
 											)}
@@ -2742,7 +2753,7 @@ const HostDetail = () => {
 															</p>
 														</div>
 														<p className="font-medium text-secondary-900 dark:text-white text-sm">
-															{host.swap_size} GB
+															{format_memory_gib(host.swap_size)}
 														</p>
 													</div>
 												)}

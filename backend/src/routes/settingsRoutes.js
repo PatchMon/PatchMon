@@ -4,8 +4,13 @@ const { body, validationResult } = require("express-validator");
 const { getPrismaClient } = require("../config/prisma");
 const { authenticateToken } = require("../middleware/auth");
 const { requireManageSettings } = require("../middleware/permissions");
-const { getSettings, updateSettings } = require("../services/settingsService");
+const {
+	getSettings,
+	getSettingsForDisplay,
+	updateSettings,
+} = require("../services/settingsService");
 const { verifyApiKey } = require("../utils/apiKeyUtils");
+const { get_password_policy } = require("../config/passwordPolicy");
 
 const router = express.Router();
 
@@ -140,7 +145,9 @@ router.get("/public", authenticateToken, async (_req, res) => {
 
 router.get("/", authenticateToken, requireManageSettings, async (_req, res) => {
 	try {
-		const settings = await getSettings();
+		// Read from DB so the settings form always shows persisted values after
+		// refresh (avoids stale in-memory cache with multiple processes or cold cache).
+		const settings = await getSettingsForDisplay();
 		if (process.env.ENABLE_LOGGING === "true") {
 			logger.info("Returning settings");
 		}
@@ -365,7 +372,49 @@ router.get("/server-url", async (_req, res) => {
 	}
 });
 
-// Get login settings for public use (used by login screen)
+// Get environment variables for display in settings page
+router.get(
+	"/env-config",
+	authenticateToken,
+	requireManageSettings,
+	async (_req, res) => {
+		try {
+			// Get database settings to show the configured server URL
+			const settings = await getSettings();
+
+			const envConfig = {
+				backend: {
+					CORS_ORIGIN: process.env.CORS_ORIGIN || "Not set",
+					CORS_ORIGINS: process.env.CORS_ORIGINS || "Not set",
+					PORT: process.env.PORT || "3001",
+					NODE_ENV: process.env.NODE_ENV || "Not set",
+					// Show what's in the DB (takes precedence over env vars)
+					DB_SERVER_PROTOCOL: settings.server_protocol || "Not set",
+					DB_SERVER_HOST: settings.server_host || "Not set",
+					DB_SERVER_PORT: settings.server_port || "Not set",
+					DB_SERVER_URL: settings.server_url || "Not set",
+					// Show env vars if they exist (they would be used only on first DB creation)
+					ENV_SERVER_PROTOCOL:
+						process.env.SERVER_PROTOCOL ||
+						"Not set (DB value takes precedence)",
+					ENV_SERVER_HOST:
+						process.env.SERVER_HOST || "Not set (DB value takes precedence)",
+					ENV_SERVER_PORT:
+						process.env.SERVER_PORT || "Not set (DB value takes precedence)",
+				},
+				frontend: {
+					VITE_API_URL: process.env.VITE_API_URL || "Check frontend/.env file",
+				},
+			};
+			res.json(envConfig);
+		} catch (error) {
+			logger.error("Environment config fetch error:", error);
+			res.status(500).json({ error: "Failed to fetch environment config" });
+		}
+	},
+);
+
+// Get login settings for public use (used by login screen and first-time admin setup)
 router.get("/login-settings", async (_req, res) => {
 	try {
 		const settings = await getSettings();
@@ -373,6 +422,7 @@ router.get("/login-settings", async (_req, res) => {
 			show_github_version_on_login:
 				settings.show_github_version_on_login !== false,
 			signup_enabled: settings.signup_enabled || false,
+			password_policy: get_password_policy(),
 		});
 	} catch (error) {
 		logger.error("Failed to fetch login settings:", error);

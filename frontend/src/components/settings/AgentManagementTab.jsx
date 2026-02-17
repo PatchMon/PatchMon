@@ -13,19 +13,24 @@ import { useEffect, useState } from "react";
 import api from "../../utils/api";
 
 const AgentManagementTab = () => {
-	const [toast, setToast] = useState(null);
+	const [toasts, setToasts] = useState([]);
 	const [showVersionSelector, setShowVersionSelector] = useState(false);
 	const [_selectedVersion, setSelectedVersion] = useState(null);
+	const [downloadProgress, setDownloadProgress] = useState(null);
 
-	// Auto-hide toast after 5 seconds
+	// Auto-hide toasts after 5 seconds
 	useEffect(() => {
-		if (toast) {
-			const timer = setTimeout(() => {
-				setToast(null);
-			}, 5000);
-			return () => clearTimeout(timer);
+		if (toasts.length > 0) {
+			const timers = toasts.map((toast) => {
+				return setTimeout(() => {
+					setToasts((prev) => prev.filter((t) => t.id !== toast.id));
+				}, 5000);
+			});
+			return () => {
+				timers.forEach((timer) => clearTimeout(timer));
+			};
 		}
-	}, [toast]);
+	}, [toasts]);
 
 	// Close version selector when clicking outside
 	useEffect(() => {
@@ -56,7 +61,12 @@ const AgentManagementTab = () => {
 	}, [showVersionSelector]);
 
 	const showToast = (message, type = "success") => {
-		setToast({ message, type });
+		const id = Date.now() + Math.random();
+		setToasts((prev) => [...prev, { id, message, type }]);
+	};
+
+	const removeToast = (id) => {
+		setToasts((prev) => prev.filter((t) => t.id !== id));
 	};
 
 	// Agent version queries
@@ -109,29 +119,117 @@ const AgentManagementTab = () => {
 
 	const downloadUpdateMutation = useMutation({
 		mutationFn: async (version) => {
-			// Download the specified version (or latest if no version provided)
-			const downloadResult = await api.post("/agent/version/download", {
-				version: version || null,
-			});
-			// Refresh current agent version detection after download
-			await api.post("/agent/version/refresh");
-			// Return the download result for success handling
-			return downloadResult;
+			// Try SSE endpoint first for real-time progress
+			try {
+				return await new Promise((resolve, reject) => {
+					const versionParam = version ? `?version=${version}` : "";
+					const eventSource = new EventSource(
+						`/api/v1/agent/version/download-stream${versionParam}`,
+						{ withCredentials: true },
+					);
+
+					let isComplete = false;
+
+					eventSource.onmessage = (event) => {
+						try {
+							const data = JSON.parse(event.data);
+
+							if (data.status === "starting") {
+								setDownloadProgress({
+									message: data.message,
+									current: 0,
+									total: data.total || 6, // Use backend total if available
+								});
+								showToast(data.message, "info");
+							} else if (data.status === "downloading") {
+								// Update progress state, only show one "downloading" toast
+								setDownloadProgress({
+									message: data.message,
+									current: data.current,
+									total: data.total,
+								});
+							} else if (data.status === "success") {
+								// Individual architecture success - show brief notification
+								showToast(`✓ ${data.architecture}`, "success");
+							} else if (data.status === "failed") {
+								// Individual architecture failure
+								showToast(`✗ ${data.architecture}: ${data.reason}`, "error");
+							} else if (
+								data.status === "complete" ||
+								data.status === "finished"
+							) {
+								// All done
+								setDownloadProgress(null);
+								showToast(data.message, "success");
+								isComplete = true;
+								eventSource.close();
+								refetchVersion();
+								resolve(data.result);
+							} else if (data.status === "error") {
+								setDownloadProgress(null);
+								isComplete = true;
+								eventSource.close();
+								reject(new Error(data.error || "Download failed"));
+							}
+						} catch (err) {
+							console.error("Failed to parse SSE message:", err);
+						}
+					};
+
+					eventSource.onerror = (error) => {
+						console.error("SSE connection error:", error);
+						setDownloadProgress(null);
+						if (!isComplete) {
+							eventSource.close();
+							reject(
+								new Error(
+									"Connection lost during download. Please check server logs.",
+								),
+							);
+						}
+					};
+
+					// Timeout after 10 minutes
+					setTimeout(() => {
+						if (!isComplete) {
+							eventSource.close();
+							setDownloadProgress(null);
+							reject(
+								new Error("Download timeout - taking longer than expected"),
+							);
+						}
+					}, 600000);
+				});
+			} catch (sseError) {
+				// Fallback to legacy POST endpoint if SSE fails
+				console.warn("SSE download failed, falling back to POST:", sseError);
+				setDownloadProgress(null);
+				showToast("Downloading in background...", "info");
+
+				// Increase timeout for binary downloads
+				const downloadResult = await api.post(
+					"/agent/version/download",
+					{
+						version: version || null,
+					},
+					{
+						timeout: 600000, // 10 minutes for large binary downloads
+					},
+				);
+				// Refresh current agent version detection after download
+				await api.post("/agent/version/refresh");
+				// Return the download result for success handling
+				return downloadResult;
+			}
 		},
-		onSuccess: (data) => {
-			refetchVersion();
+		onSuccess: () => {
 			setShowVersionSelector(false);
 			setSelectedVersion(null);
-			// Show success message
-			const message =
-				data.data?.message || "Agent binaries downloaded successfully";
-			showToast(message, "success");
+			setDownloadProgress(null);
 		},
 		onError: (error) => {
-			showToast(
-				`Download failed: ${error.response?.data?.details || error.response?.data?.error || error.message}`,
-				"error",
-			);
+			setDownloadProgress(null);
+			showToast(`Download failed: ${error.message}`, "error");
 		},
 	});
 
@@ -227,50 +325,89 @@ const AgentManagementTab = () => {
 
 	return (
 		<div className="space-y-6">
-			{/* Toast Notification */}
-			{toast && (
-				<div
-					className={`fixed top-20 right-4 z-[100] max-w-md rounded-lg shadow-lg border-2 p-4 flex items-start space-x-3 animate-in slide-in-from-top-5 ${
-						toast.type === "success"
-							? "bg-green-50 dark:bg-green-900/90 border-green-500 dark:border-green-600"
-							: "bg-red-50 dark:bg-red-900/90 border-red-500 dark:border-red-600"
-					}`}
-				>
+			{/* Toast Notifications */}
+			<div className="fixed top-20 right-4 z-[100] space-y-2 max-w-md">
+				{toasts.map((toast) => (
 					<div
-						className={`flex-shrink-0 rounded-full p-1 ${
+						key={toast.id}
+						className={`rounded-lg shadow-lg border-2 p-4 flex items-start space-x-3 animate-in slide-in-from-top-5 ${
 							toast.type === "success"
-								? "bg-green-100 dark:bg-green-800"
-								: "bg-red-100 dark:bg-red-800"
+								? "bg-green-50 dark:bg-green-900/90 border-green-500 dark:border-green-600"
+								: toast.type === "info"
+									? "bg-blue-50 dark:bg-blue-900/90 border-blue-500 dark:border-blue-600"
+									: "bg-red-50 dark:bg-red-900/90 border-red-500 dark:border-red-600"
 						}`}
 					>
-						{toast.type === "success" ? (
-							<CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />
-						) : (
-							<AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
-						)}
-					</div>
-					<div className="flex-1">
-						<p
-							className={`text-sm font-medium ${
+						<div
+							className={`flex-shrink-0 rounded-full p-1 ${
 								toast.type === "success"
-									? "text-green-800 dark:text-green-100"
-									: "text-red-800 dark:text-red-100"
+									? "bg-green-100 dark:bg-green-800"
+									: toast.type === "info"
+										? "bg-blue-100 dark:bg-blue-800"
+										: "bg-red-100 dark:bg-red-800"
 							}`}
 						>
-							{toast.message}
-						</p>
+							{toast.type === "success" ? (
+								<CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />
+							) : toast.type === "info" ? (
+								<Clock className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+							) : (
+								<AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+							)}
+						</div>
+						<div className="flex-1 min-w-0">
+							<p
+								className={`text-sm font-medium break-words ${
+									toast.type === "success"
+										? "text-green-800 dark:text-green-100"
+										: toast.type === "info"
+											? "text-blue-800 dark:text-blue-100"
+											: "text-red-800 dark:text-red-100"
+								}`}
+							>
+								{toast.message}
+							</p>
+						</div>
+						<button
+							type="button"
+							onClick={() => removeToast(toast.id)}
+							className={`flex-shrink-0 rounded-lg p-1 transition-colors ${
+								toast.type === "success"
+									? "hover:bg-green-100 dark:hover:bg-green-800 text-green-600 dark:text-green-400"
+									: toast.type === "info"
+										? "hover:bg-blue-100 dark:hover:bg-blue-800 text-blue-600 dark:text-blue-400"
+										: "hover:bg-red-100 dark:hover:bg-red-800 text-red-600 dark:text-red-400"
+							}`}
+						>
+							<X className="h-4 w-4" />
+						</button>
 					</div>
-					<button
-						type="button"
-						onClick={() => setToast(null)}
-						className={`flex-shrink-0 rounded-lg p-1 transition-colors ${
-							toast.type === "success"
-								? "hover:bg-green-100 dark:hover:bg-green-800 text-green-600 dark:text-green-400"
-								: "hover:bg-red-100 dark:hover:bg-red-800 text-red-600 dark:text-red-400"
-						}`}
-					>
-						<X className="h-4 w-4" />
-					</button>
+				))}
+			</div>
+
+			{/* Download Progress Indicator (Persistent) */}
+			{downloadProgress && (
+				<div className="fixed bottom-4 right-4 z-[100] max-w-md rounded-lg shadow-lg border-2 bg-blue-50 dark:bg-blue-900/90 border-blue-500 dark:border-blue-600 p-4">
+					<div className="flex items-center space-x-3">
+						<RefreshCw className="h-5 w-5 text-blue-600 dark:text-blue-400 animate-spin" />
+						<div className="flex-1">
+							<p className="text-sm font-medium text-blue-800 dark:text-blue-100">
+								{downloadProgress.message}
+							</p>
+							<div className="mt-2 w-full bg-blue-200 dark:bg-blue-800 rounded-full h-2">
+								<div
+									className="bg-blue-600 dark:bg-blue-400 h-2 rounded-full transition-all duration-300"
+									style={{
+										width: `${(downloadProgress.current / downloadProgress.total) * 100}%`,
+									}}
+								/>
+							</div>
+							<p className="text-xs text-blue-600 dark:text-blue-300 mt-1">
+								{downloadProgress.current} of {downloadProgress.total}{" "}
+								architectures
+							</p>
+						</div>
+					</div>
 				</div>
 			)}
 

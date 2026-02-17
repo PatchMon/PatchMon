@@ -573,249 +573,200 @@ const Compliance = () => {
 			{/* ==================== HOSTS TAB ==================== */}
 			{activeTab === "hosts" && (
 				<>
-					{/* Hosts table (3/4) + Recent activity (1/3) */}
-					<div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-						{/* Hosts table - 3/4 width = 2/3 of grid */}
-						<div className="lg:col-span-2">
-							<div className="card p-4 md:p-6">
-								{tableFilter === "never-scanned" && (
-									<p className="text-sm text-primary-600 dark:text-primary-400 mb-4">
-										Showing never-scanned hosts only. Click the Never scanned
-										card again to clear.
-									</p>
-								)}
-								<div className="overflow-x-auto">
-									<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
-										<thead className="bg-secondary-50 dark:bg-secondary-700">
-											<tr>
-												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 whitespace-nowrap w-16">
-													Run
-												</th>
-												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
-													Host name
-												</th>
-												<th
-													className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 w-12"
-													title="Compliance status"
+					{/* Hosts table - full width; last activity per row */}
+					<div className="card p-4 md:p-6">
+						{tableFilter === "never-scanned" && (
+							<p className="text-sm text-primary-600 dark:text-primary-400 mb-4">
+								Showing never-scanned hosts only. Click the Never scanned card
+								again to clear.
+							</p>
+						)}
+						<div className="overflow-x-auto">
+							<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+								<thead className="bg-secondary-50 dark:bg-secondary-700">
+									<tr>
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 whitespace-nowrap w-16">
+											Run
+										</th>
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+											Host name
+										</th>
+										<th
+											className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 w-12"
+											title="Compliance status"
+										>
+											Status
+										</th>
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+											Last activity
+										</th>
+										<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300">
+											Passed
+										</th>
+										<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300">
+											Failed
+										</th>
+										<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300">
+											Skipped
+										</th>
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+											Scanner status
+										</th>
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+											Mode
+										</th>
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+											Scanners
+										</th>
+									</tr>
+								</thead>
+								<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600 text-sm">
+									{hostsTableRows.length === 0 ? (
+										<tr>
+											<td
+												colSpan={10}
+												className="px-4 py-8 text-center text-secondary-500 dark:text-secondary-400"
+											>
+												No hosts
+											</td>
+										</tr>
+									) : (
+										hostsTableRows.map((row) => {
+											const is_scanning =
+												activeScans.some((s) => s.hostId === row.host_id) ||
+												(triggerSingleScanMutation.isPending &&
+													triggerSingleScanMutation.variables?.hostId ===
+														row.host_id);
+											return (
+												<tr
+													key={row.host_id}
+													className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
 												>
-													Status
-												</th>
-												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
-													Last scan date
-												</th>
-												<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300">
-													Passed
-												</th>
-												<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300">
-													Failed
-												</th>
-												<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300">
-													Skipped
-												</th>
-												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
-													Scanner status
-												</th>
-												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
-													Mode
-												</th>
-												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
-													Scanners
-												</th>
-											</tr>
-										</thead>
-										<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600 text-sm">
-											{hostsTableRows.length === 0 ? (
-												<tr>
+													<td className="px-4 py-2 whitespace-nowrap">
+														<button
+															type="button"
+															onClick={() =>
+																triggerSingleScanMutation.mutate({
+																	hostId: row.host_id,
+																	hostName:
+																		row.friendly_name || row.hostname || "Host",
+																})
+															}
+															disabled={is_scanning}
+															className="inline-flex items-center justify-center w-6 h-6 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+															title={
+																is_scanning
+																	? "Scan in progress"
+																	: "Run compliance scan"
+															}
+														>
+															{is_scanning ? (
+																<RefreshCw className="h-3 w-3 animate-spin" />
+															) : (
+																<Play className="h-3 w-3" />
+															)}
+														</button>
+													</td>
+													<td className="px-4 py-2 whitespace-nowrap">
+														<Link
+															to={`/compliance/hosts/${row.host_id}`}
+															className="text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 hover:underline font-medium"
+														>
+															{row.friendly_name || row.hostname || "—"}
+														</Link>
+													</td>
+													<td className="px-4 py-2 whitespace-nowrap">
+														{row.score != null ? (
+															Number(row.score) >= 80 ? (
+																<ShieldCheck
+																	className="h-5 w-5 text-green-600 dark:text-green-400"
+																	title="Compliant"
+																/>
+															) : Number(row.score) >= 60 ? (
+																<AlertTriangle
+																	className="h-5 w-5 text-yellow-600 dark:text-yellow-400"
+																	title="Warning"
+																/>
+															) : (
+																<ShieldAlert
+																	className="h-5 w-5 text-red-600 dark:text-red-400"
+																	title="Critical"
+																/>
+															)
+														) : (
+															<ShieldOff
+																className="h-5 w-5 text-secondary-400"
+																title="Not scanned"
+															/>
+														)}
+													</td>
 													<td
-														colSpan={10}
-														className="px-4 py-8 text-center text-secondary-500 dark:text-secondary-400"
+														className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-secondary-300"
+														title={
+															row.last_scan_date
+																? `${row.last_activity_title || "Scan"} · ${formatDistanceToNow(new Date(row.last_scan_date), { addSuffix: true })}`
+																: undefined
+														}
 													>
-														No hosts
+														{row.last_activity_title ||
+															(row.last_scan_date ? "Scan" : "—")}
+													</td>
+													<td className="px-4 py-2 text-right whitespace-nowrap text-green-600 dark:text-green-400">
+														{row.passed != null ? row.passed : "—"}
+													</td>
+													<td className="px-4 py-2 text-right whitespace-nowrap text-red-600 dark:text-red-400">
+														{row.failed != null ? row.failed : "—"}
+													</td>
+													<td className="px-4 py-2 text-right whitespace-nowrap text-secondary-600 dark:text-secondary-400">
+														{row.skipped != null ? row.skipped : "—"}
+													</td>
+													<td className="px-4 py-2 whitespace-nowrap">
+														<span
+															className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+																row.scanner_status === "Scanned"
+																	? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+																	: row.scanner_status === "Enabled"
+																		? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
+																		: "bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-400"
+															}`}
+														>
+															{row.scanner_status}
+														</span>
+													</td>
+													<td className="px-4 py-2 whitespace-nowrap">
+														{row.compliance_mode === "disabled" ? (
+															<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-400">
+																Disabled
+															</span>
+														) : (
+															<span
+																className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+																	row.compliance_mode === "on-demand"
+																		? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+																		: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
+																}`}
+															>
+																{row.compliance_mode === "on-demand"
+																	? "On-demand"
+																	: "Scheduled"}
+															</span>
+														)}
+													</td>
+													<td className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-secondary-300">
+														{row.compliance_enabled && row.docker_enabled
+															? "OpenSCAP, Docker"
+															: row.compliance_enabled
+																? "OpenSCAP"
+																: row.docker_enabled
+																	? "Docker"
+																	: "—"}
 													</td>
 												</tr>
-											) : (
-												hostsTableRows.map((row) => {
-													const is_scanning =
-														activeScans.some((s) => s.hostId === row.host_id) ||
-														(triggerSingleScanMutation.isPending &&
-															triggerSingleScanMutation.variables?.hostId ===
-																row.host_id);
-													return (
-														<tr
-															key={row.host_id}
-															className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
-														>
-															<td className="px-4 py-2 whitespace-nowrap">
-																<button
-																	type="button"
-																	onClick={() =>
-																		triggerSingleScanMutation.mutate({
-																			hostId: row.host_id,
-																			hostName:
-																				row.friendly_name ||
-																				row.hostname ||
-																				"Host",
-																		})
-																	}
-																	disabled={is_scanning}
-																	className="inline-flex items-center justify-center w-6 h-6 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-																	title={
-																		is_scanning
-																			? "Scan in progress"
-																			: "Run compliance scan"
-																	}
-																>
-																	{is_scanning ? (
-																		<RefreshCw className="h-3 w-3 animate-spin" />
-																	) : (
-																		<Play className="h-3 w-3" />
-																	)}
-																</button>
-															</td>
-															<td className="px-4 py-2 whitespace-nowrap">
-																<Link
-																	to={`/compliance/hosts/${row.host_id}`}
-																	className="text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 hover:underline font-medium"
-																>
-																	{row.friendly_name || row.hostname || "—"}
-																</Link>
-															</td>
-															<td className="px-4 py-2 whitespace-nowrap">
-																{row.score != null ? (
-																	Number(row.score) >= 80 ? (
-																		<ShieldCheck
-																			className="h-5 w-5 text-green-600 dark:text-green-400"
-																			title="Compliant"
-																		/>
-																	) : Number(row.score) >= 60 ? (
-																		<AlertTriangle
-																			className="h-5 w-5 text-yellow-600 dark:text-yellow-400"
-																			title="Warning"
-																		/>
-																	) : (
-																		<ShieldAlert
-																			className="h-5 w-5 text-red-600 dark:text-red-400"
-																			title="Critical"
-																		/>
-																	)
-																) : (
-																	<ShieldOff
-																		className="h-5 w-5 text-secondary-400"
-																		title="Not scanned"
-																	/>
-																)}
-															</td>
-															<td className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-secondary-300">
-																{row.last_scan_date
-																	? formatDistanceToNow(
-																			new Date(row.last_scan_date),
-																			{ addSuffix: true },
-																		)
-																	: "—"}
-															</td>
-															<td className="px-4 py-2 text-right whitespace-nowrap text-green-600 dark:text-green-400">
-																{row.passed != null ? row.passed : "—"}
-															</td>
-															<td className="px-4 py-2 text-right whitespace-nowrap text-red-600 dark:text-red-400">
-																{row.failed != null ? row.failed : "—"}
-															</td>
-															<td className="px-4 py-2 text-right whitespace-nowrap text-secondary-600 dark:text-secondary-400">
-																{row.skipped != null ? row.skipped : "—"}
-															</td>
-															<td className="px-4 py-2 whitespace-nowrap">
-																<span
-																	className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-																		row.scanner_status === "Scanned"
-																			? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-																			: row.scanner_status === "Enabled"
-																				? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
-																				: "bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-400"
-																	}`}
-																>
-																	{row.scanner_status}
-																</span>
-															</td>
-															<td className="px-4 py-2 whitespace-nowrap">
-																{row.compliance_mode === "disabled" ? (
-																	<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-400">
-																		Disabled
-																	</span>
-																) : (
-																	<span
-																		className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-																			row.compliance_mode === "on-demand"
-																				? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
-																				: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
-																		}`}
-																	>
-																		{row.compliance_mode === "on-demand"
-																			? "On-demand"
-																			: "Scheduled"}
-																	</span>
-																)}
-															</td>
-															<td className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-secondary-300">
-																{row.compliance_enabled && row.docker_enabled
-																	? "OpenSCAP, Docker"
-																	: row.compliance_enabled
-																		? "OpenSCAP"
-																		: row.docker_enabled
-																			? "Docker"
-																			: "—"}
-															</td>
-														</tr>
-													);
-												})
-											)}
-										</tbody>
-									</table>
-								</div>
-							</div>
-						</div>
-
-						{/* Recent activity - 1/3 width */}
-						<div className="lg:col-span-1">
-							<div className="card p-4 md:p-6">
-								<h3 className="text-secondary-900 dark:text-white font-medium mb-4">
-									Recent activity
-								</h3>
-								<div className="space-y-3 max-h-[400px] overflow-y-auto">
-									{!recent_scans || recent_scans.length === 0 ? (
-										<p className="text-sm text-secondary-500 dark:text-secondary-400">
-											No recent scans
-										</p>
-									) : (
-										recent_scans.slice(0, 15).map((scan) => (
-											<div
-												key={scan.id}
-												className="text-sm border-b border-secondary-200 dark:border-secondary-600 pb-3 last:border-0 last:pb-0"
-											>
-												<Link
-													to={`/compliance/hosts/${scan.host_id}`}
-													className="text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 hover:underline font-medium"
-												>
-													{scan.host?.friendly_name ||
-														scan.host?.hostname ||
-														"Host"}
-												</Link>
-												<p className="text-secondary-600 dark:text-secondary-400 mt-0.5">
-													{scan.compliance_profiles?.name || scan.profile?.name}{" "}
-													· Score{" "}
-													{scan.score != null
-														? `${Number(scan.score).toFixed(0)}%`
-														: "—"}{" "}
-													·{" "}
-													{scan.completed_at
-														? formatDistanceToNow(new Date(scan.completed_at), {
-																addSuffix: true,
-															})
-														: "—"}
-												</p>
-											</div>
-										))
+											);
+										})
 									)}
-								</div>
-							</div>
+								</tbody>
+							</table>
 						</div>
 					</div>
 				</>
