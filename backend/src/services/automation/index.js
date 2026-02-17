@@ -6,6 +6,12 @@ const agentWs = require("../agentWs");
 const { v4: uuidv4 } = require("uuid");
 const { get_current_time } = require("../../utils/timezone");
 
+const COMPLIANCE_INSTALL_JOB_PREFIX = "compliance_install_job:";
+const COMPLIANCE_INSTALL_CANCEL_PREFIX = "compliance_install_cancel:";
+const _COMPLIANCE_INSTALL_JOB_TTL = 3600; // 1 hour
+const COMPLIANCE_POLL_INTERVAL_MS = 2500;
+const COMPLIANCE_INSTALL_TIMEOUT_MS = 5 * 60 * 1000; // 5 min
+
 // Import automation classes
 const VersionUpdateCheck = require("./versionUpdateCheck");
 const SessionCleanup = require("./sessionCleanup");
@@ -31,6 +37,7 @@ const QUEUE_NAMES = {
 	AGENT_COMMANDS: "agent-commands",
 	ALERT_CLEANUP: "alert-cleanup",
 	HOST_STATUS_MONITOR: "host-status-monitor",
+	COMPLIANCE: "compliance",
 };
 
 /**
@@ -403,6 +410,158 @@ class QueueManager {
 						});
 						logger.info(`❌ Marked job as failed in job_history: ${job.id}`);
 					}
+					throw error;
+				}
+			},
+			workerOptions,
+		);
+
+		// Compliance Worker (install compliance tools on agent)
+		this.workers[QUEUE_NAMES.COMPLIANCE] = new Worker(
+			QUEUE_NAMES.COMPLIANCE,
+			async (job) => {
+				const { hostId, api_id, type } = job.data;
+				if (type !== "install_compliance_tools") {
+					logger.warn(`[Compliance] Unknown job type: ${type}`);
+					return;
+				}
+				logger.info(
+					`[Compliance] Processing install_compliance_tools for host ${hostId} (${api_id})`,
+				);
+
+				let historyRecord = null;
+				try {
+					const host = await prisma.hosts.findUnique({
+						where: { id: hostId },
+						select: { id: true, api_id: true },
+					});
+					if (!host) {
+						throw new Error(`Host not found: ${hostId}`);
+					}
+					historyRecord = await prisma.job_history.create({
+						data: {
+							id: uuidv4(),
+							job_id: job.id,
+							queue_name: QUEUE_NAMES.COMPLIANCE,
+							job_name: "install_compliance_tools",
+							host_id: host.id,
+							api_id: host.api_id,
+							status: "active",
+							attempt_number: job.attemptsMade + 1,
+							created_at: get_current_time(),
+							updated_at: get_current_time(),
+						},
+					});
+				} catch (err) {
+					logger.error("[Compliance] Failed to create job_history:", err);
+				}
+
+				const jobKey = `${COMPLIANCE_INSTALL_JOB_PREFIX}${hostId}`;
+				const cancelKey = `${COMPLIANCE_INSTALL_CANCEL_PREFIX}${job.id}`;
+
+				try {
+					const connected = agentWs.isConnected(api_id);
+					logger.info(
+						`[Compliance] Agent connection check for ${api_id}: ${connected ? "connected" : "not connected"}`,
+					);
+					if (!connected) {
+						throw new Error("Agent is not connected. Cannot run install.");
+					}
+
+					await job.updateData({
+						...job.data,
+						message: "Sending install command to agent...",
+					});
+					await job.updateProgress(10);
+
+					const sent = agentWs.pushInstallScanner(api_id);
+					if (!sent) {
+						throw new Error(
+							"Failed to send install_scanner command to agent (WebSocket not ready or send failed).",
+						);
+					}
+
+					await job.updateData({
+						...job.data,
+						message: "Installing OpenSCAP and SSG content on agent...",
+					});
+					await job.updateProgress(30);
+
+					const statusKey = `integration_status:${api_id}:compliance`;
+					const deadline = Date.now() + COMPLIANCE_INSTALL_TIMEOUT_MS;
+					let lastProgress = 30;
+
+					while (Date.now() < deadline) {
+						const cancelled = await redis.get(cancelKey);
+						if (cancelled) {
+							await redis.del(cancelKey);
+							throw new Error("Cancelled by user");
+						}
+
+						const raw = await redis.get(statusKey);
+						if (raw) {
+							const data = JSON.parse(raw);
+							const status = data.status;
+							const message = data.message || status;
+							await job.updateData({ ...job.data, message });
+
+							if (status === "installing") {
+								if (lastProgress < 70) {
+									lastProgress = 70;
+									await job.updateProgress(lastProgress);
+								}
+							} else if (status === "ready") {
+								await job.updateProgress(100);
+								break;
+							} else if (status === "error") {
+								throw new Error(data.message || "Agent reported error");
+							} else if (status === "partial") {
+								await job.updateProgress(90);
+								break;
+							}
+						}
+
+						await new Promise((r) =>
+							setTimeout(r, COMPLIANCE_POLL_INTERVAL_MS),
+						);
+					}
+
+					if (Date.now() >= deadline) {
+						throw new Error("Install timed out after 5 minutes");
+					}
+
+					await redis.del(jobKey);
+					if (historyRecord) {
+						await prisma.job_history.updateMany({
+							where: { job_id: job.id },
+							data: {
+								status: "completed",
+								completed_at: get_current_time(),
+								updated_at: get_current_time(),
+							},
+						});
+					}
+					logger.info(`[Compliance] Install completed for host ${hostId}`);
+				} catch (error) {
+					await redis.del(jobKey);
+					await redis.del(cancelKey).catch(() => {});
+					if (historyRecord) {
+						await prisma.job_history.updateMany({
+							where: { job_id: job.id },
+							data: {
+								status: "failed",
+								error_message: error.message,
+								completed_at: get_current_time(),
+								updated_at: get_current_time(),
+							},
+						});
+					}
+					const errMsg =
+						error?.message ??
+						(typeof error === "string" ? error : String(error));
+					logger.warn(
+						`[Compliance] Install failed for host ${hostId}: ${errMsg}`,
+					);
 					throw error;
 				}
 			},
