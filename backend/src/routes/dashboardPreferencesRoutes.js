@@ -151,6 +151,36 @@ async function createDefaultDashboardPreferences(userId, userRole = "user") {
 				requiredPermission: "can_view_dashboard",
 				order: 17,
 			},
+			{
+				cardId: "complianceHostStatus",
+				requiredPermission: "can_view_hosts",
+				order: 18,
+			},
+			{
+				cardId: "complianceOpenSCAPDistribution",
+				requiredPermission: "can_view_hosts",
+				order: 19,
+			},
+			{
+				cardId: "complianceFailuresBySeverity",
+				requiredPermission: "can_view_hosts",
+				order: 20,
+			},
+			{
+				cardId: "complianceProfilesInUse",
+				requiredPermission: "can_view_hosts",
+				order: 21,
+			},
+			{
+				cardId: "complianceLastScanAge",
+				requiredPermission: "can_view_hosts",
+				order: 22,
+			},
+			{
+				cardId: "complianceTrendLine",
+				requiredPermission: "can_view_hosts",
+				order: 23,
+			},
 		];
 
 		// Filter cards based on user's permissions
@@ -224,13 +254,15 @@ router.put(
 				where: { user_id: userId },
 			});
 
-			// Create new preferences
-			const newPreferences = preferences.map((pref) => ({
-				id: require("uuid").v4(),
+			// Create new preferences (ensure order is integer for persistence)
+			const newPreferences = preferences.map((pref, index) => ({
+				id: uuidv4(),
 				user_id: userId,
 				card_id: pref.cardId,
 				enabled: pref.enabled,
-				order: pref.order,
+				order: Number.isInteger(Number(pref.order))
+					? Number(pref.order)
+					: index,
 				updated_at: new Date(),
 			}));
 
@@ -379,6 +411,48 @@ router.get("/defaults", authenticateToken, async (_req, res) => {
 				icon: "TrendingUp",
 				enabled: true,
 				order: 16,
+			},
+			{
+				cardId: "complianceHostStatus",
+				title: "Host Compliance Status",
+				icon: "BarChart3",
+				enabled: true,
+				order: 17,
+			},
+			{
+				cardId: "complianceOpenSCAPDistribution",
+				title: "OpenSCAP Distribution",
+				icon: "PieChart",
+				enabled: true,
+				order: 18,
+			},
+			{
+				cardId: "complianceFailuresBySeverity",
+				title: "Failures by Severity",
+				icon: "PieChart",
+				enabled: true,
+				order: 19,
+			},
+			{
+				cardId: "complianceProfilesInUse",
+				title: "Compliance Profiles in Use",
+				icon: "PieChart",
+				enabled: true,
+				order: 20,
+			},
+			{
+				cardId: "complianceLastScanAge",
+				title: "Last Scan Age",
+				icon: "BarChart3",
+				enabled: true,
+				order: 21,
+			},
+			{
+				cardId: "complianceTrendLine",
+				title: "Compliance Trend",
+				icon: "TrendingUp",
+				enabled: true,
+				order: 22,
 			},
 		];
 

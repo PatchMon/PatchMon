@@ -36,6 +36,8 @@ class AgentVersionService {
 			"linux-arm64",
 			"linux-386",
 			"linux-arm",
+			"freebsd-amd64",
+			"freebsd-arm64",
 		];
 		this.currentVersion = null;
 		this.latestVersion = null;
@@ -264,7 +266,7 @@ class AgentVersionService {
 		}
 	}
 
-	async downloadBinariesToAgentsFolder(release) {
+	async downloadBinariesToAgentsFolder(release, progressCallback = null) {
 		try {
 			logger.info(
 				`⬇️ Downloading binaries for version ${release.tag_name} to agents folder...`,
@@ -277,11 +279,24 @@ class AgentVersionService {
 
 			const downloadedFiles = [];
 			const failedDownloads = [];
+			const totalArchitectures = this.supportedArchitectures.length;
 
-			for (const arch of this.supportedArchitectures) {
-				// arch already includes "linux-", so just use it directly
+			for (let i = 0; i < this.supportedArchitectures.length; i++) {
+				const arch = this.supportedArchitectures[i];
+				// arch already includes OS prefix (linux- or freebsd-), so just use it directly
 				const assetName = `patchmon-agent-${arch}`;
 				logger.info(`🔍 Looking for asset: ${assetName}`);
+
+				// Send progress notification - starting
+				if (progressCallback) {
+					progressCallback({
+						status: "downloading",
+						architecture: arch,
+						current: i + 1,
+						total: totalArchitectures,
+						message: `Downloading ${assetName}...`,
+					});
+				}
 
 				// List all available asset names for debugging
 				if (release.assets && release.assets.length > 0) {
@@ -302,10 +317,23 @@ class AgentVersionService {
 						`⚠️ Available assets:`,
 						release.assets?.map((a) => a.name).join(", ") || "none",
 					);
-					failedDownloads.push({
+					const failure = {
 						arch,
 						reason: `Asset "${assetName}" not found in release`,
-					});
+					};
+					failedDownloads.push(failure);
+
+					// Send progress notification - failed
+					if (progressCallback) {
+						progressCallback({
+							status: "failed",
+							architecture: arch,
+							current: i + 1,
+							total: totalArchitectures,
+							message: `Failed: ${assetName} not found`,
+							reason: failure.reason,
+						});
+					}
 					continue;
 				}
 
@@ -321,7 +349,7 @@ class AgentVersionService {
 					logger.info(`🌐 Fetching ${assetName} from GitHub...`);
 					const response = await axios.get(asset.browser_download_url, {
 						responseType: "stream",
-						timeout: 120000, // Increased timeout for large files
+						timeout: 180000, // Increased timeout to 3 minutes for large files
 						maxContentLength: Infinity,
 						maxBodyLength: Infinity,
 					});
@@ -331,6 +359,7 @@ class AgentVersionService {
 
 					// Track download progress
 					let downloadedBytes = 0;
+					const _totalBytes = asset.size || 0;
 
 					// Set up error handlers before piping
 					response.data.on("error", (err) => {
@@ -343,6 +372,8 @@ class AgentVersionService {
 
 					response.data.on("data", (chunk) => {
 						downloadedBytes += chunk.length;
+						// No progress updates during download to avoid spam
+						// Only send start/success/fail notifications
 					});
 
 					// Pipe the stream
@@ -425,17 +456,42 @@ class AgentVersionService {
 						size: statsAfter.size,
 					});
 					logger.info(`✅ Successfully downloaded and verified: ${assetName}`);
+
+					// Send progress notification - success
+					if (progressCallback) {
+						progressCallback({
+							status: "success",
+							architecture: arch,
+							current: i + 1,
+							total: totalArchitectures,
+							message: `Successfully downloaded ${assetName}`,
+							size: statsAfter.size,
+						});
+					}
 				} catch (downloadError) {
 					logger.error(
 						`❌ Failed to download ${assetName}:`,
 						downloadError.message,
 					);
 					logger.error(`❌ Error stack for ${assetName}:`, downloadError.stack);
-					failedDownloads.push({
+					const failure = {
 						arch,
 						reason: downloadError.message,
 						stack: downloadError.stack,
-					});
+					};
+					failedDownloads.push(failure);
+
+					// Send progress notification - failed
+					if (progressCallback) {
+						progressCallback({
+							status: "failed",
+							architecture: arch,
+							current: i + 1,
+							total: totalArchitectures,
+							message: `Failed to download ${assetName}`,
+							reason: downloadError.message,
+						});
+					}
 					// Continue with other architectures
 				}
 			}
@@ -444,6 +500,17 @@ class AgentVersionService {
 			logger.info(
 				`📊 Download summary: ${downloadedFiles.length} successful, ${failedDownloads.length} failed`,
 			);
+
+			// Send final summary
+			if (progressCallback) {
+				progressCallback({
+					status: "complete",
+					message: `Download complete: ${downloadedFiles.length} succeeded, ${failedDownloads.length} failed`,
+					downloaded: downloadedFiles.length,
+					failed: failedDownloads.length,
+					total: totalArchitectures,
+				});
+			}
 
 			if (downloadedFiles.length === 0) {
 				const errorDetails = failedDownloads
@@ -669,7 +736,7 @@ class AgentVersionService {
 		return this.currentVersion;
 	}
 
-	async downloadLatestUpdate() {
+	async downloadLatestUpdate(progressCallback = null) {
 		try {
 			logger.info("⬇️ Downloading latest agent update...");
 
@@ -681,14 +748,14 @@ class AgentVersionService {
 			}
 
 			// Download the specific version from DNS
-			return await this.downloadVersion(this.latestVersion);
+			return await this.downloadVersion(this.latestVersion, progressCallback);
 		} catch (error) {
 			logger.error("❌ Failed to download latest update:", error.message);
 			throw error;
 		}
 	}
 
-	async downloadVersion(version) {
+	async downloadVersion(version, progressCallback = null) {
 		try {
 			logger.info(`⬇️ Downloading agent version ${version}...`);
 			logger.info(`🌐 GitHub API URL: ${this.githubApiUrl}`);
@@ -797,7 +864,10 @@ class AgentVersionService {
 			logger.info(`⬇️ Downloading binaries for version ${release.tag_name}...`);
 
 			// Download binaries for all architectures directly to agents folder
-			const downloadResult = await this.downloadBinariesToAgentsFolder(release);
+			const downloadResult = await this.downloadBinariesToAgentsFolder(
+				release,
+				progressCallback,
+			);
 
 			if (!downloadResult.success || downloadResult.downloaded.length === 0) {
 				throw new Error(

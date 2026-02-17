@@ -151,6 +151,13 @@ const Settings = () => {
 		queryFn: () => settingsAPI.get().then((res) => res.data),
 	});
 
+	// Fetch environment config
+	const { data: envConfig } = useQuery({
+		queryKey: ["envConfig"],
+		queryFn: () => settingsAPI.getEnvConfig().then((res) => res.data),
+		staleTime: 60000, // Cache for 1 minute since env vars rarely change
+	});
+
 	// Helper function to get curl flags based on settings
 	const getCurlFlags = () => {
 		return settings?.ignore_ssl_self_signed ? "-sk" : "-s";
@@ -182,7 +189,31 @@ const Settings = () => {
 		mutationFn: (data) => {
 			return settingsAPI.update(data).then((res) => res.data);
 		},
-		onSuccess: () => {
+		onSuccess: (data) => {
+			// Apply saved settings to form and cache so UI shows persisted values immediately.
+			// Avoids race where refetch returns stale data and overwrites the form after save.
+			if (data?.settings) {
+				const s = data.settings;
+				setFormData((prev) => ({
+					...prev,
+					serverProtocol: s.server_protocol || "http",
+					serverHost: s.server_host || "localhost",
+					serverPort:
+						typeof s.server_port === "number" &&
+						s.server_port >= 1 &&
+						s.server_port <= 65535
+							? s.server_port
+							: 3001,
+					updateInterval: s.update_interval ?? 60,
+					autoUpdate: s.auto_update ?? false,
+					githubRepoUrl:
+						s.github_repo_url || "https://github.com/PatchMon/PatchMon.git",
+					repositoryType: s.repository_type || "public",
+					sshKeyPath: s.ssh_key_path || "",
+					useCustomSshKey: !!s.ssh_key_path,
+				}));
+				queryClient.setQueryData(["settings"], data.settings);
+			}
 			queryClient.invalidateQueries(["settings"]);
 			setIsDirty(false);
 			setErrors({});
@@ -379,6 +410,10 @@ const Settings = () => {
 		}
 		// Remove the frontend-only field
 		delete dataToSubmit.useCustomSshKey;
+		// Ensure port is a valid number so save never sends NaN (e.g. from empty input)
+		const port = Number(dataToSubmit.serverPort);
+		dataToSubmit.serverPort =
+			Number.isFinite(port) && port >= 1 && port <= 65535 ? port : 3001;
 
 		updateSettingsMutation.mutate(dataToSubmit);
 	};
@@ -420,6 +455,10 @@ const Settings = () => {
 			}
 			// Remove the frontend-only field
 			delete dataToSubmit.useCustomSshKey;
+			// Ensure port is a valid number so save never sends NaN (e.g. from empty input)
+			const port = Number(dataToSubmit.serverPort);
+			dataToSubmit.serverPort =
+				Number.isFinite(port) && port >= 1 && port <= 65535 ? port : 3001;
 
 			updateSettingsMutation.mutate(dataToSubmit);
 		}
@@ -955,6 +994,204 @@ const Settings = () => {
 									a newer version is available during their regular update
 									cycle.
 								</p>
+							</div>
+
+							{/* Environment Variables Display */}
+							<div className="mt-6 pt-6 border-t border-secondary-200 dark:border-secondary-600">
+								<div className="flex items-center mb-4">
+									<Code className="h-5 w-5 text-primary-600 mr-2" />
+									<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+										Environment Configuration
+									</h3>
+								</div>
+								<p className="text-sm text-secondary-500 dark:text-secondary-300 mb-4">
+									Current configuration from your .env files and database. The
+									server URL above (editable form) takes precedence and is
+									stored in the database.
+								</p>
+
+								{envConfig ? (
+									<div className="space-y-4">
+										{/* Backend Configuration */}
+										<div className="bg-white dark:bg-secondary-800 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
+											<h4 className="text-sm font-semibold text-secondary-900 dark:text-white mb-3 flex items-center">
+												<Server className="h-4 w-4 mr-2 text-primary-600" />
+												Backend Configuration (backend/.env)
+											</h4>
+											<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+												<div>
+													<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 block mb-1">
+														CORS_ORIGIN
+													</label>
+													<p className="text-sm text-secondary-900 dark:text-white font-mono bg-secondary-50 dark:bg-secondary-700 px-2 py-1.5 rounded break-all">
+														{envConfig.backend.CORS_ORIGIN}
+													</p>
+													<p className="text-xs text-secondary-400 dark:text-secondary-500 mt-1">
+														Allowed frontend origin for CORS
+													</p>
+												</div>
+												<div>
+													<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 block mb-1">
+														PORT
+													</label>
+													<p className="text-sm text-secondary-900 dark:text-white font-mono bg-secondary-50 dark:bg-secondary-700 px-2 py-1.5 rounded">
+														{envConfig.backend.PORT}
+													</p>
+													<p className="text-xs text-secondary-400 dark:text-secondary-500 mt-1">
+														Backend API server port
+													</p>
+												</div>
+												<div>
+													<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 block mb-1">
+														NODE_ENV
+													</label>
+													<p className="text-sm text-secondary-900 dark:text-white font-mono bg-secondary-50 dark:bg-secondary-700 px-2 py-1.5 rounded">
+														{envConfig.backend.NODE_ENV}
+													</p>
+													<p className="text-xs text-secondary-400 dark:text-secondary-500 mt-1">
+														Environment mode
+													</p>
+												</div>
+											</div>
+										</div>
+
+										{/* Database Server URL (Active Configuration) */}
+										<div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4 border-2 border-green-300 dark:border-green-700">
+											<h4 className="text-sm font-semibold text-green-900 dark:text-green-100 mb-3 flex items-center">
+												<Shield className="h-4 w-4 mr-2 text-green-600 dark:text-green-400" />
+												Active Server URL (Database - Takes Precedence)
+											</h4>
+											<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+												<div>
+													<label className="text-xs font-medium text-green-700 dark:text-green-300 block mb-1">
+														Protocol
+													</label>
+													<p className="text-sm text-green-900 dark:text-green-100 font-mono bg-green-100 dark:bg-green-800/30 px-2 py-1.5 rounded">
+														{envConfig.backend.DB_SERVER_PROTOCOL}
+													</p>
+												</div>
+												<div>
+													<label className="text-xs font-medium text-green-700 dark:text-green-300 block mb-1">
+														Host
+													</label>
+													<p className="text-sm text-green-900 dark:text-green-100 font-mono bg-green-100 dark:bg-green-800/30 px-2 py-1.5 rounded break-all">
+														{envConfig.backend.DB_SERVER_HOST}
+													</p>
+												</div>
+												<div>
+													<label className="text-xs font-medium text-green-700 dark:text-green-300 block mb-1">
+														Port
+													</label>
+													<p className="text-sm text-green-900 dark:text-green-100 font-mono bg-green-100 dark:bg-green-800/30 px-2 py-1.5 rounded">
+														{envConfig.backend.DB_SERVER_PORT}
+													</p>
+												</div>
+												<div>
+													<label className="text-xs font-medium text-green-700 dark:text-green-300 block mb-1">
+														Full URL
+													</label>
+													<p className="text-sm text-green-900 dark:text-green-100 font-mono bg-green-100 dark:bg-green-800/30 px-2 py-1.5 rounded break-all">
+														{envConfig.backend.DB_SERVER_URL}
+													</p>
+												</div>
+											</div>
+											<div className="mt-3 p-2 bg-green-100 dark:bg-green-800/20 border border-green-200 dark:border-green-700/50 rounded">
+												<p className="text-xs text-green-800 dark:text-green-200">
+													<strong>Note:</strong> This is the currently active
+													server URL stored in the database. It's used in
+													installation scripts and agent communications. Edit it
+													using the form above.
+												</p>
+											</div>
+										</div>
+
+										{/* Environment Variable Fallbacks */}
+										<div className="bg-secondary-50 dark:bg-secondary-800/50 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
+											<h4 className="text-sm font-semibold text-secondary-900 dark:text-white mb-3 flex items-center">
+												<Code className="h-4 w-4 mr-2 text-secondary-600" />
+												Environment Variable Fallbacks (backend/.env)
+											</h4>
+											<div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+												<div>
+													<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 block mb-1">
+														SERVER_PROTOCOL
+													</label>
+													<p className="text-xs text-secondary-900 dark:text-white font-mono bg-secondary-100 dark:bg-secondary-700 px-2 py-1.5 rounded">
+														{envConfig.backend.ENV_SERVER_PROTOCOL}
+													</p>
+												</div>
+												<div>
+													<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 block mb-1">
+														SERVER_HOST
+													</label>
+													<p className="text-xs text-secondary-900 dark:text-white font-mono bg-secondary-100 dark:bg-secondary-700 px-2 py-1.5 rounded break-all">
+														{envConfig.backend.ENV_SERVER_HOST}
+													</p>
+												</div>
+												<div>
+													<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 block mb-1">
+														SERVER_PORT
+													</label>
+													<p className="text-xs text-secondary-900 dark:text-white font-mono bg-secondary-100 dark:bg-secondary-700 px-2 py-1.5 rounded">
+														{envConfig.backend.ENV_SERVER_PORT}
+													</p>
+												</div>
+											</div>
+											<div className="mt-3 p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700/50 rounded">
+												<p className="text-xs text-yellow-800 dark:text-yellow-200">
+													<strong>Info:</strong> These environment variables are
+													only used when creating the database settings for the
+													first time. Once the database is initialized, the
+													values stored in the database (shown above) take
+													precedence.
+												</p>
+											</div>
+										</div>
+
+										{/* Frontend Configuration */}
+										<div className="bg-white dark:bg-secondary-800 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
+											<h4 className="text-sm font-semibold text-secondary-900 dark:text-white mb-3 flex items-center">
+												<Code className="h-4 w-4 mr-2 text-primary-600" />
+												Frontend Configuration (frontend/.env)
+											</h4>
+											<div>
+												<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 block mb-1">
+													VITE_API_URL
+												</label>
+												<p className="text-sm text-secondary-900 dark:text-white font-mono bg-secondary-50 dark:bg-secondary-700 px-2 py-1.5 rounded break-all">
+													{envConfig.frontend.VITE_API_URL}
+												</p>
+												<p className="text-xs text-secondary-400 dark:text-secondary-500 mt-1">
+													Frontend API endpoint URL (used by browser)
+												</p>
+											</div>
+										</div>
+									</div>
+								) : (
+									<div className="bg-secondary-50 dark:bg-secondary-800 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
+										<p className="text-sm text-secondary-500 dark:text-secondary-400">
+											Loading environment configuration...
+										</p>
+									</div>
+								)}
+
+								<div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-md">
+									<p className="text-xs text-blue-700 dark:text-blue-300">
+										<strong>How to update:</strong>
+										<br />• <strong>Active Server URL:</strong> Use the form
+										above to change protocol/host/port (saves to database)
+										<br />• <strong>CORS_ORIGIN, PORT:</strong> Edit{" "}
+										<code className="bg-blue-100 dark:bg-blue-800 px-1 py-0.5 rounded">
+											backend/.env
+										</code>{" "}
+										and restart the backend
+										<br />• <strong>VITE_API_URL:</strong> Edit{" "}
+										<code className="bg-blue-100 dark:bg-blue-800 px-1 py-0.5 rounded">
+											frontend/.env
+										</code>{" "}
+										and rebuild/restart the frontend
+									</p>
+								</div>
 							</div>
 
 							{/* Security Notice */}

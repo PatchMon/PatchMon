@@ -1,5 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, CheckCircle, Save, Server, Shield } from "lucide-react";
+import {
+	AlertCircle,
+	BookOpen,
+	CheckCircle,
+	Code,
+	Save,
+	Server,
+} from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { settingsAPI } from "../../utils/api";
 
@@ -22,9 +29,18 @@ const ProtocolUrlTab = () => {
 		data: settings,
 		isLoading,
 		error,
+		refetch: _refetchSettings,
 	} = useQuery({
 		queryKey: ["settings"],
 		queryFn: () => settingsAPI.get().then((res) => res.data),
+		staleTime: 0, // Always fetch fresh data
+	});
+
+	// Fetch environment config
+	const { data: envConfig } = useQuery({
+		queryKey: ["envConfig"],
+		queryFn: () => settingsAPI.getEnvConfig().then((res) => res.data),
+		staleTime: 0, // Always fetch fresh data
 	});
 
 	// Update form data when settings are loaded
@@ -45,7 +61,20 @@ const ProtocolUrlTab = () => {
 		mutationFn: (data) => {
 			return settingsAPI.update(data).then((res) => res.data);
 		},
-		onSuccess: () => {
+		onSuccess: (data) => {
+			// Apply saved settings to form immediately so UI shows persisted values
+			// (avoids race with refetch and ensures form is not overwritten by stale cache)
+			if (data?.settings) {
+				const s = data.settings;
+				setFormData({
+					serverProtocol: s.server_protocol || "http",
+					serverHost: s.server_host || "localhost",
+					serverPort: s.server_port ?? 3001,
+				});
+			}
+			if (data?.settings) {
+				queryClient.setQueryData(["settings"], data.settings);
+			}
 			queryClient.invalidateQueries(["settings"]);
 			setIsDirty(false);
 			setErrors({});
@@ -228,39 +257,17 @@ const ProtocolUrlTab = () => {
 					</div>
 				</div>
 
-				<div className="mt-4 p-4 bg-secondary-50 dark:bg-secondary-700 rounded-md">
-					<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-2">
-						Server URL
-					</h4>
-					<p className="text-sm text-secondary-600 dark:text-secondary-300 font-mono">
-						{formData.serverProtocol}://{formData.serverHost}:
-						{formData.serverPort}
+				<div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-md">
+					<p className="text-sm text-blue-800 dark:text-blue-200">
+						<strong>Note:</strong> This URL will be used in installation scripts
+						and agent communications. Change this in order for the agents to
+						communicate with PatchMon, usually the "outside" port and
+						CORS_Origin url.
 					</p>
-					<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-1">
-						This URL will be used in installation scripts and agent
-						communications.
-					</p>
-				</div>
-
-				{/* Security Notice */}
-				<div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-md p-4">
-					<div className="flex">
-						<Shield className="h-5 w-5 text-blue-400 dark:text-blue-300" />
-						<div className="ml-3">
-							<h3 className="text-sm font-medium text-blue-800 dark:text-blue-200">
-								Security Notice
-							</h3>
-							<p className="mt-1 text-sm text-blue-700 dark:text-blue-300">
-								Changing these settings will affect all installation scripts and
-								agent communications. Make sure the server URL is accessible
-								from your client networks.
-							</p>
-						</div>
-					</div>
 				</div>
 
 				{/* Save Button */}
-				<div className="flex justify-end">
+				<div className="flex justify-end mt-4">
 					<button
 						type="button"
 						onClick={handleSave}
@@ -286,7 +293,7 @@ const ProtocolUrlTab = () => {
 				</div>
 
 				{updateSettingsMutation.isSuccess && (
-					<div className="bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded-md p-4">
+					<div className="mt-4 bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded-md p-4">
 						<div className="flex">
 							<CheckCircle className="h-5 w-5 text-green-400 dark:text-green-300" />
 							<div className="ml-3">
@@ -297,6 +304,241 @@ const ProtocolUrlTab = () => {
 						</div>
 					</div>
 				)}
+
+				{/* Environment Variables Display */}
+				<div className="mt-6 pt-6 border-t border-secondary-200 dark:border-secondary-600">
+					<div className="flex items-center mb-4">
+						<Code className="h-5 w-5 text-primary-600 mr-2" />
+						<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+							Environment Configuration
+						</h3>
+					</div>
+					<p className="text-sm text-secondary-500 dark:text-secondary-300 mb-4">
+						Current configuration values and their sources. Values from the
+						database take precedence and are edited using the form above.
+					</p>
+
+					{envConfig ? (
+						<div className="overflow-x-auto">
+							<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700">
+								<thead className="bg-secondary-50 dark:bg-secondary-800">
+									<tr>
+										<th
+											scope="col"
+											className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+										>
+											Setting Name
+										</th>
+										<th
+											scope="col"
+											className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+										>
+											Current Value
+										</th>
+										<th
+											scope="col"
+											className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+										>
+											Source
+										</th>
+									</tr>
+								</thead>
+								<tbody className="bg-white dark:bg-secondary-900 divide-y divide-secondary-200 dark:divide-secondary-700">
+									{/* Active Server URL from Database */}
+									<tr className="bg-secondary-50 dark:bg-secondary-800/50">
+										<td
+											colSpan="3"
+											className="px-4 py-2 text-xs font-semibold text-secondary-700 dark:text-secondary-300 uppercase"
+										>
+											Server URL (Active Configuration)
+										</td>
+									</tr>
+									<tr>
+										<td className="px-4 py-3 text-sm font-medium text-secondary-900 dark:text-white">
+											Server Protocol
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-700 dark:text-secondary-300 font-mono">
+											{envConfig.backend.DB_SERVER_PROTOCOL}
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-500 dark:text-secondary-400">
+											Database
+										</td>
+									</tr>
+									<tr className="bg-secondary-50 dark:bg-secondary-800/30">
+										<td className="px-4 py-3 text-sm font-medium text-secondary-900 dark:text-white">
+											Server Host
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-700 dark:text-secondary-300 font-mono break-all">
+											{envConfig.backend.DB_SERVER_HOST}
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-500 dark:text-secondary-400">
+											Database
+										</td>
+									</tr>
+									<tr>
+										<td className="px-4 py-3 text-sm font-medium text-secondary-900 dark:text-white">
+											Server Port
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-700 dark:text-secondary-300 font-mono">
+											{envConfig.backend.DB_SERVER_PORT}
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-500 dark:text-secondary-400">
+											Database
+										</td>
+									</tr>
+									<tr className="bg-secondary-50 dark:bg-secondary-800/30">
+										<td className="px-4 py-3 text-sm font-medium text-secondary-900 dark:text-white">
+											Full Server URL
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-700 dark:text-secondary-300 font-mono break-all">
+											{envConfig.backend.DB_SERVER_URL}
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-500 dark:text-secondary-400">
+											Database (Computed)
+										</td>
+									</tr>
+
+									{/* Backend .env Configuration */}
+									<tr className="bg-secondary-50 dark:bg-secondary-800/50">
+										<td
+											colSpan="3"
+											className="px-4 py-2 text-xs font-semibold text-secondary-700 dark:text-secondary-300 uppercase"
+										>
+											Backend Configuration (backend/.env)
+										</td>
+									</tr>
+									<tr>
+										<td className="px-4 py-3 text-sm font-medium text-secondary-900 dark:text-white">
+											CORS_ORIGIN
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-700 dark:text-secondary-300 font-mono break-all">
+											{envConfig.backend.CORS_ORIGIN}
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-500 dark:text-secondary-400">
+											backend/.env
+										</td>
+									</tr>
+									<tr className="bg-secondary-50 dark:bg-secondary-800/30">
+										<td className="px-4 py-3 text-sm font-medium text-secondary-900 dark:text-white">
+											CORS_ORIGINS
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-700 dark:text-secondary-300 font-mono break-all">
+											{envConfig.backend.CORS_ORIGINS}
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-500 dark:text-secondary-400">
+											backend/.env
+										</td>
+									</tr>
+									<tr>
+										<td className="px-4 py-3 text-sm font-medium text-secondary-900 dark:text-white">
+											PORT
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-700 dark:text-secondary-300 font-mono">
+											{envConfig.backend.PORT}
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-500 dark:text-secondary-400">
+											backend/.env
+										</td>
+									</tr>
+									<tr className="bg-secondary-50 dark:bg-secondary-800/30">
+										<td className="px-4 py-3 text-sm font-medium text-secondary-900 dark:text-white">
+											NODE_ENV
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-700 dark:text-secondary-300 font-mono">
+											{envConfig.backend.NODE_ENV}
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-500 dark:text-secondary-400">
+											backend/.env
+										</td>
+									</tr>
+
+									{/* Frontend .env Configuration */}
+									<tr className="bg-secondary-50 dark:bg-secondary-800/50">
+										<td
+											colSpan="3"
+											className="px-4 py-2 text-xs font-semibold text-secondary-700 dark:text-secondary-300 uppercase"
+										>
+											Frontend Configuration (frontend/.env)
+										</td>
+									</tr>
+									<tr>
+										<td className="px-4 py-3 text-sm font-medium text-secondary-900 dark:text-white">
+											VITE_API_URL
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-700 dark:text-secondary-300 font-mono break-all">
+											{envConfig.frontend.VITE_API_URL}
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-500 dark:text-secondary-400">
+											frontend/.env
+										</td>
+									</tr>
+
+									{/* Environment Variable Fallbacks (Optional) */}
+									<tr className="bg-secondary-50 dark:bg-secondary-800/50">
+										<td
+											colSpan="3"
+											className="px-4 py-2 text-xs font-semibold text-secondary-700 dark:text-secondary-300 uppercase"
+										>
+											Environment Variable Fallbacks (backend/.env - Only used
+											on first DB init)
+										</td>
+									</tr>
+									<tr>
+										<td className="px-4 py-3 text-sm font-medium text-secondary-900 dark:text-white">
+											SERVER_PROTOCOL
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-700 dark:text-secondary-300 font-mono">
+											{envConfig.backend.ENV_SERVER_PROTOCOL}
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-500 dark:text-secondary-400">
+											backend/.env (fallback)
+										</td>
+									</tr>
+									<tr className="bg-secondary-50 dark:bg-secondary-800/30">
+										<td className="px-4 py-3 text-sm font-medium text-secondary-900 dark:text-white">
+											SERVER_HOST
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-700 dark:text-secondary-300 font-mono break-all">
+											{envConfig.backend.ENV_SERVER_HOST}
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-500 dark:text-secondary-400">
+											backend/.env (fallback)
+										</td>
+									</tr>
+									<tr>
+										<td className="px-4 py-3 text-sm font-medium text-secondary-900 dark:text-white">
+											SERVER_PORT
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-700 dark:text-secondary-300 font-mono">
+											{envConfig.backend.ENV_SERVER_PORT}
+										</td>
+										<td className="px-4 py-3 text-sm text-secondary-500 dark:text-secondary-400">
+											backend/.env (fallback)
+										</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+					) : (
+						<div className="bg-secondary-50 dark:bg-secondary-800 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
+							<p className="text-sm text-secondary-500 dark:text-secondary-400">
+								Loading environment configuration...
+							</p>
+						</div>
+					)}
+
+					<div className="mt-4 flex justify-end">
+						<a
+							href="https://docs.patchmon.net/books/patchmon-application-documentation/page/patchmon-environment-variables-reference"
+							target="_blank"
+							rel="noopener noreferrer"
+							className="inline-flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg text-sm transition-colors"
+						>
+							<BookOpen className="h-4 w-4" />
+							Environment Variables Documentation
+						</a>
+					</div>
+				</div>
 			</form>
 		</div>
 	);

@@ -747,6 +747,16 @@ function pushComplianceScan(apiId, profileType = "all", options = {}) {
 	return false;
 }
 
+function pushComplianceScanCancel(apiId) {
+	const ws = apiIdToSocket.get(apiId);
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		safeSend(ws, JSON.stringify({ type: "compliance_scan_cancel" }));
+		logger.info(`[agent-ws] Sent compliance scan cancel for ${apiId}`);
+		return true;
+	}
+	return false;
+}
+
 function pushUpgradeSSG(apiId) {
 	logger.info(`[agent-ws] pushUpgradeSSG called for api_id=${apiId}`);
 	const ws = apiIdToSocket.get(apiId);
@@ -1060,6 +1070,7 @@ module.exports = {
 	pushUpdateNotification,
 	pushUpdateNotificationToAll,
 	pushComplianceScan,
+	pushComplianceScanCancel,
 	pushUpgradeSSG,
 	pushRemediateRule,
 	pushDockerImageScan,

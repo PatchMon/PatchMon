@@ -22,7 +22,8 @@ jobs:
       - name: Setup Biome
         uses: biomejs/setup-biome@v2
         with:
-          version: latest
+          # Pinned to avoid GitHub API call for "latest" (avoids 401 with restricted GITHUB_TOKEN)
+          version: "2.4.2"
 
       - name: Run Biome CI
         env:

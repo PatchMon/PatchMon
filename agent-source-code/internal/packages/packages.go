@@ -14,12 +14,12 @@ import (
 
 // Manager handles package information collection
 type Manager struct {
-	logger          *logrus.Logger
-	aptManager      *APTManager
-	dnfManager      *DNFManager
-	apkManager      *APKManager
-	pacmanManager   *PacmanManager
-	freebsdManager  *FreeBSDManager
+	logger         *logrus.Logger
+	aptManager     *APTManager
+	dnfManager     *DNFManager
+	apkManager     *APKManager
+	pacmanManager  *PacmanManager
+	freebsdManager *FreeBSDManager
 }
 
 // New creates a new package manager

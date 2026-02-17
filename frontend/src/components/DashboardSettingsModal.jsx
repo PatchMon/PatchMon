@@ -130,13 +130,12 @@ const DashboardSettingsModal = ({ isOpen, onClose }) => {
 	const updatePreferencesMutation = useMutation({
 		mutationFn: (preferences) => dashboardPreferencesAPI.update(preferences),
 		onSuccess: (response) => {
-			// Optimistically update the query cache with the correct data structure
+			// Update cache with saved preferences so dashboard order is correct immediately.
+			// Do not invalidate here: a refetch can race and overwrite with stale data.
 			queryClient.setQueryData(
 				["dashboardPreferences"],
 				response.data.preferences,
 			);
-			// Also invalidate to ensure fresh data
-			queryClient.invalidateQueries(["dashboardPreferences"]);
 			setHasChanges(false);
 			onClose();
 		},
@@ -177,6 +176,13 @@ const DashboardSettingsModal = ({ isOpen, onClose }) => {
 				if (cardId === "recentUsers") return "Table";
 				if (cardId === "recentCollection") return "Table";
 				if (cardId === "quickStats") return "Wide card";
+				if (cardId === "complianceHostStatus") return "Bar chart";
+				if (cardId === "complianceOpenSCAPDistribution")
+					return "Doughnut chart";
+				if (cardId === "complianceFailuresBySeverity") return "Doughnut chart";
+				if (cardId === "complianceProfilesInUse") return "Bar chart";
+				if (cardId === "complianceLastScanAge") return "Doughnut chart";
+				if (cardId === "complianceTrendLine") return "Line chart";
 				return undefined;
 			};
 
@@ -234,7 +240,7 @@ const DashboardSettingsModal = ({ isOpen, onClose }) => {
 		const preferences = cards.map((card) => ({
 			cardId: card.cardId,
 			enabled: card.enabled,
-			order: card.order,
+			order: Number(card.order),
 		}));
 
 		updatePreferencesMutation.mutate(preferences);

@@ -6,6 +6,7 @@ import Layout from "./components/Layout";
 import LogoProvider from "./components/LogoProvider";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SettingsLayout from "./components/SettingsLayout";
+import SetupCheckError from "./components/SetupCheckError";
 import { isAuthPhase } from "./constants/authPhases";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ColorThemeProvider } from "./contexts/ColorThemeContext";
@@ -27,6 +28,12 @@ const Repositories = lazy(() => import("./pages/Repositories"));
 const RepositoryDetail = lazy(() => import("./pages/RepositoryDetail"));
 const Docker = lazy(() => import("./pages/Docker"));
 const Compliance = lazy(() => import("./pages/Compliance"));
+const ComplianceHostDetail = lazy(
+	() => import("./pages/compliance/HostDetail"),
+);
+const ComplianceRuleDetail = lazy(
+	() => import("./pages/compliance/RuleDetail"),
+);
 const Reporting = lazy(() => import("./pages/Reporting"));
 const DockerContainerDetail = lazy(
 	() => import("./pages/docker/ContainerDetail"),
@@ -64,7 +71,8 @@ const LoadingFallback = () => (
 );
 
 function AppRoutes() {
-	const { needsFirstTimeSetup, authPhase, isAuthenticated } = useAuth();
+	const { needsFirstTimeSetup, setupCheckError, authPhase, isAuthenticated } =
+		useAuth();
 	const isAuth = isAuthenticated(); // Call the function to get boolean value
 
 	// Show loading while checking setup or initialising
@@ -84,7 +92,12 @@ function AppRoutes() {
 		);
 	}
 
-	// Show first-time setup if no admin users exist
+	// Backend/DB unreachable or rate limited - show error, not first-time setup
+	if (setupCheckError) {
+		return <SetupCheckError />;
+	}
+
+	// Show first-time setup only when we successfully determined no admin users exist
 	if (needsFirstTimeSetup && !isAuth) {
 		return <FirstTimeAdminSetup />;
 	}
@@ -179,6 +192,26 @@ function AppRoutes() {
 						<ProtectedRoute requirePermission="can_view_hosts">
 							<Layout>
 								<Compliance />
+							</Layout>
+						</ProtectedRoute>
+					}
+				/>
+				<Route
+					path="/compliance/hosts/:id"
+					element={
+						<ProtectedRoute requirePermission="can_view_hosts">
+							<Layout>
+								<ComplianceHostDetail />
+							</Layout>
+						</ProtectedRoute>
+					}
+				/>
+				<Route
+					path="/compliance/rules/:id"
+					element={
+						<ProtectedRoute requirePermission="can_view_hosts">
+							<Layout>
+								<ComplianceRuleDetail />
 							</Layout>
 						</ProtectedRoute>
 					}

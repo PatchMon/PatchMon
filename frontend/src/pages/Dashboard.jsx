@@ -28,6 +28,15 @@ import {
 import { useEffect, useState } from "react";
 import { Bar, Doughnut, Line, Pie } from "react-chartjs-2";
 import { useNavigate } from "react-router-dom";
+import {
+	COMPLIANCE_WIDGET_CARD_IDS,
+	ComplianceProfilesPie,
+	ComplianceTrendLinePlaceholder,
+	FailuresBySeverityDoughnut,
+	HostComplianceStatusBar,
+	LastScanAgeBar,
+	OpenSCAPDistributionDoughnut,
+} from "../components/compliance/widgets";
 import DashboardSettingsModal from "../components/DashboardSettingsModal";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
@@ -37,6 +46,7 @@ import {
 	formatRelativeTime,
 	settingsAPI,
 } from "../utils/api";
+import { complianceAPI } from "../utils/complianceApi";
 
 // Register Chart.js components
 ChartJS.register(
@@ -263,6 +273,19 @@ const Dashboard = () => {
 		staleTime: 60 * 1000,
 	});
 
+	// Fetch compliance dashboard only when at least one compliance card is enabled and user can view hosts
+	const has_view_hosts = permissions?.can_view_hosts === true;
+	const is_any_compliance_card_enabled = cardPreferences.some(
+		(c) => COMPLIANCE_WIDGET_CARD_IDS.includes(c.cardId) && c.enabled,
+	);
+	const { data: compliance_dashboard } = useQuery({
+		queryKey: ["compliance-dashboard"],
+		queryFn: () => complianceAPI.getDashboard().then((res) => res.data),
+		staleTime: 60 * 1000,
+		refetchOnWindowFocus: false,
+		enabled: has_view_hosts && is_any_compliance_card_enabled,
+	});
+
 	// Fetch settings to get the agent update interval
 	const { data: settings } = useQuery({
 		queryKey: ["settings"],
@@ -340,6 +363,11 @@ const Dashboard = () => {
 				return false; // Hide card if user doesn't have permission
 			}
 		}
+		if (COMPLIANCE_WIDGET_CARD_IDS.includes(cardId)) {
+			if (permissions?.can_view_hosts !== true) {
+				return false; // Hide compliance cards if user can't view hosts
+			}
+		}
 
 		return card.enabled;
 	};
@@ -369,6 +397,7 @@ const Dashboard = () => {
 				"packagePriority",
 				"recentUsers",
 				"recentCollection",
+				...COMPLIANCE_WIDGET_CARD_IDS,
 			].includes(cardId)
 		) {
 			return "charts";
@@ -848,6 +877,79 @@ const Dashboard = () => {
 						</div>
 					</div>
 				);
+
+			case "complianceHostStatus":
+				return compliance_dashboard ? (
+					<HostComplianceStatusBar data={compliance_dashboard} />
+				) : (
+					<div className="card p-4 sm:p-6 w-full">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+							Host Compliance Status
+						</h3>
+						<div className="h-64 flex items-center justify-center">
+							<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
+						</div>
+					</div>
+				);
+
+			case "complianceOpenSCAPDistribution":
+				return compliance_dashboard ? (
+					<OpenSCAPDistributionDoughnut data={compliance_dashboard} />
+				) : (
+					<div className="card p-4 sm:p-6 w-full">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+							OpenSCAP Benchmark Distribution
+						</h3>
+						<div className="h-64 flex items-center justify-center">
+							<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
+						</div>
+					</div>
+				);
+
+			case "complianceFailuresBySeverity":
+				return compliance_dashboard ? (
+					<FailuresBySeverityDoughnut data={compliance_dashboard} />
+				) : (
+					<div className="card p-4 sm:p-6 w-full">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+							Failures by Severity
+						</h3>
+						<div className="h-64 flex items-center justify-center">
+							<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
+						</div>
+					</div>
+				);
+
+			case "complianceProfilesInUse":
+				return compliance_dashboard ? (
+					<ComplianceProfilesPie data={compliance_dashboard} />
+				) : (
+					<div className="card p-4 sm:p-6 w-full">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+							Compliance Profiles in Use
+						</h3>
+						<div className="h-64 flex items-center justify-center">
+							<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
+						</div>
+					</div>
+				);
+
+			case "complianceLastScanAge":
+				return compliance_dashboard ? (
+					<LastScanAgeBar data={compliance_dashboard} />
+				) : (
+					<div className="card p-4 sm:p-6 w-full">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+							Last Scan Age
+						</h3>
+						<div className="h-64 flex items-center justify-center">
+							<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
+						</div>
+					</div>
+				);
+
+			case "complianceTrendLine":
+				return <ComplianceTrendLinePlaceholder />;
 
 			case "packageTrends":
 				return (

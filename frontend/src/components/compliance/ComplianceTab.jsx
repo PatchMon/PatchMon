@@ -25,12 +25,13 @@ import {
 	Server,
 	Settings,
 	Shield,
+	Square,
 	ToggleLeft,
 	ToggleRight,
 	Wrench,
 	XCircle,
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
 	Bar,
 	BarChart,
@@ -190,6 +191,38 @@ const ComplianceTab = ({
 		placeholderData: (previousData) => previousData,
 	});
 
+	// Refs for SSE handler so effect only depends on scanInProgress/apiId (avoids connect/disconnect storm)
+	const refetchLatestRef = useRef(refetchLatest);
+	const refetchHistoryRef = useRef(refetchHistory);
+	refetchLatestRef.current = refetchLatest;
+	refetchHistoryRef.current = refetchHistory;
+
+	// Paginated scan results (used on Results tab to avoid loading all rules at once)
+	const scanIdForResults = latestScan?.id;
+	const { data: scanResultsData } = useQuery({
+		queryKey: [
+			"compliance-scan-results",
+			scanIdForResults,
+			currentPage,
+			statusFilter,
+			severityFilter,
+		],
+		queryFn: () =>
+			complianceAPI.getScanResults(scanIdForResults, {
+				limit: resultsPerPage,
+				offset: (currentPage - 1) * resultsPerPage,
+				...(statusFilter !== "all" ? { status: statusFilter } : {}),
+				...(severityFilter !== "all" ? { severity: severityFilter } : {}),
+			}),
+		enabled: !!scanIdForResults && activeSubtab === "results",
+		staleTime: 60 * 1000,
+		refetchOnWindowFocus: false,
+	});
+
+	const paginatedResults = scanResultsData?.results ?? [];
+	const paginationTotal = scanResultsData?.pagination?.total ?? 0;
+	const severityBreakdown = scanResultsData?.severity_breakdown;
+
 	// Get integration status (scanner info, components)
 	const {
 		data: integrationStatus,
@@ -200,7 +233,9 @@ const ComplianceTab = ({
 		queryFn: () =>
 			complianceAPI.getIntegrationStatus(hostId).then((res) => res.data),
 		enabled: !!hostId,
-		refetchInterval: 30000, // Refresh every 30 seconds
+		staleTime: 5 * 60 * 1000, // 5 min - rely on invalidation after scan trigger/completion
+		refetchInterval: 5 * 60 * 1000, // 5 min instead of 30s to reduce API load
+		refetchOnWindowFocus: false,
 	});
 
 	// Update selected profile when agent profiles are loaded
@@ -249,6 +284,11 @@ const ComplianceTab = ({
 			}
 		}
 	}, [scansByType, latestScan?.compliance_profiles?.type, profileTypeFilter]);
+
+	// Reset to page 1 when status or severity filter changes (paginated results refetch with new params)
+	useEffect(() => {
+		setCurrentPage(1);
+	}, []);
 
 	// SSG content update mutation
 	const [updateMessage, setUpdateMessage] = useState(null);
@@ -411,15 +451,17 @@ const ComplianceTab = ({
 		setScanMessage,
 	]);
 
-	// SSE connection for real-time compliance scan progress
+	// SSE connection for real-time compliance scan progress.
+	// Effect MUST depend only on scanInProgress and apiId. Including setScanInProgress/setScanMessage
+	// (wrapper functions recreated each render) caused the effect to re-run every render → new
+	// EventSource and cleanup of the previous one → connect/disconnect storm on the server.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: wrapper setters are recreated each render and would cause SSE connect/disconnect storms
 	useEffect(() => {
 		if (!scanInProgress || !apiId) {
 			setScanProgress(null);
 			return;
 		}
 
-		// Connect to SSE - authentication is handled via httpOnly cookies automatically
-		console.log("[Compliance SSE] Connecting for api_id:", apiId);
 		const eventSource = new EventSource(
 			`/api/v1/ws/compliance-progress/${apiId}/stream`,
 			{ withCredentials: true },
@@ -428,19 +470,23 @@ const ComplianceTab = ({
 		eventSource.onmessage = (event) => {
 			try {
 				const data = JSON.parse(event.data);
-				console.log("[Compliance SSE] Progress:", data);
 				setScanProgress(data);
 
-				// If scan completed or failed, update UI immediately
-				if (data.phase === "completed" || data.phase === "failed") {
-					// Set scan as no longer in progress
+				if (
+					data.phase === "completed" ||
+					data.phase === "failed" ||
+					data.phase === "cancelled"
+				) {
 					setScanInProgress(false);
-
-					// Show appropriate message
 					if (data.phase === "completed") {
 						setScanMessage({
 							type: "success",
 							text: data.message || "Scan completed!",
+						});
+					} else if (data.phase === "cancelled") {
+						setScanMessage({
+							type: "info",
+							text: data.message || "Scan cancelled",
 						});
 					} else {
 						setScanMessage({
@@ -448,17 +494,11 @@ const ComplianceTab = ({
 							text: data.error || data.message || "Scan failed",
 						});
 					}
-
-					// Refetch data to get the latest results
-					refetchLatest();
-					refetchHistory();
-
-					// Auto-switch to results tab on completion
+					refetchLatestRef.current?.();
+					refetchHistoryRef.current?.();
 					if (data.phase === "completed") {
 						setActiveSubtab("results");
 					}
-
-					// Clear messages after delay
 					setTimeout(() => {
 						setScanProgress(null);
 						setScanMessage(null);
@@ -469,25 +509,15 @@ const ComplianceTab = ({
 			}
 		};
 
-		eventSource.onerror = (err) => {
-			console.warn("[Compliance SSE] Connection error:", err);
-			// EventSource will auto-reconnect, no action needed
+		eventSource.onerror = () => {
+			// EventSource auto-reconnects; only log if needed for debugging
+			// console.debug("[Compliance SSE] Connection error");
 		};
 
 		return () => {
-			console.log("[Compliance SSE] Disconnecting");
 			eventSource.close();
 		};
-	}, [
-		scanInProgress,
-		apiId,
-		refetchHistory, // Refetch data to get the latest results
-		refetchLatest, // Set scan as no longer in progress
-		// biome-ignore lint/correctness/useExhaustiveDependencies: React useState setters are stable
-		setScanInProgress,
-		// biome-ignore lint/correctness/useExhaustiveDependencies: React useState setters are stable
-		setScanMessage,
-	]);
+	}, [scanInProgress, apiId]);
 
 	const triggerScan = useMutation({
 		mutationFn: (options) => complianceAPI.triggerScan(hostId, options),
@@ -516,6 +546,25 @@ const ComplianceTab = ({
 				error.response?.data?.error ||
 				error.message ||
 				"Failed to trigger scan";
+			setScanMessage({ type: "error", text: errorMsg });
+			setTimeout(() => setScanMessage(null), 5000);
+		},
+	});
+
+	const cancelScanMutation = useMutation({
+		mutationFn: () => complianceAPI.cancelScan(hostId),
+		onSuccess: () => {
+			setScanMessage({
+				type: "info",
+				text: "Cancel requested. The scan will stop shortly.",
+			});
+			setTimeout(() => setScanMessage(null), 5000);
+		},
+		onError: (error) => {
+			const errorMsg =
+				error.response?.data?.error ||
+				error.message ||
+				"Failed to send cancel request";
 			setScanMessage({ type: "error", text: errorMsg });
 			setTimeout(() => setScanMessage(null), 5000);
 		},
@@ -598,6 +647,10 @@ const ComplianceTab = ({
 			{/* Scan In Progress Banner */}
 			{scanInProgress && (
 				<div className="p-4 rounded-lg bg-primary-900/30 border border-primary-600 text-primary-200">
+					<p className="text-xs text-primary-400/80 mb-2">
+						The scan runs on the host in the background. You can leave this tab
+						and come back; use Cancel to stop it.
+					</p>
 					<div className="flex items-center justify-between">
 						<div className="flex items-center gap-3">
 							<RefreshCw className="h-5 w-5 animate-spin text-primary-400" />
@@ -612,7 +665,7 @@ const ComplianceTab = ({
 								</p>
 							</div>
 						</div>
-						<div className="flex items-center gap-4">
+						<div className="flex items-center gap-3">
 							<div className="text-right">
 								<p className="text-xl font-mono font-bold text-primary-400">
 									{Math.floor(elapsedTime / 60)}:
@@ -620,6 +673,20 @@ const ComplianceTab = ({
 								</p>
 								<p className="text-xs text-primary-400/60">elapsed</p>
 							</div>
+							<button
+								type="button"
+								onClick={() => cancelScanMutation.mutate()}
+								disabled={cancelScanMutation.isPending || !isConnected}
+								className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/30 hover:bg-red-600/50 text-red-200 text-sm rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+								title={
+									!isConnected
+										? "Host must be connected to cancel"
+										: "Stop the running scan"
+								}
+							>
+								<Square className="h-4 w-4" />
+								Cancel
+							</button>
 							<button
 								onClick={() => setActiveSubtab("scan")}
 								className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600/30 hover:bg-primary-600/50 text-primary-200 text-sm rounded-lg transition-colors"
@@ -992,14 +1059,18 @@ const ComplianceTab = ({
 					</div>
 				</>
 			) : (
-				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-12 text-center">
+				<div className="card p-12 text-center">
 					<Shield className="h-16 w-16 text-secondary-600 mx-auto mb-4" />
 					<h3 className="text-lg font-medium text-white mb-2">
 						No Compliance Scans Yet
 					</h3>
-					<p className="text-secondary-400 mb-6">
+					<p className="text-secondary-400 mb-2">
 						Run a security compliance scan to check this host against CIS
-						benchmarks
+						benchmarks.
+					</p>
+					<p className="text-sm text-secondary-500 mb-6">
+						Ensure OpenSCAP (and Docker if using Docker Bench) is installed on
+						this host.
 					</p>
 					<button
 						onClick={() => setActiveSubtab("scan")}
@@ -1092,6 +1163,10 @@ const ComplianceTab = ({
 			{/* Scan In Progress */}
 			{scanInProgress ? (
 				<div className="bg-secondary-800 rounded-lg border border-primary-600 p-6">
+					<p className="text-xs text-secondary-400 mb-3">
+						The scan runs on the host in the background. You can leave this tab
+						and come back; use Cancel to stop it.
+					</p>
 					<div className="flex items-center justify-between mb-4">
 						<div className="flex items-center gap-4">
 							<div className="p-3 bg-primary-600/20 rounded-full">
@@ -1108,12 +1183,28 @@ const ComplianceTab = ({
 								</p>
 							</div>
 						</div>
-						<div className="text-right">
-							<p className="text-2xl font-mono font-bold text-primary-400">
-								{Math.floor(elapsedTime / 60)}:
-								{(elapsedTime % 60).toString().padStart(2, "0")}
-							</p>
-							<p className="text-xs text-secondary-500">elapsed</p>
+						<div className="flex items-center gap-4">
+							<div className="text-right">
+								<p className="text-2xl font-mono font-bold text-primary-400">
+									{Math.floor(elapsedTime / 60)}:
+									{(elapsedTime % 60).toString().padStart(2, "0")}
+								</p>
+								<p className="text-xs text-secondary-500">elapsed</p>
+							</div>
+							<button
+								type="button"
+								onClick={() => cancelScanMutation.mutate()}
+								disabled={cancelScanMutation.isPending || !isConnected}
+								className="flex items-center gap-1.5 px-3 py-2 bg-red-600/30 hover:bg-red-600/50 text-red-200 text-sm rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+								title={
+									!isConnected
+										? "Host must be connected to cancel"
+										: "Stop the running scan"
+								}
+							>
+								<Square className="h-4 w-4" />
+								Cancel
+							</button>
 						</div>
 					</div>
 					{/* Progress bar - use SSE progress if available, otherwise estimate from time */}
@@ -1565,17 +1656,17 @@ const ComplianceTab = ({
 		</div>
 	);
 
-	// Render Results subtab
+	// Render Results subtab (uses paginated results and optional severity_breakdown from API)
 	const renderResults = () => {
-		const results = latestScan?.compliance_results || latestScan?.results || [];
-		const failedResults = results.filter((r) => r.status === "fail");
+		const byStatus = severityBreakdown?.by_status || {};
+		const bySeverity = severityBreakdown?.by_severity || {};
 		const counts = {
-			fail: failedResults.length,
-			warn: results.filter((r) => r.status === "warn").length,
-			pass: results.filter((r) => r.status === "pass").length,
-			skipped: results.filter(
-				(r) => r.status === "skip" || r.status === "notapplicable",
-			).length,
+			fail: byStatus.fail ?? latestScan?.failed ?? 0,
+			warn: byStatus.warn ?? latestScan?.warnings ?? 0,
+			pass: byStatus.pass ?? latestScan?.passed ?? 0,
+			skipped:
+				(byStatus.skip ?? 0) + (byStatus.notapplicable ?? 0) ||
+				(latestScan?.skipped ?? 0) + (latestScan?.not_applicable ?? 0),
 		};
 
 		// Determine if this is a Docker Bench scan
@@ -1583,22 +1674,13 @@ const ComplianceTab = ({
 			latestScan?.compliance_profiles?.type || "openscap";
 		const isDockerBenchResults = currentProfileType === "docker-bench";
 
-		// Severity counts for failed rules
-		const getSeverity = (result) => {
-			return (
-				result.compliance_rules?.severity ||
-				result.rule?.severity ||
-				result.severity ||
-				"unknown"
-			);
-		};
+		// Severity counts for failed rules (from first-page breakdown or zero)
 		const severityCounts = {
-			critical: failedResults.filter((r) => getSeverity(r) === "critical")
-				.length,
-			high: failedResults.filter((r) => getSeverity(r) === "high").length,
-			medium: failedResults.filter((r) => getSeverity(r) === "medium").length,
-			low: failedResults.filter((r) => getSeverity(r) === "low").length,
-			unknown: failedResults.filter((r) => getSeverity(r) === "unknown").length,
+			critical: bySeverity.critical ?? 0,
+			high: bySeverity.high ?? 0,
+			medium: bySeverity.medium ?? 0,
+			low: bySeverity.low ?? 0,
+			unknown: bySeverity.unknown ?? 0,
 		};
 
 		// Severity subtabs for Failed tab
@@ -1752,45 +1834,23 @@ const ComplianceTab = ({
 			);
 		};
 
-		// Map statusFilter to include both skip and notapplicable for "skipped" tab
-		const getFilteredResults = () => {
-			let filtered;
-			if (statusFilter === "skipped") {
-				filtered = results.filter(
-					(r) => r.status === "skip" || r.status === "notapplicable",
-				);
-			} else if (statusFilter === "all") {
-				filtered = results;
-			} else {
-				filtered = results.filter((r) => r.status === statusFilter);
-			}
+		// API returns one page; apply only client-side search on current page
+		const displayResults =
+			ruleSearch.trim() === ""
+				? paginatedResults
+				: paginatedResults.filter((r) => {
+						const searchLower = ruleSearch.toLowerCase().trim();
+						return (
+							getTitle(r).toLowerCase().includes(searchLower) ||
+							getRuleId(r).toLowerCase().includes(searchLower)
+						);
+					});
 
-			// Apply severity filter if on Failed tab and not "all"
-			if (statusFilter === "fail" && severityFilter !== "all") {
-				filtered = filtered.filter((r) => getSeverity(r) === severityFilter);
-			}
-
-			// Apply search filter
-			if (ruleSearch.trim()) {
-				const searchLower = ruleSearch.toLowerCase().trim();
-				filtered = filtered.filter(
-					(r) =>
-						getTitle(r).toLowerCase().includes(searchLower) ||
-						getRuleId(r).toLowerCase().includes(searchLower),
-				);
-			}
-
-			return filtered;
-		};
-
-		const currentFilteredResults = getFilteredResults();
-
-		// Pagination calculations
-		const totalResults = currentFilteredResults.length;
-		const totalPages = Math.ceil(totalResults / resultsPerPage);
+		// Pagination from API
+		const totalResults = paginationTotal;
+		const totalPages = Math.max(1, Math.ceil(totalResults / resultsPerPage));
 		const startIndex = (currentPage - 1) * resultsPerPage;
-		const endIndex = startIndex + resultsPerPage;
-		const paginatedResults = currentFilteredResults.slice(startIndex, endIndex);
+		const endIndex = Math.min(startIndex + resultsPerPage, totalResults);
 
 		// Group results by CIS section (e.g., "1.1", "5.2")
 		const getParentSection = (result) => {
@@ -1805,7 +1865,7 @@ const ComplianceTab = ({
 		};
 
 		const groupedResults = groupBySection
-			? paginatedResults.reduce((groups, result) => {
+			? displayResults.reduce((groups, result) => {
 					const section = getParentSection(result);
 					if (!groups[section]) {
 						groups[section] = [];
@@ -2201,22 +2261,21 @@ const ComplianceTab = ({
 								</div>
 
 								{/* Results List with Pagination Info */}
-								{currentFilteredResults &&
-									currentFilteredResults.length > 0 && (
-										<div className="px-4 py-2 border-b border-secondary-700 flex items-center justify-between text-xs text-secondary-400">
+								{displayResults && displayResults.length > 0 && (
+									<div className="px-4 py-2 border-b border-secondary-700 flex items-center justify-between text-xs text-secondary-400">
+										<span>
+											Showing {startIndex + 1}-
+											{Math.min(endIndex, totalResults)} of {totalResults}{" "}
+											results
+										</span>
+										{totalPages > 1 && (
 											<span>
-												Showing {startIndex + 1}-
-												{Math.min(endIndex, totalResults)} of {totalResults}{" "}
-												results
+												Page {currentPage} of {totalPages}
 											</span>
-											{totalPages > 1 && (
-												<span>
-													Page {currentPage} of {totalPages}
-												</span>
-											)}
-										</div>
-									)}
-								{currentFilteredResults && currentFilteredResults.length > 0 ? (
+										)}
+									</div>
+								)}
+								{displayResults && displayResults.length > 0 ? (
 									<div className="divide-y divide-secondary-700">
 										{/* Grouped View */}
 										{groupBySection &&
@@ -2340,6 +2399,207 @@ const ComplianceTab = ({
 																					</p>
 																				</div>
 																			)}
+																			{/* Why this failed / Why this warning - same as flat view */}
+																			{(result.status === "fail" ||
+																				result.status === "warn") && (
+																				<div
+																					className={`${result.status === "warn" ? "bg-yellow-900/20 border-yellow-800/50" : "bg-red-900/20 border-red-800/50"} border rounded-lg p-3`}
+																				>
+																					<p
+																						className={`${result.status === "warn" ? "text-yellow-400" : "text-red-400"} font-medium mb-2 flex items-center gap-1`}
+																					>
+																						<XCircle className="h-3.5 w-3.5" />
+																						{result.status === "warn"
+																							? "Why This Warning"
+																							: "Why This Failed"}
+																					</p>
+																					<div
+																						className={`${result.status === "warn" ? "text-yellow-200/90" : "text-red-200/90"} text-sm space-y-2`}
+																					>
+																						{result.finding ? (
+																							<p>{result.finding}</p>
+																						) : result.actual ? (
+																							<>
+																								<p>
+																									The check found a
+																									non-compliant value:
+																								</p>
+																								<div className="mt-2 grid grid-cols-1 gap-2">
+																									<div className="bg-red-800/30 rounded p-2">
+																										<span className="text-red-300 text-xs font-medium">
+																											Current setting:
+																										</span>
+																										<code className="block mt-1 text-red-200 break-all">
+																											{result.actual}
+																										</code>
+																									</div>
+																									{result.expected && (
+																										<div className="bg-green-800/30 rounded p-2">
+																											<span className="text-green-300 text-xs font-medium">
+																												Required setting:
+																											</span>
+																											<code className="block mt-1 text-green-200 break-all">
+																												{result.expected}
+																											</code>
+																										</div>
+																									)}
+																								</div>
+																							</>
+																						) : (
+																							<p className="text-secondary-300">
+																								{result.compliance_rules
+																									?.rationale ||
+																									result.rule?.rationale ||
+																									result.rationale ||
+																									result.compliance_rules
+																										?.description ||
+																									result.rule?.description ||
+																									result.description ||
+																									"The system does not meet this requirement. See remediation below."}
+																							</p>
+																						)}
+																					</div>
+																				</div>
+																			)}
+																			{(result.compliance_rules?.rationale ||
+																				result.rule?.rationale ||
+																				result.rationale) && (
+																				<div>
+																					<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+																						<BookOpen className="h-3.5 w-3.5" />
+																						Why This Matters
+																					</p>
+																					<p className="text-secondary-300 text-sm leading-relaxed">
+																						{result.compliance_rules
+																							?.rationale ||
+																							result.rule?.rationale ||
+																							result.rationale}
+																					</p>
+																				</div>
+																			)}
+																			{(result.actual || result.expected) && (
+																				<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+																					{result.actual && (
+																						<div className="bg-secondary-700/50 rounded p-2">
+																							<p className="text-secondary-400 text-xs font-medium mb-1">
+																								Current Value
+																							</p>
+																							<code className="text-red-300 text-xs break-all">
+																								{result.actual}
+																							</code>
+																						</div>
+																					)}
+																					{result.expected && (
+																						<div className="bg-secondary-700/50 rounded p-2">
+																							<p className="text-secondary-400 text-xs font-medium mb-1">
+																								Required Value
+																							</p>
+																							<code className="text-green-300 text-xs break-all">
+																								{result.expected}
+																							</code>
+																						</div>
+																					)}
+																				</div>
+																			)}
+																			{/* What the fix does - for fail/warn with remediation */}
+																			{(result.status === "fail" ||
+																				result.status === "warn") &&
+																				(result.compliance_rules?.remediation ||
+																					result.rule?.remediation ||
+																					result.remediation) && (
+																					<div className="bg-orange-900/20 border border-orange-800/50 rounded-lg p-3">
+																						<p className="text-orange-400 font-medium mb-2 flex items-center gap-1">
+																							<Wrench className="h-3.5 w-3.5" />
+																							What the Fix Does
+																						</p>
+																						<p className="text-orange-200/90 text-sm">
+																							{(() => {
+																								const remediation =
+																									result.compliance_rules
+																										?.remediation ||
+																									result.rule?.remediation ||
+																									result.remediation ||
+																									"";
+																								const title =
+																									result.compliance_rules
+																										?.title ||
+																									result.rule?.title ||
+																									result.title ||
+																									"";
+																								if (
+																									remediation.includes(
+																										"sysctl",
+																									) ||
+																									remediation.includes(
+																										"/proc/sys",
+																									)
+																								)
+																									return "This fix will modify kernel parameters to enable the required security setting.";
+																								if (
+																									remediation.includes(
+																										"chmod",
+																									) ||
+																									remediation.includes("chown")
+																								)
+																									return "This fix will update file permissions or ownership to meet the required security standard.";
+																								if (
+																									remediation.includes("apt") ||
+																									remediation.includes("yum") ||
+																									remediation.includes("dnf")
+																								)
+																									return "This fix will install, update, or remove packages as needed to meet the security requirement.";
+																								if (
+																									remediation.includes(
+																										"systemctl",
+																									) ||
+																									remediation.includes(
+																										"service",
+																									)
+																								)
+																									return "This fix will enable, disable, or configure a system service to meet the security requirement.";
+																								if (
+																									remediation.includes(
+																										"/etc/ssh",
+																									)
+																								)
+																									return "This fix will update SSH daemon configuration to harden remote access security.";
+																								if (
+																									remediation.includes(
+																										"audit",
+																									) ||
+																									remediation.includes("auditd")
+																								)
+																									return "This fix will configure audit logging to track security-relevant system events.";
+																								if (
+																									remediation.includes("pam") ||
+																									remediation.includes(
+																										"/etc/pam",
+																									)
+																								)
+																									return "This fix will configure authentication modules to enforce stronger access controls.";
+																								if (
+																									title
+																										.toLowerCase()
+																										.includes("password")
+																								)
+																									return "This fix will update password policy settings to require stronger passwords or enforce better credential management.";
+																								if (
+																									remediation.includes(
+																										"iptables",
+																									) ||
+																									remediation.includes(
+																										"nftables",
+																									) ||
+																									title
+																										.toLowerCase()
+																										.includes("firewall")
+																								)
+																									return "This fix will configure firewall rules to restrict network access and improve security.";
+																								return "This fix will apply the recommended configuration change to bring your system into compliance with the security benchmark.";
+																							})()}
+																						</p>
+																					</div>
+																				)}
 																			{(result.compliance_rules?.remediation ||
 																				result.rule?.remediation ||
 																				result.remediation) && (

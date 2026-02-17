@@ -109,9 +109,9 @@ model hosts {
   installed_kernel_version String?
   load_average             Json?
   network_interfaces       Json?
-  ram_installed            Int?
+  ram_installed            Float?
   selinux_status           String?
-  swap_size                Int?
+  swap_size                Float?
   system_uptime            String?
   notes                    String?
   needs_reboot             Boolean?                 @default(false)

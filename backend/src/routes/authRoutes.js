@@ -261,67 +261,9 @@ async function clearFailedTFAAttempts(userId) {
 	await redis.del(key);
 }
 
-/**
- * Password complexity requirements
- * - Minimum 8 characters
- * - At least one uppercase letter
- * - At least one lowercase letter
- * - At least one number
- * - At least one special character
- */
-const PASSWORD_MIN_LENGTH = parseInt(process.env.PASSWORD_MIN_LENGTH, 10) || 8;
-const PASSWORD_REQUIRE_UPPERCASE =
-	process.env.PASSWORD_REQUIRE_UPPERCASE !== "false";
-const PASSWORD_REQUIRE_LOWERCASE =
-	process.env.PASSWORD_REQUIRE_LOWERCASE !== "false";
-const PASSWORD_REQUIRE_NUMBER = process.env.PASSWORD_REQUIRE_NUMBER !== "false";
-const PASSWORD_REQUIRE_SPECIAL =
-	process.env.PASSWORD_REQUIRE_SPECIAL !== "false";
-
-/**
- * Validate password complexity
- * @param {string} password - The password to validate
- * @returns {{valid: boolean, errors: string[]}}
- */
-function validatePasswordComplexity(password) {
-	const errors = [];
-
-	if (!password || password.length < PASSWORD_MIN_LENGTH) {
-		errors.push(`Password must be at least ${PASSWORD_MIN_LENGTH} characters`);
-	}
-
-	if (PASSWORD_REQUIRE_UPPERCASE && !/[A-Z]/.test(password)) {
-		errors.push("Password must contain at least one uppercase letter");
-	}
-
-	if (PASSWORD_REQUIRE_LOWERCASE && !/[a-z]/.test(password)) {
-		errors.push("Password must contain at least one lowercase letter");
-	}
-
-	if (PASSWORD_REQUIRE_NUMBER && !/[0-9]/.test(password)) {
-		errors.push("Password must contain at least one number");
-	}
-
-	if (
-		PASSWORD_REQUIRE_SPECIAL &&
-		!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)
-	) {
-		errors.push("Password must contain at least one special character");
-	}
-
-	return { valid: errors.length === 0, errors };
-}
-
-/**
- * Express-validator custom validator for password complexity
- */
-const passwordComplexityValidator = (value) => {
-	const result = validatePasswordComplexity(value);
-	if (!result.valid) {
-		throw new Error(result.errors.join(". "));
-	}
-	return true;
-};
+const {
+	password_complexity_validator: passwordComplexityValidator,
+} = require("../config/passwordPolicy");
 
 /**
  * Parse user agent string to extract browser and OS info

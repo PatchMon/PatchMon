@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
@@ -300,13 +301,26 @@ func runService() error {
 					"enable_remediation": m.enableRemediation,
 				}).Info("Running on-demand compliance scan...")
 				go func(msg wsMsg) {
+					ctx, cancel := context.WithCancel(context.Background())
+					complianceScanCancelMu.Lock()
+					complianceScanCancel = cancel
+					complianceScanCancelMu.Unlock()
+					defer func() {
+						complianceScanCancelMu.Lock()
+						complianceScanCancel = nil
+						complianceScanCancelMu.Unlock()
+					}()
 					options := &models.ComplianceScanOptions{
 						ProfileID:            msg.profileID,
 						EnableRemediation:    msg.enableRemediation,
 						FetchRemoteResources: msg.fetchRemoteResources,
 					}
-					if err := runComplianceScanWithOptions(options); err != nil {
-						logger.WithError(err).Warn("compliance_scan failed")
+					if err := runComplianceScanWithOptions(ctx, options); err != nil {
+						if errors.Is(err, context.Canceled) {
+							logger.Info("Compliance scan was cancelled")
+						} else {
+							logger.WithError(err).Warn("compliance_scan failed")
+						}
 					} else {
 						if msg.enableRemediation {
 							logger.Info("On-demand compliance scan with remediation completed successfully")
@@ -315,6 +329,17 @@ func runService() error {
 						}
 					}
 				}(m)
+			case "compliance_scan_cancel":
+				complianceScanCancelMu.Lock()
+				cancelFn := complianceScanCancel
+				complianceScanCancel = nil
+				complianceScanCancelMu.Unlock()
+				if cancelFn != nil {
+					cancelFn()
+					logger.Info("Compliance scan cancel requested and sent to running scan")
+				} else {
+					logger.Debug("Compliance scan cancel requested but no scan is running")
+				}
 			case "upgrade_ssg":
 				logger.Info("Upgrading SSG content packages...")
 				go func() {
@@ -843,6 +868,10 @@ var complianceProgressChan = make(chan ComplianceScanProgress, 10)
 var globalWsConn *websocket.Conn
 var globalWsConnMu sync.RWMutex
 
+// Cancel function for the currently running compliance scan (nil if none). Guarded by complianceScanCancelMu.
+var complianceScanCancel context.CancelFunc
+var complianceScanCancelMu sync.Mutex
+
 func wsLoop(out chan<- wsMsg, dockerEvents <-chan interface{}) {
 	backoff := time.Second
 	for {
@@ -1157,6 +1186,9 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				enableRemediation:    payload.EnableRemediation,
 				fetchRemoteResources: payload.FetchRemoteResources,
 			}
+		case "compliance_scan_cancel":
+			logger.Info("compliance_scan_cancel received")
+			out <- wsMsg{kind: "compliance_scan_cancel"}
 		case "upgrade_ssg":
 			logger.Info("upgrade_ssg received from WebSocket")
 			out <- wsMsg{kind: "upgrade_ssg"}
@@ -1841,8 +1873,9 @@ func sendComplianceProgress(phase, profileName, message string, progress float64
 	}
 }
 
-// runComplianceScanWithOptions runs an on-demand compliance scan with options and sends results to server
-func runComplianceScanWithOptions(options *models.ComplianceScanOptions) error {
+// runComplianceScanWithOptions runs an on-demand compliance scan with options and sends results to server.
+// ctx can be cancelled from the server (e.g. user clicks Cancel) to abort the scan.
+func runComplianceScanWithOptions(ctx context.Context, options *models.ComplianceScanOptions) error {
 	profileName := options.ProfileID
 	if profileName == "" {
 		profileName = "default"
@@ -1869,14 +1902,16 @@ func runComplianceScanWithOptions(options *models.ComplianceScanOptions) error {
 	// Send progress: evaluating
 	sendComplianceProgress("evaluating", profileName, "Running OpenSCAP evaluation (this may take several minutes)...", 15, "")
 
-	// Run the scan with options (25 minutes to allow for complex systems)
-	// OpenSCAP CIS Level 1 Server can take 15+ minutes on systems with many packages
-	// Docker Bench needs additional time after OpenSCAP completes
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
-	defer cancel()
+	// Run the scan with options (25 min max; ctx can cancel earlier)
+	scanCtx, timeoutCancel := context.WithTimeout(ctx, 25*time.Minute)
+	defer timeoutCancel()
 
-	integrationData, err := complianceInteg.CollectWithOptions(ctx, options)
+	integrationData, err := complianceInteg.CollectWithOptions(scanCtx, options)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			sendComplianceProgress("cancelled", profileName, "Scan cancelled", 0, "")
+			return err
+		}
 		sendComplianceProgress("failed", profileName, "Scan failed", 0, err.Error())
 		return fmt.Errorf("compliance scan failed: %w", err)
 	}

@@ -11,6 +11,10 @@ const agentWs = require("../services/agentWs");
 
 const prisma = getPrismaClient();
 
+// Short-lived cache for compliance dashboard (reduces DB load under repeated requests)
+const DASHBOARD_CACHE_TTL_MS = 45 * 1000; // 45 seconds
+let dashboard_cache = { data: null, expires: 0 };
+
 // Rate limiter for scan submissions (per agent)
 const scanSubmitLimiter = rateLimit({
 	windowMs: 60 * 1000, // 1 minute
@@ -32,9 +36,10 @@ const VALID_RESULT_STATUSES = [
 	"warn",
 	"skip",
 	"notapplicable",
+	"skipped", // frontend uses "skipped" for skip+notapplicable
 	"error",
 ];
-const VALID_SEVERITIES = ["low", "medium", "high", "critical"];
+const VALID_SEVERITIES = ["low", "medium", "high", "critical", "unknown"];
 const VALID_PROFILE_TYPES = ["openscap", "docker-bench", "oscap-docker", "all"];
 
 function isValidUUID(id) {
@@ -420,14 +425,90 @@ router.get("/profiles", async (_req, res) => {
  */
 router.get("/dashboard", async (_req, res) => {
 	try {
-		// Get latest scan per host per profile using raw query for PostgreSQL
-		// This ensures we get both OpenSCAP and Docker Bench scans for each host
-		const latestScans = await prisma.$queryRaw`
-      SELECT DISTINCT ON (host_id, profile_id) *
-      FROM compliance_scans
-      WHERE status = 'completed'
-      ORDER BY host_id, profile_id, completed_at DESC
-    `;
+		const now = Date.now();
+		if (dashboard_cache.data && dashboard_cache.expires > now) {
+			return res.json(dashboard_cache.data);
+		}
+
+		// Run initial queries in parallel (include profile name for "last activity" title)
+		const [latestScansRows, profileTypeQuery, unscanned, allHostsRows] =
+			await Promise.all([
+				prisma.$queryRaw`
+        SELECT DISTINCT ON (cs.host_id, cs.profile_id) cs.*, cp.name as profile_name
+        FROM compliance_scans cs
+        JOIN compliance_profiles cp ON cs.profile_id = cp.id
+        WHERE cs.status = 'completed'
+        ORDER BY cs.host_id, cs.profile_id, cs.completed_at DESC
+      `,
+				prisma.compliance_profiles.findMany({
+					select: { id: true, type: true },
+				}),
+				prisma.hosts.count({
+					where: {
+						compliance_scans: { none: {} },
+					},
+				}),
+				prisma.hosts.findMany({
+					select: {
+						id: true,
+						hostname: true,
+						friendly_name: true,
+						compliance_enabled: true,
+						compliance_on_demand_only: true,
+						docker_enabled: true,
+					},
+				}),
+			]);
+
+		const latestScans = latestScansRows;
+
+		// Build one row per host with their single most recent scan (for dashboard hosts table)
+		const latest_per_host = new Map();
+		for (const s of latestScans) {
+			const existing = latest_per_host.get(s.host_id);
+			if (
+				!existing ||
+				new Date(s.completed_at) > new Date(existing.completed_at)
+			) {
+				latest_per_host.set(s.host_id, s);
+			}
+		}
+		const hosts_with_latest_scan = allHostsRows
+			.map((h) => {
+				const scan = latest_per_host.get(h.id);
+				return {
+					host_id: h.id,
+					hostname: h.hostname,
+					friendly_name: h.friendly_name,
+					last_scan_date: scan?.completed_at ?? null,
+					last_activity_title: scan?.profile_name ?? null,
+					passed: scan != null ? Number(scan.passed) || 0 : null,
+					failed: scan != null ? Number(scan.failed) || 0 : null,
+					skipped:
+						scan != null
+							? (Number(scan.skipped) || 0) + (Number(scan.not_applicable) || 0)
+							: null,
+					score: scan != null ? Number(scan.score) : null,
+					scanner_status:
+						scan != null
+							? "Scanned"
+							: h.compliance_enabled
+								? "Enabled"
+								: "Never scanned",
+					compliance_mode: h.compliance_enabled
+						? h.compliance_on_demand_only
+							? "on-demand"
+							: "enabled"
+						: "disabled",
+					compliance_enabled: h.compliance_enabled,
+					docker_enabled: h.docker_enabled,
+				};
+			})
+			.sort((a, b) => {
+				if (!a.last_scan_date) return 1;
+				if (!b.last_scan_date) return -1;
+				return new Date(b.last_scan_date) - new Date(a.last_scan_date);
+			});
 
 		// Calculate averages - use unique hosts, not scan count
 		const uniqueHostIds = [...new Set(latestScans.map((s) => s.host_id))];
@@ -448,26 +529,16 @@ router.get("/dashboard", async (_req, res) => {
 		const scans_critical = latestScans.filter(
 			(s) => Number(s.score) < 60,
 		).length;
-		const unscanned = await prisma.hosts.count({
-			where: {
-				compliance_scans: { none: {} },
-			},
-		});
+		// Profile types map (from parallel query above)
+		const profileTypes = {};
+		for (const p of profileTypeQuery) {
+			profileTypes[p.id] = p.type;
+		}
 
 		// Get HOST-LEVEL compliance status (using worst score per host)
 		// A host is compliant only if ALL its scans are >=80%
 		// A host is critical if ANY of its scans are <60%
 		// A host is warning if its worst score is 60-80%
-		// Also track which scan type caused the worst score
-
-		// First, get profile types for each scan
-		const profileTypes = {};
-		const profileTypeQuery = await prisma.compliance_profiles.findMany({
-			select: { id: true, type: true },
-		});
-		for (const p of profileTypeQuery) {
-			profileTypes[p.id] = p.type;
-		}
 
 		// Track worst score and which scan type caused it per host
 		const hostWorstScores = new Map(); // host_id -> { score, scanType }
@@ -512,26 +583,57 @@ router.get("/dashboard", async (_req, res) => {
 		const warning = scans_warning;
 		const critical = scans_critical;
 
-		// Recent scans
-		const recentScans = await prisma.compliance_scans.findMany({
-			take: 10,
-			orderBy: { completed_at: "desc" },
-			include: {
-				hosts: { select: { id: true, hostname: true, friendly_name: true } },
-				compliance_profiles: { select: { name: true, type: true } },
-			},
-		});
-
-		// Worst performing hosts (latest scan per host per profile, sorted by score)
-		// Include both OpenSCAP and Docker Bench scans for each host
-		const worstHostsRaw = await prisma.$queryRaw`
-      SELECT DISTINCT ON (host_id, profile_id) cs.*, h.hostname, h.friendly_name, cp.name as profile_name, cp.type as profile_type
-      FROM compliance_scans cs
-      JOIN hosts h ON cs.host_id = h.id
-      JOIN compliance_profiles cp ON cs.profile_id = cp.id
-      WHERE cs.status = 'completed'
-      ORDER BY cs.host_id, cs.profile_id, cs.completed_at DESC
-    `;
+		// Parallel fetch: recent scans, worst hosts, profile distribution, profile type stats
+		const [recentScans, worstHostsRaw, profileDistribution, profileTypeStats] =
+			await Promise.all([
+				prisma.compliance_scans.findMany({
+					take: 10,
+					orderBy: { completed_at: "desc" },
+					include: {
+						hosts: {
+							select: { id: true, hostname: true, friendly_name: true },
+						},
+						compliance_profiles: { select: { name: true, type: true } },
+					},
+				}),
+				prisma.$queryRaw`
+          SELECT DISTINCT ON (host_id, profile_id) cs.*, h.hostname, h.friendly_name, cp.name as profile_name, cp.type as profile_type
+          FROM compliance_scans cs
+          JOIN hosts h ON cs.host_id = h.id
+          JOIN compliance_profiles cp ON cs.profile_id = cp.id
+          WHERE cs.status = 'completed'
+          ORDER BY cs.host_id, cs.profile_id, cs.completed_at DESC
+        `,
+				prisma.$queryRaw`
+          SELECT
+            cp.name as profile_name,
+            cp.type as profile_type,
+            COUNT(DISTINCT cs.host_id) as host_count
+          FROM compliance_scans cs
+          JOIN compliance_profiles cp ON cs.profile_id = cp.id
+          WHERE cs.status = 'completed'
+          GROUP BY cp.id, cp.name, cp.type
+          ORDER BY host_count DESC
+        `,
+				prisma.$queryRaw`
+          SELECT
+            cp.type as profile_type,
+            COUNT(DISTINCT cs.host_id) as hosts_scanned,
+            AVG(cs.score) as average_score,
+            SUM(cs.passed) as total_passed,
+            SUM(cs.failed) as total_failed,
+            SUM(cs.warnings) as total_warnings,
+            SUM(cs.total_rules) as total_rules
+          FROM (
+            SELECT DISTINCT ON (host_id, profile_id) *
+            FROM compliance_scans
+            WHERE status = 'completed'
+            ORDER BY host_id, profile_id, completed_at DESC
+          ) cs
+          JOIN compliance_profiles cp ON cs.profile_id = cp.id
+          GROUP BY cp.type
+        `,
+			]);
 
 		// Sort by score ascending and take top 5
 		const worstHosts = worstHostsRaw
@@ -580,161 +682,123 @@ router.get("/dashboard", async (_req, res) => {
 			0,
 		);
 
-		// Get top failing rules across all hosts (most recent scan per host) - for OpenSCAP
+		// Parallel fetch: rules and severity (all depend on latestScanIds)
 		const latestScanIds = latestScans.map((s) => s.id);
 		let topFailingRules = [];
-		if (latestScanIds.length > 0) {
-			// Use Prisma.join for proper array handling in raw SQL
-			// Include profile_type for filtering
-			topFailingRules = await prisma.$queryRaw`
-        SELECT
-          cr.rule_id,
-          cru.title,
-          cru.severity,
-          cp.type as profile_type,
-          COUNT(*) as fail_count
-        FROM compliance_results cr
-        JOIN compliance_rules cru ON cr.rule_id = cru.id
-        JOIN compliance_scans cs ON cr.scan_id = cs.id
-        JOIN compliance_profiles cp ON cs.profile_id = cp.id
-        WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
-          AND cr.status = 'fail'
-        GROUP BY cr.rule_id, cru.title, cru.severity, cp.type
-        ORDER BY fail_count DESC
-        LIMIT 10
-      `;
-		}
-
-		// Get top warning rules across all hosts - for Docker Bench (uses 'warn' status)
 		let topWarningRules = [];
-		if (latestScanIds.length > 0) {
-			topWarningRules = await prisma.$queryRaw`
-        SELECT
-          cr.rule_id,
-          cru.title,
-          cru.severity,
-          cp.type as profile_type,
-          COUNT(*) as warn_count
-        FROM compliance_results cr
-        JOIN compliance_rules cru ON cr.rule_id = cru.id
-        JOIN compliance_scans cs ON cr.scan_id = cs.id
-        JOIN compliance_profiles cp ON cs.profile_id = cp.id
-        WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
-          AND cr.status = 'warn'
-        GROUP BY cr.rule_id, cru.title, cru.severity, cp.type
-        ORDER BY warn_count DESC
-        LIMIT 10
-      `;
-		}
-
-		// Get profile distribution (how many hosts use each profile)
-		const profileDistribution = await prisma.$queryRaw`
-      SELECT
-        cp.name as profile_name,
-        cp.type as profile_type,
-        COUNT(DISTINCT cs.host_id) as host_count
-      FROM compliance_scans cs
-      JOIN compliance_profiles cp ON cs.profile_id = cp.id
-      WHERE cs.status = 'completed'
-      GROUP BY cp.id, cp.name, cp.type
-      ORDER BY host_count DESC
-    `;
-
-		// Get severity breakdown from latest scans (with profile type for breakdown)
-		// Include both 'fail' (OpenSCAP) and 'warn' (Docker Bench) statuses
 		let severityBreakdown = [];
 		let severityByProfileType = [];
-		if (latestScanIds.length > 0) {
-			// Overall severity breakdown - include fail AND warn
-			severityBreakdown = await prisma.$queryRaw`
-        SELECT
-          cru.severity,
-          COUNT(*) as count
-        FROM compliance_results cr
-        JOIN compliance_rules cru ON cr.rule_id = cru.id
-        WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
-          AND cr.status IN ('fail', 'warn')
-        GROUP BY cru.severity
-        ORDER BY
-          CASE cru.severity
-            WHEN 'critical' THEN 1
-            WHEN 'high' THEN 2
-            WHEN 'medium' THEN 3
-            WHEN 'low' THEN 4
-            ELSE 5
-          END
-      `;
-
-			// Severity breakdown by profile type (for stacked chart)
-			// Include fail AND warn to capture both OpenSCAP failures and Docker Bench warnings
-			severityByProfileType = await prisma.$queryRaw`
-        SELECT
-          cru.severity,
-          cp.type as profile_type,
-          COUNT(*) as count
-        FROM compliance_results cr
-        JOIN compliance_rules cru ON cr.rule_id = cru.id
-        JOIN compliance_scans cs ON cr.scan_id = cs.id
-        JOIN compliance_profiles cp ON cs.profile_id = cp.id
-        WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
-          AND cr.status IN ('fail', 'warn')
-        GROUP BY cru.severity, cp.type
-        ORDER BY
-          CASE cru.severity
-            WHEN 'critical' THEN 1
-            WHEN 'high' THEN 2
-            WHEN 'medium' THEN 3
-            WHEN 'low' THEN 4
-            ELSE 5
-          END
-      `;
-		}
-
-		// Docker Bench issues by section (since Docker Bench doesn't have severity)
 		let dockerBenchBySection = [];
-		if (latestScanIds.length > 0) {
-			dockerBenchBySection = await prisma.$queryRaw`
-        SELECT
-          cru.section,
-          COUNT(*) as count
-        FROM compliance_results cr
-        JOIN compliance_rules cru ON cr.rule_id = cru.id
-        JOIN compliance_scans cs ON cr.scan_id = cs.id
-        JOIN compliance_profiles cp ON cs.profile_id = cp.id
-        WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
-          AND cr.status = 'warn'
-          AND cp.type = 'docker-bench'
-        GROUP BY cru.section
-        ORDER BY cru.section
-      `;
-		}
 
-		// Get aggregate stats by profile type (openscap vs docker-bench)
-		const profileTypeStats = await prisma.$queryRaw`
-      SELECT
-        cp.type as profile_type,
-        COUNT(DISTINCT cs.host_id) as hosts_scanned,
-        AVG(cs.score) as average_score,
-        SUM(cs.passed) as total_passed,
-        SUM(cs.failed) as total_failed,
-        SUM(cs.warnings) as total_warnings,
-        SUM(cs.total_rules) as total_rules
-      FROM (
-        SELECT DISTINCT ON (host_id, profile_id) *
-        FROM compliance_scans
-        WHERE status = 'completed'
-        ORDER BY host_id, profile_id, completed_at DESC
-      ) cs
-      JOIN compliance_profiles cp ON cs.profile_id = cp.id
-      GROUP BY cp.type
-    `;
+		if (latestScanIds.length > 0) {
+			const [
+				topFailingRows,
+				topWarningRows,
+				severityRows,
+				severityByTypeRows,
+				dockerSectionRows,
+			] = await Promise.all([
+				prisma.$queryRaw`
+          SELECT
+            cr.rule_id,
+            cru.title,
+            cru.severity,
+            cp.type as profile_type,
+            COUNT(*) as fail_count
+          FROM compliance_results cr
+          JOIN compliance_rules cru ON cr.rule_id = cru.id
+          JOIN compliance_scans cs ON cr.scan_id = cs.id
+          JOIN compliance_profiles cp ON cs.profile_id = cp.id
+          WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
+            AND cr.status = 'fail'
+          GROUP BY cr.rule_id, cru.title, cru.severity, cp.type
+          ORDER BY fail_count DESC
+          LIMIT 10
+        `,
+				prisma.$queryRaw`
+          SELECT
+            cr.rule_id,
+            cru.title,
+            cru.severity,
+            cp.type as profile_type,
+            COUNT(*) as warn_count
+          FROM compliance_results cr
+          JOIN compliance_rules cru ON cr.rule_id = cru.id
+          JOIN compliance_scans cs ON cr.scan_id = cs.id
+          JOIN compliance_profiles cp ON cs.profile_id = cp.id
+          WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
+            AND cr.status = 'warn'
+          GROUP BY cr.rule_id, cru.title, cru.severity, cp.type
+          ORDER BY warn_count DESC
+          LIMIT 10
+        `,
+				prisma.$queryRaw`
+          SELECT
+            cru.severity,
+            COUNT(*) as count
+          FROM compliance_results cr
+          JOIN compliance_rules cru ON cr.rule_id = cru.id
+          WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
+            AND cr.status IN ('fail', 'warn')
+          GROUP BY cru.severity
+          ORDER BY
+            CASE cru.severity
+              WHEN 'critical' THEN 1
+              WHEN 'high' THEN 2
+              WHEN 'medium' THEN 3
+              WHEN 'low' THEN 4
+              ELSE 5
+            END
+        `,
+				prisma.$queryRaw`
+          SELECT
+            cru.severity,
+            cp.type as profile_type,
+            COUNT(*) as count
+          FROM compliance_results cr
+          JOIN compliance_rules cru ON cr.rule_id = cru.id
+          JOIN compliance_scans cs ON cr.scan_id = cs.id
+          JOIN compliance_profiles cp ON cs.profile_id = cp.id
+          WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
+            AND cr.status IN ('fail', 'warn')
+          GROUP BY cru.severity, cp.type
+          ORDER BY
+            CASE cru.severity
+              WHEN 'critical' THEN 1
+              WHEN 'high' THEN 2
+              WHEN 'medium' THEN 3
+              WHEN 'low' THEN 4
+              ELSE 5
+            END
+        `,
+				prisma.$queryRaw`
+          SELECT
+            cru.section,
+            COUNT(*) as count
+          FROM compliance_results cr
+            JOIN compliance_rules cru ON cr.rule_id = cru.id
+            JOIN compliance_scans cs ON cr.scan_id = cs.id
+            JOIN compliance_profiles cp ON cs.profile_id = cp.id
+          WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
+            AND cr.status = 'warn'
+            AND cp.type = 'docker-bench'
+          GROUP BY cru.section
+          ORDER BY cru.section
+        `,
+			]);
+			topFailingRules = topFailingRows;
+			topWarningRules = topWarningRows;
+			severityBreakdown = severityRows;
+			severityByProfileType = severityByTypeRows;
+			dockerBenchBySection = dockerSectionRows;
+		}
 
 		// Calculate scan age distribution (how fresh is the compliance data)
 		// Track by profile type (OpenSCAP vs Docker Bench)
-		const now = new Date();
-		const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
-		const oneWeekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
-		const oneMonthAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+		const scanNow = new Date();
+		const oneDayAgo = new Date(scanNow - 24 * 60 * 60 * 1000);
+		const oneWeekAgo = new Date(scanNow - 7 * 24 * 60 * 60 * 1000);
+		const oneMonthAgo = new Date(scanNow - 30 * 24 * 60 * 60 * 1000);
 
 		const scanAgeDistribution = {
 			today: { openscap: 0, "docker-bench": 0 },
@@ -773,7 +837,7 @@ router.get("/dashboard", async (_req, res) => {
 			}
 		}
 
-		res.json({
+		const payload = {
 			summary: {
 				total_hosts: totalHosts,
 				average_score: Math.round(avgScore * 100) / 100,
@@ -796,6 +860,7 @@ router.get("/dashboard", async (_req, res) => {
 				total_rules: totalRules,
 			},
 			recent_scans: transformedRecentScans,
+			hosts_with_latest_scan: hosts_with_latest_scan,
 			worst_hosts: worstHosts,
 			top_failing_rules: topFailingRules.map((r) => ({
 				rule_id: r.rule_id,
@@ -841,7 +906,13 @@ router.get("/dashboard", async (_req, res) => {
 				total_warnings: Number(p.total_warnings) || 0,
 				total_rules: Number(p.total_rules) || 0,
 			})),
-		});
+		};
+
+		dashboard_cache = {
+			data: payload,
+			expires: Date.now() + DASHBOARD_CACHE_TTL_MS,
+		};
+		res.json(payload);
 	} catch (error) {
 		logger.error("[Compliance] Error fetching dashboard:", error);
 		res.status(500).json({ error: "Failed to fetch dashboard data" });
@@ -1113,12 +1184,18 @@ router.get("/scans/:hostId/latest-by-type", async (req, res) => {
 
 /**
  * GET /api/v1/compliance/results/:scanId
- * Get detailed results for a specific scan
+ * Get detailed results for a specific scan (paginated).
+ * Query params: status, severity, limit (default 50, max 100), offset (default 0)
  */
 router.get("/results/:scanId", async (req, res) => {
 	try {
 		const { scanId } = req.params;
-		const { status, severity } = req.query;
+		const {
+			status,
+			severity,
+			limit: limitParam,
+			offset: offsetParam,
+		} = req.query;
 
 		// Validate scanId
 		if (!isValidUUID(scanId)) {
@@ -1139,23 +1216,73 @@ router.get("/results/:scanId", async (req, res) => {
 			});
 		}
 
+		const limit = sanitizeInt(limitParam, 50, 1, 100);
+		const offset = Math.max(0, parseInt(offsetParam, 10) || 0);
+
 		const where = { scan_id: scanId };
-		if (status) where.status = status;
+		if (status) {
+			if (status === "skipped") {
+				where.status = { in: ["skip", "notapplicable"] };
+			} else {
+				where.status = status;
+			}
+		}
 
-		const results = await prisma.compliance_results.findMany({
-			where,
-			include: {
-				compliance_rules: true,
+		// Severity filter: apply via relation (required for count and findMany)
+		if (severity) {
+			where.compliance_rules = { severity };
+		}
+
+		const baseWhere = { scan_id: scanId };
+
+		const [results, total, statusCounts, severityRows] = await Promise.all([
+			prisma.compliance_results.findMany({
+				where,
+				include: {
+					compliance_rules: true,
+				},
+				orderBy: [{ status: "asc" }],
+				take: limit,
+				skip: offset,
+			}),
+			prisma.compliance_results.count({ where }),
+			offset === 0
+				? prisma.compliance_results.groupBy({
+						by: ["status"],
+						where: baseWhere,
+						_count: true,
+					})
+				: Promise.resolve([]),
+			offset === 0
+				? prisma.$queryRaw`
+            SELECT cru.severity, COUNT(*)::int as count
+            FROM compliance_results cr
+            JOIN compliance_rules cru ON cr.rule_id = cru.id
+            WHERE cr.scan_id = ${scanId} AND cr.status = 'fail'
+            GROUP BY cru.severity
+          `
+				: Promise.resolve([]),
+		]);
+
+		const payload = {
+			results,
+			pagination: {
+				total,
+				limit,
+				offset,
 			},
-			orderBy: [{ status: "asc" }],
-		});
-
-		// Filter by severity if specified
-		const filteredResults = severity
-			? results.filter((r) => r.compliance_rules.severity === severity)
-			: results;
-
-		res.json(filteredResults);
+		};
+		if (offset === 0 && (statusCounts.length > 0 || severityRows.length > 0)) {
+			payload.severity_breakdown = {
+				by_status: Object.fromEntries(
+					statusCounts.map((s) => [s.status, s._count]),
+				),
+				by_severity: Object.fromEntries(
+					severityRows.map((r) => [r.severity || "unknown", r.count]),
+				),
+			};
+		}
+		res.json(payload);
 	} catch (error) {
 		logger.error("[Compliance] Error fetching results:", error);
 		res.status(500).json({ error: "Failed to fetch results" });
@@ -1524,6 +1651,46 @@ router.post("/trigger/:hostId", async (req, res) => {
 });
 
 /**
+ * POST /api/v1/compliance/cancel/:hostId
+ * Request the agent to cancel the currently running compliance scan (if any)
+ */
+router.post("/cancel/:hostId", async (req, res) => {
+	try {
+		const { hostId } = req.params;
+
+		if (!isValidUUID(hostId)) {
+			return res.status(400).json({ error: "Invalid host ID format" });
+		}
+
+		const host = await prisma.hosts.findUnique({
+			where: { id: hostId },
+		});
+
+		if (!host) {
+			return res.status(404).json({ error: "Host not found" });
+		}
+
+		if (!agentWs.isConnected(host.api_id)) {
+			return res.status(400).json({ error: "Host is not connected" });
+		}
+
+		const success = agentWs.pushComplianceScanCancel(host.api_id);
+
+		if (success) {
+			res.json({
+				message: "Cancel scan request sent",
+				host_id: hostId,
+			});
+		} else {
+			res.status(400).json({ error: "Failed to send cancel request" });
+		}
+	} catch (error) {
+		logger.error("[Compliance] Error sending cancel scan:", error);
+		res.status(500).json({ error: "Failed to send cancel request" });
+	}
+});
+
+/**
  * POST /api/v1/compliance/upgrade-ssg/:hostId
  * Trigger SSG content package upgrade on the agent
  */
@@ -1654,6 +1821,324 @@ router.get("/trends/:hostId", async (req, res) => {
 	} catch (error) {
 		logger.error("[Compliance] Error fetching trends:", error);
 		res.status(500).json({ error: "Failed to fetch trends" });
+	}
+});
+
+// ==========================================
+// Rule-centric endpoints (cross-host view)
+// ==========================================
+
+/**
+ * GET /api/v1/compliance/rules
+ * List all compliance rules with aggregated pass/fail/warn counts across hosts.
+ * Uses only the latest completed scan per host per profile to avoid counting old results.
+ * Query params: severity, status, search, limit, offset, profile_type
+ */
+router.get("/rules", async (req, res) => {
+	try {
+		const limit = sanitizeInt(req.query.limit, 50, 1, 200);
+		const offset = sanitizeInt(req.query.offset, 0, 0, 100000);
+		const severity = req.query.severity;
+		const status_filter = req.query.status; // "fail", "warn", "pass", or null for all
+		const search = req.query.search ? String(req.query.search).trim() : null;
+		const profile_type = req.query.profile_type;
+
+		// Validate optional params
+		if (severity && !VALID_SEVERITIES.includes(severity)) {
+			return res.status(400).json({ error: "Invalid severity filter" });
+		}
+		if (status_filter && !["pass", "fail", "warn"].includes(status_filter)) {
+			return res.status(400).json({ error: "Invalid status filter" });
+		}
+		if (profile_type && !VALID_PROFILE_TYPES.includes(profile_type)) {
+			return res.status(400).json({ error: "Invalid profile_type filter" });
+		}
+
+		// Build rule where clause
+		const rule_where = {};
+		if (severity) {
+			if (severity === "unknown") {
+				// Match both null and string "unknown"
+				rule_where.OR = [{ severity: null }, { severity: "unknown" }];
+			} else {
+				rule_where.severity = severity;
+			}
+		}
+		if (search) {
+			const search_or = [
+				{ title: { contains: search, mode: "insensitive" } },
+				{ rule_ref: { contains: search, mode: "insensitive" } },
+				{ section: { contains: search, mode: "insensitive" } },
+			];
+			if (rule_where.OR) {
+				// severity=unknown already set OR; combine with AND
+				rule_where.AND = [{ OR: rule_where.OR }, { OR: search_or }];
+				delete rule_where.OR;
+			} else {
+				rule_where.OR = search_or;
+			}
+		}
+		if (profile_type && profile_type !== "all") {
+			rule_where.compliance_profiles = { type: profile_type };
+		}
+
+		// Get latest completed scan ID per host per profile (avoids counting old results)
+		const latest_scans_raw = await prisma.$queryRaw`
+			SELECT DISTINCT ON (host_id, profile_id) id
+			FROM compliance_scans
+			WHERE status = 'completed'
+			ORDER BY host_id, profile_id, completed_at DESC
+		`;
+		const latest_scan_ids = latest_scans_raw.map((s) => s.id);
+
+		if (latest_scan_ids.length === 0) {
+			return res.json({ rules: [], pagination: { total: 0, limit, offset } });
+		}
+
+		// Restrict to rules that appear in scan results: only failing or compliant (passing) rules; exclude not discovered and warning-only
+		if (status_filter) {
+			// Filter by status: only rule IDs that have at least one result in that status
+			const rule_ids_with_status = await prisma.$queryRaw`
+				SELECT DISTINCT cr.rule_id as id
+				FROM compliance_results cr
+				WHERE cr.scan_id IN (${Prisma.join(latest_scan_ids)})
+					AND cr.status = ${status_filter}
+			`;
+			const ids = rule_ids_with_status.map((r) => r.id);
+			if (ids.length === 0) {
+				return res.json({ rules: [], pagination: { total: 0, limit, offset } });
+			}
+			rule_where.id = { in: ids };
+		} else {
+			// No status filter: only show rules that are failing or fully compliant (discovered in scans, no warning-only)
+			const [ids_with_fail, ids_with_warn, ids_with_pass] = await Promise.all([
+				prisma.$queryRaw`
+					SELECT DISTINCT cr.rule_id as id FROM compliance_results cr
+					WHERE cr.scan_id IN (${Prisma.join(latest_scan_ids)}) AND cr.status = 'fail'
+				`.then((rows) => rows.map((r) => r.id)),
+				prisma.$queryRaw`
+					SELECT DISTINCT cr.rule_id as id FROM compliance_results cr
+					WHERE cr.scan_id IN (${Prisma.join(latest_scan_ids)}) AND cr.status = 'warn'
+				`.then((rows) => rows.map((r) => r.id)),
+				prisma.$queryRaw`
+					SELECT DISTINCT cr.rule_id as id FROM compliance_results cr
+					WHERE cr.scan_id IN (${Prisma.join(latest_scan_ids)}) AND cr.status = 'pass'
+				`.then((rows) => rows.map((r) => r.id)),
+			]);
+			const fail_set = new Set(ids_with_fail);
+			const warn_set = new Set(ids_with_warn);
+			// Compliant = has pass, no fail, no warn
+			const compliant_ids = ids_with_pass.filter(
+				(id) => !fail_set.has(id) && !warn_set.has(id),
+			);
+			const ids = [...new Set([...ids_with_fail, ...compliant_ids])];
+			if (ids.length === 0) {
+				return res.json({ rules: [], pagination: { total: 0, limit, offset } });
+			}
+			rule_where.id = { in: ids };
+		}
+
+		// Count total matching rules (for pagination)
+		const total = await prisma.compliance_rules.count({ where: rule_where });
+
+		// Fetch rules with result aggregation
+		const rules = await prisma.compliance_rules.findMany({
+			where: rule_where,
+			orderBy: [{ section: "asc" }, { title: "asc" }],
+			skip: offset,
+			take: limit,
+			select: {
+				id: true,
+				rule_ref: true,
+				title: true,
+				severity: true,
+				section: true,
+				profile_id: true,
+				compliance_profiles: { select: { type: true, name: true } },
+				compliance_results: {
+					where: { scan_id: { in: latest_scan_ids } },
+					select: { status: true },
+				},
+			},
+		});
+
+		// Aggregate counts per rule
+		const rules_with_counts = rules.map((r) => {
+			const results = r.compliance_results || [];
+			const hosts_passed = results.filter((x) => x.status === "pass").length;
+			const hosts_failed = results.filter((x) => x.status === "fail").length;
+			const hosts_warned = results.filter((x) => x.status === "warn").length;
+			const total_hosts = results.length;
+			return {
+				id: r.id,
+				rule_ref: r.rule_ref,
+				title: r.title,
+				severity: r.severity,
+				section: r.section,
+				profile_id: r.profile_id,
+				profile_type: r.compliance_profiles?.type,
+				profile_name: r.compliance_profiles?.name,
+				hosts_passed,
+				hosts_failed,
+				hosts_warned,
+				total_hosts,
+			};
+		});
+
+		res.json({
+			rules: rules_with_counts,
+			pagination: { total, limit, offset },
+		});
+	} catch (error) {
+		logger.error("[Compliance] Error fetching rules:", error);
+		res.status(500).json({ error: "Failed to fetch rules" });
+	}
+});
+
+/**
+ * GET /api/v1/compliance/rules/:ruleId
+ * Get detailed rule information plus affected hosts with their latest result status.
+ */
+router.get("/rules/:ruleId", async (req, res) => {
+	try {
+		const { ruleId } = req.params;
+		if (!isValidUUID(ruleId)) {
+			return res.status(400).json({ error: "Invalid rule ID format" });
+		}
+
+		const rule = await prisma.compliance_rules.findUnique({
+			where: { id: ruleId },
+			include: {
+				compliance_profiles: { select: { id: true, type: true, name: true } },
+			},
+		});
+
+		if (!rule) {
+			return res.status(404).json({ error: "Rule not found" });
+		}
+
+		// Get latest completed scan per host for this rule's profile
+		const latest_scans_raw = await prisma.$queryRaw`
+			SELECT DISTINCT ON (host_id) id, host_id, completed_at
+			FROM compliance_scans
+			WHERE status = 'completed' AND profile_id = ${rule.profile_id}
+			ORDER BY host_id, completed_at DESC
+		`;
+
+		const latest_scan_ids = latest_scans_raw.map((s) => s.id);
+		const _scan_map = new Map(latest_scans_raw.map((s) => [s.id, s]));
+
+		// Get results for this rule from those latest scans (include remediation for fallback)
+		const results = await prisma.compliance_results.findMany({
+			where: {
+				rule_id: ruleId,
+				scan_id: { in: latest_scan_ids },
+			},
+			select: {
+				status: true,
+				finding: true,
+				actual: true,
+				expected: true,
+				remediation: true,
+				scan_id: true,
+				compliance_scans: {
+					select: {
+						host_id: true,
+						completed_at: true,
+						hosts: {
+							select: {
+								id: true,
+								hostname: true,
+								friendly_name: true,
+								ip: true,
+							},
+						},
+					},
+				},
+			},
+		});
+
+		const affected_hosts = results.map((r) => ({
+			host_id: r.compliance_scans.host_id,
+			hostname: r.compliance_scans.hosts.hostname,
+			friendly_name: r.compliance_scans.hosts.friendly_name,
+			ip: r.compliance_scans.hosts.ip,
+			status: r.status,
+			finding: r.finding,
+			actual: r.actual,
+			expected: r.expected,
+			scan_date: r.compliance_scans.completed_at,
+		}));
+
+		// Sort: failures first, then warnings, then passes
+		const status_order = {
+			fail: 0,
+			warn: 1,
+			error: 2,
+			skip: 3,
+			notapplicable: 4,
+			pass: 5,
+		};
+		affected_hosts.sort(
+			(a, b) => (status_order[a.status] ?? 99) - (status_order[b.status] ?? 99),
+		);
+
+		// When rule has no rationale, derive "why this failed" from first fail/warn host that has content
+		// (affected_hosts already sorted: fail first, then warn, then pass)
+		const fail_warn_hosts = affected_hosts.filter(
+			(h) => h.status === "fail" || h.status === "warn" || h.status === "error",
+		);
+		let rationale_display = rule.rationale?.trim() || null;
+		if (!rationale_display && fail_warn_hosts.length > 0) {
+			const with_content = fail_warn_hosts.find(
+				(h) => h.finding?.trim() || h.actual?.trim() || h.expected?.trim(),
+			);
+			const src = with_content || fail_warn_hosts[0];
+			if (src.finding?.trim()) {
+				rationale_display = src.finding.trim();
+			} else if (src.actual?.trim() || src.expected?.trim()) {
+				const parts = [];
+				if (src.actual?.trim()) parts.push(`Actual: ${src.actual.trim()}`);
+				if (src.expected?.trim())
+					parts.push(`Expected: ${src.expected.trim()}`);
+				rationale_display = parts.join("\n");
+			} else {
+				// No finding/actual/expected on any fail/warn result: use rule description or title
+				rationale_display =
+					rule.description?.trim() ||
+					rule.title ||
+					"This check did not meet the benchmark requirement on one or more hosts. See the table below for per-host status.";
+			}
+		}
+
+		// When rule has no remediation, use first result that has remediation (same as host page)
+		let remediation_display = rule.remediation?.trim() || null;
+		if (!remediation_display && results.length > 0) {
+			const with_remediation = results.find((r) => r.remediation?.trim());
+			if (with_remediation?.remediation?.trim()) {
+				remediation_display = with_remediation.remediation.trim();
+			}
+		}
+
+		res.json({
+			rule: {
+				id: rule.id,
+				rule_ref: rule.rule_ref,
+				title: rule.title,
+				description: rule.description,
+				rationale: rationale_display ?? rule.rationale,
+				severity: rule.severity,
+				section: rule.section,
+				remediation: remediation_display ?? rule.remediation,
+				profile_id: rule.profile_id,
+				profile_type: rule.compliance_profiles?.type,
+				profile_name: rule.compliance_profiles?.name,
+			},
+			affected_hosts,
+		});
+	} catch (error) {
+		logger.error("[Compliance] Error fetching rule detail:", error);
+		res.status(500).json({ error: "Failed to fetch rule detail" });
 	}
 });
 

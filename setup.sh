@@ -34,7 +34,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Global variables
-SCRIPT_VERSION="self-hosting-install.sh v1.4.1-selfhost-2026-02-16"
+SCRIPT_VERSION="self-hosting-install.sh v1.4.2-selfhost-2026-02-16"
 DEFAULT_GITHUB_REPO="https://github.com/PatchMon/PatchMon.git"
 FQDN=""
 CUSTOM_FQDN=""
@@ -1214,7 +1214,7 @@ TFA_SUSPICIOUS_ACTIVITY_THRESHOLD=3
 EOF
 
     # Frontend .env (VITE_API_URL must match CORS/base URL so dashboard can reach backend)
-    local app_version="1.4.1"
+    local app_version="1.4.2"
     if [ -f "backend/package.json" ]; then
         app_version=$(grep '"version"' backend/package.json | head -1 | sed 's/.*"version": "\([^"]*\)".*/\1/')
     fi
@@ -3038,7 +3038,7 @@ update_frontend_env_file() {
     local base_url="${cors_origin%/}"
     local vite_api_url="$base_url/api/v1"
     
-    local app_version="1.4.1"
+    local app_version="1.4.2"
     if [ -f "$instance_dir/backend/package.json" ]; then
         app_version=$(grep '"version"' "$instance_dir/backend/package.json" | head -1 | sed 's/.*"version": "\([^"]*\)".*/\1/')
     fi
