@@ -8,8 +8,14 @@ const { authenticateToken } = require("../middleware/auth");
 const { v4: uuidv4, validate: uuidValidate } = require("uuid");
 const { verifyApiKey } = require("../utils/apiKeyUtils");
 const agentWs = require("../services/agentWs");
+const { queueManager, QUEUE_NAMES } = require("../services/automation");
+const { redis } = require("../services/automation/shared/redis");
 
 const prisma = getPrismaClient();
+
+const COMPLIANCE_INSTALL_JOB_PREFIX = "compliance_install_job:";
+const COMPLIANCE_INSTALL_CANCEL_PREFIX = "compliance_install_cancel:";
+const COMPLIANCE_INSTALL_JOB_TTL = 3600;
 
 // Short-lived cache for compliance dashboard (reduces DB load under repeated requests)
 const DASHBOARD_CACHE_TTL_MS = 45 * 1000; // 45 seconds
@@ -1687,6 +1693,142 @@ router.post("/cancel/:hostId", async (req, res) => {
 	} catch (error) {
 		logger.error("[Compliance] Error sending cancel scan:", error);
 		res.status(500).json({ error: "Failed to send cancel request" });
+	}
+});
+
+/**
+ * GET /api/v1/compliance/install-job/:hostId
+ * Return current install job status for progress polling.
+ */
+router.get("/install-job/:hostId", async (req, res) => {
+	try {
+		const { hostId } = req.params;
+
+		if (!isValidUUID(hostId)) {
+			return res.status(400).json({ error: "Invalid host ID format" });
+		}
+
+		const host = await prisma.hosts.findUnique({
+			where: { id: hostId },
+			select: { id: true },
+		});
+
+		if (!host) {
+			return res.status(404).json({ error: "Host not found" });
+		}
+
+		const jobKey = `${COMPLIANCE_INSTALL_JOB_PREFIX}${hostId}`;
+		const jobId = await redis.get(jobKey);
+
+		if (!jobId) {
+			return res.json({
+				status: "none",
+				message: "No active or recent install job",
+			});
+		}
+
+		const queue = queueManager.queues[QUEUE_NAMES.COMPLIANCE];
+		const job = await queue.getJob(jobId);
+
+		if (!job) {
+			await redis.del(jobKey).catch(() => {});
+			return res.json({
+				job_id: jobId,
+				status: "completed",
+				message: "Job no longer in queue (completed or expired)",
+			});
+		}
+
+		const state = await job.getState();
+		res.json({
+			job_id: job.id,
+			status: state,
+			progress: job.progress,
+			message: job.data?.message,
+			error: job.failedReason,
+		});
+	} catch (error) {
+		logger.error("[Compliance] Error getting install job status:", error);
+		res.status(500).json({ error: "Failed to get install job status" });
+	}
+});
+
+/**
+ * POST /api/v1/compliance/install-scanner/:hostId/cancel
+ * Signal worker to cancel the current install job for this host.
+ * Defined before /install-scanner/:hostId so "cancel" is not parsed as hostId.
+ */
+router.post("/install-scanner/:hostId/cancel", async (req, res) => {
+	try {
+		const { hostId } = req.params;
+
+		if (!isValidUUID(hostId)) {
+			return res.status(400).json({ error: "Invalid host ID format" });
+		}
+
+		const jobKey = `${COMPLIANCE_INSTALL_JOB_PREFIX}${hostId}`;
+		const jobId = await redis.get(jobKey);
+
+		if (!jobId) {
+			return res
+				.status(404)
+				.json({ error: "No active install job for this host" });
+		}
+
+		const cancelKey = `${COMPLIANCE_INSTALL_CANCEL_PREFIX}${jobId}`;
+		await redis.set(cancelKey, "1", "EX", 300);
+
+		await redis.del(jobKey).catch(() => {});
+
+		res.json({ message: "Cancel requested" });
+	} catch (error) {
+		logger.error("[Compliance] Error cancelling install job:", error);
+		res.status(500).json({ error: "Failed to cancel install job" });
+	}
+});
+
+/**
+ * POST /api/v1/compliance/install-scanner/:hostId
+ * Enqueue OpenSCAP/SSG install job; worker sends install_scanner to agent and polls until ready.
+ */
+router.post("/install-scanner/:hostId", async (req, res) => {
+	try {
+		const { hostId } = req.params;
+
+		if (!isValidUUID(hostId)) {
+			return res.status(400).json({ error: "Invalid host ID format" });
+		}
+
+		const host = await prisma.hosts.findUnique({
+			where: { id: hostId },
+		});
+
+		if (!host) {
+			return res.status(404).json({ error: "Host not found" });
+		}
+
+		if (!agentWs.isConnected(host.api_id)) {
+			return res.status(400).json({ error: "Host is not connected" });
+		}
+
+		const queue = queueManager.queues[QUEUE_NAMES.COMPLIANCE];
+		const job = await queue.add(
+			"install_compliance_tools",
+			{ hostId, api_id: host.api_id, type: "install_compliance_tools" },
+			{ attempts: 1 },
+		);
+
+		const jobKey = `${COMPLIANCE_INSTALL_JOB_PREFIX}${hostId}`;
+		await redis.setex(jobKey, COMPLIANCE_INSTALL_JOB_TTL, job.id);
+
+		res.json({
+			job_id: job.id,
+			host_id: hostId,
+			message: "Install job queued",
+		});
+	} catch (error) {
+		logger.error("[Compliance] Error enqueueing install scanner:", error);
+		res.status(500).json({ error: "Failed to enqueue install scanner" });
 	}
 });
 

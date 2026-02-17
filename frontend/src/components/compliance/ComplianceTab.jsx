@@ -352,6 +352,23 @@ const ComplianceTab = ({
 		},
 	});
 
+	// Install scanner mutation (apt install openscap, update SSG)
+	const installScannerMutation = useMutation({
+		mutationFn: () => complianceAPI.installScanner(hostId),
+		onSuccess: () => {
+			refetchStatus();
+			// Poll status while agent is installing (agent sends "installing" then "ready")
+			const interval = setInterval(() => refetchStatus(), 2500);
+			setTimeout(() => clearInterval(interval), 90000);
+		},
+		onError: (error) => {
+			const msg =
+				error.response?.data?.error || "Failed to send install command";
+			setSSGUpgradeMessage({ type: "error", text: msg });
+			setTimeout(() => setSSGUpgradeMessage(null), 6000);
+		},
+	});
+
 	// Single rule remediation mutation with enhanced feedback
 	const [remediationStatus, setRemediationStatus] = useState(null); // { phase: 'sending'|'running'|'complete'|'error', rule: string, message: string }
 	const remediateRuleMutation = useMutation({
@@ -4074,8 +4091,78 @@ const ComplianceTab = ({
 		);
 	};
 
+	const status = integrationStatus?.status;
+	const scanner_info = status?.scanner_info;
+	const components = status?.components || {};
+	const openscap_ready =
+		components.openscap === "ready" ||
+		scanner_info?.openscap_available ||
+		scanner_info?.openscap_version;
+	const status_installing = status?.status === "installing";
+	const status_ready = status?.status === "ready";
+	const show_install_button =
+		!openscap_ready &&
+		isConnected &&
+		!installScannerMutation.isPending &&
+		!status_installing;
+
 	return (
 		<div className="space-y-4">
+			{/* Scanner status bar - above Security Compliance (always show on host compliance tab) */}
+			<div className="rounded-lg border border-secondary-700 bg-secondary-800/80 p-4">
+				<div className="flex flex-wrap items-center justify-between gap-3">
+					<div className="flex flex-wrap items-center gap-4 text-sm">
+						<div className="flex items-center gap-2">
+							<Shield className="h-4 w-4 text-primary-400" />
+							<span className="text-secondary-300">Scanner</span>
+							<span
+								className={`capitalize ${
+									status_ready || openscap_ready
+										? "text-green-400"
+										: status_installing
+											? "text-blue-400"
+											: status?.status === "error"
+												? "text-red-400"
+												: "text-secondary-400"
+								}`}
+							>
+								{status_installing
+									? "Installing…"
+									: status_ready || openscap_ready
+										? "Ready"
+										: (status?.status ?? "Not installed")}
+							</span>
+						</div>
+						{scanner_info?.openscap_version && (
+							<span className="text-secondary-500">
+								OpenSCAP {scanner_info.openscap_version}
+							</span>
+						)}
+						{scanner_info?.content_package && (
+							<span className="text-secondary-500">
+								SSG {scanner_info.content_package}
+							</span>
+						)}
+					</div>
+					{show_install_button && (
+						<button
+							type="button"
+							onClick={() => installScannerMutation.mutate()}
+							disabled={!isConnected || installScannerMutation.isPending}
+							className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+						>
+							<Package className="h-4 w-4" />
+							Install scanner
+						</button>
+					)}
+					{status_installing && (
+						<span className="text-sm text-blue-400">
+							Installing OpenSCAP and updating SSG content…
+						</span>
+					)}
+				</div>
+			</div>
+
 			{/* Header */}
 			<div className="flex items-center gap-3">
 				<Shield className="h-6 w-6 text-primary-400" />

@@ -26,7 +26,7 @@ import {
 	Wifi,
 	X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
@@ -86,6 +86,10 @@ const HostDetail = () => {
 	});
 	const [showAllReports, setShowAllReports] = useState(false);
 
+	// Compliance install job (Host Detail Compliance tab): progress and cancel
+	const [complianceInstallJob, setComplianceInstallJob] = useState(null);
+	const complianceInstallPollRef = useRef(null);
+
 	// State for auto-update confirmation dialog
 	const [autoUpdateDialog, setAutoUpdateDialog] = useState(false);
 
@@ -107,7 +111,7 @@ const HostDetail = () => {
 	}, []);
 
 	// Helper function to safely set timeout with cleanup tracking
-	const safeSetTimeout = (callback, delay) => {
+	const safeSetTimeout = useCallback((callback, delay) => {
 		const timeoutId = setTimeout(() => {
 			if (isMountedRef.current) {
 				callback();
@@ -119,7 +123,7 @@ const HostDetail = () => {
 		}, delay);
 		timeoutRefs.current.push(timeoutId);
 		return timeoutId;
-	};
+	}, []);
 
 	const {
 		data: host,
@@ -542,6 +546,89 @@ const HostDetail = () => {
 			enabled: !!hostId && !!integrationsData?.data?.integrations?.compliance,
 		});
 
+	// On entering Compliance tab: check for an existing install job so we can resume progress
+	useEffect(() => {
+		if (
+			activeTab !== "compliance" ||
+			!hostId ||
+			!integrationsData?.data?.integrations?.compliance
+		) {
+			return;
+		}
+		let cancelled = false;
+		complianceAPI
+			.getInstallJobStatus(hostId)
+			.then((data) => {
+				if (cancelled || !isMountedRef.current) return;
+				if (data.status === "active" || data.status === "waiting") {
+					setComplianceInstallJob({
+						status: data.status,
+						progress: data.progress ?? 0,
+						message: data.message ?? "",
+						error: data.error,
+					});
+				}
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, [activeTab, hostId, integrationsData?.data?.integrations?.compliance]);
+
+	// Poll install job status while job is active or waiting
+	useEffect(() => {
+		const status = complianceInstallJob?.status;
+		if (
+			activeTab !== "compliance" ||
+			!hostId ||
+			(status !== "active" && status !== "waiting")
+		) {
+			if (complianceInstallPollRef.current) {
+				clearInterval(complianceInstallPollRef.current);
+				complianceInstallPollRef.current = null;
+			}
+			return;
+		}
+		const fetchStatus = () => {
+			complianceAPI
+				.getInstallJobStatus(hostId)
+				.then((data) => {
+					if (!isMountedRef.current) return;
+					setComplianceInstallJob({
+						status: data.status,
+						progress: data.progress ?? 0,
+						message: data.message ?? "",
+						error: data.error,
+					});
+					if (
+						data.status === "completed" ||
+						data.status === "failed" ||
+						data.status === "none"
+					) {
+						refetchComplianceStatus();
+						safeSetTimeout(() => {
+							if (isMountedRef.current) setComplianceInstallJob(null);
+						}, 3000);
+					}
+				})
+				.catch(() => {});
+		};
+		fetchStatus();
+		complianceInstallPollRef.current = setInterval(fetchStatus, 1500);
+		return () => {
+			if (complianceInstallPollRef.current) {
+				clearInterval(complianceInstallPollRef.current);
+				complianceInstallPollRef.current = null;
+			}
+		};
+	}, [
+		activeTab,
+		hostId,
+		complianceInstallJob?.status,
+		refetchComplianceStatus,
+		safeSetTimeout,
+	]);
+
 	// Fetch Docker data for this host
 	const {
 		data: dockerData,
@@ -703,6 +790,30 @@ const HostDetail = () => {
 				"Failed to set compliance mode:",
 				error.response?.data?.error || error.message,
 			);
+		},
+	});
+
+	// Install compliance scanner (BullMQ job); starts progress polling on success
+	const installComplianceScannerMutation = useMutation({
+		mutationFn: () => complianceAPI.installScanner(hostId),
+		onSuccess: () => {
+			setComplianceInstallJob({
+				status: "waiting",
+				progress: 0,
+				message: "Install job queued…",
+				error: null,
+			});
+		},
+		onError: (error) => {
+			setIntegrationRefreshMessage({
+				text: error.response?.data?.error || "Failed to start install",
+				isError: true,
+			});
+			safeSetTimeout(() => {
+				if (isMountedRef.current) {
+					setIntegrationRefreshMessage({ text: "", isError: false });
+				}
+			}, 5000);
 		},
 	});
 
@@ -4423,9 +4534,123 @@ const HostDetail = () => {
 							</div>
 						)}
 
-						{/* Compliance — summary card linking to full compliance page */}
+						{/* Compliance — scanner status, install, summary card linking to full compliance page */}
 						{activeTab === "compliance" && (
 							<div className="space-y-4">
+								{/* Scanner integration status and Install */}
+								{integrationsData?.data?.integrations?.compliance && (
+									<div className="card p-4">
+										<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-2">
+											Compliance scanner
+										</h4>
+										<div className="flex flex-wrap items-center gap-3">
+											<span
+												className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+													complianceSetupStatus?.status?.status === "ready" ||
+													complianceSetupStatus?.status?.status === "partial"
+														? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
+														: complianceSetupStatus?.status?.status ===
+																"installing"
+															? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
+															: complianceSetupStatus?.status?.status ===
+																	"error"
+																? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300"
+																: "bg-secondary-100 text-secondary-700 dark:bg-secondary-600 dark:text-secondary-200"
+												}`}
+											>
+												{complianceSetupStatus?.status?.status === "ready" ||
+												complianceSetupStatus?.status?.status === "partial"
+													? "Ready"
+													: complianceSetupStatus?.status?.status ===
+															"installing"
+														? "Installing…"
+														: complianceSetupStatus?.status?.status === "error"
+															? "Error"
+															: "Not installed"}
+											</span>
+											{(complianceSetupStatus?.status?.scanner_info
+												?.openscap_version ||
+												complianceSetupStatus?.status?.scanner_info
+													?.content_package) && (
+												<span className="text-xs text-secondary-500 dark:text-secondary-400">
+													{[
+														complianceSetupStatus?.status?.scanner_info
+															?.openscap_version &&
+															`OpenSCAP ${complianceSetupStatus.status.scanner_info.openscap_version}`,
+														complianceSetupStatus?.status?.scanner_info
+															?.content_package &&
+															`SSG ${complianceSetupStatus.status.scanner_info.content_package}`,
+													]
+														.filter(Boolean)
+														.join(", ")}
+												</span>
+											)}
+											{complianceSetupStatus?.status?.status !== "ready" &&
+												complianceSetupStatus?.status?.status !== "partial" &&
+												wsStatus?.connected &&
+												(complianceInstallJob?.status !== "active" &&
+												complianceInstallJob?.status !== "waiting" ? (
+													<button
+														type="button"
+														onClick={() =>
+															installComplianceScannerMutation.mutate()
+														}
+														disabled={
+															installComplianceScannerMutation.isPending
+														}
+														className="inline-flex items-center gap-2 px-3 py-1.5 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
+													>
+														{installComplianceScannerMutation.isPending
+															? "Starting…"
+															: "Install scanner"}
+													</button>
+												) : (
+													<button
+														type="button"
+														onClick={() => {
+															complianceAPI
+																.cancelInstallScanner(hostId)
+																.then(() => {
+																	setComplianceInstallJob(null);
+																	refetchComplianceStatus();
+																})
+																.catch(() => {});
+														}}
+														className="inline-flex items-center gap-2 px-3 py-1.5 bg-secondary-200 hover:bg-secondary-300 dark:bg-secondary-600 dark:hover:bg-secondary-500 text-secondary-800 dark:text-secondary-200 text-sm font-medium rounded-lg transition-colors"
+													>
+														Cancel
+													</button>
+												))}
+										</div>
+										{(complianceInstallJob?.status === "active" ||
+											complianceInstallJob?.status === "waiting") && (
+											<div className="mt-3">
+												<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-2">
+													<div
+														className="bg-primary-600 dark:bg-primary-500 h-2 rounded-full transition-all duration-300"
+														style={{
+															width: `${complianceInstallJob.progress ?? 0}%`,
+														}}
+													/>
+												</div>
+												<p className="text-xs text-secondary-600 dark:text-secondary-400 mt-1">
+													{complianceInstallJob.message || "Installing…"}
+												</p>
+											</div>
+										)}
+										{complianceInstallJob?.status === "completed" && (
+											<p className="text-xs text-green-600 dark:text-green-400 mt-2">
+												Install completed. Refreshing status…
+											</p>
+										)}
+										{complianceInstallJob?.status === "failed" && (
+											<p className="text-xs text-red-600 dark:text-red-400 mt-2">
+												{complianceInstallJob.error || "Install failed."}
+											</p>
+										)}
+									</div>
+								)}
+
 								<div className="card p-6">
 									<div className="flex items-start justify-between mb-4">
 										<div>

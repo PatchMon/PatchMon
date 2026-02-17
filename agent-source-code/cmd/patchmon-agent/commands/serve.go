@@ -349,6 +349,15 @@ func runService() error {
 						logger.Info("SSG content packages upgraded successfully")
 					}
 				}()
+			case "install_scanner":
+				logger.Info("Install scanner requested (OpenSCAP + SSG)...")
+				go func() {
+					if err := runInstallScanner(); err != nil {
+						logger.WithError(err).Warn("install_scanner failed")
+					} else {
+						logger.Info("Install scanner completed successfully")
+					}
+				}()
 			case "remediate_rule":
 				logger.WithField("rule_id", m.ruleID).Info("Remediating single rule...")
 				go func(ruleID string) {
@@ -480,6 +489,56 @@ func upgradeSSGContent() error {
 		logger.Info("Updated compliance status sent to backend")
 	}
 
+	return nil
+}
+
+// runInstallScanner installs OpenSCAP and SSG content (apt/dnf install, update SSG) and reports status via HTTP
+func runInstallScanner() error {
+	httpClient := client.New(cfgManager, logger)
+	ctx := context.Background()
+	enabled := cfgManager.IsIntegrationEnabled("compliance")
+
+	// Send initial "installing" status so the UI can show progress
+	if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
+		Integration: "compliance",
+		Enabled:     enabled,
+		Status:      "installing",
+		Message:     "Installing OpenSCAP and updating SSG content...",
+	}); err != nil {
+		logger.WithError(err).Debug("Failed to send installing status")
+	}
+
+	openscapScanner := compliance.NewOpenSCAPScanner(logger)
+	if err := openscapScanner.EnsureInstalled(); err != nil {
+		logger.WithError(err).Warn("EnsureInstalled failed")
+		_ = httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
+			Integration: "compliance",
+			Enabled:     enabled,
+			Status:      "error",
+			Message:     err.Error(),
+			ScannerInfo: openscapScanner.GetScannerDetails(),
+		})
+		return err
+	}
+
+	scannerDetails := openscapScanner.GetScannerDetails()
+	dockerIntegrationEnabled := cfgManager.IsIntegrationEnabled("docker")
+	if dockerIntegrationEnabled {
+		dockerBenchScanner := compliance.NewDockerBenchScanner(logger)
+		scannerDetails.DockerBenchAvailable = dockerBenchScanner.IsAvailable()
+		oscapDockerScanner := compliance.NewOscapDockerScanner(logger)
+		scannerDetails.OscapDockerAvailable = oscapDockerScanner.IsAvailable()
+	}
+
+	if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
+		Integration: "compliance",
+		Enabled:     enabled,
+		Status:      "ready",
+		Message:     "OpenSCAP and SSG content installed and ready",
+		ScannerInfo: scannerDetails,
+	}); err != nil {
+		logger.WithError(err).Warn("Failed to send ready status after install")
+	}
 	return nil
 }
 
@@ -1193,6 +1252,9 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 			logger.Info("upgrade_ssg received from WebSocket")
 			out <- wsMsg{kind: "upgrade_ssg"}
 			logger.Info("upgrade_ssg sent to message channel")
+		case "install_scanner":
+			logger.Info("install_scanner received from WebSocket")
+			out <- wsMsg{kind: "install_scanner"}
 		case "remediate_rule":
 			// Validate rule ID to prevent command injection
 			if err := validateRuleID(payload.RuleID); err != nil {
