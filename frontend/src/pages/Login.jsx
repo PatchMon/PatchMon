@@ -218,6 +218,13 @@ const Login = () => {
 		fetchOidcConfig();
 	}, []);
 
+	// Auto-redirect to OIDC if enabled and local auth is disabled
+	useEffect(() => {
+		if (oidcConfig.enabled && oidcConfig.disableLocalAuth) {
+			window.location.href = "/api/v1/auth/oidc/login";
+		}
+	}, [oidcConfig]);
+
 	// Handle OIDC callback (tokens are now in httpOnly cookies)
 	useEffect(() => {
 		const urlParams = new URLSearchParams(window.location.search);
