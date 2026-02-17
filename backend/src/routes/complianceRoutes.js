@@ -264,45 +264,61 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
 
 				const uniqueResults = Array.from(deduplicatedResults.values());
 
+				// Batch fetch all existing rules for this profile
+				const ruleRefs = uniqueResults
+					.map((r) => r.rule_ref || r.rule_id || r.id)
+					.filter(Boolean);
+
+				const existingRules = await prisma.compliance_rules.findMany({
+					where: {
+						profile_id: profile.id,
+						rule_ref: { in: ruleRefs },
+					},
+				});
+
+				const existingRulesMap = new Map(
+					existingRules.map((r) => [r.rule_ref, r]),
+				);
+
+				// Separate rules into create and update batches
+				const rulesToCreate = [];
+				const rulesToUpdate = [];
+				const ruleMap = new Map(); // Maps rule_ref to rule (existing or new)
+
 				for (const result of uniqueResults) {
-					// Get rule_ref from various possible field names
 					const ruleRef = result.rule_ref || result.rule_id || result.id;
 					if (!ruleRef) continue;
 
-					// Upsert rule - always update if we have better metadata
-					let rule = await prisma.compliance_rules.findFirst({
-						where: {
+					const existingRule = existingRulesMap.get(ruleRef);
+
+					if (!existingRule) {
+						// Create new rule
+						const newRule = {
+							id: uuidv4(),
 							profile_id: profile.id,
 							rule_ref: ruleRef,
-						},
-					});
-
-					if (!rule) {
-						rule = await prisma.compliance_rules.create({
-							data: {
-								id: uuidv4(),
-								profile_id: profile.id,
-								rule_ref: ruleRef,
-								title: result.title || ruleRef || "Unknown",
-								description: result.description || null,
-								severity: result.severity || null,
-								section: result.section || null,
-								remediation: result.remediation || null,
-							},
-						});
+							title: result.title || ruleRef || "Unknown",
+							description: result.description || null,
+							severity: result.severity || null,
+							section: result.section || null,
+							remediation: result.remediation || null,
+							created_at: new Date(),
+							updated_at: new Date(),
+						};
+						rulesToCreate.push(newRule);
+						ruleMap.set(ruleRef, newRule);
 					} else {
-						// Update existing rule if we have new/better metadata from agent
-						// Only update fields that have values and are currently missing or generic
+						// Check if we need to update existing rule
 						const updateData = {};
 
 						// Update title if agent provides one and current is missing/generic
 						if (
 							result.title &&
 							result.title !== ruleRef &&
-							(!rule.title ||
-								rule.title === ruleRef ||
-								rule.title === "Unknown" ||
-								rule.title.toLowerCase().replace(/[_\s]+/g, " ") ===
+							(!existingRule.title ||
+								existingRule.title === ruleRef ||
+								existingRule.title === "Unknown" ||
+								existingRule.title.toLowerCase().replace(/[_\s]+/g, " ") ===
 									ruleRef
 										.replace(/xccdf_org\.ssgproject\.content_rule_/i, "")
 										.replace(/_/g, " "))
@@ -311,50 +327,69 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
 						}
 
 						// Update description if agent provides one and current is missing
-						if (result.description && !rule.description) {
+						if (result.description && !existingRule.description) {
 							updateData.description = result.description;
 						}
 
 						// Update severity if agent provides one and current is missing
-						if (result.severity && !rule.severity) {
+						if (result.severity && !existingRule.severity) {
 							updateData.severity = result.severity;
 						}
 
 						// Update section if agent provides one and current is missing
-						if (result.section && !rule.section) {
+						if (result.section && !existingRule.section) {
 							updateData.section = result.section;
 						}
 
 						// Update remediation if agent provides one and current is missing
-						if (result.remediation && !rule.remediation) {
+						if (result.remediation && !existingRule.remediation) {
 							updateData.remediation = result.remediation;
 						}
 
-						// Only run update if we have changes
 						if (Object.keys(updateData).length > 0) {
-							rule = await prisma.compliance_rules.update({
-								where: { id: rule.id },
-								data: updateData,
+							rulesToUpdate.push({
+								id: existingRule.id,
+								...updateData,
+								updated_at: new Date(),
 							});
 						}
-					}
 
-					// Create or update result (upsert to handle duplicate rules in same scan)
-					await prisma.compliance_results.upsert({
-						where: {
-							scan_id_rule_id: {
-								scan_id: scan.id,
-								rule_id: rule.id,
-							},
-						},
-						update: {
-							status: result.status,
-							finding: result.finding || result.message || null,
-							actual: result.actual || null,
-							expected: result.expected || null,
-							remediation: result.remediation || null,
-						},
-						create: {
+						ruleMap.set(ruleRef, existingRule);
+					}
+				}
+
+				// Batch create new rules
+				if (rulesToCreate.length > 0) {
+					await prisma.compliance_rules.createMany({
+						data: rulesToCreate,
+						skipDuplicates: true,
+					});
+				}
+
+				// Batch update existing rules
+				for (const update of rulesToUpdate) {
+					const { id, ...updateData } = update;
+					await prisma.compliance_rules.update({
+						where: { id },
+						data: updateData,
+					});
+				}
+
+				// Batch create compliance results
+				// Delete existing results for this scan first to avoid conflicts
+				await prisma.compliance_results.deleteMany({
+					where: { scan_id: scan.id },
+				});
+
+				const resultsToCreate = uniqueResults
+					.map((result) => {
+						const ruleRef = result.rule_ref || result.rule_id || result.id;
+						if (!ruleRef) return null;
+
+						const rule = ruleMap.get(ruleRef);
+						if (!rule) return null;
+
+						return {
 							id: uuidv4(),
 							scan_id: scan.id,
 							rule_id: rule.id,
@@ -363,11 +398,17 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
 							actual: result.actual || null,
 							expected: result.expected || null,
 							remediation: result.remediation || null,
-						},
+						};
+					})
+					.filter(Boolean);
+
+				if (resultsToCreate.length > 0) {
+					await prisma.compliance_results.createMany({
+						data: resultsToCreate,
+						skipDuplicates: true,
 					});
 				}
 			}
-
 			logger.info(
 				`[Compliance] Scan saved for host ${host.friendly_name || host.hostname} (${profile_name}): ${stats.passed}/${stats.total_rules} passed (${score}%)`,
 			);

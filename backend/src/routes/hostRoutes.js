@@ -874,38 +874,28 @@ router.post(
 					});
 				}
 
-				// Now process host_packages
-				for (const packageData of packages) {
+				// Now process host_packages in batch
+				// Since we already cleared host_packages, we can use createMany
+				const hostPackagesToCreate = packages.map((packageData) => {
 					const pkg = existingPackageMap.get(packageData.name);
+					return {
+						id: uuidv4(),
+						host_id: host.id,
+						package_id: pkg.id,
+						current_version: packageData.currentVersion,
+						available_version: packageData.availableVersion || null,
+						needs_update: packageData.needsUpdate,
+						is_security_update: packageData.isSecurityUpdate || false,
+						last_checked: new Date(),
+					};
+				});
 
-					await tx.host_packages.upsert({
-						where: {
-							host_id_package_id: {
-								host_id: host.id,
-								package_id: pkg.id,
-							},
-						},
-						update: {
-							current_version: packageData.currentVersion,
-							available_version: packageData.availableVersion || null,
-							needs_update: packageData.needsUpdate,
-							is_security_update: packageData.isSecurityUpdate || false,
-							last_checked: new Date(),
-						},
-						create: {
-							id: uuidv4(),
-							host_id: host.id,
-							package_id: pkg.id,
-							current_version: packageData.currentVersion,
-							available_version: packageData.availableVersion || null,
-							needs_update: packageData.needsUpdate,
-							is_security_update: packageData.isSecurityUpdate || false,
-							last_checked: new Date(),
-						},
+				if (hostPackagesToCreate.length > 0) {
+					await tx.host_packages.createMany({
+						data: hostPackagesToCreate,
+						skipDuplicates: true,
 					});
-				}
-
-				// Process repositories if provided
+				} // Process repositories if provided
 				if (repositories && Array.isArray(repositories)) {
 					// Clear existing host repositories
 					await tx.host_repositories.deleteMany({
@@ -921,43 +911,79 @@ router.post(
 						}
 					}
 
-					// Process each unique repository
-					for (const repoData of uniqueRepos.values()) {
-						// Find or create repository
-						let repo = await tx.repositories.findFirst({
-							where: {
+					// Batch fetch all existing repositories
+					const uniqueReposArray = Array.from(uniqueRepos.values());
+					const existingRepos = await tx.repositories.findMany({
+						where: {
+							OR: uniqueReposArray.map((repoData) => ({
 								url: repoData.url,
 								distribution: repoData.distribution,
 								components: repoData.components,
-							},
-						});
+							})),
+						},
+					});
 
-						if (!repo) {
-							repo = await tx.repositories.create({
-								data: {
-									id: uuidv4(),
-									name: repoData.name,
-									url: repoData.url,
-									distribution: repoData.distribution,
-									components: repoData.components,
-									repo_type: repoData.repoType,
-									is_active: true,
-									is_secure: repoData.isSecure || false,
-									description: `${repoData.repoType} repository for ${repoData.distribution}`,
-									updated_at: new Date(),
-								},
+					// Map existing repos for quick lookup
+					const existingRepoMap = new Map(
+						existingRepos.map((r) => [
+							`${r.url}|${r.distribution}|${r.components}`,
+							r,
+						]),
+					);
+
+					// Separate repos into create and existing
+					const reposToCreate = [];
+					const repoIdMap = new Map(); // Maps key to repo id
+
+					for (const repoData of uniqueReposArray) {
+						const key = `${repoData.url}|${repoData.distribution}|${repoData.components}`;
+						const existingRepo = existingRepoMap.get(key);
+
+						if (existingRepo) {
+							repoIdMap.set(key, existingRepo.id);
+						} else {
+							const newRepoId = uuidv4();
+							repoIdMap.set(key, newRepoId);
+							reposToCreate.push({
+								id: newRepoId,
+								name: repoData.name,
+								url: repoData.url,
+								distribution: repoData.distribution,
+								components: repoData.components,
+								repo_type: repoData.repoType,
+								is_active: true,
+								is_secure: repoData.isSecure || false,
+								description: `${repoData.repoType} repository for ${repoData.distribution}`,
+								created_at: new Date(),
+								updated_at: new Date(),
 							});
 						}
+					}
 
-						// Create host repository relationship
-						await tx.host_repositories.create({
-							data: {
-								id: uuidv4(),
-								host_id: host.id,
-								repository_id: repo.id,
-								is_enabled: repoData.isEnabled !== false, // Default to enabled
-								last_checked: new Date(),
-							},
+					// Batch create new repositories
+					if (reposToCreate.length > 0) {
+						await tx.repositories.createMany({
+							data: reposToCreate,
+							skipDuplicates: true,
+						});
+					}
+
+					// Batch create host repository relationships
+					const hostReposToCreate = uniqueReposArray.map((repoData) => {
+						const key = `${repoData.url}|${repoData.distribution}|${repoData.components}`;
+						return {
+							id: uuidv4(),
+							host_id: host.id,
+							repository_id: repoIdMap.get(key),
+							is_enabled: repoData.isEnabled !== false, // Default to enabled
+							last_checked: new Date(),
+						};
+					});
+
+					if (hostReposToCreate.length > 0) {
+						await tx.host_repositories.createMany({
+							data: hostReposToCreate,
+							skipDuplicates: true,
 						});
 					}
 				}
