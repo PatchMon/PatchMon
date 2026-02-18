@@ -289,7 +289,7 @@ const Hosts = () => {
 	// Fetch settings to check global auto-update status
 	// Try public endpoint first (works for all users), fallback to full settings if user has permissions
 	const { data: settings } = useQuery({
-		queryKey: ["settings"],
+		queryKey: ["settings", "public"],
 		queryFn: async () => {
 			try {
 				// Try public endpoint first (available to all authenticated users)

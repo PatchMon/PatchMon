@@ -149,7 +149,7 @@ const HostDetail = () => {
 	// Fetch global settings to check if auto-update master toggle is enabled
 	// Try public endpoint first (works for all users), fallback to full settings if user has permissions
 	const { data: settings } = useQuery({
-		queryKey: ["settings"],
+		queryKey: ["settings", "public"],
 		queryFn: async () => {
 			try {
 				// Try public endpoint first (available to all authenticated users)

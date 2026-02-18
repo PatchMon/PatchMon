@@ -105,14 +105,15 @@ server {
         alias /usr/share/nginx/html/assets/;
         expires 1h;
         add_header Cache-Control "public, must-revalidate";
-        # Allow CORS for assets if needed
         add_header Access-Control-Allow-Origin *;
+        access_log off;
     }
 
     # Static assets caching (exclude Bull Board and API assets like Swagger UI)
     location ~* ^/(?!bullboard|api/).*\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
         expires 1y;
         add_header Cache-Control "public, immutable";
+        access_log off;
     }
 
     # Health check endpoint
