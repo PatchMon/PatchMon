@@ -74,6 +74,7 @@ const Login = () => {
 		youtube_subscribers: null,
 		linkedin_followers: null,
 	});
+	const [oidcProcessed, setOidcProcessed] = useState(false); // Track if OIDC callback was processed
 	const canvasRef = useRef(null);
 	const { themeConfig } = useColorTheme();
 
@@ -220,6 +221,12 @@ const Login = () => {
 
 	// Auto-redirect to OIDC if enabled and local auth is disabled
 	useEffect(() => {
+		// Don't auto-redirect if user explicitly logged out
+		const explicitLogout = sessionStorage.getItem("explicit_logout");
+		if (explicitLogout) {
+			return;
+		}
+
 		if (oidcConfig.enabled && oidcConfig.disableLocalAuth) {
 			window.location.href = "/api/v1/auth/oidc/login";
 		}
@@ -227,40 +234,28 @@ const Login = () => {
 
 	// Handle OIDC callback (tokens are now in httpOnly cookies)
 	useEffect(() => {
+		// Prevent processing the same callback multiple times
+		if (oidcProcessed) {
+			return;
+		}
+
 		const urlParams = new URLSearchParams(window.location.search);
 		const oidcSuccess = urlParams.get("oidc");
 		const oidcError = urlParams.get("error");
 
 		if (oidcError) {
 			setError(decodeURIComponent(oidcError));
-			// Clean up URL
 			window.history.replaceState({}, document.title, "/login");
-		} else if (oidcSuccess === "success") {
-			// Tokens are in httpOnly cookies, fetch user profile to verify auth
-			const fetchUserAndRedirect = async () => {
-				try {
-					// The token cookie will be sent automatically with credentials
-					const response = await fetch("/api/v1/auth/profile", {
-						credentials: "include",
-					});
-					if (response.ok) {
-						const data = await response.json();
-						// Store minimal info for UI state (token is in httpOnly cookie)
-						setAuthState(null, data.user);
-						navigate("/");
-					} else {
-						setError("Failed to complete OIDC login");
-					}
-				} catch (err) {
-					console.error("Error fetching user after OIDC login:", err);
-					setError("Failed to complete OIDC login");
-				}
-				// Clean up URL
-				window.history.replaceState({}, document.title, "/login");
-			};
-			fetchUserAndRedirect();
+			setOidcProcessed(true);
+			return;
 		}
-	}, [navigate, setAuthState]);
+
+		if (oidcSuccess === "success") {
+			setOidcProcessed(true);
+			sessionStorage.removeItem("explicit_logout");
+			window.location.href = "/";
+		}
+	}, []);
 
 	// Fetch latest release and social media stats
 	useEffect(() => {
@@ -1059,6 +1054,7 @@ const Login = () => {
 
 									<button
 										onClick={() => {
+											sessionStorage.removeItem("explicit_logout");
 											window.location.href = "/api/v1/auth/oidc/login";
 										}}
 										className={`${oidcConfig.disableLocalAuth ? "" : "mt-4"} w-full flex justify-center py-2 px-4 border border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-800 hover:bg-secondary-50 dark:hover:bg-secondary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500`}

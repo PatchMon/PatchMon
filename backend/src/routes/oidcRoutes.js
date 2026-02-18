@@ -450,7 +450,8 @@ router.get("/callback", async (req, res) => {
 		const isProduction = process.env.NODE_ENV === "production";
 		// Only use secure cookies if actually using HTTPS
 		const useSecureCookies = isSecure && isProduction;
-		const sameSiteValue = isProduction ? "strict" : "lax";
+		// Strict would block cookies on the redirect from IdP back to our app
+		const sameSiteValue = "lax";
 
 		logger.debug(
 			`OIDC: setting cookies - Secure: ${useSecureCookies}, SameSite: ${sameSiteValue}, IsHTTPS: ${isSecure}`,
