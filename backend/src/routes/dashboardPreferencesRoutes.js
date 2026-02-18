@@ -181,6 +181,11 @@ async function createDefaultDashboardPreferences(userId, userRole = "user") {
 				requiredPermission: "can_view_hosts",
 				order: 23,
 			},
+			{
+				cardId: "complianceActiveBenchmarkScans",
+				requiredPermission: "can_view_hosts",
+				order: 24,
+			},
 		];
 
 		// Filter cards based on user's permissions
@@ -453,6 +458,13 @@ router.get("/defaults", authenticateToken, async (_req, res) => {
 				icon: "TrendingUp",
 				enabled: true,
 				order: 22,
+			},
+			{
+				cardId: "complianceActiveBenchmarkScans",
+				title: "Active Benchmark Scans",
+				icon: "Shield",
+				enabled: true,
+				order: 23,
 			},
 		];
 

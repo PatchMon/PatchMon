@@ -14,7 +14,7 @@ A maintenance release with OIDC improvements, FreeBSD agent support, installer f
 - Fixes for native installer upgrade paths
 - Improved reliability when upgrading existing installations
 
-### 🐛 Host Table Views Not Saving — Bug Fix
+### 🐛 Host Table Views Not Saving -> Bug Fix
 - Fixed an issue where host table view preferences (columns, sort order, filters) were not being saved
 - Table view state now persists correctly across sessions
 

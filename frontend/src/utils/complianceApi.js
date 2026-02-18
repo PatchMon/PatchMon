@@ -81,6 +81,10 @@ export const complianceAPI = {
 			fetch_remote_resources: options.fetchRemoteResources || false,
 		}),
 
+	// Get global scan history (paginated, filterable)
+	getScanHistory: (params = {}) =>
+		api.get("/compliance/scans/history", { params }).then((res) => res.data),
+
 	// Get rules with aggregated cross-host pass/fail/warn counts
 	getRules: (params = {}) =>
 		api.get("/compliance/rules", { params }).then((res) => res.data),
