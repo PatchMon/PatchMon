@@ -1,278 +1,365 @@
 # PatchMon Agent
 
-PatchMon's monitoring agent sends package and repository information to the PatchMon server.
+PatchMon's monitoring agent collects and reports package, system, hardware, and network information to the PatchMon server. It runs as a long-lived service with a persistent WebSocket connection for real-time communication.
+
+## Supported Platforms
+
+**Linux** (amd64, 386, arm64, arm):
+- Debian / Ubuntu (apt)
+- Fedora / RHEL / CentOS / AlmaLinux / Rocky Linux (dnf)
+- Arch Linux / Manjaro (pacman)
+- Alpine Linux (apk)
+
+**FreeBSD** (amd64, arm64):
+- FreeBSD / pfSense (pkg)
 
 ## Installation
 
 ### Binary Installation
 
-1. **Download** the appropriate binary for your architecture from the releases
+1. **Download** the appropriate binary for your OS and architecture from the releases.
 2. **Make executable** and move to system path:
-   ```bash
-   chmod +x patchmon-agent-linux-amd64
-   sudo mv patchmon-agent-linux-amd64 /usr/local/bin/patchmon-agent
-   ```
+
+```bash
+chmod +x patchmon-agent-linux-amd64
+sudo mv patchmon-agent-linux-amd64 /usr/local/bin/patchmon-agent
+```
 
 ### From Source
 
 1. **Prerequisites**:
-   - Go 1.25 or later
+   - Go 1.24 or later
    - Root access on the target system
 
 2. **Build and Install**:
-   ```bash
-   # Clone or copy the source code
-   make deps          # Install dependencies
-   make build         # Build the application
-   sudo make install  # Install to /usr/local/bin
-   ```
+
+```bash
+make deps          # Install dependencies
+make build         # Build for current platform
+sudo make install  # Install to /usr/local/bin
+```
 
 ## Configuration
 
 ### Initial Setup
 
 1. **Configure Credentials**:
-   ```bash
-   sudo patchmon-agent config set-api <API_ID> <API_KEY> <SERVER_URL>
-   ```
 
-   Example:
-   ```bash
-   sudo patchmon-agent config set-api patchmon_1a2b3c4d abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890 http://patchmon.example.com
-   ```
+```bash
+sudo patchmon-agent config set-api <API_ID> <API_KEY> <SERVER_URL>
+```
 
-2. **Test Configuration**:
-   ```bash
-   sudo patchmon-agent ping
-   ```
+Example:
+
+```bash
+sudo patchmon-agent config set-api patchmon_1a2b3c4d abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890 https://patchmon.example.com
+```
+
+This saves the server URL to the config file and API credentials to the credentials file, then automatically runs a connectivity test to verify everything is working.
+
+2. **Test Connectivity** (optional, already tested during setup):
+
+```bash
+sudo patchmon-agent ping
+```
 
 3. **Send Initial Report**:
-   ```bash
-   sudo patchmon-agent report
-   ```
+
+```bash
+sudo patchmon-agent report
+```
+
+4. **Start the Service**:
+
+```bash
+sudo patchmon-agent serve
+```
+
+The `serve` command is the primary runtime mode. It maintains a WebSocket connection to the server, sends periodic reports on a configurable interval, handles real-time commands from the server, and manages auto-updates.
 
 ### Configuration Files
 
-- **Main Config**: `/etc/patchmon/config.yml` (YAML format)
-- **Credentials**: `/etc/patchmon/credentials.yml` (YAML format, 600 permissions)
-- **Logs**: `/var/log/patchmon-agent.log`
-
-## Usage
-
-### Available Commands
-
-```bash
-# Configuration and setup
-sudo patchmon-agent config set-api <API_ID> <API_KEY> <SERVER_URL>  # Configure credentials
-sudo patchmon-agent config show                                     # Show current config
-sudo patchmon-agent ping                                            # Test credentials and connectivity
-
-# Data collection and reporting
-sudo patchmon-agent report                                          # Report system & package status to server
-
-# Agent management
-sudo patchmon-agent check-version                                   # Check for updates
-sudo patchmon-agent update-agent                                    # Update to latest version
-sudo patchmon-agent update-crontab                                  # Update cron schedule
-sudo patchmon-agent uninstall [flags]                               # Uninstall the agent
-
-# Diagnostics
-sudo patchmon-agent diagnostics                                     # Show system diagnostics
-```
+- **Main Config**: `/etc/patchmon/config.yml`
+- **Credentials**: `/etc/patchmon/credentials.yml` (600 permissions)
+- **Logs**: `/etc/patchmon/logs/patchmon-agent.log`
 
 ### Example Configuration File
 
-Create `/etc/patchmon/config.yml`:
+`/etc/patchmon/config.yml`:
 
 ```yaml
 patchmon_server: "https://patchmon.example.com"
 api_version: "v1"
 credentials_file: "/etc/patchmon/credentials.yml"
-log_file: "/var/log/patchmon-agent.log"
+log_file: "/etc/patchmon/logs/patchmon-agent.log"
 log_level: "info"
+update_interval: 60
+report_offset: 0
+skip_ssl_verify: false
+integrations:
+  docker: false
+  compliance: "on-demand"
+  ssh-proxy-enabled: false
 ```
+
+| Field | Description |
+|---|---|
+| `patchmon_server` | PatchMon server URL |
+| `api_version` | API version (default `v1`) |
+| `credentials_file` | Path to credentials file |
+| `log_file` | Path to log file |
+| `log_level` | Log verbosity: `debug`, `info`, `warn`, `error` |
+| `update_interval` | Report interval in minutes (synced from server) |
+| `report_offset` | Stagger offset in seconds (auto-calculated from API ID) |
+| `skip_ssl_verify` | Skip TLS verification (blocked in production) |
+| `integrations` | Toggle integrations on/off (synced from server) |
 
 ### Example Credentials File
 
-The credentials file is automatically created by the `configure` command:
+The credentials file is automatically created by `config set-api`:
 
 ```yaml
 api_id: "patchmon_1a2b3c4d5e6f7890"
-api_key: "abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+api_key: "your_api_key_here"
 ```
 
-## Automation
+## Usage
 
-### Crontab Setup
+### Available Commands
 
-The agent can automatically configure crontab based on server policies:
+```
+patchmon-agent [command] [flags]
+```
+
+| Command | Description | Root Required |
+|---|---|---|
+| `serve` | Run the agent as a long-lived service | Yes |
+| `report` | Collect and send system/package data to server | Yes |
+| `report --json` | Output the report payload as JSON to stdout | Yes |
+| `ping` | Test server connectivity and validate API credentials | Yes |
+| `config set-api <ID> <KEY> <URL>` | Configure API credentials and server URL | Yes |
+| `config show` | Display current configuration and credentials status | No |
+| `check-version` | Check if an agent update is available | Yes |
+| `update-agent` | Download and install the latest agent version | Yes |
+| `diagnostics` | Show detailed system and agent diagnostics | No |
+
+### Global Flags
+
+| Flag | Description |
+|---|---|
+| `--config <path>` | Config file path (default `/etc/patchmon/config.yml`) |
+| `--log-level <level>` | Override log level (`debug`, `info`, `warn`, `error`) |
+
+## Service Mode (`serve`)
+
+The `serve` command is how the agent is intended to run in production. It:
+
+- Maintains a persistent **WebSocket connection** to the PatchMon server
+- Sends periodic **package and system reports** on a configurable interval
+- **Staggers report times** using a deterministic offset derived from the API ID to avoid thundering herd
+- Receives and acts on **real-time server commands** (report now, update agent, toggle integrations, run compliance scans, etc.)
+- **Syncs configuration** (report interval, integration status) from the server on startup
+- Streams **Docker container events** in real-time when Docker integration is enabled
+- Handles **auto-updates** with SHA256 binary integrity verification
+- Supports **SSH proxy** sessions when explicitly enabled in config
+
+### Service Management
+
+The agent supports three init systems for service restarts during updates:
+
+- **systemd** (most Linux distributions)
+- **OpenRC** (Alpine Linux)
+- **FreeBSD rc.d** (FreeBSD / pfSense)
+
+If no init system is detected, it falls back to a helper script for safe restarts.
+
+## Integrations
+
+Integrations are managed from the PatchMon web interface and synced to the agent via WebSocket. They can also be configured manually in `config.yml`.
+
+### Docker
+
+When enabled, the agent collects Docker containers, images, volumes, networks, and available image updates. It also streams real-time container status events over WebSocket.
+
+```yaml
+integrations:
+  docker: true
+```
+
+### Compliance Scanning (OpenSCAP)
+
+Compliance scanning supports three modes:
+
+| Mode | Config Value | Behaviour |
+|---|---|---|
+| Disabled | `false` | No compliance scanning |
+| On-demand | `"on-demand"` | Scans only when triggered from the web UI (default) |
+| Enabled | `true` | Automatic scans run with each scheduled report |
+
+```yaml
+integrations:
+  compliance: "on-demand"
+```
+
+When enabled, the agent installs OpenSCAP and SCAP Security Guide content. Available scan tools:
+
+- **OpenSCAP** - CIS benchmark scanning and remediation
+- **Docker Bench** - CIS Docker Benchmark (requires Docker integration)
+- **oscap-docker** - Docker image CVE scanning (requires Docker integration)
+
+### SSH Proxy
+
+Enables browser-based SSH sessions through the agent. Must be enabled manually in `config.yml` for security reasons -- it cannot be pushed from the server.
+
+```yaml
+integrations:
+  ssh-proxy-enabled: true
+```
+
+## Agent Updates
+
+The agent supports automatic updates with security protections:
+
+- **SHA256 hash verification** - downloaded binary integrity is verified against a server-provided hash before installation
+- **Version validation** - the downloaded binary is executed in test mode before replacing the current binary
+- **Atomic replacement** - the binary is replaced using `os.Rename` for atomicity
+- **Backup retention** - the last 3 binary backups are kept
+- **Loop prevention** - a timestamp marker prevents repeated update attempts within 5 minutes
+- **TLS enforcement** - `skip_ssl_verify` is blocked in production environments
+
+To manually check for updates:
 
 ```bash
-# Update crontab with current server policy
-sudo patchmon-agent update-crontab
+sudo patchmon-agent check-version
 ```
 
-This creates entries like:
+To manually update:
+
 ```bash
-# Hourly reports (at minute 15)
-15 * * * * /usr/local/bin/patchmon-agent report >/dev/null 2>&1
-15 * * * * /usr/local/bin/patchmon-agent update-crontab >/dev/null 2>&1
-
-# Or custom interval (every 30 minutes)
-*/30 * * * * /usr/local/bin/patchmon-agent report >/dev/null 2>&1
-*/30 * * * * /usr/local/bin/patchmon-agent update-crontab >/dev/null 2>&1
+sudo patchmon-agent update-agent
 ```
-
-## Uninstallation
-
-The agent includes a built-in uninstall command for complete removal:
-
-### Basic Uninstall
-```bash
-# Remove agent binary, crontab entries, and backup files
-sudo patchmon-agent uninstall
-```
-
-### Complete Uninstall
-```bash
-# Remove everything including configuration and logs
-sudo patchmon-agent uninstall --remove-config --remove-logs
-
-# Or use the shortcut flag
-sudo patchmon-agent uninstall --remove-all  # or -a
-
-# Silent complete removal
-sudo patchmon-agent uninstall -af
-```
-
-### Uninstall Options
-```bash
---remove-config    # Remove configuration and credentials files
---remove-logs      # Remove log files  
---remove-all, -a   # Remove all files (shortcut for --remove-config --remove-logs)
---force, -f        # Skip confirmation prompts
-```
-
-### What Gets Removed
-
-**Always removed:**
-- Agent binary (current executable)
-- Additional binaries found in common locations
-- Crontab entries related to patchmon-agent
-- Backup files created during updates
-
-**Optional (with flags):**
-- Configuration files (`--remove-config`)
-- Credentials files (`--remove-config`) 
-- Log files (`--remove-logs`)
-
-The uninstall process will:
-1. Show what will be removed
-2. Prompt for confirmation (unless `--force` is used)
-3. Remove crontab entries first
-4. Remove additional files and binaries
-5. Use a self-destruct mechanism to remove the main binary
 
 ## Logging
 
-Logs are written to `/var/log/patchmon-agent.log` with timestamps and structured format:
+Logs are written to `/etc/patchmon/logs/patchmon-agent.log` with rotation (max 10 MB per file, 5 backups, 14 day retention, compressed).
 
 ```
-2023-09-27T10:30:00 level=info msg="Collecting package information..."
-2023-09-27T10:30:01 level=info msg="Found packages" count=156
-2023-09-27T10:30:02 level=info msg="Sending report to PatchMon server..."
-2023-09-27T10:30:03 level=info msg="Report sent successfully"
+2026-02-18T10:30:00 level=info msg="Collecting package information..."
+2026-02-18T10:30:01 level=info msg="Found packages" count=156
+2026-02-18T10:30:02 level=info msg="Sending report to PatchMon server..."
+2026-02-18T10:30:03 level=info msg="Report sent successfully"
 ```
 
 Log levels: `debug`, `info`, `warn`, `error`
+
+## Diagnostics
+
+Run comprehensive diagnostics to check agent health:
+
+```bash
+sudo patchmon-agent diagnostics
+```
+
+This displays:
+
+- **System information** - OS, architecture, kernel, hostname, machine ID
+- **Agent information** - version, config file paths, log level
+- **Configuration status** - whether config and credentials files exist
+- **Network connectivity** - TCP reachability test and API credential validation
+- **Recent logs** - last 10 log entries
 
 ## Troubleshooting
 
 ### Common Issues
 
 1. **Permission Denied**:
-   ```bash
-   # Ensure running as root
-   sudo patchmon-agent <command>
-   ```
-
-2. **Credentials Not Found**:
-   ```bash
-   # Configure credentials first
-   sudo patchmon-agent config set-api <API_ID> <API_KEY> <SERVER_URL>
-   ```
-
-3. **Network Connectivity**:
-   ```bash
-   # Test server connectivity
-   sudo patchmon-agent ping
-   sudo patchmon-agent diagnostics  # Detailed network info
-   ```
-
-4. **Package Manager Issues**:
-   ```bash
-   # Update package lists manually
-   sudo apt update         # Ubuntu/Debian
-   sudo dnf check-update   # Fedora/RHEL
-   ```
-
-### Diagnostics
-
-Run comprehensive diagnostics:
 
 ```bash
+# Most commands require root
+sudo patchmon-agent <command>
+```
+
+2. **Credentials Not Found**:
+
+```bash
+# Configure credentials first
+sudo patchmon-agent config set-api <API_ID> <API_KEY> <SERVER_URL>
+```
+
+3. **Network Connectivity**:
+
+```bash
+# Test server reachability and credentials
+sudo patchmon-agent ping
+
+# Detailed diagnostics including network info
 sudo patchmon-agent diagnostics
 ```
 
-This returns information about your system, the agent, the current configuration and server connectivity state, and more.
+4. **Package Manager Issues**:
 
-## Migration from Shell Script
+```bash
+# Update package lists manually
+sudo apt update         # Debian/Ubuntu
+sudo dnf check-update   # Fedora/RHEL
+sudo apk update         # Alpine
+sudo pacman -Sy         # Arch
+```
 
-The Go implementation maintains compatibility with the existing shell script workflow:
+## Uninstallation
 
-1. **Same command structure**: All commands work identically
-2. **Same configuration files**: Uses the same paths and formats
-3. **Same API compatibility**: Works with existing PatchMon servers
-4. **Improved performance**: Faster execution and better error handling
-
-To migrate:
-1. Remove the old shell script agent, config, credentials, and crontab.
-2. Install the Go binary as described above
-3. No changes needed to crontab or server settings
+Uninstall functionality is handled by the `patchmon_remove.sh` script rather than a built-in command. This ensures clean removal of the binary, service files, crontab entries, configuration, and logs.
 
 ## Development
 
 ### Building
 
 ```bash
-# Install dependencies
-make deps
-
-# Build for current platform
-make build
-
-# Build for all supported platforms (Linux amd64, arm64, i386)
-make build-all
-
-# Run tests
-make test
-
-# Run tests with coverage
-make test-coverage
-
-# Format and lint
-make fmt
-make lint
-
-# Clean build artifacts
-make clean
+make deps            # Install Go dependencies
+make build           # Build for current platform
+make build-linux     # Build Linux binaries (amd64, 386, arm64, arm)
+make build-freebsd   # Build FreeBSD binaries (amd64, arm64)
+make build-all       # Build all platforms
+make test            # Run tests
+make test-coverage   # Run tests with coverage report
+make fmt             # Format code
+make lint            # Lint code (requires golangci-lint)
+make clean           # Remove build artifacts
+make install         # Build and install to /usr/local/bin
 ```
 
-## Contributing
+### Project Structure
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Run `make fmt` and `make lint`
-6. Submit a pull request
+```
+cmd/patchmon-agent/
+  main.go                       Entry point
+  commands/
+    root.go                     Root command and global flags
+    config.go                   config set-api / config show
+    connectivity_tests.go       ping command
+    report.go                   report command and integration data
+    diagnostics.go              diagnostics command
+    version_update.go           check-version / update-agent
+    serve.go                    serve command (service mode, WebSocket, integrations)
+internal/
+  config/                       Configuration and credentials management
+  client/                       HTTP client for PatchMon API
+  packages/                     Package managers (apt, dnf, pacman, apk, freebsd)
+  repositories/                 Repository detection (apt, dnf, pacman, apk, freebsd)
+  system/                       OS detection, system info, reboot status
+  hardware/                     CPU, RAM, disk info
+  network/                      Network interfaces, DNS, gateway
+  crontab/                      Crontab management
+  integrations/
+    docker/                     Docker container/image/volume/network monitoring
+    compliance/                 OpenSCAP, Docker Bench, oscap-docker
+  constants/                    Shared constants
+  utils/                        Timezone, offset calculation, utilities
+  pkgversion/                   Agent version constant
+  bufpool/                      Buffer pool for memory optimisation
+pkg/models/                     Shared data models and API payloads
+```
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
