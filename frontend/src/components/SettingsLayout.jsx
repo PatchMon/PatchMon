@@ -18,6 +18,7 @@ import {
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import DiscordIcon from "./DiscordIcon";
 
 const SettingsLayout = ({ children }) => {
 	const location = useLocation();
@@ -132,6 +133,11 @@ const SettingsLayout = ({ children }) => {
 						name: "AI Terminal",
 						href: "/settings/ai-terminal",
 						icon: Bot,
+					},
+					{
+						name: "Discord Auth",
+						href: "/settings/discord-auth",
+						icon: DiscordIcon,
 					},
 				],
 			});

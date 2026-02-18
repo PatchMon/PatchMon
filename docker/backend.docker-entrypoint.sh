@@ -110,8 +110,8 @@ log "Environment: ${NODE_ENV:-production}"
 export PATH="/app/node_modules/.bin:$PATH"
 export NODE_PATH="/app/node_modules:/app/backend/node_modules:$NODE_PATH"
 
-# Update agents (version-aware)
-update_agents
+# Update agents (version-aware, non-fatal - volume may have permission issues on first run)
+update_agents || log "WARNING: Could not update agents - continuing startup (run: sudo chown -R 1000:1000 docker/compose_dev_data/agents)"
 
 # Check if ASSETS_DIR is set and ensure it's writable (for custom branding support)
 if [ -n "$ASSETS_DIR" ]; then

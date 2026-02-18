@@ -1847,6 +1847,11 @@ router.get("/profile", authenticateToken, async (req, res) => {
 				accepted_release_notes_versions: acceptedVersions,
 				oidc_sub: req.user.oidc_sub || null,
 				oidc_provider: req.user.oidc_provider || null,
+				discord_id: req.user.discord_id || null,
+				discord_username: req.user.discord_username || null,
+				discord_avatar: req.user.discord_avatar || null,
+				discord_linked_at: req.user.discord_linked_at || null,
+				has_password: !!req.user.password_hash,
 			},
 		});
 	} catch (error) {

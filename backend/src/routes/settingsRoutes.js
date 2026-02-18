@@ -418,11 +418,21 @@ router.get(
 router.get("/login-settings", async (_req, res) => {
 	try {
 		const settings = await getSettings();
+
+		// Also load Discord config
+		const discordEnabled = settings.discord_oauth_enabled || false;
+		const discordButtonText =
+			settings.discord_button_text || "Login with Discord";
+
 		res.json({
 			show_github_version_on_login:
 				settings.show_github_version_on_login !== false,
 			signup_enabled: settings.signup_enabled || false,
 			password_policy: get_password_policy(),
+			discord: {
+				enabled: discordEnabled,
+				buttonText: discordButtonText,
+			},
 		});
 	} catch (error) {
 		logger.error("Failed to fetch login settings:", error);

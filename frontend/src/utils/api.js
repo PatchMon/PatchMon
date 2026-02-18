@@ -439,6 +439,15 @@ export const aiAPI = {
 	complete: (data) => api.post("/ai/complete", data),
 };
 
+// Discord OAuth API
+export const discordAPI = {
+	getConfig: () => api.get("/auth/discord/config"),
+	getSettings: () => api.get("/auth/discord/settings"),
+	updateSettings: (data) => api.put("/auth/discord/settings", data),
+	link: () => api.post("/auth/discord/link"),
+	unlink: () => api.post("/auth/discord/unlink"),
+};
+
 // Alerts API
 export const alertsAPI = {
 	getAlerts: (params = {}) => {

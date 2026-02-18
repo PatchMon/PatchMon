@@ -98,6 +98,7 @@ const releaseNotesRoutes = require("./routes/releaseNotesRoutes");
 const releaseNotesAcceptanceRoutes = require("./routes/releaseNotesAcceptanceRoutes");
 const buyMeACoffeeRoutes = require("./routes/buyMeACoffeeRoutes");
 const oidcRoutes = require("./routes/oidcRoutes");
+const discordRoutes = require("./routes/discordRoutes");
 const complianceRoutes = require("./routes/complianceRoutes");
 const { initializeOIDC } = require("./auth/oidc");
 const aiRoutes = require("./routes/aiRoutes");
@@ -383,6 +384,7 @@ const agentLimiter = rateLimit({
 
 app.use(`/api/${apiVersion}/auth`, authLimiter, authRoutes);
 app.use(`/api/${apiVersion}/auth/oidc`, authLimiter, oidcRoutes);
+app.use(`/api/${apiVersion}/auth/discord`, authLimiter, discordRoutes);
 app.use(`/api/${apiVersion}/hosts`, agentLimiter, hostRoutes);
 app.use(`/api/${apiVersion}/host-groups`, hostGroupRoutes);
 app.use(`/api/${apiVersion}/packages`, packageRoutes);

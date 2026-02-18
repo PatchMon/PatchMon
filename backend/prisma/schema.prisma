@@ -227,6 +227,12 @@ model settings {
   ai_api_key                   String?   // Encrypted API key
   // Alerts system settings
   alerts_enabled               Boolean   @default(true) // Master switch for alerts system
+  // Discord OAuth settings
+  discord_oauth_enabled        Boolean   @default(false)
+  discord_client_id            String?
+  discord_client_secret        String?   // Encrypted via encrypt()
+  discord_redirect_uri         String?
+  discord_button_text          String?   @default("Login with Discord")
 }
 
 model update_history {
@@ -281,6 +287,10 @@ model users {
   oidc_sub                  String?                     @unique
   oidc_provider             String?
   avatar_url                String?
+  discord_id                String?                     @unique
+  discord_username          String?
+  discord_avatar            String?
+  discord_linked_at         DateTime?
   dashboard_preferences     dashboard_preferences[]
   user_sessions             user_sessions[]
   auto_enrollment_tokens    auto_enrollment_tokens[]
