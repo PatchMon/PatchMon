@@ -119,6 +119,8 @@ model hosts {
   docker_enabled           Boolean                  @default(false)
   compliance_enabled       Boolean                  @default(false)
   compliance_on_demand_only Boolean                 @default(true)
+  compliance_scanner_status Json?                  // last known scanner status from agent (status, message, components, scanner_info)
+  compliance_scanner_updated_at DateTime?           // when agent last reported compliance scanner status
   host_down_alerts_enabled Boolean?                 // null = inherit from global config, true = enabled, false = disabled
   expected_platform       String?                  // linux | freebsd | windows (for OS-specific install command)
   host_packages            host_packages[]

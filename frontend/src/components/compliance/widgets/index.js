@@ -17,6 +17,7 @@ ChartJS.register(
 	Legend,
 );
 
+export { default as ActiveBenchmarkScans } from "./ActiveBenchmarkScans";
 export { default as ComplianceProfilesPie } from "./ComplianceProfilesPie";
 export { default as ComplianceTrendLinePlaceholder } from "./ComplianceTrendLinePlaceholder";
 export { default as FailuresBySeverityDoughnut } from "./FailuresBySeverityDoughnut";
@@ -31,4 +32,5 @@ export const COMPLIANCE_WIDGET_CARD_IDS = [
 	"complianceProfilesInUse",
 	"complianceLastScanAge",
 	"complianceTrendLine",
+	"complianceActiveBenchmarkScans",
 ];

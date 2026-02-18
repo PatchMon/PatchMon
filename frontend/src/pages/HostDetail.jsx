@@ -15,8 +15,10 @@ import {
 	HardDrive,
 	Key,
 	MemoryStick,
+	MinusCircle,
 	Monitor,
 	Package,
+	Play,
 	RefreshCw,
 	RotateCcw,
 	Server,
@@ -546,7 +548,7 @@ const HostDetail = () => {
 			enabled: !!hostId && !!integrationsData?.data?.integrations?.compliance,
 		});
 
-	// On entering Compliance tab: check for an existing install job so we can resume progress
+	// On entering Compliance tab: check for install job and request fresh scanner status from agent
 	useEffect(() => {
 		if (
 			activeTab !== "compliance" ||
@@ -556,6 +558,18 @@ const HostDetail = () => {
 			return;
 		}
 		let cancelled = false;
+
+		// Request agent to report current compliance scanner status (WebSocket → agent re-checks and POSTs)
+		adminHostsAPI
+			.requestComplianceStatus(hostId)
+			.then(() => {
+				if (cancelled || !isMountedRef.current) return;
+				// Refetch after a short delay so we pick up live or cached status
+				safeSetTimeout(() => refetchComplianceStatus(), 800);
+				safeSetTimeout(() => refetchComplianceStatus(), 3000);
+			})
+			.catch(() => {});
+
 		complianceAPI
 			.getInstallJobStatus(hostId)
 			.then((data) => {
@@ -573,7 +587,13 @@ const HostDetail = () => {
 		return () => {
 			cancelled = true;
 		};
-	}, [activeTab, hostId, integrationsData?.data?.integrations?.compliance]);
+	}, [
+		activeTab,
+		hostId,
+		integrationsData?.data?.integrations?.compliance,
+		refetchComplianceStatus,
+		safeSetTimeout,
+	]);
 
 	// Poll install job status while job is active or waiting
 	useEffect(() => {
@@ -807,6 +827,28 @@ const HostDetail = () => {
 		onError: (error) => {
 			setIntegrationRefreshMessage({
 				text: error.response?.data?.error || "Failed to start install",
+				isError: true,
+			});
+			safeSetTimeout(() => {
+				if (isMountedRef.current) {
+					setIntegrationRefreshMessage({ text: "", isError: false });
+				}
+			}, 5000);
+		},
+	});
+
+	// Run compliance scan now (sends to backend / BullMQ flow)
+	const triggerComplianceScanMutation = useMutation({
+		mutationFn: () =>
+			complianceAPI.triggerScan(hostId, { profile_type: "all" }),
+		onSuccess: () => {
+			queryClient.invalidateQueries({
+				queryKey: ["compliance-latest", hostId],
+			});
+		},
+		onError: (error) => {
+			setIntegrationRefreshMessage({
+				text: error.response?.data?.error || "Failed to start scan",
 				isError: true,
 			});
 			safeSetTimeout(() => {
@@ -4534,97 +4576,346 @@ const HostDetail = () => {
 							</div>
 						)}
 
-						{/* Compliance — scanner status, install, summary card linking to full compliance page */}
+						{/* Compliance — same card styling as Agent queue tab */}
 						{activeTab === "compliance" && (
-							<div className="space-y-4">
-								{/* Scanner integration status and Install */}
+							<div className="space-y-6">
+								<div className="flex items-center justify-between">
+									<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+										Security Compliance
+									</h3>
+								</div>
+
+								{/* Summary stats — clickable to scan results filtered by status + host */}
+								{complianceLatest && (
+									<div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+										<Link
+											to="/compliance"
+											state={{
+												complianceTab: "scan-results",
+												scanResultsFilters: { status: "pass", host_id: hostId },
+											}}
+											className="card p-4 hover:ring-2 hover:ring-green-500/40 transition-shadow"
+											title="View passing rules for this host"
+										>
+											<div className="flex items-center">
+												<CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 mr-2" />
+												<div>
+													<p className="text-sm text-secondary-500 dark:text-white">
+														Passed
+													</p>
+													<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+														{complianceLatest.passed ?? "—"}
+													</p>
+												</div>
+											</div>
+										</Link>
+										<Link
+											to="/compliance"
+											state={{
+												complianceTab: "scan-results",
+												scanResultsFilters: { status: "fail", host_id: hostId },
+											}}
+											className="card p-4 hover:ring-2 hover:ring-red-500/40 transition-shadow"
+											title="View failing rules for this host"
+										>
+											<div className="flex items-center">
+												<AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 mr-2" />
+												<div>
+													<p className="text-sm text-secondary-500 dark:text-white">
+														Failed
+													</p>
+													<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+														{complianceLatest.failed ?? "—"}
+													</p>
+												</div>
+											</div>
+										</Link>
+										<Link
+											to="/compliance"
+											state={{
+												complianceTab: "scan-results",
+												scanResultsFilters: {
+													status: "skipped",
+													host_id: hostId,
+												},
+											}}
+											className="card p-4 hover:ring-2 hover:ring-secondary-500/40 transition-shadow"
+											title="View skipped/N/A rules for this host"
+										>
+											<div className="flex items-center">
+												<MinusCircle className="h-5 w-5 text-secondary-600 dark:text-secondary-400 mr-2" />
+												<div>
+													<p className="text-sm text-secondary-500 dark:text-white">
+														Skipped
+													</p>
+													<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+														{(complianceLatest.skipped ?? 0) +
+															(complianceLatest.not_applicable ?? 0) || "—"}
+													</p>
+												</div>
+											</div>
+										</Link>
+										<div className="card p-4">
+											<div className="flex items-center">
+												<Calendar className="h-5 w-5 text-primary-600 dark:text-primary-400 mr-2" />
+												<div>
+													<p className="text-sm text-secondary-500 dark:text-white">
+														Last Scan
+													</p>
+													<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+														{complianceLatest.completed_at
+															? new Date(
+																	complianceLatest.completed_at,
+																).toLocaleString()
+															: "—"}
+													</p>
+												</div>
+											</div>
+										</div>
+									</div>
+								)}
+
+								{/* Compliance scanner card — consistent layout: details left, actions right */}
 								{integrationsData?.data?.integrations?.compliance && (
 									<div className="card p-4">
-										<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-2">
-											Compliance scanner
-										</h4>
-										<div className="flex flex-wrap items-center gap-3">
-											<span
-												className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
-													complianceSetupStatus?.status?.status === "ready" ||
-													complianceSetupStatus?.status?.status === "partial"
-														? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
-														: complianceSetupStatus?.status?.status ===
-																"installing"
-															? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
+										<div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+											{/* Left: scanner status and details */}
+											<div className="min-w-0 flex-1">
+												<div className="flex items-center gap-2 mb-3">
+													<Shield className="h-5 w-5 text-primary-600 dark:text-primary-400 flex-shrink-0" />
+													<span className="text-sm font-medium text-secondary-900 dark:text-white">
+														Compliance scanner
+													</span>
+													<span
+														className={`px-2 py-0.5 rounded text-xs font-medium ${
+															complianceSetupStatus?.status?.status ===
+																"ready" ||
+															complianceSetupStatus?.status?.status ===
+																"partial"
+																? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
+																: complianceSetupStatus?.status?.status ===
+																		"installing"
+																	? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
+																	: complianceSetupStatus?.status?.status ===
+																			"error"
+																		? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300"
+																		: "bg-secondary-100 text-secondary-700 dark:bg-secondary-600 dark:text-secondary-200"
+														}`}
+													>
+														{complianceSetupStatus?.status?.status ===
+															"ready" ||
+														complianceSetupStatus?.status?.status === "partial"
+															? "Ready"
 															: complianceSetupStatus?.status?.status ===
-																	"error"
-																? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300"
-																: "bg-secondary-100 text-secondary-700 dark:bg-secondary-600 dark:text-secondary-200"
-												}`}
-											>
-												{complianceSetupStatus?.status?.status === "ready" ||
-												complianceSetupStatus?.status?.status === "partial"
-													? "Ready"
-													: complianceSetupStatus?.status?.status ===
-															"installing"
-														? "Installing…"
-														: complianceSetupStatus?.status?.status === "error"
-															? "Error"
-															: "Not installed"}
-											</span>
-											{(complianceSetupStatus?.status?.scanner_info
-												?.openscap_version ||
-												complianceSetupStatus?.status?.scanner_info
-													?.content_package) && (
-												<span className="text-xs text-secondary-500 dark:text-secondary-400">
-													{[
+																	"installing"
+																? "Installing…"
+																: complianceSetupStatus?.status?.status ===
+																		"error"
+																	? "Error"
+																	: "Not installed"}
+													</span>
+													{complianceSetupStatus?.source === "cached" && (
+														<span className="text-xs text-secondary-500 dark:text-secondary-400 italic">
+															(cached)
+														</span>
+													)}
+												</div>
+												<div className="space-y-1.5 text-sm">
+													{complianceSetupStatus?.status?.scanner_info
+														?.openscap_version && (
+														<div className="flex gap-2">
+															<span className="text-secondary-500 dark:text-secondary-400 font-medium shrink-0">
+																OpenSCAP
+															</span>
+															<span className="text-secondary-900 dark:text-white font-mono">
+																{
+																	complianceSetupStatus.status.scanner_info
+																		.openscap_version
+																}
+															</span>
+														</div>
+													)}
+													{(complianceSetupStatus?.status?.scanner_info
+														?.content_package ||
 														complianceSetupStatus?.status?.scanner_info
-															?.openscap_version &&
-															`OpenSCAP ${complianceSetupStatus.status.scanner_info.openscap_version}`,
-														complianceSetupStatus?.status?.scanner_info
-															?.content_package &&
-															`SSG ${complianceSetupStatus.status.scanner_info.content_package}`,
-													]
-														.filter(Boolean)
-														.join(", ")}
-												</span>
-											)}
-											{complianceSetupStatus?.status?.status !== "ready" &&
-												complianceSetupStatus?.status?.status !== "partial" &&
-												wsStatus?.connected &&
-												(complianceInstallJob?.status !== "active" &&
-												complianceInstallJob?.status !== "waiting" ? (
-													<button
-														type="button"
-														onClick={() =>
-															installComplianceScannerMutation.mutate()
-														}
-														disabled={
-															installComplianceScannerMutation.isPending
-														}
-														className="inline-flex items-center gap-2 px-3 py-1.5 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
-													>
-														{installComplianceScannerMutation.isPending
-															? "Starting…"
-															: "Install scanner"}
-													</button>
-												) : (
-													<button
-														type="button"
-														onClick={() => {
-															complianceAPI
-																.cancelInstallScanner(hostId)
-																.then(() => {
-																	setComplianceInstallJob(null);
-																	refetchComplianceStatus();
-																})
-																.catch(() => {});
-														}}
-														className="inline-flex items-center gap-2 px-3 py-1.5 bg-secondary-200 hover:bg-secondary-300 dark:bg-secondary-600 dark:hover:bg-secondary-500 text-secondary-800 dark:text-secondary-200 text-sm font-medium rounded-lg transition-colors"
-													>
-														Cancel
-													</button>
-												))}
+															?.ssg_version) && (
+														<div className="flex gap-2">
+															<span className="text-secondary-500 dark:text-secondary-400 font-medium shrink-0">
+																SSG content
+															</span>
+															<span className="text-secondary-900 dark:text-white font-mono">
+																{complianceSetupStatus.status.scanner_info
+																	.content_package ||
+																	complianceSetupStatus.status.scanner_info
+																		.ssg_version ||
+																	"—"}
+															</span>
+														</div>
+													)}
+													{complianceSetupStatus?.status?.scanner_info
+														?.content_file && (
+														<div className="flex gap-2">
+															<span className="text-secondary-500 dark:text-secondary-400 font-medium shrink-0">
+																Content file on server
+															</span>
+															<span className="text-secondary-900 dark:text-white font-mono text-xs break-all min-w-0">
+																{
+																	complianceSetupStatus.status.scanner_info
+																		.content_file
+																}
+															</span>
+														</div>
+													)}
+												</div>
+												{!complianceSetupStatus?.status?.scanner_info
+													?.openscap_version &&
+													!complianceSetupStatus?.status?.scanner_info
+														?.content_file && (
+														<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-1">
+															No version or path data yet. Use Refresh status or
+															Install scanner.
+														</p>
+													)}
+												{(complianceSetupStatus?.status?.scanner_info
+													?.ssg_needs_upgrade ||
+													complianceSetupStatus?.status?.scanner_info
+														?.content_mismatch) && (
+													<div className="mt-2 space-y-1">
+														{complianceSetupStatus.status.scanner_info
+															.ssg_needs_upgrade && (
+															<p className="text-xs text-amber-600 dark:text-amber-400">
+																{complianceSetupStatus.status.scanner_info
+																	.ssg_upgrade_message ||
+																	"SSG upgrade recommended"}
+															</p>
+														)}
+														{(complianceSetupStatus.status.scanner_info
+															.content_mismatch ||
+															complianceSetupStatus.status.scanner_info
+																.mismatch_warning) && (
+															<p className="text-xs text-amber-600 dark:text-amber-400">
+																{complianceSetupStatus.status.scanner_info
+																	.mismatch_warning ||
+																	"Content mismatch with OS"}
+															</p>
+														)}
+													</div>
+												)}
+												{(complianceSetupStatus?.status?.scanner_info
+													?.docker_bench_available ||
+													complianceSetupStatus?.status?.scanner_info
+														?.oscap_docker_available) && (
+													<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-2">
+														{[
+															complianceSetupStatus.status.scanner_info
+																.docker_bench_available && "Docker Bench",
+															complianceSetupStatus.status.scanner_info
+																.oscap_docker_available && "oscap-docker",
+														]
+															.filter(Boolean)
+															.join(", ")}{" "}
+														available
+													</p>
+												)}
+											</div>
+											{/* Right: actions */}
+											<div className="flex flex-wrap items-center gap-2 sm:flex-shrink-0">
+												<button
+													type="button"
+													onClick={() => {
+														adminHostsAPI
+															.requestComplianceStatus(hostId)
+															.then(() => {
+																refetchComplianceStatus();
+																safeSetTimeout(
+																	() => refetchComplianceStatus(),
+																	2000,
+																);
+																safeSetTimeout(
+																	() => refetchComplianceStatus(),
+																	5000,
+																);
+															})
+															.catch(() => {});
+													}}
+													className="btn-outline inline-flex items-center gap-2 text-sm"
+													title="Ask agent to report current scanner status"
+												>
+													<RefreshCw className="h-4 w-4" />
+													Refresh status
+												</button>
+												{complianceSetupStatus?.status?.status !== "ready" &&
+													complianceSetupStatus?.status?.status !== "partial" &&
+													wsStatus?.connected &&
+													(complianceInstallJob?.status !== "active" &&
+													complianceInstallJob?.status !== "waiting" ? (
+														<button
+															type="button"
+															onClick={() =>
+																installComplianceScannerMutation.mutate()
+															}
+															disabled={
+																installComplianceScannerMutation.isPending
+															}
+															className="btn-primary inline-flex items-center gap-2 text-sm"
+														>
+															{installComplianceScannerMutation.isPending
+																? "Starting…"
+																: "Install scanner"}
+														</button>
+													) : (
+														<button
+															type="button"
+															onClick={() => {
+																complianceAPI
+																	.cancelInstallScanner(hostId)
+																	.then(() => {
+																		setComplianceInstallJob(null);
+																		refetchComplianceStatus();
+																	})
+																	.catch(() => {});
+															}}
+															className="btn-outline inline-flex items-center gap-2 text-sm"
+														>
+															Cancel
+														</button>
+													))}
+												<Link
+													to={`/compliance/hosts/${hostId}`}
+													className="btn-outline inline-flex items-center gap-2 text-sm"
+												>
+													<ExternalLink className="h-4 w-4" />
+													View Full Details
+												</Link>
+												<button
+													type="button"
+													onClick={() => triggerComplianceScanMutation.mutate()}
+													disabled={
+														!wsStatus?.connected ||
+														triggerComplianceScanMutation.isPending ||
+														(complianceSetupStatus?.status?.status !==
+															"ready" &&
+															complianceSetupStatus?.status?.status !==
+																"partial")
+													}
+													className="btn-primary inline-flex items-center gap-2 text-sm"
+													title={
+														complianceSetupStatus?.status?.status !== "ready" &&
+														complianceSetupStatus?.status?.status !== "partial"
+															? "Install scanner first"
+															: "Start compliance scan on this host"
+													}
+												>
+													<Play className="h-4 w-4" />
+													{triggerComplianceScanMutation.isPending
+														? "Starting…"
+														: "Run scan now"}
+												</button>
+											</div>
 										</div>
 										{(complianceInstallJob?.status === "active" ||
 											complianceInstallJob?.status === "waiting") && (
-											<div className="mt-3">
+											<div className="mt-3 pt-3 border-t border-secondary-200 dark:border-secondary-600">
 												<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-2">
 													<div
 														className="bg-primary-600 dark:bg-primary-500 h-2 rounded-full transition-all duration-300"
@@ -4651,89 +4942,23 @@ const HostDetail = () => {
 									</div>
 								)}
 
-								<div className="card p-6">
-									<div className="flex items-start justify-between mb-4">
-										<div>
-											<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
-												Security Compliance
-											</h3>
-											<p className="text-sm text-secondary-500 dark:text-secondary-400 mt-1">
-												View detailed compliance reports, scan history, results
-												and trends for this host.
-											</p>
-										</div>
-										{complianceLatest?.score != null && (
-											<div
-												className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-semibold ${
-													Number(complianceLatest.score) >= 80
-														? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
-														: Number(complianceLatest.score) >= 60
-															? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300"
-															: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300"
-												}`}
-											>
-												{Math.round(complianceLatest.score)}%
-											</div>
-										)}
+								{/* Empty state when compliance not enabled or no scans yet */}
+								{!integrationsData?.data?.integrations?.compliance && (
+									<div className="card p-4">
+										<p className="text-sm text-secondary-500 dark:text-secondary-400 mb-2">
+											Compliance is not enabled for this host. Enable it in the
+											Integrations tab.
+										</p>
+										<Link
+											to={`/compliance/hosts/${hostId}`}
+											className="btn-primary inline-flex items-center gap-2"
+										>
+											<Shield className="h-4 w-4" />
+											View Full Compliance Details
+											<ExternalLink className="h-3.5 w-3.5" />
+										</Link>
 									</div>
-									{complianceLatest ? (
-										<div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
-											<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 text-center">
-												<p className="text-xs text-secondary-500 dark:text-secondary-400">
-													Passed
-												</p>
-												<p className="text-lg font-bold text-green-600 dark:text-green-400">
-													{complianceLatest.passed ?? "—"}
-												</p>
-											</div>
-											<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 text-center">
-												<p className="text-xs text-secondary-500 dark:text-secondary-400">
-													Failed
-												</p>
-												<p className="text-lg font-bold text-red-600 dark:text-red-400">
-													{complianceLatest.failed ?? "—"}
-												</p>
-											</div>
-											<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 text-center">
-												<p className="text-xs text-secondary-500 dark:text-secondary-400">
-													Skipped
-												</p>
-												<p className="text-lg font-bold text-secondary-600 dark:text-secondary-400">
-													{(complianceLatest.skipped ?? 0) +
-														(complianceLatest.not_applicable ?? 0) || "—"}
-												</p>
-											</div>
-											<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-3 text-center">
-												<p className="text-xs text-secondary-500 dark:text-secondary-400">
-													Last Scan
-												</p>
-												<p className="text-sm font-medium text-secondary-900 dark:text-white">
-													{complianceLatest.completed_at
-														? new Date(
-																complianceLatest.completed_at,
-															).toLocaleDateString()
-														: "—"}
-												</p>
-											</div>
-										</div>
-									) : (
-										<div className="bg-secondary-50 dark:bg-secondary-700/50 rounded-lg p-4 mb-4 text-center">
-											<p className="text-sm text-secondary-500 dark:text-secondary-400">
-												{host?.compliance_enabled
-													? "No scans have been run yet. View the full compliance page to run your first scan."
-													: "Compliance is not enabled for this host. Enable it in the Integrations tab."}
-											</p>
-										</div>
-									)}
-									<Link
-										to={`/compliance/hosts/${hostId}`}
-										className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-lg transition-colors"
-									>
-										<Shield className="h-4 w-4" />
-										View Full Compliance Details
-										<ExternalLink className="h-3.5 w-3.5" />
-									</Link>
-								</div>
+								)}
 							</div>
 						)}
 

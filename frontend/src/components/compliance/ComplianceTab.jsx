@@ -174,9 +174,10 @@ const ComplianceTab = ({
 		queryKey: ["compliance-latest", hostId, profileTypeFilter],
 		queryFn: () =>
 			complianceAPI
-				.getLatestScan(hostId, profileTypeFilter)
+				.getLatestScan(hostId, profileTypeFilter ?? undefined)
 				.then((res) => res.data),
-		enabled: !!hostId && profileTypeFilter !== null,
+		// Run as soon as we have hostId so Results tab has a scan to show; when profileTypeFilter is null we get latest of any type
+		enabled: !!hostId,
 		staleTime: 30 * 1000, // Consider data fresh for 30 seconds
 		refetchOnWindowFocus: false, // Don't refetch on window focus to avoid flicker
 	});
@@ -199,7 +200,13 @@ const ComplianceTab = ({
 
 	// Paginated scan results (used on Results tab to avoid loading all rules at once)
 	const scanIdForResults = latestScan?.id;
-	const { data: scanResultsData } = useQuery({
+	const {
+		data: scanResultsData,
+		isLoading: scanResultsLoading,
+		isFetching: scanResultsFetching,
+		isError: scanResultsError,
+		refetch: refetchScanResults,
+	} = useQuery({
 		queryKey: [
 			"compliance-scan-results",
 			scanIdForResults,
@@ -2277,22 +2284,58 @@ const ComplianceTab = ({
 									</div>
 								</div>
 
-								{/* Results List with Pagination Info */}
-								{displayResults && displayResults.length > 0 && (
-									<div className="px-4 py-2 border-b border-secondary-700 flex items-center justify-between text-xs text-secondary-400">
-										<span>
-											Showing {startIndex + 1}-
-											{Math.min(endIndex, totalResults)} of {totalResults}{" "}
-											results
+								{/* Loading state for paginated scan results (table data) */}
+								{(scanResultsLoading ||
+									(scanResultsFetching && !scanResultsData)) && (
+									<div className="flex items-center justify-center py-12 border-b border-secondary-700">
+										<RefreshCw className="h-8 w-8 text-primary-400 animate-spin mr-3" />
+										<span className="text-secondary-400">
+											Loading scan results...
 										</span>
-										{totalPages > 1 && (
-											<span>
-												Page {currentPage} of {totalPages}
-											</span>
-										)}
 									</div>
 								)}
-								{displayResults && displayResults.length > 0 ? (
+								{/* Error state for scan results query */}
+								{!scanResultsLoading &&
+									!scanResultsFetching &&
+									scanResultsError && (
+										<div className="p-6 border-b border-secondary-700 text-center">
+											<p className="text-red-400 mb-3">
+												Failed to load scan results
+											</p>
+											<button
+												type="button"
+												onClick={() => refetchScanResults()}
+												className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm"
+											>
+												<RefreshCw className="h-4 w-4" />
+												Retry
+											</button>
+										</div>
+									)}
+								{/* Results List with Pagination Info */}
+								{!scanResultsLoading &&
+									!scanResultsFetching &&
+									!scanResultsError &&
+									displayResults &&
+									displayResults.length > 0 && (
+										<div className="px-4 py-2 border-b border-secondary-700 flex items-center justify-between text-xs text-secondary-400">
+											<span>
+												Showing {startIndex + 1}-
+												{Math.min(endIndex, totalResults)} of {totalResults}{" "}
+												results
+											</span>
+											{totalPages > 1 && (
+												<span>
+													Page {currentPage} of {totalPages}
+												</span>
+											)}
+										</div>
+									)}
+								{!scanResultsLoading &&
+								!scanResultsFetching &&
+								!scanResultsError &&
+								displayResults &&
+								displayResults.length > 0 ? (
 									<div className="divide-y divide-secondary-700">
 										{/* Grouped View */}
 										{groupBySection &&
@@ -2416,7 +2459,7 @@ const ComplianceTab = ({
 																					</p>
 																				</div>
 																			)}
-																			{/* Why this failed / Why this warning - same as flat view */}
+																			{/* Why this failed / Why this warning - DB only: finding, actual, expected */}
 																			{(result.status === "fail" ||
 																				result.status === "warn") && (
 																				<div
@@ -2427,29 +2470,32 @@ const ComplianceTab = ({
 																					>
 																						<XCircle className="h-3.5 w-3.5" />
 																						{result.status === "warn"
-																							? "Why This Warning"
-																							: "Why This Failed"}
+																							? "Why This Warning (this host)"
+																							: "Why This Failed (this host)"}
 																					</p>
 																					<div
 																						className={`${result.status === "warn" ? "text-yellow-200/90" : "text-red-200/90"} text-sm space-y-2`}
 																					>
 																						{result.finding ? (
 																							<p>{result.finding}</p>
-																						) : result.actual ? (
+																						) : result.actual ||
+																							result.expected ? (
 																							<>
 																								<p>
 																									The check found a
 																									non-compliant value:
 																								</p>
 																								<div className="mt-2 grid grid-cols-1 gap-2">
-																									<div className="bg-red-800/30 rounded p-2">
-																										<span className="text-red-300 text-xs font-medium">
-																											Current setting:
-																										</span>
-																										<code className="block mt-1 text-red-200 break-all">
-																											{result.actual}
-																										</code>
-																									</div>
+																									{result.actual && (
+																										<div className="bg-red-800/30 rounded p-2">
+																											<span className="text-red-300 text-xs font-medium">
+																												Current setting:
+																											</span>
+																											<code className="block mt-1 text-red-200 break-all">
+																												{result.actual}
+																											</code>
+																										</div>
+																									)}
 																									{result.expected && (
 																										<div className="bg-green-800/30 rounded p-2">
 																											<span className="text-green-300 text-xs font-medium">
@@ -2463,16 +2509,15 @@ const ComplianceTab = ({
 																								</div>
 																							</>
 																						) : (
-																							<p className="text-secondary-300">
-																								{result.compliance_rules
-																									?.rationale ||
-																									result.rule?.rationale ||
-																									result.rationale ||
-																									result.compliance_rules
-																										?.description ||
-																									result.rule?.description ||
-																									result.description ||
-																									"The system does not meet this requirement. See remediation below."}
+																							<p className="text-secondary-400 text-xs italic">
+																								No failure details in the
+																								database (finding, actual,
+																								expected are empty). The agent
+																								may not be sending these fields,
+																								or the backend may not be
+																								storing them — check agent
+																								payload and backend logs when
+																								the scan was submitted.
 																							</p>
 																						)}
 																					</div>
@@ -2737,7 +2782,7 @@ const ComplianceTab = ({
 																</div>
 															)}
 
-															{/* WHY THIS FAILED/WARNED - Clear explanation for failed/warn rules */}
+															{/* WHY THIS FAILED/WARNED - DB only: finding, actual, expected (no fallback to description) */}
 															{(result.status === "fail" ||
 																result.status === "warn") && (
 																<div
@@ -2748,155 +2793,53 @@ const ComplianceTab = ({
 																	>
 																		<XCircle className="h-3.5 w-3.5" />
 																		{result.status === "warn"
-																			? "Why This Warning"
-																			: "Why This Failed"}
+																			? "Why This Warning (this host)"
+																			: "Why This Failed (this host)"}
 																	</p>
 																	<div
 																		className={`${result.status === "warn" ? "text-yellow-200/90" : "text-red-200/90"} text-sm space-y-2`}
 																	>
-																		{(() => {
-																			// Check all possible locations for metadata (nested or direct from agent)
-																			const title =
-																				result.compliance_rules?.title ||
-																				result.rule?.title ||
-																				result.title ||
-																				"";
-																			const description =
-																				result.compliance_rules?.description ||
-																				result.rule?.description ||
-																				result.description ||
-																				"";
-																			const rationale =
-																				result.compliance_rules?.rationale ||
-																				result.rule?.rationale ||
-																				result.rationale ||
-																				"";
-
-																			// If we have a specific finding from the scan, show it first
-																			if (result.finding) {
-																				return <p>{result.finding}</p>;
-																			}
-
-																			// If we have actual vs expected, show detailed comparison
-																			if (result.actual) {
-																				return (
-																					<>
-																						<p>
-																							The check found a non-compliant
-																							value:
-																						</p>
-																						<div className="mt-2 grid grid-cols-1 gap-2">
-																							<div className="bg-red-800/30 rounded p-2">
-																								<span className="text-red-300 text-xs font-medium">
-																									Current setting:
-																								</span>
-																								<code className="block mt-1 text-red-200 break-all">
-																									{result.actual}
-																								</code>
-																							</div>
-																							{result.expected && (
-																								<div className="bg-green-800/30 rounded p-2">
-																									<span className="text-green-300 text-xs font-medium">
-																										Required setting:
-																									</span>
-																									<code className="block mt-1 text-green-200 break-all">
-																										{result.expected}
-																									</code>
-																								</div>
-																							)}
+																		{result.finding ? (
+																			<p>{result.finding}</p>
+																		) : result.actual || result.expected ? (
+																			<>
+																				<p>
+																					The check found a non-compliant value:
+																				</p>
+																				<div className="mt-2 grid grid-cols-1 gap-2">
+																					{result.actual && (
+																						<div className="bg-red-800/30 rounded p-2">
+																							<span className="text-red-300 text-xs font-medium">
+																								Current setting:
+																							</span>
+																							<code className="block mt-1 text-red-200 break-all">
+																								{result.actual}
+																							</code>
 																						</div>
-																					</>
-																				);
-																			}
-
-																			// PRIORITY: Use actual description from benchmark if available
-																			// This is the real explanation from SSG/CIS, not a generic pattern match
-																			if (
-																				description &&
-																				description.length > 10
-																			) {
-																				// Clean up the description - remove extra whitespace
-																				const cleanDesc = description
-																					.replace(/\s+/g, " ")
-																					.trim();
-																				return (
-																					<>
-																						<p className="leading-relaxed">
-																							{cleanDesc}
-																						</p>
-																						{rationale &&
-																							rationale.length > 10 && (
-																								<p className="mt-2 text-red-300/70 text-xs italic">
-																									<strong>
-																										Security Impact:
-																									</strong>{" "}
-																									{rationale
-																										.replace(/\s+/g, " ")
-																										.trim()
-																										.substring(0, 200)}
-																									{rationale.length > 200
-																										? "..."
-																										: ""}
-																								</p>
-																							)}
-																					</>
-																				);
-																			}
-
-																			// Fallback: Generate explanation from title if no description
-																			// Parse "Ensure X is Y" pattern
-																			const ensureMatch = title.match(
-																				/^Ensure\s+(.+?)\s+(?:is|are)\s+(.+)$/i,
-																			);
-																			if (ensureMatch) {
-																				const [, subject, expectedState] =
-																					ensureMatch;
-																				return (
-																					<>
-																						<p>
-																							This rule requires that{" "}
-																							<strong>{subject}</strong> is{" "}
-																							<strong>{expectedState}</strong>.
-																						</p>
-																						<p className="mt-1 text-red-300/80">
-																							The current system configuration
-																							does not meet this requirement.
-																						</p>
-																					</>
-																				);
-																			}
-
-																			// Parse "Install X" pattern
-																			const installMatch =
-																				title.match(/^Install\s+(.+)$/i);
-																			if (installMatch) {
-																				return (
-																					<p>
-																						The package{" "}
-																						<strong>{installMatch[1]}</strong>{" "}
-																						must be installed but is not present
-																						on this system.
-																					</p>
-																				);
-																			}
-
-																			// Final fallback
-																			return (
-																				<>
-																					<p>
-																						The system does not meet the
-																						requirement:{" "}
-																						<strong>
-																							{title || "this security check"}
-																						</strong>
-																					</p>
-																					<p className="mt-1 text-red-300/80">
-																						See the remediation steps below for
-																						how to fix this.
-																					</p>
-																				</>
-																			);
-																		})()}
+																					)}
+																					{result.expected && (
+																						<div className="bg-green-800/30 rounded p-2">
+																							<span className="text-green-300 text-xs font-medium">
+																								Required setting:
+																							</span>
+																							<code className="block mt-1 text-green-200 break-all">
+																								{result.expected}
+																							</code>
+																						</div>
+																					)}
+																				</div>
+																			</>
+																		) : (
+																			<p className="text-secondary-400 text-xs italic">
+																				No failure details in the database
+																				(finding, actual, expected are empty).
+																				The agent may not be sending these
+																				fields, or the backend may not be
+																				storing them — check agent payload and
+																				backend logs when the scan was
+																				submitted.
+																			</p>
+																		)}
 																	</div>
 																</div>
 															)}
@@ -3193,14 +3136,17 @@ const ComplianceTab = ({
 											</div>
 										)}
 									</div>
-								) : (
+								) : !scanResultsLoading &&
+									!scanResultsFetching &&
+									!scanResultsError ? (
 									<div className="p-8 text-center">
 										<p className="text-secondary-400">
 											No {statusFilter !== "all" ? statusFilter : ""} results
-											found
+											found for this filter. Try another tab (e.g. Passed or
+											Warnings).
 										</p>
 									</div>
-								)}
+								) : null}
 							</div>
 						)}
 					</>

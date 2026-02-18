@@ -1147,8 +1147,8 @@ router.post("/integration-status", validateApiCredentials, async (req, res) => {
 			timestamp: new Date().toISOString(),
 		};
 
-		// Store with 1 hour expiry
-		await redis.setex(statusKey, 3600, JSON.stringify(statusData));
+		// Store in Redis with 2 hour expiry so UI has fresh data without constant agent reports
+		await redis.setex(statusKey, 7200, JSON.stringify(statusData));
 
 		// Also broadcast via WebSocket if available
 		try {
@@ -1163,13 +1163,16 @@ router.post("/integration-status", validateApiCredentials, async (req, res) => {
 			logger.info("WebSocket broadcast not available:", wsError.message);
 		}
 
-		// Update host record with compliance setup status
-		if (integration === "compliance" && status === "ready") {
+		// Persist compliance scanner status to host record for accurate display when Redis is empty
+		if (integration === "compliance") {
+			const now = new Date();
 			await prisma.hosts.update({
 				where: { id: hostId },
 				data: {
-					compliance_enabled: enabled,
-					updated_at: new Date(),
+					compliance_scanner_status: statusData,
+					compliance_scanner_updated_at: now,
+					...(status === "ready" ? { compliance_enabled: enabled } : {}),
+					updated_at: now,
 				},
 			});
 		}
@@ -3027,6 +3030,7 @@ router.get(
 );
 
 // Get integration setup status for a host (frontend-facing)
+// For compliance: returns Redis if present, else fallback to last persisted status on host
 router.get(
 	"/:hostId/integrations/:integrationName/status",
 	authenticateToken,
@@ -3034,35 +3038,102 @@ router.get(
 		try {
 			const { hostId, integrationName } = req.params;
 
-			// Get host to get api_id
 			const host = await prisma.hosts.findUnique({
 				where: { id: hostId },
-				select: { api_id: true },
+				select: {
+					api_id: true,
+					compliance_scanner_status: true,
+					compliance_scanner_updated_at: true,
+				},
 			});
 
 			if (!host) {
 				return res.status(404).json({ error: "Host not found" });
 			}
 
-			// Get status from Redis
 			const statusKey = `integration_status:${host.api_id}:${integrationName}`;
 			const statusData = await redis.get(statusKey);
 
-			if (!statusData) {
+			if (statusData) {
 				return res.json({
 					success: true,
-					status: null,
-					message: "No status available",
+					status: JSON.parse(statusData),
+					source: "live",
+				});
+			}
+
+			// Fallback to persisted compliance scanner status when Redis is empty
+			if (
+				integrationName === "compliance" &&
+				host.compliance_scanner_status &&
+				typeof host.compliance_scanner_status === "object"
+			) {
+				return res.json({
+					success: true,
+					status: host.compliance_scanner_status,
+					source: "cached",
+					cached_at: host.compliance_scanner_updated_at,
 				});
 			}
 
 			res.json({
 				success: true,
-				status: JSON.parse(statusData),
+				status: null,
+				message: "No status available",
 			});
 		} catch (error) {
 			logger.error("Get integration setup status error:", error);
 			res.status(500).json({ error: "Failed to get integration setup status" });
+		}
+	},
+);
+
+// Request fresh compliance scanner status from agent (view permission)
+// Triggers agent to re-check and report; use when opening Compliance tab or clicking Refresh
+router.post(
+	"/:hostId/integrations/compliance/request-status",
+	authenticateToken,
+	requireViewHosts,
+	async (req, res) => {
+		try {
+			const { hostId } = req.params;
+
+			const host = await prisma.hosts.findUnique({
+				where: { id: hostId },
+				select: { id: true, api_id: true },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			const queue = queueManager.queues[QUEUE_NAMES.AGENT_COMMANDS];
+			if (!queue) {
+				return res.status(500).json({ error: "Queue not available" });
+			}
+
+			await queue.add(
+				"refresh_integration_status",
+				{
+					api_id: host.api_id,
+					type: "refresh_integration_status",
+				},
+				{
+					attempts: 2,
+					backoff: { type: "exponential", delay: 1000 },
+				},
+			);
+
+			res.json({
+				success: true,
+				message: "Compliance status refresh requested",
+			});
+		} catch (error) {
+			logger.error("Request compliance status error:", error);
+			res.status(500).json({
+				error: "Failed to request compliance status",
+				details: error?.message,
+			});
 		}
 	},
 );

@@ -29,6 +29,7 @@ import { useEffect, useState } from "react";
 import { Bar, Doughnut, Line, Pie } from "react-chartjs-2";
 import { useNavigate } from "react-router-dom";
 import {
+	ActiveBenchmarkScans,
 	COMPLIANCE_WIDGET_CARD_IDS,
 	ComplianceProfilesPie,
 	ComplianceTrendLinePlaceholder,
@@ -951,6 +952,9 @@ const Dashboard = () => {
 			case "complianceTrendLine":
 				return <ComplianceTrendLinePlaceholder />;
 
+			case "complianceActiveBenchmarkScans":
+				return <ActiveBenchmarkScans />;
+
 			case "packageTrends":
 				return (
 					<div className="card p-4 sm:p-6 w-full">
@@ -1171,71 +1175,119 @@ const Dashboard = () => {
 
 			case "recentUsers":
 				return (
-					<div className="card p-4 sm:p-6">
-						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
-							Recent Users Logged in
-						</h3>
-						<div className="h-64 overflow-y-auto">
-							<div className="space-y-3">
-								{(recentUsers || []).slice(0, 5).map((u) => (
-									<div
-										key={u.id}
-										className="flex items-center justify-between py-2 border-b border-secondary-100 dark:border-secondary-700 last:border-b-0"
-									>
-										<div className="text-sm font-medium text-secondary-900 dark:text-white">
-											{u.username}
-										</div>
-										<div className="text-sm text-secondary-500 dark:text-white/70">
-											{u.last_login
-												? formatRelativeTime(u.last_login)
-												: "Never"}
-										</div>
-									</div>
-								))}
-								{(!recentUsers || recentUsers.length === 0) && (
-									<div className="text-center text-secondary-500 dark:text-white/70 py-4">
-										No users found
-									</div>
-								)}
-							</div>
+					<div className="card p-4 sm:p-6 w-full">
+						<div className="flex items-center justify-between mb-4">
+							<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+								Recent Users Logged in
+							</h3>
+							{recentUsers?.length > 0 && (
+								<span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+									<Users className="h-3 w-3" />
+									{recentUsers.length} users
+								</span>
+							)}
 						</div>
+						{!recentUsers || recentUsers.length === 0 ? (
+							<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-secondary-500">
+								<Users className="h-8 w-8 mb-2" />
+								<p className="text-sm">No users found</p>
+							</div>
+						) : (
+							<div className="overflow-hidden rounded-lg border border-secondary-200 dark:border-secondary-700">
+								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700 text-sm">
+									<thead className="bg-secondary-50 dark:bg-secondary-700/50">
+										<tr>
+											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase">
+												Username
+											</th>
+											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase">
+												Last Login
+											</th>
+										</tr>
+									</thead>
+									<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-700">
+										{recentUsers.slice(0, 5).map((u) => (
+											<tr
+												key={u.id}
+												className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
+											>
+												<td className="px-3 py-1.5 whitespace-nowrap">
+													<span className="font-medium text-secondary-900 dark:text-white">
+														{u.username}
+													</span>
+												</td>
+												<td className="px-3 py-1.5 whitespace-nowrap text-secondary-500 dark:text-secondary-400 text-xs">
+													{u.last_login
+														? formatRelativeTime(u.last_login)
+														: "Never"}
+												</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</div>
+						)}
 					</div>
 				);
 
 			case "recentCollection":
 				return (
-					<div className="card p-4 sm:p-6">
-						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
-							Recent Collection
-						</h3>
-						<div className="h-64 overflow-y-auto">
-							<div className="space-y-3">
-								{(recentCollection || []).slice(0, 5).map((host) => (
-									<div
-										key={host.id}
-										className="flex items-center justify-between py-2 border-b border-secondary-100 dark:border-secondary-700 last:border-b-0"
-									>
-										<button
-											type="button"
-											onClick={() => navigate(`/hosts/${host.id}`)}
-											className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 hover:underline text-left"
-										>
-											{host.friendly_name || host.hostname}
-										</button>
-										<div className="text-sm text-secondary-500 dark:text-white/70">
-											{host.last_update
-												? formatRelativeTime(host.last_update)
-												: "Never"}
-										</div>
-									</div>
-								))}
-								{(!recentCollection || recentCollection.length === 0) && (
-									<div className="text-center text-secondary-500 dark:text-white/70 py-4">
-										No hosts found
-									</div>
-								)}
-							</div>
+					<div className="card p-4 sm:p-6 w-full">
+						<div className="flex items-center justify-between mb-4">
+							<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+								Recent Collection
+							</h3>
+							{recentCollection?.length > 0 && (
+								<span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+									<Server className="h-3 w-3" />
+									{recentCollection.length} hosts
+								</span>
+							)}
 						</div>
+						{!recentCollection || recentCollection.length === 0 ? (
+							<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-secondary-500">
+								<Server className="h-8 w-8 mb-2" />
+								<p className="text-sm">No hosts found</p>
+							</div>
+						) : (
+							<div className="overflow-hidden rounded-lg border border-secondary-200 dark:border-secondary-700">
+								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700 text-sm">
+									<thead className="bg-secondary-50 dark:bg-secondary-700/50">
+										<tr>
+											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase">
+												Host
+											</th>
+											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase">
+												Last Update
+											</th>
+										</tr>
+									</thead>
+									<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-700">
+										{recentCollection.slice(0, 5).map((host) => (
+											<tr
+												key={host.id}
+												className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
+											>
+												<td className="px-3 py-1.5 whitespace-nowrap">
+													<button
+														type="button"
+														onClick={() => navigate(`/hosts/${host.id}`)}
+														className="font-medium text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300 hover:underline"
+													>
+														{host.friendly_name || host.hostname}
+													</button>
+												</td>
+												<td className="px-3 py-1.5 whitespace-nowrap text-secondary-500 dark:text-secondary-400 text-xs">
+													{host.last_update
+														? formatRelativeTime(host.last_update)
+														: "Never"}
+												</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</div>
+						)}
 					</div>
 				);
 

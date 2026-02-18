@@ -1,22 +1,28 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	ArrowLeft,
 	ExternalLink,
+	Play,
 	RefreshCw,
 	Shield,
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import HostComplianceDetail from "../../components/compliance/HostComplianceDetail";
 import { dashboardAPI } from "../../utils/api";
-
-// Lazy load ComplianceTab since it's a large component
-const ComplianceTab = lazy(
-	() => import("../../components/compliance/ComplianceTab"),
-);
+import { complianceAPI } from "../../utils/complianceApi";
 
 const ComplianceHostDetail = () => {
 	const { id } = useParams();
+	const queryClient = useQueryClient();
+
+	const triggerScanMutation = useMutation({
+		mutationFn: () => complianceAPI.triggerScan(id, { profile_type: "all" }),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["compliance-latest", id] });
+		},
+	});
 
 	// Fetch host details
 	const {
@@ -108,9 +114,33 @@ const ComplianceHostDetail = () => {
 					<div className="flex items-center">
 						<Shield className="h-8 w-8 text-primary-500 mr-3" />
 						<div>
-							<h1 className="text-2xl font-bold text-secondary-900 dark:text-white">
-								{host.friendly_name || host.hostname}
-							</h1>
+							<div className="flex items-center gap-3">
+								<h1 className="text-2xl font-bold text-secondary-900 dark:text-white">
+									{host.friendly_name || host.hostname}
+								</h1>
+								<button
+									type="button"
+									onClick={() => triggerScanMutation.mutate()}
+									disabled={
+										triggerScanMutation.isPending || !ws_status?.connected
+									}
+									className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+									title={
+										!ws_status?.connected
+											? "Host is disconnected"
+											: triggerScanMutation.isPending
+												? "Scan in progress…"
+												: "Run compliance scan now"
+									}
+								>
+									{triggerScanMutation.isPending ? (
+										<RefreshCw className="h-4 w-4 animate-spin" />
+									) : (
+										<Play className="h-4 w-4" />
+									)}
+									{triggerScanMutation.isPending ? "Scanning…" : "Run Scan"}
+								</button>
+							</div>
 							<p className="mt-1 text-sm text-secondary-600 dark:text-secondary-400">
 								{host.ip} &middot; Compliance Overview
 							</p>
@@ -144,21 +174,7 @@ const ComplianceHostDetail = () => {
 			</div>
 
 			{/* Compliance Content */}
-			<Suspense
-				fallback={
-					<div className="flex items-center justify-center py-12">
-						<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
-					</div>
-				}
-			>
-				<ComplianceTab
-					hostId={id}
-					apiId={host?.api_id}
-					isConnected={ws_status?.connected}
-					complianceEnabled={host?.compliance_enabled}
-					dockerEnabled={host?.docker_enabled}
-				/>
-			</Suspense>
+			<HostComplianceDetail hostId={id} />
 		</div>
 	);
 };

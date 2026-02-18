@@ -6,6 +6,7 @@ import {
 	CheckCircle,
 	Clock,
 	Container,
+	History,
 	ListChecks,
 	PieChart as PieChartIcon,
 	Play,
@@ -32,6 +33,7 @@ import {
 	XAxis,
 	YAxis,
 } from "recharts";
+import ScanHistoryTab from "../components/compliance/ScanHistoryTab";
 import ScanResultsTab from "../components/compliance/ScanResultsTab";
 import {
 	ComplianceProfilesPie,
@@ -106,6 +108,7 @@ const COMPLIANCE_TABS = [
 	{ id: "overview", label: "Overview", icon: BarChart3 },
 	{ id: "hosts", label: "Hosts", icon: Users },
 	{ id: "scan-results", label: "Scan Results", icon: ListChecks },
+	{ id: "history", label: "History", icon: History },
 ];
 
 const Compliance = () => {
@@ -119,14 +122,18 @@ const Compliance = () => {
 		return "overview";
 	});
 
-	// Handle tab navigation from external links (e.g. back from RuleDetail)
+	const [scanResultsFilters, setScanResultsFilters] = useState(null);
+
+	// Handle tab navigation and filters from external links (e.g. host compliance cards)
 	useEffect(() => {
 		const requested = location.state?.complianceTab;
 		if (requested && COMPLIANCE_TABS.some((t) => t.id === requested)) {
 			setActiveTab(requested);
 		}
-	}, [location.state?.complianceTab]);
-
+		if (location.state?.scanResultsFilters) {
+			setScanResultsFilters(location.state.scanResultsFilters);
+		}
+	}, [location.state?.complianceTab, location.state?.scanResultsFilters]);
 	const [showBulkScanModal, setShowBulkScanModal] = useState(false);
 	const [selectedHosts, setSelectedHosts] = useState([]);
 	const [bulkScanOptions, setBulkScanOptions] = useState({
@@ -711,14 +718,65 @@ const Compliance = () => {
 														{row.last_activity_title ||
 															(row.last_scan_date ? "Scan" : "—")}
 													</td>
-													<td className="px-4 py-2 text-right whitespace-nowrap text-green-600 dark:text-green-400">
-														{row.passed != null ? row.passed : "—"}
+													<td className="px-4 py-2 text-right whitespace-nowrap">
+														{row.passed != null ? (
+															<button
+																type="button"
+																onClick={() => {
+																	setScanResultsFilters({
+																		status: "pass",
+																		host_id: row.host_id,
+																	});
+																	setActiveTab("scan-results");
+																}}
+																className="text-green-600 dark:text-green-400 hover:underline font-medium tabular-nums"
+																title="View passing rules for this host"
+															>
+																{row.passed}
+															</button>
+														) : (
+															"—"
+														)}
 													</td>
-													<td className="px-4 py-2 text-right whitespace-nowrap text-red-600 dark:text-red-400">
-														{row.failed != null ? row.failed : "—"}
+													<td className="px-4 py-2 text-right whitespace-nowrap">
+														{row.failed != null ? (
+															<button
+																type="button"
+																onClick={() => {
+																	setScanResultsFilters({
+																		status: "fail",
+																		host_id: row.host_id,
+																	});
+																	setActiveTab("scan-results");
+																}}
+																className="text-red-600 dark:text-red-400 hover:underline font-medium tabular-nums"
+																title="View failing rules for this host"
+															>
+																{row.failed}
+															</button>
+														) : (
+															"—"
+														)}
 													</td>
-													<td className="px-4 py-2 text-right whitespace-nowrap text-secondary-600 dark:text-secondary-400">
-														{row.skipped != null ? row.skipped : "—"}
+													<td className="px-4 py-2 text-right whitespace-nowrap">
+														{row.skipped != null ? (
+															<button
+																type="button"
+																onClick={() => {
+																	setScanResultsFilters({
+																		status: "skipped",
+																		host_id: row.host_id,
+																	});
+																	setActiveTab("scan-results");
+																}}
+																className="text-secondary-600 dark:text-secondary-400 hover:underline font-medium tabular-nums"
+																title="View skipped/N/A rules for this host"
+															>
+																{row.skipped}
+															</button>
+														) : (
+															"—"
+														)}
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap">
 														<span
@@ -1825,7 +1883,16 @@ const Compliance = () => {
 
 			{/* ==================== SCAN RESULTS TAB ==================== */}
 			{activeTab === "scan-results" && (
-				<ScanResultsTab profileTypeFilter={profileTypeFilter} />
+				<ScanResultsTab
+					profileTypeFilter={profileTypeFilter}
+					scannedHosts={hosts_with_latest_scan}
+					initialFilters={scanResultsFilters}
+				/>
+			)}
+
+			{/* ==================== HISTORY TAB ==================== */}
+			{activeTab === "history" && (
+				<ScanHistoryTab scanned_hosts={hosts_with_latest_scan} />
 			)}
 		</div>
 	);

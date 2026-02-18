@@ -883,6 +883,11 @@ async function getPermissionBasedPreferences(userRole) {
 			requiredPermission: "can_view_hosts",
 			order: 23,
 		},
+		{
+			cardId: "complianceActiveBenchmarkScans",
+			requiredPermission: "can_view_hosts",
+			order: 24,
+		},
 	];
 
 	// Filter cards based on user's permissions

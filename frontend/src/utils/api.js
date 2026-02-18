@@ -147,6 +147,8 @@ export const adminHostsAPI = {
 		}),
 	getIntegrationSetupStatus: (hostId, integrationName) =>
 		api.get(`/hosts/${hostId}/integrations/${integrationName}/status`),
+	requestComplianceStatus: (hostId) =>
+		api.post(`/hosts/${hostId}/integrations/compliance/request-status`),
 	refreshDocker: (hostId) => api.post(`/hosts/${hostId}/refresh-docker`),
 	setComplianceMode: (hostId, mode) =>
 		api.post(`/hosts/${hostId}/integrations/compliance/mode`, {
