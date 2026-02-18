@@ -1,4 +1,20 @@
-import { useQuery } from "@tanstack/react-query";
+import {
+	closestCenter,
+	DndContext,
+	DragOverlay,
+	KeyboardSensor,
+	PointerSensor,
+	useSensor,
+	useSensors,
+} from "@dnd-kit/core";
+import {
+	arrayMove,
+	rectSortingStrategy,
+	SortableContext,
+	sortableKeyboardCoordinates,
+	useSortable,
+} from "@dnd-kit/sortable";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	ArcElement,
 	BarElement,
@@ -14,18 +30,23 @@ import {
 import {
 	AlertTriangle,
 	CheckCircle,
+	Eye,
+	EyeOff,
 	Folder,
 	GitBranch,
+	GripVertical,
 	Package,
 	RefreshCw,
 	RotateCcw,
+	Save,
 	Server,
 	Settings,
 	Shield,
 	Users,
 	WifiOff,
+	X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Bar, Doughnut, Line, Pie } from "react-chartjs-2";
 import { useNavigate } from "react-router-dom";
 import {
@@ -38,6 +59,7 @@ import {
 	LastScanAgeBar,
 	OpenSCAPDistributionDoughnut,
 } from "../components/compliance/widgets";
+import DashboardSettingsChoiceModal from "../components/DashboardSettingsChoiceModal";
 import DashboardSettingsModal from "../components/DashboardSettingsModal";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
@@ -62,15 +84,135 @@ ChartJS.register(
 	Title,
 );
 
+// Drag-to-resize handle on the right edge of a card in edit mode
+const CARD_RESIZE_PIXELS_PER_COLUMN = 40;
+
+const CardResizeHandle = ({ card_id, col_span, on_resize }) => {
+	const [dragging, set_dragging] = useState(false);
+	const [start_x, set_start_x] = useState(0);
+	const [start_span, set_start_span] = useState(1);
+
+	const handle_pointer_down = useCallback(
+		(e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			set_dragging(true);
+			set_start_x(e.clientX);
+			set_start_span(Math.min(3, Math.max(1, Number(col_span ?? 1))));
+		},
+		[col_span],
+	);
+
+	useEffect(() => {
+		if (!dragging) return;
+		const handle_pointer_move = (e) => {
+			const delta_x = e.clientX - start_x;
+			const delta_cols = Math.round(delta_x / CARD_RESIZE_PIXELS_PER_COLUMN);
+			const new_span = Math.min(3, Math.max(1, start_span + delta_cols));
+			on_resize(card_id, new_span);
+			set_start_span(new_span);
+			set_start_x(e.clientX);
+		};
+		const handle_pointer_up = () => {
+			set_dragging(false);
+		};
+		window.addEventListener("pointermove", handle_pointer_move);
+		window.addEventListener("pointerup", handle_pointer_up);
+		return () => {
+			window.removeEventListener("pointermove", handle_pointer_move);
+			window.removeEventListener("pointerup", handle_pointer_up);
+		};
+	}, [dragging, start_x, start_span, card_id, on_resize]);
+
+	const span = Math.min(3, Math.max(1, Number(col_span ?? 1)));
+	return (
+		<div
+			role="slider"
+			aria-label="Card width in columns"
+			aria-valuenow={span}
+			aria-valuemin={1}
+			aria-valuemax={3}
+			tabIndex={0}
+			onPointerDown={handle_pointer_down}
+			className={`absolute right-0 top-0 bottom-0 w-2 cursor-col-resize z-20 flex items-center justify-center group ${
+				dragging ? "bg-primary-400" : ""
+			}`}
+		>
+			<div
+				className={`h-12 w-0.5 rounded-full transition-opacity ${
+					dragging
+						? "bg-primary-600"
+						: "bg-secondary-400 group-hover:bg-primary-500"
+				}`}
+			/>
+		</div>
+	);
+};
+
+// Wrapper for a dashboard card in edit mode: draggable with handle
+const SortableDashboardCard = ({ card_id, render_card }) => {
+	const {
+		attributes,
+		listeners,
+		setNodeRef,
+		transform,
+		transition,
+		isDragging,
+	} = useSortable({
+		id: card_id,
+	});
+
+	// Dragged card: hide in place (overlay shows the moving copy). Others: slide with translate-only and rounded pixels to avoid distortion.
+	const x = transform?.x ?? 0;
+	const y = transform?.y ?? 0;
+	const translateOnly = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
+	const style = isDragging
+		? { opacity: 0 }
+		: {
+				transform: translateOnly,
+				transition,
+				opacity: 1,
+				willChange: transform ? "transform" : undefined,
+				backfaceVisibility: "hidden",
+			};
+
+	return (
+		<div
+			ref={setNodeRef}
+			style={style}
+			className="relative flex h-full min-h-0 flex-col overflow-hidden"
+		>
+			<button
+				type="button"
+				{...attributes}
+				{...listeners}
+				className="absolute top-2 right-2 z-10 p-1.5 rounded bg-secondary-100 dark:bg-secondary-700 text-secondary-500 hover:text-secondary-700 dark:hover:text-secondary-300 cursor-grab active:cursor-grabbing"
+				aria-label="Drag to reorder"
+			>
+				<GripVertical className="h-4 w-4" />
+			</button>
+			<div className="min-h-0 flex-1 overflow-auto">{render_card(card_id)}</div>
+		</div>
+	);
+};
+
 const Dashboard = () => {
+	const [show_choice_modal, set_show_choice_modal] = useState(false);
 	const [showSettingsModal, setShowSettingsModal] = useState(false);
+	const [dashboard_edit_mode, set_dashboard_edit_mode] = useState(false);
+	const [edit_mode_order, set_edit_mode_order] = useState(null);
+	const [edit_mode_layout, set_edit_mode_layout] = useState(null);
 	const [cardPreferences, setCardPreferences] = useState([]);
 	const [packageTrendsPeriod, setPackageTrendsPeriod] = useState("1"); // days
 	const [packageTrendsHost, setPackageTrendsHost] = useState("all"); // host filter
 	const [systemStatsJobId, setSystemStatsJobId] = useState(null); // Track job ID for system statistics
 	const [isTriggeringJob, setIsTriggeringJob] = useState(false);
 	const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
+	const [active_drag_id, set_active_drag_id] = useState(null);
+	const [over_id, set_over_id] = useState(null);
+	const [active_drag_rect, set_active_drag_rect] = useState(null);
 	const navigate = useNavigate();
+	const query_client = useQueryClient();
 	const { isDark } = useTheme();
 	const { user, permissions } = useAuth();
 
@@ -110,6 +252,10 @@ const Dashboard = () => {
 
 	const handleRepositoriesClick = () => {
 		navigate("/repositories");
+	};
+
+	const handleComplianceClick = () => {
+		navigate("/compliance");
 	};
 
 	const handleNeedsRebootClick = () => {
@@ -276,9 +422,11 @@ const Dashboard = () => {
 
 	// Fetch compliance dashboard only when at least one compliance card is enabled and user can view hosts
 	const has_view_hosts = permissions?.can_view_hosts === true;
-	const is_any_compliance_card_enabled = cardPreferences.some(
-		(c) => COMPLIANCE_WIDGET_CARD_IDS.includes(c.cardId) && c.enabled,
-	);
+	const is_any_compliance_card_enabled =
+		cardPreferences.some(
+			(c) => COMPLIANCE_WIDGET_CARD_IDS.includes(c.cardId) && c.enabled,
+		) ||
+		cardPreferences.some((c) => c.cardId === "complianceStats" && c.enabled);
 	const { data: compliance_dashboard } = useQuery({
 		queryKey: ["compliance-dashboard"],
 		queryFn: () => complianceAPI.getDashboard().then((res) => res.data),
@@ -300,6 +448,45 @@ const Dashboard = () => {
 			dashboardPreferencesAPI.getDefaults().then((res) => res.data),
 	});
 
+	// Fetch dashboard row layout (column counts per row type)
+	const { data: dashboard_layout } = useQuery({
+		queryKey: ["dashboardLayout"],
+		queryFn: () => dashboardPreferencesAPI.getLayout().then((res) => res.data),
+		staleTime: 5 * 60 * 1000,
+	});
+
+	// Update dashboard preferences (used by edit-mode save; state reset is in handle_edit_mode_save)
+	const update_preferences_mutation = useMutation({
+		mutationFn: (preferences) => dashboardPreferencesAPI.update(preferences),
+		onSuccess: (response) => {
+			query_client.setQueryData(
+				["dashboardPreferences"],
+				response.data.preferences,
+			);
+		},
+		onError: (err) => {
+			console.error("Failed to update dashboard preferences:", err);
+		},
+	});
+
+	// Update dashboard layout (used by edit-mode save and list modal)
+	const update_layout_mutation = useMutation({
+		mutationFn: (layout) =>
+			dashboardPreferencesAPI.updateLayout({
+				stats_columns: Number(layout.stats_columns),
+				charts_columns: Number(layout.charts_columns),
+			}),
+		onSuccess: (response) => {
+			query_client.setQueryData(["dashboardLayout"], {
+				stats_columns: response.data.stats_columns,
+				charts_columns: response.data.charts_columns,
+			});
+		},
+		onError: (err) => {
+			console.error("Failed to update dashboard layout:", err);
+		},
+	});
+
 	// Merge preferences with default cards (normalize snake_case from API)
 	useEffect(() => {
 		if (preferences && defaultCards) {
@@ -307,6 +494,7 @@ const Dashboard = () => {
 				cardId: p.cardId ?? p.card_id,
 				enabled: p.enabled,
 				order: p.order,
+				col_span: p.col_span ?? p.colSpan ?? 1,
 			}));
 
 			const mergedCards = defaultCards
@@ -320,26 +508,125 @@ const Dashboard = () => {
 							? userPreference.enabled
 							: defaultCard.enabled,
 						order: userPreference ? userPreference.order : defaultCard.order,
+						col_span:
+							userPreference?.col_span != null
+								? Math.min(3, Math.max(1, Number(userPreference.col_span)))
+								: defaultCard.cardId === "quickStats"
+									? 2
+									: 1,
 					};
 				})
 				.sort((a, b) => a.order - b.order);
 
 			setCardPreferences(mergedCards);
 		} else if (defaultCards) {
-			// If no preferences exist, use defaults
-			setCardPreferences(defaultCards.sort((a, b) => a.order - b.order));
+			// If no preferences exist, use defaults (quickStats defaults to 2 columns)
+			const with_default_col_span = defaultCards.map((c) => ({
+				...c,
+				col_span: c.cardId === "quickStats" ? 2 : (c.col_span ?? 1),
+			}));
+			setCardPreferences(
+				with_default_col_span.sort((a, b) => a.order - b.order),
+			);
 		}
 	}, [preferences, defaultCards]);
 
+	// Clear edit-mode order when exiting dashboard edit mode (e.g. after cancel)
+	useEffect(() => {
+		if (!dashboard_edit_mode && edit_mode_order) {
+			set_edit_mode_order(null);
+		}
+	}, [dashboard_edit_mode, edit_mode_order]);
+
+	// DnD sensors for edit mode
+	const edit_mode_sensors = useSensors(
+		useSensor(PointerSensor),
+		useSensor(KeyboardSensor, {
+			coordinateGetter: sortableKeyboardCoordinates,
+		}),
+	);
+
+	const handle_edit_mode_drag_end = useCallback((event) => {
+		set_active_drag_id(null);
+		set_over_id(null);
+		set_active_drag_rect(null);
+		const { active, over } = event;
+		if (!over || active.id === over.id) return;
+		set_edit_mode_order((prev) => {
+			if (!prev) return prev;
+			const enabled = prev
+				.filter((c) => c.enabled)
+				.sort((a, b) => a.order - b.order);
+			const old_index = enabled.findIndex((c) => c.cardId === active.id);
+			const new_index = enabled.findIndex((c) => c.cardId === over.id);
+			if (old_index === -1 || new_index === -1) return prev;
+			const new_enabled = arrayMove(enabled, old_index, new_index);
+			const disabled = prev
+				.filter((c) => !c.enabled)
+				.sort((a, b) => a.order - b.order);
+			return [
+				...new_enabled.map((c, i) => ({ ...c, order: i })),
+				...disabled.map((c, i) => ({
+					...c,
+					order: new_enabled.length + i,
+				})),
+			];
+		});
+	}, []);
+
+	const handle_edit_mode_save = useCallback(async () => {
+		if (!edit_mode_order) return;
+		const preferences = edit_mode_order.map((c) => ({
+			cardId: c.cardId,
+			enabled: c.enabled,
+			order: Number(c.order),
+			col_span: Math.min(3, Math.max(1, Number(c.col_span ?? 1))),
+		}));
+		const layout_changed =
+			edit_mode_layout &&
+			(dashboard_layout?.stats_columns !== edit_mode_layout.stats_columns ||
+				dashboard_layout?.charts_columns !== edit_mode_layout.charts_columns);
+		const pending = [];
+		pending.push(update_preferences_mutation.mutateAsync(preferences));
+		if (layout_changed) {
+			pending.push(
+				update_layout_mutation.mutateAsync({
+					stats_columns: edit_mode_layout.stats_columns,
+					charts_columns: edit_mode_layout.charts_columns,
+				}),
+			);
+		}
+		try {
+			await Promise.all(pending);
+			set_dashboard_edit_mode(false);
+			set_edit_mode_order(null);
+			set_edit_mode_layout(null);
+		} catch (_e) {
+			// Errors logged in mutations
+		}
+	}, [
+		edit_mode_order,
+		edit_mode_layout,
+		dashboard_layout,
+		update_preferences_mutation,
+		update_layout_mutation,
+	]);
+
+	const handle_edit_mode_cancel = useCallback(() => {
+		set_dashboard_edit_mode(false);
+		set_edit_mode_order(null);
+		set_edit_mode_layout(null);
+	}, []);
+
 	// Listen for custom event from Layout component
 	useEffect(() => {
-		const handleOpenSettings = () => {
-			setShowSettingsModal(true);
+		const handle_open_settings = () => {
+			set_show_choice_modal(true);
 		};
 
-		window.addEventListener("openDashboardSettings", handleOpenSettings);
+		window.addEventListener("openDashboardSettings", handle_open_settings);
 		return () => {
-			window.removeEventListener("openDashboardSettings", handleOpenSettings);
+			window.removeEventListener("openDashboardSettings", handle_open_settings);
 		};
 	}, []);
 
@@ -364,7 +651,10 @@ const Dashboard = () => {
 				return false; // Hide card if user doesn't have permission
 			}
 		}
-		if (COMPLIANCE_WIDGET_CARD_IDS.includes(cardId)) {
+		if (
+			cardId === "complianceStats" ||
+			COMPLIANCE_WIDGET_CARD_IDS.includes(cardId)
+		) {
 			if (permissions?.can_view_hosts !== true) {
 				return false; // Hide compliance cards if user can't view hosts
 			}
@@ -386,6 +676,8 @@ const Dashboard = () => {
 				"totalHostGroups",
 				"totalUsers",
 				"totalRepos",
+				"complianceStats",
+				"quickStats",
 			].includes(cardId)
 		) {
 			return "stats";
@@ -404,26 +696,62 @@ const Dashboard = () => {
 			return "charts";
 		} else if (["packageTrends"].includes(cardId)) {
 			return "charts";
-		} else if (["erroredHosts", "quickStats"].includes(cardId)) {
+		} else if (["erroredHosts"].includes(cardId)) {
 			return "fullwidth";
 		}
 		return "fullwidth"; // Default to full width
 	};
 
-	// Helper function to get CSS class for card group
-	const getGroupClassName = (cardType) => {
+	// Tailwind grid-cols classes so they are included in the bundle (2–6 columns)
+	const GRID_COLS_CLASS = {
+		2: "lg:grid-cols-2",
+		3: "lg:grid-cols-3",
+		4: "lg:grid-cols-4",
+		5: "lg:grid-cols-5",
+		6: "lg:grid-cols-6",
+	};
+
+	// Fixed row heights so card heights match between edit mode and normal view (no dynamic jump when reordering)
+	const STATS_ROW_HEIGHT = "grid-auto-rows-[8rem]";
+	const CHARTS_ROW_HEIGHT = "grid-auto-rows-[320px]";
+	const FULLWIDTH_ROW_HEIGHT = "grid-auto-rows-[300px]";
+
+	// Helper: get grid class for a group type given a layout object (used for edit mode and normal view)
+	const getGroupClassNameForLayout = (cardType, layout) => {
+		const stats_cols = layout?.stats_columns ?? 5;
+		const charts_cols = layout?.charts_columns ?? 3;
+		const stats_lg = GRID_COLS_CLASS[stats_cols] ?? "lg:grid-cols-5";
+		const charts_lg = GRID_COLS_CLASS[charts_cols] ?? "lg:grid-cols-3";
 		switch (cardType) {
 			case "stats":
-				return "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4";
+				return `grid grid-cols-2 sm:grid-cols-3 ${stats_lg} gap-3 sm:gap-4 ${STATS_ROW_HEIGHT}`;
 			case "charts":
-				return "grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6";
+				return `grid grid-cols-1 ${charts_lg} gap-4 sm:gap-6 ${CHARTS_ROW_HEIGHT}`;
 			case "widecharts":
-				return "grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6";
+				return `grid grid-cols-1 ${charts_lg} gap-4 sm:gap-6 ${CHARTS_ROW_HEIGHT}`;
 			case "fullwidth":
-				return "space-y-6";
+				return `grid grid-cols-1 gap-6 ${FULLWIDTH_ROW_HEIGHT}`;
 			default:
-				return "space-y-6";
+				return `grid grid-cols-1 gap-6 ${FULLWIDTH_ROW_HEIGHT}`;
 		}
+	};
+
+	// Helper function to get CSS class for card group (uses saved layout when present)
+	const getGroupClassName = (cardType) =>
+		getGroupClassNameForLayout(cardType, dashboard_layout);
+
+	// Column span class per card (1–3 columns)
+	const COL_SPAN_CLASS = {
+		1: "",
+		2: "lg:col-span-2",
+		3: "lg:col-span-3",
+	};
+	const get_card_col_span_class = (card) => {
+		const span =
+			card?.col_span != null
+				? Math.min(3, Math.max(1, Number(card.col_span)))
+				: 1;
+		return COL_SPAN_CLASS[span] ?? "";
 	};
 
 	// Helper function to render a card by ID
@@ -433,7 +761,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
 						onClick={handleNeedsRebootClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -461,7 +789,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
 						onClick={handleTotalHostsClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -490,7 +818,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
 						onClick={handleHostsNeedingUpdatesClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -519,7 +847,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
 						onClick={handleUpToDateClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -548,7 +876,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
 						onClick={handleOutdatedPackagesClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -577,7 +905,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
 						onClick={handleSecurityUpdatesClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -606,7 +934,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
 						onClick={handleHostGroupsClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -635,7 +963,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
 						onClick={handleUsersClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -664,7 +992,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left min-h-[44px]"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
 						onClick={handleRepositoriesClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -688,6 +1016,40 @@ const Dashboard = () => {
 						</div>
 					</button>
 				);
+
+			case "complianceStats": {
+				const compliance_compliant =
+					compliance_dashboard?.summary?.hosts_compliant ?? 0;
+				const compliance_total =
+					compliance_dashboard?.summary?.hosts_with_compliance_enabled ?? 0;
+				return (
+					<button
+						type="button"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
+						onClick={handleComplianceClick}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								handleComplianceClick();
+							}
+						}}
+					>
+						<div className="flex items-center">
+							<div className="flex-shrink-0">
+								<Shield className="h-5 w-5 text-primary-600 mr-2" />
+							</div>
+							<div className="w-0 flex-1">
+								<p className="text-sm text-secondary-500 dark:text-white">
+									Compliance
+								</p>
+								<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+									{compliance_compliant}/{compliance_total} hosts
+								</p>
+							</div>
+						</div>
+					</button>
+				);
+			}
 
 			case "erroredHosts":
 				return (
@@ -797,11 +1159,11 @@ const Dashboard = () => {
 
 			case "osDistribution":
 				return (
-					<div className="card p-4 sm:p-6 w-full">
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							OS Distribution
 						</h3>
-						<div className="h-64 w-full flex items-center justify-center">
+						<div className="h-64 w-full flex items-center justify-center flex-1 min-h-0">
 							<div className="w-full h-full max-w-sm">
 								<Pie data={osChartData} options={chartOptions} />
 							</div>
@@ -811,11 +1173,11 @@ const Dashboard = () => {
 
 			case "osDistributionDoughnut":
 				return (
-					<div className="card p-4 sm:p-6 w-full">
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							OS Distribution
 						</h3>
-						<div className="h-64 w-full flex items-center justify-center">
+						<div className="h-64 w-full flex items-center justify-center flex-1 min-h-0">
 							<div className="w-full h-full max-w-sm">
 								<Doughnut data={osChartData} options={doughnutChartOptions} />
 							</div>
@@ -825,11 +1187,11 @@ const Dashboard = () => {
 
 			case "osDistributionBar":
 				return (
-					<div className="card p-4 sm:p-6 w-full">
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							OS Distribution
 						</h3>
-						<div className="h-64">
+						<div className="h-64 flex-1 min-h-0">
 							<Bar data={osBarChartData} options={barChartOptions} />
 						</div>
 					</div>
@@ -839,7 +1201,7 @@ const Dashboard = () => {
 				return (
 					<button
 						type="button"
-						className="card p-4 sm:p-6 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left"
+						className="card p-4 sm:p-6 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full flex flex-col"
 						onClick={handleUpdateStatusClick}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" || e.key === " ") {
@@ -851,7 +1213,7 @@ const Dashboard = () => {
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							Update Status
 						</h3>
-						<div className="h-64 w-full flex items-center justify-center">
+						<div className="h-64 w-full flex items-center justify-center flex-1 min-h-0">
 							<div className="w-full h-full max-w-sm">
 								<Pie
 									data={updateStatusChartData}
@@ -864,11 +1226,11 @@ const Dashboard = () => {
 
 			case "packagePriority":
 				return (
-					<div className="card p-4 sm:p-6 w-full">
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							Outdated Packages by Priority
 						</h3>
-						<div className="h-64 w-full flex items-center justify-center">
+						<div className="h-64 w-full flex items-center justify-center flex-1 min-h-0">
 							<div className="w-full h-full max-w-sm">
 								<Pie
 									data={packagePriorityChartData}
@@ -883,11 +1245,11 @@ const Dashboard = () => {
 				return compliance_dashboard ? (
 					<HostComplianceStatusBar data={compliance_dashboard} />
 				) : (
-					<div className="card p-4 sm:p-6 w-full">
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							Host Compliance Status
 						</h3>
-						<div className="h-64 flex items-center justify-center">
+						<div className="h-64 flex items-center justify-center flex-1 min-h-0">
 							<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
 						</div>
 					</div>
@@ -897,11 +1259,11 @@ const Dashboard = () => {
 				return compliance_dashboard ? (
 					<OpenSCAPDistributionDoughnut data={compliance_dashboard} />
 				) : (
-					<div className="card p-4 sm:p-6 w-full">
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							OpenSCAP Benchmark Distribution
 						</h3>
-						<div className="h-64 flex items-center justify-center">
+						<div className="h-64 flex items-center justify-center flex-1 min-h-0">
 							<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
 						</div>
 					</div>
@@ -911,11 +1273,11 @@ const Dashboard = () => {
 				return compliance_dashboard ? (
 					<FailuresBySeverityDoughnut data={compliance_dashboard} />
 				) : (
-					<div className="card p-4 sm:p-6 w-full">
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							Failures by Severity
 						</h3>
-						<div className="h-64 flex items-center justify-center">
+						<div className="h-64 flex items-center justify-center flex-1 min-h-0">
 							<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
 						</div>
 					</div>
@@ -925,11 +1287,11 @@ const Dashboard = () => {
 				return compliance_dashboard ? (
 					<ComplianceProfilesPie data={compliance_dashboard} />
 				) : (
-					<div className="card p-4 sm:p-6 w-full">
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							Compliance Profiles in Use
 						</h3>
-						<div className="h-64 flex items-center justify-center">
+						<div className="h-64 flex items-center justify-center flex-1 min-h-0">
 							<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
 						</div>
 					</div>
@@ -939,11 +1301,11 @@ const Dashboard = () => {
 				return compliance_dashboard ? (
 					<LastScanAgeBar data={compliance_dashboard} />
 				) : (
-					<div className="card p-4 sm:p-6 w-full">
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							Last Scan Age
 						</h3>
-						<div className="h-64 flex items-center justify-center">
+						<div className="h-64 flex items-center justify-center flex-1 min-h-0">
 							<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
 						</div>
 					</div>
@@ -957,8 +1319,8 @@ const Dashboard = () => {
 
 			case "packageTrends":
 				return (
-					<div className="card p-4 sm:p-6 w-full">
-						<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+						<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4 flex-shrink-0">
 							<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
 								Package Trends Over Time
 							</h3>
@@ -1116,56 +1478,65 @@ const Dashboard = () => {
 						: 0;
 
 				return (
-					<div className="card p-4 sm:p-6">
-						<div className="flex items-center justify-between mb-4">
-							<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
-								System Overview
-							</h3>
-						</div>
-						<div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-							<div className="text-center">
-								<div className="text-2xl font-bold text-primary-600">
+					<div className="card p-3 sm:p-4 w-full h-full flex flex-col min-h-0">
+						<div className="grid grid-cols-4 gap-2 sm:gap-3 flex-1 min-h-0 items-center">
+							<div className="text-center min-w-0">
+								<div
+									className="text-lg sm:text-xl font-bold text-primary-600 truncate"
+									title={`${updatePercentage}%`}
+								>
 									{updatePercentage}%
 								</div>
-								<div className="text-sm text-secondary-500 dark:text-white/70">
+								<div
+									className="text-xs text-secondary-500 dark:text-white/70 truncate"
+									title="Need Updates"
+								>
 									Need Updates
 								</div>
-								<div className="text-xs text-secondary-400 dark:text-white/60">
-									{stats.cards.hostsNeedingUpdates}/{stats.cards.totalHosts}{" "}
-									hosts
+								<div className="text-[10px] sm:text-xs text-secondary-400 dark:text-white/60 truncate">
+									{stats.cards.hostsNeedingUpdates}/{stats.cards.totalHosts}
 								</div>
 							</div>
-							<div className="text-center">
-								<div className="text-2xl font-bold text-danger-600">
+							<div className="text-center min-w-0">
+								<div className="text-lg sm:text-xl font-bold text-danger-600 truncate">
 									{stats.cards.securityUpdates}
 								</div>
-								<div className="text-sm text-secondary-500 dark:text-white/70">
-									Security Issues
+								<div
+									className="text-xs text-secondary-500 dark:text-white/70 truncate"
+									title="Security Issues"
+								>
+									Security
 								</div>
-								<div className="text-xs text-secondary-400 dark:text-white/60">
-									{securityPercentage}% of updates
+								<div className="text-[10px] sm:text-xs text-secondary-400 dark:text-white/60 truncate">
+									{securityPercentage}%
 								</div>
 							</div>
-							<div className="text-center">
-								<div className="text-2xl font-bold text-success-600">
+							<div className="text-center min-w-0">
+								<div className="text-lg sm:text-xl font-bold text-success-600 truncate">
 									{onlinePercentage}%
 								</div>
-								<div className="text-sm text-secondary-500 dark:text-white/70">
+								<div
+									className="text-xs text-secondary-500 dark:text-white/70 truncate"
+									title="Online"
+								>
 									Online
 								</div>
-								<div className="text-xs text-secondary-400 dark:text-white/60">
-									{onlineHosts}/{stats.cards.totalHosts} hosts
+								<div className="text-[10px] sm:text-xs text-secondary-400 dark:text-white/60 truncate">
+									{onlineHosts}/{stats.cards.totalHosts}
 								</div>
 							</div>
-							<div className="text-center">
-								<div className="text-2xl font-bold text-secondary-600">
+							<div className="text-center min-w-0">
+								<div className="text-lg sm:text-xl font-bold text-secondary-600 truncate">
 									{avgPackagesPerHost}
 								</div>
-								<div className="text-sm text-secondary-500 dark:text-white/70">
-									Avg per Host
+								<div
+									className="text-xs text-secondary-500 dark:text-white/70 truncate"
+									title="Avg per Host"
+								>
+									Avg/Host
 								</div>
-								<div className="text-xs text-secondary-400 dark:text-white/60">
-									outdated packages
+								<div className="text-[10px] sm:text-xs text-secondary-400 dark:text-white/60 truncate">
+									outdated
 								</div>
 							</div>
 						</div>
@@ -1175,8 +1546,8 @@ const Dashboard = () => {
 
 			case "recentUsers":
 				return (
-					<div className="card p-4 sm:p-6 w-full">
-						<div className="flex items-center justify-between mb-4">
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+						<div className="flex items-center justify-between mb-4 flex-shrink-0">
 							<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
 								Recent Users Logged in
 							</h3>
@@ -1188,12 +1559,12 @@ const Dashboard = () => {
 							)}
 						</div>
 						{!recentUsers || recentUsers.length === 0 ? (
-							<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-secondary-500">
+							<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-secondary-500 flex-1">
 								<Users className="h-8 w-8 mb-2" />
 								<p className="text-sm">No users found</p>
 							</div>
 						) : (
-							<div className="overflow-hidden rounded-lg border border-secondary-200 dark:border-secondary-700">
+							<div className="overflow-hidden rounded-lg border border-secondary-200 dark:border-secondary-700 flex-1 min-h-0 flex flex-col">
 								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700 text-sm">
 									<thead className="bg-secondary-50 dark:bg-secondary-700/50">
 										<tr>
@@ -1232,8 +1603,8 @@ const Dashboard = () => {
 
 			case "recentCollection":
 				return (
-					<div className="card p-4 sm:p-6 w-full">
-						<div className="flex items-center justify-between mb-4">
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+						<div className="flex items-center justify-between mb-4 flex-shrink-0">
 							<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
 								Recent Collection
 							</h3>
@@ -1245,12 +1616,12 @@ const Dashboard = () => {
 							)}
 						</div>
 						{!recentCollection || recentCollection.length === 0 ? (
-							<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-secondary-500">
+							<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-secondary-500 flex-1">
 								<Server className="h-8 w-8 mb-2" />
 								<p className="text-sm">No hosts found</p>
 							</div>
 						) : (
-							<div className="overflow-hidden rounded-lg border border-secondary-200 dark:border-secondary-700">
+							<div className="overflow-hidden rounded-lg border border-secondary-200 dark:border-secondary-700 flex-1 min-h-0 flex flex-col">
 								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700 text-sm">
 									<thead className="bg-secondary-50 dark:bg-secondary-700/50">
 										<tr>
@@ -1774,7 +2145,7 @@ const Dashboard = () => {
 				<div className="flex items-center gap-3">
 					<button
 						type="button"
-						onClick={() => setShowSettingsModal(true)}
+						onClick={() => set_show_choice_modal(true)}
 						className="hidden md:flex btn-outline items-center gap-2 min-h-[44px] min-w-[44px] justify-center"
 						title="Customize dashboard layout"
 					>
@@ -1794,56 +2165,384 @@ const Dashboard = () => {
 				</div>
 			</div>
 
-			{/* Dynamically Rendered Cards - Unified Order */}
-			{(() => {
-				const enabledCards = cardPreferences
-					.filter((card) => isCardEnabled(card.cardId))
-					.sort((a, b) => a.order - b.order);
-
-				// Group consecutive cards of the same type for proper layout
-				const cardGroups = [];
-				let currentGroup = null;
-
-				enabledCards.forEach((card) => {
-					const cardType = getCardType(card.cardId);
-
-					if (!currentGroup || currentGroup.type !== cardType) {
-						// Start a new group
-						currentGroup = {
-							type: cardType,
-							cards: [card],
-						};
-						cardGroups.push(currentGroup);
-					} else {
-						// Add to existing group
-						currentGroup.cards.push(card);
-					}
-				});
-
-				return (
-					<>
-						{cardGroups.map((group, groupIndex) => (
-							<div
-								key={`group-${group.type}-${groupIndex}`}
-								className={getGroupClassName(group.type)}
+			{/* Edit mode bar: row layout, drag to reorder, Save order, Cancel */}
+			{dashboard_edit_mode && (
+				<div className="p-3 rounded-lg bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 space-y-3">
+					<div className="flex flex-wrap items-center justify-between gap-3">
+						<p className="text-sm text-primary-800 dark:text-primary-200">
+							Drag cards to reorder. Drag the right edge of a card to make it
+							wider or narrower. Change row columns below if needed, then Save
+							order to apply.
+						</p>
+						<div className="flex items-center gap-2">
+							<button
+								type="button"
+								onClick={handle_edit_mode_save}
+								disabled={
+									update_preferences_mutation.isPending ||
+									update_layout_mutation.isPending
+								}
+								className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
 							>
-								{group.cards.map((card, cardIndex) => (
-									<div
-										key={`card-${card.cardId}-${groupIndex}-${cardIndex}`}
-										className={
-											card.cardId === "packageTrends" ? "lg:col-span-2" : ""
-										}
+								{update_preferences_mutation.isPending ||
+								update_layout_mutation.isPending ? (
+									<>
+										<span className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-white border-t-transparent" />
+										Saving...
+									</>
+								) : (
+									<>
+										<Save className="h-4 w-4" />
+										Save order
+									</>
+								)}
+							</button>
+							<button
+								type="button"
+								onClick={handle_edit_mode_cancel}
+								disabled={
+									update_preferences_mutation.isPending ||
+									update_layout_mutation.isPending
+								}
+								className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium bg-white dark:bg-secondary-800 border border-secondary-300 dark:border-secondary-600 text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-700 disabled:opacity-50"
+							>
+								<X className="h-4 w-4" />
+								Cancel
+							</button>
+						</div>
+					</div>
+					{/* Row layout: columns per row (same as list modal) */}
+					{edit_mode_layout && (
+						<div className="flex flex-wrap items-center gap-4 pt-2 border-t border-primary-200 dark:border-primary-800">
+							<span className="text-xs font-medium text-primary-800 dark:text-primary-200">
+								Row layout:
+							</span>
+							<div className="flex flex-wrap items-center gap-3">
+								<div className="flex items-center gap-2">
+									<label
+										htmlFor="edit-stats-columns"
+										className="text-xs text-primary-700 dark:text-primary-300"
 									>
-										{renderCard(card.cardId)}
-									</div>
-								))}
+										Stats row
+									</label>
+									<select
+										id="edit-stats-columns"
+										value={edit_mode_layout.stats_columns}
+										onChange={(e) => {
+											const v = Number(e.target.value);
+											set_edit_mode_layout((prev) =>
+												prev ? { ...prev, stats_columns: v } : null,
+											);
+										}}
+										className="rounded-md border border-primary-300 dark:border-primary-700 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm py-1 px-2"
+									>
+										{[2, 3, 4, 5, 6].map((n) => (
+											<option key={n} value={n}>
+												{n} columns
+											</option>
+										))}
+									</select>
+								</div>
+								<div className="flex items-center gap-2">
+									<label
+										htmlFor="edit-charts-columns"
+										className="text-xs text-primary-700 dark:text-primary-300"
+									>
+										Charts row
+									</label>
+									<select
+										id="edit-charts-columns"
+										value={edit_mode_layout.charts_columns}
+										onChange={(e) => {
+											const v = Number(e.target.value);
+											set_edit_mode_layout((prev) =>
+												prev ? { ...prev, charts_columns: v } : null,
+											);
+										}}
+										className="rounded-md border border-primary-300 dark:border-primary-700 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm py-1 px-2"
+									>
+										{[2, 3, 4].map((n) => (
+											<option key={n} value={n}>
+												{n} columns
+											</option>
+										))}
+									</select>
+								</div>
 							</div>
-						))}
-					</>
-				);
-			})()}
+						</div>
+					)}
+				</div>
+			)}
 
-			{/* Dashboard Settings Modal */}
+			{/* Dynamically Rendered Cards - Edit mode (grouped by type, using edit_mode_layout) or normal (grouped) */}
+			{dashboard_edit_mode && edit_mode_order ? (
+				<DndContext
+					sensors={edit_mode_sensors}
+					collisionDetection={closestCenter}
+					onDragStart={(e) => {
+						set_active_drag_id(e.active.id);
+						const rect = e.active.rect.current;
+						set_active_drag_rect(
+							rect ? { width: rect.width, height: rect.height } : null,
+						);
+					}}
+					onDragOver={(e) => set_over_id(e.over?.id ?? null)}
+					onDragEnd={handle_edit_mode_drag_end}
+				>
+					<SortableContext
+						items={edit_mode_order
+							.filter((c) => c.enabled && isCardEnabled(c.cardId))
+							.sort((a, b) => a.order - b.order)
+							.map((c) => c.cardId)}
+						strategy={rectSortingStrategy}
+					>
+						{(() => {
+							const layout = edit_mode_layout ?? {
+								stats_columns: dashboard_layout?.stats_columns ?? 5,
+								charts_columns: dashboard_layout?.charts_columns ?? 3,
+							};
+							// In edit mode show ALL cards (enabled + hidden) so user can toggle visibility; filter only by permissions
+							const all_cards = edit_mode_order.filter((c) => {
+								if (c.cardId === "totalUsers" || c.cardId === "recentUsers") {
+									if (permissions?.can_view_users !== true) return false;
+								}
+								if (
+									c.cardId === "complianceStats" ||
+									COMPLIANCE_WIDGET_CARD_IDS.includes(c.cardId)
+								) {
+									if (permissions?.can_view_hosts !== true) return false;
+								}
+								return true;
+							});
+							const card_groups = [];
+							let current_group = null;
+							all_cards.forEach((card) => {
+								const card_type = getCardType(card.cardId);
+								if (!current_group || current_group.type !== card_type) {
+									current_group = {
+										type: card_type,
+										cards: [card],
+									};
+									card_groups.push(current_group);
+								} else {
+									current_group.cards.push(card);
+								}
+							});
+							// Within each group: enabled first (by order), then hidden at the end (by order)
+							card_groups.forEach((group) => {
+								group.cards.sort((a, b) => {
+									if (a.enabled && !b.enabled) return -1;
+									if (!a.enabled && b.enabled) return 1;
+									return a.order - b.order;
+								});
+							});
+							const handle_toggle_visibility = (card_id) => {
+								set_edit_mode_order((prev) =>
+									prev
+										? prev.map((c) =>
+												c.cardId === card_id
+													? { ...c, enabled: !c.enabled }
+													: c,
+											)
+										: prev,
+								);
+							};
+							return (
+								<>
+									{card_groups.map((group, group_index) => (
+										<div
+											key={`edit-group-${group.type}-${group_index}`}
+											className={getGroupClassNameForLayout(group.type, layout)}
+										>
+											{group.cards.map((card, card_index) => {
+												const is_drop_target =
+													card.enabled &&
+													over_id === card.cardId &&
+													active_drag_id !== card.cardId;
+												return (
+													<div
+														key={`card-${card.cardId}-${group_index}-${card_index}`}
+														className={
+															"relative h-full min-h-0 " +
+															get_card_col_span_class(card) +
+															(is_drop_target
+																? " ring-2 ring-primary-500 ring-offset-2 ring-offset-white dark:ring-offset-secondary-900 rounded-lg"
+																: "")
+														}
+													>
+														{card.enabled ? (
+															<>
+																<SortableDashboardCard
+																	card_id={card.cardId}
+																	render_card={renderCard}
+																/>
+																<CardResizeHandle
+																	card_id={card.cardId}
+																	col_span={card.col_span ?? 1}
+																	on_resize={(id, new_span) => {
+																		set_edit_mode_order((prev) =>
+																			prev
+																				? prev.map((c) =>
+																						c.cardId === id
+																							? { ...c, col_span: new_span }
+																							: c,
+																					)
+																				: prev,
+																		);
+																	}}
+																/>
+																<button
+																	type="button"
+																	onClick={() =>
+																		handle_toggle_visibility(card.cardId)
+																	}
+																	className="absolute top-2 left-2 z-10 p-1.5 rounded bg-green-100 dark:bg-green-900/80 text-green-800 dark:text-green-200 hover:bg-green-200 dark:hover:bg-green-800 cursor-pointer"
+																	title="Hide card"
+																	aria-label="Hide card"
+																>
+																	<Eye className="h-4 w-4" />
+																</button>
+															</>
+														) : (
+															<>
+																<div className="h-full opacity-50 pointer-events-none">
+																	{renderCard(card.cardId)}
+																</div>
+																<button
+																	type="button"
+																	onClick={() =>
+																		handle_toggle_visibility(card.cardId)
+																	}
+																	className="absolute top-2 left-2 z-10 p-1.5 rounded bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-200 hover:bg-secondary-300 dark:hover:bg-secondary-500 cursor-pointer"
+																	title="Show card"
+																	aria-label="Show card"
+																>
+																	<EyeOff className="h-4 w-4" />
+																</button>
+															</>
+														)}
+													</div>
+												);
+											})}
+										</div>
+									))}
+								</>
+							);
+						})()}
+					</SortableContext>
+					<DragOverlay
+						dropAnimation={{
+							duration: 200,
+							easing: "cubic-bezier(0.18, 0.67, 0.6, 1.22)",
+						}}
+					>
+						{active_drag_id
+							? (() => {
+									const rect = active_drag_rect;
+									const active_card = edit_mode_order.find(
+										(c) => c.cardId === active_drag_id,
+									);
+									const col_span = Math.min(
+										3,
+										Math.max(1, Number(active_card?.col_span ?? 1)),
+									);
+									const fallback_width =
+										col_span === 1 ? 256 : col_span === 2 ? 512 : 768;
+									const style = rect
+										? {
+												width: rect.width,
+												height: rect.height,
+												minWidth: rect.width,
+												minHeight: rect.height,
+											}
+										: {
+												width: fallback_width,
+												minHeight: "8rem",
+												minWidth: fallback_width,
+											};
+									return (
+										<div
+											className="relative flex min-h-[8rem] flex-col overflow-hidden rounded-lg border-2 border-primary-400 bg-white shadow-xl dark:border-primary-500 dark:bg-secondary-800"
+											style={style}
+										>
+											<div className="min-h-0 flex-1 overflow-auto p-2">
+												{renderCard(active_drag_id)}
+											</div>
+										</div>
+									);
+								})()
+							: null}
+					</DragOverlay>
+				</DndContext>
+			) : (
+				(() => {
+					const order_source = edit_mode_order ?? cardPreferences;
+					const enabledCards = order_source
+						.filter((card) => isCardEnabled(card.cardId))
+						.sort((a, b) => a.order - b.order);
+
+					// Group consecutive cards of the same type for proper layout
+					const cardGroups = [];
+					let currentGroup = null;
+
+					enabledCards.forEach((card) => {
+						const cardType = getCardType(card.cardId);
+
+						if (!currentGroup || currentGroup.type !== cardType) {
+							currentGroup = {
+								type: cardType,
+								cards: [card],
+							};
+							cardGroups.push(currentGroup);
+						} else {
+							currentGroup.cards.push(card);
+						}
+					});
+
+					return (
+						<>
+							{cardGroups.map((group, groupIndex) => (
+								<div
+									key={`group-${group.type}-${groupIndex}`}
+									className={getGroupClassName(group.type)}
+								>
+									{group.cards.map((card, cardIndex) => (
+										<div
+											key={`card-${card.cardId}-${groupIndex}-${cardIndex}`}
+											className={`h-full ${get_card_col_span_class(card)}`}
+										>
+											{renderCard(card.cardId)}
+										</div>
+									))}
+								</div>
+							))}
+						</>
+					);
+				})()
+			)}
+
+			{/* Dashboard settings choice (list vs drag on dashboard) */}
+			<DashboardSettingsChoiceModal
+				is_open={show_choice_modal}
+				on_close={() => set_show_choice_modal(false)}
+				on_choose_list={() => setShowSettingsModal(true)}
+				on_choose_drag={() => {
+					set_edit_mode_order(
+						cardPreferences.map((c) => ({
+							cardId: c.cardId,
+							enabled: c.enabled,
+							order: c.order,
+							col_span: c.col_span ?? 1,
+						})),
+					);
+					set_edit_mode_layout({
+						stats_columns: dashboard_layout?.stats_columns ?? 5,
+						charts_columns: dashboard_layout?.charts_columns ?? 3,
+					});
+					set_dashboard_edit_mode(true);
+				}}
+			/>
+			{/* Dashboard Settings Modal (list reorder + visibility) */}
 			<DashboardSettingsModal
 				isOpen={showSettingsModal}
 				onClose={() => setShowSettingsModal(false)}

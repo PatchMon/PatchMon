@@ -98,44 +98,54 @@ function statusFilterToDbValues(statusFilter) {
 
 /**
  * Get latest completed scan per (host_id, profile_id), or per host_id when profileId is set.
- * Returns array of scan objects (id, host_id, profile_id, completed_at, ...) without raw SQL.
+ * Uses PostgreSQL DISTINCT ON in a single query to avoid loading all scans into memory.
  */
 async function getLatestCompletedScans(prismaClient, options = {}) {
-	const { profile_id: profileId = null, select: selectOverride } = options;
-	const where = { status: "completed" };
-	if (profileId) where.profile_id = profileId;
-	const select = selectOverride ?? {
-		id: true,
-		host_id: true,
-		profile_id: true,
-		completed_at: true,
-		passed: true,
-		failed: true,
-		warnings: true,
-		skipped: true,
-		not_applicable: true,
-		score: true,
-		total_rules: true,
-		compliance_profiles: { select: { name: true, type: true } },
-	};
-	const scans = await prismaClient.compliance_scans.findMany({
-		where,
-		orderBy: [
-			{ host_id: "asc" },
-			{ profile_id: "asc" },
-			{ completed_at: "desc" },
-		],
-		select,
-	});
-	const seen = new Set();
-	const result = [];
-	for (const s of scans) {
-		const key = profileId ? s.host_id : `${s.host_id}:${s.profile_id}`;
-		if (seen.has(key)) continue;
-		seen.add(key);
-		result.push(s);
-	}
-	return result;
+	const { profile_id: profileId = null } = options;
+
+	// Build parameterized raw query: one row per (host_id, profile_id) or per host_id when profileId set
+	const distinctColumns = profileId ? "host_id" : "host_id, profile_id";
+	const orderByColumns = profileId
+		? "host_id, completed_at DESC"
+		: "host_id, profile_id, completed_at DESC";
+
+	const rows = await prismaClient.$queryRawUnsafe(
+		`
+		SELECT cs.id, cs.host_id, cs.profile_id, cs.completed_at, cs.passed, cs.failed,
+			cs.warnings, cs.skipped, cs.not_applicable, cs.score, cs.total_rules,
+			cp.name AS profile_name, cp.type AS profile_type
+		FROM (
+			SELECT DISTINCT ON (${distinctColumns})
+				id, host_id, profile_id, completed_at, passed, failed, warnings,
+				skipped, not_applicable, score, total_rules
+			FROM compliance_scans
+			WHERE status = 'completed'
+			${profileId ? "AND profile_id = $1" : ""}
+			ORDER BY ${orderByColumns}
+		) cs
+		LEFT JOIN compliance_profiles cp ON cp.id = cs.profile_id
+		`,
+		...(profileId ? [profileId] : []),
+	);
+
+	// Map to shape expected by callers (compliance_profiles: { name, type })
+	return rows.map((r) => ({
+		id: r.id,
+		host_id: r.host_id,
+		profile_id: r.profile_id,
+		completed_at: r.completed_at,
+		passed: r.passed,
+		failed: r.failed,
+		warnings: r.warnings,
+		skipped: r.skipped,
+		not_applicable: r.not_applicable,
+		score: r.score,
+		total_rules: r.total_rules,
+		compliance_profiles: {
+			name: r.profile_name,
+			type: r.profile_type,
+		},
+	}));
 }
 
 // ==========================================
@@ -723,6 +733,11 @@ router.get("/dashboard", async (_req, res) => {
 			}
 		}
 
+		// Count total hosts with compliance enabled
+		const hosts_with_compliance_enabled = allHostsRows.filter(
+			(h) => h.compliance_enabled === true,
+		).length;
+
 		// For backwards compatibility, keep the old field names as scan counts
 		const compliant = scans_compliant;
 		const warning = scans_warning;
@@ -1030,6 +1045,7 @@ router.get("/dashboard", async (_req, res) => {
 				hosts_warning,
 				hosts_critical,
 				unscanned,
+				hosts_with_compliance_enabled,
 				// Host status breakdown by scan type (which scan type caused the status)
 				host_status_by_scan_type: hostStatusByScanType,
 				// Scan-level counts (for backwards compatibility)

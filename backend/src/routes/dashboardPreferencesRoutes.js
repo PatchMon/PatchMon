@@ -105,36 +105,43 @@ async function createDefaultDashboardPreferences(userId, userRole = "user") {
 			// User management cards (admin only)
 			{ cardId: "totalUsers", requiredPermission: "can_view_users", order: 8 },
 
+			// Compliance card (requires can_view_hosts)
+			{
+				cardId: "complianceStats",
+				requiredPermission: "can_view_hosts",
+				order: 9,
+			},
+
 			// System/Report cards
 			{
 				cardId: "osDistribution",
 				requiredPermission: "can_view_reports",
-				order: 9,
+				order: 10,
 			},
 			{
 				cardId: "osDistributionBar",
 				requiredPermission: "can_view_reports",
-				order: 10,
+				order: 11,
 			},
 			{
 				cardId: "osDistributionDoughnut",
 				requiredPermission: "can_view_reports",
-				order: 11,
+				order: 12,
 			},
 			{
 				cardId: "recentCollection",
 				requiredPermission: "can_view_hosts",
-				order: 12,
+				order: 13,
 			},
 			{
 				cardId: "updateStatus",
 				requiredPermission: "can_view_reports",
-				order: 13,
+				order: 14,
 			},
 			{
 				cardId: "packagePriority",
 				requiredPermission: "can_view_packages",
-				order: 14,
+				order: 15,
 			},
 			{
 				cardId: "packageTrends",
@@ -243,6 +250,10 @@ router.put(
 			.isBoolean()
 			.withMessage("Enabled must be boolean"),
 		body("preferences.*.order").isInt().withMessage("Order must be integer"),
+		body("preferences.*.col_span")
+			.optional()
+			.isInt({ min: 1, max: 3 })
+			.withMessage("col_span must be 1, 2, or 3"),
 	],
 	async (req, res) => {
 		try {
@@ -259,17 +270,24 @@ router.put(
 				where: { user_id: userId },
 			});
 
-			// Create new preferences (ensure order is integer for persistence)
-			const newPreferences = preferences.map((pref, index) => ({
-				id: uuidv4(),
-				user_id: userId,
-				card_id: pref.cardId,
-				enabled: pref.enabled,
-				order: Number.isInteger(Number(pref.order))
-					? Number(pref.order)
-					: index,
-				updated_at: new Date(),
-			}));
+			// Create new preferences (ensure order and col_span for persistence)
+			const newPreferences = preferences.map((pref, index) => {
+				const colSpan = pref.col_span ?? pref.colSpan;
+				const span = Number(colSpan);
+				const col_span =
+					Number.isInteger(span) && span >= 1 && span <= 3 ? span : 1;
+				return {
+					id: uuidv4(),
+					user_id: userId,
+					card_id: pref.cardId,
+					enabled: pref.enabled,
+					order: Number.isInteger(Number(pref.order))
+						? Number(pref.order)
+						: index,
+					col_span,
+					updated_at: new Date(),
+				};
+			});
 
 			await prisma.dashboard_preferences.createMany({
 				data: newPreferences,
@@ -282,6 +300,88 @@ router.put(
 		} catch (error) {
 			logger.error("Dashboard preferences update error:", error);
 			res.status(500).json({ error: "Failed to update dashboard preferences" });
+		}
+	},
+);
+
+// Default row column counts when user has no saved layout
+const DEFAULT_LAYOUT = {
+	stats_columns: 5,
+	charts_columns: 3,
+};
+
+// Get user's dashboard row layout (column counts per row type)
+router.get("/layout", authenticateToken, async (req, res) => {
+	try {
+		const layout = await prisma.dashboard_layout.findUnique({
+			where: { user_id: req.user.id },
+		});
+		if (!layout) {
+			return res.json({
+				stats_columns: DEFAULT_LAYOUT.stats_columns,
+				charts_columns: DEFAULT_LAYOUT.charts_columns,
+			});
+		}
+		res.json({
+			stats_columns: layout.stats_columns,
+			charts_columns: layout.charts_columns,
+		});
+	} catch (error) {
+		logger.error("Dashboard layout fetch error:", error);
+		res.status(500).json({ error: "Failed to fetch dashboard layout" });
+	}
+});
+
+// Update user's dashboard row layout
+router.put(
+	"/layout",
+	authenticateToken,
+	[
+		body("stats_columns")
+			.optional()
+			.isInt({ min: 2, max: 6 })
+			.withMessage("stats_columns must be between 2 and 6"),
+		body("charts_columns")
+			.optional()
+			.isInt({ min: 2, max: 4 })
+			.withMessage("charts_columns must be between 2 and 4"),
+	],
+	async (req, res) => {
+		try {
+			const errors = validationResult(req);
+			if (!errors.isEmpty()) {
+				return res.status(400).json({ errors: errors.array() });
+			}
+			const userId = req.user.id;
+			const stats_columns = Number(
+				req.body.stats_columns ?? DEFAULT_LAYOUT.stats_columns,
+			);
+			const charts_columns = Number(
+				req.body.charts_columns ?? DEFAULT_LAYOUT.charts_columns,
+			);
+			const now = new Date();
+			await prisma.dashboard_layout.upsert({
+				where: { user_id: userId },
+				create: {
+					user_id: userId,
+					stats_columns,
+					charts_columns,
+					updated_at: now,
+				},
+				update: {
+					stats_columns,
+					charts_columns,
+					updated_at: now,
+				},
+			});
+			res.json({
+				message: "Dashboard layout updated successfully",
+				stats_columns,
+				charts_columns,
+			});
+		} catch (error) {
+			logger.error("Dashboard layout update error:", error);
+			res.status(500).json({ error: "Failed to update dashboard layout" });
 		}
 	},
 );
@@ -355,46 +455,53 @@ router.get("/defaults", authenticateToken, async (_req, res) => {
 				order: 8,
 			},
 			{
+				cardId: "complianceStats",
+				title: "Compliance",
+				icon: "Shield",
+				enabled: true,
+				order: 9,
+			},
+			{
 				cardId: "osDistribution",
 				title: "OS Distribution",
 				icon: "BarChart3",
 				enabled: true,
-				order: 9,
+				order: 10,
 			},
 			{
 				cardId: "osDistributionBar",
 				title: "OS Distribution (Bar)",
 				icon: "BarChart3",
 				enabled: true,
-				order: 9,
+				order: 11,
 			},
 			{
 				cardId: "osDistributionDoughnut",
 				title: "OS Distribution (Doughnut)",
 				icon: "PieChart",
 				enabled: true,
-				order: 10,
+				order: 12,
 			},
 			{
 				cardId: "recentCollection",
 				title: "Recent Collection",
 				icon: "Server",
 				enabled: true,
-				order: 11,
+				order: 13,
 			},
 			{
 				cardId: "updateStatus",
 				title: "Update Status",
 				icon: "BarChart3",
 				enabled: true,
-				order: 12,
+				order: 14,
 			},
 			{
 				cardId: "packagePriority",
 				title: "Package Priority",
 				icon: "BarChart3",
 				enabled: true,
-				order: 13,
+				order: 15,
 			},
 			{
 				cardId: "packageTrends",

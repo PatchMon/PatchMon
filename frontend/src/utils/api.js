@@ -234,6 +234,8 @@ export const dashboardPreferencesAPI = {
 	get: () => api.get("/dashboard-preferences"),
 	update: (preferences) => api.put("/dashboard-preferences", { preferences }),
 	getDefaults: () => api.get("/dashboard-preferences/defaults"),
+	getLayout: () => api.get("/dashboard-preferences/layout"),
+	updateLayout: (layout) => api.put("/dashboard-preferences/layout", layout),
 };
 
 // Hosts API (for agent communication - kept for compatibility)
