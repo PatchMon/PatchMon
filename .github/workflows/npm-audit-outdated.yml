@@ -1,0 +1,78 @@
+# Check npm dependencies for vulnerabilities and outdated packages.
+# Runs on schedule, manual trigger, and on push/PR to package files.
+name: npm audit & outdated
+
+on:
+  schedule:
+    # Weekly on Monday 00:00 UTC
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
+  push:
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - "backend/package.json"
+      - "frontend/package.json"
+  pull_request:
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - "backend/package.json"
+      - "frontend/package.json"
+
+jobs:
+  audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: "package.json"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        run: |
+          # Fail only on high/critical; moderate/low are reported but do not fail
+          npm audit --audit-level=high
+        env:
+          npm_config_audit_level: high
+
+  outdated:
+    name: Outdated packages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: "package.json"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check for outdated packages
+        run: |
+          echo "## Outdated packages (root + workspaces)" >> $GITHUB_STEP_SUMMARY
+          npm outdated --long 2>&1 | tee outdated.txt || true
+          if [ -s outdated.txt ]; then
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat outdated.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No outdated packages." >> $GITHUB_STEP_SUMMARY
+          fi
+        continue-on-error: true

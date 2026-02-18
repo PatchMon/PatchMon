@@ -22,7 +22,10 @@
 		"format": "biome format --write .",
 		"format:check": "biome format .",
 		"lint": "biome check .",
-		"lint:fix": "biome check --write ."
+		"lint:fix": "biome check --write .",
+		"audit": "npm audit --audit-level=high",
+		"audit:all": "npm audit",
+		"outdated": "npm outdated --long"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.2",
