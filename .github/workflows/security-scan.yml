@@ -53,8 +53,8 @@ jobs:
           fetch-depth: 0
 
       - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Uncomment for orgs that require a license (free at gitleaks.io)
-          # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/repo" zricethezav/gitleaks:latest detect \
+            --source /repo \
+            --no-git \
+            $([ -f .gitleaks.toml ] && echo "--config /repo/.gitleaks.toml" || true)
