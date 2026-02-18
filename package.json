@@ -22,7 +22,13 @@
 		"format": "biome format --write .",
 		"format:check": "biome format .",
 		"lint": "biome check .",
-		"lint:fix": "biome check --write ."
+		"lint:fix": "biome check --write .",
+		"audit": "npm audit --audit-level=high",
+		"audit:all": "npm audit",
+		"outdated": "npm outdated --long",
+		"security:secrets": "docker run --rm -v \"${PWD}:/repo\" zricethezav/gitleaks:latest detect --source /repo --no-git",
+		"security:codeql": "bash -c 'command -v codeql >/dev/null 2>&1 || { echo \"CodeQL CLI not found. Install from https://github.com/github/codeql-action#running-codeql-cli-in-your-ci-system\"; exit 1; }; rm -rf .codeql-db; codeql database create .codeql-db --language=javascript --source-root=. && codeql database analyze .codeql-db javascript-security-extended --format=sarif-latest --output=codeql-results.sarif && echo \"Results in codeql-results.sarif\"'",
+		"security": "npm run security:secrets && npm run security:codeql"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.2",
