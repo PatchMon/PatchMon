@@ -1,6 +1,9 @@
 # Security-focused checks: catch malicious or risky code and leaked secrets.
-# - CodeQL: SAST for JavaScript/TypeScript (injection, XSS, dangerous patterns).
+# - CodeQL: SAST for JavaScript/TypeScript, Go (agent), and Actions (injection, XSS, etc.).
 # - Gitleaks: Scans for committed secrets (API keys, tokens, private keys).
+#
+# View results: Security → Code scanning. Use the branch dropdown to select the
+# branch that ran (e.g. your PR branch); default view shows the default branch.
 name: Security scan
 
 on:
@@ -19,8 +22,18 @@ permissions:
 
 jobs:
   codeql:
-    name: CodeQL (SAST)
-    runs-on: ubuntu-latest
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ${{ (matrix.language == 'go' && 'ubuntu-latest') || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: javascript-typescript
+            build-mode: none
+          - language: go
+            build-mode: autobuild
+          - language: actions
+            build-mode: none
     permissions:
       actions: read
       contents: read
@@ -30,18 +43,16 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
-          languages: javascript
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
           queries: security-extended
 
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
-
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
-          category: "/language:javascript"
+          category: "/language:${{ matrix.language }}"
 
   secrets:
     name: Secrets (Gitleaks)
