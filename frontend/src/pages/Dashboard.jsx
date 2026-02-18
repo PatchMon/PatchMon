@@ -59,8 +59,6 @@ import {
 	LastScanAgeBar,
 	OpenSCAPDistributionDoughnut,
 } from "../components/compliance/widgets";
-import DashboardSettingsChoiceModal from "../components/DashboardSettingsChoiceModal";
-import DashboardSettingsModal from "../components/DashboardSettingsModal";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import {
@@ -197,8 +195,6 @@ const SortableDashboardCard = ({ card_id, render_card }) => {
 };
 
 const Dashboard = () => {
-	const [show_choice_modal, set_show_choice_modal] = useState(false);
-	const [showSettingsModal, setShowSettingsModal] = useState(false);
 	const [dashboard_edit_mode, set_dashboard_edit_mode] = useState(false);
 	const [edit_mode_order, set_edit_mode_order] = useState(null);
 	const [edit_mode_layout, set_edit_mode_layout] = useState(null);
@@ -618,17 +614,33 @@ const Dashboard = () => {
 		set_edit_mode_layout(null);
 	}, []);
 
-	// Listen for custom event from Layout component
-	useEffect(() => {
-		const handle_open_settings = () => {
-			set_show_choice_modal(true);
-		};
+	// Enter rearrange-cards (edit) mode: used by settings icon and openDashboardSettings event
+	const handle_enter_edit_mode = useCallback(() => {
+		set_edit_mode_order(
+			cardPreferences.map((c) => ({
+				cardId: c.cardId,
+				enabled: c.enabled,
+				order: c.order,
+				col_span: c.col_span ?? 1,
+			})),
+		);
+		set_edit_mode_layout({
+			stats_columns: dashboard_layout?.stats_columns ?? 5,
+			charts_columns: dashboard_layout?.charts_columns ?? 3,
+		});
+		set_dashboard_edit_mode(true);
+	}, [cardPreferences, dashboard_layout]);
 
-		window.addEventListener("openDashboardSettings", handle_open_settings);
+	// Listen for custom event from Layout component (e.g. header settings icon)
+	useEffect(() => {
+		window.addEventListener("openDashboardSettings", handle_enter_edit_mode);
 		return () => {
-			window.removeEventListener("openDashboardSettings", handle_open_settings);
+			window.removeEventListener(
+				"openDashboardSettings",
+				handle_enter_edit_mode,
+			);
 		};
-	}, []);
+	}, [handle_enter_edit_mode]);
 
 	// Track window size for responsive chart options
 	useEffect(() => {
@@ -2145,7 +2157,7 @@ const Dashboard = () => {
 				<div className="flex items-center gap-3">
 					<button
 						type="button"
-						onClick={() => set_show_choice_modal(true)}
+						onClick={handle_enter_edit_mode}
 						className="hidden md:flex btn-outline items-center gap-2 min-h-[44px] min-w-[44px] justify-center"
 						title="Customize dashboard layout"
 					>
@@ -2520,33 +2532,6 @@ const Dashboard = () => {
 					);
 				})()
 			)}
-
-			{/* Dashboard settings choice (list vs drag on dashboard) */}
-			<DashboardSettingsChoiceModal
-				is_open={show_choice_modal}
-				on_close={() => set_show_choice_modal(false)}
-				on_choose_list={() => setShowSettingsModal(true)}
-				on_choose_drag={() => {
-					set_edit_mode_order(
-						cardPreferences.map((c) => ({
-							cardId: c.cardId,
-							enabled: c.enabled,
-							order: c.order,
-							col_span: c.col_span ?? 1,
-						})),
-					);
-					set_edit_mode_layout({
-						stats_columns: dashboard_layout?.stats_columns ?? 5,
-						charts_columns: dashboard_layout?.charts_columns ?? 3,
-					});
-					set_dashboard_edit_mode(true);
-				}}
-			/>
-			{/* Dashboard Settings Modal (list reorder + visibility) */}
-			<DashboardSettingsModal
-				isOpen={showSettingsModal}
-				onClose={() => setShowSettingsModal(false)}
-			/>
 		</div>
 	);
 };
