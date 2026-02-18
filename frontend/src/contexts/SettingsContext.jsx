@@ -23,7 +23,7 @@ export const SettingsProvider = ({ children }) => {
 		error,
 		refetch,
 	} = useQuery({
-		queryKey: ["settings"],
+		queryKey: ["settings", "public"],
 		queryFn: async () => {
 			try {
 				// Try public endpoint first (available to all authenticated users)

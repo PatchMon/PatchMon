@@ -19,21 +19,20 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Biome
-        uses: biomejs/setup-biome@v2
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          # Pinned to avoid GitHub API call for "latest" (avoids 401 with restricted GITHUB_TOKEN)
-          version: "2.4.2"
+          node-version-file: "package.json"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Run Biome CI
         env:
-          # Override VCS setting to ensure consistent file checking
-          # This makes CI check all files, not just git-tracked ones
           BIOME_VCS_ENABLED: "false"
         run: |
-          # biome ci is the correct command for CI (doesn't auto-fix, only reports)
-          # Add flags to match local file handling behavior
-          biome ci \
+          npx biome ci \
             --no-errors-on-unmatched \
             --files-ignore-unknown=true \
             .
