@@ -206,7 +206,7 @@ Track upcoming features and progress on the roadmap board:
 
 ## License
 
-AGPLv3 - see [LICENSE](LICENSE) for details.
+AGPL v3 - see [LICENSE](LICENSE) for details.
 
 ---
 

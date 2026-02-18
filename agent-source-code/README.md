@@ -11,7 +11,7 @@ PatchMon's monitoring agent collects and reports package, system, hardware, and 
 - Alpine Linux (apk)
 
 **FreeBSD** (amd64, arm64):
-- FreeBSD / pfSense (pkg)
+- FreeBSD
 
 ## Installation
 
@@ -362,4 +362,4 @@ pkg/models/                     Shared data models and API payloads
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+This project is licensed under AGPL v3 (AGPL-3.0). Copyright 9 Technology Group LTD. See the [LICENSE](LICENSE) file for details.
