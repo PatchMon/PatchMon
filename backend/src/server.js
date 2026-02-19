@@ -79,6 +79,8 @@ const permissionsRoutes = require("./routes/permissionsRoutes");
 const settingsRoutes = require("./routes/settingsRoutes");
 const {
 	router: dashboardPreferencesRoutes,
+	DEFAULT_CARD_LAYOUT,
+	DEFAULT_GRID_LAYOUT,
 } = require("./routes/dashboardPreferencesRoutes");
 const repositoryRoutes = require("./routes/repositoryRoutes");
 const versionRoutes = require("./routes/versionRoutes");
@@ -595,13 +597,14 @@ process.on("uncaughtException", (error) => {
 });
 
 // Initialize dashboard preferences for all users.
-// For users with no preferences, create a full set from permissions.
-// For users with existing preferences, incrementally add any new cards
-// and remove any cards the user no longer has permission for, while
-// preserving the user's custom order and enabled state.
+// For users with no preferences, create the curated default layout.
+// For users with existing preferences, incrementally add any new cards,
+// remove cards the user no longer has permission for, and — on first
+// upgrade to 1.4.2+ — seed the dashboard_layout record and apply
+// default col_span values while preserving the user's custom order and
+// enabled state.
 async function initializeDashboardPreferences() {
 	try {
-		// Get all users
 		const users = await prisma.users.findMany({
 			select: {
 				id: true,
@@ -614,8 +617,10 @@ async function initializeDashboardPreferences() {
 						card_id: true,
 						order: true,
 						enabled: true,
+						col_span: true,
 					},
 				},
+				dashboard_layout: true,
 			},
 		});
 
@@ -623,37 +628,54 @@ async function initializeDashboardPreferences() {
 			return;
 		}
 
+		// Build a quick lookup of default col_span values by cardId
+		const defaultColSpanMap = new Map(
+			DEFAULT_CARD_LAYOUT.map((c) => [c.cardId, c.col_span]),
+		);
+
 		let initializedCount = 0;
 		let updatedCount = 0;
+		const now = new Date();
 
 		for (const user of users) {
 			const hasPreferences = user.dashboard_preferences.length > 0;
 
-			// Get permission-based preferences for this user's role
 			const expectedPreferences = await getPermissionBasedPreferences(
 				user.role,
 			);
 
 			if (!hasPreferences) {
-				// User has no preferences — create a full set from defaults
+				// ── Brand new user (or wiped) — apply the full curated layout ──
 				const preferencesData = expectedPreferences.map((pref) => ({
 					id: require("uuid").v4(),
 					user_id: user.id,
 					card_id: pref.cardId,
 					enabled: pref.enabled,
 					order: pref.order,
-					created_at: new Date(),
-					updated_at: new Date(),
+					col_span: pref.col_span,
+					created_at: now,
+					updated_at: now,
 				}));
 
 				await prisma.dashboard_preferences.createMany({
 					data: preferencesData,
 				});
 
+				// Seed dashboard_layout if it doesn't exist yet
+				if (!user.dashboard_layout) {
+					await prisma.dashboard_layout.create({
+						data: {
+							user_id: user.id,
+							stats_columns: DEFAULT_GRID_LAYOUT.stats_columns,
+							charts_columns: DEFAULT_GRID_LAYOUT.charts_columns,
+							updated_at: now,
+						},
+					});
+				}
+
 				initializedCount++;
 			} else {
-				// User has existing preferences — do an incremental sync.
-				// Preserve existing order and enabled state.
+				// ── Existing user — incremental sync ─────────────────────────
 				const existingCardIds = new Set(
 					user.dashboard_preferences.map((p) => p.card_id),
 				);
@@ -661,31 +683,44 @@ async function initializeDashboardPreferences() {
 					expectedPreferences.map((p) => p.cardId),
 				);
 
-				// Find cards that need to be added (new cards the user doesn't have yet)
 				const cardsToAdd = expectedPreferences.filter(
 					(p) => !existingCardIds.has(p.cardId),
 				);
 
-				// Find cards that need to be removed (user no longer has permission)
 				const cardIdsToRemove = user.dashboard_preferences
 					.filter((p) => !expectedCardIds.has(p.card_id))
 					.map((p) => p.id);
 
-				if (cardsToAdd.length === 0 && cardIdsToRemove.length === 0) {
-					continue; // Nothing to change for this user
+				// Detect pre-1.4.2 users who need the upgrade defaults applied:
+				// they won't have a dashboard_layout record yet.
+				const needsUpgradeDefaults = !user.dashboard_layout;
+
+				// Cards that need their col_span updated to the curated default
+				// (only touch cards still at the migration default of 1 where the
+				// curated default differs, so we don't overwrite manual tweaks)
+				const colSpanUpdates = needsUpgradeDefaults
+					? user.dashboard_preferences.filter((p) => {
+							const target = defaultColSpanMap.get(p.card_id);
+							return target && target !== 1 && (p.col_span ?? 1) === 1;
+						})
+					: [];
+
+				const hasChanges =
+					cardsToAdd.length > 0 ||
+					cardIdsToRemove.length > 0 ||
+					needsUpgradeDefaults;
+
+				if (!hasChanges) {
+					continue;
 				}
 
 				await prisma.$transaction(async (tx) => {
-					// Remove cards the user no longer has permission for
 					if (cardIdsToRemove.length > 0) {
 						await tx.dashboard_preferences.deleteMany({
-							where: {
-								id: { in: cardIdsToRemove },
-							},
+							where: { id: { in: cardIdsToRemove } },
 						});
 					}
 
-					// Add newly available cards at the end of the user's existing order
 					if (cardsToAdd.length > 0) {
 						const maxOrder = Math.max(
 							...user.dashboard_preferences.map((p) => p.order),
@@ -696,14 +731,36 @@ async function initializeDashboardPreferences() {
 							id: require("uuid").v4(),
 							user_id: user.id,
 							card_id: pref.cardId,
-							enabled: true,
+							enabled: pref.enabled,
 							order: maxOrder + 1 + idx,
-							created_at: new Date(),
-							updated_at: new Date(),
+							col_span: pref.col_span,
+							created_at: now,
+							updated_at: now,
 						}));
 
 						await tx.dashboard_preferences.createMany({
 							data: newPreferencesData,
+						});
+					}
+
+					// Apply curated col_span values for upgrading users
+					for (const pref of colSpanUpdates) {
+						const target = defaultColSpanMap.get(pref.card_id);
+						await tx.dashboard_preferences.update({
+							where: { id: pref.id },
+							data: { col_span: target, updated_at: now },
+						});
+					}
+
+					// Seed the dashboard_layout record for upgrading users
+					if (needsUpgradeDefaults) {
+						await tx.dashboard_layout.create({
+							data: {
+								user_id: user.id,
+								stats_columns: DEFAULT_GRID_LAYOUT.stats_columns,
+								charts_columns: DEFAULT_GRID_LAYOUT.charts_columns,
+								updated_at: now,
+							},
 						});
 					}
 				}, getTransactionOptions());
@@ -712,7 +769,6 @@ async function initializeDashboardPreferences() {
 			}
 		}
 
-		// Only show summary if there were changes
 		if (initializedCount > 0 || updatedCount > 0) {
 			console.log(
 				`✅ Dashboard preferences: ${initializedCount} initialized, ${updatedCount} updated`,
@@ -769,144 +825,21 @@ async function getUserPermissions(userRole) {
 	}
 }
 
-// Helper function to get permission-based dashboard preferences for a role
+// Helper function to get permission-based dashboard preferences for a role.
+// Uses the shared DEFAULT_CARD_LAYOUT from dashboardPreferencesRoutes.js as the
+// single source of truth for card definitions, order, enabled state, and col_span.
 async function getPermissionBasedPreferences(userRole) {
-	// Get user's actual permissions
 	const permissions = await getUserPermissions(userRole);
 
-	// Define all possible dashboard cards with their required permissions.
-	// IMPORTANT: This list must stay in sync with createDefaultDashboardPreferences
-	// in dashboardPreferencesRoutes.js and the /defaults endpoint.
-	const allCards = [
-		// Host-related cards
-		{ cardId: "totalHosts", requiredPermission: "can_view_hosts", order: 0 },
-		{
-			cardId: "hostsNeedingUpdates",
-			requiredPermission: "can_view_hosts",
-			order: 1,
-		},
-
-		// Package-related cards
-		{
-			cardId: "totalOutdatedPackages",
-			requiredPermission: "can_view_packages",
-			order: 2,
-		},
-		{
-			cardId: "securityUpdates",
-			requiredPermission: "can_view_packages",
-			order: 3,
-		},
-
-		// Host-related cards (continued)
-		{
-			cardId: "totalHostGroups",
-			requiredPermission: "can_view_hosts",
-			order: 4,
-		},
-		{ cardId: "upToDateHosts", requiredPermission: "can_view_hosts", order: 5 },
-		{
-			cardId: "hostsNeedingReboot",
-			requiredPermission: "can_view_hosts",
-			order: 6,
-		},
-
-		// Repository-related cards
-		{ cardId: "totalRepos", requiredPermission: "can_view_hosts", order: 7 },
-
-		// User management cards (admin only)
-		{ cardId: "totalUsers", requiredPermission: "can_view_users", order: 8 },
-
-		// System/Report cards
-		{
-			cardId: "osDistribution",
-			requiredPermission: "can_view_reports",
-			order: 9,
-		},
-		{
-			cardId: "osDistributionBar",
-			requiredPermission: "can_view_reports",
-			order: 10,
-		},
-		{
-			cardId: "osDistributionDoughnut",
-			requiredPermission: "can_view_reports",
-			order: 11,
-		},
-		{
-			cardId: "recentCollection",
-			requiredPermission: "can_view_hosts",
-			order: 12,
-		},
-		{
-			cardId: "updateStatus",
-			requiredPermission: "can_view_reports",
-			order: 13,
-		},
-		{
-			cardId: "packagePriority",
-			requiredPermission: "can_view_packages",
-			order: 14,
-		},
-		{
-			cardId: "packageTrends",
-			requiredPermission: "can_view_packages",
-			order: 15,
-		},
-		{ cardId: "recentUsers", requiredPermission: "can_view_users", order: 16 },
-		{
-			cardId: "quickStats",
-			requiredPermission: "can_view_dashboard",
-			order: 17,
-		},
-
-		// Compliance cards
-		{
-			cardId: "complianceHostStatus",
-			requiredPermission: "can_view_hosts",
-			order: 18,
-		},
-		{
-			cardId: "complianceOpenSCAPDistribution",
-			requiredPermission: "can_view_hosts",
-			order: 19,
-		},
-		{
-			cardId: "complianceFailuresBySeverity",
-			requiredPermission: "can_view_hosts",
-			order: 20,
-		},
-		{
-			cardId: "complianceProfilesInUse",
-			requiredPermission: "can_view_hosts",
-			order: 21,
-		},
-		{
-			cardId: "complianceLastScanAge",
-			requiredPermission: "can_view_hosts",
-			order: 22,
-		},
-		{
-			cardId: "complianceTrendLine",
-			requiredPermission: "can_view_hosts",
-			order: 23,
-		},
-		{
-			cardId: "complianceActiveBenchmarkScans",
-			requiredPermission: "can_view_hosts",
-			order: 24,
-		},
-	];
-
-	// Filter cards based on user's permissions
-	const allowedCards = allCards.filter((card) => {
+	const allowedCards = DEFAULT_CARD_LAYOUT.filter((card) => {
 		return permissions[card.requiredPermission] === true;
 	});
 
 	return allowedCards.map((card) => ({
 		cardId: card.cardId,
-		enabled: true,
+		enabled: card.enabled,
 		order: card.order,
+		col_span: card.col_span,
 	}));
 }
 
