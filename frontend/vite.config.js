@@ -17,6 +17,12 @@ export default defineConfig({
 		strictPort: true, // Exit if port is already in use
 		allowedHosts: true, // Allow all hosts in development
 		proxy: {
+			"/bullboard": {
+				target: `http://${process.env.BACKEND_HOST || "localhost"}:${process.env.BACKEND_PORT || "3001"}`,
+				changeOrigin: true,
+				secure: false,
+				ws: true,
+			},
 			"/api": {
 				target: `http://${process.env.BACKEND_HOST || "localhost"}:${process.env.BACKEND_PORT || "3001"}`,
 				changeOrigin: true,

@@ -545,12 +545,26 @@ const ComplianceTab = ({
 
 	const triggerScan = useMutation({
 		mutationFn: (options) => complianceAPI.triggerScan(hostId, options),
-		onSuccess: (_, variables) => {
+		onSuccess: (response, variables) => {
+			const body = response?.data;
+			const job_id = body?.job_id || "";
+			const job_label = job_id ? ` — Job ID: ${job_id}` : "";
+
+			if (!isConnected) {
+				// Agent offline: queued for later
+				setScanMessage({
+					type: "success",
+					text: `${body?.message || "Scan queued; will run when agent is online"}${job_label}`,
+				});
+				setTimeout(() => setScanMessage(null), 10000);
+				return;
+			}
+
+			// Agent connected: scan will run now via the worker
 			setScanInProgress(true);
 			const remediationText = variables.enableRemediation
 				? " Remediation is enabled - failed rules will be automatically fixed."
 				: "";
-			// Get profile name for display
 			const profileName =
 				availableProfiles.find(
 					(p) => (p.xccdf_id || p.id) === variables.profileId,
@@ -558,7 +572,7 @@ const ComplianceTab = ({
 			setScanMessage(
 				{
 					type: "info",
-					text: `Compliance scan started. This may take several minutes...${remediationText}`,
+					text: `Compliance scan started. This may take several minutes...${remediationText}${job_label}`,
 					startTime: Date.now(),
 					profileName: profileName,
 				},
@@ -1626,8 +1640,12 @@ const ComplianceTab = ({
 									triggerScan.mutate(scanOptions);
 								}}
 								disabled={
-									!isConnected ||
 									triggerScan.isPending ||
+									// When offline, oscap-docker cannot be queued
+									(!isConnected &&
+										availableProfiles.find(
+											(p) => (p.xccdf_id || p.id) === selectedProfile,
+										)?.type === "oscap-docker") ||
 									// Disable if oscap-docker profile but no image specified and not scanning all
 									(availableProfiles.find(
 										(p) => (p.xccdf_id || p.id) === selectedProfile,
@@ -1648,7 +1666,13 @@ const ComplianceTab = ({
 								) : (
 									<Play className="h-5 w-5" />
 								)}
-								{enableRemediation ? "Scan & Remediate" : "Start Scan"}
+								{triggerScan.isPending
+									? "Starting…"
+									: enableRemediation
+										? "Scan & Remediate"
+										: isConnected
+											? "Start Scan"
+											: "Queue scan for when agent is online"}
 							</button>
 						</div>
 					</div>

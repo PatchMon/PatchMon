@@ -27,7 +27,7 @@ import {
 import { useEffect, useState } from "react";
 import { dashboardPreferencesAPI } from "../utils/api";
 
-// Sortable Card Item Component
+// Sortable Card Item Component (card width is set by dragging the card edge in dashboard edit mode)
 const SortableCardItem = ({ card, onToggle }) => {
 	const {
 		attributes,
@@ -99,9 +99,13 @@ const SortableCardItem = ({ card, onToggle }) => {
 	);
 };
 
+const DEFAULT_LAYOUT = { stats_columns: 5, charts_columns: 3 };
+
 const DashboardSettingsModal = ({ isOpen, onClose }) => {
 	const [cards, setCards] = useState([]);
 	const [hasChanges, setHasChanges] = useState(false);
+	const [layout_state, set_layout_state] = useState(DEFAULT_LAYOUT);
+	const [layout_has_changes, set_layout_has_changes] = useState(false);
 	const queryClient = useQueryClient();
 
 	const sensors = useSensors(
@@ -126,21 +130,40 @@ const DashboardSettingsModal = ({ isOpen, onClose }) => {
 		enabled: isOpen,
 	});
 
-	// Update preferences mutation
+	// Fetch dashboard row layout
+	const { data: layout_data } = useQuery({
+		queryKey: ["dashboardLayout"],
+		queryFn: () => dashboardPreferencesAPI.getLayout().then((res) => res.data),
+		enabled: isOpen,
+	});
+
+	// Update preferences mutation (onClose is called from handleSave after both saves if needed)
 	const updatePreferencesMutation = useMutation({
 		mutationFn: (preferences) => dashboardPreferencesAPI.update(preferences),
 		onSuccess: (response) => {
-			// Update cache with saved preferences so dashboard order is correct immediately.
-			// Do not invalidate here: a refetch can race and overwrite with stale data.
 			queryClient.setQueryData(
 				["dashboardPreferences"],
 				response.data.preferences,
 			);
 			setHasChanges(false);
-			onClose();
 		},
 		onError: (error) => {
 			console.error("Failed to update dashboard preferences:", error);
+		},
+	});
+
+	// Update layout mutation
+	const updateLayoutMutation = useMutation({
+		mutationFn: (layout) => dashboardPreferencesAPI.updateLayout(layout),
+		onSuccess: (response) => {
+			queryClient.setQueryData(["dashboardLayout"], {
+				stats_columns: response.data.stats_columns,
+				charts_columns: response.data.charts_columns,
+			});
+			set_layout_has_changes(false);
+		},
+		onError: (error) => {
+			console.error("Failed to update dashboard layout:", error);
 		},
 	});
 
@@ -152,6 +175,7 @@ const DashboardSettingsModal = ({ isOpen, onClose }) => {
 				cardId: p.cardId ?? p.card_id,
 				enabled: p.enabled,
 				order: p.order,
+				col_span: p.col_span ?? p.colSpan ?? 1,
 			}));
 
 			const typeLabelFor = (cardId) => {
@@ -198,6 +222,10 @@ const DashboardSettingsModal = ({ isOpen, onClose }) => {
 							? userPreference.enabled
 							: defaultCard.enabled,
 						order: userPreference ? userPreference.order : defaultCard.order,
+						col_span:
+							userPreference?.col_span != null
+								? Math.min(3, Math.max(1, Number(userPreference.col_span)))
+								: 1,
 						typeLabel: typeLabelFor(defaultCard.cardId),
 					};
 				})
@@ -206,6 +234,18 @@ const DashboardSettingsModal = ({ isOpen, onClose }) => {
 			setCards(mergedCards);
 		}
 	}, [preferences, defaultCards]);
+
+	// Initialize layout state when layout data is loaded
+	useEffect(() => {
+		if (layout_data && isOpen) {
+			set_layout_state({
+				stats_columns:
+					layout_data.stats_columns ?? DEFAULT_LAYOUT.stats_columns,
+				charts_columns:
+					layout_data.charts_columns ?? DEFAULT_LAYOUT.charts_columns,
+			});
+		}
+	}, [layout_data, isOpen]);
 
 	const handleDragEnd = (event) => {
 		const { active, over } = event;
@@ -236,14 +276,33 @@ const DashboardSettingsModal = ({ isOpen, onClose }) => {
 		setHasChanges(true);
 	};
 
-	const handleSave = () => {
+	const handleSave = async () => {
 		const preferences = cards.map((card) => ({
 			cardId: card.cardId,
 			enabled: card.enabled,
 			order: Number(card.order),
+			col_span: Math.min(3, Math.max(1, Number(card.col_span ?? 1))),
 		}));
-
-		updatePreferencesMutation.mutate(preferences);
+		const pending = [];
+		if (layout_has_changes) {
+			pending.push(
+				updateLayoutMutation.mutateAsync({
+					stats_columns: Number(layout_state.stats_columns),
+					charts_columns: Number(layout_state.charts_columns),
+				}),
+			);
+		}
+		if (hasChanges) {
+			pending.push(updatePreferencesMutation.mutateAsync(preferences));
+		}
+		if (pending.length === 0) return;
+		try {
+			await Promise.all(pending);
+			set_layout_has_changes(false);
+			onClose();
+		} catch (_e) {
+			// Errors logged in mutations
+		}
 	};
 
 	const handleReset = () => {
@@ -256,6 +315,8 @@ const DashboardSettingsModal = ({ isOpen, onClose }) => {
 			setCards(resetCards);
 			setHasChanges(true);
 		}
+		set_layout_state(DEFAULT_LAYOUT);
+		set_layout_has_changes(true);
 	};
 
 	if (!isOpen) return null;
@@ -288,11 +349,74 @@ const DashboardSettingsModal = ({ isOpen, onClose }) => {
 							</button>
 						</div>
 
-						<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-6">
+						<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-4">
 							Customize your dashboard by reordering cards and toggling their
 							visibility. Drag cards to reorder them, and click the visibility
 							toggle to show/hide cards.
 						</p>
+
+						{/* Row layout: columns per row type */}
+						<div className="mb-6 p-3 rounded-lg bg-secondary-50 dark:bg-secondary-700/50 border border-secondary-200 dark:border-secondary-600">
+							<p className="text-sm font-medium text-secondary-900 dark:text-white mb-2">
+								Row layout (columns per row)
+							</p>
+							<div className="flex flex-wrap gap-4">
+								<div>
+									<label
+										htmlFor="stats-columns"
+										className="block text-xs text-secondary-500 dark:text-secondary-400 mb-1"
+									>
+										Stats row (small cards)
+									</label>
+									<select
+										id="stats-columns"
+										value={layout_state.stats_columns}
+										onChange={(e) => {
+											const v = Number(e.target.value);
+											set_layout_state((prev) => ({
+												...prev,
+												stats_columns: v,
+											}));
+											set_layout_has_changes(true);
+										}}
+										className="rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm py-1.5 px-2"
+									>
+										{[2, 3, 4, 5, 6].map((n) => (
+											<option key={n} value={n}>
+												{n} columns
+											</option>
+										))}
+									</select>
+								</div>
+								<div>
+									<label
+										htmlFor="charts-columns"
+										className="block text-xs text-secondary-500 dark:text-secondary-400 mb-1"
+									>
+										Charts row
+									</label>
+									<select
+										id="charts-columns"
+										value={layout_state.charts_columns}
+										onChange={(e) => {
+											const v = Number(e.target.value);
+											set_layout_state((prev) => ({
+												...prev,
+												charts_columns: v,
+											}));
+											set_layout_has_changes(true);
+										}}
+										className="rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm py-1.5 px-2"
+									>
+										{[2, 3, 4].map((n) => (
+											<option key={n} value={n}>
+												{n} columns
+											</option>
+										))}
+									</select>
+								</div>
+							</div>
+						</div>
 
 						{isLoading ? (
 							<div className="flex items-center justify-center py-8">
@@ -326,14 +450,21 @@ const DashboardSettingsModal = ({ isOpen, onClose }) => {
 						<button
 							type="button"
 							onClick={handleSave}
-							disabled={!hasChanges || updatePreferencesMutation.isPending}
+							disabled={
+								(!hasChanges && !layout_has_changes) ||
+								updatePreferencesMutation.isPending ||
+								updateLayoutMutation.isPending
+							}
 							className={`w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 text-base font-medium text-white sm:ml-3 sm:w-auto sm:text-sm ${
-								!hasChanges || updatePreferencesMutation.isPending
+								(!hasChanges && !layout_has_changes) ||
+								updatePreferencesMutation.isPending ||
+								updateLayoutMutation.isPending
 									? "bg-secondary-400 cursor-not-allowed"
 									: "bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
 							}`}
 						>
-							{updatePreferencesMutation.isPending ? (
+							{updatePreferencesMutation.isPending ||
+							updateLayoutMutation.isPending ? (
 								<>
 									<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
 									Saving...

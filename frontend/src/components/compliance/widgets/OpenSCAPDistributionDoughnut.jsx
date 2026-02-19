@@ -71,8 +71,8 @@ const OpenSCAPDistributionDoughnut = ({ data }) => {
 	const options = getBarOptions(isDark, "y");
 
 	return (
-		<div className="card p-4 sm:p-6 w-full">
-			<div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+		<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+			<div className="flex flex-wrap items-center justify-between gap-2 mb-4 flex-shrink-0">
 				<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
 					Benchmark Distribution
 				</h3>
@@ -88,7 +88,7 @@ const OpenSCAPDistributionDoughnut = ({ data }) => {
 					</span>
 				</label>
 			</div>
-			<div className="h-48 sm:h-56 w-full">
+			<div className="h-48 sm:h-56 w-full flex-1 min-h-0">
 				{has_data ? (
 					<Bar data={chart_data} options={options} />
 				) : (
