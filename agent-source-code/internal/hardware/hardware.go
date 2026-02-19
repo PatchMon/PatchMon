@@ -121,7 +121,9 @@ func (m *Manager) getDiskDetails() []models.DiskInfo {
 		return []models.DiskInfo{}
 	}
 
-	var disks []models.DiskInfo
+	// Use non-nil slice so JSON encodes as [] instead of null when no disks are found
+	// (e.g. overlay root, all partitions filtered, or Usage fails on all)
+	disks := make([]models.DiskInfo, 0)
 
 	for _, partition := range partitions {
 		// Skip special filesystems

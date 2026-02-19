@@ -196,10 +196,11 @@ func (m *FreeBSDManager) parseConfigFiles() ([]models.Repository, error) {
 
 // parseConfigFile parses a single pkg configuration file
 // Format (UCL-like):
-// RepoName: {
-//   url: "https://...",
-//   enabled: yes
-// }
+//
+//	RepoName: {
+//	  url: "https://...",
+//	  enabled: yes
+//	}
 func (m *FreeBSDManager) parseConfigFile(filename string) ([]models.Repository, error) {
 	var repositories []models.Repository
 

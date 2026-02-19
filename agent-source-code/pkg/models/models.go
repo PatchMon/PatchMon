@@ -181,7 +181,7 @@ type IntegrationSetupStatus struct {
 	Enabled       bool                      `json:"enabled"`
 	Status        string                    `json:"status"` // "ready", "installing", "removing", "error"
 	Message       string                    `json:"message"`
-	Components    map[string]string         `json:"components,omitempty"`       // Component name -> status
+	Components    map[string]string         `json:"components,omitempty"` // Component name -> status
 	ScannerInfo   *ComplianceScannerDetails `json:"scanner_info,omitempty"`
 	InstallEvents []InstallEvent            `json:"install_events,omitempty"`
 }
@@ -240,8 +240,8 @@ type ComplianceScanOptions struct {
 	TailoringFile        string `json:"tailoring_file,omitempty"`
 	OutputFormat         string `json:"output_format,omitempty"`
 	Timeout              int    `json:"timeout,omitempty"`
-	OpenSCAPEnabled      *bool  `json:"openscap_enabled,omitempty"`      // Per-host toggle: run OpenSCAP scans
-	DockerBenchEnabled   *bool  `json:"docker_bench_enabled,omitempty"`  // Per-host toggle: run Docker Bench scans
+	OpenSCAPEnabled      *bool  `json:"openscap_enabled,omitempty"`     // Per-host toggle: run OpenSCAP scans
+	DockerBenchEnabled   *bool  `json:"docker_bench_enabled,omitempty"` // Per-host toggle: run Docker Bench scans
 }
 
 // Credentials holds API authentication information

@@ -3,10 +3,10 @@ package commands
 import (
 	"context"
 	"crypto/rand"
-	"errors"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -26,9 +26,9 @@ import (
 	"patchmon-agent/internal/integrations"
 	"patchmon-agent/internal/integrations/compliance"
 	"patchmon-agent/internal/integrations/docker"
+	"patchmon-agent/internal/pkgversion"
 	"patchmon-agent/internal/system"
 	"patchmon-agent/internal/utils"
-	"patchmon-agent/internal/pkgversion"
 	"patchmon-agent/pkg/models"
 
 	"github.com/gorilla/websocket"

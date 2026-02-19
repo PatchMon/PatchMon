@@ -648,8 +648,11 @@ router.post(
 			.isFloat({ min: 0 })
 			.withMessage("Swap size must be a non-negative number"),
 		body("diskDetails")
-			.optional()
-			.isArray()
+			.optional({ values: "null" })
+			.custom(
+				(value) =>
+					value === undefined || value === null || Array.isArray(value),
+			)
 			.withMessage("Disk details must be an array"),
 		// Network Information
 		body("gatewayIp")
@@ -743,7 +746,12 @@ router.post(
 				updateData.ram_installed = req.body.ramInstalled;
 			if (req.body.swapSize !== undefined)
 				updateData.swap_size = req.body.swapSize;
-			if (req.body.diskDetails) updateData.disk_details = req.body.diskDetails;
+			// Only update when sent; normalise null to [] (agent may send null on overlay/read-only roots)
+			if (Object.hasOwn(req.body, "diskDetails")) {
+				updateData.disk_details = Array.isArray(req.body.diskDetails)
+					? req.body.diskDetails
+					: [];
+			}
 
 			// Network Information
 			if (req.body.gatewayIp) {
