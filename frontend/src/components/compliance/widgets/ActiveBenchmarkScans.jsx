@@ -15,8 +15,8 @@ const ActiveBenchmarkScans = () => {
 	const scans = data?.activeScans || [];
 
 	return (
-		<div className="card p-4 sm:p-6 w-full">
-			<div className="flex items-center justify-between mb-4">
+		<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+			<div className="flex items-center justify-between mb-4 flex-shrink-0">
 				<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
 					Active Benchmark Scans
 				</h3>
@@ -29,16 +29,16 @@ const ActiveBenchmarkScans = () => {
 			</div>
 
 			{isLoading ? (
-				<div className="flex items-center justify-center h-24">
+				<div className="flex items-center justify-center h-24 flex-1 min-h-0">
 					<RefreshCw className="h-5 w-5 animate-spin text-secondary-400" />
 				</div>
 			) : scans.length === 0 ? (
-				<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-secondary-500">
+				<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-secondary-500 flex-1">
 					<ShieldCheck className="h-8 w-8 mb-2" />
 					<p className="text-sm">No scans currently running</p>
 				</div>
 			) : (
-				<div className="overflow-hidden rounded-lg border border-secondary-200 dark:border-secondary-700">
+				<div className="overflow-hidden rounded-lg border border-secondary-200 dark:border-secondary-700 flex-1 min-h-0 flex flex-col">
 					<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700 text-sm">
 						<thead className="bg-secondary-50 dark:bg-secondary-700/50">
 							<tr>

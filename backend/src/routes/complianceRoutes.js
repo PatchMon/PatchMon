@@ -15,6 +15,8 @@ const prisma = getPrismaClient();
 const COMPLIANCE_INSTALL_JOB_PREFIX = "compliance_install_job:";
 const COMPLIANCE_INSTALL_CANCEL_PREFIX = "compliance_install_cancel:";
 const COMPLIANCE_INSTALL_JOB_TTL = 3600;
+const COMPLIANCE_SCAN_JOB_ID_PREFIX = "compliance-scan-";
+const COMPLIANCE_SCAN_QUEUE_RETRY_DELAY_MS = 60 * 1000; // 1 min when agent offline
 
 // Short-lived cache for compliance dashboard (reduces DB load under repeated requests)
 const DASHBOARD_CACHE_TTL_MS = 45 * 1000; // 45 seconds
@@ -96,46 +98,65 @@ function statusFilterToDbValues(statusFilter) {
 	}
 }
 
+// Order for host compliance rule results: Failed first, then Warning, then Passed, then N/A/skip/error
+function status_rank_for_sort(status) {
+	const s = (status || "").toLowerCase();
+	if (["fail", "failed", "failure"].includes(s)) return 1;
+	if (["warn", "warning", "warned"].includes(s)) return 2;
+	if (["pass", "passed"].includes(s)) return 3;
+	return 4; // skip, notapplicable, error, etc.
+}
+
 /**
  * Get latest completed scan per (host_id, profile_id), or per host_id when profileId is set.
- * Returns array of scan objects (id, host_id, profile_id, completed_at, ...) without raw SQL.
+ * Uses PostgreSQL DISTINCT ON in a single query to avoid loading all scans into memory.
  */
 async function getLatestCompletedScans(prismaClient, options = {}) {
-	const { profile_id: profileId = null, select: selectOverride } = options;
-	const where = { status: "completed" };
-	if (profileId) where.profile_id = profileId;
-	const select = selectOverride ?? {
-		id: true,
-		host_id: true,
-		profile_id: true,
-		completed_at: true,
-		passed: true,
-		failed: true,
-		warnings: true,
-		skipped: true,
-		not_applicable: true,
-		score: true,
-		total_rules: true,
-		compliance_profiles: { select: { name: true, type: true } },
-	};
-	const scans = await prismaClient.compliance_scans.findMany({
-		where,
-		orderBy: [
-			{ host_id: "asc" },
-			{ profile_id: "asc" },
-			{ completed_at: "desc" },
-		],
-		select,
-	});
-	const seen = new Set();
-	const result = [];
-	for (const s of scans) {
-		const key = profileId ? s.host_id : `${s.host_id}:${s.profile_id}`;
-		if (seen.has(key)) continue;
-		seen.add(key);
-		result.push(s);
-	}
-	return result;
+	const { profile_id: profileId = null } = options;
+
+	// Build parameterized raw query: one row per (host_id, profile_id) or per host_id when profileId set
+	const distinctColumns = profileId ? "host_id" : "host_id, profile_id";
+	const orderByColumns = profileId
+		? "host_id, completed_at DESC"
+		: "host_id, profile_id, completed_at DESC";
+
+	const rows = await prismaClient.$queryRawUnsafe(
+		`
+		SELECT cs.id, cs.host_id, cs.profile_id, cs.completed_at, cs.passed, cs.failed,
+			cs.warnings, cs.skipped, cs.not_applicable, cs.score, cs.total_rules,
+			cp.name AS profile_name, cp.type AS profile_type
+		FROM (
+			SELECT DISTINCT ON (${distinctColumns})
+				id, host_id, profile_id, completed_at, passed, failed, warnings,
+				skipped, not_applicable, score, total_rules
+			FROM compliance_scans
+			WHERE status = 'completed'
+			${profileId ? "AND profile_id = $1" : ""}
+			ORDER BY ${orderByColumns}
+		) cs
+		LEFT JOIN compliance_profiles cp ON cp.id = cs.profile_id
+		`,
+		...(profileId ? [profileId] : []),
+	);
+
+	// Map to shape expected by callers (compliance_profiles: { name, type })
+	return rows.map((r) => ({
+		id: r.id,
+		host_id: r.host_id,
+		profile_id: r.profile_id,
+		completed_at: r.completed_at,
+		passed: r.passed,
+		failed: r.failed,
+		warnings: r.warnings,
+		skipped: r.skipped,
+		not_applicable: r.not_applicable,
+		score: r.score,
+		total_rules: r.total_rules,
+		compliance_profiles: {
+			name: r.profile_name,
+			type: r.profile_type,
+		},
+	}));
 }
 
 // ==========================================
@@ -723,6 +744,11 @@ router.get("/dashboard", async (_req, res) => {
 			}
 		}
 
+		// Count total hosts with compliance enabled
+		const hosts_with_compliance_enabled = allHostsRows.filter(
+			(h) => h.compliance_enabled === true,
+		).length;
+
 		// For backwards compatibility, keep the old field names as scan counts
 		const compliant = scans_compliant;
 		const warning = scans_warning;
@@ -1030,6 +1056,7 @@ router.get("/dashboard", async (_req, res) => {
 				hosts_warning,
 				hosts_critical,
 				unscanned,
+				hosts_with_compliance_enabled,
 				// Host status breakdown by scan type (which scan type caused the status)
 				host_status_by_scan_type: hostStatusByScanType,
 				// Scan-level counts (for backwards compatibility)
@@ -1517,17 +1544,13 @@ router.get("/results/:scanId", async (req, res) => {
 
 		const baseWhere = { scan_id: scanId };
 
-		const [results, total, statusCounts, severityRows] = await Promise.all([
+		const [all_results, statusCounts, severityRows] = await Promise.all([
 			prisma.compliance_results.findMany({
 				where,
 				include: {
 					compliance_rules: true,
 				},
-				orderBy: [{ status: "asc" }],
-				take: limit,
-				skip: offset,
 			}),
-			prisma.compliance_results.count({ where }),
 			offset === 0
 				? prisma.compliance_results.groupBy({
 						by: ["status"],
@@ -1556,6 +1579,13 @@ router.get("/results/:scanId", async (req, res) => {
 					})()
 				: Promise.resolve([]),
 		]);
+
+		// Order: Failed first, then Warning, then Passed, then N/A/skip/error
+		all_results.sort(
+			(a, b) => status_rank_for_sort(a.status) - status_rank_for_sort(b.status),
+		);
+		const total = all_results.length;
+		const results = all_results.slice(offset, offset + limit);
 
 		const payload = {
 			results,
@@ -1813,20 +1843,13 @@ router.post("/trigger/:hostId", async (req, res) => {
 			return res.status(404).json({ error: "Host not found" });
 		}
 
-		// Use agentWs service to send compliance scan trigger
-		if (!agentWs.isConnected(host.api_id)) {
-			return res.status(400).json({ error: "Host is not connected" });
-		}
-
-		// Build scan options
-		const scanOptions = {
-			profileId: profile_id,
-			enableRemediation: Boolean(enable_remediation),
-			fetchRemoteResources: Boolean(fetch_remote_resources),
-		};
-
-		// Handle Docker image CVE scanning separately
+		// Docker image CVE scan: must be connected, no queue
 		if (profile_type === "oscap-docker") {
+			if (!agentWs.isConnected(host.api_id)) {
+				return res.status(400).json({
+					error: "Docker image CVE scan requires the agent to be connected.",
+				});
+			}
 			const dockerScanOptions = {
 				imageName: image_name || null,
 				scanAllImages: Boolean(scan_all_images),
@@ -1843,99 +1866,79 @@ router.post("/trigger/:hostId", async (req, res) => {
 					scan_all_images: Boolean(scan_all_images),
 					image_name: image_name || null,
 				});
-			} else {
-				return res
-					.status(400)
-					.json({ error: "Failed to send Docker image scan trigger" });
 			}
+			return res
+				.status(400)
+				.json({ error: "Failed to send Docker image scan trigger" });
 		}
 
-		// Use the dedicated pushComplianceScan function with options
-		const success = agentWs.pushComplianceScan(
-			host.api_id,
-			profile_type,
-			scanOptions,
-		);
-
-		if (success) {
-			// Create "running" scan records for tracking
-			const profilesToUse = [];
-			if (profile_type === "all" || profile_type === "openscap") {
-				let oscapProfile = await prisma.compliance_profiles.findFirst({
-					where: { type: "openscap" },
-					orderBy: { name: "asc" },
-				});
-				if (!oscapProfile) {
-					oscapProfile = await prisma.compliance_profiles.create({
-						data: {
-							id: uuidv4(),
-							name: "OpenSCAP Scan",
-							type: "openscap",
-						},
+		// All other scans (all, openscap, docker-bench): always go through BullMQ so we always have a job_id
+		const queue = queueManager.queues[QUEUE_NAMES.COMPLIANCE];
+		if (!queue) {
+			logger.error("[Compliance] Compliance queue not initialized");
+			return res.status(503).json({
+				error: "Scan queue is not available. Please try again later.",
+			});
+		}
+		const job_id = `${COMPLIANCE_SCAN_JOB_ID_PREFIX}${hostId}`;
+		try {
+			const existing = await queue.getJob(job_id);
+			if (existing) {
+				const state = await existing.getState();
+				if (state === "waiting" || state === "delayed") {
+					return res.json({
+						message: "Scan already queued for this host",
+						host_id: hostId,
+						queued: true,
+						already_queued: true,
+						job_id: existing.id,
 					});
 				}
-				profilesToUse.push(oscapProfile);
+				// Completed/failed: remove so we can add a fresh job (max 1 per host)
+				await existing.remove().catch(() => {});
 			}
-			if (profile_type === "all" || profile_type === "docker-bench") {
-				let dockerProfile = await prisma.compliance_profiles.findFirst({
-					where: { type: "docker-bench" },
-					orderBy: { name: "asc" },
-				});
-				if (!dockerProfile) {
-					dockerProfile = await prisma.compliance_profiles.create({
-						data: {
-							id: uuidv4(),
-							name: "Docker Bench Security",
-							type: "docker-bench",
-						},
-					});
-				}
-				profilesToUse.push(dockerProfile);
-			}
-
-			logger.info(
-				`[Compliance] Creating ${profilesToUse.length} running scan records for host ${hostId}`,
+			const job = await queue.add(
+				"run_scan",
+				{
+					type: "run_scan",
+					hostId,
+					api_id: host.api_id,
+					profile_type,
+					profile_id: profile_id || null,
+					enable_remediation: Boolean(enable_remediation),
+					fetch_remote_resources: Boolean(fetch_remote_resources),
+				},
+				{
+					jobId: job_id,
+					attempts: 1,
+					backoff: {
+						type: "fixed",
+						delay: COMPLIANCE_SCAN_QUEUE_RETRY_DELAY_MS,
+					},
+				},
 			);
-
-			for (const profile of profilesToUse) {
-				try {
-					const runningScan = await prisma.compliance_scans.create({
-						data: {
-							id: uuidv4(),
-							host_id: hostId,
-							profile_id: profile.id,
-							started_at: new Date(),
-							completed_at: null,
-							status: "running",
-							total_rules: 0,
-							passed: 0,
-							failed: 0,
-							warnings: 0,
-							skipped: 0,
-							not_applicable: 0,
-							score: null,
-						},
-					});
-					logger.info(
-						`[Compliance] Created running scan record: ${runningScan.id} for profile ${profile.name}`,
-					);
-				} catch (err) {
-					logger.warn(
-						`[Compliance] Could not create running scan record: ${err.message}`,
-					);
-				}
-			}
-
-			res.json({
-				message: enable_remediation
-					? "Compliance scan with remediation triggered"
-					: "Compliance scan triggered",
+			const connected = agentWs.isConnected(host.api_id);
+			const safe_host_id = String(hostId).replace(/\r|\n/g, "");
+			logger.info(
+				`[Compliance] Scan queued for host ${safe_host_id}; job_id=${job.id} agent_connected=${connected}`,
+			);
+			return res.json({
+				message: connected
+					? enable_remediation
+						? "Compliance scan with remediation triggered"
+						: "Compliance scan triggered"
+					: "Scan queued; will run when agent is online",
 				host_id: hostId,
+				queued: true,
+				job_id: job.id,
 				profile_type,
 				enable_remediation,
 			});
-		} else {
-			res.status(400).json({ error: "Failed to send scan trigger" });
+		} catch (err) {
+			logger.error("[Compliance] Error queuing scan:", err);
+			return res.status(500).json({
+				error: "Failed to queue scan. Please try again.",
+			});
 		}
 	} catch (error) {
 		logger.error("[Compliance] Error triggering scan:", error);

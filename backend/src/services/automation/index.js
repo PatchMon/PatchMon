@@ -1,4 +1,4 @@
-const { Queue, Worker } = require("bullmq");
+const { Queue, Worker, DelayedError } = require("bullmq");
 const logger = require("../../utils/logger");
 const { redis, redisConnection } = require("./shared/redis");
 const { prisma } = require("./shared/prisma");
@@ -416,11 +416,168 @@ class QueueManager {
 			workerOptions,
 		);
 
-		// Compliance Worker (install compliance tools on agent)
+		// Compliance Worker (install compliance tools + run_scan when agent offline)
+		const COMPLIANCE_SCAN_RETRY_DELAY_MS = 60 * 1000; // 1 min
 		this.workers[QUEUE_NAMES.COMPLIANCE] = new Worker(
 			QUEUE_NAMES.COMPLIANCE,
-			async (job) => {
+			async (job, token) => {
 				const { hostId, api_id, type } = job.data;
+
+				if (type === "run_scan") {
+					const {
+						profile_type = "all",
+						profile_id,
+						enable_remediation,
+						fetch_remote_resources,
+					} = job.data;
+
+					// Create job_history record so the Agent Queue tab can track this job
+					let historyRecord = null;
+					try {
+						historyRecord = await prisma.job_history.create({
+							data: {
+								id: uuidv4(),
+								job_id: job.id,
+								queue_name: QUEUE_NAMES.COMPLIANCE,
+								job_name: "run_scan",
+								host_id: hostId,
+								api_id: api_id,
+								status: "active",
+								attempt_number: job.attemptsMade + 1,
+								created_at: get_current_time(),
+								updated_at: get_current_time(),
+							},
+						});
+					} catch (err) {
+						logger.error(
+							"[Compliance] run_scan: failed to create job_history:",
+							err,
+						);
+					}
+
+					if (!agentWs.isConnected(api_id)) {
+						logger.info(
+							`[Compliance] run_scan: agent ${api_id} offline, re-queuing in ${COMPLIANCE_SCAN_RETRY_DELAY_MS / 1000}s`,
+						);
+						if (historyRecord) {
+							await prisma.job_history
+								.updateMany({
+									where: { job_id: job.id },
+									data: { status: "delayed", updated_at: get_current_time() },
+								})
+								.catch(() => {});
+						}
+						await job.moveToDelayed(
+							Date.now() + COMPLIANCE_SCAN_RETRY_DELAY_MS,
+							token,
+						);
+						throw new DelayedError();
+					}
+					const scanOptions = {
+						profileId: profile_id || null,
+						enableRemediation: Boolean(enable_remediation),
+						fetchRemoteResources: Boolean(fetch_remote_resources),
+					};
+					const sent = agentWs.pushComplianceScan(
+						api_id,
+						profile_type,
+						scanOptions,
+					);
+					if (!sent) {
+						if (historyRecord) {
+							await prisma.job_history
+								.updateMany({
+									where: { job_id: job.id },
+									data: { status: "delayed", updated_at: get_current_time() },
+								})
+								.catch(() => {});
+						}
+						await job.moveToDelayed(
+							Date.now() + COMPLIANCE_SCAN_RETRY_DELAY_MS,
+							token,
+						);
+						throw new DelayedError();
+					}
+					// Create "running" scan records for UI
+					const profilesToUse = [];
+					if (profile_type === "all" || profile_type === "openscap") {
+						let oscapProfile = await prisma.compliance_profiles.findFirst({
+							where: { type: "openscap" },
+							orderBy: { name: "asc" },
+						});
+						if (!oscapProfile) {
+							oscapProfile = await prisma.compliance_profiles.create({
+								data: {
+									id: uuidv4(),
+									name: "OpenSCAP Scan",
+									type: "openscap",
+								},
+							});
+						}
+						profilesToUse.push(oscapProfile);
+					}
+					if (profile_type === "all" || profile_type === "docker-bench") {
+						let dockerProfile = await prisma.compliance_profiles.findFirst({
+							where: { type: "docker-bench" },
+							orderBy: { name: "asc" },
+						});
+						if (!dockerProfile) {
+							dockerProfile = await prisma.compliance_profiles.create({
+								data: {
+									id: uuidv4(),
+									name: "Docker Bench Security",
+									type: "docker-bench",
+								},
+							});
+						}
+						profilesToUse.push(dockerProfile);
+					}
+					for (const profile of profilesToUse) {
+						try {
+							await prisma.compliance_scans.create({
+								data: {
+									id: uuidv4(),
+									host_id: hostId,
+									profile_id: profile.id,
+									started_at: new Date(),
+									completed_at: null,
+									status: "running",
+									total_rules: 0,
+									passed: 0,
+									failed: 0,
+									warnings: 0,
+									skipped: 0,
+									not_applicable: 0,
+									score: null,
+								},
+							});
+						} catch (err) {
+							logger.warn(
+								`[Compliance] run_scan: could not create running record: ${err.message}`,
+							);
+						}
+					}
+
+					// Mark job_history as completed
+					if (historyRecord) {
+						await prisma.job_history
+							.updateMany({
+								where: { job_id: job.id },
+								data: {
+									status: "completed",
+									completed_at: get_current_time(),
+									updated_at: get_current_time(),
+								},
+							})
+							.catch(() => {});
+					}
+
+					logger.info(
+						`[Compliance] run_scan: triggered for host ${hostId} (agent online)`,
+					);
+					return;
+				}
+
 				if (type !== "install_compliance_tools") {
 					logger.warn(`[Compliance] Unknown job type: ${type}`);
 					return;
@@ -718,35 +875,56 @@ class QueueManager {
 	 * Get jobs for a specific host (by API ID)
 	 */
 	async getHostJobs(apiId, limit = 20) {
-		const queue = this.queues[QUEUE_NAMES.AGENT_COMMANDS];
-		if (!queue) {
-			throw new Error(`Queue ${QUEUE_NAMES.AGENT_COMMANDS} not found`);
-		}
+		// Collect jobs from all queues that carry host-specific work
+		const queue_names_to_check = [
+			QUEUE_NAMES.AGENT_COMMANDS,
+			QUEUE_NAMES.COMPLIANCE,
+		];
 
-		logger.info(`[getHostJobs] Looking for jobs with api_id: ${apiId}`);
-
-		// Get active queue status (waiting, active, delayed, failed)
-		const [waiting, active, delayed, failed] = await Promise.all([
-			queue.getWaiting(),
-			queue.getActive(),
-			queue.getDelayed(),
-			queue.getFailed(),
-		]);
-
-		// Filter by API ID
 		const filterByApiId = (jobs) =>
 			jobs.filter((job) => job.data && job.data.api_id === apiId);
 
-		const waitingCount = filterByApiId(waiting).length;
-		const activeCount = filterByApiId(active).length;
-		const delayedCount = filterByApiId(delayed).length;
-		const failedCount = filterByApiId(failed).length;
+		let waitingCount = 0;
+		let activeCount = 0;
+		let delayedCount = 0;
+		let failedCount = 0;
 
-		logger.info(
-			`[getHostJobs] Queue status - Waiting: ${waitingCount}, Active: ${activeCount}, Delayed: ${delayedCount}, Failed: ${failedCount}`,
-		);
+		// Collect live BullMQ jobs for this host (across all queues)
+		const liveJobs = [];
 
-		// Get job history from database (shows all attempts and status changes)
+		for (const qn of queue_names_to_check) {
+			const q = this.queues[qn];
+			if (!q) continue;
+			const [waiting, active, delayed, failed, completed] = await Promise.all([
+				q.getWaiting(),
+				q.getActive(),
+				q.getDelayed(),
+				q.getFailed(),
+				q.getCompleted(0, limit - 1),
+			]);
+			const hostWaiting = filterByApiId(waiting);
+			const hostActive = filterByApiId(active);
+			const hostDelayed = filterByApiId(delayed);
+			const hostFailed = filterByApiId(failed);
+			const hostCompleted = filterByApiId(completed);
+			waitingCount += hostWaiting.length;
+			activeCount += hostActive.length;
+			delayedCount += hostDelayed.length;
+			failedCount += hostFailed.length;
+
+			for (const j of hostWaiting)
+				liveJobs.push({ job: j, state: "waiting", queue: qn });
+			for (const j of hostActive)
+				liveJobs.push({ job: j, state: "active", queue: qn });
+			for (const j of hostDelayed)
+				liveJobs.push({ job: j, state: "delayed", queue: qn });
+			for (const j of hostFailed)
+				liveJobs.push({ job: j, state: "failed", queue: qn });
+			for (const j of hostCompleted)
+				liveJobs.push({ job: j, state: "completed", queue: qn });
+		}
+
+		// Get job history from database (shows completed attempts and status changes)
 		const jobHistory = await prisma.job_history.findMany({
 			where: {
 				api_id: apiId,
@@ -757,19 +935,16 @@ class QueueManager {
 			take: limit,
 		});
 
-		logger.info(
-			`[getHostJobs] Found ${jobHistory.length} job history records for api_id: ${apiId}`,
-		);
-
-		return {
-			waiting: waitingCount,
-			active: activeCount,
-			delayed: delayedCount,
-			failed: failedCount,
-			jobHistory: jobHistory.map((job) => ({
+		// Merge live BullMQ jobs with DB history; live jobs first, then history.
+		// Avoid duplicates: if a live job's id matches a history record's job_id, skip the history one.
+		const liveJobIds = new Set(liveJobs.map((l) => l.job.id));
+		const historyRows = jobHistory
+			.filter((h) => !liveJobIds.has(h.job_id))
+			.map((job) => ({
 				id: job.id,
 				job_id: job.job_id,
 				job_name: job.job_name,
+				queue_name: job.queue_name || null,
 				status: job.status,
 				attempt_number: job.attempt_number,
 				error_message: job.error_message,
@@ -777,7 +952,30 @@ class QueueManager {
 				created_at: job.created_at,
 				updated_at: job.updated_at,
 				completed_at: job.completed_at,
-			})),
+			}));
+
+		const liveRows = liveJobs.map((l) => ({
+			id: l.job.id,
+			job_id: l.job.id,
+			job_name: l.job.name || l.job.data?.type || "unknown",
+			queue_name: l.queue,
+			status: l.state,
+			attempt_number: (l.job.attemptsMade || 0) + 1,
+			error_message: l.job.failedReason || null,
+			output: null,
+			created_at: l.job.timestamp ? new Date(l.job.timestamp) : null,
+			updated_at: null,
+			completed_at: l.job.finishedOn ? new Date(l.job.finishedOn) : null,
+		}));
+
+		const merged = [...liveRows, ...historyRows].slice(0, limit);
+
+		return {
+			waiting: waitingCount,
+			active: activeCount,
+			delayed: delayedCount,
+			failed: failedCount,
+			jobHistory: merged,
 		};
 	}
 

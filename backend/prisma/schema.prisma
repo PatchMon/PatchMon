@@ -14,11 +14,20 @@ model dashboard_preferences {
   card_id    String
   enabled    Boolean  @default(true)
   order      Int      @default(0)
+  col_span   Int      @default(1)
   created_at DateTime @default(now())
   updated_at DateTime
   users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@unique([user_id, card_id])
+}
+
+model dashboard_layout {
+  user_id        String   @id
+  stats_columns  Int      @default(5)
+  charts_columns Int      @default(3)
+  updated_at     DateTime
+  users          users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
 }
 
 model host_groups {
@@ -292,6 +301,7 @@ model users {
   discord_avatar            String?
   discord_linked_at         DateTime?
   dashboard_preferences     dashboard_preferences[]
+  dashboard_layout          dashboard_layout?
   user_sessions             user_sessions[]
   auto_enrollment_tokens    auto_enrollment_tokens[]
   release_notes_acceptances release_notes_acceptances[]
@@ -301,6 +311,7 @@ model users {
   alert_config_auto_assign  alert_config[]           @relation("AlertConfigAutoAssign")
 
   @@index([role])
+  @@index([last_login])
 }
 
 model user_sessions {

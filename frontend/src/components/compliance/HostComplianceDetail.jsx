@@ -98,6 +98,7 @@ const HostComplianceDetail = ({ hostId }) => {
 
 	const passed = latest_scan?.passed ?? 0;
 	const failed = latest_scan?.failed ?? 0;
+	const warnings_count = latest_scan?.warnings ?? 0;
 	const na_count =
 		(latest_scan?.skipped ?? 0) + (latest_scan?.not_applicable ?? 0);
 	const completed_at = latest_scan?.completed_at
@@ -117,8 +118,8 @@ const HostComplianceDetail = ({ hostId }) => {
 
 	return (
 		<div className="space-y-6">
-			{/* 4 summary cards — click to filter the rule results table below */}
-			<div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+			{/* 5 summary cards — click to filter the rule results table below */}
+			<div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
 				<button
 					type="button"
 					onClick={() => {
@@ -161,6 +162,29 @@ const HostComplianceDetail = ({ hostId }) => {
 							</p>
 							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
 								{failed}
+							</p>
+						</div>
+					</div>
+				</button>
+				<button
+					type="button"
+					onClick={() => {
+						set_status_filter(status_filter === "warn" ? "" : "warn");
+						set_page(0);
+					}}
+					className={`card p-4 text-left transition-shadow ${status_filter === "warn" ? "ring-2 ring-yellow-500" : "hover:ring-2 hover:ring-yellow-500/40"}`}
+					title="Filter to warning rules"
+				>
+					<div className="flex items-center">
+						<div className="flex-shrink-0">
+							<ShieldAlert className="h-5 w-5 text-yellow-600 mr-2" />
+						</div>
+						<div className="w-0 flex-1">
+							<p className="text-sm text-secondary-500 dark:text-white">
+								Warning
+							</p>
+							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+								{warnings_count}
 							</p>
 						</div>
 					</div>

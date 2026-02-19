@@ -40,11 +40,11 @@ const HostComplianceStatusBar = ({ data }) => {
 	];
 
 	return (
-		<div className="card p-4 sm:p-6 w-full">
-			<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+		<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+			<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex-shrink-0">
 				Host Compliance Status
 			</h3>
-			<div className="grid grid-cols-2 gap-3">
+			<div className="grid grid-cols-2 gap-3 flex-1 min-h-0">
 				{boxes.map((box) => {
 					const Icon = box.Icon;
 					return (

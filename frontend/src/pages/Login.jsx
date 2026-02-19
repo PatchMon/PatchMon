@@ -270,7 +270,7 @@ const Login = () => {
 			sessionStorage.removeItem("explicit_logout");
 			window.location.href = "/";
 		}
-	}, []);
+	}, [oidcProcessed]);
 
 	// Fetch latest release and social media stats
 	useEffect(() => {
