@@ -745,6 +745,12 @@ function pushComplianceScan(apiId, profileType = "all", options = {}) {
 			profile_id: options.profileId || null,
 			enable_remediation: options.enableRemediation || false,
 			fetch_remote_resources: options.fetchRemoteResources || false,
+			openscap_enabled:
+				options.openscapEnabled !== undefined ? options.openscapEnabled : true,
+			docker_bench_enabled:
+				options.dockerBenchEnabled !== undefined
+					? options.dockerBenchEnabled
+					: true,
 		};
 		safeSend(ws, JSON.stringify(payload));
 		const remediationStatus = options.enableRemediation

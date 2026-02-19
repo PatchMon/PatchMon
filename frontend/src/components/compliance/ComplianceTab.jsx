@@ -5,6 +5,7 @@ import {
 	BookOpen,
 	Box,
 	CheckCircle,
+	CheckCircle2,
 	ChevronDown,
 	ChevronLeft,
 	ChevronRight,
@@ -17,6 +18,7 @@ import {
 	Info,
 	Layers,
 	ListChecks,
+	Loader2,
 	MinusCircle,
 	Package,
 	Play,
@@ -25,6 +27,7 @@ import {
 	Server,
 	Settings,
 	Shield,
+	SkipForward,
 	Square,
 	ToggleLeft,
 	ToggleRight,
@@ -72,6 +75,15 @@ const SUBTABS = [
 	{ id: "settings", name: "Settings", icon: Settings },
 ];
 
+// Ordered steps for compliance scanner installation (match agent step ids)
+const INSTALL_CHECKLIST_STEPS = [
+	{ id: "detect_os", label: "Detect operating system" },
+	{ id: "install_openscap", label: "Install OpenSCAP packages" },
+	{ id: "verify_openscap", label: "Verify installation and SSG content" },
+	{ id: "docker_bench", label: "Docker Bench (optional)" },
+	{ id: "complete", label: "Complete" },
+];
+
 const ComplianceTab = ({
 	hostId,
 	apiId,
@@ -94,8 +106,47 @@ const ComplianceTab = ({
 	const [groupBySection, setGroupBySection] = useState(false); // Group results by CIS section
 	const [expandedSections, setExpandedSections] = useState({}); // Track which sections are expanded
 	const [profileTypeFilter, setProfileTypeFilter] = useState(null); // Filter by profile type (null = show latest overall)
-	const resultsPerPage = 25; // Number of results per page
+	const resultsPerPage = 25;
 	const _queryClient = useQueryClient();
+
+	// Scanner type toggles (OpenSCAP / Docker Bench individually)
+	const [scannerToggles, setScannerToggles] = useState({
+		openscap: true,
+		docker_bench: false,
+	});
+
+	const {
+		data: integrationsForToggles,
+		refetch: refetchIntegrationsForToggles,
+	} = useQuery({
+		queryKey: ["host-integrations-scanners", hostId],
+		queryFn: () =>
+			complianceAPI.getHostIntegrations(hostId).then((res) => res.data),
+		enabled: !!hostId,
+		staleTime: 60 * 1000,
+	});
+
+	useEffect(() => {
+		if (integrationsForToggles) {
+			setScannerToggles({
+				openscap:
+					integrationsForToggles.data?.compliance_openscap_enabled ??
+					integrationsForToggles.compliance_openscap_enabled ??
+					true,
+				docker_bench:
+					integrationsForToggles.data?.compliance_docker_bench_enabled ??
+					integrationsForToggles.compliance_docker_bench_enabled ??
+					false,
+			});
+		}
+	}, [integrationsForToggles]);
+
+	const scannerToggleMutation = useMutation({
+		mutationFn: (settings) => complianceAPI.setScannerToggles(hostId, settings),
+		onSuccess: () => {
+			refetchIntegrationsForToggles();
+		},
+	});
 
 	// Persist scan state in sessionStorage to survive tab switches
 	const scanStateKey = `compliance-scan-${hostId}`;
@@ -240,8 +291,12 @@ const ComplianceTab = ({
 		queryFn: () =>
 			complianceAPI.getIntegrationStatus(hostId).then((res) => res.data),
 		enabled: !!hostId,
-		staleTime: 5 * 60 * 1000, // 5 min - rely on invalidation after scan trigger/completion
-		refetchInterval: 5 * 60 * 1000, // 5 min instead of 30s to reduce API load
+		staleTime: 5 * 60 * 1000,
+		refetchInterval: (query) => {
+			const st = query.state?.data?.status?.status;
+			if (st === "installing" || st === "removing") return 2000;
+			return 5 * 60 * 1000;
+		},
 		refetchOnWindowFocus: false,
 	});
 
@@ -364,8 +419,12 @@ const ComplianceTab = ({
 		mutationFn: () => complianceAPI.installScanner(hostId),
 		onSuccess: () => {
 			refetchStatus();
+			refetchInstallJob();
 			// Poll status while agent is installing (agent sends "installing" then "ready")
-			const interval = setInterval(() => refetchStatus(), 2500);
+			const interval = setInterval(() => {
+				refetchStatus();
+				refetchInstallJob();
+			}, 2500);
 			setTimeout(() => clearInterval(interval), 90000);
 		},
 		onError: (error) => {
@@ -373,6 +432,22 @@ const ComplianceTab = ({
 				error.response?.data?.error || "Failed to send install command";
 			setSSGUpgradeMessage({ type: "error", text: msg });
 			setTimeout(() => setSSGUpgradeMessage(null), 6000);
+		},
+	});
+
+	// Install job status (progress + install_events) — keep polling while job is active so checklist stays visible
+	const integration_status = integrationStatus?.status?.status;
+	const { data: installJobData, refetch: refetchInstallJob } = useQuery({
+		queryKey: ["compliance-install-job", hostId],
+		queryFn: () => complianceAPI.getInstallJobStatus(hostId),
+		enabled: !!hostId,
+		staleTime: 0,
+		refetchInterval: (query) => {
+			const job = query.state?.data;
+			const job_in_progress =
+				job?.status === "active" || job?.status === "waiting";
+			if (integration_status === "installing" || job_in_progress) return 2000;
+			return false;
 		},
 	});
 
@@ -3471,6 +3546,59 @@ const ComplianceTab = ({
 					</div>
 				)}
 
+				{/* Scanner Type Toggles */}
+				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
+					<h3 className="text-lg font-medium text-white flex items-center gap-2 mb-4">
+						<Settings className="h-5 w-5 text-primary-400" />
+						Scanner Types
+					</h3>
+					<div className="space-y-3">
+						<label className="flex items-center justify-between gap-3 p-3 rounded-lg bg-secondary-700/40 cursor-pointer">
+							<div>
+								<span className="text-sm font-medium text-white">OpenSCAP</span>
+								<p className="text-xs text-secondary-400 mt-0.5">
+									CIS Benchmarks, STIG, and other SCAP-based compliance checks
+								</p>
+							</div>
+							<input
+								type="checkbox"
+								checked={scannerToggles.openscap}
+								onChange={(e) => {
+									const val = e.target.checked;
+									setScannerToggles((prev) => ({ ...prev, openscap: val }));
+									scannerToggleMutation.mutate({ openscap_enabled: val });
+								}}
+								className="h-5 w-5 rounded border-secondary-500 text-primary-600 focus:ring-primary-500 bg-secondary-700"
+							/>
+						</label>
+						<label
+							className={`flex items-center justify-between gap-3 p-3 rounded-lg bg-secondary-700/40 ${!dockerEnabled ? "opacity-60" : "cursor-pointer"}`}
+						>
+							<div>
+								<span className="text-sm font-medium text-white">
+									Docker Bench
+								</span>
+								<p className="text-xs text-secondary-400 mt-0.5">
+									CIS Docker Benchmark security checks
+									{!dockerEnabled &&
+										" — requires Docker integration to be enabled"}
+								</p>
+							</div>
+							<input
+								type="checkbox"
+								checked={scannerToggles.docker_bench}
+								disabled={!dockerEnabled}
+								onChange={(e) => {
+									const val = e.target.checked;
+									setScannerToggles((prev) => ({ ...prev, docker_bench: val }));
+									scannerToggleMutation.mutate({ docker_bench_enabled: val });
+								}}
+								className="h-5 w-5 rounded border-secondary-500 text-primary-600 focus:ring-primary-500 bg-secondary-700 disabled:opacity-40"
+							/>
+						</label>
+					</div>
+				</div>
+
 				{/* Scanner Status */}
 				<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
 					<div className="flex items-center justify-between mb-4">
@@ -4070,11 +4198,37 @@ const ComplianceTab = ({
 		scanner_info?.openscap_version;
 	const status_installing = status?.status === "installing";
 	const status_ready = status?.status === "ready";
+	const install_job_in_progress =
+		installJobData?.status === "active" || installJobData?.status === "waiting";
+	const show_install_progress = status_installing || install_job_in_progress;
 	const show_install_button =
 		!openscap_ready &&
 		isConnected &&
 		!installScannerMutation.isPending &&
-		!status_installing;
+		!status_installing &&
+		!install_job_in_progress;
+
+	// Prefer install-job events when in progress (worker merges from Redis); fallback to status.install_events
+	const install_events =
+		(show_install_progress &&
+			((installJobData?.install_events?.length > 0 &&
+				installJobData.install_events) ||
+				status?.install_events)) ||
+		[];
+	// Build checklist: for each predefined step, find latest event by step id and derive display state
+	const install_checklist_steps = INSTALL_CHECKLIST_STEPS.map(
+		({ id, label }) => {
+			const evt = install_events.filter((e) => e.step === id).pop();
+			const step_status = evt?.status || "pending";
+			return {
+				id,
+				label,
+				status: step_status,
+				message:
+					evt?.message ?? (step_status === "pending" ? "Waiting…" : null),
+			};
+		},
+	);
 
 	return (
 		<div className="space-y-4">
@@ -4089,14 +4243,14 @@ const ComplianceTab = ({
 								className={`capitalize ${
 									status_ready || openscap_ready
 										? "text-green-400"
-										: status_installing
+										: show_install_progress
 											? "text-blue-400"
 											: status?.status === "error"
 												? "text-red-400"
 												: "text-secondary-400"
 								}`}
 							>
-								{status_installing
+								{show_install_progress
 									? "Installing…"
 									: status_ready || openscap_ready
 										? "Ready"
@@ -4125,12 +4279,68 @@ const ComplianceTab = ({
 							Install scanner
 						</button>
 					)}
-					{status_installing && (
+					{show_install_progress && install_events.length === 0 && (
 						<span className="text-sm text-blue-400">
-							Installing OpenSCAP and updating SSG content…
+							Starting installation…
 						</span>
 					)}
 				</div>
+				{/* Installation progress checklist — visible for full install (status or job in progress) */}
+				{show_install_progress && (
+					<div className="mt-4 pt-4 border-t border-secondary-700">
+						<p className="text-sm font-medium text-secondary-200 mb-3">
+							Installation progress
+						</p>
+						<ul className="space-y-2">
+							{install_checklist_steps.map((step) => (
+								<li key={step.id} className="flex items-center gap-3 text-sm">
+									{step.status === "done" && (
+										<CheckCircle2 className="h-4 w-4 text-green-400 flex-shrink-0" />
+									)}
+									{step.status === "in_progress" && (
+										<Loader2 className="h-4 w-4 text-blue-400 animate-spin flex-shrink-0" />
+									)}
+									{step.status === "failed" && (
+										<XCircle className="h-4 w-4 text-red-400 flex-shrink-0" />
+									)}
+									{step.status === "skipped" && (
+										<SkipForward className="h-4 w-4 text-secondary-400 flex-shrink-0" />
+									)}
+									{step.status === "pending" && (
+										<div className="h-4 w-4 rounded-full border-2 border-secondary-500 flex-shrink-0" />
+									)}
+									<div className="flex-1 min-w-0">
+										<span
+											className={
+												step.status === "done"
+													? "text-green-400"
+													: step.status === "in_progress"
+														? "text-blue-400"
+														: step.status === "failed"
+															? "text-red-400"
+															: step.status === "skipped"
+																? "text-secondary-400"
+																: "text-secondary-500"
+											}
+										>
+											{step.label}
+										</span>
+										{step.message && step.status !== "pending" && (
+											<span className="text-secondary-500 ml-1.5 text-xs">
+												— {step.message}
+											</span>
+										)}
+										{step.status === "pending" && (
+											<span className="text-secondary-500 ml-1.5 text-xs">
+												{step.message}
+											</span>
+										)}
+									</div>
+								</li>
+							))}
+						</ul>
+					</div>
+				)}
 			</div>
 
 			{/* Header */}
