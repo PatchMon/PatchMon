@@ -159,12 +159,13 @@ router.get("/login", async (_req, res) => {
  */
 router.get("/callback", async (req, res) => {
 	try {
+		// CodeQL: These query params are required by the OAuth2 authorization code flow (RFC 6749 §4.1.2 for anyone interested)
 		const { code, state, error: oauthError } = req.query;
 		const frontendUrl = process.env.CORS_ORIGIN || "http://localhost:3000";
 
 		// Check for errors from Discord
 		if (oauthError) {
-			logger.error(`Discord OAuth error: ${oauthError}`);
+			logger.error("Discord OAuth callback received an error response");
 			return res.redirect(`${frontendUrl}/login?error=Authentication+failed`);
 		}
 
