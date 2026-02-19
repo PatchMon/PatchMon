@@ -122,7 +122,10 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const http = require("node:http");
 const server = http.createServer(app);
-const { init: initAgentWs } = require("./services/agentWs");
+const {
+	init: initAgentWs,
+	registerOnAgentConnect,
+} = require("./services/agentWs");
 const agentVersionService = require("./services/agentVersionService");
 
 // Trust proxy (needed when behind reverse proxy) and remove X-Powered-By
@@ -481,10 +484,15 @@ app.use(`/bullboard`, async (req, res, next) => {
 	const crypto = require("node:crypto");
 	const sessionId = crypto.randomBytes(16).toString("hex");
 
-	// Set a secure auth cookie that will persist for the session
+	// Secure cookie only in production and when request is over HTTPS (dev + HTTP Docker work)
+	const is_secure_request =
+		req.secure || req.get("x-forwarded-proto") === "https";
+	const use_secure_cookie =
+		process.env.NODE_ENV === "production" && is_secure_request;
+
 	res.cookie("bull-board-auth", sessionId, {
 		httpOnly: true,
-		secure: process.env.NODE_ENV === "production",
+		secure: use_secure_cookie,
 		maxAge: 3600000, // 1 hour
 		path: "/bullboard",
 		sameSite: "strict",
@@ -967,6 +975,29 @@ async function startServer() {
 
 		// Initialize WS layer with the underlying HTTP server
 		initAgentWs(server, prisma);
+		// When an agent connects, expedite any queued compliance scan for that host (max 1 per host)
+		registerOnAgentConnect(async (apiId) => {
+			try {
+				const host = await prisma.hosts.findUnique({
+					where: { api_id: apiId },
+					select: { id: true },
+				});
+				if (!host) return;
+				const queue = queueManager.queues[QUEUE_NAMES.COMPLIANCE];
+				const jobId = `compliance-scan-${host.id}`;
+				const job = await queue.getJob(jobId);
+				if (!job) return;
+				const state = await job.getState();
+				if (state === "delayed" || state === "waiting") {
+					await job.moveToDelayed(Date.now());
+				}
+			} catch (err) {
+				logger.error(
+					"[agent-ws] Error expediting queued compliance scan:",
+					err,
+				);
+			}
+		});
 		await agentVersionService.initialize();
 
 		// Send metrics on startup (silent - no console output)

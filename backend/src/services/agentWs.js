@@ -39,6 +39,13 @@ const connectionChangeSubscribers = new Map();
 // Map<api_id, Set<callback>>
 const complianceProgressSubscribers = new Map();
 
+// Optional callback when an agent connects (e.g. to expedite queued compliance scans)
+let on_agent_connect_callback = null;
+
+function registerOnAgentConnect(callback) {
+	on_agent_connect_callback = callback;
+}
+
 let wss;
 let prisma;
 
@@ -174,6 +181,13 @@ function init(server, prismaClient) {
 
 				// Notify subscribers of connection
 				notifyConnectionChange(apiId, true);
+
+				// Expedite any queued compliance scan for this host (runs in background)
+				if (on_agent_connect_callback) {
+					on_agent_connect_callback(apiId).catch((err) =>
+						logger.error("[agent-ws] Error in onAgentConnect callback:", err),
+					);
+				}
 
 				// Resolve any existing host_down alerts when host reconnects
 				(async () => {
@@ -1115,4 +1129,6 @@ module.exports = {
 	subscribeToConnectionChanges,
 	// Subscribe to compliance progress updates (for SSE)
 	subscribeToComplianceProgress,
+	// Register callback when agent connects (used to expedite queued compliance scans)
+	registerOnAgentConnect,
 };

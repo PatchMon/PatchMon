@@ -84,6 +84,10 @@ const AgentQueueTab = ({ hostId }) => {
 				return "Report Now";
 			case "update_agent":
 				return "Agent Update";
+			case "run_scan":
+				return "Compliance Scan";
+			case "install_compliance_tools":
+				return "Install Compliance Scanner";
 			default:
 				return type;
 		}

@@ -90,6 +90,7 @@ const HostDetail = () => {
 
 	// Compliance install job (Host Detail Compliance tab): progress and cancel
 	const [complianceInstallJob, setComplianceInstallJob] = useState(null);
+	const [complianceScanFeedback, setComplianceScanFeedback] = useState(null);
 	const complianceInstallPollRef = useRef(null);
 
 	// State for auto-update confirmation dialog
@@ -837,25 +838,33 @@ const HostDetail = () => {
 		},
 	});
 
-	// Run compliance scan now (sends to backend / BullMQ flow)
+	// Run compliance scan now (always goes through BullMQ queue; max 1 per host)
 	const triggerComplianceScanMutation = useMutation({
 		mutationFn: () =>
 			complianceAPI.triggerScan(hostId, { profile_type: "all" }),
-		onSuccess: () => {
+		onSuccess: (response) => {
+			const body = response?.data;
+			const job_id = body?.job_id || "";
+			const msg = body?.message || "Scan triggered";
+			setComplianceScanFeedback({
+				text: job_id ? `${msg} — Job ID: ${job_id}` : msg,
+				isError: false,
+			});
+			safeSetTimeout(() => {
+				if (isMountedRef.current) setComplianceScanFeedback(null);
+			}, 10000);
 			queryClient.invalidateQueries({
 				queryKey: ["compliance-latest", hostId],
 			});
 		},
 		onError: (error) => {
-			setIntegrationRefreshMessage({
+			setComplianceScanFeedback({
 				text: error.response?.data?.error || "Failed to start scan",
 				isError: true,
 			});
 			safeSetTimeout(() => {
-				if (isMountedRef.current) {
-					setIntegrationRefreshMessage({ text: "", isError: false });
-				}
-			}, 5000);
+				if (isMountedRef.current) setComplianceScanFeedback(null);
+			}, 8000);
 		},
 	});
 
@@ -4891,7 +4900,6 @@ const HostDetail = () => {
 													type="button"
 													onClick={() => triggerComplianceScanMutation.mutate()}
 													disabled={
-														!wsStatus?.connected ||
 														triggerComplianceScanMutation.isPending ||
 														(complianceSetupStatus?.status?.status !==
 															"ready" &&
@@ -4903,16 +4911,31 @@ const HostDetail = () => {
 														complianceSetupStatus?.status?.status !== "ready" &&
 														complianceSetupStatus?.status?.status !== "partial"
 															? "Install scanner first"
-															: "Start compliance scan on this host"
+															: wsStatus?.connected
+																? "Start compliance scan on this host"
+																: "Queue scan to run when agent is back online (max 1 per host)"
 													}
 												>
 													<Play className="h-4 w-4" />
 													{triggerComplianceScanMutation.isPending
 														? "Starting…"
-														: "Run scan now"}
+														: wsStatus?.connected
+															? "Run scan now"
+															: "Queue scan for when agent is online"}
 												</button>
 											</div>
 										</div>
+										{complianceScanFeedback && (
+											<div
+												className={`mt-3 px-3 py-2 rounded-lg text-sm ${
+													complianceScanFeedback.isError
+														? "bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-700"
+														: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-700"
+												}`}
+											>
+												{complianceScanFeedback.text}
+											</div>
+										)}
 										{(complianceInstallJob?.status === "active" ||
 											complianceInstallJob?.status === "waiting") && (
 											<div className="mt-3 pt-3 border-t border-secondary-200 dark:border-secondary-600">
