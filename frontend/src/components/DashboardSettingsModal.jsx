@@ -99,7 +99,7 @@ const SortableCardItem = ({ card, onToggle }) => {
 	);
 };
 
-const DEFAULT_LAYOUT = { stats_columns: 5, charts_columns: 3 };
+const DEFAULT_LAYOUT = { stats_columns: 6, charts_columns: 4 };
 
 const DashboardSettingsModal = ({ isOpen, onClose }) => {
 	const [cards, setCards] = useState([]);
@@ -309,8 +309,9 @@ const DashboardSettingsModal = ({ isOpen, onClose }) => {
 		if (defaultCards) {
 			const resetCards = defaultCards.map((card) => ({
 				...card,
-				enabled: true,
+				enabled: card.enabled,
 				order: card.order,
+				col_span: card.col_span ?? 1,
 			}));
 			setCards(resetCards);
 			setHasChanges(true);

@@ -483,7 +483,9 @@ const Dashboard = () => {
 		},
 	});
 
-	// Merge preferences with default cards (normalize snake_case from API)
+	// Merge preferences with default cards (normalize snake_case from API).
+	// The /defaults endpoint now returns col_span per card so the frontend
+	// no longer needs to hardcode fallback spans.
 	useEffect(() => {
 		if (preferences && defaultCards) {
 			const normalizedPreferences = preferences.map((p) => ({
@@ -507,19 +509,16 @@ const Dashboard = () => {
 						col_span:
 							userPreference?.col_span != null
 								? Math.min(3, Math.max(1, Number(userPreference.col_span)))
-								: defaultCard.cardId === "quickStats"
-									? 2
-									: 1,
+								: Math.min(3, Math.max(1, Number(defaultCard.col_span ?? 1))),
 					};
 				})
 				.sort((a, b) => a.order - b.order);
 
 			setCardPreferences(mergedCards);
 		} else if (defaultCards) {
-			// If no preferences exist, use defaults (quickStats defaults to 2 columns)
 			const with_default_col_span = defaultCards.map((c) => ({
 				...c,
-				col_span: c.cardId === "quickStats" ? 2 : (c.col_span ?? 1),
+				col_span: Math.min(3, Math.max(1, Number(c.col_span ?? 1))),
 			}));
 			setCardPreferences(
 				with_default_col_span.sort((a, b) => a.order - b.order),
@@ -614,6 +613,22 @@ const Dashboard = () => {
 		set_edit_mode_layout(null);
 	}, []);
 
+	// Reset edit-mode state to the curated defaults from the server
+	const handle_edit_mode_reset = useCallback(() => {
+		if (!defaultCards) return;
+		set_edit_mode_order(
+			defaultCards
+				.map((c) => ({
+					cardId: c.cardId,
+					enabled: c.enabled,
+					order: c.order,
+					col_span: Math.min(3, Math.max(1, Number(c.col_span ?? 1))),
+				}))
+				.sort((a, b) => a.order - b.order),
+		);
+		set_edit_mode_layout({ stats_columns: 6, charts_columns: 4 });
+	}, [defaultCards]);
+
 	// Enter rearrange-cards (edit) mode: used by settings icon and openDashboardSettings event
 	const handle_enter_edit_mode = useCallback(() => {
 		set_edit_mode_order(
@@ -625,8 +640,8 @@ const Dashboard = () => {
 			})),
 		);
 		set_edit_mode_layout({
-			stats_columns: dashboard_layout?.stats_columns ?? 5,
-			charts_columns: dashboard_layout?.charts_columns ?? 3,
+			stats_columns: dashboard_layout?.stats_columns ?? 6,
+			charts_columns: dashboard_layout?.charts_columns ?? 4,
 		});
 		set_dashboard_edit_mode(true);
 	}, [cardPreferences, dashboard_layout]);
@@ -730,10 +745,10 @@ const Dashboard = () => {
 
 	// Helper: get grid class for a group type given a layout object (used for edit mode and normal view)
 	const getGroupClassNameForLayout = (cardType, layout) => {
-		const stats_cols = layout?.stats_columns ?? 5;
-		const charts_cols = layout?.charts_columns ?? 3;
-		const stats_lg = GRID_COLS_CLASS[stats_cols] ?? "lg:grid-cols-5";
-		const charts_lg = GRID_COLS_CLASS[charts_cols] ?? "lg:grid-cols-3";
+		const stats_cols = layout?.stats_columns ?? 6;
+		const charts_cols = layout?.charts_columns ?? 4;
+		const stats_lg = GRID_COLS_CLASS[stats_cols] ?? "lg:grid-cols-6";
+		const charts_lg = GRID_COLS_CLASS[charts_cols] ?? "lg:grid-cols-4";
 		switch (cardType) {
 			case "stats":
 				return `grid grid-cols-2 sm:grid-cols-3 ${stats_lg} gap-3 sm:gap-4 ${STATS_ROW_HEIGHT}`;
@@ -2158,10 +2173,11 @@ const Dashboard = () => {
 					<button
 						type="button"
 						onClick={handle_enter_edit_mode}
-						className="hidden md:flex btn-outline items-center gap-2 min-h-[44px] min-w-[44px] justify-center"
+						className="hidden md:flex btn-outline items-center gap-2 min-h-[44px] px-3 justify-center"
 						title="Customize dashboard layout"
 					>
 						<Settings className="h-4 w-4" />
+						<span>Edit dashboard</span>
 					</button>
 					<button
 						type="button"
@@ -2208,6 +2224,19 @@ const Dashboard = () => {
 										Save order
 									</>
 								)}
+							</button>
+							<button
+								type="button"
+								onClick={handle_edit_mode_reset}
+								disabled={
+									update_preferences_mutation.isPending ||
+									update_layout_mutation.isPending ||
+									!defaultCards
+								}
+								className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium bg-white dark:bg-secondary-800 border border-amber-400 dark:border-amber-600 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/20 disabled:opacity-50"
+							>
+								<RotateCcw className="h-4 w-4" />
+								Reset to Defaults
 							</button>
 							<button
 								type="button"
@@ -2310,8 +2339,8 @@ const Dashboard = () => {
 					>
 						{(() => {
 							const layout = edit_mode_layout ?? {
-								stats_columns: dashboard_layout?.stats_columns ?? 5,
-								charts_columns: dashboard_layout?.charts_columns ?? 3,
+								stats_columns: dashboard_layout?.stats_columns ?? 6,
+								charts_columns: dashboard_layout?.charts_columns ?? 4,
 							};
 							// In edit mode show ALL cards (enabled + hidden) so user can toggle visibility; filter only by permissions
 							const all_cards = edit_mode_order.filter((c) => {
