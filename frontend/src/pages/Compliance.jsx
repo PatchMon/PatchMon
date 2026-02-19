@@ -15,6 +15,7 @@ import {
 	ShieldAlert,
 	ShieldCheck,
 	ShieldOff,
+	StopCircle,
 	Users,
 	Wifi,
 	WifiOff,
@@ -314,6 +315,20 @@ const Compliance = () => {
 		onError: (error, { hostName }) => {
 			const errorMsg = error.response?.data?.error || error.message;
 			toast.error(`Scan failed for ${hostName || "host"}: ${errorMsg}`);
+		},
+	});
+
+	const cancelScanMutation = useMutation({
+		mutationFn: ({ hostId }) => complianceAPI.cancelScan(hostId),
+		onSuccess: (_, { hostName }) => {
+			toast.success(`Cancel request sent for ${hostName || "host"}`);
+			queryClient.invalidateQueries(["compliance-active-scans"]);
+		},
+		onError: (error, { hostName }) => {
+			const errorMsg = error.response?.data?.error || error.message;
+			toast.error(
+				`Failed to cancel scan for ${hostName || "host"}: ${errorMsg}`,
+			);
 		},
 	});
 
@@ -639,40 +654,72 @@ const Compliance = () => {
 										</tr>
 									) : (
 										hostsTableRows.map((row) => {
+											const active_scan = activeScans.find(
+												(s) => s.hostId === row.host_id,
+											);
 											const is_scanning =
-												activeScans.some((s) => s.hostId === row.host_id) ||
+												!!active_scan ||
 												(triggerSingleScanMutation.isPending &&
 													triggerSingleScanMutation.variables?.hostId ===
 														row.host_id);
+											const is_cancelling =
+												cancelScanMutation.isPending &&
+												cancelScanMutation.variables?.hostId === row.host_id;
 											return (
 												<tr
 													key={row.host_id}
-													className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
+													className={
+														is_scanning
+															? "bg-blue-950/30 dark:bg-blue-950/30 hover:bg-blue-950/40 dark:hover:bg-blue-950/40"
+															: "hover:bg-secondary-50 dark:hover:bg-secondary-700"
+													}
 												>
 													<td className="px-4 py-2 whitespace-nowrap">
-														<button
-															type="button"
-															onClick={() =>
-																triggerSingleScanMutation.mutate({
-																	hostId: row.host_id,
-																	hostName:
-																		row.friendly_name || row.hostname || "Host",
-																})
-															}
-															disabled={is_scanning}
-															className="inline-flex items-center justify-center w-6 h-6 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-															title={
-																is_scanning
-																	? "Scan in progress"
-																	: "Run compliance scan"
-															}
-														>
-															{is_scanning ? (
-																<RefreshCw className="h-3 w-3 animate-spin" />
-															) : (
+														{is_scanning ? (
+															<button
+																type="button"
+																onClick={() =>
+																	cancelScanMutation.mutate({
+																		hostId: row.host_id,
+																		hostName:
+																			row.friendly_name ||
+																			row.hostname ||
+																			"Host",
+																	})
+																}
+																disabled={is_cancelling}
+																className="inline-flex items-center justify-center w-6 h-6 border border-transparent rounded text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+																title={
+																	is_cancelling
+																		? "Cancelling..."
+																		: "Cancel running scan"
+																}
+															>
+																{is_cancelling ? (
+																	<RefreshCw className="h-3 w-3 animate-spin" />
+																) : (
+																	<StopCircle className="h-3.5 w-3.5" />
+																)}
+															</button>
+														) : (
+															<button
+																type="button"
+																onClick={() =>
+																	triggerSingleScanMutation.mutate({
+																		hostId: row.host_id,
+																		hostName:
+																			row.friendly_name ||
+																			row.hostname ||
+																			"Host",
+																	})
+																}
+																disabled={triggerSingleScanMutation.isPending}
+																className="inline-flex items-center justify-center w-6 h-6 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+																title="Run compliance scan"
+															>
 																<Play className="h-3 w-3" />
-															)}
-														</button>
+															</button>
+														)}
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap">
 														<Link
@@ -710,13 +757,31 @@ const Compliance = () => {
 													<td
 														className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-secondary-300"
 														title={
-															row.last_scan_date
-																? `${row.last_activity_title || "Scan"} · ${formatDistanceToNow(new Date(row.last_scan_date), { addSuffix: true })}`
-																: undefined
+															is_scanning
+																? `Scan running${active_scan?.startedAt ? ` · started ${formatDistanceToNow(new Date(active_scan.startedAt), { addSuffix: true })}` : ""}`
+																: row.last_scan_date
+																	? `${row.last_activity_title || "Scan"} · ${formatDistanceToNow(new Date(row.last_scan_date), { addSuffix: true })}`
+																	: undefined
 														}
 													>
-														{row.last_activity_title ||
-															(row.last_scan_date ? "Scan" : "—")}
+														{is_scanning ? (
+															<span className="inline-flex items-center gap-1.5 text-blue-400">
+																<RefreshCw className="h-3 w-3 animate-spin" />
+																<span className="text-xs font-medium">
+																	{active_scan?.isPending
+																		? "Starting..."
+																		: active_scan?.profileType ===
+																				"docker-bench"
+																			? "Docker Bench"
+																			: active_scan?.profileType === "openscap"
+																				? "OpenSCAP"
+																				: "Scanning..."}
+																</span>
+															</span>
+														) : (
+															row.last_activity_title ||
+															(row.last_scan_date ? "Scan" : "—")
+														)}
 													</td>
 													<td className="px-4 py-2 text-right whitespace-nowrap">
 														{row.passed != null ? (
