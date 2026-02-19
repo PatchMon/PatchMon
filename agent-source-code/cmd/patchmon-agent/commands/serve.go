@@ -314,6 +314,8 @@ func runService() error {
 						ProfileID:            msg.profileID,
 						EnableRemediation:    msg.enableRemediation,
 						FetchRemoteResources: msg.fetchRemoteResources,
+						OpenSCAPEnabled:      msg.openscapEnabled,
+						DockerBenchEnabled:   msg.dockerBenchEnabled,
 					}
 					if err := runComplianceScanWithOptions(ctx, options); err != nil {
 						if errors.Is(err, context.Canceled) {
@@ -493,52 +495,140 @@ func upgradeSSGContent() error {
 }
 
 // runInstallScanner installs OpenSCAP and SSG content (apt/dnf install, update SSG) and reports status via HTTP
+// Sends granular install events so the frontend can display real-time progress.
 func runInstallScanner() error {
 	httpClient := client.New(cfgManager, logger)
 	ctx := context.Background()
 	enabled := cfgManager.IsIntegrationEnabled("compliance")
 
-	// Send initial "installing" status so the UI can show progress
-	if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
-		Integration: "compliance",
-		Enabled:     enabled,
-		Status:      "installing",
-		Message:     "Installing OpenSCAP and updating SSG content...",
-	}); err != nil {
-		logger.WithError(err).Debug("Failed to send installing status")
+	events := make([]models.InstallEvent, 0, 8)
+
+	addEvent := func(step, status, message string) {
+		events = append(events, models.InstallEvent{
+			Step:      step,
+			Status:    status,
+			Message:   message,
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		})
 	}
 
+	sendStatus := func(overallStatus, message string, scannerInfo *models.ComplianceScannerDetails) {
+		_ = httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
+			Integration:   "compliance",
+			Enabled:       enabled,
+			Status:        overallStatus,
+			Message:       message,
+			InstallEvents: events,
+			ScannerInfo:   scannerInfo,
+		})
+	}
+
+	// Step 1: Detect OS
+	addEvent("detect_os", "in_progress", "Detecting operating system...")
+	sendStatus("installing", "Detecting operating system...", nil)
+
 	openscapScanner := compliance.NewOpenSCAPScanner(logger)
+	osInfo := openscapScanner.GetOSInfo()
+	osDesc := fmt.Sprintf("%s %s (%s)", osInfo.Name, osInfo.Version, osInfo.Family)
+	if osInfo.Name == "" {
+		osDesc = "unknown OS"
+	}
+
+	// Mark detect_os done
+	events[len(events)-1] = models.InstallEvent{
+		Step:      "detect_os",
+		Status:    "done",
+		Message:   fmt.Sprintf("Detected %s", osDesc),
+		Timestamp: events[len(events)-1].Timestamp,
+	}
+
+	// Step 2: Install OpenSCAP packages
+	addEvent("install_openscap", "in_progress", "Installing OpenSCAP packages...")
+	sendStatus("installing", "Installing OpenSCAP packages...", nil)
+
 	if err := openscapScanner.EnsureInstalled(); err != nil {
 		logger.WithError(err).Warn("EnsureInstalled failed")
-		_ = httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
-			Integration: "compliance",
-			Enabled:     enabled,
-			Status:      "error",
-			Message:     err.Error(),
-			ScannerInfo: openscapScanner.GetScannerDetails(),
-		})
+		events[len(events)-1] = models.InstallEvent{
+			Step:      "install_openscap",
+			Status:    "failed",
+			Message:   fmt.Sprintf("OpenSCAP installation failed: %s", err.Error()),
+			Timestamp: events[len(events)-1].Timestamp,
+		}
+		addEvent("complete", "failed", "Installation failed")
+		sendStatus("error", err.Error(), openscapScanner.GetScannerDetails())
 		return err
 	}
 
-	scannerDetails := openscapScanner.GetScannerDetails()
-	dockerIntegrationEnabled := cfgManager.IsIntegrationEnabled("docker")
-	if dockerIntegrationEnabled {
-		dockerBenchScanner := compliance.NewDockerBenchScanner(logger)
-		scannerDetails.DockerBenchAvailable = dockerBenchScanner.IsAvailable()
-		oscapDockerScanner := compliance.NewOscapDockerScanner(logger)
-		scannerDetails.OscapDockerAvailable = oscapDockerScanner.IsAvailable()
+	events[len(events)-1] = models.InstallEvent{
+		Step:      "install_openscap",
+		Status:    "done",
+		Message:   "OpenSCAP packages installed successfully",
+		Timestamp: events[len(events)-1].Timestamp,
 	}
 
-	if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
-		Integration: "compliance",
-		Enabled:     enabled,
-		Status:      "ready",
-		Message:     "OpenSCAP and SSG content installed and ready",
-		ScannerInfo: scannerDetails,
-	}); err != nil {
-		logger.WithError(err).Warn("Failed to send ready status after install")
+	// Step 3: Verify installation and SSG content
+	addEvent("verify_openscap", "in_progress", "Verifying OpenSCAP installation and SSG content...")
+	sendStatus("installing", "Verifying OpenSCAP installation...", nil)
+
+	scannerDetails := openscapScanner.GetScannerDetails()
+	verifyMsg := "OpenSCAP verified"
+	if scannerDetails.OpenSCAPVersion != "" {
+		verifyMsg = fmt.Sprintf("OpenSCAP %s verified", scannerDetails.OpenSCAPVersion)
 	}
+	if scannerDetails.ContentPackage != "" {
+		verifyMsg += fmt.Sprintf(", SSG content: %s", scannerDetails.ContentPackage)
+	}
+	events[len(events)-1] = models.InstallEvent{
+		Step:      "verify_openscap",
+		Status:    "done",
+		Message:   verifyMsg,
+		Timestamp: events[len(events)-1].Timestamp,
+	}
+
+	// Step 4: Docker Bench (if docker enabled)
+	dockerIntegrationEnabled := cfgManager.IsIntegrationEnabled("docker")
+	if dockerIntegrationEnabled {
+		addEvent("docker_bench", "in_progress", "Pre-pulling Docker Bench image...")
+		sendStatus("installing", "Pre-pulling Docker Bench image...", nil)
+
+		dockerBenchScanner := compliance.NewDockerBenchScanner(logger)
+		if dockerBenchScanner.IsAvailable() {
+			if err := dockerBenchScanner.EnsureInstalled(); err != nil {
+				logger.WithError(err).Warn("Failed to pre-pull Docker Bench image")
+				events[len(events)-1] = models.InstallEvent{
+					Step:      "docker_bench",
+					Status:    "failed",
+					Message:   fmt.Sprintf("Docker Bench image pull failed: %s", err.Error()),
+					Timestamp: events[len(events)-1].Timestamp,
+				}
+			} else {
+				scannerDetails.DockerBenchAvailable = true
+				events[len(events)-1] = models.InstallEvent{
+					Step:      "docker_bench",
+					Status:    "done",
+					Message:   "Docker Bench image pulled successfully",
+					Timestamp: events[len(events)-1].Timestamp,
+				}
+			}
+		} else {
+			events[len(events)-1] = models.InstallEvent{
+				Step:      "docker_bench",
+				Status:    "skipped",
+				Message:   "Docker not available on this host",
+				Timestamp: events[len(events)-1].Timestamp,
+			}
+		}
+
+		oscapDockerScanner := compliance.NewOscapDockerScanner(logger)
+		scannerDetails.OscapDockerAvailable = oscapDockerScanner.IsAvailable()
+	} else {
+		addEvent("docker_bench", "skipped", "Docker integration not enabled, skipping Docker Bench setup")
+	}
+
+	// Step 5: Complete
+	addEvent("complete", "done", "Installation complete - scanner is ready")
+	sendStatus("ready", "OpenSCAP and SSG content installed and ready", scannerDetails)
+
 	return nil
 }
 
@@ -822,6 +912,8 @@ type wsMsg struct {
 	profileID              string // For compliance_scan: specific XCCDF profile ID
 	enableRemediation      bool   // For compliance_scan: enable auto-remediation
 	fetchRemoteResources   bool   // For compliance_scan: fetch remote resources
+	openscapEnabled        *bool  // For compliance_scan: per-host OpenSCAP scanner toggle
+	dockerBenchEnabled     *bool  // For compliance_scan: per-host Docker Bench scanner toggle
 	ruleID                 string // For remediate_rule: specific rule ID to remediate
 	imageName              string // For docker_image_scan: Docker image to scan
 	containerName          string // For docker_image_scan: Docker container to scan
@@ -1162,6 +1254,8 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 			ProfileID            string `json:"profile_id"`             // For compliance_scan: specific XCCDF profile ID
 			EnableRemediation    bool   `json:"enable_remediation"`     // For compliance_scan
 			FetchRemoteResources bool   `json:"fetch_remote_resources"` // For compliance_scan
+			OpenSCAPEnabled      *bool  `json:"openscap_enabled"`       // For compliance_scan: per-host toggle
+			DockerBenchEnabled   *bool  `json:"docker_bench_enabled"`   // For compliance_scan: per-host toggle
 			RuleID               string `json:"rule_id"`                // For remediate_rule: specific rule to remediate
 			ImageName            string `json:"image_name"`             // For docker_image_scan: Docker image to scan
 			ContainerName        string `json:"container_name"`         // For docker_image_scan: container to scan
@@ -1244,6 +1338,8 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				profileID:            payload.ProfileID,
 				enableRemediation:    payload.EnableRemediation,
 				fetchRemoteResources: payload.FetchRemoteResources,
+				openscapEnabled:      payload.OpenSCAPEnabled,
+				dockerBenchEnabled:   payload.DockerBenchEnabled,
 			}
 		case "compliance_scan_cancel":
 			logger.Info("compliance_scan_cancel received")
@@ -1430,53 +1526,84 @@ func toggleIntegration(integrationName string, enabled bool) error {
 			logger.Info("Compliance enabled - installing required tools...")
 			overallStatus = "installing"
 
-			// Send initial "installing" status
-			if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
-				Integration: "compliance",
-				Enabled:     true,
-				Status:      overallStatus,
-				Message:     "Installing compliance tools...",
-			}); err != nil {
-				logger.WithError(err).Warn("Failed to send initial compliance installation status")
+			events := make([]models.InstallEvent, 0, 8)
+			addEvent := func(step, status, message string) {
+				events = append(events, models.InstallEvent{
+					Step:      step,
+					Status:    status,
+					Message:   message,
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+				})
+			}
+			sendEvt := func(oStatus, msg string, si *models.ComplianceScannerDetails) {
+				_ = httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
+					Integration:   "compliance",
+					Enabled:       true,
+					Status:        oStatus,
+					Message:       msg,
+					Components:    components,
+					InstallEvents: events,
+					ScannerInfo:   si,
+				})
 			}
 
-			// Install OpenSCAP
+			// Step: Detect OS
+			addEvent("detect_os", "in_progress", "Detecting operating system...")
+			sendEvt(overallStatus, "Detecting operating system...", nil)
+
 			openscapScanner := compliance.NewOpenSCAPScanner(logger)
+			osInfo := openscapScanner.GetOSInfo()
+			osDesc := fmt.Sprintf("%s %s (%s)", osInfo.Name, osInfo.Version, osInfo.Family)
+			if osInfo.Name == "" {
+				osDesc = "unknown OS"
+			}
+			events[len(events)-1] = models.InstallEvent{Step: "detect_os", Status: "done", Message: fmt.Sprintf("Detected %s", osDesc), Timestamp: events[len(events)-1].Timestamp}
+
+			// Step: Install OpenSCAP
+			addEvent("install_openscap", "in_progress", "Installing OpenSCAP packages...")
+			sendEvt(overallStatus, "Installing OpenSCAP packages...", nil)
+
 			if err := openscapScanner.EnsureInstalled(); err != nil {
 				logger.WithError(err).Warn("Failed to install OpenSCAP (will try again on next scan)")
 				components["openscap"] = "failed"
+				events[len(events)-1] = models.InstallEvent{Step: "install_openscap", Status: "failed", Message: fmt.Sprintf("OpenSCAP installation failed: %s", err.Error()), Timestamp: events[len(events)-1].Timestamp}
 			} else {
 				logger.Info("OpenSCAP installed successfully")
 				components["openscap"] = "ready"
+				events[len(events)-1] = models.InstallEvent{Step: "install_openscap", Status: "done", Message: "OpenSCAP packages installed successfully", Timestamp: events[len(events)-1].Timestamp}
 			}
 
-			// Pre-pull Docker Bench image only if Docker integration is enabled AND Docker is available
+			// Step: Docker Bench
 			dockerIntegrationEnabled := cfgManager.IsIntegrationEnabled("docker")
 			if dockerIntegrationEnabled {
+				addEvent("docker_bench", "in_progress", "Pre-pulling Docker Bench image...")
+				sendEvt(overallStatus, "Pre-pulling Docker Bench image...", nil)
+
 				dockerBenchScanner := compliance.NewDockerBenchScanner(logger)
 				if dockerBenchScanner.IsAvailable() {
 					if err := dockerBenchScanner.EnsureInstalled(); err != nil {
 						logger.WithError(err).Warn("Failed to pre-pull Docker Bench image (will pull on first scan)")
 						components["docker-bench"] = "failed"
+						events[len(events)-1] = models.InstallEvent{Step: "docker_bench", Status: "failed", Message: fmt.Sprintf("Docker Bench image pull failed: %s", err.Error()), Timestamp: events[len(events)-1].Timestamp}
 					} else {
 						logger.Info("Docker Bench image pulled successfully")
 						components["docker-bench"] = "ready"
+						events[len(events)-1] = models.InstallEvent{Step: "docker_bench", Status: "done", Message: "Docker Bench image pulled successfully", Timestamp: events[len(events)-1].Timestamp}
 					}
 				} else {
 					components["docker-bench"] = "unavailable"
+					events[len(events)-1] = models.InstallEvent{Step: "docker_bench", Status: "skipped", Message: "Docker not available on this host", Timestamp: events[len(events)-1].Timestamp}
 				}
 
-				// Install oscap-docker for container image CVE scanning
 				oscapDockerScanner := compliance.NewOscapDockerScanner(logger)
 				if !oscapDockerScanner.IsAvailable() {
 					if err := oscapDockerScanner.EnsureInstalled(); err != nil {
-						// Check if it's a platform limitation (not available on this OS) vs installation failure
 						errMsg := err.Error()
 						if strings.Contains(errMsg, "not available") || strings.Contains(errMsg, "not supported") {
 							logger.WithError(err).Info("oscap-docker not available on this platform")
 							components["oscap-docker"] = "unavailable"
 						} else {
-							logger.WithError(err).Warn("Failed to install oscap-docker (container CVE scanning won't be available)")
+							logger.WithError(err).Warn("Failed to install oscap-docker")
 							components["oscap-docker"] = "failed"
 						}
 					} else {
@@ -1484,12 +1611,11 @@ func toggleIntegration(integrationName string, enabled bool) error {
 						components["oscap-docker"] = "ready"
 					}
 				} else {
-					logger.Info("oscap-docker already available")
 					components["oscap-docker"] = "ready"
 				}
 			} else {
 				logger.Debug("Docker integration not enabled, skipping Docker Bench and oscap-docker setup")
-				// Don't add docker-bench to components at all if integration is not enabled
+				addEvent("docker_bench", "skipped", "Docker integration not enabled, skipping Docker Bench setup")
 			}
 
 			// Determine overall status
@@ -1507,11 +1633,14 @@ func toggleIntegration(integrationName string, enabled bool) error {
 				overallStatus = "partial"
 				statusMessage = "Some compliance tools failed to install"
 			}
+			addEvent("complete", func() string {
+				if allReady {
+					return "done"
+				}
+				return "failed"
+			}(), statusMessage)
 
-			// Get detailed scanner info to send with status
 			scannerDetails := openscapScanner.GetScannerDetails()
-
-			// Add Docker Bench and oscap-docker info if available
 			if dockerIntegrationEnabled {
 				dockerBenchScanner := compliance.NewDockerBenchScanner(logger)
 				scannerDetails.DockerBenchAvailable = dockerBenchScanner.IsAvailable()
@@ -1524,7 +1653,6 @@ func toggleIntegration(integrationName string, enabled bool) error {
 					})
 				}
 
-				// Add oscap-docker info for container image CVE scanning
 				oscapDockerScanner := compliance.NewOscapDockerScanner(logger)
 				scannerDetails.OscapDockerAvailable = oscapDockerScanner.IsAvailable()
 				if oscapDockerScanner.IsAvailable() {
@@ -1538,18 +1666,8 @@ func toggleIntegration(integrationName string, enabled bool) error {
 				}
 			}
 
-			// Send final status with scanner info
-			if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
-				Integration: "compliance",
-				Enabled:     enabled,
-				Status:      overallStatus,
-				Message:     statusMessage,
-				Components:  components,
-				ScannerInfo: scannerDetails,
-			}); err != nil {
-				logger.WithError(err).Warn("Failed to send final compliance status")
-			}
-			return nil // Skip the generic status send below
+			sendEvt(overallStatus, statusMessage, scannerDetails)
+			return nil
 		}
 
 		logger.Info("Compliance disabled - removing tools...")

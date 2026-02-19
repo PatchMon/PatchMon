@@ -83,6 +83,18 @@ func (c *Integration) CollectWithOptions(ctx context.Context, options *models.Co
 	// Docker Bench is only available if Docker integration is enabled AND Docker is installed
 	dockerBenchEffectivelyAvailable := c.dockerIntegrationEnabled && c.dockerBench.IsAvailable()
 
+	// Per-host scanner toggles: default to enabled if not specified
+	openscapScanEnabled := true
+	dockerBenchScanEnabled := true
+	if options != nil {
+		if options.OpenSCAPEnabled != nil {
+			openscapScanEnabled = *options.OpenSCAPEnabled
+		}
+		if options.DockerBenchEnabled != nil {
+			dockerBenchScanEnabled = *options.DockerBenchEnabled
+		}
+	}
+
 	complianceData := &models.ComplianceData{
 		Scans:  make([]models.ComplianceScan, 0),
 		OSInfo: c.openscap.GetOSInfo(),
@@ -103,8 +115,8 @@ func (c *Integration) CollectWithOptions(ctx context.Context, options *models.Co
 	// Check if this is a Docker Bench specific scan
 	isDockerBenchOnly := profileID == "docker-bench"
 
-	// Run OpenSCAP scan if available and not a Docker Bench only request
-	if c.openscap.IsAvailable() && !isDockerBenchOnly {
+	// Run OpenSCAP scan if available, enabled via per-host toggle, and not a Docker Bench only request
+	if c.openscap.IsAvailable() && openscapScanEnabled && !isDockerBenchOnly {
 		var scan *models.ComplianceScan
 		var err error
 
@@ -145,9 +157,9 @@ func (c *Integration) CollectWithOptions(ctx context.Context, options *models.Co
 		}
 	}
 
-	// Run Docker Bench scan if Docker integration is enabled AND Docker is available
+	// Run Docker Bench scan if Docker integration is enabled AND Docker is available AND per-host toggle allows it
 	// Always run if docker-bench profile is specifically selected, or if running all profiles
-	runDockerBench := dockerBenchEffectivelyAvailable && (isDockerBenchOnly || profileID == "" || profileID == "all")
+	runDockerBench := dockerBenchEffectivelyAvailable && dockerBenchScanEnabled && (isDockerBenchOnly || profileID == "" || profileID == "all")
 	if runDockerBench {
 		c.logger.Info("Running Docker Bench for Security scan...")
 		scan, err := c.dockerBench.RunScan(ctx)

@@ -25,6 +25,13 @@ const (
 	osReleasePath  = "/etc/os-release"
 )
 
+// sanitizeForLog replaces newlines and carriage returns so logged values cannot inject extra log lines.
+func sanitizeForLog(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return s
+}
+
 // Profile mappings for different OS families
 var profileMappings = map[string]map[string]string{
 	"level1_server": {
@@ -413,8 +420,11 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 		// Build package list - openscap-common is required for Ubuntu 24.04+
 		packages := []string{"openscap-scanner", "openscap-common"}
 
-		// Try to install SSG content packages (may not be available for newer Ubuntu)
+		// SSG content: ssg-base + ssg-debderived provide Ubuntu content; on Debian we need ssg-debian for ssg-debian10/11/12/13-ds.xml
 		ssgPackages := []string{"ssg-debderived", "ssg-base"}
+		if s.osInfo.Name == "debian" {
+			ssgPackages = append(ssgPackages, "ssg-debian")
+		}
 
 		// Install core OpenSCAP packages first
 		installArgs := append([]string{"install", "-y", "-qq",
@@ -454,10 +464,13 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 			s.logger.Info("SSG content packages installed successfully")
 
 			// Explicitly upgrade to ensure we have the latest SCAP content
-			upgradeCmd := exec.CommandContext(ctx, "apt-get", "upgrade", "-y", "-qq",
+			upgradePkgs := []string{"ssg-base", "ssg-debderived"}
+			if s.osInfo.Name == "debian" {
+				upgradePkgs = append(upgradePkgs, "ssg-debian")
+			}
+			upgradeCmd := exec.CommandContext(ctx, "apt-get", append([]string{"upgrade", "-y", "-qq",
 				"-o", "Dpkg::Options::=--force-confdef",
-				"-o", "Dpkg::Options::=--force-confold",
-				"ssg-base", "ssg-debderived")
+				"-o", "Dpkg::Options::=--force-confold"}, upgradePkgs...)...)
 			upgradeCmd.Env = nonInteractiveEnv
 			upgradeOutput, upgradeErr := upgradeCmd.CombinedOutput()
 			if upgradeErr != nil {
@@ -513,6 +526,28 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 	}
 
 	s.logger.Info("OpenSCAP installed/upgraded successfully")
+
+	// On Debian 12+, if no content file or content doesn't match OS version (e.g. only ssg-debian11 on Debian 13), try GitHub SSG
+	if s.osInfo.Family == "debian" && s.osInfo.Name == "debian" {
+		ver := s.osInfo.Version
+		major := strings.Split(ver, ".")[0]
+		if ver >= "12" || strings.HasPrefix(ver, "13") {
+			contentFile := s.getContentFile()
+			needGitHub := contentFile == ""
+			if contentFile != "" && major != "" {
+				base := filepath.Base(contentFile)
+				needGitHub = !strings.Contains(base, "debian"+major)
+			}
+			if needGitHub {
+				s.logger.Info("Debian SCAP content missing or version mismatch, attempting download from ComplianceAsCode GitHub...")
+				if err := s.UpgradeSSGContent(); err != nil {
+					s.logger.WithError(err).Warn("Failed to install SSG content from GitHub; ensure ssg-debian package is available for your Debian version")
+				} else {
+					s.logger.Info("SSG content installed from GitHub successfully")
+				}
+			}
+		}
+	}
 
 	// Re-check availability after installation
 	s.checkAvailability()
@@ -637,30 +672,24 @@ func (s *OpenSCAPScanner) installSSGFromGitHub() error {
 		return fmt.Errorf("failed to create content directory: %w", err)
 	}
 
-	// Copy all XML files (datastream files) to the target directory
+	// Copy all datastream files (ssg-*-ds.xml) to the target directory.
+	// Search recursively so we find files in build/ or any subdir (release zip layout varies).
 	s.logger.WithField("target", targetDir).Info("Installing SSG content files...")
 
-	xmlFiles, err := filepath.Glob(filepath.Join(contentSrcDir, "*.xml"))
-	if err != nil {
-		return fmt.Errorf("failed to find XML files: %w", err)
-	}
-
+	xmlFiles := s.findDatastreamFiles(contentSrcDir)
 	if len(xmlFiles) == 0 {
-		// Try looking in subdirectories
-		xmlFiles, _ = filepath.Glob(filepath.Join(contentSrcDir, "*", "*.xml"))
+		s.logger.Warn("No ssg-*-ds.xml files found in release zip; trying nightly build...")
+		return s.installSSGFromNightly(tmpDir, targetDir)
 	}
 
 	copiedCount := 0
 	for _, src := range xmlFiles {
 		baseName := filepath.Base(src)
-		// Only copy datastream files (ssg-*-ds.xml)
-		if strings.HasPrefix(baseName, "ssg-") && strings.HasSuffix(baseName, "-ds.xml") {
-			dst := filepath.Join(targetDir, baseName)
-			if err := s.copyFile(src, dst); err != nil {
-				s.logger.WithError(err).WithField("file", baseName).Warn("Failed to copy content file")
-			} else {
-				copiedCount++
-			}
+		dst := filepath.Join(targetDir, baseName)
+		if err := s.copyFile(src, dst); err != nil {
+			s.logger.WithError(err).WithField("file", baseName).Warn("Failed to copy content file")
+		} else {
+			copiedCount++
 		}
 	}
 
@@ -676,6 +705,72 @@ func (s *OpenSCAPScanner) installSSGFromGitHub() error {
 		return fmt.Errorf("failed to write version marker: %w", err)
 	}
 
+	return nil
+}
+
+// findDatastreamFiles returns paths to all ssg-*-ds.xml files under dir (recursive).
+func (s *OpenSCAPScanner) findDatastreamFiles(dir string) []string {
+	var out []string
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		base := filepath.Base(path)
+		if strings.HasPrefix(base, "ssg-") && strings.HasSuffix(base, "-ds.xml") {
+			out = append(out, path)
+		}
+		return nil
+	})
+	return out
+}
+
+// installSSGFromNightly downloads the ComplianceAsCode nightly build (pre-built datastreams) and installs them.
+func (s *OpenSCAPScanner) installSSGFromNightly(tmpDir, targetDir string) error {
+	const nightlyURL = "https://nightly.link/ComplianceAsCode/content/workflows/nightly_build/master/Nightly%20Build.zip"
+	s.logger.Info("Downloading SSG from nightly build...")
+
+	zipPath := filepath.Join(tmpDir, "ssg-nightly.zip")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	if err := s.downloadFile(ctx, nightlyURL, zipPath); err != nil {
+		return fmt.Errorf("failed to download nightly SSG: %w", err)
+	}
+
+	nightlyExtract := filepath.Join(tmpDir, "nightly-extracted")
+	if err := s.extractZip(zipPath, nightlyExtract); err != nil {
+		return fmt.Errorf("failed to extract nightly SSG: %w", err)
+	}
+
+	// Nightly zip may have top-level dir like "content-master" or flat ssg-*-ds.xml
+	contentSrcDir := nightlyExtract
+	entries, _ := os.ReadDir(nightlyExtract)
+	if len(entries) == 1 && entries[0].IsDir() {
+		contentSrcDir = filepath.Join(nightlyExtract, entries[0].Name())
+	}
+
+	xmlFiles := s.findDatastreamFiles(contentSrcDir)
+	if len(xmlFiles) == 0 {
+		return fmt.Errorf("no ssg-*-ds.xml files found in nightly build")
+	}
+
+	copiedCount := 0
+	for _, src := range xmlFiles {
+		baseName := filepath.Base(src)
+		dst := filepath.Join(targetDir, baseName)
+		if err := s.copyFile(src, dst); err != nil {
+			s.logger.WithError(err).WithField("file", baseName).Warn("Failed to copy content file")
+		} else {
+			copiedCount++
+		}
+	}
+	if copiedCount == 0 {
+		return fmt.Errorf("no SSG content files were installed from nightly")
+	}
+
+	versionFile := filepath.Join(targetDir, ".ssg-version")
+	_ = os.WriteFile(versionFile, []byte("nightly\n"), 0644)
+	s.logger.WithField("files_installed", copiedCount).Info("SSG content from nightly build installed successfully")
 	return nil
 }
 
@@ -979,10 +1074,10 @@ func (s *OpenSCAPScanner) getContentFile() string {
 		}
 	}
 
-	// Try to find any matching file
+	// Try to find any matching file; when multiple exist, prefer the one that matches OS version
 	matches, err := filepath.Glob(filepath.Join(scapContentDir, fmt.Sprintf("ssg-%s*-ds.xml", contentOSName)))
 	if err == nil && len(matches) > 0 {
-		return matches[0]
+		return s.bestContentMatch(matches, contentOSName)
 	}
 
 	// If still not found and we normalized to a base distribution, try the original OS name as fallback
@@ -998,9 +1093,58 @@ func (s *OpenSCAPScanner) getContentFile() string {
 				return path
 			}
 		}
+		matches, err := filepath.Glob(filepath.Join(scapContentDir, fmt.Sprintf("ssg-%s*-ds.xml", s.osInfo.Name)))
+		if err == nil && len(matches) > 0 {
+			return s.bestContentMatch(matches, s.osInfo.Name)
+		}
 	}
 
 	return ""
+}
+
+// bestContentMatch chooses the best content file from multiple matches (e.g. ssg-debian10, ssg-debian11, ssg-debian13).
+// Prefers the file whose version matches the OS major version; otherwise the highest version not exceeding it.
+func (s *OpenSCAPScanner) bestContentMatch(matches []string, contentOSName string) string {
+	majorVersion := strings.Split(s.osInfo.Version, ".")[0]
+	wantPrefix := contentOSName + majorVersion // e.g. "debian13"
+
+	// Prefer exact version match
+	for _, path := range matches {
+		base := filepath.Base(path)
+		if strings.Contains(base, wantPrefix) {
+			return path
+		}
+	}
+	// Otherwise prefer highest version not exceeding our major (e.g. on Debian 13 prefer 12 over 11 over 10)
+	var ourMajor int
+	if _, err := fmt.Sscanf(majorVersion, "%d", &ourMajor); err != nil {
+		return matches[0]
+	}
+	var bestPath string
+	bestVer := -1
+	for _, path := range matches {
+		base := filepath.Base(path)
+		mid := strings.TrimSuffix(strings.TrimPrefix(base, "ssg-"), "-ds.xml")
+		if !strings.HasPrefix(mid, contentOSName) {
+			continue
+		}
+		verStr := strings.TrimPrefix(mid, contentOSName)
+		if verStr == "" {
+			continue
+		}
+		var ver int
+		if _, err := fmt.Sscanf(verStr, "%d", &ver); err != nil {
+			continue
+		}
+		if ver <= ourMajor && ver > bestVer {
+			bestVer = ver
+			bestPath = path
+		}
+	}
+	if bestPath != "" {
+		return bestPath
+	}
+	return matches[0]
 }
 
 // GetAvailableProfiles returns available CIS profiles for this system
@@ -1028,7 +1172,7 @@ func (s *OpenSCAPScanner) GetAvailableProfiles() []string {
 	return profiles
 }
 
-// getProfileID returns the full profile ID for this OS
+// getProfileID returns the full profile ID for this OS (from static mapping).
 func (s *OpenSCAPScanner) getProfileID(profileName string) string {
 	// If it's already a full XCCDF profile ID, use it directly
 	if strings.HasPrefix(profileName, "xccdf_") {
@@ -1051,6 +1195,84 @@ func (s *OpenSCAPScanner) getProfileID(profileName string) string {
 		}
 	}
 	return ""
+}
+
+// getProfileIDFromContent resolves the profile ID actually present in the content file.
+// Some datastreams (e.g. ssg-debian13-ds.xml) do not ship CIS profiles and only have
+// ANSSI/standard; this asks oscap for the list and returns a matching ID, or falls back
+// to the "standard" profile so the scan can run.
+func (s *OpenSCAPScanner) getProfileIDFromContent(contentFile string, preferredID string) string {
+	if contentFile == "" || preferredID == "" {
+		return preferredID
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, oscapBinary, "info", "--profiles", contentFile)
+	output, err := cmd.Output()
+	if err != nil {
+		s.logger.WithError(err).Debug("Could not get profiles from content, using preferred ID")
+		return preferredID
+	}
+	type profileEntry struct {
+		id   string
+		name string
+	}
+	var list []profileEntry
+	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) < 1 {
+			continue
+		}
+		id := strings.TrimSpace(parts[0])
+		name := ""
+		if len(parts) == 2 {
+			name = strings.TrimSpace(parts[1])
+		}
+		list = append(list, profileEntry{id: id, name: name})
+	}
+	if len(list) == 0 {
+		return preferredID
+	}
+	// Prefer exact or CIS match
+	for _, p := range list {
+		if p.id == preferredID {
+			return p.id
+		}
+		if strings.HasSuffix(p.id, "cis_level1_server") && strings.HasSuffix(preferredID, "cis_level1_server") {
+			return p.id
+		}
+		if strings.HasSuffix(p.id, "cis_level2_server") && strings.HasSuffix(preferredID, "cis_level2_server") {
+			return p.id
+		}
+		if strings.Contains(preferredID, "cis_level1") && strings.Contains(p.id, "cis_level1") {
+			return p.id
+		}
+		if strings.Contains(preferredID, "cis_level2") && strings.Contains(p.id, "cis_level2") {
+			return p.id
+		}
+	}
+	// No CIS profile in content (e.g. Debian 13 only has ANSSI + standard). Use "standard" if present.
+	for _, p := range list {
+		if strings.Contains(p.id, "profile_standard") {
+			s.logger.WithFields(logrus.Fields{
+				"requested": sanitizeForLog(preferredID),
+				"using":     sanitizeForLog(p.id),
+			}).Info("Requested profile not in content; using Standard System Security profile")
+			return p.id
+		}
+	}
+	// Last resort: first profile in the list
+	fallback := list[0].id
+	s.logger.WithFields(logrus.Fields{
+		"requested": sanitizeForLog(preferredID),
+		"using":     sanitizeForLog(fallback),
+	}).Info("Requested profile not in content; using first available profile")
+	return fallback
 }
 
 // RunScan executes an OpenSCAP scan (legacy method - calls RunScanWithOptions with defaults)
@@ -1077,6 +1299,8 @@ func (s *OpenSCAPScanner) RunScanWithOptions(ctx context.Context, options *model
 	if profileID == "" {
 		return nil, fmt.Errorf("profile %s not available for %s", options.ProfileID, s.osInfo.Name)
 	}
+	// Resolve to the profile ID actually in the content (e.g. Debian 13 datastream may use different IDs)
+	profileID = s.getProfileIDFromContent(contentFile, profileID)
 
 	// Create temp file for results
 	resultsFile, err := os.CreateTemp("", "oscap-results-*.xml")
@@ -1093,28 +1317,13 @@ func (s *OpenSCAPScanner) RunScanWithOptions(ctx context.Context, options *model
 		}
 	}()
 
-	// Create temp file for OVAL results (contains detailed check data)
-	ovalResultsFile, err := os.CreateTemp("", "oscap-oval-*.xml")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create oval temp file: %w", err)
-	}
-	ovalResultsPath := ovalResultsFile.Name()
-	if err := ovalResultsFile.Close(); err != nil {
-		return nil, fmt.Errorf("failed to close OVAL results file: %w", err)
-	}
-	defer func() {
-		if err := os.Remove(ovalResultsPath); err != nil && !os.IsNotExist(err) {
-			_ = err
-		}
-	}()
-
-	// Build command arguments
+	// Use only --results for XCCDF output. We do not use --oval-results because on some
+	// OpenSCAP versions (e.g. Debian) oscap tries to parse the OVAL output file as input
+	// and fails with "Document is empty" when the file is not yet written, breaking the scan.
 	args := []string{
 		"xccdf", "eval",
 		"--profile", profileID,
 		"--results", resultsPath,
-		"--oval-results",         // Generate detailed OVAL results with actual values
-		"--check-engine-results", // Force evaluation even if CPE doesn't match perfectly
 	}
 
 	// Add optional arguments based on options
@@ -1229,13 +1438,15 @@ func (s *OpenSCAPScanner) RunScanWithOptions(ctx context.Context, options *model
 	// Verify results file was written
 	if fileInfo, statErr := os.Stat(resultsPath); statErr == nil {
 		if fileInfo.Size() == 0 {
-			s.logger.Warn("Results file is empty - scan may not have run correctly")
-			// Log first part of oscap output for debugging
-			outputPreview := string(output)
-			if len(outputPreview) > 1000 {
-				outputPreview = outputPreview[:1000] + "... (truncated)"
+			outputStr := string(output)
+			s.logger.Warn("Results file is empty - scan may not have run correctly (run agent as root for full evaluation)")
+			if len(outputStr) > 0 {
+				preview := outputStr
+				if len(preview) > 1500 {
+					preview = preview[:1500] + "... (truncated)"
+				}
+				s.logger.WithField("oscap_output", preview).Warn("OpenSCAP stdout/stderr")
 			}
-			s.logger.WithField("oscap_output_preview", outputPreview).Debug("OpenSCAP output preview")
 		} else {
 			s.logger.WithField("results_file_size_bytes", fileInfo.Size()).Debug("Results file has content")
 		}

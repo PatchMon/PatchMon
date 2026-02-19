@@ -1121,8 +1121,15 @@ router.get("/integrations", validateApiCredentials, async (req, res) => {
 // Receive integration setup status from agent
 router.post("/integration-status", validateApiCredentials, async (req, res) => {
 	try {
-		const { integration, enabled, status, message, components, scanner_info } =
-			req.body;
+		const {
+			integration,
+			enabled,
+			status,
+			message,
+			components,
+			scanner_info,
+			install_events,
+		} = req.body;
 		const hostId = req.hostRecord.id;
 		const apiId = req.hostRecord.api_id;
 
@@ -1133,6 +1140,9 @@ router.post("/integration-status", validateApiCredentials, async (req, res) => {
 			message,
 			components,
 			scanner_info: scanner_info ? "present" : "not provided",
+			install_events_count: Array.isArray(install_events)
+				? install_events.length
+				: 0,
 		});
 
 		// Store the status update in Redis for real-time UI updates
@@ -1144,6 +1154,7 @@ router.post("/integration-status", validateApiCredentials, async (req, res) => {
 			message,
 			components: components || {},
 			scanner_info: scanner_info || null,
+			install_events: Array.isArray(install_events) ? install_events : [],
 			timestamp: new Date().toISOString(),
 		};
 
@@ -2977,6 +2988,8 @@ router.get(
 					docker_enabled: true,
 					compliance_enabled: true,
 					compliance_on_demand_only: true,
+					compliance_openscap_enabled: true,
+					compliance_docker_bench_enabled: true,
 				},
 			});
 
@@ -3010,11 +3023,17 @@ router.get(
 			res.json({
 				success: true,
 				compliance_mode: complianceMode,
-				compliance_on_demand_only: host.compliance_on_demand_only ?? true, // Legacy - kept for backward compatibility
+				compliance_on_demand_only: host.compliance_on_demand_only ?? true,
+				compliance_openscap_enabled: host.compliance_openscap_enabled ?? true,
+				compliance_docker_bench_enabled:
+					host.compliance_docker_bench_enabled ?? false,
 				data: {
 					integrations,
 					connected,
-					compliance_mode: complianceMode, // Also include in data for easy access
+					compliance_mode: complianceMode,
+					compliance_openscap_enabled: host.compliance_openscap_enabled ?? true,
+					compliance_docker_bench_enabled:
+						host.compliance_docker_bench_enabled ?? false,
 					host: {
 						id: host.id,
 						friendlyName: host.friendly_name,
@@ -3358,6 +3377,67 @@ router.post(
 		} catch (error) {
 			logger.error("Set compliance mode error:", error);
 			res.status(500).json({ error: "Failed to set compliance mode" });
+		}
+	},
+);
+
+// Set individual scanner enables (OpenSCAP, Docker Bench) for a host
+router.post(
+	"/:hostId/integrations/compliance/scanners",
+	authenticateToken,
+	requireManageHosts,
+	async (req, res) => {
+		try {
+			const { hostId } = req.params;
+			const { openscap_enabled, docker_bench_enabled } = req.body;
+
+			if (
+				openscap_enabled === undefined &&
+				docker_bench_enabled === undefined
+			) {
+				return res.status(400).json({
+					error:
+						"At least one of openscap_enabled or docker_bench_enabled must be provided",
+				});
+			}
+
+			const host = await prisma.hosts.findUnique({
+				where: { id: hostId },
+				select: { id: true, api_id: true, friendly_name: true },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			const data = {};
+			if (openscap_enabled !== undefined) {
+				data.compliance_openscap_enabled = !!openscap_enabled;
+			}
+			if (docker_bench_enabled !== undefined) {
+				data.compliance_docker_bench_enabled = !!docker_bench_enabled;
+			}
+
+			await prisma.hosts.update({
+				where: { id: hostId },
+				data,
+			});
+
+			res.json({
+				success: true,
+				message: "Scanner settings updated",
+				data: {
+					openscap_enabled:
+						openscap_enabled !== undefined ? !!openscap_enabled : undefined,
+					docker_bench_enabled:
+						docker_bench_enabled !== undefined
+							? !!docker_bench_enabled
+							: undefined,
+				},
+			});
+		} catch (error) {
+			logger.error("Set scanner settings error:", error);
+			res.status(500).json({ error: "Failed to update scanner settings" });
 		}
 	},
 );

@@ -420,10 +420,6 @@ app.use(
 );
 app.use(`/api/${apiVersion}/buy-me-a-coffee`, buyMeACoffeeRoutes);
 app.use(`/api/${apiVersion}/compliance`, complianceRoutes);
-app.use(
-	`/api/${apiVersion}/social-media-stats`,
-	require("./routes/socialMediaStatsRoutes"),
-);
 app.use(`/api/${apiVersion}/ai`, aiRoutes);
 app.use(`/api/${apiVersion}/alerts`, alertRoutes);
 
