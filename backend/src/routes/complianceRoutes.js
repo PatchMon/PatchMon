@@ -1918,8 +1918,9 @@ router.post("/trigger/:hostId", async (req, res) => {
 				},
 			);
 			const connected = agentWs.isConnected(host.api_id);
+			const safe_host_id = String(hostId).replace(/\r|\n/g, "");
 			logger.info(
-				`[Compliance] Scan queued for host ${hostId}; job_id=${job.id} agent_connected=${connected}`,
+				`[Compliance] Scan queued for host ${safe_host_id}; job_id=${job.id} agent_connected=${connected}`,
 			);
 			return res.json({
 				message: connected
