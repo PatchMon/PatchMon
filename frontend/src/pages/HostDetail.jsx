@@ -14,6 +14,7 @@ import {
 	ExternalLink,
 	HardDrive,
 	Key,
+	Loader2,
 	MemoryStick,
 	MinusCircle,
 	Monitor,
@@ -23,6 +24,7 @@ import {
 	RotateCcw,
 	Server,
 	Shield,
+	SkipForward,
 	Terminal,
 	Trash2,
 	Wifi,
@@ -59,6 +61,15 @@ const format_memory_gib = (value) => {
 	if (Number.isNaN(num)) return null;
 	return `${num.toFixed(2)} GiB`;
 };
+
+// Ordered steps for compliance scanner installation (match agent step ids)
+const INSTALL_CHECKLIST_STEPS = [
+	{ id: "detect_os", label: "Detect operating system" },
+	{ id: "install_openscap", label: "Install OpenSCAP packages" },
+	{ id: "verify_openscap", label: "Verify installation and SSG content" },
+	{ id: "docker_bench", label: "Docker Bench (optional)" },
+	{ id: "complete", label: "Complete" },
+];
 
 const HostDetail = () => {
 	const { hostId } = useParams();
@@ -580,6 +591,7 @@ const HostDetail = () => {
 						status: data.status,
 						progress: data.progress ?? 0,
 						message: data.message ?? "",
+						install_events: data.install_events || [],
 						error: data.error,
 					});
 				}
@@ -619,6 +631,7 @@ const HostDetail = () => {
 						status: data.status,
 						progress: data.progress ?? 0,
 						message: data.message ?? "",
+						install_events: data.install_events || [],
 						error: data.error,
 					});
 					if (
@@ -3541,55 +3554,62 @@ const HostDetail = () => {
 																"installing" && (
 																<div className="space-y-2">
 																	<div className="flex items-center gap-2">
-																		<RefreshCw className="h-4 w-4 animate-spin text-primary-600 dark:text-primary-400" />
+																		<Loader2 className="h-4 w-4 animate-spin text-primary-600 dark:text-primary-400" />
 																		<span className="text-sm font-medium text-primary-700 dark:text-primary-300">
 																			Installing Compliance Tools
 																		</span>
 																	</div>
-																	<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-1.5">
-																		<div
-																			className="bg-primary-600 h-1.5 rounded-full animate-pulse"
-																			style={{ width: "60%" }}
-																		/>
-																	</div>
-																	<p className="text-xs text-secondary-600 dark:text-secondary-400">
-																		{complianceSetupStatus.status.message ||
-																			"Installing OpenSCAP packages and security content..."}
-																	</p>
-																	{complianceSetupStatus.status.components && (
-																		<div className="flex flex-wrap gap-2 mt-2">
-																			{Object.entries(
-																				complianceSetupStatus.status.components,
-																			)
-																				.filter(
-																					([, status]) =>
-																						status !== "unavailable",
-																				)
-																				.map(([name, status]) => (
-																					<span
-																						key={name}
-																						className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
-																							status === "ready"
-																								? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
-																								: status === "failed"
-																									? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
-																									: "bg-secondary-200 text-secondary-600 dark:bg-secondary-600 dark:text-secondary-300"
-																						}`}
+																	{complianceSetupStatus.status.install_events
+																		?.length > 0 ? (
+																		<ul className="space-y-1 mt-1">
+																			{complianceSetupStatus.status.install_events.map(
+																				(evt) => (
+																					<li
+																						key={`${evt.message ?? ""}-${evt.status}-${evt.component ?? ""}`}
+																						className="flex items-center gap-2 text-xs"
 																					>
-																						{status === "ready" && (
-																							<CheckCircle2 className="h-3 w-3" />
+																						{evt.status === "done" && (
+																							<CheckCircle2 className="h-3.5 w-3.5 text-green-500 dark:text-green-400 flex-shrink-0" />
 																						)}
-																						{status === "failed" && (
-																							<AlertCircle className="h-3 w-3" />
+																						{evt.status === "in_progress" && (
+																							<Loader2 className="h-3.5 w-3.5 text-blue-500 dark:text-blue-400 animate-spin flex-shrink-0" />
 																						)}
-																						{status !== "ready" &&
-																							status !== "failed" && (
-																								<Clock className="h-3 w-3" />
-																							)}
-																						{name}
-																					</span>
-																				))}
-																		</div>
+																						{evt.status === "failed" && (
+																							<AlertCircle className="h-3.5 w-3.5 text-red-500 dark:text-red-400 flex-shrink-0" />
+																						)}
+																						{evt.status === "skipped" && (
+																							<SkipForward className="h-3.5 w-3.5 text-secondary-400 flex-shrink-0" />
+																						)}
+																						<span
+																							className={
+																								evt.status === "done"
+																									? "text-green-700 dark:text-green-400"
+																									: evt.status === "in_progress"
+																										? "text-blue-700 dark:text-blue-400"
+																										: evt.status === "failed"
+																											? "text-red-700 dark:text-red-400"
+																											: "text-secondary-500 dark:text-secondary-400"
+																							}
+																						>
+																							{evt.message}
+																						</span>
+																					</li>
+																				),
+																			)}
+																		</ul>
+																	) : (
+																		<>
+																			<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-1.5">
+																				<div
+																					className="bg-primary-600 h-1.5 rounded-full animate-pulse"
+																					style={{ width: "60%" }}
+																				/>
+																			</div>
+																			<p className="text-xs text-secondary-600 dark:text-secondary-400">
+																				{complianceSetupStatus.status.message ||
+																					"Installing OpenSCAP packages and security content..."}
+																			</p>
+																		</>
 																	)}
 																</div>
 															)}
@@ -3717,6 +3737,8 @@ const HostDetail = () => {
 																	"installing",
 																	"removing",
 																	"partial",
+																	"error",
+																	"disabled",
 																].includes(
 																	complianceSetupStatus?.status?.status,
 																) && (
@@ -3885,6 +3907,72 @@ const HostDetail = () => {
 													</p>
 												);
 											})()}
+
+											{/* Individual scanner toggles */}
+											{integrationsData?.data?.integrations?.compliance && (
+												<div className="mt-3 pt-3 border-t border-secondary-200 dark:border-secondary-700 space-y-2">
+													<p className="text-xs font-medium text-secondary-600 dark:text-secondary-400">
+														Scanner Types
+													</p>
+													<label className="flex items-center justify-between gap-2 cursor-pointer">
+														<span className="text-xs text-secondary-700 dark:text-secondary-300">
+															OpenSCAP (CIS Benchmarks)
+														</span>
+														<input
+															type="checkbox"
+															checked={
+																integrationsData?.data
+																	?.compliance_openscap_enabled ??
+																integrationsData?.compliance_openscap_enabled ??
+																true
+															}
+															onChange={(e) => {
+																adminHostsAPI
+																	.setComplianceScanners(hostId, {
+																		openscap_enabled: e.target.checked,
+																	})
+																	.then(() => refetchIntegrations())
+																	.catch(() => {});
+															}}
+															className="h-4 w-4 rounded border-secondary-300 text-primary-600 focus:ring-primary-500"
+														/>
+													</label>
+													<label className="flex items-center justify-between gap-2 cursor-pointer">
+														<div className="flex flex-col">
+															<span className="text-xs text-secondary-700 dark:text-secondary-300">
+																Docker Bench
+															</span>
+															{!integrationsData?.data?.integrations
+																?.docker && (
+																<span className="text-[10px] text-secondary-400">
+																	Docker integration not enabled
+																</span>
+															)}
+														</div>
+														<input
+															type="checkbox"
+															checked={
+																integrationsData?.data
+																	?.compliance_docker_bench_enabled ??
+																integrationsData?.compliance_docker_bench_enabled ??
+																false
+															}
+															disabled={
+																!integrationsData?.data?.integrations?.docker
+															}
+															onChange={(e) => {
+																adminHostsAPI
+																	.setComplianceScanners(hostId, {
+																		docker_bench_enabled: e.target.checked,
+																	})
+																	.then(() => refetchIntegrations())
+																	.catch(() => {});
+															}}
+															className="h-4 w-4 rounded border-secondary-300 text-primary-600 focus:ring-primary-500 disabled:opacity-40"
+														/>
+													</label>
+												</div>
+											)}
 										</div>
 									</div>
 								)}
@@ -4695,34 +4783,44 @@ const HostDetail = () => {
 													<span className="text-sm font-medium text-secondary-900 dark:text-white">
 														Compliance scanner
 													</span>
-													<span
-														className={`px-2 py-0.5 rounded text-xs font-medium ${
-															complianceSetupStatus?.status?.status ===
-																"ready" ||
-															complianceSetupStatus?.status?.status ===
-																"partial"
-																? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
-																: complianceSetupStatus?.status?.status ===
-																		"installing"
-																	? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
-																	: complianceSetupStatus?.status?.status ===
-																			"error"
-																		? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300"
-																		: "bg-secondary-100 text-secondary-700 dark:bg-secondary-600 dark:text-secondary-200"
-														}`}
-													>
-														{complianceSetupStatus?.status?.status ===
-															"ready" ||
-														complianceSetupStatus?.status?.status === "partial"
-															? "Ready"
-															: complianceSetupStatus?.status?.status ===
-																	"installing"
-																? "Installing…"
-																: complianceSetupStatus?.status?.status ===
-																		"error"
-																	? "Error"
-																	: "Not installed"}
-													</span>
+													{(() => {
+														const isJobActive =
+															complianceInstallJob?.status === "active" ||
+															complianceInstallJob?.status === "waiting";
+														const scannerStatus =
+															complianceSetupStatus?.status?.status;
+														let label, colorClass;
+														if (
+															scannerStatus === "ready" ||
+															scannerStatus === "partial"
+														) {
+															label = "Ready";
+															colorClass =
+																"bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300";
+														} else if (
+															scannerStatus === "installing" ||
+															isJobActive
+														) {
+															label = "Installing…";
+															colorClass =
+																"bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300";
+														} else if (scannerStatus === "error") {
+															label = "Error";
+															colorClass =
+																"bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300";
+														} else {
+															label = "Not installed";
+															colorClass =
+																"bg-secondary-100 text-secondary-700 dark:bg-secondary-600 dark:text-secondary-200";
+														}
+														return (
+															<span
+																className={`px-2 py-0.5 rounded text-xs font-medium ${colorClass}`}
+															>
+																{label}
+															</span>
+														);
+													})()}
 													{complianceSetupStatus?.source === "cached" && (
 														<span className="text-xs text-secondary-500 dark:text-secondary-400 italic">
 															(cached)
@@ -4947,9 +5045,77 @@ const HostDetail = () => {
 														}}
 													/>
 												</div>
-												<p className="text-xs text-secondary-600 dark:text-secondary-400 mt-1">
-													{complianceInstallJob.message || "Installing…"}
+												<p className="text-xs font-medium text-secondary-600 dark:text-secondary-400 mt-2 mb-1.5">
+													Installation progress
 												</p>
+												{(() => {
+													const events =
+														complianceInstallJob.install_events || [];
+													const steps = INSTALL_CHECKLIST_STEPS.map(
+														({ id, label }) => {
+															const evt = events
+																.filter((e) => e.step === id)
+																.pop();
+															const stepStatus = evt?.status || "pending";
+															return {
+																id,
+																label,
+																status: stepStatus,
+																message:
+																	evt?.message ??
+																	(stepStatus === "pending"
+																		? "Waiting…"
+																		: null),
+															};
+														},
+													);
+													return (
+														<ul className="space-y-1.5">
+															{steps.map((step) => (
+																<li
+																	key={step.id}
+																	className="flex items-center gap-2 text-xs"
+																>
+																	{step.status === "done" && (
+																		<CheckCircle2 className="h-3.5 w-3.5 text-green-400 flex-shrink-0" />
+																	)}
+																	{step.status === "in_progress" && (
+																		<Loader2 className="h-3.5 w-3.5 text-blue-400 animate-spin flex-shrink-0" />
+																	)}
+																	{step.status === "failed" && (
+																		<X className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />
+																	)}
+																	{step.status === "skipped" && (
+																		<SkipForward className="h-3.5 w-3.5 text-secondary-400 flex-shrink-0" />
+																	)}
+																	{step.status === "pending" && (
+																		<div className="h-3.5 w-3.5 rounded-full border-2 border-secondary-400 dark:border-secondary-500 flex-shrink-0" />
+																	)}
+																	<span
+																		className={
+																			step.status === "done"
+																				? "text-green-600 dark:text-green-400"
+																				: step.status === "in_progress"
+																					? "text-blue-600 dark:text-blue-400"
+																					: step.status === "failed"
+																						? "text-red-600 dark:text-red-400"
+																						: step.status === "skipped"
+																							? "text-secondary-500"
+																							: "text-secondary-500"
+																		}
+																	>
+																		{step.label}
+																		{step.message &&
+																			step.status !== "pending" &&
+																			` — ${step.message}`}
+																		{step.status === "pending" &&
+																			` — ${step.message}`}
+																	</span>
+																</li>
+															))}
+														</ul>
+													);
+												})()}
 											</div>
 										)}
 										{complianceInstallJob?.status === "completed" && (

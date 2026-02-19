@@ -64,6 +64,13 @@ export const complianceAPI = {
 	cancelInstallScanner: (hostId) =>
 		api.post(`/compliance/install-scanner/${hostId}/cancel`),
 
+	// Set individual scanner enables (OpenSCAP, Docker Bench)
+	setScannerToggles: (hostId, settings) =>
+		api.post(`/hosts/${hostId}/integrations/compliance/scanners`, settings),
+
+	// Get host integrations data (includes scanner toggle states)
+	getHostIntegrations: (hostId) => api.get(`/hosts/${hostId}/integrations`),
+
 	// Remediate a single failed rule
 	remediateRule: (hostId, ruleId) =>
 		api.post(`/compliance/remediate/${hostId}`, { rule_id: ruleId }),

@@ -39,15 +39,6 @@ import ReleaseNotesModal from "./ReleaseNotesModal";
 import UpgradeNotificationIcon from "./UpgradeNotificationIcon";
 
 const Layout = ({ children }) => {
-	// Helper function to format numbers in k format (e.g., 1663 -> 1.7k)
-	const formatNumber = (num) => {
-		if (num >= 1000) {
-			const rounded = Math.ceil((num / 1000) * 10) / 10; // Round up to 1 decimal place
-			return `${rounded.toFixed(1)}k`;
-		}
-		return num.toString();
-	};
-
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
 		// Load sidebar state from localStorage, default to false
@@ -56,13 +47,6 @@ const Layout = ({ children }) => {
 	});
 	const [_githubStars, _setGithubStars] = useState(null);
 	const [_userMenuOpen, setUserMenuOpen] = useState(false);
-	const [socialMediaStats, setSocialMediaStats] = useState({
-		github_stars: null,
-		discord_members: null,
-		buymeacoffee_supporters: null,
-		youtube_subscribers: null,
-		linkedin_followers: null,
-	});
 	const [mobileLinksOpen, setMobileLinksOpen] = useState(false);
 	const [showReleaseNotes, setShowReleaseNotes] = useState(false);
 	const location = useLocation();
@@ -494,52 +478,6 @@ const Layout = ({ children }) => {
 			observer.disconnect();
 		};
 	}, [themeConfig]);
-
-	// Fetch social media stats from cache - only once on mount
-	// Using useRef to track if we've already fetched to prevent re-fetching on settings updates
-	const hasFetchedSocialMedia = useRef(false);
-
-	useEffect(() => {
-		// Only fetch once on component mount, not when settings change
-		if (hasFetchedSocialMedia.current) return;
-
-		const fetchSocialMediaStats = async () => {
-			try {
-				const response = await fetch("/api/v1/social-media-stats");
-				if (response.ok) {
-					const data = await response.json();
-					// Only update stats that are not null - preserve existing values if fetch failed
-					setSocialMediaStats((prev) => ({
-						github_stars:
-							data.github_stars !== null
-								? data.github_stars
-								: prev.github_stars,
-						discord_members:
-							data.discord_members !== null
-								? data.discord_members
-								: prev.discord_members,
-						buymeacoffee_supporters:
-							data.buymeacoffee_supporters !== null
-								? data.buymeacoffee_supporters
-								: prev.buymeacoffee_supporters,
-						youtube_subscribers:
-							data.youtube_subscribers !== null
-								? data.youtube_subscribers
-								: prev.youtube_subscribers,
-						linkedin_followers:
-							data.linkedin_followers !== null
-								? data.linkedin_followers
-								: prev.linkedin_followers,
-					}));
-				}
-			} catch (error) {
-				console.error("Failed to fetch social media stats:", error);
-			}
-		};
-
-		fetchSocialMediaStats();
-		hasFetchedSocialMedia.current = true;
-	}, []); // Empty dependency array - only run once on mount
 
 	// Short format for navigation area
 	const formatRelativeTimeShort = (date) => {
@@ -1671,14 +1609,10 @@ const Layout = ({ children }) => {
 														<span className="text-sm font-medium flex-1">
 															GitHub
 														</span>
-														{socialMediaStats.github_stars !== null && (
-															<div className="flex items-center gap-1">
-																<Star className="h-4 w-4 fill-current text-yellow-500" />
-																<span className="text-sm">
-																	{formatNumber(socialMediaStats.github_stars)}
-																</span>
-															</div>
-														)}
+														<div className="flex items-center gap-1">
+															<Star className="h-4 w-4 fill-current text-yellow-500" />
+															<span className="text-sm">2.1K</span>
+														</div>
 													</a>
 													{/* Buy Me a Coffee */}
 													<a
@@ -1712,13 +1646,9 @@ const Layout = ({ children }) => {
 														<span className="text-sm font-medium flex-1">
 															Discord
 														</span>
-														{socialMediaStats.discord_members !== null && (
-															<div className="flex items-center gap-1">
-																<span className="text-sm">
-																	{socialMediaStats.discord_members}
-																</span>
-															</div>
-														)}
+														<div className="flex items-center gap-1">
+															<span className="text-sm">500</span>
+														</div>
 													</a>
 													{/* LinkedIn */}
 													<a
@@ -1732,13 +1662,9 @@ const Layout = ({ children }) => {
 														<span className="text-sm font-medium flex-1">
 															LinkedIn
 														</span>
-														{socialMediaStats.linkedin_followers !== null && (
-															<div className="flex items-center gap-1">
-																<span className="text-sm">
-																	{socialMediaStats.linkedin_followers}
-																</span>
-															</div>
-														)}
+														<div className="flex items-center gap-1">
+															<span className="text-sm">250</span>
+														</div>
 													</a>
 													{/* YouTube */}
 													<a
@@ -1752,13 +1678,9 @@ const Layout = ({ children }) => {
 														<span className="text-sm font-medium flex-1">
 															YouTube
 														</span>
-														{socialMediaStats.youtube_subscribers !== null && (
-															<div className="flex items-center gap-1">
-																<span className="text-sm">
-																	{socialMediaStats.youtube_subscribers}
-																</span>
-															</div>
-														)}
+														<div className="flex items-center gap-1">
+															<span className="text-sm">100</span>
+														</div>
 													</a>
 												</div>
 											</div>
@@ -1783,14 +1705,10 @@ const Layout = ({ children }) => {
 										aria-label="GitHub"
 									>
 										<Github className="h-5 w-5 flex-shrink-0" />
-										{socialMediaStats.github_stars !== null && (
-											<div className="flex items-center gap-1">
-												<Star className="h-4 w-4 fill-current text-yellow-500" />
-												<span className="text-sm font-medium">
-													{formatNumber(socialMediaStats.github_stars)}
-												</span>
-											</div>
-										)}
+										<div className="flex items-center gap-1">
+											<Star className="h-4 w-4 fill-current text-yellow-500" />
+											<span className="text-sm font-medium">2.1K</span>
+										</div>
 									</a>
 									{/* 2) Buy Me a Coffee */}
 									<a
@@ -1829,11 +1747,7 @@ const Layout = ({ children }) => {
 										title="Discord"
 									>
 										<DiscordIcon className="h-5 w-5 text-[#5865F2]" />
-										{socialMediaStats.discord_members !== null && (
-											<span className="text-sm font-medium">
-												{socialMediaStats.discord_members}
-											</span>
-										)}
+										<span className="text-sm font-medium">500</span>
 									</a>
 									{/* 4) LinkedIn */}
 									<a
@@ -1849,11 +1763,7 @@ const Layout = ({ children }) => {
 										title="LinkedIn Company Page"
 									>
 										<FaLinkedin className="h-5 w-5 text-[#0077B5]" />
-										{socialMediaStats.linkedin_followers !== null && (
-											<span className="text-sm font-medium">
-												{socialMediaStats.linkedin_followers}
-											</span>
-										)}
+										<span className="text-sm font-medium">250</span>
 									</a>
 									{/* 5) YouTube */}
 									<a
@@ -1869,11 +1779,7 @@ const Layout = ({ children }) => {
 										title="YouTube Channel"
 									>
 										<FaYoutube className="h-5 w-5 text-[#FF0000]" />
-										{socialMediaStats.youtube_subscribers !== null && (
-											<span className="text-sm font-medium">
-												{socialMediaStats.youtube_subscribers}
-											</span>
-										)}
+										<span className="text-sm font-medium">100</span>
 									</a>
 								</div>
 							</div>

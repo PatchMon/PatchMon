@@ -178,9 +178,18 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
 			return res.status(401).json({ error: "API credentials required" });
 		}
 
-		// Validate host credentials
+		// Validate host credentials and load scanner toggles for filtering submitted scans
 		const host = await prisma.hosts.findFirst({
 			where: { api_id: apiId },
+			select: {
+				id: true,
+				api_id: true,
+				api_key: true,
+				hostname: true,
+				friendly_name: true,
+				compliance_openscap_enabled: true,
+				compliance_docker_bench_enabled: true,
+			},
 		});
 
 		if (!host) {
@@ -260,6 +269,21 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
 						type: profile_type || "openscap",
 					},
 				});
+			}
+
+			// Only persist scans for scanner types that are enabled for this host.
+			// Avoids storing OpenSCAP (or Docker Bench) results when the user has that scanner disabled.
+			const profileType = profile.type || profile_type || "openscap";
+			const openscapEnabled = host.compliance_openscap_enabled ?? true;
+			const dockerBenchEnabled = host.compliance_docker_bench_enabled ?? false;
+			if (
+				(profileType === "openscap" && !openscapEnabled) ||
+				(profileType === "docker-bench" && !dockerBenchEnabled)
+			) {
+				logger.info(
+					`[Compliance] Skipping scan result for profile_type=${profileType} (disabled for host ${host.id})`,
+				);
+				continue;
 			}
 
 			// Use stats from agent if provided, otherwise calculate
@@ -1662,7 +1686,14 @@ router.post("/trigger/bulk", async (req, res) => {
 		// Get all hosts
 		const hosts = await prisma.hosts.findMany({
 			where: { id: { in: hostIds } },
-			select: { id: true, api_id: true, hostname: true, friendly_name: true },
+			select: {
+				id: true,
+				api_id: true,
+				hostname: true,
+				friendly_name: true,
+				compliance_openscap_enabled: true,
+				compliance_docker_bench_enabled: true,
+			},
 		});
 
 		const hostMap = new Map(hosts.map((h) => [h.id, h]));
@@ -1738,15 +1769,41 @@ router.post("/trigger/bulk", async (req, res) => {
 				continue;
 			}
 
+			const oscapOn = host.compliance_openscap_enabled ?? true;
+			const dbenchOn = host.compliance_docker_bench_enabled ?? false;
+
+			let hostProfileType = profile_type;
+			if (profile_type === "all" || profile_type === "" || !profile_type) {
+				if (oscapOn && !dbenchOn) hostProfileType = "openscap";
+				else if (!oscapOn && dbenchOn) hostProfileType = "docker-bench";
+				else if (!oscapOn && !dbenchOn) {
+					results.failed.push({
+						hostId,
+						hostName: host.friendly_name || host.hostname,
+						error: "Both scanners disabled",
+					});
+					continue;
+				}
+			}
+
+			const hostScanOptions = {
+				...scanOptions,
+				openscapEnabled: oscapOn,
+				dockerBenchEnabled: dbenchOn,
+			};
 			const success = agentWs.pushComplianceScan(
 				host.api_id,
-				profile_type,
-				scanOptions,
+				hostProfileType,
+				hostScanOptions,
 			);
 
 			if (success) {
-				// Create "running" scan records for tracking
-				for (const profile of profilesToUse) {
+				// Create "running" scan records only for the profile type we actually sent to the agent
+				const profilesForHost =
+					hostProfileType === "all"
+						? profilesToUse
+						: profilesToUse.filter((p) => p.type === hostProfileType);
+				for (const profile of profilesForHost) {
 					try {
 						await prisma.compliance_scans.create({
 							data: {
@@ -2035,6 +2092,7 @@ router.get("/install-job/:hostId", async (req, res) => {
 			status: state,
 			progress: job.progress,
 			message: job.data?.message,
+			install_events: job.data?.install_events || [],
 			error: job.failedReason,
 		});
 	} catch (error) {

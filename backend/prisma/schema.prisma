@@ -128,6 +128,8 @@ model hosts {
   docker_enabled           Boolean                  @default(false)
   compliance_enabled       Boolean                  @default(false)
   compliance_on_demand_only Boolean                 @default(true)
+  compliance_openscap_enabled Boolean               @default(true)  // individually enable/disable OpenSCAP scanning
+  compliance_docker_bench_enabled Boolean            @default(false) // individually enable/disable Docker Bench scanning
   compliance_scanner_status Json?                  // last known scanner status from agent (status, message, components, scanner_info)
   compliance_scanner_updated_at DateTime?           // when agent last reported compliance scanner status
   host_down_alerts_enabled Boolean?                 // null = inherit from global config, true = enabled, false = disabled

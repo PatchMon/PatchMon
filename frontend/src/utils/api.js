@@ -152,8 +152,10 @@ export const adminHostsAPI = {
 	refreshDocker: (hostId) => api.post(`/hosts/${hostId}/refresh-docker`),
 	setComplianceMode: (hostId, mode) =>
 		api.post(`/hosts/${hostId}/integrations/compliance/mode`, {
-			mode: mode, // "disabled", "on-demand", or "enabled"
+			mode: mode,
 		}),
+	setComplianceScanners: (hostId, settings) =>
+		api.post(`/hosts/${hostId}/integrations/compliance/scanners`, settings),
 	setComplianceOnDemandOnly: (hostId, onDemandOnly) =>
 		api.post(`/hosts/${hostId}/compliance/on-demand-only`, {
 			on_demand_only: onDemandOnly,

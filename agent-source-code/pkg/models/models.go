@@ -167,14 +167,23 @@ type IntegrationStatusResponse struct {
 	Integrations map[string]bool `json:"integrations"`
 }
 
+// InstallEvent represents a single notable event during scanner installation
+type InstallEvent struct {
+	Step      string `json:"step"`
+	Status    string `json:"status"` // "in_progress", "done", "failed", "skipped"
+	Message   string `json:"message"`
+	Timestamp string `json:"timestamp"`
+}
+
 // IntegrationSetupStatus represents the setup status of an integration
 type IntegrationSetupStatus struct {
-	Integration string                    `json:"integration"`
-	Enabled     bool                      `json:"enabled"`
-	Status      string                    `json:"status"` // "ready", "installing", "removing", "error"
-	Message     string                    `json:"message"`
-	Components  map[string]string         `json:"components,omitempty"` // Component name -> status
-	ScannerInfo *ComplianceScannerDetails `json:"scanner_info,omitempty"`
+	Integration   string                    `json:"integration"`
+	Enabled       bool                      `json:"enabled"`
+	Status        string                    `json:"status"` // "ready", "installing", "removing", "error"
+	Message       string                    `json:"message"`
+	Components    map[string]string         `json:"components,omitempty"`       // Component name -> status
+	ScannerInfo   *ComplianceScannerDetails `json:"scanner_info,omitempty"`
+	InstallEvents []InstallEvent            `json:"install_events,omitempty"`
 }
 
 // ComplianceScannerDetails contains detailed OpenSCAP scanner information
@@ -223,14 +232,16 @@ type ScanProfileInfo struct {
 
 // ComplianceScanOptions represents configurable scan options
 type ComplianceScanOptions struct {
-	ProfileID            string `json:"profile_id"`                       // Profile to use for scan
-	RuleID               string `json:"rule_id,omitempty"`                // Specific rule ID to scan/remediate (for single rule operations)
-	EnableRemediation    bool   `json:"enable_remediation,omitempty"`     // Enable automatic remediation
-	RemediationType      string `json:"remediation_type,omitempty"`       // "online", "offline", "script"
-	FetchRemoteResources bool   `json:"fetch_remote_resources,omitempty"` // Fetch remote OVAL content
-	TailoringFile        string `json:"tailoring_file,omitempty"`         // Path to tailoring file
-	OutputFormat         string `json:"output_format,omitempty"`          // "html", "xml", "arf"
-	Timeout              int    `json:"timeout,omitempty"`                // Scan timeout in minutes
+	ProfileID            string `json:"profile_id"`
+	RuleID               string `json:"rule_id,omitempty"`
+	EnableRemediation    bool   `json:"enable_remediation,omitempty"`
+	RemediationType      string `json:"remediation_type,omitempty"`
+	FetchRemoteResources bool   `json:"fetch_remote_resources,omitempty"`
+	TailoringFile        string `json:"tailoring_file,omitempty"`
+	OutputFormat         string `json:"output_format,omitempty"`
+	Timeout              int    `json:"timeout,omitempty"`
+	OpenSCAPEnabled      *bool  `json:"openscap_enabled,omitempty"`      // Per-host toggle: run OpenSCAP scans
+	DockerBenchEnabled   *bool  `json:"docker_bench_enabled,omitempty"`  // Per-host toggle: run Docker Bench scans
 }
 
 // Credentials holds API authentication information

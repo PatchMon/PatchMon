@@ -473,14 +473,54 @@ class QueueManager {
 						);
 						throw new DelayedError();
 					}
+					// Fetch per-host scanner toggles and adjust profile_type accordingly
+					let openscapEnabled = true;
+					let dockerBenchEnabled = false;
+					try {
+						const hostRecord = await prisma.hosts.findUnique({
+							where: { id: hostId },
+							select: {
+								compliance_openscap_enabled: true,
+								compliance_docker_bench_enabled: true,
+							},
+						});
+						if (hostRecord) {
+							openscapEnabled = hostRecord.compliance_openscap_enabled ?? true;
+							dockerBenchEnabled =
+								hostRecord.compliance_docker_bench_enabled ?? false;
+						}
+					} catch (_e) {
+						/* proceed with defaults */
+					}
+
+					// Rewrite profile_type based on per-host toggles so existing
+					// agents (that don't know about the toggle fields) still
+					// run only the scanners the user enabled.
+					let effectiveProfileType = profile_type;
+					if (profile_type === "all" || profile_type === "" || !profile_type) {
+						if (openscapEnabled && !dockerBenchEnabled) {
+							effectiveProfileType = "openscap";
+						} else if (!openscapEnabled && dockerBenchEnabled) {
+							effectiveProfileType = "docker-bench";
+						} else if (!openscapEnabled && !dockerBenchEnabled) {
+							logger.warn(
+								`[Compliance] Both scanners disabled for host ${hostId}, skipping scan`,
+							);
+							return;
+						}
+						// both enabled → keep "all"
+					}
+
 					const scanOptions = {
 						profileId: profile_id || null,
 						enableRemediation: Boolean(enable_remediation),
 						fetchRemoteResources: Boolean(fetch_remote_resources),
+						openscapEnabled,
+						dockerBenchEnabled,
 					};
 					const sent = agentWs.pushComplianceScan(
 						api_id,
-						profile_type,
+						effectiveProfileType,
 						scanOptions,
 					);
 					if (!sent) {
@@ -498,9 +538,12 @@ class QueueManager {
 						);
 						throw new DelayedError();
 					}
-					// Create "running" scan records for UI
+					// Create "running" scan records for UI - only for the profile type we actually sent to the agent
 					const profilesToUse = [];
-					if (profile_type === "all" || profile_type === "openscap") {
+					if (
+						effectiveProfileType === "all" ||
+						effectiveProfileType === "openscap"
+					) {
 						let oscapProfile = await prisma.compliance_profiles.findFirst({
 							where: { type: "openscap" },
 							orderBy: { name: "asc" },
@@ -516,7 +559,10 @@ class QueueManager {
 						}
 						profilesToUse.push(oscapProfile);
 					}
-					if (profile_type === "all" || profile_type === "docker-bench") {
+					if (
+						effectiveProfileType === "all" ||
+						effectiveProfileType === "docker-bench"
+					) {
 						let dockerProfile = await prisma.compliance_profiles.findFirst({
 							where: { type: "docker-bench" },
 							orderBy: { name: "asc" },
@@ -628,8 +674,9 @@ class QueueManager {
 					await job.updateData({
 						...job.data,
 						message: "Sending install command to agent...",
+						install_events: [],
 					});
-					await job.updateProgress(10);
+					await job.updateProgress(5);
 
 					const sent = agentWs.pushInstallScanner(api_id);
 					if (!sent) {
@@ -640,13 +687,13 @@ class QueueManager {
 
 					await job.updateData({
 						...job.data,
-						message: "Installing OpenSCAP and SSG content on agent...",
+						message: "Waiting for agent to begin installation...",
 					});
-					await job.updateProgress(30);
+					await job.updateProgress(10);
 
 					const statusKey = `integration_status:${api_id}:compliance`;
 					const deadline = Date.now() + COMPLIANCE_INSTALL_TIMEOUT_MS;
-					let lastProgress = 30;
+					let lastEventCount = 0;
 
 					while (Date.now() < deadline) {
 						const cancelled = await redis.get(cancelKey);
@@ -660,20 +707,41 @@ class QueueManager {
 							const data = JSON.parse(raw);
 							const status = data.status;
 							const message = data.message || status;
-							await job.updateData({ ...job.data, message });
+							const install_events = data.install_events || [];
 
-							if (status === "installing") {
-								if (lastProgress < 70) {
-									lastProgress = 70;
-									await job.updateProgress(lastProgress);
-								}
-							} else if (status === "ready") {
+							await job.updateData({
+								...job.data,
+								message,
+								install_events,
+							});
+
+							// Compute progress from event steps
+							if (
+								install_events.length > 0 &&
+								install_events.length !== lastEventCount
+							) {
+								lastEventCount = install_events.length;
+								const doneCount = install_events.filter(
+									(e) =>
+										e.status === "done" ||
+										e.status === "skipped" ||
+										e.status === "failed",
+								).length;
+								const total = Math.max(install_events.length, 5);
+								const eventProgress = Math.min(
+									95,
+									Math.round(10 + (doneCount / total) * 85),
+								);
+								await job.updateProgress(eventProgress);
+							}
+
+							if (status === "ready") {
 								await job.updateProgress(100);
 								break;
 							} else if (status === "error") {
 								throw new Error(data.message || "Agent reported error");
 							} else if (status === "partial") {
-								await job.updateProgress(90);
+								await job.updateProgress(95);
 								break;
 							}
 						}
