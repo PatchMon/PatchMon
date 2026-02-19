@@ -32,3 +32,7 @@
 # Temporary files
 **/tmp
 **/temp
+
+# Docker compose dev data (volumes)
+docker/compose_dev_data
+**/compose_dev_data

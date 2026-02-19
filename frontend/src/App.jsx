@@ -59,6 +59,7 @@ const SettingsServerConfig = lazy(
 const SettingsUsers = lazy(() => import("./pages/settings/SettingsUsers"));
 const SettingsMetrics = lazy(() => import("./pages/settings/SettingsMetrics"));
 const AiSettings = lazy(() => import("./pages/settings/AiSettings"));
+const DiscordSettings = lazy(() => import("./pages/settings/DiscordSettings"));
 
 // Loading fallback component
 const LoadingFallback = () => (
@@ -500,6 +501,16 @@ function AppRoutes() {
 						<ProtectedRoute requirePermission="can_manage_settings">
 							<Layout>
 								<AiSettings />
+							</Layout>
+						</ProtectedRoute>
+					}
+				/>
+				<Route
+					path="/settings/discord-auth"
+					element={
+						<ProtectedRoute requirePermission="can_manage_settings">
+							<Layout>
+								<DiscordSettings />
 							</Layout>
 						</ProtectedRoute>
 					}

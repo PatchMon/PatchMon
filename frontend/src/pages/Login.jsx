@@ -58,6 +58,10 @@ const Login = () => {
 		buttonText: "Login with SSO",
 		disableLocalAuth: false,
 	});
+	const [discordConfig, setDiscordConfig] = useState({
+		enabled: false,
+		buttonText: "Login with Discord",
+	});
 	const [oidcProcessed, setOidcProcessed] = useState(false); // Track if OIDC callback was processed
 	const canvasRef = useRef(null);
 	const { themeConfig } = useColorTheme();
@@ -176,6 +180,9 @@ const Login = () => {
 					setShowGithubVersionOnLogin(
 						data.show_github_version_on_login !== false,
 					);
+					if (data.discord) {
+						setDiscordConfig(data.discord);
+					}
 				}
 			} catch (error) {
 				console.error("Failed to check login settings:", error);
@@ -235,6 +242,14 @@ const Login = () => {
 		}
 
 		if (oidcSuccess === "success") {
+			setOidcProcessed(true);
+			sessionStorage.removeItem("explicit_logout");
+			window.location.href = "/";
+		}
+
+		const discordSuccess = urlParams.get("discord");
+
+		if (discordSuccess === "success") {
 			setOidcProcessed(true);
 			sessionStorage.removeItem("explicit_logout");
 			window.location.href = "/";
@@ -1016,6 +1031,23 @@ const Login = () => {
 										type="button"
 									>
 										{oidcConfig.buttonText || "Login with SSO"}
+									</button>
+								</div>
+							)}
+
+							{discordConfig.enabled && (
+								<div className="mt-4">
+									<button
+										onClick={() => {
+											sessionStorage.removeItem("explicit_logout");
+											window.location.href = "/api/v1/auth/discord/login";
+										}}
+										className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-md shadow-sm text-sm font-medium text-white hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#5865F2]"
+										style={{ backgroundColor: "#5865F2" }}
+										type="button"
+									>
+										<DiscordIcon className="h-5 w-5" />
+										{discordConfig.buttonText || "Login with Discord"}
 									</button>
 								</div>
 							)}
