@@ -25,6 +25,13 @@ const (
 	osReleasePath  = "/etc/os-release"
 )
 
+// sanitizeForLog replaces newlines and carriage returns so logged values cannot inject extra log lines.
+func sanitizeForLog(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return s
+}
+
 // Profile mappings for different OS families
 var profileMappings = map[string]map[string]string{
 	"level1_server": {
@@ -1253,8 +1260,8 @@ func (s *OpenSCAPScanner) getProfileIDFromContent(contentFile string, preferredI
 	for _, p := range list {
 		if strings.Contains(p.id, "profile_standard") {
 			s.logger.WithFields(logrus.Fields{
-				"requested": preferredID,
-				"using":     p.id,
+				"requested": sanitizeForLog(preferredID),
+				"using":     sanitizeForLog(p.id),
 			}).Info("Requested profile not in content; using Standard System Security profile")
 			return p.id
 		}
@@ -1262,8 +1269,8 @@ func (s *OpenSCAPScanner) getProfileIDFromContent(contentFile string, preferredI
 	// Last resort: first profile in the list
 	fallback := list[0].id
 	s.logger.WithFields(logrus.Fields{
-		"requested": preferredID,
-		"using":     fallback,
+		"requested": sanitizeForLog(preferredID),
+		"using":     sanitizeForLog(fallback),
 	}).Info("Requested profile not in content; using first available profile")
 	return fallback
 }
