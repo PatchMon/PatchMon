@@ -1879,10 +1879,7 @@ const Hosts = () => {
 
 												{/* Desktop Table Layout */}
 												<div className="hidden md:block">
-													<table
-														className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600"
-														style={{ minWidth: "max-content" }}
-													>
+													<table className="w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 														<thead className="bg-secondary-50 dark:bg-secondary-700">
 															<tr>
 																{visibleColumns.map((column) => (
