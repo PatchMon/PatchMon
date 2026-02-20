@@ -172,7 +172,7 @@ function init(server, prismaClient) {
 				const proto = request.headers["x-forwarded-proto"];
 				const isSecure =
 					socket.encrypted || proto === "https" || proto === "wss";
-				
+
 				apiIdToSocket.set(apiId, ws);
 				connectionMetadata.set(apiId, { ws, secure: isSecure });
 
