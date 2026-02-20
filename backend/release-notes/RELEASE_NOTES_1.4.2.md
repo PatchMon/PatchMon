@@ -70,4 +70,4 @@
 
 ## Thank you
 
-I appreciate the whole community for helping with PRs and 
+I appreciate the whole community for helping with PRs and help testing areas of PatchMon <3
