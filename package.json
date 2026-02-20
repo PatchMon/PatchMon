@@ -30,10 +30,22 @@
 		"security:codeql": "bash -c 'command -v codeql >/dev/null 2>&1 || { echo \"CodeQL CLI not found. Install from https://github.com/github/codeql-action#running-codeql-cli-in-your-ci-system\"; exit 1; }; rm -rf .codeql-db; codeql database create .codeql-db --language=javascript --source-root=. && codeql database analyze .codeql-db javascript-security-extended --format=sarif-latest --output=codeql-results.sarif && echo \"Results in codeql-results.sarif\"'",
 		"security": "npm run security:secrets && npm run security:codeql"
 	},
+	"overrides": {
+		"minimatch": "10.2.2",
+		"glob": "13.0.6",
+		"filelist": {
+			"minimatch": "10.2.2"
+		},
+		"test-exclude": {
+			"minimatch": "10.2.2"
+		},
+		"esbuild": "0.25.12"
+	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.4.2",
+		"@biomejs/biome": "^2.4.3",
 		"concurrently": "^8.2.2",
-		"lefthook": "^1.13.4"
+		"lefthook": "^1.13.4",
+		"minimatch": "10.2.2"
 	},
 	"engines": {
 		"node": ">=18.0.0"

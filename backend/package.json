@@ -19,8 +19,8 @@
 		"swagger-autogen": "node ./src/swagger.js"
 	},
 	"dependencies": {
-		"@bull-board/api": "^6.18.2",
-		"@bull-board/express": "^6.18.2",
+		"@bull-board/api": "^6.19.0",
+		"@bull-board/express": "^6.19.0",
 		"@prisma/client": "^6.19.2",
 		"axios": "^1.7.9",
 		"bcryptjs": "^2.4.3",
@@ -47,7 +47,7 @@
 	},
 	"devDependencies": {
 		"@types/bcryptjs": "^2.4.6",
-		"jest": "^29.7.0",
+		"jest": "^30.2.0",
 		"nodemon": "^3.1.9",
 		"supertest": "^7.0.0",
 		"swagger-autogen": "^2.23.0"
