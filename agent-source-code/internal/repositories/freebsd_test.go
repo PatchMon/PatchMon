@@ -11,10 +11,10 @@ func TestExtractDistributionFromURL(t *testing.T) {
 	manager := NewFreeBSDManager(logger)
 
 	tests := []struct {
-		name              string
-		url               string
-		wantDistribution  string
-		wantComponents    string
+		name             string
+		url              string
+		wantDistribution string
+		wantComponents   string
 	}{
 		{
 			name:             "Standard FreeBSD URL",

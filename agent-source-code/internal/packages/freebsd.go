@@ -143,8 +143,9 @@ func (m *FreeBSDManager) parseInstalledPackages(output string) map[string]string
 // The following 5 package(s) will be affected (of 0 checked):
 //
 // Installed packages to be UPGRADED:
-//         curl: 8.9.1 -> 8.10.0
-//         git: 2.46.0 -> 2.46.1
+//
+//	curl: 8.9.1 -> 8.10.0
+//	git: 2.46.0 -> 2.46.1
 func (m *FreeBSDManager) parseUpgradeOutput(output string, _ map[string]string) []models.Package {
 	var packages []models.Package
 
@@ -248,9 +249,10 @@ func (m *FreeBSDManager) markSecurityVulnerabilities(packages []models.Package) 
 // parseAuditOutput parses pkg audit output to get list of vulnerable packages
 // Example output:
 // curl-8.9.1 is vulnerable:
-//   curl -- multiple vulnerabilities
-//   CVE: CVE-2024-XXXX
-//   WWW: https://vuxml.FreeBSD.org/freebsd/...
+//
+//	curl -- multiple vulnerabilities
+//	CVE: CVE-2024-XXXX
+//	WWW: https://vuxml.FreeBSD.org/freebsd/...
 func (m *FreeBSDManager) parseAuditOutput(output string) map[string]bool {
 	vulnerablePackages := make(map[string]bool)
 

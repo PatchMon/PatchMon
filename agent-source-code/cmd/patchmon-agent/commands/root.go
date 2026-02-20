@@ -7,8 +7,8 @@ import (
 
 	"patchmon-agent/internal/config"
 	"patchmon-agent/internal/constants"
-	"patchmon-agent/internal/utils"
 	"patchmon-agent/internal/pkgversion"
+	"patchmon-agent/internal/utils"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"

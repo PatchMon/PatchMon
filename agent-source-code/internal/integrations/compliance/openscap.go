@@ -1551,7 +1551,6 @@ func (s *OpenSCAPScanner) RunOfflineRemediation(ctx context.Context, resultsPath
 	return nil
 }
 
-
 // ruleMetadata holds extracted rule information from the benchmark
 type ruleMetadata struct {
 	Title       string
