@@ -23,6 +23,7 @@ const MetricsReporting = require("./metricsReporting");
 const SystemStatistics = require("./systemStatistics");
 const AlertCleanup = require("./alertCleanup");
 const HostStatusMonitor = require("./hostStatusMonitor");
+const ComplianceScanCleanup = require("./complianceScanCleanup");
 
 // Queue names
 const QUEUE_NAMES = {
@@ -38,6 +39,7 @@ const QUEUE_NAMES = {
 	ALERT_CLEANUP: "alert-cleanup",
 	HOST_STATUS_MONITOR: "host-status-monitor",
 	COMPLIANCE: "compliance",
+	COMPLIANCE_SCAN_CLEANUP: "compliance-scan-cleanup",
 };
 
 /**
@@ -127,6 +129,8 @@ class QueueManager {
 		this.automations[QUEUE_NAMES.HOST_STATUS_MONITOR] = new HostStatusMonitor(
 			this,
 		);
+		this.automations[QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP] =
+			new ComplianceScanCleanup(this);
 
 		logger.info("✅ All automation classes initialized");
 	}
@@ -252,6 +256,15 @@ class QueueManager {
 			QUEUE_NAMES.HOST_STATUS_MONITOR,
 			this.automations[QUEUE_NAMES.HOST_STATUS_MONITOR].process.bind(
 				this.automations[QUEUE_NAMES.HOST_STATUS_MONITOR],
+			),
+			workerOptions,
+		);
+
+		// Compliance Scan Cleanup Worker
+		this.workers[QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP] = new Worker(
+			QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP,
+			this.automations[QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP].process.bind(
+				this.automations[QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP],
 			),
 			workerOptions,
 		);
@@ -832,6 +845,7 @@ class QueueManager {
 		await this.automations[QUEUE_NAMES.SYSTEM_STATISTICS].schedule();
 		await this.automations[QUEUE_NAMES.ALERT_CLEANUP].schedule();
 		await this.automations[QUEUE_NAMES.HOST_STATUS_MONITOR].schedule();
+		await this.automations[QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP].schedule();
 	}
 
 	/**
@@ -881,6 +895,12 @@ class QueueManager {
 
 	async triggerHostStatusMonitor() {
 		return this.automations[QUEUE_NAMES.HOST_STATUS_MONITOR].triggerManual();
+	}
+
+	async triggerComplianceScanCleanup() {
+		return this.automations[
+			QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP
+		].triggerManual();
 	}
 
 	/**

@@ -1316,6 +1316,93 @@ router.get("/scans/history", async (req, res) => {
 });
 
 /**
+ * GET /api/v1/compliance/scans/stalled
+ * Get list of compliance scans running over 3 hours (without cleaning them up)
+ */
+router.get("/scans/stalled", async (_req, res) => {
+	try {
+		const thresholdMs = 3 * 60 * 60 * 1000; // 3 hours
+		const thresholdTime = new Date(Date.now() - thresholdMs);
+
+		const stalledScans = await prisma.compliance_scans.findMany({
+			where: {
+				OR: [
+					{ status: "running" },
+					{ completed_at: null, status: { not: "failed" } },
+				],
+				started_at: {
+					lt: thresholdTime,
+				},
+			},
+			orderBy: { started_at: "asc" },
+			include: {
+				hosts: {
+					select: {
+						id: true,
+						hostname: true,
+						friendly_name: true,
+						api_id: true,
+					},
+				},
+				compliance_profiles: {
+					select: {
+						name: true,
+						type: true,
+					},
+				},
+			},
+		});
+
+		const scansWithRuntime = stalledScans.map((scan) => {
+			const runtimeMs = Date.now() - new Date(scan.started_at).getTime();
+			const runtimeMinutes = Math.round(runtimeMs / 1000 / 60);
+			const runtimeHours = (runtimeMs / 1000 / 60 / 60).toFixed(1);
+
+			return {
+				id: scan.id,
+				hostId: scan.host_id,
+				hostName: scan.hosts?.friendly_name || scan.hosts?.hostname,
+				apiId: scan.hosts?.api_id,
+				profileName: scan.compliance_profiles?.name,
+				profileType: scan.compliance_profiles?.type,
+				startedAt: scan.started_at,
+				status: scan.status,
+				runtimeMinutes,
+				runtimeHours,
+			};
+		});
+
+		res.json({
+			stalledScans: scansWithRuntime,
+			count: scansWithRuntime.length,
+		});
+	} catch (error) {
+		logger.error("[Compliance] Error fetching stalled scans:", error);
+		res.status(500).json({ error: "Failed to fetch stalled scans" });
+	}
+});
+
+/**
+ * POST /api/v1/compliance/scans/cleanup
+ * Manually trigger cleanup of stalled compliance scans (running over 3 hours)
+ */
+router.post("/scans/cleanup", async (_req, res) => {
+	try {
+		logger.info("[Compliance] Manual scan cleanup triggered");
+		const job = await queueManager.triggerComplianceScanCleanup();
+
+		res.json({
+			success: true,
+			message: "Compliance scan cleanup triggered",
+			jobId: job.id,
+		});
+	} catch (error) {
+		logger.error("[Compliance] Error triggering scan cleanup:", error);
+		res.status(500).json({ error: "Failed to trigger scan cleanup" });
+	}
+});
+
+/**
  * GET /api/v1/compliance/scans/:hostId
  * Get scan history for a specific host
  */
