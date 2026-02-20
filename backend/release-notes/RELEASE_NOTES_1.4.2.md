@@ -1,19 +1,10 @@
-# PatchMon 1.4.2: Release notes
+## 🎉 PatchMon 1.4.2
 
-Release notes for **1.4.2** compared to [v1.4.1](https://github.com/PatchMon/PatchMon/releases/tag/v1.4.1). Focus is on user impact and what was fixed or improved.
+## 📈 Dashboard and UI
 
----
-
-## 🔐 HTTPS and reverse proxy
-
-- **WebSocket shown as insecure (ws) when using HTTPS**: When PatchMon was behind a reverse proxy (e.g. nginx, Traefik) with HTTPS, the UI could still show the agent connection as insecure (`ws` instead of `wss`). This is fixed by correctly using `X-Forwarded-Proto` (including `https` and `wss`) and the header name used by some proxies (`http_x_forwarded_proto`), so the secure state matches how users actually connect.
-
----
-
-## 🔑 OIDC and authentication
-
-- **OIDC login/logout loop**: With “auto redirect to OIDC” enabled, some users hit a redirect loop between login and logout. That flow is fixed so OIDC-only setups work as intended.
-- **Auto-redirect to OIDC**: When `OIDC_ENABLED=true` and `OIDC_DISABLE_LOCAL_AUTH=true`, the app now automatically redirects to the OIDC provider instead of showing the local login page.
+- **Editable dashboard**: Dashboard widgets can be edited and re-arranged; a default layout is provided and editing is the default experience.
+- **Bull Board missing over HTTP**: The queue monitoring UI (Bull Board) did not appear when the app was served over HTTP (e.g. dev or internal HTTP). It now shows correctly for both HTTP and HTTPS.
+- **Ultrawide (21:9) layouts**: Dashboard layout is adjusted for 21:9 and similar ultrawide screens so content uses space better.
 
 ---
 
@@ -29,11 +20,16 @@ Release notes for **1.4.2** compared to [v1.4.1](https://github.com/PatchMon/Pat
 
 ---
 
-## 📈 Dashboard and UI
+## 🔐 HTTPS and reverse proxy
 
-- **Editable dashboard**: Dashboard widgets can be edited and re-arranged; a default layout is provided and editing is the default experience.
-- **Bull Board missing over HTTP**: The queue monitoring UI (Bull Board) did not appear when the app was served over HTTP (e.g. dev or internal HTTP). It now shows correctly for both HTTP and HTTPS.
-- **Ultrawide (21:9) layouts**: Dashboard layout is adjusted for 21:9 and similar ultrawide screens so content uses space better.
+- **WebSocket shown as insecure (ws) when using HTTPS**: When PatchMon was behind a reverse proxy (e.g. nginx, Traefik) with HTTPS, the UI could still show the agent connection as insecure (`ws` instead of `wss`). This is fixed by correctly using `X-Forwarded-Proto` (including `https` and `wss`) and the header name used by some proxies (`http_x_forwarded_proto`), so the secure state matches how users actually connect.
+
+---
+
+## 🔑 OIDC and authentication
+
+- **OIDC login/logout loop**: With “auto redirect to OIDC” enabled, some users hit a redirect loop between login and logout. That flow is fixed so OIDC-only setups work as intended.
+- **Auto-redirect to OIDC**: When `OIDC_ENABLED=true` and `OIDC_DISABLE_LOCAL_AUTH=true`, the app now automatically redirects to the OIDC provider instead of showing the local login page.
 
 ---
 
@@ -63,15 +59,15 @@ Release notes for **1.4.2** compared to [v1.4.1](https://github.com/PatchMon/Pat
 
 - **NPM vulnerabilities**: Dependency bumps and fixes to address known NPM vulnerabilities.
 - **License**: License is clearly stated as AGPL v3 in the repo.
-- **Code quality and secrets**: Code scanning and CodeQL are enabled; Gitleaks runs in Docker to help catch secrets and sensitive patterns.
+- **Code quality and secrets**: Code scanning and CodeQL are enabled.
 
 ---
 
 ## 📦 Other
 
-- **Fonts**: Fonts are self-hosted where applicable for faster load and fewer external requests.
+- **Fonts**: Fonts are self-hosted where applicable for faster load and fewer external requests via DNS.
 - **Biome**: Linting/tooling uses a pinned Biome version for consistent formatting and checks.
 
----
+## Thank you
 
-*If you notice anything missing or incorrect in these notes, please open an issue or PR on the [PatchMon repo](https://github.com/PatchMon/PatchMon).*
+I appreciate the whole community for helping with PRs and 
