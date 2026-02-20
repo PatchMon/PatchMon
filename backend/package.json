@@ -47,7 +47,7 @@
 	},
 	"devDependencies": {
 		"@types/bcryptjs": "^2.4.6",
-		"jest": "^29.7.0",
+		"jest": "^30.2.0",
 		"nodemon": "^3.1.9",
 		"supertest": "^7.0.0",
 		"swagger-autogen": "^2.23.0"
