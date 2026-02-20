@@ -170,7 +170,8 @@ function init(server, prismaClient) {
 
 				// Detect if connection is secure (wss://) or not (ws://)
 				const proto = request.headers["x-forwarded-proto"];
-				const isSecure = socket.encrypted || proto === "https" || proto === "wss";
+				const isSecure =
+					socket.encrypted || proto === "https" || proto === "wss";
 				
 				apiIdToSocket.set(apiId, ws);
 				connectionMetadata.set(apiId, { ws, secure: isSecure });
