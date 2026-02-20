@@ -927,6 +927,33 @@ const Hosts = () => {
 		.filter((col) => col.visible)
 		.sort((a, b) => a.order - b.order);
 
+	const renderOsWithVersionTooltip = (host, textClassName) => {
+		const osVersion =
+			typeof host.os_version === "string" && host.os_version.trim()
+				? host.os_version.trim()
+				: "OS version unavailable";
+
+		return (
+			<div
+				className={`group relative inline-flex items-center gap-2 text-sm cursor-help ${textClassName}`}
+			>
+				<OSIcon osType={host.os_type} className="h-4 w-4" />
+				<span>{getOSDisplayName(host.os_type)}</span>
+
+				<div
+					role="tooltip"
+					className="pointer-events-none absolute left-1/2 top-full z-30 mt-2 w-max max-w-sm -translate-x-1/2 rounded-lg border border-secondary-200 bg-secondary-50 px-3 py-2 text-left text-xs text-secondary-700 shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100 dark:border-secondary-400 dark:bg-secondary-700 dark:text-secondary-200"
+				>
+					<div className="absolute -top-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 border-l border-t border-secondary-200 bg-secondary-50 dark:border-secondary-400 dark:bg-secondary-700" />
+					<p className="font-medium text-secondary-900 dark:text-white">
+						OS Version
+					</p>
+					<p className="mt-0.5 break-words">{osVersion}</p>
+				</div>
+			</div>
+		);
+	};
+
 	// Helper function to render table cell content
 	const renderCellContent = (column, host) => {
 		switch (column.id) {
@@ -1003,11 +1030,9 @@ const Hosts = () => {
 				);
 			}
 			case "os":
-				return (
-					<div className="flex items-center gap-2 text-sm text-secondary-900 dark:text-white">
-						<OSIcon osType={host.os_type} className="h-4 w-4" />
-						<span>{getOSDisplayName(host.os_type)}</span>
-					</div>
+				return renderOsWithVersionTooltip(
+					host,
+					"text-secondary-900 dark:text-white",
 				);
 			case "os_version":
 				return (
@@ -1739,17 +1764,11 @@ const Hosts = () => {
 																<div className="flex items-center justify-between gap-2">
 																	{visibleColumns.some(
 																		(col) => col.id === "os",
-																	) && (
-																		<div className="flex items-center gap-2 text-sm">
-																			<OSIcon
-																				osType={host.os_type}
-																				className="h-4 w-4"
-																			/>
-																			<span className="text-secondary-700 dark:text-secondary-300">
-																				{getOSDisplayName(host.os_type)}
-																			</span>
-																		</div>
-																	)}
+																	) &&
+																		renderOsWithVersionTooltip(
+																			host,
+																			"text-secondary-700 dark:text-secondary-300",
+																		)}
 																	<div className="flex flex-wrap items-center gap-2">
 																		{visibleColumns.some(
 																			(col) => col.id === "status",
