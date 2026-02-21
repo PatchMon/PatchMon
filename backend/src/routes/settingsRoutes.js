@@ -432,6 +432,7 @@ router.get("/login-settings", async (_req, res) => {
 			discord: {
 				enabled: discordEnabled,
 				buttonText: discordButtonText,
+				allowRegistration: settings.discord_allow_registration || false,
 			},
 		});
 	} catch (error) {
