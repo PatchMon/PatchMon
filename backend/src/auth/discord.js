@@ -40,15 +40,16 @@ function generatePKCE() {
  * @param {object} config - { clientId, redirectUri }
  * @returns {{ url: string, state: string, codeVerifier: string }}
  */
-function getDiscordAuthorizationUrl(config) {
+function getDiscordAuthorizationUrl(config, options = {}) {
 	const state = generateState();
 	const { codeVerifier, codeChallenge } = generatePKCE();
+	const scopes = options.scopes || "identify email";
 
 	const params = new URLSearchParams({
 		client_id: config.clientId,
 		redirect_uri: config.redirectUri,
 		response_type: "code",
-		scope: "identify email",
+		scope: scopes,
 		state: state,
 		code_challenge: codeChallenge,
 		code_challenge_method: "S256",
@@ -121,9 +122,30 @@ function getDiscordAvatarUrl(userId, avatarHash) {
 	return `${DISCORD_CDN_BASE}/avatars/${userId}/${avatarHash}.${ext}?size=256`;
 }
 
+/**
+ * Fetch the guilds (servers) a Discord user belongs to
+ * @param {string} accessToken - OAuth2 access token (requires `guilds` scope)
+ * @returns {Promise<Array<{ id: string, name: string, icon: string|null, owner: boolean }>>}
+ */
+async function getDiscordUserGuilds(accessToken) {
+	const response = await axios.get(`${DISCORD_API_BASE}/users/@me/guilds`, {
+		headers: {
+			Authorization: `Bearer ${accessToken}`,
+		},
+	});
+
+	return response.data.map(({ id, name, icon, owner }) => ({
+		id,
+		name,
+		icon,
+		owner,
+	}));
+}
+
 module.exports = {
 	getDiscordAuthorizationUrl,
 	exchangeCodeForToken,
 	getDiscordUser,
+	getDiscordUserGuilds,
 	getDiscordAvatarUrl,
 };
