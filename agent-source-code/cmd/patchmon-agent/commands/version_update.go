@@ -671,7 +671,7 @@ rm -f "$0"
 		}
 		cmd.Stdout = nil
 		cmd.Stderr = nil
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		cmd.SysProcAttr = sysProcAttrForDetach()
 		if err := cmd.Start(); err != nil {
 			_ = os.Remove(helperPath)
 			logger.WithError(err).Warn("Failed to start restart helper, exiting to let daemon -r respawn")
