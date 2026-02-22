@@ -29,6 +29,9 @@ RUN mkdir -p /app/assets && chown node:node /app/assets && chmod 1777 /app/asset
 
 USER node
 
+RUN npm install --workspace=backend --ignore-scripts && cd backend && npx prisma generate && \
+    chmod -R u+w /app/node_modules/@prisma/engines 2>/dev/null || true
+
 EXPOSE 3001
 
 VOLUME [ "/app/agents" ]
