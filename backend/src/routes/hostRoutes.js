@@ -283,7 +283,12 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 						: "linux";
 		}
 		if (!os) {
-			os = host?.expected_platform === "freebsd" ? "freebsd" : "linux";
+			os =
+				host?.expected_platform === "freebsd"
+					? "freebsd"
+					: host?.expected_platform === "windows"
+						? "windows"
+						: "linux";
 		}
 		const validArchitecturesLinux = ["amd64", "386", "arm64", "arm"];
 		const validArchitecturesFreebsd = ["amd64", "arm64"];
@@ -462,8 +467,8 @@ router.post(
 			.withMessage("Compliance enabled must be a boolean"),
 		body("expected_platform")
 			.optional()
-			.isIn(["linux", "freebsd"])
-			.withMessage("expected_platform must be linux or freebsd"),
+			.isIn(["linux", "freebsd", "windows"])
+			.withMessage("expected_platform must be linux, freebsd, or windows"),
 	],
 	async (req, res) => {
 		try {

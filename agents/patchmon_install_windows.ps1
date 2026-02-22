@@ -274,6 +274,7 @@ if ($serviceStarted) {
 } else {
     Write-Host "PatchMon Agent installation completed with warnings." -ForegroundColor Yellow
     Write-Host "The agent binary and credentials are installed, but the Windows Service could not be started." -ForegroundColor Yellow
+}
 Write-Host ""
 Write-Host "Installation Summary:" -ForegroundColor Green
 Write-Host "   • Configuration directory: $ConfigPath" -ForegroundColor Gray
@@ -308,4 +309,4 @@ if ($serviceStarted) {
     Write-Host ""
     Write-Host "Or run as a background task:" -ForegroundColor Yellow
     Write-Host "  Start-Process -FilePath `"$targetPath`" -ArgumentList 'serve' -WindowStyle Hidden" -ForegroundColor Cyan
-
+}
