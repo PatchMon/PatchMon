@@ -17,7 +17,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"patchmon-agent/internal/client"
@@ -43,7 +42,7 @@ var serveCmd = &cobra.Command{
 		if err := checkRoot(); err != nil {
 			return err
 		}
-		return runService()
+		return runAsService()
 	},
 }
 
@@ -51,7 +50,8 @@ func init() {
 	rootCmd.AddCommand(serveCmd)
 }
 
-func runService() error {
+// runServiceLoop is the main service loop. stopCh signals shutdown (nil = run forever on Unix)
+func runServiceLoop(stopCh <-chan struct{}) error {
 	if err := cfgManager.LoadCredentials(); err != nil {
 		return err
 	}
@@ -209,8 +209,18 @@ func runService() error {
 	// Track current interval for offset recalculation on updates
 	currentInterval := intervalMinutes
 
+	// Create a stop channel that never closes if none provided (for Unix systems)
+	effectiveStopCh := stopCh
+	if effectiveStopCh == nil {
+		effectiveStopCh = make(chan struct{}) // never closed
+	}
+
 	for {
 		select {
+		case <-effectiveStopCh:
+			// Shutdown requested
+			logger.Info("Shutdown signal received, stopping service...")
+			return nil
 		case <-offsetTimer.C:
 			// Offset period completed, start consuming from ticker normally
 			offsetPassed = true
@@ -1666,12 +1676,8 @@ rm -f "$0"
 				}
 				cmd.Stdout = nil
 				cmd.Stderr = nil
-				// Create a new session to fully detach the child process
-				// Setsid is stronger than Setpgid — it creates a new session,
-				// ensuring the helper script survives even if the parent's cgroup is cleaned up
-				cmd.SysProcAttr = &syscall.SysProcAttr{
-					Setsid: true,
-				}
+				// Create a new session to fully detach the child process (Linux only)
+				cmd.SysProcAttr = sysProcAttrForDetach()
 				if err := cmd.Start(); err != nil {
 					logger.WithError(err).Warn("Failed to start restart helper script, supervise-daemon will handle restart")
 					// Clean up script
@@ -1781,9 +1787,7 @@ rm -f "$0"
 	}
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true,
-	}
+	cmd.SysProcAttr = sysProcAttrForDetach()
 
 	if err := cmd.Start(); err != nil {
 		logger.WithError(err).Error("Failed to start restart helper script")

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"patchmon-agent/internal/config"
 	"patchmon-agent/internal/constants"
@@ -127,8 +128,12 @@ func updateLogLevel(cmd *cobra.Command) {
 	}
 }
 
-// checkRoot ensures the command is run as root
+// checkRoot ensures the command is run as root (Unix) or Administrator (Windows)
 func checkRoot() error {
+	if runtime.GOOS == "windows" {
+		// On Windows, admin check is done at install time; agent runs as Administrator
+		return nil
+	}
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("this command requires root privileges, please run with sudo or as root user")
 	}

@@ -64,8 +64,9 @@ services:
       DATABASE_URL: postgresql://patchmon_user:1NS3CU6E_DEV_D8_PASSW0RD@database:5432/patchmon_db
       JWT_SECRET: INS3CURE_DEV_7WT_5ECR3T
       SERVER_PROTOCOL: http
-      SERVER_HOST: localhost
+      SERVER_HOST: 192.168.1.142
       SERVER_PORT: 3000
+      CORS_ORIGINS: http://192.168.1.142:3000,http://localhost:3000,http://127.0.0.1:3000
       CORS_ORIGIN: http://localhost:3000
       # Database Connection Pool Configuration (Prisma)
       DB_CONNECTION_LIMIT: 30
@@ -87,11 +88,16 @@ services:
       REDIS_DB: 0
       # Assets directory for custom branding (logos, favicons)
       ASSETS_DIR: /app/assets
+      # Guacamole (RDP viewer for Windows hosts)
+      GUACAMOLE_URL: http://guacamole:8080
+      GUACAMOLE_JSON_SECRET_KEY: "1a2b3c4d5e6f7890abcdef1234567890"
     ports:
       - "3001:3001"
     volumes:
       - ./compose_dev_data/agents:/app/agents
       - ./compose_dev_data/assets:/app/assets
+      # Mount backend src for live reload (no rebuild needed)
+      - ../backend/src:/app/backend/src
     networks:
       - patchmon-internal
     depends_on:
@@ -122,15 +128,23 @@ services:
     environment:
       BACKEND_HOST: backend
       BACKEND_PORT: 3001
+      GUACAMOLE_HOST: guacamole
+      GUACAMOLE_PORT: 8080
     ports:
       - "3000:3000"
     volumes:
       - ./compose_dev_data/assets:/app/frontend/public/assets
+      # Mount frontend src for live reload (no rebuild needed)
+      - ../frontend/src:/app/frontend/src
+      # Mount vite config so optimizeDeps/exclude changes apply without rebuild
+      - ../frontend/vite.config.js:/app/frontend/vite.config.js
     networks:
       - patchmon-internal
     depends_on:
       backend:
         condition: service_healthy
+      guacamole:
+        condition: service_started
     develop:
       watch:
         - action: sync
@@ -140,6 +154,60 @@ services:
             - node_modules/
         - action: rebuild
           path: ../frontend/package.json
+        - action: rebuild
+          path: ../frontend/vite.config.js
+
+  # ---------------------------------------------------------------------------
+  # Guacamole - RDP viewer for Windows hosts
+  # ---------------------------------------------------------------------------
+  guacamole-db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: guacamole_db
+      POSTGRES_USER: guacamole_user
+      # WARNING: Insecure development password - DO NOT use in production
+      POSTGRES_PASSWORD: 1NS3CU6E_DEV_GUAC_PASS
+    volumes:
+      - ./compose_dev_data/guacamole_db:/var/lib/postgresql/data
+    networks:
+      - patchmon-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guacamole_user -d guacamole_db"]
+      interval: 3s
+      timeout: 5s
+      retries: 7
+
+  guacd:
+    image: guacamole/guacd
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: info
+    networks:
+      - patchmon-internal
+
+  guacamole:
+    image: guacamole/guacamole
+    restart: unless-stopped
+    environment:
+      GUACD_HOSTNAME: guacd
+      POSTGRESQL_HOSTNAME: guacamole-db
+      POSTGRESQL_DATABASE: guacamole_db
+      POSTGRESQL_USER: guacamole_user
+      POSTGRESQL_PASSWORD: 1NS3CU6E_DEV_GUAC_PASS
+      # JSON auth: PatchMon creates ephemeral connections on demand
+      JSON_ENABLED: "true"
+      JSON_SECRET_KEY: "1a2b3c4d5e6f7890abcdef1234567890"
+      RDP_IGNORE_CERT: "true"
+    ports:
+      - "8080:8080"
+    networks:
+      - patchmon-internal
+    depends_on:
+      guacd:
+        condition: service_started
+      guacamole-db:
+        condition: service_healthy
 
 networks:
   patchmon-internal:

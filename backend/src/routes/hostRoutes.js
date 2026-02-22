@@ -170,85 +170,50 @@ router.get("/agent/download", async (req, res) => {
 		const fs = require("node:fs");
 		const path = require("node:path");
 
-		// Check if this is a legacy agent (bash script) requesting update
-		// Legacy agents will have agent_version < 1.2.9 (excluding 1.2.9 itself)
-		// But allow forcing binary download for fresh installations
-		const forceBinary = req.query.force === "binary";
-		const isLegacyAgent =
-			!forceBinary &&
-			host.agent_version &&
-			((host.agent_version.startsWith("1.2.") &&
-				host.agent_version !== "1.2.9") ||
-				host.agent_version.startsWith("1.1.") ||
-				host.agent_version.startsWith("1.0."));
+		// Serve Go agent binary (OS-aware: linux or windows)
+		const architecture = req.query.arch || "amd64";
 
-		if (isLegacyAgent) {
-			// Serve migration script for legacy agents
-			const migrationScriptPath = path.join(
-				__dirname,
-				"../../../agents/patchmon-agent.sh",
-			);
-
-			if (!fs.existsSync(migrationScriptPath)) {
-				return res.status(404).json({ error: "Migration script not found" });
-			}
-
-			// Set appropriate headers for script download
-			res.setHeader("Content-Type", "text/plain");
-			res.setHeader(
-				"Content-Disposition",
-				'attachment; filename="patchmon-agent.sh"',
-			);
-
-			// Stream the migration script
-			const fileStream = fs.createReadStream(migrationScriptPath);
-			fileStream.pipe(res);
-
-			fileStream.on("error", (error) => {
-				logger.error("Migration script stream error:", error);
-				if (!res.headersSent) {
-					res.status(500).json({ error: "Failed to stream migration script" });
-				}
-			});
-		} else {
-			// Serve Go binary for new agents
-			const architecture = req.query.arch || "amd64";
-
-			// Validate architecture
-			const validArchitectures = ["amd64", "386", "arm64", "arm"];
-			if (!validArchitectures.includes(architecture)) {
-				return res.status(400).json({
-					error: "Invalid architecture. Must be one of: amd64, 386, arm64, arm",
-				});
-			}
-
-			const binaryName = `patchmon-agent-linux-${architecture}`;
-			const binaryPath = path.join(__dirname, "../../../agents", binaryName);
-
-			if (!fs.existsSync(binaryPath)) {
-				return res.status(404).json({
-					error: `Agent binary not found for architecture: ${architecture}`,
-				});
-			}
-
-			// Set appropriate headers for binary download
-			res.setHeader("Content-Type", "application/octet-stream");
-			res.setHeader(
-				"Content-Disposition",
-				`attachment; filename="${binaryName}"`,
-			);
-
-			// Stream the binary file
-			const fileStream = fs.createReadStream(binaryPath);
-			fileStream.pipe(res);
-
-			fileStream.on("error", (error) => {
-				logger.error("Binary stream error:", error);
-				if (!res.headersSent) {
-					res.status(500).json({ error: "Failed to stream agent binary" });
-				}
+		// Validate architecture
+		const validArchitectures = ["amd64", "386", "arm64", "arm"];
+		if (!validArchitectures.includes(architecture)) {
+			return res.status(400).json({
+				error: "Invalid architecture. Must be one of: amd64, 386, arm64, arm",
 			});
 		}
+
+		// Determine OS (default to linux for backward compatibility)
+		const os = req.query.os || "linux";
+
+		// Determine binary name based on OS
+		const binaryName =
+			os === "windows"
+				? `patchmon-agent-windows-${architecture}.exe`
+				: `patchmon-agent-linux-${architecture}`;
+		const binaryPath = path.join(__dirname, "../../../agents", binaryName);
+
+		if (!fs.existsSync(binaryPath)) {
+			return res.status(404).json({
+				error: `Agent binary not found for ${os} architecture: ${architecture}`,
+			});
+		}
+
+		// Set appropriate headers for binary download
+		res.setHeader("Content-Type", "application/octet-stream");
+		res.setHeader(
+			"Content-Disposition",
+			`attachment; filename="${binaryName}"`,
+		);
+
+		// Stream the binary file
+		const fileStream = fs.createReadStream(binaryPath);
+		fileStream.pipe(res);
+
+		fileStream.on("error", (error) => {
+			logger.error("Binary stream error:", error);
+			if (!res.headersSent) {
+				res.status(500).json({ error: "Failed to stream agent binary" });
+			}
+		});
 	} catch (error) {
 		logger.error("Agent download error:", error);
 		res.status(500).json({ error: "Failed to serve agent" });
@@ -284,173 +249,137 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 
 		// Get architecture parameter (default to amd64 for Go agents)
 		const architecture = req.query.arch || "amd64";
-		const agentType = req.query.type || "go"; // "go" or "legacy"
+		const os = req.query.os || "linux";
 
-		if (agentType === "legacy") {
-			// Legacy agent version check (bash script)
-			const agentPath = path.join(
-				__dirname,
-				"../../../agents/patchmon-agent.sh",
-			);
+		// Go agent version check
+		// Always check the server's local binary for the requested architecture
+		// The server's agents folder is the source of truth, not GitHub
+		const { execFile } = require("node:child_process");
+		const { promisify } = require("node:util");
+		const execFileAsync = promisify(execFile);
 
-			if (!fs.existsSync(agentPath)) {
-				return res.status(404).json({ error: "Legacy agent script not found" });
-			}
+		const binaryName =
+			os === "windows"
+				? `patchmon-agent-windows-${architecture}.exe`
+				: `patchmon-agent-linux-${architecture}`;
+		if (binaryName.includes("..")) {
+			return res.status(400).json({ error: "Invalid architecture specified" });
+		}
+		const binaryPath = path.join(__dirname, "../../../agents", binaryName);
 
-			const scriptContent = fs.readFileSync(agentPath, "utf8");
-			const versionMatch = scriptContent.match(/AGENT_VERSION="([^"]+)"/);
+		if (fs.existsSync(binaryPath)) {
+			// Binary exists in server's agents folder - use its version
+			let serverVersion = null;
 
-			if (!versionMatch) {
-				return res
-					.status(500)
-					.json({ error: "Could not extract version from agent script" });
-			}
+			// Try method 1: Execute binary directly (works for same architecture)
+			// Using execFile instead of exec to prevent shell injection
+			try {
+				const { stdout } = await execFileAsync(binaryPath, ["--help"], {
+					timeout: 10000,
+				});
 
-			const currentVersion = versionMatch[1];
+				// Parse version from help output (e.g., "PatchMon Agent v1.3.1")
+				const versionMatch = stdout.match(
+					/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
+				);
 
-			res.json({
-				currentVersion: currentVersion,
-				latestVersion: currentVersion,
-				hasUpdate: false,
-				autoUpdateDisabled: autoUpdateDisabled,
-				autoUpdateDisabledReason: autoUpdateDisabled
-					? autoUpdateDisabledReason
-					: null,
-				downloadUrl: `/api/v1/hosts/agent/download`,
-				releaseNotes: `PatchMon Agent v${currentVersion}`,
-				minServerVersion: null,
-				agentType: "legacy",
-			});
-		} else {
-			// Go agent version check
-			// Always check the server's local binary for the requested architecture
-			// The server's agents folder is the source of truth, not GitHub
-			const { execFile } = require("node:child_process");
-			const { promisify } = require("node:util");
-			const execFileAsync = promisify(execFile);
+				if (versionMatch) {
+					serverVersion = versionMatch[1];
+				}
+			} catch (execError) {
+				// Execution failed (likely cross-architecture) - try alternative method
+				logger.warn(
+					`Failed to execute binary ${binaryName} to get version (may be cross-architecture): ${execError.message}`,
+				);
 
-			const binaryName = `patchmon-agent-linux-${architecture}`;
-			if (binaryName.includes("..")) {
-				return res
-					.status(400)
-					.json({ error: "Invalid architecture specified" });
-			}
-			const binaryPath = path.join(__dirname, "../../../agents", binaryName);
-
-			if (fs.existsSync(binaryPath)) {
-				// Binary exists in server's agents folder - use its version
-				let serverVersion = null;
-
-				// Try method 1: Execute binary directly (works for same architecture)
-				// Using execFile instead of exec to prevent shell injection
+				// Try method 2: Extract version using strings command (works for cross-architecture)
+				// Using execFile with strings command to avoid shell injection
 				try {
-					const { stdout } = await execFileAsync(binaryPath, ["--help"], {
-						timeout: 10000,
-					});
+					const { stdout: stringsOutput } = await execFileAsync(
+						"strings",
+						[binaryPath],
+						{ timeout: 10000, maxBuffer: 10 * 1024 * 1024 },
+					);
 
-					// Parse version from help output (e.g., "PatchMon Agent v1.3.1")
-					const versionMatch = stdout.match(
+					// Filter in Node.js instead of piping through grep
+					const versionMatch = stringsOutput.match(
 						/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
 					);
 
 					if (versionMatch) {
 						serverVersion = versionMatch[1];
+						logger.info(
+							`✅ Extracted version ${serverVersion} from binary using strings command`,
+						);
 					}
-				} catch (execError) {
-					// Execution failed (likely cross-architecture) - try alternative method
+				} catch (stringsError) {
 					logger.warn(
-						`Failed to execute binary ${binaryName} to get version (may be cross-architecture): ${execError.message}`,
+						`Failed to extract version using strings command: ${stringsError.message}`,
 					);
-
-					// Try method 2: Extract version using strings command (works for cross-architecture)
-					// Using execFile with strings command to avoid shell injection
-					try {
-						const { stdout: stringsOutput } = await execFileAsync(
-							"strings",
-							[binaryPath],
-							{ timeout: 10000, maxBuffer: 10 * 1024 * 1024 },
-						);
-
-						// Filter in Node.js instead of piping through grep
-						const versionMatch = stringsOutput.match(
-							/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
-						);
-
-						if (versionMatch) {
-							serverVersion = versionMatch[1];
-							logger.info(
-								`✅ Extracted version ${serverVersion} from binary using strings command`,
-							);
-						}
-					} catch (stringsError) {
-						logger.warn(
-							`Failed to extract version using strings command: ${stringsError.message}`,
-						);
-					}
 				}
-
-				// If we successfully got the version, return it
-				if (serverVersion) {
-					const agentVersion = req.query.currentVersion || serverVersion;
-
-					// Proper semantic version comparison: only update if server version is NEWER
-					const hasUpdate = compareVersions(serverVersion, agentVersion) > 0;
-
-					// Calculate SHA256 hash of the binary for integrity verification
-					// This allows agents to verify the downloaded binary matches the expected hash
-					let binaryHash = null;
-					try {
-						const binaryContent = fs.readFileSync(binaryPath);
-						binaryHash = crypto
-							.createHash("sha256")
-							.update(binaryContent)
-							.digest("hex");
-					} catch (hashErr) {
-						logger.warn(
-							`Failed to calculate hash for binary ${binaryName}: ${hashErr.message}`,
-						);
-					}
-
-					// Return update info, but indicate if auto-update is disabled
-					return res.json({
-						currentVersion: agentVersion,
-						latestVersion: serverVersion,
-						hasUpdate: hasUpdate && !autoUpdateDisabled, // Only true if update available AND auto-update enabled
-						autoUpdateDisabled: autoUpdateDisabled,
-						autoUpdateDisabledReason: autoUpdateDisabled
-							? autoUpdateDisabledReason
-							: null,
-						downloadUrl: `/api/v1/hosts/agent/download?arch=${architecture}`,
-						releaseNotes: `PatchMon Agent v${serverVersion}`,
-						minServerVersion: null,
-						architecture: architecture,
-						agentType: "go",
-						hash: binaryHash, // SHA256 hash for integrity verification
-					});
-				}
-
-				// If we couldn't get version, fall through to error response
-				logger.warn(
-					`Could not determine version for binary ${binaryName} using any method`,
-				);
 			}
 
-			// Binary doesn't exist or couldn't get version - return error
-			// Don't fall back to GitHub - the server's agents folder is the source of truth
-			const agentVersion = req.query.currentVersion || "unknown";
-			return res.status(404).json({
-				error: `Agent binary not found for architecture: ${architecture}. Please ensure the binary is in the server's agents folder.`,
-				currentVersion: agentVersion,
-				latestVersion: null,
-				hasUpdate: false,
-				autoUpdateDisabled: autoUpdateDisabled,
-				autoUpdateDisabledReason: autoUpdateDisabled
-					? autoUpdateDisabledReason
-					: null,
-				architecture: architecture,
-				agentType: "go",
-			});
+			// If we successfully got the version, return it
+			if (serverVersion) {
+				const agentVersion = req.query.currentVersion || serverVersion;
+
+				// Proper semantic version comparison: only update if server version is NEWER
+				const hasUpdate = compareVersions(serverVersion, agentVersion) > 0;
+
+				// Calculate SHA256 hash of the binary for integrity verification
+				// This allows agents to verify the downloaded binary matches the expected hash
+				let binaryHash = null;
+				try {
+					const binaryContent = fs.readFileSync(binaryPath);
+					binaryHash = crypto
+						.createHash("sha256")
+						.update(binaryContent)
+						.digest("hex");
+				} catch (hashErr) {
+					logger.warn(
+						`Failed to calculate hash for binary ${binaryName}: ${hashErr.message}`,
+					);
+				}
+
+				// Return update info, but indicate if auto-update is disabled
+				return res.json({
+					currentVersion: agentVersion,
+					latestVersion: serverVersion,
+					hasUpdate: hasUpdate && !autoUpdateDisabled, // Only true if update available AND auto-update enabled
+					autoUpdateDisabled: autoUpdateDisabled,
+					autoUpdateDisabledReason: autoUpdateDisabled
+						? autoUpdateDisabledReason
+						: null,
+					downloadUrl: `/api/v1/hosts/agent/download?arch=${architecture}&os=${os}`,
+					releaseNotes: `PatchMon Agent v${serverVersion}`,
+					minServerVersion: null,
+					architecture: architecture,
+					agentType: "go",
+					hash: binaryHash, // SHA256 hash for integrity verification
+				});
+			}
+
+			// If we couldn't get version, fall through to error response
+			logger.warn(
+				`Could not determine version for binary ${binaryName} using any method`,
+			);
 		}
+
+		// Binary doesn't exist or couldn't get version - return error
+		// Don't fall back to GitHub - the server's agents folder is the source of truth
+		const agentVersion = req.query.currentVersion || "unknown";
+		return res.status(404).json({
+			error: `Agent binary not found for architecture: ${architecture}. Please ensure the binary is in the server's agents folder.`,
+			currentVersion: agentVersion,
+			latestVersion: null,
+			hasUpdate: false,
+			autoUpdateDisabled: autoUpdateDisabled,
+			autoUpdateDisabledReason: autoUpdateDisabled
+				? autoUpdateDisabledReason
+				: null,
+			architecture: architecture,
+			agentType: "go",
+		});
 	} catch (error) {
 		logger.error("Version check error:", error);
 		res.status(500).json({ error: "Failed to get agent version" });
@@ -2353,22 +2282,23 @@ router.get("/install", async (req, res) => {
 		const fs = require("node:fs");
 		const path = require("node:path");
 
-		const scriptPath = path.join(
-			__dirname,
-			"../../../agents/patchmon_install.sh",
-		);
-
-		if (!fs.existsSync(scriptPath)) {
-			return res.status(404).json({ error: "Installation script not found" });
-		}
-
-		let script = fs.readFileSync(scriptPath, "utf8");
-
-		// Convert Windows line endings to Unix line endings
-		script = script.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+		// Detect OS: explicit ?os=windows query param takes precedence, else User-Agent
+		const osParam = req.query.os?.toLowerCase();
+		const userAgent = (req.headers["user-agent"] || "").toLowerCase();
+		const isWindows =
+			osParam === "windows"
+				? true
+				: osParam === "linux"
+					? false
+					: userAgent.includes("windows") || userAgent.includes("powershell");
 
 		// Get the configured server URL from settings
-		let serverUrl = "http://localhost:3001";
+		// Use SERVER_HOST and SERVER_PORT from environment, or fall back to settings
+		let serverUrl =
+			process.env.SERVER_HOST && process.env.SERVER_PORT
+				? `${process.env.SERVER_PROTOCOL || "http"}://${process.env.SERVER_HOST}:${process.env.SERVER_PORT}`
+				: "http://localhost:3001";
+
 		try {
 			const settings = await prisma.settings.findFirst();
 			if (settings?.server_url) {
@@ -2381,36 +2311,100 @@ router.get("/install", async (req, res) => {
 			);
 		}
 
-		// Determine curl flags dynamically from settings (ignore self-signed)
-		let curlFlags = "-s";
-		let skipSSLVerify = "false";
-		try {
-			const settings = await prisma.settings.findFirst();
-			if (settings && settings.ignore_ssl_self_signed === true) {
-				curlFlags = "-sk";
-				skipSSLVerify = "true";
+		if (isWindows) {
+			// Serve PowerShell script for Windows
+			const scriptPath = path.join(
+				__dirname,
+				"../../../agents/patchmon_install_windows.ps1",
+			);
+
+			if (!fs.existsSync(scriptPath)) {
+				return res
+					.status(404)
+					.json({ error: "Windows installation script not found" });
 			}
-		} catch (sslSettingsError) {
-			logger.warn("Could not fetch SSL settings:", sslSettingsError.message);
-		}
 
-		// Check for --force parameter
-		const forceInstall = req.query.force === "true" || req.query.force === "1";
+			// Generate bootstrap token (same secure flow as Linux - no embedding of API key)
+			const bootstrapToken = await generateBootstrapToken(host.api_id, apiKey);
 
-		// Get architecture parameter (only set if explicitly provided, otherwise let script auto-detect)
-		const architecture = req.query.arch;
+			let script = fs.readFileSync(scriptPath, "utf8");
 
-		// Generate a secure bootstrap token instead of embedding the API key directly
-		// The agent will exchange this token for actual credentials via a secure API call
-		// IMPORTANT: Use the plaintext apiKey from the request headers, NOT host.api_key (which is the hash)
-		const bootstrapToken = await generateBootstrapToken(host.api_id, apiKey);
+			// Inject bootstrap token and server URL into param() block
+			// PowerShell param() must be first - we replace defaults with actual values
+			const lines = script.split("\n");
+			for (let i = 0; i < lines.length; i++) {
+				const line = lines[i].trim();
+				if (line.startsWith("param(")) {
+					let paramEnd = i;
+					for (let j = i; j < lines.length; j++) {
+						if (lines[j].trim() === ")") {
+							paramEnd = j;
+							break;
+						}
+					}
+					const newParamBlock = `param(
+    [string]$ServerURL = "${serverUrl}",
+    [string]$BootstrapToken = "${bootstrapToken}",
+    [string]$APIID = "",
+    [string]$APIKey = "",
+    [string]$Version = "latest",
+    [string]$InstallPath = "C:\\Program Files\\PatchMon",
+    [string]$ConfigPath = "C:\\ProgramData\\PatchMon"
+)`;
+					lines.splice(i, paramEnd - i + 1, ...newParamBlock.split("\n"));
+					break;
+				}
+			}
+			script = lines.join("\n");
 
-		// Inject bootstrap token and server URL into the script
-		// The actual API credentials are NOT embedded - they will be fetched securely
-		const archExport = architecture
-			? `export ARCHITECTURE="${architecture}"\n`
-			: "";
-		const envVars = `#!/bin/sh
+			res.setHeader("Content-Type", "text/plain; charset=utf-8");
+			res.setHeader(
+				"Content-Disposition",
+				'inline; filename="patchmon_install.ps1"',
+			);
+			res.send(script);
+		} else {
+			// Serve bash script for Linux/Unix (existing behavior)
+			const scriptPath = path.join(
+				__dirname,
+				"../../../agents/patchmon_install.sh",
+			);
+
+			if (!fs.existsSync(scriptPath)) {
+				return res.status(404).json({ error: "Installation script not found" });
+			}
+
+			let script = fs.readFileSync(scriptPath, "utf8");
+
+			// Convert Windows line endings to Unix line endings
+			script = script.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+			// Determine curl flags dynamically from settings (ignore self-signed)
+			let curlFlags = "-s";
+			let skipSSLVerify = "false";
+			try {
+				const settings = await prisma.settings.findFirst();
+				if (settings && settings.ignore_ssl_self_signed === true) {
+					curlFlags = "-sk";
+					skipSSLVerify = "true";
+				}
+			} catch (_) {}
+
+			// Check for --force parameter
+			const forceInstall =
+				req.query.force === "true" || req.query.force === "1";
+
+			// Get architecture parameter (only set if explicitly provided, otherwise let script auto-detect)
+			const architecture = req.query.arch;
+
+			// Generate bootstrap token (secure flow - no embedding of API key)
+			const apiKey = req.headers["x-api-key"];
+			const bootstrapToken = await generateBootstrapToken(host.api_id, apiKey);
+
+			const archExport = architecture
+				? `export ARCHITECTURE="${architecture}"\n`
+				: "";
+			const envVars = `#!/bin/sh
 export PATCHMON_URL="${serverUrl}"
 export BOOTSTRAP_TOKEN="${bootstrapToken}"
 export CURL_FLAGS="${curlFlags}"
@@ -2440,16 +2434,17 @@ fetch_credentials() {
 fetch_credentials
 `;
 
-		// Remove the shebang from the original script and prepend our env vars
-		script = script.replace(/^#!/, "#");
-		script = envVars + script;
+			// Remove the shebang from the original script and prepend our env vars
+			script = script.replace(/^#!/, "#");
+			script = envVars + script;
 
-		res.setHeader("Content-Type", "text/plain");
-		res.setHeader(
-			"Content-Disposition",
-			'inline; filename="patchmon_install.sh"',
-		);
-		res.send(script);
+			res.setHeader("Content-Type", "text/plain");
+			res.setHeader(
+				"Content-Disposition",
+				'inline; filename="patchmon_install.sh"',
+			);
+			res.send(script);
+		}
 	} catch (error) {
 		logger.error("Installation script error:", error);
 		res.status(500).json({ error: "Failed to serve installation script" });
@@ -2489,49 +2484,82 @@ router.post("/bootstrap/exchange", async (req, res) => {
 
 // Serve the removal script (public - no authentication required)
 // The script is static and only removes PatchMon files from the system
-router.get("/remove", async (_req, res) => {
+router.get("/remove", async (req, res) => {
 	try {
 		const fs = require("node:fs");
 		const path = require("node:path");
 
-		const scriptPath = path.join(
-			__dirname,
-			"../../../agents/patchmon_remove.sh",
-		);
+		// Detect OS: explicit ?os=windows takes precedence, else User-Agent
+		const osParam = req.query.os?.toLowerCase();
+		const userAgent = (req.headers["user-agent"] || "").toLowerCase();
+		const isWindows =
+			osParam === "windows"
+				? true
+				: osParam === "linux"
+					? false
+					: userAgent.includes("windows") || userAgent.includes("powershell");
 
-		if (!fs.existsSync(scriptPath)) {
-			return res.status(404).json({ error: "Removal script not found" });
-		}
+		if (isWindows) {
+			// Serve PowerShell script for Windows
+			const scriptPath = path.join(
+				__dirname,
+				"../../../agents/patchmon_remove_windows.ps1",
+			);
 
-		// Read the script content
-		let script = fs.readFileSync(scriptPath, "utf8");
-
-		// Convert line endings
-		script = script.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-
-		// Determine curl flags dynamically from settings for consistency
-		let curlFlags = "-s";
-		try {
-			const settings = await prisma.settings.findFirst();
-			if (settings && settings.ignore_ssl_self_signed === true) {
-				curlFlags = "-sk";
+			if (!fs.existsSync(scriptPath)) {
+				return res
+					.status(404)
+					.json({ error: "Windows removal script not found" });
 			}
-		} catch (settingsError) {
-			logger.warn("Could not fetch settings:", settingsError.message);
+
+			const script = fs.readFileSync(scriptPath, "utf8");
+
+			// Set appropriate headers for PowerShell script
+			res.setHeader("Content-Type", "text/plain; charset=utf-8");
+			res.setHeader(
+				"Content-Disposition",
+				'inline; filename="patchmon_remove_windows.ps1"',
+			);
+			res.send(script);
+		} else {
+			// Serve bash script for Linux/Unix
+			const scriptPath = path.join(
+				__dirname,
+				"../../../agents/patchmon_remove.sh",
+			);
+
+			if (!fs.existsSync(scriptPath)) {
+				return res.status(404).json({ error: "Removal script not found" });
+			}
+
+			// Read the script content
+			let script = fs.readFileSync(scriptPath, "utf8");
+
+			// Convert line endings
+			script = script.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+			// Determine curl flags dynamically from settings for consistency
+			let curlFlags = "-s";
+			try {
+				const settings = await prisma.settings.findFirst();
+				if (settings && settings.ignore_ssl_self_signed === true) {
+					curlFlags = "-sk";
+				}
+			} catch (_) {}
+
+			// Prepend environment for CURL_FLAGS so script can use it if needed
+			const envPrefix = `#!/bin/sh\nexport CURL_FLAGS="${curlFlags}"\n\n`;
+			script = script.replace(/^#!/, "#");
+			script = envPrefix + script;
+
+			// Set appropriate headers for script download
+			res.setHeader("Content-Type", "text/plain");
+			res.setHeader(
+				"Content-Disposition",
+				'inline; filename="patchmon_remove.sh"',
+			);
+			res.send(script);
 		}
-
-		// Prepend environment for CURL_FLAGS so script can use it if needed
-		const envPrefix = `#!/bin/sh\nexport CURL_FLAGS="${curlFlags}"\n\n`;
-		script = script.replace(/^#!/, "#");
-		script = envPrefix + script;
-
-		// Set appropriate headers for script download
-		res.setHeader("Content-Type", "text/plain");
-		res.setHeader(
-			"Content-Disposition",
-			'inline; filename="patchmon_remove.sh"',
-		);
-		res.send(script);
 	} catch (error) {
 		logger.error("Removal script error:", error.message);
 		res.status(500).json({ error: "Failed to serve removal script" });

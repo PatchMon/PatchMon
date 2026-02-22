@@ -41,6 +41,8 @@ const (
 	RepoTypeRPM    = "rpm"
 	RepoTypeAPK    = "apk"
 	RepoTypePacman = "pacman"
+	RepoTypeWU     = "windows-update" // Windows Update
+	RepoTypeWSUS   = "wsus"           // Windows Server Update Services
 )
 
 // Log level constants

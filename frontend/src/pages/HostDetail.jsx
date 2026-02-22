@@ -26,12 +26,14 @@ import {
 	Wifi,
 	X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import ComplianceTab from "../components/compliance/ComplianceTab";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
+import RdpViewer from "../components/RdpViewer";
 import SshTerminal from "../components/SshTerminal";
+
 import {
 	adminHostsAPI,
 	alertsAPI,
@@ -129,6 +131,7 @@ const HostDetail = () => {
 		staleTime: 5 * 60 * 1000, // 5 minutes - data stays fresh longer
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
+	const isWindowsHost = (host?.os_type || "").toLowerCase().includes("windows");
 
 	// Fetch global settings to check if auto-update master toggle is enabled
 	// Try public endpoint first (works for all users), fallback to full settings if user has permissions
@@ -2256,6 +2259,19 @@ const HostDetail = () => {
 						>
 							Terminal
 						</button>
+						{isWindowsHost && (
+							<button
+								type="button"
+								onClick={() => handleTabChange("rdp")}
+								className={`px-4 py-2 text-sm font-medium ${
+									activeTab === "rdp"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300"
+								}`}
+							>
+								RDP
+							</button>
+						)}
 					</div>
 
 					<div className="p-4">
@@ -3168,13 +3184,51 @@ const HostDetail = () => {
 
 						{/* Terminal - Always mounted and open to preserve connection, hidden when not active */}
 						{host && (
-							<div className={activeTab === "terminal" ? "" : "hidden"}>
-								<SshTerminal
-									host={host}
-									isOpen={true}
-									onClose={() => handleTabChange("host")}
-									embedded={true}
-								/>
+							<div
+								className={
+									activeTab === "terminal"
+										? "min-h-[calc(100vh-14rem)]"
+										: "hidden"
+								}
+							>
+								<Suspense
+									fallback={
+										<div className="flex items-center justify-center py-12 text-secondary-500">
+											Loading...
+										</div>
+									}
+								>
+									<SshTerminal
+										host={host}
+										isOpen={true}
+										onClose={() => handleTabChange("host")}
+										embedded={true}
+									/>
+								</Suspense>
+							</div>
+						)}
+
+						{/* RDP - Windows hosts only */}
+						{host && isWindowsHost && (
+							<div
+								className={
+									activeTab === "rdp" ? "min-h-[calc(100vh-14rem)]" : "hidden"
+								}
+							>
+								<Suspense
+									fallback={
+										<div className="flex items-center justify-center py-12 text-secondary-500">
+											Loading...
+										</div>
+									}
+								>
+									<RdpViewer
+										host={host}
+										isOpen={true}
+										onClose={() => handleTabChange("host")}
+										embedded={true}
+									/>
+								</Suspense>
 							</div>
 						)}
 

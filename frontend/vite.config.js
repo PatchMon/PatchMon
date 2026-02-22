@@ -6,7 +6,7 @@ import { defineConfig } from "vite";
 export default defineConfig({
 	plugins: [react()],
 	optimizeDeps: {
-		include: ["xterm", "xterm-addon-fit"],
+		include: ["xterm", "xterm-addon-fit", "guacamole-common-js"],
 		esbuildOptions: {
 			target: "es2020",
 		},
@@ -58,6 +58,12 @@ export default defineConfig({
 				target: `http://${process.env.BACKEND_HOST || "localhost"}:${process.env.BACKEND_PORT || "3001"}`,
 				changeOrigin: true,
 				secure: false,
+			},
+			"/guacamole": {
+				target: `http://${process.env.GUACAMOLE_HOST || "localhost"}:${process.env.GUACAMOLE_PORT || "8080"}`,
+				changeOrigin: true,
+				secure: false,
+				ws: true,
 			},
 		},
 	},

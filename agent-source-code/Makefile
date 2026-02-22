@@ -3,6 +3,9 @@
 # Build variables
 BINARY_NAME=patchmon-agent
 BUILD_DIR=build
+# Where backend serves agents from (both must stay in sync)
+AGENTS_REPO=../agents
+AGENTS_DOCKER=../docker/compose_dev_data/agents
 # Strip debug info (version comes from internal/version/version.go)
 LDFLAGS=-ldflags "-s -w"
 # Disable VCS stamping
@@ -11,8 +14,8 @@ BUILD_FLAGS=-buildvcs=false
 # Go variables
 GOBASE=$(shell pwd)
 GOBIN=$(GOBASE)/$(BUILD_DIR)
-# Use full path to go binary to avoid PATH issues when running as root
-GO_CMD=/usr/local/go/bin/go
+# Use go from PATH
+GO_CMD?=go
 # Use full path to golangci-lint binary to avoid PATH issues when running as root
 GOLANGCI_LINT_CMD=/root/go/bin/golangci-lint
 
@@ -27,15 +30,23 @@ build:
 	@mkdir -p $(BUILD_DIR)
 	@CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME) ./cmd/patchmon-agent
 
-# Build for multiple architectures
+# Build for multiple architectures and write directly to backend serve dirs.
+# No separate deploy step - build = overwrite. Always.
 .PHONY: build-all
 build-all:
 	@echo "Building for multiple architectures..."
-	@mkdir -p $(BUILD_DIR)
+	@mkdir -p $(BUILD_DIR) $(AGENTS_REPO) $(AGENTS_DOCKER)
 	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-linux-amd64 ./cmd/patchmon-agent
 	@GOOS=linux GOARCH=386 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-linux-386 ./cmd/patchmon-agent
 	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-linux-arm64 ./cmd/patchmon-agent
 	@GOOS=linux GOARCH=arm GOARM=6 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-linux-arm ./cmd/patchmon-agent
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-windows-amd64.exe ./cmd/patchmon-agent
+	@GOOS=windows GOARCH=386 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-windows-386.exe ./cmd/patchmon-agent
+	@echo "Copying to backend serve locations..."
+	@for f in $(GOBIN)/$(BINARY_NAME)-linux-* $(GOBIN)/$(BINARY_NAME)-windows-*.exe; do \
+		[ -f "$$f" ] && cp "$$f" $(AGENTS_REPO)/ && cp "$$f" $(AGENTS_DOCKER)/; \
+	done
+	@echo "Done. agents/ and docker/compose_dev_data/agents/ updated."
 
 # Install dependencies
 .PHONY: deps
@@ -88,7 +99,7 @@ install: build
 help:
 	@echo "Available targets:"
 	@echo "  build         Build the application"
-	@echo "  build-all     Build for multiple architectures"
+	@echo "  build-all     Build all archs + overwrite agents/ and docker/compose_dev_data/agents/"
 	@echo "  deps          Install dependencies"
 	@echo "  test          Run tests"
 	@echo "  test-coverage Run tests with coverage"

@@ -32,3 +32,6 @@
 # Temporary files
 **/tmp
 **/temp
+
+# Docker dev data (may have restricted permissions from previous runs)
+**/compose_dev_data
