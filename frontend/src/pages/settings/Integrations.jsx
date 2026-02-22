@@ -5,6 +5,7 @@ import {
 	CheckCircle,
 	Container,
 	Copy,
+	Download,
 	Eye,
 	EyeOff,
 	Plus,
@@ -16,7 +17,131 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import SettingsLayout from "../../components/SettingsLayout";
-import api, { settingsAPI } from "../../utils/api";
+import api, { dashboardAPI, settingsAPI } from "../../utils/api";
+
+// Checkmk CSV export: format per https://docs.checkmk.com/latest/en/hosts_setup.html#import
+const CHECKMK_CSV_DELIMITER = ";";
+const CHECKMK_HOSTNAME_MAX_LENGTH = 240;
+
+// Basic columns only (minimal import)
+const CHECKMK_CSV_HEADER_BASIC = "hostname;ip address;alias;agent";
+
+// All attributes from Checkmk docs §6.1 "Overview of the attributes for import"
+const CHECKMK_CSV_HEADER_FULL =
+	"Host name;Alias;Monitored on site;IPv4 address;IPv6 address;SNMP community;Tag: Criticality;Tag: Networking Segment;Tag: Checkmk agent / API integrations;Tag: Piggyback;Tag: SNMP;Tag: IP address family";
+
+function escape_csv_field(value) {
+	if (value == null) return "";
+	const s = String(value);
+	if (/[;"\n\r]/.test(s)) {
+		return `"${s.replace(/"/g, '""')}"`;
+	}
+	return s;
+}
+
+function build_checkmk_csv(hosts, include_additional_fields) {
+	const header = include_additional_fields
+		? CHECKMK_CSV_HEADER_FULL
+		: CHECKMK_CSV_HEADER_BASIC;
+	const rows = [header];
+	for (const host of hosts) {
+		const hostname = (host.hostname || "").slice(
+			0,
+			CHECKMK_HOSTNAME_MAX_LENGTH,
+		);
+		const ip = host.ip || "";
+		const alias = host.friendly_name || host.hostname || hostname;
+		const agent = "cmk-agent";
+		if (include_additional_fields) {
+			rows.push(
+				[
+					escape_csv_field(hostname),
+					escape_csv_field(alias),
+					escape_csv_field(""), // Monitored on site
+					escape_csv_field(ip),
+					escape_csv_field(""), // IPv6 address
+					escape_csv_field(""), // SNMP community
+					escape_csv_field(""), // Tag: Criticality (e.g. prod, test)
+					escape_csv_field(""), // Tag: Networking Segment
+					escape_csv_field(agent),
+					escape_csv_field(""), // Tag: Piggyback
+					escape_csv_field(""), // Tag: SNMP
+					escape_csv_field(""), // Tag: IP address family
+				].join(CHECKMK_CSV_DELIMITER),
+			);
+		} else {
+			rows.push(
+				[
+					escape_csv_field(hostname),
+					escape_csv_field(ip),
+					escape_csv_field(alias),
+					escape_csv_field(agent),
+				].join(CHECKMK_CSV_DELIMITER),
+			);
+		}
+	}
+	return rows.join("\n");
+}
+
+function CheckmkExportButton({ include_additional_fields }) {
+	const [exporting, setExporting] = useState(false);
+	const [error, setError] = useState(null);
+
+	const handle_export = async () => {
+		setError(null);
+		setExporting(true);
+		try {
+			const res = await dashboardAPI.getHosts();
+			const hosts = Array.isArray(res.data) ? res.data : [];
+			if (hosts.length === 0) {
+				setError("No hosts to export.");
+				return;
+			}
+			const csv = build_checkmk_csv(hosts, include_additional_fields);
+			const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement("a");
+			a.href = url;
+			a.download = `checkmk_hosts_export_${new Date().toISOString().slice(0, 10)}.csv`;
+			a.click();
+			URL.revokeObjectURL(url);
+		} catch (err) {
+			const msg =
+				err.response?.data?.error || err.response?.status === 403
+					? "You do not have permission to view hosts."
+					: "Export failed.";
+			setError(msg);
+		} finally {
+			setExporting(false);
+		}
+	};
+
+	return (
+		<div className="flex flex-col gap-2">
+			<button
+				type="button"
+				onClick={handle_export}
+				disabled={exporting}
+				className="btn-primary inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm"
+			>
+				{exporting ? (
+					<>
+						<div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-white" />
+						Exporting...
+					</>
+				) : (
+					<>
+						<Download className="h-3.5 w-3.5" />
+						Export CSV
+					</>
+				)}
+			</button>
+			{error && (
+				<p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+			)}
+		</div>
+	);
+}
 
 const Integrations = () => {
 	// Generate unique IDs for form elements
@@ -64,6 +189,8 @@ const Integrations = () => {
 	});
 
 	const [copy_success, setCopySuccess] = useState({});
+	const [checkmk_additional_fields, setCheckmkAdditionalFields] =
+		useState(false);
 
 	// Helper function to build enrollment URL with optional force flag and selected type
 	const getEnrollmentUrl = (scriptType = "proxmox-lxc") => {
@@ -508,6 +635,20 @@ const Integrations = () => {
 								<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
 							)}
 						</button>
+						<button
+							type="button"
+							onClick={() => handleTabChange("checkmk")}
+							className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+								activeTab === "checkmk"
+									? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
+									: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+							}`}
+						>
+							<span>Checkmk</span>
+							{activeTab === "checkmk" && (
+								<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+							)}
+						</button>
 					</div>
 
 					{/* Desktop Tab Navigation */}
@@ -578,6 +719,17 @@ const Integrations = () => {
 								}`}
 							>
 								Compliance
+							</button>
+							<button
+								type="button"
+								onClick={() => handleTabChange("checkmk")}
+								className={`px-6 py-3 text-sm font-medium ${
+									activeTab === "checkmk"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
+										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+								}`}
+							>
+								Checkmk
 							</button>
 						</div>
 					</div>
@@ -1973,6 +2125,87 @@ const Integrations = () => {
 											</ul>
 										</div>
 									</div>
+								</div>
+							</div>
+						)}
+
+						{/* Checkmk Tab */}
+						{activeTab === "checkmk" && (
+							<div className="space-y-6">
+								<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+									<div className="flex items-center gap-3 flex-1 min-w-0">
+										<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
+											<Server className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+										</div>
+										<div className="min-w-0">
+											<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
+												Checkmk integration
+											</h3>
+											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
+												Export hosts as CSV for import into Checkmk
+											</p>
+										</div>
+									</div>
+								</div>
+
+								<div className="bg-secondary-50 dark:bg-secondary-800/50 rounded-lg border border-secondary-200 dark:border-secondary-700 p-4 md:p-6">
+									<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-4">
+										Export your PatchMon host list in the{" "}
+										<a
+											href="https://docs.checkmk.com/latest/en/hosts_setup.html#import"
+											target="_blank"
+											rel="noopener noreferrer"
+											className="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 underline"
+										>
+											Checkmk CSV import format
+										</a>
+										. Use the file in Checkmk under Setup → Hosts → Import hosts
+										via CSV file.
+									</p>
+									<p className="text-xs text-secondary-500 dark:text-secondary-500 mb-4">
+										{checkmk_additional_fields
+											? "Full set of Checkmk import attributes (Host name, Alias, Monitored on site, IPv4, IPv6, SNMP community, Tag: Criticality, Tag: Networking Segment, Tag: Checkmk agent / API integrations, Tag: Piggyback, Tag: SNMP, Tag: IP address family). Empty columns can be filled in Checkmk or in the CSV before import."
+											: "Columns: hostname, IPv4 address, alias, and Checkmk agent tag (cmk-agent). Hostnames are limited to 240 characters per Checkmk."}
+									</p>
+									<div className="flex items-center gap-3 mb-4">
+										<button
+											id="checkmk-additional-fields"
+											type="button"
+											role="switch"
+											aria-checked={checkmk_additional_fields}
+											onClick={() =>
+												setCheckmkAdditionalFields((prev) => !prev)
+											}
+											className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:focus:ring-offset-secondary-900 ${
+												checkmk_additional_fields
+													? "bg-primary-600"
+													: "bg-secondary-200 dark:bg-secondary-600"
+											}`}
+										>
+											<span
+												className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+													checkmk_additional_fields
+														? "translate-x-5"
+														: "translate-x-1"
+												}`}
+											/>
+										</button>
+										<label
+											htmlFor="checkmk-additional-fields"
+											className="text-sm font-medium text-secondary-700 dark:text-secondary-300 cursor-pointer"
+										>
+											Add additional fields
+										</label>
+									</div>
+									<p className="text-xs text-secondary-500 dark:text-secondary-500 mb-4">
+										When enabled, the CSV includes all attributes from the
+										Checkmk import docs (section 6.1). PatchMon only fills
+										hostname, alias, IPv4, and agent; other columns are empty
+										for you to edit in Checkmk or before re-import.
+									</p>
+									<CheckmkExportButton
+										include_additional_fields={checkmk_additional_fields}
+									/>
 								</div>
 							</div>
 						)}

@@ -1,4 +1,7 @@
-require("dotenv").config();
+// Load .env from backend directory so it works regardless of process cwd (e.g. when started from repo root)
+require("dotenv").config({
+	path: require("node:path").join(__dirname, "..", ".env"),
+});
 
 // Global error handlers for unhandled rejections and exceptions
 process.on("unhandledRejection", (reason, promise) => {
@@ -61,7 +64,7 @@ const {
 	disconnectPrisma,
 	getTransactionOptions,
 } = require("./config/prisma");
-const winston = require("winston");
+const logger = require("./utils/logger");
 
 const swaggerUi = require("swagger-ui-express");
 const swaggerDocument = require("./swagger_output.json");
@@ -76,6 +79,8 @@ const permissionsRoutes = require("./routes/permissionsRoutes");
 const settingsRoutes = require("./routes/settingsRoutes");
 const {
 	router: dashboardPreferencesRoutes,
+	DEFAULT_CARD_LAYOUT,
+	DEFAULT_GRID_LAYOUT,
 } = require("./routes/dashboardPreferencesRoutes");
 const repositoryRoutes = require("./routes/repositoryRoutes");
 const versionRoutes = require("./routes/versionRoutes");
@@ -95,6 +100,7 @@ const releaseNotesRoutes = require("./routes/releaseNotesRoutes");
 const releaseNotesAcceptanceRoutes = require("./routes/releaseNotesAcceptanceRoutes");
 const buyMeACoffeeRoutes = require("./routes/buyMeACoffeeRoutes");
 const oidcRoutes = require("./routes/oidcRoutes");
+const discordRoutes = require("./routes/discordRoutes");
 const complianceRoutes = require("./routes/complianceRoutes");
 const { initializeOIDC } = require("./auth/oidc");
 const aiRoutes = require("./routes/aiRoutes");
@@ -112,71 +118,17 @@ const { ExpressAdapter } = require("@bull-board/express");
 // Initialize Prisma client with optimized connection pooling for multiple instances
 const prisma = getPrismaClient();
 
-// Initialize logger - only if logging is enabled
-const logger =
-	process.env.ENABLE_LOGGING === "true"
-		? winston.createLogger({
-				level: process.env.LOG_LEVEL || "info",
-				format: winston.format.combine(
-					winston.format.timestamp(),
-					winston.format.errors({ stack: true }),
-					winston.format.json(),
-				),
-				transports: [],
-			})
-		: {
-				info: () => {},
-				error: () => {},
-				warn: () => {},
-				debug: () => {},
-			};
-
-// Configure transports based on PM_LOG_TO_CONSOLE environment variable
-if (process.env.ENABLE_LOGGING === "true") {
-	const logToConsole =
-		process.env.PM_LOG_TO_CONSOLE === "1" ||
-		process.env.PM_LOG_TO_CONSOLE === "true";
-
-	if (logToConsole) {
-		// Log to stdout/stderr instead of files
-		logger.add(
-			new winston.transports.Console({
-				format: winston.format.combine(
-					winston.format.timestamp(),
-					winston.format.errors({ stack: true }),
-					winston.format.printf(({ timestamp, level, message, stack }) => {
-						return `${timestamp} [${level.toUpperCase()}]: ${stack || message}`;
-					}),
-				),
-				stderrLevels: ["error", "warn"],
-			}),
-		);
-	} else {
-		// Log to files (default behavior)
-		logger.add(
-			new winston.transports.File({
-				filename: "logs/error.log",
-				level: "error",
-			}),
-		);
-		logger.add(new winston.transports.File({ filename: "logs/combined.log" }));
-
-		// Also add console logging for non-production environments
-		if (process.env.NODE_ENV !== "production") {
-			logger.add(
-				new winston.transports.Console({
-					format: winston.format.simple(),
-				}),
-			);
-		}
-	}
-}
+// Use shared logger (configured via ENABLE_LOGGING, LOG_LEVEL, LOG_TO_CONSOLE in .env)
+// See backend/src/utils/logger.js
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const http = require("node:http");
 const server = http.createServer(app);
-const { init: initAgentWs } = require("./services/agentWs");
+const {
+	init: initAgentWs,
+	registerOnAgentConnect,
+} = require("./services/agentWs");
 const agentVersionService = require("./services/agentVersionService");
 
 // Trust proxy (needed when behind reverse proxy) and remove X-Powered-By
@@ -185,8 +137,15 @@ if (process.env.TRUST_PROXY) {
 	const trustProxyValue = process.env.TRUST_PROXY;
 
 	// Parse the trust proxy setting according to Express documentation
+	// IMPORTANT: Avoid using "true" - it's a security risk. Use a number or IP/subnet instead.
 	if (trustProxyValue === "true") {
-		app.set("trust proxy", true);
+		// Default to trusting private IP ranges (common for Docker/Kubernetes/nginx)
+		// This is much safer than "true" which trusts all proxies
+		console.warn(
+			"⚠️  TRUST_PROXY=true is not recommended. Defaulting to private IP ranges. Set TRUST_PROXY=1 or specific IP/subnet for better security.",
+		);
+		// Trust common private IP ranges: loopback, Docker, Kubernetes, and RFC1918 private networks
+		app.set("trust proxy", ["loopback", "linklocal", "uniquelocal"]);
 	} else if (trustProxyValue === "false") {
 		app.set("trust proxy", false);
 	} else if (/^\d+$/.test(trustProxyValue)) {
@@ -228,6 +187,8 @@ const limiter = rateLimit({
 	legacyHeaders: false,
 	skipSuccessfulRequests: false, // Count all requests for proper rate limiting
 	skipFailedRequests: false, // Also count failed requests
+	// Disable trust proxy validation - we handle it explicitly above
+	validate: { trustProxy: false },
 });
 
 // Middleware
@@ -408,6 +369,7 @@ const authLimiter = rateLimit({
 	standardHeaders: true,
 	legacyHeaders: false,
 	skipSuccessfulRequests: false, // Count all requests for proper rate limiting
+	validate: { trustProxy: false },
 });
 const agentLimiter = rateLimit({
 	windowMs: parseInt(process.env.AGENT_RATE_LIMIT_WINDOW_MS, 10) || 60 * 1000,
@@ -422,10 +384,12 @@ const agentLimiter = rateLimit({
 	standardHeaders: true,
 	legacyHeaders: false,
 	skipSuccessfulRequests: false, // Count all requests for proper rate limiting
+	validate: { trustProxy: false },
 });
 
 app.use(`/api/${apiVersion}/auth`, authLimiter, authRoutes);
 app.use(`/api/${apiVersion}/auth/oidc`, authLimiter, oidcRoutes);
+app.use(`/api/${apiVersion}/auth/discord`, authLimiter, discordRoutes);
 app.use(`/api/${apiVersion}/hosts`, agentLimiter, hostRoutes);
 app.use(`/api/${apiVersion}/host-groups`, hostGroupRoutes);
 app.use(`/api/${apiVersion}/packages`, packageRoutes);
@@ -458,10 +422,6 @@ app.use(
 );
 app.use(`/api/${apiVersion}/buy-me-a-coffee`, buyMeACoffeeRoutes);
 app.use(`/api/${apiVersion}/compliance`, complianceRoutes);
-app.use(
-	`/api/${apiVersion}/social-media-stats`,
-	require("./routes/socialMediaStatsRoutes"),
-);
 app.use(`/api/${apiVersion}/ai`, aiRoutes);
 app.use(`/api/${apiVersion}/alerts`, alertRoutes);
 
@@ -483,7 +443,7 @@ app.use(`/bullboard`, (_req, res, next) => {
 	// Note: 'unsafe-inline' and 'unsafe-eval' are required for Bull Board's React app
 	res.setHeader(
 		"Content-Security-Policy",
-		"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; object-src 'none';",
+		"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; object-src 'none';",
 	);
 
 	next();
@@ -524,10 +484,15 @@ app.use(`/bullboard`, async (req, res, next) => {
 	const crypto = require("node:crypto");
 	const sessionId = crypto.randomBytes(16).toString("hex");
 
-	// Set a secure auth cookie that will persist for the session
+	// Secure cookie only in production and when request is over HTTPS (dev + HTTP Docker work)
+	const is_secure_request =
+		req.secure || req.get("x-forwarded-proto") === "https";
+	const use_secure_cookie =
+		process.env.NODE_ENV === "production" && is_secure_request;
+
 	res.cookie("bull-board-auth", sessionId, {
 		httpOnly: true,
-		secure: process.env.NODE_ENV === "production",
+		secure: use_secure_cookie,
 		maxAge: 3600000, // 1 hour
 		path: "/bullboard",
 		sameSite: "strict",
@@ -629,10 +594,15 @@ process.on("uncaughtException", (error) => {
 	process.exit(1);
 });
 
-// Initialize dashboard preferences for all users
+// Initialize dashboard preferences for all users.
+// For users with no preferences, create the curated default layout.
+// For users with existing preferences, incrementally add any new cards,
+// remove cards the user no longer has permission for, and — on first
+// upgrade to 1.4.2+ — seed the dashboard_layout record and apply
+// default col_span values while preserving the user's custom order and
+// enabled state.
 async function initializeDashboardPreferences() {
 	try {
-		// Get all users
 		const users = await prisma.users.findMany({
 			select: {
 				id: true,
@@ -641,9 +611,14 @@ async function initializeDashboardPreferences() {
 				role: true,
 				dashboard_preferences: {
 					select: {
+						id: true,
 						card_id: true,
+						order: true,
+						enabled: true,
+						col_span: true,
 					},
 				},
+				dashboard_layout: true,
 			},
 		});
 
@@ -651,69 +626,147 @@ async function initializeDashboardPreferences() {
 			return;
 		}
 
+		// Build a quick lookup of default col_span values by cardId
+		const defaultColSpanMap = new Map(
+			DEFAULT_CARD_LAYOUT.map((c) => [c.cardId, c.col_span]),
+		);
+
 		let initializedCount = 0;
 		let updatedCount = 0;
+		const now = new Date();
 
 		for (const user of users) {
 			const hasPreferences = user.dashboard_preferences.length > 0;
 
-			// Get permission-based preferences for this user's role
 			const expectedPreferences = await getPermissionBasedPreferences(
 				user.role,
 			);
-			const expectedCardCount = expectedPreferences.length;
 
 			if (!hasPreferences) {
-				// User has no preferences - create them
+				// ── Brand new user (or wiped) — apply the full curated layout ──
 				const preferencesData = expectedPreferences.map((pref) => ({
 					id: require("uuid").v4(),
 					user_id: user.id,
 					card_id: pref.cardId,
 					enabled: pref.enabled,
 					order: pref.order,
-					created_at: new Date(),
-					updated_at: new Date(),
+					col_span: pref.col_span,
+					created_at: now,
+					updated_at: now,
 				}));
 
 				await prisma.dashboard_preferences.createMany({
 					data: preferencesData,
 				});
 
+				// Seed dashboard_layout if it doesn't exist yet
+				if (!user.dashboard_layout) {
+					await prisma.dashboard_layout.create({
+						data: {
+							user_id: user.id,
+							stats_columns: DEFAULT_GRID_LAYOUT.stats_columns,
+							charts_columns: DEFAULT_GRID_LAYOUT.charts_columns,
+							updated_at: now,
+						},
+					});
+				}
+
 				initializedCount++;
 			} else {
-				// User already has preferences - check if they need updating
-				const currentCardCount = user.dashboard_preferences.length;
+				// ── Existing user — incremental sync ─────────────────────────
+				const existingCardIds = new Set(
+					user.dashboard_preferences.map((p) => p.card_id),
+				);
+				const expectedCardIds = new Set(
+					expectedPreferences.map((p) => p.cardId),
+				);
 
-				if (currentCardCount !== expectedCardCount) {
-					// Use transaction to prevent race condition
-					await prisma.$transaction(async (tx) => {
-						// Delete existing preferences
+				const cardsToAdd = expectedPreferences.filter(
+					(p) => !existingCardIds.has(p.cardId),
+				);
+
+				const cardIdsToRemove = user.dashboard_preferences
+					.filter((p) => !expectedCardIds.has(p.card_id))
+					.map((p) => p.id);
+
+				// Detect pre-1.4.2 users who need the upgrade defaults applied:
+				// they won't have a dashboard_layout record yet.
+				const needsUpgradeDefaults = !user.dashboard_layout;
+
+				// Cards that need their col_span updated to the curated default
+				// (only touch cards still at the migration default of 1 where the
+				// curated default differs, so we don't overwrite manual tweaks)
+				const colSpanUpdates = needsUpgradeDefaults
+					? user.dashboard_preferences.filter((p) => {
+							const target = defaultColSpanMap.get(p.card_id);
+							return target && target !== 1 && (p.col_span ?? 1) === 1;
+						})
+					: [];
+
+				const hasChanges =
+					cardsToAdd.length > 0 ||
+					cardIdsToRemove.length > 0 ||
+					needsUpgradeDefaults;
+
+				if (!hasChanges) {
+					continue;
+				}
+
+				await prisma.$transaction(async (tx) => {
+					if (cardIdsToRemove.length > 0) {
 						await tx.dashboard_preferences.deleteMany({
-							where: { user_id: user.id },
+							where: { id: { in: cardIdsToRemove } },
 						});
+					}
 
-						// Create new preferences based on permissions
-						const preferencesData = expectedPreferences.map((pref) => ({
+					if (cardsToAdd.length > 0) {
+						const maxOrder = Math.max(
+							...user.dashboard_preferences.map((p) => p.order),
+							-1,
+						);
+
+						const newPreferencesData = cardsToAdd.map((pref, idx) => ({
 							id: require("uuid").v4(),
 							user_id: user.id,
 							card_id: pref.cardId,
 							enabled: pref.enabled,
-							order: pref.order,
-							created_at: new Date(),
-							updated_at: new Date(),
+							order: maxOrder + 1 + idx,
+							col_span: pref.col_span,
+							created_at: now,
+							updated_at: now,
 						}));
 
 						await tx.dashboard_preferences.createMany({
-							data: preferencesData,
+							data: newPreferencesData,
 						});
-					}, getTransactionOptions());
+					}
 
-					updatedCount++;
-				}
+					// Apply curated col_span values for upgrading users
+					for (const pref of colSpanUpdates) {
+						const target = defaultColSpanMap.get(pref.card_id);
+						await tx.dashboard_preferences.update({
+							where: { id: pref.id },
+							data: { col_span: target, updated_at: now },
+						});
+					}
+
+					// Seed the dashboard_layout record for upgrading users
+					if (needsUpgradeDefaults) {
+						await tx.dashboard_layout.create({
+							data: {
+								user_id: user.id,
+								stats_columns: DEFAULT_GRID_LAYOUT.stats_columns,
+								charts_columns: DEFAULT_GRID_LAYOUT.charts_columns,
+								updated_at: now,
+							},
+						});
+					}
+				}, getTransactionOptions());
+
+				updatedCount++;
 			}
 		}
 
-		// Only show summary if there were changes
 		if (initializedCount > 0 || updatedCount > 0) {
 			console.log(
 				`✅ Dashboard preferences: ${initializedCount} initialized, ${updatedCount} updated`,
@@ -770,100 +823,21 @@ async function getUserPermissions(userRole) {
 	}
 }
 
-// Helper function to get permission-based dashboard preferences for a role
+// Helper function to get permission-based dashboard preferences for a role.
+// Uses the shared DEFAULT_CARD_LAYOUT from dashboardPreferencesRoutes.js as the
+// single source of truth for card definitions, order, enabled state, and col_span.
 async function getPermissionBasedPreferences(userRole) {
-	// Get user's actual permissions
 	const permissions = await getUserPermissions(userRole);
 
-	// Define all possible dashboard cards with their required permissions
-	const allCards = [
-		// Host-related cards
-		{ cardId: "totalHosts", requiredPermission: "can_view_hosts", order: 0 },
-		{
-			cardId: "hostsNeedingUpdates",
-			requiredPermission: "can_view_hosts",
-			order: 1,
-		},
-
-		// Package-related cards
-		{
-			cardId: "totalOutdatedPackages",
-			requiredPermission: "can_view_packages",
-			order: 2,
-		},
-		{
-			cardId: "securityUpdates",
-			requiredPermission: "can_view_packages",
-			order: 3,
-		},
-
-		// Host-related cards (continued)
-		{
-			cardId: "totalHostGroups",
-			requiredPermission: "can_view_hosts",
-			order: 4,
-		},
-		{ cardId: "upToDateHosts", requiredPermission: "can_view_hosts", order: 5 },
-
-		// Repository-related cards
-		{ cardId: "totalRepos", requiredPermission: "can_view_hosts", order: 6 }, // Repos are host-related
-
-		// User management cards (admin only)
-		{ cardId: "totalUsers", requiredPermission: "can_view_users", order: 7 },
-
-		// System/Report cards
-		{
-			cardId: "osDistribution",
-			requiredPermission: "can_view_reports",
-			order: 8,
-		},
-		{
-			cardId: "osDistributionBar",
-			requiredPermission: "can_view_reports",
-			order: 9,
-		},
-		{
-			cardId: "osDistributionDoughnut",
-			requiredPermission: "can_view_reports",
-			order: 10,
-		},
-		{
-			cardId: "recentCollection",
-			requiredPermission: "can_view_hosts",
-			order: 11,
-		}, // Collection is host-related
-		{
-			cardId: "updateStatus",
-			requiredPermission: "can_view_reports",
-			order: 12,
-		},
-		{
-			cardId: "packagePriority",
-			requiredPermission: "can_view_packages",
-			order: 13,
-		},
-		{
-			cardId: "packageTrends",
-			requiredPermission: "can_view_packages",
-			order: 14,
-		},
-		{ cardId: "recentUsers", requiredPermission: "can_view_users", order: 15 },
-		{
-			cardId: "quickStats",
-			requiredPermission: "can_view_dashboard",
-			order: 16,
-		},
-	];
-
-	// Filter cards based on user's permissions
-	const allowedCards = allCards.filter((card) => {
+	const allowedCards = DEFAULT_CARD_LAYOUT.filter((card) => {
 		return permissions[card.requiredPermission] === true;
 	});
 
 	return allowedCards.map((card) => ({
 		cardId: card.cardId,
-		enabled: true,
-		order: card.order, // Preserve original order from allCards
+		enabled: card.enabled,
+		order: card.order,
+		col_span: card.col_span,
 	}));
 }
 
@@ -932,6 +906,29 @@ async function startServer() {
 
 		// Initialize WS layer with the underlying HTTP server
 		initAgentWs(server, prisma);
+		// When an agent connects, expedite any queued compliance scan for that host (max 1 per host)
+		registerOnAgentConnect(async (apiId) => {
+			try {
+				const host = await prisma.hosts.findUnique({
+					where: { api_id: apiId },
+					select: { id: true },
+				});
+				if (!host) return;
+				const queue = queueManager.queues[QUEUE_NAMES.COMPLIANCE];
+				const jobId = `compliance-scan-${host.id}`;
+				const job = await queue.getJob(jobId);
+				if (!job) return;
+				const state = await job.getState();
+				if (state === "delayed" || state === "waiting") {
+					await job.moveToDelayed(Date.now());
+				}
+			} catch (err) {
+				logger.error(
+					"[agent-ws] Error expediting queued compliance scan:",
+					err,
+				);
+			}
+		});
 		await agentVersionService.initialize();
 
 		// Send metrics on startup (silent - no console output)

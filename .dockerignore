@@ -33,5 +33,6 @@
 **/tmp
 **/temp
 
-# Docker dev data (may have restricted permissions from previous runs)
+# Docker compose dev data (volumes)
+docker/compose_dev_data
 **/compose_dev_data

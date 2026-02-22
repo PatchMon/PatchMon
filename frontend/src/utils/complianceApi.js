@@ -21,9 +21,11 @@ export const complianceAPI = {
 	getLatestScansByType: (hostId) =>
 		api.get(`/compliance/scans/${hostId}/latest-by-type`),
 
-	// Get detailed results for a scan
+	// Get detailed results for a scan (paginated: limit, offset, status, severity)
 	getScanResults: (scanId, params = {}) =>
-		api.get(`/compliance/results/${scanId}`, { params }),
+		api
+			.get(`/compliance/results/${scanId}`, { params })
+			.then((res) => res.data),
 
 	// Trigger a compliance scan with options
 	triggerScan: (hostId, options = {}) =>
@@ -37,6 +39,9 @@ export const complianceAPI = {
 			scan_all_images: options.scanAllImages || false,
 		}),
 
+	// Request the agent to cancel the currently running compliance scan (runs in background; cancel is optional)
+	cancelScan: (hostId) => api.post(`/compliance/cancel/${hostId}`),
+
 	// Get compliance score trends
 	getTrends: (hostId, days = 30) =>
 		api.get(`/compliance/trends/${hostId}`, { params: { days } }),
@@ -47,6 +52,24 @@ export const complianceAPI = {
 
 	// Upgrade SSG content packages on the agent
 	upgradeSSG: (hostId) => api.post(`/compliance/upgrade-ssg/${hostId}`),
+
+	// Install scanner (OpenSCAP + SSG) on the agent via BullMQ job
+	installScanner: (hostId) => api.post(`/compliance/install-scanner/${hostId}`),
+
+	// Get install job status for progress polling
+	getInstallJobStatus: (hostId) =>
+		api.get(`/compliance/install-job/${hostId}`).then((res) => res.data),
+
+	// Cancel the current install job for a host
+	cancelInstallScanner: (hostId) =>
+		api.post(`/compliance/install-scanner/${hostId}/cancel`),
+
+	// Set individual scanner enables (OpenSCAP, Docker Bench)
+	setScannerToggles: (hostId, settings) =>
+		api.post(`/hosts/${hostId}/integrations/compliance/scanners`, settings),
+
+	// Get host integrations data (includes scanner toggle states)
+	getHostIntegrations: (hostId) => api.get(`/hosts/${hostId}/integrations`),
 
 	// Remediate a single failed rule
 	remediateRule: (hostId, ruleId) =>
@@ -64,4 +87,16 @@ export const complianceAPI = {
 			enable_remediation: options.enableRemediation || false,
 			fetch_remote_resources: options.fetchRemoteResources || false,
 		}),
+
+	// Get global scan history (paginated, filterable)
+	getScanHistory: (params = {}) =>
+		api.get("/compliance/scans/history", { params }).then((res) => res.data),
+
+	// Get rules with aggregated cross-host pass/fail/warn counts
+	getRules: (params = {}) =>
+		api.get("/compliance/rules", { params }).then((res) => res.data),
+
+	// Get detailed rule info plus affected hosts
+	getRuleDetail: (ruleId) =>
+		api.get(`/compliance/rules/${ruleId}`).then((res) => res.data),
 };

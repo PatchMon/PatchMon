@@ -8,27 +8,30 @@ import {
 	CheckCircle,
 	CheckCircle2,
 	Clock,
-	Container,
 	Cpu,
 	Database,
 	Download,
+	ExternalLink,
 	HardDrive,
 	Key,
+	Loader2,
 	MemoryStick,
+	MinusCircle,
 	Monitor,
 	Package,
+	Play,
 	RefreshCw,
 	RotateCcw,
 	Server,
 	Shield,
+	SkipForward,
 	Terminal,
 	Trash2,
 	Wifi,
 	X,
 } from "lucide-react";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import ComplianceTab from "../components/compliance/ComplianceTab";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import RdpViewer from "../components/RdpViewer";
@@ -49,6 +52,26 @@ import { OSIcon } from "../utils/osIcons.jsx";
 import AgentQueueTab from "./hostdetail/AgentQueueTab";
 import CredentialsModal from "./hostdetail/CredentialsModal";
 import DeleteConfirmationModal from "./hostdetail/DeleteConfirmationModal";
+
+/**
+ * Format a memory size (in GiB from the agent) for display.
+ * Shows 2 decimal places with the GiB unit label.
+ */
+const format_memory_gib = (value) => {
+	if (value == null) return null;
+	const num = Number(value);
+	if (Number.isNaN(num)) return null;
+	return `${num.toFixed(2)} GiB`;
+};
+
+// Ordered steps for compliance scanner installation (match agent step ids)
+const INSTALL_CHECKLIST_STEPS = [
+	{ id: "detect_os", label: "Detect operating system" },
+	{ id: "install_openscap", label: "Install OpenSCAP packages" },
+	{ id: "verify_openscap", label: "Verify installation and SSG content" },
+	{ id: "docker_bench", label: "Docker Bench (optional)" },
+	{ id: "complete", label: "Complete" },
+];
 
 const HostDetail = () => {
 	const { hostId } = useParams();
@@ -78,6 +101,11 @@ const HostDetail = () => {
 	});
 	const [showAllReports, setShowAllReports] = useState(false);
 
+	// Compliance install job (Host Detail Compliance tab): progress and cancel
+	const [complianceInstallJob, setComplianceInstallJob] = useState(null);
+	const [complianceScanFeedback, setComplianceScanFeedback] = useState(null);
+	const complianceInstallPollRef = useRef(null);
+
 	// State for auto-update confirmation dialog
 	const [autoUpdateDialog, setAutoUpdateDialog] = useState(false);
 
@@ -99,7 +127,7 @@ const HostDetail = () => {
 	}, []);
 
 	// Helper function to safely set timeout with cleanup tracking
-	const safeSetTimeout = (callback, delay) => {
+	const safeSetTimeout = useCallback((callback, delay) => {
 		const timeoutId = setTimeout(() => {
 			if (isMountedRef.current) {
 				callback();
@@ -111,7 +139,7 @@ const HostDetail = () => {
 		}, delay);
 		timeoutRefs.current.push(timeoutId);
 		return timeoutId;
-	};
+	}, []);
 
 	const {
 		data: host,
@@ -136,7 +164,7 @@ const HostDetail = () => {
 	// Fetch global settings to check if auto-update master toggle is enabled
 	// Try public endpoint first (works for all users), fallback to full settings if user has permissions
 	const { data: settings } = useQuery({
-		queryKey: ["settings"],
+		queryKey: ["settings", "public"],
 		queryFn: async () => {
 			try {
 				// Try public endpoint first (available to all authenticated users)
@@ -201,20 +229,6 @@ const HostDetail = () => {
 		enabled: !!hostId,
 	});
 
-	// Fetch latest compliance scan for quick view (only if compliance might be enabled)
-	const { data: complianceLatest, isLoading: _isLoadingCompliance } = useQuery({
-		queryKey: ["compliance-latest-quickview", hostId],
-		queryFn: () =>
-			complianceAPI
-				.getLatestScan(hostId)
-				.then((res) => res.data)
-				.catch(() => null),
-		staleTime: 2 * 60 * 1000, // 2 minutes
-		refetchOnWindowFocus: false,
-		enabled: !!hostId,
-		retry: false, // Don't retry if compliance not enabled
-	});
-
 	// Fetch host groups for multi-select
 	const { data: hostGroups } = useQuery({
 		queryKey: ["host-groups"],
@@ -228,12 +242,35 @@ const HostDetail = () => {
 		setActiveTab(tabName);
 	};
 
-	// Auto-show credentials modal for new/pending hosts
+	// Open requested tab when navigating with state (e.g. from Compliance page link)
 	useEffect(() => {
-		if (host && host.status === "pending") {
+		const requestedTab = location.state?.tab;
+		if (
+			requestedTab &&
+			[
+				"host",
+				"network",
+				"system",
+				"history",
+				"queue",
+				"notes",
+				"integrations",
+				"reporting",
+				"docker",
+				"compliance",
+				"terminal",
+			].includes(requestedTab)
+		) {
+			setActiveTab(requestedTab);
+		}
+	}, [location.state?.tab]);
+
+	// Auto-show credentials modal for new/pending hosts (skip if just arrived from Add Host wizard)
+	useEffect(() => {
+		if (host && host.status === "pending" && !location.state?.fromWizard) {
 			setShowCredentialsModal(true);
 		}
-	}, [host]);
+	}, [host, location.state?.fromWizard]);
 
 	// Sync notes state with host data
 	useEffect(() => {
@@ -491,7 +528,21 @@ const HostDetail = () => {
 		enabled: !!hostId, // Always fetch to control tab visibility
 	});
 
-	// Poll for compliance setup status when compliance is enabled
+	// Fetch latest compliance scan for quick view (after integrationsData so enabled can use it); reuse same key as ComplianceTab
+	const { data: complianceLatest, isLoading: _isLoadingCompliance } = useQuery({
+		queryKey: ["compliance-latest", hostId, null],
+		queryFn: () =>
+			complianceAPI
+				.getLatestScan(hostId)
+				.then((res) => res.data)
+				.catch(() => null),
+		staleTime: 2 * 60 * 1000, // 2 minutes
+		refetchOnWindowFocus: false,
+		enabled: !!hostId && !!integrationsData?.data?.integrations?.compliance,
+		retry: false, // Don't retry if compliance not enabled
+	});
+
+	// Poll for compliance setup status only when compliance integration is enabled
 	const { data: complianceSetupStatus, refetch: refetchComplianceStatus } =
 		useQuery({
 			queryKey: ["compliance-setup-status", hostId],
@@ -499,7 +550,7 @@ const HostDetail = () => {
 				adminHostsAPI
 					.getIntegrationSetupStatus(hostId, "compliance")
 					.then((res) => res.data),
-			staleTime: 5 * 1000, // 5 seconds
+			staleTime: 60 * 1000, // 1 min when not installing/removing
 			refetchInterval: (query) => {
 				// Poll every 2 seconds while status is "installing" or "removing"
 				const status = query.state?.data?.status?.status;
@@ -509,9 +560,111 @@ const HostDetail = () => {
 				return false; // Stop polling when done
 			},
 			refetchOnWindowFocus: false,
-			// Always enable for hosts - we need to catch status updates
-			enabled: !!hostId,
+			enabled: !!hostId && !!integrationsData?.data?.integrations?.compliance,
 		});
+
+	// On entering Compliance tab: check for install job and request fresh scanner status from agent
+	useEffect(() => {
+		if (
+			activeTab !== "compliance" ||
+			!hostId ||
+			!integrationsData?.data?.integrations?.compliance
+		) {
+			return;
+		}
+		let cancelled = false;
+
+		// Request agent to report current compliance scanner status (WebSocket → agent re-checks and POSTs)
+		adminHostsAPI
+			.requestComplianceStatus(hostId)
+			.then(() => {
+				if (cancelled || !isMountedRef.current) return;
+				// Refetch after a short delay so we pick up live or cached status
+				safeSetTimeout(() => refetchComplianceStatus(), 800);
+				safeSetTimeout(() => refetchComplianceStatus(), 3000);
+			})
+			.catch(() => {});
+
+		complianceAPI
+			.getInstallJobStatus(hostId)
+			.then((data) => {
+				if (cancelled || !isMountedRef.current) return;
+				if (data.status === "active" || data.status === "waiting") {
+					setComplianceInstallJob({
+						status: data.status,
+						progress: data.progress ?? 0,
+						message: data.message ?? "",
+						install_events: data.install_events || [],
+						error: data.error,
+					});
+				}
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, [
+		activeTab,
+		hostId,
+		integrationsData?.data?.integrations?.compliance,
+		refetchComplianceStatus,
+		safeSetTimeout,
+	]);
+
+	// Poll install job status while job is active or waiting
+	useEffect(() => {
+		const status = complianceInstallJob?.status;
+		if (
+			activeTab !== "compliance" ||
+			!hostId ||
+			(status !== "active" && status !== "waiting")
+		) {
+			if (complianceInstallPollRef.current) {
+				clearInterval(complianceInstallPollRef.current);
+				complianceInstallPollRef.current = null;
+			}
+			return;
+		}
+		const fetchStatus = () => {
+			complianceAPI
+				.getInstallJobStatus(hostId)
+				.then((data) => {
+					if (!isMountedRef.current) return;
+					setComplianceInstallJob({
+						status: data.status,
+						progress: data.progress ?? 0,
+						message: data.message ?? "",
+						install_events: data.install_events || [],
+						error: data.error,
+					});
+					if (
+						data.status === "completed" ||
+						data.status === "failed" ||
+						data.status === "none"
+					) {
+						refetchComplianceStatus();
+						safeSetTimeout(() => {
+							if (isMountedRef.current) setComplianceInstallJob(null);
+						}, 3000);
+					}
+				})
+				.catch(() => {});
+		};
+		fetchStatus();
+		complianceInstallPollRef.current = setInterval(fetchStatus, 1500);
+		return () => {
+			if (complianceInstallPollRef.current) {
+				clearInterval(complianceInstallPollRef.current);
+				complianceInstallPollRef.current = null;
+			}
+		};
+	}, [
+		activeTab,
+		hostId,
+		complianceInstallJob?.status,
+		refetchComplianceStatus,
+		safeSetTimeout,
+	]);
 
 	// Fetch Docker data for this host
 	const {
@@ -674,6 +827,60 @@ const HostDetail = () => {
 				"Failed to set compliance mode:",
 				error.response?.data?.error || error.message,
 			);
+		},
+	});
+
+	// Install compliance scanner (BullMQ job); starts progress polling on success
+	const installComplianceScannerMutation = useMutation({
+		mutationFn: () => complianceAPI.installScanner(hostId),
+		onSuccess: () => {
+			setComplianceInstallJob({
+				status: "waiting",
+				progress: 0,
+				message: "Install job queued…",
+				error: null,
+			});
+		},
+		onError: (error) => {
+			setIntegrationRefreshMessage({
+				text: error.response?.data?.error || "Failed to start install",
+				isError: true,
+			});
+			safeSetTimeout(() => {
+				if (isMountedRef.current) {
+					setIntegrationRefreshMessage({ text: "", isError: false });
+				}
+			}, 5000);
+		},
+	});
+
+	// Run compliance scan now (always goes through BullMQ queue; max 1 per host)
+	const triggerComplianceScanMutation = useMutation({
+		mutationFn: () =>
+			complianceAPI.triggerScan(hostId, { profile_type: "all" }),
+		onSuccess: (response) => {
+			const body = response?.data;
+			const job_id = body?.job_id || "";
+			const msg = body?.message || "Scan triggered";
+			setComplianceScanFeedback({
+				text: job_id ? `${msg} — Job ID: ${job_id}` : msg,
+				isError: false,
+			});
+			safeSetTimeout(() => {
+				if (isMountedRef.current) setComplianceScanFeedback(null);
+			}, 10000);
+			queryClient.invalidateQueries({
+				queryKey: ["compliance-latest", hostId],
+			});
+		},
+		onError: (error) => {
+			setComplianceScanFeedback({
+				text: error.response?.data?.error || "Failed to start scan",
+				isError: true,
+			});
+			safeSetTimeout(() => {
+				if (isMountedRef.current) setComplianceScanFeedback(null);
+			}, 8000);
 		},
 	});
 
@@ -868,25 +1075,6 @@ const HostDetail = () => {
 									Reboot Required
 								</span>
 							)}
-							{/* Integration Badges */}
-							{integrationsData?.data?.integrations?.compliance && (
-								<span
-									className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200"
-									title="Compliance scanning enabled"
-								>
-									<Shield className="h-3 w-3" />
-									Compliance
-								</span>
-							)}
-							{integrationsData?.data?.integrations?.docker && (
-								<span
-									className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
-									title="Docker monitoring enabled"
-								>
-									<Container className="h-3 w-3" />
-									Docker
-								</span>
-							)}
 						</div>
 						{/* Info row with uptime and last updated */}
 						<div className="flex items-center gap-4 text-sm text-secondary-600 dark:text-white">
@@ -1055,85 +1243,6 @@ const HostDetail = () => {
 				</button>
 			</div>
 
-			{/* Compliance Quick View - Only shows when compliance is enabled and has scan data */}
-			{integrationsData?.data?.integrations?.compliance &&
-				complianceLatest &&
-				complianceLatest.score !== undefined && (
-					<div className="mb-6">
-						<button
-							type="button"
-							onClick={() => handleTabChange("compliance")}
-							className="card p-4 w-full cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left"
-							title="View compliance details"
-						>
-							<div className="flex items-center justify-between">
-								<div className="flex items-center gap-4">
-									<div className="flex-shrink-0">
-										<div
-											className={`w-12 h-12 rounded-full flex items-center justify-center ${
-												complianceLatest.score >= 80
-													? "bg-green-100 dark:bg-green-900/30"
-													: complianceLatest.score >= 60
-														? "bg-yellow-100 dark:bg-yellow-900/30"
-														: "bg-red-100 dark:bg-red-900/30"
-											}`}
-										>
-											<span
-												className={`text-lg font-bold ${
-													complianceLatest.score >= 80
-														? "text-green-600 dark:text-green-400"
-														: complianceLatest.score >= 60
-															? "text-yellow-600 dark:text-yellow-400"
-															: "text-red-600 dark:text-red-400"
-												}`}
-											>
-												{Math.round(complianceLatest.score)}%
-											</span>
-										</div>
-									</div>
-									<div>
-										<div className="flex items-center gap-2">
-											<Shield className="h-4 w-4 text-primary-600 dark:text-primary-400" />
-											<p className="text-sm font-medium text-secondary-900 dark:text-white">
-												Compliance Score
-											</p>
-										</div>
-										<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-0.5">
-											{complianceLatest.compliance_profiles?.name ||
-												"Security Profile"}
-											{complianceLatest.completed_at && (
-												<span className="ml-2">
-													• {formatRelativeTime(complianceLatest.completed_at)}
-												</span>
-											)}
-										</p>
-									</div>
-								</div>
-								<div className="flex items-center gap-4 text-sm">
-									<div className="flex items-center gap-1.5">
-										<CheckCircle className="h-4 w-4 text-green-500" />
-										<span className="text-secondary-700 dark:text-secondary-300">
-											{complianceLatest.passed || 0}
-										</span>
-									</div>
-									<div className="flex items-center gap-1.5">
-										<X className="h-4 w-4 text-red-500" />
-										<span className="text-secondary-700 dark:text-secondary-300">
-											{complianceLatest.failed || 0}
-										</span>
-									</div>
-									<div className="flex items-center gap-1.5">
-										<AlertTriangle className="h-4 w-4 text-yellow-500" />
-										<span className="text-secondary-700 dark:text-secondary-300">
-											{complianceLatest.warnings || 0}
-										</span>
-									</div>
-								</div>
-							</div>
-						</button>
-					</div>
-				)}
-
 			{/* Main Content - Full Width */}
 			<div className="flex-1 md:overflow-hidden">
 				{/* Mobile View - All sections as cards stacked vertically */}
@@ -1216,6 +1325,19 @@ const HostDetail = () => {
 											/>
 										);
 									})()}
+								</div>
+
+								<div>
+									<p className="text-xs text-secondary-500 dark:text-secondary-300 mb-1.5">
+										Integrations
+									</p>
+									<button
+										type="button"
+										onClick={() => handleTabChange("integrations")}
+										className="text-sm text-primary-600 dark:text-primary-400 hover:underline"
+									>
+										Manage in Integrations tab →
+									</button>
 								</div>
 
 								<div>
@@ -1600,13 +1722,13 @@ const HostDetail = () => {
 											</div>
 										)}
 
-										{host.ram_installed && (
+										{host.ram_installed != null && (
 											<div>
 												<p className="text-xs text-secondary-500 dark:text-secondary-300">
 													RAM Installed
 												</p>
 												<p className="font-medium text-secondary-900 dark:text-white text-sm">
-													{host.ram_installed} GB
+													{format_memory_gib(host.ram_installed)}
 												</p>
 											</div>
 										)}
@@ -1618,7 +1740,7 @@ const HostDetail = () => {
 														Swap Size
 													</p>
 													<p className="font-medium text-secondary-900 dark:text-white text-sm">
-														{host.swap_size} GB
+														{format_memory_gib(host.swap_size)}
 													</p>
 												</div>
 											)}
@@ -2391,6 +2513,19 @@ const HostDetail = () => {
 
 									<div>
 										<p className="text-xs text-secondary-500 dark:text-secondary-300 mb-1.5">
+											Integrations
+										</p>
+										<button
+											type="button"
+											onClick={() => handleTabChange("integrations")}
+											className="text-sm text-primary-600 dark:text-primary-400 hover:underline"
+										>
+											Manage in Integrations tab →
+										</button>
+									</div>
+
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-secondary-300 mb-1.5">
 											Operating System
 										</p>
 										<div className="flex items-center gap-2">
@@ -2784,7 +2919,7 @@ const HostDetail = () => {
 											)}
 
 											{/* RAM Installed */}
-											{host.ram_installed && (
+											{host.ram_installed != null && (
 												<div className="bg-secondary-50 dark:bg-secondary-700 p-4 rounded-lg">
 													<div className="flex items-center gap-2 mb-2">
 														<MemoryStick className="h-4 w-4 text-primary-600 dark:text-primary-400" />
@@ -2793,7 +2928,7 @@ const HostDetail = () => {
 														</p>
 													</div>
 													<p className="font-medium text-secondary-900 dark:text-white text-sm">
-														{host.ram_installed} GB
+														{format_memory_gib(host.ram_installed)}
 													</p>
 												</div>
 											)}
@@ -2809,7 +2944,7 @@ const HostDetail = () => {
 															</p>
 														</div>
 														<p className="font-medium text-secondary-900 dark:text-white text-sm">
-															{host.swap_size} GB
+															{format_memory_gib(host.swap_size)}
 														</p>
 													</div>
 												)}
@@ -3473,55 +3608,62 @@ const HostDetail = () => {
 																"installing" && (
 																<div className="space-y-2">
 																	<div className="flex items-center gap-2">
-																		<RefreshCw className="h-4 w-4 animate-spin text-primary-600 dark:text-primary-400" />
+																		<Loader2 className="h-4 w-4 animate-spin text-primary-600 dark:text-primary-400" />
 																		<span className="text-sm font-medium text-primary-700 dark:text-primary-300">
 																			Installing Compliance Tools
 																		</span>
 																	</div>
-																	<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-1.5">
-																		<div
-																			className="bg-primary-600 h-1.5 rounded-full animate-pulse"
-																			style={{ width: "60%" }}
-																		/>
-																	</div>
-																	<p className="text-xs text-secondary-600 dark:text-secondary-400">
-																		{complianceSetupStatus.status.message ||
-																			"Installing OpenSCAP packages and security content..."}
-																	</p>
-																	{complianceSetupStatus.status.components && (
-																		<div className="flex flex-wrap gap-2 mt-2">
-																			{Object.entries(
-																				complianceSetupStatus.status.components,
-																			)
-																				.filter(
-																					([, status]) =>
-																						status !== "unavailable",
-																				)
-																				.map(([name, status]) => (
-																					<span
-																						key={name}
-																						className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
-																							status === "ready"
-																								? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
-																								: status === "failed"
-																									? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
-																									: "bg-secondary-200 text-secondary-600 dark:bg-secondary-600 dark:text-secondary-300"
-																						}`}
+																	{complianceSetupStatus.status.install_events
+																		?.length > 0 ? (
+																		<ul className="space-y-1 mt-1">
+																			{complianceSetupStatus.status.install_events.map(
+																				(evt) => (
+																					<li
+																						key={`${evt.message ?? ""}-${evt.status}-${evt.component ?? ""}`}
+																						className="flex items-center gap-2 text-xs"
 																					>
-																						{status === "ready" && (
-																							<CheckCircle2 className="h-3 w-3" />
+																						{evt.status === "done" && (
+																							<CheckCircle2 className="h-3.5 w-3.5 text-green-500 dark:text-green-400 flex-shrink-0" />
 																						)}
-																						{status === "failed" && (
-																							<AlertCircle className="h-3 w-3" />
+																						{evt.status === "in_progress" && (
+																							<Loader2 className="h-3.5 w-3.5 text-blue-500 dark:text-blue-400 animate-spin flex-shrink-0" />
 																						)}
-																						{status !== "ready" &&
-																							status !== "failed" && (
-																								<Clock className="h-3 w-3" />
-																							)}
-																						{name}
-																					</span>
-																				))}
-																		</div>
+																						{evt.status === "failed" && (
+																							<AlertCircle className="h-3.5 w-3.5 text-red-500 dark:text-red-400 flex-shrink-0" />
+																						)}
+																						{evt.status === "skipped" && (
+																							<SkipForward className="h-3.5 w-3.5 text-secondary-400 flex-shrink-0" />
+																						)}
+																						<span
+																							className={
+																								evt.status === "done"
+																									? "text-green-700 dark:text-green-400"
+																									: evt.status === "in_progress"
+																										? "text-blue-700 dark:text-blue-400"
+																										: evt.status === "failed"
+																											? "text-red-700 dark:text-red-400"
+																											: "text-secondary-500 dark:text-secondary-400"
+																							}
+																						>
+																							{evt.message}
+																						</span>
+																					</li>
+																				),
+																			)}
+																		</ul>
+																	) : (
+																		<>
+																			<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-1.5">
+																				<div
+																					className="bg-primary-600 h-1.5 rounded-full animate-pulse"
+																					style={{ width: "60%" }}
+																				/>
+																			</div>
+																			<p className="text-xs text-secondary-600 dark:text-secondary-400">
+																				{complianceSetupStatus.status.message ||
+																					"Installing OpenSCAP packages and security content..."}
+																			</p>
+																		</>
 																	)}
 																</div>
 															)}
@@ -3592,7 +3734,7 @@ const HostDetail = () => {
 																	</div>
 																	<p className="text-xs text-secondary-600 dark:text-secondary-400">
 																		{complianceSetupStatus.status.message ||
-																			"Some components failed to install"}
+																			"Some components failed to install. Install OpenSCAP (and optionally Docker) on this host. See the Compliance Installation guide in the documentation."}
 																	</p>
 																	{complianceSetupStatus.status.components && (
 																		<div className="flex flex-wrap gap-2">
@@ -3641,6 +3783,37 @@ const HostDetail = () => {
 																	</p>
 																</div>
 															)}
+
+															{/* Not ready / missing components: show actionable message */}
+															{complianceSetupStatus?.status?.status &&
+																![
+																	"ready",
+																	"installing",
+																	"removing",
+																	"partial",
+																	"error",
+																	"disabled",
+																].includes(
+																	complianceSetupStatus?.status?.status,
+																) && (
+																	<div className="space-y-2">
+																		<p className="text-sm text-secondary-700 dark:text-secondary-300">
+																			Install OpenSCAP (and optionally Docker
+																			for Docker Bench) on this host. Verify
+																			with{" "}
+																			<code className="text-xs bg-secondary-200 dark:bg-secondary-700 px-1 rounded">
+																				oscap --version
+																			</code>{" "}
+																			and that SCAP content is present.
+																		</p>
+																		<p className="text-xs text-secondary-500 dark:text-secondary-400">
+																			See the Compliance{" "}
+																			<strong>Getting started</strong> or{" "}
+																			<strong>Installation</strong> guide in the
+																			documentation.
+																		</p>
+																	</div>
+																)}
 
 															{/* Fallback: Compliance enabled but no status in cache - assume ready */}
 															{!complianceSetupStatus?.status?.status &&
@@ -3788,6 +3961,72 @@ const HostDetail = () => {
 													</p>
 												);
 											})()}
+
+											{/* Individual scanner toggles */}
+											{integrationsData?.data?.integrations?.compliance && (
+												<div className="mt-3 pt-3 border-t border-secondary-200 dark:border-secondary-700 space-y-2">
+													<p className="text-xs font-medium text-secondary-600 dark:text-secondary-400">
+														Scanner Types
+													</p>
+													<label className="flex items-center justify-between gap-2 cursor-pointer">
+														<span className="text-xs text-secondary-700 dark:text-secondary-300">
+															OpenSCAP (CIS Benchmarks)
+														</span>
+														<input
+															type="checkbox"
+															checked={
+																integrationsData?.data
+																	?.compliance_openscap_enabled ??
+																integrationsData?.compliance_openscap_enabled ??
+																true
+															}
+															onChange={(e) => {
+																adminHostsAPI
+																	.setComplianceScanners(hostId, {
+																		openscap_enabled: e.target.checked,
+																	})
+																	.then(() => refetchIntegrations())
+																	.catch(() => {});
+															}}
+															className="h-4 w-4 rounded border-secondary-300 text-primary-600 focus:ring-primary-500"
+														/>
+													</label>
+													<label className="flex items-center justify-between gap-2 cursor-pointer">
+														<div className="flex flex-col">
+															<span className="text-xs text-secondary-700 dark:text-secondary-300">
+																Docker Bench
+															</span>
+															{!integrationsData?.data?.integrations
+																?.docker && (
+																<span className="text-[10px] text-secondary-400">
+																	Docker integration not enabled
+																</span>
+															)}
+														</div>
+														<input
+															type="checkbox"
+															checked={
+																integrationsData?.data
+																	?.compliance_docker_bench_enabled ??
+																integrationsData?.compliance_docker_bench_enabled ??
+																false
+															}
+															disabled={
+																!integrationsData?.data?.integrations?.docker
+															}
+															onChange={(e) => {
+																adminHostsAPI
+																	.setComplianceScanners(hostId, {
+																		docker_bench_enabled: e.target.checked,
+																	})
+																	.then(() => refetchIntegrations())
+																	.catch(() => {});
+															}}
+															className="h-4 w-4 rounded border-secondary-300 text-primary-600 focus:ring-primary-500 disabled:opacity-40"
+														/>
+													</label>
+												</div>
+											)}
 										</div>
 									</div>
 								)}
@@ -4488,15 +4727,482 @@ const HostDetail = () => {
 							</div>
 						)}
 
-						{/* Compliance */}
+						{/* Compliance — same card styling as Agent queue tab */}
 						{activeTab === "compliance" && (
-							<ComplianceTab
-								hostId={hostId}
-								apiId={host?.api_id}
-								isConnected={wsStatus?.connected}
-								complianceEnabled={host?.compliance_enabled}
-								dockerEnabled={host?.docker_enabled}
-							/>
+							<div className="space-y-6">
+								<div className="flex items-center justify-between">
+									<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+										Security Compliance
+									</h3>
+								</div>
+
+								{/* Summary stats — clickable to scan results filtered by status + host */}
+								{complianceLatest && (
+									<div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+										<Link
+											to="/compliance"
+											state={{
+												complianceTab: "scan-results",
+												scanResultsFilters: { status: "pass", host_id: hostId },
+											}}
+											className="card p-4 hover:ring-2 hover:ring-green-500/40 transition-shadow"
+											title="View passing rules for this host"
+										>
+											<div className="flex items-center">
+												<CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 mr-2" />
+												<div>
+													<p className="text-sm text-secondary-500 dark:text-white">
+														Passed
+													</p>
+													<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+														{complianceLatest.passed ?? "—"}
+													</p>
+												</div>
+											</div>
+										</Link>
+										<Link
+											to="/compliance"
+											state={{
+												complianceTab: "scan-results",
+												scanResultsFilters: { status: "fail", host_id: hostId },
+											}}
+											className="card p-4 hover:ring-2 hover:ring-red-500/40 transition-shadow"
+											title="View failing rules for this host"
+										>
+											<div className="flex items-center">
+												<AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 mr-2" />
+												<div>
+													<p className="text-sm text-secondary-500 dark:text-white">
+														Failed
+													</p>
+													<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+														{complianceLatest.failed ?? "—"}
+													</p>
+												</div>
+											</div>
+										</Link>
+										<Link
+											to="/compliance"
+											state={{
+												complianceTab: "scan-results",
+												scanResultsFilters: {
+													status: "skipped",
+													host_id: hostId,
+												},
+											}}
+											className="card p-4 hover:ring-2 hover:ring-secondary-500/40 transition-shadow"
+											title="View skipped/N/A rules for this host"
+										>
+											<div className="flex items-center">
+												<MinusCircle className="h-5 w-5 text-secondary-600 dark:text-secondary-400 mr-2" />
+												<div>
+													<p className="text-sm text-secondary-500 dark:text-white">
+														Skipped
+													</p>
+													<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+														{(complianceLatest.skipped ?? 0) +
+															(complianceLatest.not_applicable ?? 0) || "—"}
+													</p>
+												</div>
+											</div>
+										</Link>
+										<div className="card p-4">
+											<div className="flex items-center">
+												<Calendar className="h-5 w-5 text-primary-600 dark:text-primary-400 mr-2" />
+												<div>
+													<p className="text-sm text-secondary-500 dark:text-white">
+														Last Scan
+													</p>
+													<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+														{complianceLatest.completed_at
+															? new Date(
+																	complianceLatest.completed_at,
+																).toLocaleString()
+															: "—"}
+													</p>
+												</div>
+											</div>
+										</div>
+									</div>
+								)}
+
+								{/* Compliance scanner card — consistent layout: details left, actions right */}
+								{integrationsData?.data?.integrations?.compliance && (
+									<div className="card p-4">
+										<div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+											{/* Left: scanner status and details */}
+											<div className="min-w-0 flex-1">
+												<div className="flex items-center gap-2 mb-3">
+													<Shield className="h-5 w-5 text-primary-600 dark:text-primary-400 flex-shrink-0" />
+													<span className="text-sm font-medium text-secondary-900 dark:text-white">
+														Compliance scanner
+													</span>
+													{(() => {
+														const isJobActive =
+															complianceInstallJob?.status === "active" ||
+															complianceInstallJob?.status === "waiting";
+														const scannerStatus =
+															complianceSetupStatus?.status?.status;
+														let label, colorClass;
+														if (
+															scannerStatus === "ready" ||
+															scannerStatus === "partial"
+														) {
+															label = "Ready";
+															colorClass =
+																"bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300";
+														} else if (
+															scannerStatus === "installing" ||
+															isJobActive
+														) {
+															label = "Installing…";
+															colorClass =
+																"bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300";
+														} else if (scannerStatus === "error") {
+															label = "Error";
+															colorClass =
+																"bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300";
+														} else {
+															label = "Not installed";
+															colorClass =
+																"bg-secondary-100 text-secondary-700 dark:bg-secondary-600 dark:text-secondary-200";
+														}
+														return (
+															<span
+																className={`px-2 py-0.5 rounded text-xs font-medium ${colorClass}`}
+															>
+																{label}
+															</span>
+														);
+													})()}
+													{complianceSetupStatus?.source === "cached" && (
+														<span className="text-xs text-secondary-500 dark:text-secondary-400 italic">
+															(cached)
+														</span>
+													)}
+												</div>
+												<div className="space-y-1.5 text-sm">
+													{complianceSetupStatus?.status?.scanner_info
+														?.openscap_version && (
+														<div className="flex gap-2">
+															<span className="text-secondary-500 dark:text-secondary-400 font-medium shrink-0">
+																OpenSCAP
+															</span>
+															<span className="text-secondary-900 dark:text-white font-mono">
+																{
+																	complianceSetupStatus.status.scanner_info
+																		.openscap_version
+																}
+															</span>
+														</div>
+													)}
+													{(complianceSetupStatus?.status?.scanner_info
+														?.content_package ||
+														complianceSetupStatus?.status?.scanner_info
+															?.ssg_version) && (
+														<div className="flex gap-2">
+															<span className="text-secondary-500 dark:text-secondary-400 font-medium shrink-0">
+																SSG content
+															</span>
+															<span className="text-secondary-900 dark:text-white font-mono">
+																{complianceSetupStatus.status.scanner_info
+																	.content_package ||
+																	complianceSetupStatus.status.scanner_info
+																		.ssg_version ||
+																	"—"}
+															</span>
+														</div>
+													)}
+													{complianceSetupStatus?.status?.scanner_info
+														?.content_file && (
+														<div className="flex gap-2">
+															<span className="text-secondary-500 dark:text-secondary-400 font-medium shrink-0">
+																Content file on server
+															</span>
+															<span className="text-secondary-900 dark:text-white font-mono text-xs break-all min-w-0">
+																{
+																	complianceSetupStatus.status.scanner_info
+																		.content_file
+																}
+															</span>
+														</div>
+													)}
+												</div>
+												{!complianceSetupStatus?.status?.scanner_info
+													?.openscap_version &&
+													!complianceSetupStatus?.status?.scanner_info
+														?.content_file && (
+														<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-1">
+															No version or path data yet. Use Refresh status or
+															Install scanner.
+														</p>
+													)}
+												{(complianceSetupStatus?.status?.scanner_info
+													?.ssg_needs_upgrade ||
+													complianceSetupStatus?.status?.scanner_info
+														?.content_mismatch) && (
+													<div className="mt-2 space-y-1">
+														{complianceSetupStatus.status.scanner_info
+															.ssg_needs_upgrade && (
+															<p className="text-xs text-amber-600 dark:text-amber-400">
+																{complianceSetupStatus.status.scanner_info
+																	.ssg_upgrade_message ||
+																	"SSG upgrade recommended"}
+															</p>
+														)}
+														{(complianceSetupStatus.status.scanner_info
+															.content_mismatch ||
+															complianceSetupStatus.status.scanner_info
+																.mismatch_warning) && (
+															<p className="text-xs text-amber-600 dark:text-amber-400">
+																{complianceSetupStatus.status.scanner_info
+																	.mismatch_warning ||
+																	"Content mismatch with OS"}
+															</p>
+														)}
+													</div>
+												)}
+												{(complianceSetupStatus?.status?.scanner_info
+													?.docker_bench_available ||
+													complianceSetupStatus?.status?.scanner_info
+														?.oscap_docker_available) && (
+													<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-2">
+														{[
+															complianceSetupStatus.status.scanner_info
+																.docker_bench_available && "Docker Bench",
+															complianceSetupStatus.status.scanner_info
+																.oscap_docker_available && "oscap-docker",
+														]
+															.filter(Boolean)
+															.join(", ")}{" "}
+														available
+													</p>
+												)}
+											</div>
+											{/* Right: actions */}
+											<div className="flex flex-wrap items-center gap-2 sm:flex-shrink-0">
+												<button
+													type="button"
+													onClick={() => {
+														adminHostsAPI
+															.requestComplianceStatus(hostId)
+															.then(() => {
+																refetchComplianceStatus();
+																safeSetTimeout(
+																	() => refetchComplianceStatus(),
+																	2000,
+																);
+																safeSetTimeout(
+																	() => refetchComplianceStatus(),
+																	5000,
+																);
+															})
+															.catch(() => {});
+													}}
+													className="btn-outline inline-flex items-center gap-2 text-sm"
+													title="Ask agent to report current scanner status"
+												>
+													<RefreshCw className="h-4 w-4" />
+													Refresh status
+												</button>
+												{complianceSetupStatus?.status?.status !== "ready" &&
+													complianceSetupStatus?.status?.status !== "partial" &&
+													wsStatus?.connected &&
+													(complianceInstallJob?.status !== "active" &&
+													complianceInstallJob?.status !== "waiting" ? (
+														<button
+															type="button"
+															onClick={() =>
+																installComplianceScannerMutation.mutate()
+															}
+															disabled={
+																installComplianceScannerMutation.isPending
+															}
+															className="btn-primary inline-flex items-center gap-2 text-sm"
+														>
+															{installComplianceScannerMutation.isPending
+																? "Starting…"
+																: "Install scanner"}
+														</button>
+													) : (
+														<button
+															type="button"
+															onClick={() => {
+																complianceAPI
+																	.cancelInstallScanner(hostId)
+																	.then(() => {
+																		setComplianceInstallJob(null);
+																		refetchComplianceStatus();
+																	})
+																	.catch(() => {});
+															}}
+															className="btn-outline inline-flex items-center gap-2 text-sm"
+														>
+															Cancel
+														</button>
+													))}
+												<Link
+													to={`/compliance/hosts/${hostId}`}
+													className="btn-outline inline-flex items-center gap-2 text-sm"
+												>
+													<ExternalLink className="h-4 w-4" />
+													View Full Details
+												</Link>
+												<button
+													type="button"
+													onClick={() => triggerComplianceScanMutation.mutate()}
+													disabled={
+														triggerComplianceScanMutation.isPending ||
+														(complianceSetupStatus?.status?.status !==
+															"ready" &&
+															complianceSetupStatus?.status?.status !==
+																"partial")
+													}
+													className="btn-primary inline-flex items-center gap-2 text-sm"
+													title={
+														complianceSetupStatus?.status?.status !== "ready" &&
+														complianceSetupStatus?.status?.status !== "partial"
+															? "Install scanner first"
+															: wsStatus?.connected
+																? "Start compliance scan on this host"
+																: "Queue scan to run when agent is back online (max 1 per host)"
+													}
+												>
+													<Play className="h-4 w-4" />
+													{triggerComplianceScanMutation.isPending
+														? "Starting…"
+														: wsStatus?.connected
+															? "Run scan now"
+															: "Queue scan for when agent is online"}
+												</button>
+											</div>
+										</div>
+										{complianceScanFeedback && (
+											<div
+												className={`mt-3 px-3 py-2 rounded-lg text-sm ${
+													complianceScanFeedback.isError
+														? "bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-700"
+														: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-700"
+												}`}
+											>
+												{complianceScanFeedback.text}
+											</div>
+										)}
+										{(complianceInstallJob?.status === "active" ||
+											complianceInstallJob?.status === "waiting") && (
+											<div className="mt-3 pt-3 border-t border-secondary-200 dark:border-secondary-600">
+												<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-2">
+													<div
+														className="bg-primary-600 dark:bg-primary-500 h-2 rounded-full transition-all duration-300"
+														style={{
+															width: `${complianceInstallJob.progress ?? 0}%`,
+														}}
+													/>
+												</div>
+												<p className="text-xs font-medium text-secondary-600 dark:text-secondary-400 mt-2 mb-1.5">
+													Installation progress
+												</p>
+												{(() => {
+													const events =
+														complianceInstallJob.install_events || [];
+													const steps = INSTALL_CHECKLIST_STEPS.map(
+														({ id, label }) => {
+															const evt = events
+																.filter((e) => e.step === id)
+																.pop();
+															const stepStatus = evt?.status || "pending";
+															return {
+																id,
+																label,
+																status: stepStatus,
+																message:
+																	evt?.message ??
+																	(stepStatus === "pending"
+																		? "Waiting…"
+																		: null),
+															};
+														},
+													);
+													return (
+														<ul className="space-y-1.5">
+															{steps.map((step) => (
+																<li
+																	key={step.id}
+																	className="flex items-center gap-2 text-xs"
+																>
+																	{step.status === "done" && (
+																		<CheckCircle2 className="h-3.5 w-3.5 text-green-400 flex-shrink-0" />
+																	)}
+																	{step.status === "in_progress" && (
+																		<Loader2 className="h-3.5 w-3.5 text-blue-400 animate-spin flex-shrink-0" />
+																	)}
+																	{step.status === "failed" && (
+																		<X className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />
+																	)}
+																	{step.status === "skipped" && (
+																		<SkipForward className="h-3.5 w-3.5 text-secondary-400 flex-shrink-0" />
+																	)}
+																	{step.status === "pending" && (
+																		<div className="h-3.5 w-3.5 rounded-full border-2 border-secondary-400 dark:border-secondary-500 flex-shrink-0" />
+																	)}
+																	<span
+																		className={
+																			step.status === "done"
+																				? "text-green-600 dark:text-green-400"
+																				: step.status === "in_progress"
+																					? "text-blue-600 dark:text-blue-400"
+																					: step.status === "failed"
+																						? "text-red-600 dark:text-red-400"
+																						: step.status === "skipped"
+																							? "text-secondary-500"
+																							: "text-secondary-500"
+																		}
+																	>
+																		{step.label}
+																		{step.message &&
+																			step.status !== "pending" &&
+																			` — ${step.message}`}
+																		{step.status === "pending" &&
+																			` — ${step.message}`}
+																	</span>
+																</li>
+															))}
+														</ul>
+													);
+												})()}
+											</div>
+										)}
+										{complianceInstallJob?.status === "completed" && (
+											<p className="text-xs text-green-600 dark:text-green-400 mt-2">
+												Install completed. Refreshing status…
+											</p>
+										)}
+										{complianceInstallJob?.status === "failed" && (
+											<p className="text-xs text-red-600 dark:text-red-400 mt-2">
+												{complianceInstallJob.error || "Install failed."}
+											</p>
+										)}
+									</div>
+								)}
+
+								{/* Empty state when compliance not enabled or no scans yet */}
+								{!integrationsData?.data?.integrations?.compliance && (
+									<div className="card p-4">
+										<p className="text-sm text-secondary-500 dark:text-secondary-400 mb-2">
+											Compliance is not enabled for this host. Enable it in the
+											Integrations tab.
+										</p>
+										<Link
+											to={`/compliance/hosts/${hostId}`}
+											className="btn-primary inline-flex items-center gap-2"
+										>
+											<Shield className="h-4 w-4" />
+											View Full Compliance Details
+											<ExternalLink className="h-3.5 w-3.5" />
+										</Link>
+									</div>
+								)}
+							</div>
 						)}
 
 						{/* Reporting */}

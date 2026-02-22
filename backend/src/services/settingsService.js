@@ -126,17 +126,18 @@ async function initSettings() {
 	}
 
 	try {
+		// Deterministic ordering so we always get the same row when multiple rows exist (e.g. ties on updated_at)
 		let settings = await prisma.settings.findFirst({
-			orderBy: { updated_at: "desc" },
+			orderBy: [{ updated_at: "desc" }, { id: "desc" }],
 		});
 
 		if (!settings) {
 			// No settings exist, create from environment variables and defaults
 			settings = await createSettingsFromEnvironment();
-		} else {
-			// Settings exist, sync with environment variables
-			settings = await syncEnvironmentToSettings(settings);
 		}
+		// When settings exist, use DB as source of truth so saved URL (and other settings) persist across restarts.
+		// Do not overwrite with env vars here; env is only used for initial creation.
+		// To reset URL from env, use a dedicated "sync from environment" action if needed.
 
 		// Cache the initialised settings
 		cachedSettings = settings;
@@ -152,6 +153,25 @@ async function getSettings() {
 	return cachedSettings || (await initSettings());
 }
 
+// Get settings from DB and update cache. Use for GET /settings so the UI always
+// sees persisted values after refresh (avoids stale in-memory cache when
+// multiple processes or when cache was never updated by a PUT on this process).
+async function getSettingsForDisplay() {
+	try {
+		const settings = await prisma.settings.findFirst({
+			orderBy: [{ updated_at: "desc" }, { id: "desc" }],
+		});
+		if (settings) {
+			cachedSettings = settings;
+			return settings;
+		}
+		return await initSettings();
+	} catch (error) {
+		logger.error("Failed to get settings for display:", error);
+		throw error;
+	}
+}
+
 // Update settings and refresh cache
 async function updateSettings(id, updateData) {
 	try {
@@ -163,21 +183,21 @@ async function updateSettings(id, updateData) {
 			},
 		});
 
-		// Reconstruct server_url from components
+		// Reconstruct server_url from components and persist so GET/cache stay in sync
 		const serverUrl = constructServerUrl(
 			updatedSettings.server_protocol,
 			updatedSettings.server_host,
 			updatedSettings.server_port,
 		);
 		if (updatedSettings.server_url !== serverUrl) {
-			updatedSettings.server_url = serverUrl;
 			await prisma.settings.update({
 				where: { id },
 				data: { server_url: serverUrl },
 			});
+			updatedSettings.server_url = serverUrl;
 		}
 
-		// Update cache
+		// Update cache with full object so GET /settings returns correct values
 		cachedSettings = updatedSettings;
 		return updatedSettings;
 	} catch (error) {
@@ -194,6 +214,7 @@ function invalidateCache() {
 module.exports = {
 	initSettings,
 	getSettings,
+	getSettingsForDisplay,
 	updateSettings,
 	invalidateCache,
 	syncEnvironmentToSettings, // Export for startup use

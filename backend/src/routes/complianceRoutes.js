@@ -3,13 +3,24 @@ const logger = require("../utils/logger");
 const router = express.Router();
 const rateLimit = require("express-rate-limit");
 const { getPrismaClient } = require("../config/prisma");
-const { Prisma } = require("@prisma/client");
 const { authenticateToken } = require("../middleware/auth");
 const { v4: uuidv4, validate: uuidValidate } = require("uuid");
 const { verifyApiKey } = require("../utils/apiKeyUtils");
 const agentWs = require("../services/agentWs");
+const { queueManager, QUEUE_NAMES } = require("../services/automation");
+const { redis } = require("../services/automation/shared/redis");
 
 const prisma = getPrismaClient();
+
+const COMPLIANCE_INSTALL_JOB_PREFIX = "compliance_install_job:";
+const COMPLIANCE_INSTALL_CANCEL_PREFIX = "compliance_install_cancel:";
+const COMPLIANCE_INSTALL_JOB_TTL = 3600;
+const COMPLIANCE_SCAN_JOB_ID_PREFIX = "compliance-scan-";
+const COMPLIANCE_SCAN_QUEUE_RETRY_DELAY_MS = 60 * 1000; // 1 min when agent offline
+
+// Short-lived cache for compliance dashboard (reduces DB load under repeated requests)
+const DASHBOARD_CACHE_TTL_MS = 45 * 1000; // 45 seconds
+let dashboard_cache = { data: null, expires: 0 };
 
 // Rate limiter for scan submissions (per agent)
 const scanSubmitLimiter = rateLimit({
@@ -19,6 +30,7 @@ const scanSubmitLimiter = rateLimit({
 	message: { error: "Too many scan submissions, please try again later" },
 	standardHeaders: true,
 	legacyHeaders: false,
+	validate: { trustProxy: false },
 });
 
 // ==========================================
@@ -31,9 +43,10 @@ const VALID_RESULT_STATUSES = [
 	"warn",
 	"skip",
 	"notapplicable",
+	"skipped", // frontend uses "skipped" for skip+notapplicable
 	"error",
 ];
-const VALID_SEVERITIES = ["low", "medium", "high", "critical"];
+const VALID_SEVERITIES = ["low", "medium", "high", "critical", "unknown"];
 const VALID_PROFILE_TYPES = ["openscap", "docker-bench", "oscap-docker", "all"];
 
 function isValidUUID(id) {
@@ -44,6 +57,106 @@ function sanitizeInt(value, defaultVal, min = 1, max = 1000) {
 	const parsed = parseInt(value, 10);
 	if (Number.isNaN(parsed)) return defaultVal;
 	return Math.min(Math.max(parsed, min), max);
+}
+
+// Normalize agent result status to canonical DB values (fail, pass, warn, skip, notapplicable, error)
+function normalizeResultStatus(status) {
+	if (!status || typeof status !== "string") return status;
+	const s = status.toLowerCase().trim();
+	const map = {
+		fail: "fail",
+		failed: "fail",
+		failure: "fail",
+		pass: "pass",
+		passed: "pass",
+		warn: "warn",
+		warning: "warn",
+		warned: "warn",
+		skip: "skip",
+		skipped: "skip",
+		notapplicable: "notapplicable",
+		not_applicable: "notapplicable",
+		na: "notapplicable",
+		error: "error",
+	};
+	return map[s] || status;
+}
+
+// Status values that match a given filter (for querying existing data with possible variants)
+function statusFilterToDbValues(statusFilter) {
+	switch (statusFilter) {
+		case "fail":
+			return ["fail", "failed", "failure"];
+		case "pass":
+			return ["pass", "passed"];
+		case "warn":
+			return ["warn", "warning", "warned"];
+		case "skipped":
+			return ["skip", "notapplicable", "skipped"];
+		default:
+			return [statusFilter];
+	}
+}
+
+// Order for host compliance rule results: Failed first, then Warning, then Passed, then N/A/skip/error
+function status_rank_for_sort(status) {
+	const s = (status || "").toLowerCase();
+	if (["fail", "failed", "failure"].includes(s)) return 1;
+	if (["warn", "warning", "warned"].includes(s)) return 2;
+	if (["pass", "passed"].includes(s)) return 3;
+	return 4; // skip, notapplicable, error, etc.
+}
+
+/**
+ * Get latest completed scan per (host_id, profile_id), or per host_id when profileId is set.
+ * Uses PostgreSQL DISTINCT ON in a single query to avoid loading all scans into memory.
+ */
+async function getLatestCompletedScans(prismaClient, options = {}) {
+	const { profile_id: profileId = null } = options;
+
+	// Build parameterized raw query: one row per (host_id, profile_id) or per host_id when profileId set
+	const distinctColumns = profileId ? "host_id" : "host_id, profile_id";
+	const orderByColumns = profileId
+		? "host_id, completed_at DESC"
+		: "host_id, profile_id, completed_at DESC";
+
+	const rows = await prismaClient.$queryRawUnsafe(
+		`
+		SELECT cs.id, cs.host_id, cs.profile_id, cs.completed_at, cs.passed, cs.failed,
+			cs.warnings, cs.skipped, cs.not_applicable, cs.score, cs.total_rules,
+			cp.name AS profile_name, cp.type AS profile_type
+		FROM (
+			SELECT DISTINCT ON (${distinctColumns})
+				id, host_id, profile_id, completed_at, passed, failed, warnings,
+				skipped, not_applicable, score, total_rules
+			FROM compliance_scans
+			WHERE status = 'completed'
+			${profileId ? "AND profile_id = $1" : ""}
+			ORDER BY ${orderByColumns}
+		) cs
+		LEFT JOIN compliance_profiles cp ON cp.id = cs.profile_id
+		`,
+		...(profileId ? [profileId] : []),
+	);
+
+	// Map to shape expected by callers (compliance_profiles: { name, type })
+	return rows.map((r) => ({
+		id: r.id,
+		host_id: r.host_id,
+		profile_id: r.profile_id,
+		completed_at: r.completed_at,
+		passed: r.passed,
+		failed: r.failed,
+		warnings: r.warnings,
+		skipped: r.skipped,
+		not_applicable: r.not_applicable,
+		score: r.score,
+		total_rules: r.total_rules,
+		compliance_profiles: {
+			name: r.profile_name,
+			type: r.profile_type,
+		},
+	}));
 }
 
 // ==========================================
@@ -65,9 +178,18 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
 			return res.status(401).json({ error: "API credentials required" });
 		}
 
-		// Validate host credentials
+		// Validate host credentials and load scanner toggles for filtering submitted scans
 		const host = await prisma.hosts.findFirst({
 			where: { api_id: apiId },
+			select: {
+				id: true,
+				api_id: true,
+				api_key: true,
+				hostname: true,
+				friendly_name: true,
+				compliance_openscap_enabled: true,
+				compliance_docker_bench_enabled: true,
+			},
 		});
 
 		if (!host) {
@@ -149,6 +271,21 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
 				});
 			}
 
+			// Only persist scans for scanner types that are enabled for this host.
+			// Avoids storing OpenSCAP (or Docker Bench) results when the user has that scanner disabled.
+			const profileType = profile.type || profile_type || "openscap";
+			const openscapEnabled = host.compliance_openscap_enabled ?? true;
+			const dockerBenchEnabled = host.compliance_docker_bench_enabled ?? false;
+			if (
+				(profileType === "openscap" && !openscapEnabled) ||
+				(profileType === "docker-bench" && !dockerBenchEnabled)
+			) {
+				logger.info(
+					`[Compliance] Skipping scan result for profile_type=${profileType} (disabled for host ${host.id})`,
+				);
+				continue;
+			}
+
 			// Use stats from agent if provided, otherwise calculate
 			const stats = {
 				total_rules: scanData.total_rules ?? results?.length ?? 0,
@@ -219,7 +356,15 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
 			});
 
 			// Create rule and result records
-			if (results && Array.isArray(results)) {
+			let results_stored = 0;
+			if (!results || !Array.isArray(results)) {
+				const hasResults = results != null;
+				logger.warn(
+					`[Compliance] Scan saved without per-rule results (profile=${profile_name}, host=${host.id}). ` +
+						`Payload has 'results': ${hasResults}, isArray: ${Array.isArray(results)}. ` +
+						`Agent must send a 'results' array on each scan object.`,
+				);
+			} else if (results && Array.isArray(results)) {
 				// Debug: Count status values received from agent
 				const receivedStatusCounts = {};
 				for (const r of results) {
@@ -258,45 +403,69 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
 
 				const uniqueResults = Array.from(deduplicatedResults.values());
 
+				if (uniqueResults.length === 0 && results.length > 0) {
+					const sample = results[0];
+					const keys =
+						sample && typeof sample === "object" ? Object.keys(sample) : [];
+					logger.warn(
+						`[Compliance] All ${results.length} result(s) skipped: each item must have rule_ref, rule_id, or id. ` +
+							`Sample keys: ${keys.join(", ") || "none"}.`,
+					);
+				}
+
+				// Batch fetch all existing rules for this profile
+				const ruleRefs = uniqueResults
+					.map((r) => r.rule_ref || r.rule_id || r.id)
+					.filter(Boolean);
+
+				const existingRules = await prisma.compliance_rules.findMany({
+					where: {
+						profile_id: profile.id,
+						rule_ref: { in: ruleRefs },
+					},
+				});
+
+				const existingRulesMap = new Map(
+					existingRules.map((r) => [r.rule_ref, r]),
+				);
+
+				// Separate rules into create and update batches
+				const rulesToCreate = [];
+				const rulesToUpdate = [];
+				const ruleMap = new Map(); // Maps rule_ref to rule (existing or new)
+
 				for (const result of uniqueResults) {
-					// Get rule_ref from various possible field names
 					const ruleRef = result.rule_ref || result.rule_id || result.id;
 					if (!ruleRef) continue;
 
-					// Upsert rule - always update if we have better metadata
-					let rule = await prisma.compliance_rules.findFirst({
-						where: {
+					const existingRule = existingRulesMap.get(ruleRef);
+
+					if (!existingRule) {
+						// Create new rule (compliance_rules has no created_at/updated_at)
+						const newRule = {
+							id: uuidv4(),
 							profile_id: profile.id,
 							rule_ref: ruleRef,
-						},
-					});
-
-					if (!rule) {
-						rule = await prisma.compliance_rules.create({
-							data: {
-								id: uuidv4(),
-								profile_id: profile.id,
-								rule_ref: ruleRef,
-								title: result.title || ruleRef || "Unknown",
-								description: result.description || null,
-								severity: result.severity || null,
-								section: result.section || null,
-								remediation: result.remediation || null,
-							},
-						});
+							title: result.title || ruleRef || "Unknown",
+							description: result.description || null,
+							severity: result.severity || null,
+							section: result.section || null,
+							remediation: result.remediation || null,
+						};
+						rulesToCreate.push(newRule);
+						ruleMap.set(ruleRef, newRule);
 					} else {
-						// Update existing rule if we have new/better metadata from agent
-						// Only update fields that have values and are currently missing or generic
+						// Check if we need to update existing rule
 						const updateData = {};
 
 						// Update title if agent provides one and current is missing/generic
 						if (
 							result.title &&
 							result.title !== ruleRef &&
-							(!rule.title ||
-								rule.title === ruleRef ||
-								rule.title === "Unknown" ||
-								rule.title.toLowerCase().replace(/[_\s]+/g, " ") ===
+							(!existingRule.title ||
+								existingRule.title === ruleRef ||
+								existingRule.title === "Unknown" ||
+								existingRule.title.toLowerCase().replace(/[_\s]+/g, " ") ===
 									ruleRef
 										.replace(/xccdf_org\.ssgproject\.content_rule_/i, "")
 										.replace(/_/g, " "))
@@ -305,71 +474,101 @@ router.post("/scans", scanSubmitLimiter, async (req, res) => {
 						}
 
 						// Update description if agent provides one and current is missing
-						if (result.description && !rule.description) {
+						if (result.description && !existingRule.description) {
 							updateData.description = result.description;
 						}
 
 						// Update severity if agent provides one and current is missing
-						if (result.severity && !rule.severity) {
+						if (result.severity && !existingRule.severity) {
 							updateData.severity = result.severity;
 						}
 
 						// Update section if agent provides one and current is missing
-						if (result.section && !rule.section) {
+						if (result.section && !existingRule.section) {
 							updateData.section = result.section;
 						}
 
 						// Update remediation if agent provides one and current is missing
-						if (result.remediation && !rule.remediation) {
+						if (result.remediation && !existingRule.remediation) {
 							updateData.remediation = result.remediation;
 						}
 
-						// Only run update if we have changes
 						if (Object.keys(updateData).length > 0) {
-							rule = await prisma.compliance_rules.update({
-								where: { id: rule.id },
-								data: updateData,
+							rulesToUpdate.push({
+								id: existingRule.id,
+								...updateData,
 							});
 						}
-					}
 
-					// Create or update result (upsert to handle duplicate rules in same scan)
-					await prisma.compliance_results.upsert({
-						where: {
-							scan_id_rule_id: {
-								scan_id: scan.id,
-								rule_id: rule.id,
-							},
-						},
-						update: {
-							status: result.status,
-							finding: result.finding || result.message || null,
-							actual: result.actual || null,
-							expected: result.expected || null,
-							remediation: result.remediation || null,
-						},
-						create: {
+						ruleMap.set(ruleRef, existingRule);
+					}
+				}
+
+				// Batch create new rules
+				if (rulesToCreate.length > 0) {
+					await prisma.compliance_rules.createMany({
+						data: rulesToCreate,
+						skipDuplicates: true,
+					});
+				}
+
+				// Batch update existing rules
+				for (const update of rulesToUpdate) {
+					const { id, ...updateData } = update;
+					await prisma.compliance_rules.update({
+						where: { id },
+						data: updateData,
+					});
+				}
+
+				// Batch create compliance results
+				// Delete existing results for this scan first to avoid conflicts
+				await prisma.compliance_results.deleteMany({
+					where: { scan_id: scan.id },
+				});
+
+				const resultsToCreate = uniqueResults
+					.map((result) => {
+						const ruleRef = result.rule_ref || result.rule_id || result.id;
+						if (!ruleRef) return null;
+
+						const rule = ruleMap.get(ruleRef);
+						if (!rule) return null;
+
+						return {
 							id: uuidv4(),
 							scan_id: scan.id,
 							rule_id: rule.id,
-							status: result.status,
+							status: normalizeResultStatus(result.status) || result.status,
 							finding: result.finding || result.message || null,
 							actual: result.actual || null,
 							expected: result.expected || null,
 							remediation: result.remediation || null,
-						},
+						};
+					})
+					.filter(Boolean);
+
+				if (resultsToCreate.length > 0) {
+					await prisma.compliance_results.createMany({
+						data: resultsToCreate,
+						skipDuplicates: true,
 					});
+					results_stored = resultsToCreate.length;
+				} else if (results.length > 0) {
+					logger.warn(
+						`[Compliance] No compliance_results created for scan ${scan.id} (profile=${profile_name}): ${results.length} results received but none could be mapped to rules.`,
+					);
 				}
 			}
-
 			logger.info(
-				`[Compliance] Scan saved for host ${host.friendly_name || host.hostname} (${profile_name}): ${stats.passed}/${stats.total_rules} passed (${score}%)`,
+				`[Compliance] Scan saved for host ${host.friendly_name || host.hostname} (${profile_name}): ${stats.passed}/${stats.total_rules} passed (${score}%), results_stored=${results_stored}`,
 			);
 			processedScans.push({
 				scan_id: scan.id,
 				profile_name,
 				score: scan.score,
 				stats,
+				results_stored,
 			});
 		}
 
@@ -419,14 +618,87 @@ router.get("/profiles", async (_req, res) => {
  */
 router.get("/dashboard", async (_req, res) => {
 	try {
-		// Get latest scan per host per profile using raw query for PostgreSQL
-		// This ensures we get both OpenSCAP and Docker Bench scans for each host
-		const latestScans = await prisma.$queryRaw`
-      SELECT DISTINCT ON (host_id, profile_id) *
-      FROM compliance_scans
-      WHERE status = 'completed'
-      ORDER BY host_id, profile_id, completed_at DESC
-    `;
+		const now = Date.now();
+		if (dashboard_cache.data && dashboard_cache.expires > now) {
+			return res.json(dashboard_cache.data);
+		}
+
+		// Run initial queries in parallel (include profile name for "last activity" title)
+		const [latestScansRows, profileTypeQuery, unscanned, allHostsRows] =
+			await Promise.all([
+				getLatestCompletedScans(prisma),
+				prisma.compliance_profiles.findMany({
+					select: { id: true, type: true },
+				}),
+				prisma.hosts.count({
+					where: {
+						compliance_scans: { none: {} },
+					},
+				}),
+				prisma.hosts.findMany({
+					select: {
+						id: true,
+						hostname: true,
+						friendly_name: true,
+						compliance_enabled: true,
+						compliance_on_demand_only: true,
+						docker_enabled: true,
+					},
+				}),
+			]);
+
+		const latestScans = latestScansRows.map((s) => ({
+			...s,
+			profile_name: s.compliance_profiles?.name ?? null,
+		}));
+
+		// Build one row per host with their single most recent scan (for dashboard hosts table)
+		const latest_per_host = new Map();
+		for (const s of latestScans) {
+			const existing = latest_per_host.get(s.host_id);
+			if (
+				!existing ||
+				new Date(s.completed_at) > new Date(existing.completed_at)
+			) {
+				latest_per_host.set(s.host_id, s);
+			}
+		}
+		const hosts_with_latest_scan = allHostsRows
+			.map((h) => {
+				const scan = latest_per_host.get(h.id);
+				return {
+					host_id: h.id,
+					hostname: h.hostname,
+					friendly_name: h.friendly_name,
+					last_scan_date: scan?.completed_at ?? null,
+					last_activity_title: scan?.profile_name ?? null,
+					passed: scan != null ? Number(scan.passed) || 0 : null,
+					failed: scan != null ? Number(scan.failed) || 0 : null,
+					skipped:
+						scan != null
+							? (Number(scan.skipped) || 0) + (Number(scan.not_applicable) || 0)
+							: null,
+					score: scan != null ? Number(scan.score) : null,
+					scanner_status:
+						scan != null
+							? "Scanned"
+							: h.compliance_enabled
+								? "Enabled"
+								: "Never scanned",
+					compliance_mode: h.compliance_enabled
+						? h.compliance_on_demand_only
+							? "on-demand"
+							: "enabled"
+						: "disabled",
+					compliance_enabled: h.compliance_enabled,
+					docker_enabled: h.docker_enabled,
+				};
+			})
+			.sort((a, b) => {
+				if (!a.last_scan_date) return 1;
+				if (!b.last_scan_date) return -1;
+				return new Date(b.last_scan_date) - new Date(a.last_scan_date);
+			});
 
 		// Calculate averages - use unique hosts, not scan count
 		const uniqueHostIds = [...new Set(latestScans.map((s) => s.host_id))];
@@ -447,26 +719,16 @@ router.get("/dashboard", async (_req, res) => {
 		const scans_critical = latestScans.filter(
 			(s) => Number(s.score) < 60,
 		).length;
-		const unscanned = await prisma.hosts.count({
-			where: {
-				compliance_scans: { none: {} },
-			},
-		});
+		// Profile types map (from parallel query above)
+		const profileTypes = {};
+		for (const p of profileTypeQuery) {
+			profileTypes[p.id] = p.type;
+		}
 
 		// Get HOST-LEVEL compliance status (using worst score per host)
 		// A host is compliant only if ALL its scans are >=80%
 		// A host is critical if ANY of its scans are <60%
 		// A host is warning if its worst score is 60-80%
-		// Also track which scan type caused the worst score
-
-		// First, get profile types for each scan
-		const profileTypes = {};
-		const profileTypeQuery = await prisma.compliance_profiles.findMany({
-			select: { id: true, type: true },
-		});
-		for (const p of profileTypeQuery) {
-			profileTypes[p.id] = p.type;
-		}
 
 		// Track worst score and which scan type caused it per host
 		const hostWorstScores = new Map(); // host_id -> { score, scanType }
@@ -506,55 +768,100 @@ router.get("/dashboard", async (_req, res) => {
 			}
 		}
 
+		// Count total hosts with compliance enabled
+		const hosts_with_compliance_enabled = allHostsRows.filter(
+			(h) => h.compliance_enabled === true,
+		).length;
+
 		// For backwards compatibility, keep the old field names as scan counts
 		const compliant = scans_compliant;
 		const warning = scans_warning;
 		const critical = scans_critical;
 
-		// Recent scans
+		// Fetch recent scans; derive worst hosts, profile distribution and type stats from latestScans
 		const recentScans = await prisma.compliance_scans.findMany({
 			take: 10,
 			orderBy: { completed_at: "desc" },
 			include: {
-				hosts: { select: { id: true, hostname: true, friendly_name: true } },
+				hosts: {
+					select: { id: true, hostname: true, friendly_name: true },
+				},
 				compliance_profiles: { select: { name: true, type: true } },
 			},
 		});
 
-		// Worst performing hosts (latest scan per host per profile, sorted by score)
-		// Include both OpenSCAP and Docker Bench scans for each host
-		const worstHostsRaw = await prisma.$queryRaw`
-      SELECT DISTINCT ON (host_id, profile_id) cs.*, h.hostname, h.friendly_name, cp.name as profile_name, cp.type as profile_type
-      FROM compliance_scans cs
-      JOIN hosts h ON cs.host_id = h.id
-      JOIN compliance_profiles cp ON cs.profile_id = cp.id
-      WHERE cs.status = 'completed'
-      ORDER BY cs.host_id, cs.profile_id, cs.completed_at DESC
-    `;
-
-		// Sort by score ascending and take top 5
-		const worstHosts = worstHostsRaw
+		const hostById = new Map(allHostsRows.map((h) => [h.id, h]));
+		const worstHosts = latestScans
+			.map((s) => {
+				const host = hostById.get(s.host_id);
+				return {
+					id: s.id,
+					host_id: s.host_id,
+					score: s.score,
+					completed_at: s.completed_at,
+					host: host
+						? {
+								id: host.id,
+								hostname: host.hostname,
+								friendly_name: host.friendly_name,
+							}
+						: { id: s.host_id, hostname: null, friendly_name: null },
+					profile: { name: s.profile_name ?? s.compliance_profiles?.name },
+					compliance_profiles: {
+						type: s.compliance_profiles?.type,
+						name: s.profile_name ?? s.compliance_profiles?.name,
+					},
+				};
+			})
 			.sort((a, b) => (Number(a.score) || 0) - (Number(b.score) || 0))
-			.slice(0, 5)
-			.map((h) => ({
-				id: h.id,
-				host_id: h.host_id,
-				score: h.score,
-				completed_at: h.completed_at,
-				host: {
-					id: h.host_id,
-					hostname: h.hostname,
-					friendly_name: h.friendly_name,
-				},
-				profile: {
-					name: h.profile_name,
-				},
-				// Include compliance_profiles for frontend filtering
-				compliance_profiles: {
-					type: h.profile_type,
-					name: h.profile_name,
-				},
-			}));
+			.slice(0, 5);
+
+		const profileDistribution = Object.values(
+			latestScans.reduce((acc, s) => {
+				const id = s.profile_id;
+				if (!acc[id])
+					acc[id] = {
+						profile_name: s.compliance_profiles?.name ?? s.profile_name,
+						profile_type: s.compliance_profiles?.type,
+						host_count: 0,
+					};
+				acc[id].host_count += 1;
+				return acc;
+			}, {}),
+		)
+			.map((p) => ({ ...p, host_count: Number(p.host_count) }))
+			.sort((a, b) => (b.host_count || 0) - (a.host_count || 0));
+
+		const profileTypeStats = Object.values(
+			latestScans.reduce((acc, s) => {
+				const t = s.compliance_profiles?.type ?? "unknown";
+				if (!acc[t])
+					acc[t] = {
+						profile_type: t,
+						hosts_scanned: 0,
+						total_score: 0,
+						total_passed: 0,
+						total_failed: 0,
+						total_warnings: 0,
+						total_rules: 0,
+					};
+				acc[t].hosts_scanned += 1;
+				acc[t].total_score += Number(s.score) || 0;
+				acc[t].total_passed += Number(s.passed) || 0;
+				acc[t].total_failed += Number(s.failed) || 0;
+				acc[t].total_warnings += Number(s.warnings) || 0;
+				acc[t].total_rules += Number(s.total_rules) || 0;
+				return acc;
+			}, {}),
+		).map((p) => ({
+			profile_type: p.profile_type,
+			hosts_scanned: p.hosts_scanned,
+			average_score: p.hosts_scanned ? p.total_score / p.hosts_scanned : null,
+			total_passed: p.total_passed,
+			total_failed: p.total_failed,
+			total_warnings: p.total_warnings,
+			total_rules: p.total_rules,
+		}));
 
 		// Transform recent_scans to match frontend expectations
 		// Keep compliance_profiles for filtering, also add host/profile aliases for display
@@ -579,161 +886,153 @@ router.get("/dashboard", async (_req, res) => {
 			0,
 		);
 
-		// Get top failing rules across all hosts (most recent scan per host) - for OpenSCAP
+		// Parallel fetch: rules and severity (all depend on latestScanIds)
 		const latestScanIds = latestScans.map((s) => s.id);
 		let topFailingRules = [];
-		if (latestScanIds.length > 0) {
-			// Use Prisma.join for proper array handling in raw SQL
-			// Include profile_type for filtering
-			topFailingRules = await prisma.$queryRaw`
-        SELECT
-          cr.rule_id,
-          cru.title,
-          cru.severity,
-          cp.type as profile_type,
-          COUNT(*) as fail_count
-        FROM compliance_results cr
-        JOIN compliance_rules cru ON cr.rule_id = cru.id
-        JOIN compliance_scans cs ON cr.scan_id = cs.id
-        JOIN compliance_profiles cp ON cs.profile_id = cp.id
-        WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
-          AND cr.status = 'fail'
-        GROUP BY cr.rule_id, cru.title, cru.severity, cp.type
-        ORDER BY fail_count DESC
-        LIMIT 10
-      `;
-		}
-
-		// Get top warning rules across all hosts - for Docker Bench (uses 'warn' status)
 		let topWarningRules = [];
-		if (latestScanIds.length > 0) {
-			topWarningRules = await prisma.$queryRaw`
-        SELECT
-          cr.rule_id,
-          cru.title,
-          cru.severity,
-          cp.type as profile_type,
-          COUNT(*) as warn_count
-        FROM compliance_results cr
-        JOIN compliance_rules cru ON cr.rule_id = cru.id
-        JOIN compliance_scans cs ON cr.scan_id = cs.id
-        JOIN compliance_profiles cp ON cs.profile_id = cp.id
-        WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
-          AND cr.status = 'warn'
-        GROUP BY cr.rule_id, cru.title, cru.severity, cp.type
-        ORDER BY warn_count DESC
-        LIMIT 10
-      `;
-		}
-
-		// Get profile distribution (how many hosts use each profile)
-		const profileDistribution = await prisma.$queryRaw`
-      SELECT
-        cp.name as profile_name,
-        cp.type as profile_type,
-        COUNT(DISTINCT cs.host_id) as host_count
-      FROM compliance_scans cs
-      JOIN compliance_profiles cp ON cs.profile_id = cp.id
-      WHERE cs.status = 'completed'
-      GROUP BY cp.id, cp.name, cp.type
-      ORDER BY host_count DESC
-    `;
-
-		// Get severity breakdown from latest scans (with profile type for breakdown)
-		// Include both 'fail' (OpenSCAP) and 'warn' (Docker Bench) statuses
 		let severityBreakdown = [];
 		let severityByProfileType = [];
-		if (latestScanIds.length > 0) {
-			// Overall severity breakdown - include fail AND warn
-			severityBreakdown = await prisma.$queryRaw`
-        SELECT
-          cru.severity,
-          COUNT(*) as count
-        FROM compliance_results cr
-        JOIN compliance_rules cru ON cr.rule_id = cru.id
-        WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
-          AND cr.status IN ('fail', 'warn')
-        GROUP BY cru.severity
-        ORDER BY
-          CASE cru.severity
-            WHEN 'critical' THEN 1
-            WHEN 'high' THEN 2
-            WHEN 'medium' THEN 3
-            WHEN 'low' THEN 4
-            ELSE 5
-          END
-      `;
-
-			// Severity breakdown by profile type (for stacked chart)
-			// Include fail AND warn to capture both OpenSCAP failures and Docker Bench warnings
-			severityByProfileType = await prisma.$queryRaw`
-        SELECT
-          cru.severity,
-          cp.type as profile_type,
-          COUNT(*) as count
-        FROM compliance_results cr
-        JOIN compliance_rules cru ON cr.rule_id = cru.id
-        JOIN compliance_scans cs ON cr.scan_id = cs.id
-        JOIN compliance_profiles cp ON cs.profile_id = cp.id
-        WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
-          AND cr.status IN ('fail', 'warn')
-        GROUP BY cru.severity, cp.type
-        ORDER BY
-          CASE cru.severity
-            WHEN 'critical' THEN 1
-            WHEN 'high' THEN 2
-            WHEN 'medium' THEN 3
-            WHEN 'low' THEN 4
-            ELSE 5
-          END
-      `;
-		}
-
-		// Docker Bench issues by section (since Docker Bench doesn't have severity)
 		let dockerBenchBySection = [];
-		if (latestScanIds.length > 0) {
-			dockerBenchBySection = await prisma.$queryRaw`
-        SELECT
-          cru.section,
-          COUNT(*) as count
-        FROM compliance_results cr
-        JOIN compliance_rules cru ON cr.rule_id = cru.id
-        JOIN compliance_scans cs ON cr.scan_id = cs.id
-        JOIN compliance_profiles cp ON cs.profile_id = cp.id
-        WHERE cr.scan_id IN (${Prisma.join(latestScanIds)})
-          AND cr.status = 'warn'
-          AND cp.type = 'docker-bench'
-        GROUP BY cru.section
-        ORDER BY cru.section
-      `;
-		}
 
-		// Get aggregate stats by profile type (openscap vs docker-bench)
-		const profileTypeStats = await prisma.$queryRaw`
-      SELECT
-        cp.type as profile_type,
-        COUNT(DISTINCT cs.host_id) as hosts_scanned,
-        AVG(cs.score) as average_score,
-        SUM(cs.passed) as total_passed,
-        SUM(cs.failed) as total_failed,
-        SUM(cs.warnings) as total_warnings,
-        SUM(cs.total_rules) as total_rules
-      FROM (
-        SELECT DISTINCT ON (host_id, profile_id) *
-        FROM compliance_scans
-        WHERE status = 'completed'
-        ORDER BY host_id, profile_id, completed_at DESC
-      ) cs
-      JOIN compliance_profiles cp ON cs.profile_id = cp.id
-      GROUP BY cp.type
-    `;
+		if (latestScanIds.length > 0) {
+			const [failResults, warnResults, failWarnResults, dockerWarnResults] =
+				await Promise.all([
+					prisma.compliance_results.findMany({
+						where: {
+							scan_id: { in: latestScanIds },
+							status: "fail",
+						},
+						select: {
+							rule_id: true,
+							compliance_rules: { select: { title: true, severity: true } },
+							compliance_scans: {
+								select: { compliance_profiles: { select: { type: true } } },
+							},
+						},
+					}),
+					prisma.compliance_results.findMany({
+						where: {
+							scan_id: { in: latestScanIds },
+							status: "warn",
+						},
+						select: {
+							rule_id: true,
+							compliance_rules: {
+								select: { title: true, severity: true, section: true },
+							},
+							compliance_scans: {
+								select: { compliance_profiles: { select: { type: true } } },
+							},
+						},
+					}),
+					prisma.compliance_results.findMany({
+						where: {
+							scan_id: { in: latestScanIds },
+							status: { in: ["fail", "warn"] },
+						},
+						select: {
+							compliance_rules: { select: { severity: true } },
+							compliance_scans: {
+								select: { compliance_profiles: { select: { type: true } } },
+							},
+						},
+					}),
+					prisma.compliance_results.findMany({
+						where: {
+							scan_id: { in: latestScanIds },
+							status: "warn",
+						},
+						select: {
+							compliance_rules: { select: { section: true } },
+							compliance_scans: {
+								select: { compliance_profiles: { select: { type: true } } },
+							},
+						},
+					}),
+				]);
+
+			const severityOrder = (a, b) => {
+				const order = { critical: 1, high: 2, medium: 3, low: 4 };
+				return (order[a] ?? 5) - (order[b] ?? 5);
+			};
+
+			const failByKey = failResults.reduce((acc, r) => {
+				const key = `${r.rule_id}:${r.compliance_scans?.compliance_profiles?.type ?? ""}`;
+				if (!acc[key])
+					acc[key] = {
+						rule_id: r.rule_id,
+						title: r.compliance_rules?.title,
+						severity: r.compliance_rules?.severity,
+						profile_type: r.compliance_scans?.compliance_profiles?.type,
+						fail_count: 0,
+					};
+				acc[key].fail_count += 1;
+				return acc;
+			}, {});
+			topFailingRules = Object.values(failByKey)
+				.sort((a, b) => (b.fail_count || 0) - (a.fail_count || 0))
+				.slice(0, 10);
+
+			const warnByKey = warnResults.reduce((acc, r) => {
+				const key = `${r.rule_id}:${r.compliance_scans?.compliance_profiles?.type ?? ""}`;
+				if (!acc[key])
+					acc[key] = {
+						rule_id: r.rule_id,
+						title: r.compliance_rules?.title,
+						severity: r.compliance_rules?.severity,
+						profile_type: r.compliance_scans?.compliance_profiles?.type,
+						warn_count: 0,
+					};
+				acc[key].warn_count += 1;
+				return acc;
+			}, {});
+			topWarningRules = Object.values(warnByKey)
+				.sort((a, b) => (b.warn_count || 0) - (a.warn_count || 0))
+				.slice(0, 10);
+
+			const severityCounts = failWarnResults.reduce((acc, r) => {
+				const s = r.compliance_rules?.severity ?? "unknown";
+				acc[s] = (acc[s] || 0) + 1;
+				return acc;
+			}, {});
+			severityBreakdown = Object.entries(severityCounts)
+				.map(([severity, count]) => ({ severity, count }))
+				.sort((a, b) => severityOrder(a.severity, b.severity));
+
+			const severityByTypeCounts = failWarnResults.reduce((acc, r) => {
+				const sev = r.compliance_rules?.severity ?? "unknown";
+				const typ = r.compliance_scans?.compliance_profiles?.type ?? "unknown";
+				const key = `${sev}:${typ}`;
+				if (!acc[key])
+					acc[key] = { severity: sev, profile_type: typ, count: 0 };
+				acc[key].count += 1;
+				return acc;
+			}, {});
+			severityByProfileType = Object.values(severityByTypeCounts).sort((a, b) =>
+				severityOrder(a.severity, b.severity),
+			);
+
+			const dockerWarnBySection = dockerWarnResults
+				.filter(
+					(r) =>
+						r.compliance_scans?.compliance_profiles?.type === "docker-bench",
+				)
+				.reduce((acc, r) => {
+					const sec = r.compliance_rules?.section ?? "Unknown";
+					acc[sec] = (acc[sec] || 0) + 1;
+					return acc;
+				}, {});
+			dockerBenchBySection = Object.entries(dockerWarnBySection)
+				.map(([section, count]) => ({ section, count }))
+				.sort((a, b) => (a.section || "").localeCompare(b.section || ""));
+		}
 
 		// Calculate scan age distribution (how fresh is the compliance data)
 		// Track by profile type (OpenSCAP vs Docker Bench)
-		const now = new Date();
-		const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
-		const oneWeekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
-		const oneMonthAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+		const scanNow = new Date();
+		const oneDayAgo = new Date(scanNow - 24 * 60 * 60 * 1000);
+		const oneWeekAgo = new Date(scanNow - 7 * 24 * 60 * 60 * 1000);
+		const oneMonthAgo = new Date(scanNow - 30 * 24 * 60 * 60 * 1000);
 
 		const scanAgeDistribution = {
 			today: { openscap: 0, "docker-bench": 0 },
@@ -772,7 +1071,7 @@ router.get("/dashboard", async (_req, res) => {
 			}
 		}
 
-		res.json({
+		const payload = {
 			summary: {
 				total_hosts: totalHosts,
 				average_score: Math.round(avgScore * 100) / 100,
@@ -781,6 +1080,7 @@ router.get("/dashboard", async (_req, res) => {
 				hosts_warning,
 				hosts_critical,
 				unscanned,
+				hosts_with_compliance_enabled,
 				// Host status breakdown by scan type (which scan type caused the status)
 				host_status_by_scan_type: hostStatusByScanType,
 				// Scan-level counts (for backwards compatibility)
@@ -795,6 +1095,7 @@ router.get("/dashboard", async (_req, res) => {
 				total_rules: totalRules,
 			},
 			recent_scans: transformedRecentScans,
+			hosts_with_latest_scan: hosts_with_latest_scan,
 			worst_hosts: worstHosts,
 			top_failing_rules: topFailingRules.map((r) => ({
 				rule_id: r.rule_id,
@@ -840,7 +1141,13 @@ router.get("/dashboard", async (_req, res) => {
 				total_warnings: Number(p.total_warnings) || 0,
 				total_rules: Number(p.total_rules) || 0,
 			})),
-		});
+		};
+
+		dashboard_cache = {
+			data: payload,
+			expires: Date.now() + DASHBOARD_CACHE_TTL_MS,
+		};
+		res.json(payload);
 	} catch (error) {
 		logger.error("[Compliance] Error fetching dashboard:", error);
 		res.status(500).json({ error: "Failed to fetch dashboard data" });
@@ -903,6 +1210,195 @@ router.get("/scans/active", async (_req, res) => {
 	} catch (error) {
 		logger.error("[Compliance] Error fetching active scans:", error);
 		res.status(500).json({ error: "Failed to fetch active scans" });
+	}
+});
+
+/**
+ * GET /api/v1/compliance/scans/history
+ * Global scan history across all hosts (paginated, filterable)
+ * Query params:
+ *   - limit (default 25, max 100)
+ *   - offset (default 0)
+ *   - status: "completed", "failed", "running"
+ *   - profile_type: "openscap", "docker-bench"
+ *   - host_id: filter to a single host
+ */
+router.get("/scans/history", async (req, res) => {
+	try {
+		const limit = sanitizeInt(req.query.limit, 25, 1, 100);
+		const offset = sanitizeInt(req.query.offset, 0, 0, 100000);
+		const { status, profile_type, host_id } = req.query;
+
+		const where = {};
+		if (status) where.status = status;
+		if (host_id && uuidValidate(host_id)) where.host_id = host_id;
+		if (profile_type) {
+			where.compliance_profiles = { type: profile_type };
+		}
+
+		const [scans, total] = await Promise.all([
+			prisma.compliance_scans.findMany({
+				where,
+				orderBy: { started_at: "desc" },
+				take: limit,
+				skip: offset,
+				select: {
+					id: true,
+					host_id: true,
+					status: true,
+					started_at: true,
+					completed_at: true,
+					total_rules: true,
+					passed: true,
+					failed: true,
+					warnings: true,
+					skipped: true,
+					not_applicable: true,
+					score: true,
+					error_message: true,
+					raw_output: false,
+					hosts: {
+						select: {
+							id: true,
+							hostname: true,
+							friendly_name: true,
+						},
+					},
+					compliance_profiles: {
+						select: { name: true, type: true },
+					},
+					_count: { select: { compliance_results: true } },
+				},
+			}),
+			prisma.compliance_scans.count({ where }),
+		]);
+
+		const rows = scans.map((s) => {
+			const duration_ms =
+				s.completed_at && s.started_at
+					? new Date(s.completed_at) - new Date(s.started_at)
+					: null;
+			return {
+				id: s.id,
+				host_id: s.host_id,
+				host_name: s.hosts?.friendly_name || s.hosts?.hostname || "Unknown",
+				profile_name: s.compliance_profiles?.name || "Unknown",
+				profile_type: s.compliance_profiles?.type || "unknown",
+				status: s.status,
+				started_at: s.started_at,
+				completed_at: s.completed_at,
+				duration_ms,
+				total_rules: s.total_rules,
+				passed: s.passed,
+				failed: s.failed,
+				warnings: s.warnings,
+				skipped: s.skipped,
+				not_applicable: s.not_applicable,
+				score: s.score,
+				results_stored: s._count.compliance_results,
+				error_message: s.error_message,
+			};
+		});
+
+		res.json({
+			scans: rows,
+			pagination: {
+				total,
+				limit,
+				offset,
+				total_pages: Math.ceil(total / limit),
+			},
+		});
+	} catch (error) {
+		logger.error("[Compliance] Error fetching scan history:", error);
+		res.status(500).json({ error: "Failed to fetch scan history" });
+	}
+});
+
+/**
+ * GET /api/v1/compliance/scans/stalled
+ * Get list of compliance scans running over 3 hours (without cleaning them up)
+ */
+router.get("/scans/stalled", async (_req, res) => {
+	try {
+		const thresholdMs = 3 * 60 * 60 * 1000; // 3 hours
+		const thresholdTime = new Date(Date.now() - thresholdMs);
+
+		const stalledScans = await prisma.compliance_scans.findMany({
+			where: {
+				OR: [
+					{ status: "running" },
+					{ completed_at: null, status: { not: "failed" } },
+				],
+				started_at: {
+					lt: thresholdTime,
+				},
+			},
+			orderBy: { started_at: "asc" },
+			include: {
+				hosts: {
+					select: {
+						id: true,
+						hostname: true,
+						friendly_name: true,
+						api_id: true,
+					},
+				},
+				compliance_profiles: {
+					select: {
+						name: true,
+						type: true,
+					},
+				},
+			},
+		});
+
+		const scansWithRuntime = stalledScans.map((scan) => {
+			const runtimeMs = Date.now() - new Date(scan.started_at).getTime();
+			const runtimeMinutes = Math.round(runtimeMs / 1000 / 60);
+			const runtimeHours = (runtimeMs / 1000 / 60 / 60).toFixed(1);
+
+			return {
+				id: scan.id,
+				hostId: scan.host_id,
+				hostName: scan.hosts?.friendly_name || scan.hosts?.hostname,
+				apiId: scan.hosts?.api_id,
+				profileName: scan.compliance_profiles?.name,
+				profileType: scan.compliance_profiles?.type,
+				startedAt: scan.started_at,
+				status: scan.status,
+				runtimeMinutes,
+				runtimeHours,
+			};
+		});
+
+		res.json({
+			stalledScans: scansWithRuntime,
+			count: scansWithRuntime.length,
+		});
+	} catch (error) {
+		logger.error("[Compliance] Error fetching stalled scans:", error);
+		res.status(500).json({ error: "Failed to fetch stalled scans" });
+	}
+});
+
+/**
+ * POST /api/v1/compliance/scans/cleanup
+ * Manually trigger cleanup of stalled compliance scans (running over 3 hours)
+ */
+router.post("/scans/cleanup", async (_req, res) => {
+	try {
+		logger.info("[Compliance] Manual scan cleanup triggered");
+		const job = await queueManager.triggerComplianceScanCleanup();
+
+		res.json({
+			success: true,
+			message: "Compliance scan cleanup triggered",
+			jobId: job.id,
+		});
+	} catch (error) {
+		logger.error("[Compliance] Error triggering scan cleanup:", error);
+		res.status(500).json({ error: "Failed to trigger scan cleanup" });
 	}
 });
 
@@ -1059,47 +1555,46 @@ router.get("/scans/:hostId/latest-by-type", async (req, res) => {
 
 		// Get severity breakdown for OpenSCAP scans and section breakdown for Docker Bench
 		if (scanIds.length > 0) {
+			const severityOrder = (a, b) => {
+				const order = { critical: 1, high: 2, medium: 3, low: 4 };
+				return (order[a] ?? 5) - (order[b] ?? 5);
+			};
 			// Severity breakdown for OpenSCAP failures
 			if (results.openscap) {
-				const severityBreakdown = await prisma.$queryRaw`
-          SELECT cru.severity, COUNT(*) as count
-          FROM compliance_results cr
-          JOIN compliance_rules cru ON cr.rule_id = cru.id
-          WHERE cr.scan_id = ${results.openscap.id}
-            AND cr.status = 'fail'
-          GROUP BY cru.severity
-          ORDER BY
-            CASE cru.severity
-              WHEN 'critical' THEN 1
-              WHEN 'high' THEN 2
-              WHEN 'medium' THEN 3
-              WHEN 'low' THEN 4
-              ELSE 5
-            END
-        `;
-				results.openscap.severity_breakdown = severityBreakdown.map((s) => ({
-					severity: s.severity || "unknown",
-					count: Number(s.count),
-				}));
+				const rows = await prisma.compliance_results.findMany({
+					where: {
+						scan_id: results.openscap.id,
+						status: "fail",
+					},
+					select: { compliance_rules: { select: { severity: true } } },
+				});
+				const bySeverity = rows.reduce((acc, r) => {
+					const s = r.compliance_rules?.severity ?? "unknown";
+					acc[s] = (acc[s] || 0) + 1;
+					return acc;
+				}, {});
+				results.openscap.severity_breakdown = Object.entries(bySeverity)
+					.map(([severity, count]) => ({ severity, count: Number(count) }))
+					.sort((a, b) => severityOrder(a.severity, b.severity));
 			}
 
 			// Section breakdown for Docker Bench warnings
 			if (results["docker-bench"]) {
-				const sectionBreakdown = await prisma.$queryRaw`
-          SELECT cru.section, COUNT(*) as count
-          FROM compliance_results cr
-          JOIN compliance_rules cru ON cr.rule_id = cru.id
-          WHERE cr.scan_id = ${results["docker-bench"].id}
-            AND cr.status = 'warn'
-          GROUP BY cru.section
-          ORDER BY cru.section
-        `;
-				results["docker-bench"].section_breakdown = sectionBreakdown.map(
-					(s) => ({
-						section: s.section || "Unknown",
-						count: Number(s.count),
-					}),
-				);
+				const rows = await prisma.compliance_results.findMany({
+					where: {
+						scan_id: results["docker-bench"].id,
+						status: "warn",
+					},
+					select: { compliance_rules: { select: { section: true } } },
+				});
+				const bySection = rows.reduce((acc, r) => {
+					const s = r.compliance_rules?.section ?? "Unknown";
+					acc[s] = (acc[s] || 0) + 1;
+					return acc;
+				}, {});
+				results["docker-bench"].section_breakdown = Object.entries(bySection)
+					.map(([section, count]) => ({ section, count: Number(count) }))
+					.sort((a, b) => (a.section || "").localeCompare(b.section || ""));
 			}
 		}
 
@@ -1112,12 +1607,18 @@ router.get("/scans/:hostId/latest-by-type", async (req, res) => {
 
 /**
  * GET /api/v1/compliance/results/:scanId
- * Get detailed results for a specific scan
+ * Get detailed results for a specific scan (paginated).
+ * Query params: status, severity, limit (default 50, max 100), offset (default 0)
  */
 router.get("/results/:scanId", async (req, res) => {
 	try {
 		const { scanId } = req.params;
-		const { status, severity } = req.query;
+		const {
+			status,
+			severity,
+			limit: limitParam,
+			offset: offsetParam,
+		} = req.query;
 
 		// Validate scanId
 		if (!isValidUUID(scanId)) {
@@ -1138,23 +1639,84 @@ router.get("/results/:scanId", async (req, res) => {
 			});
 		}
 
+		const limit = sanitizeInt(limitParam, 50, 1, 100);
+		const offset = Math.max(0, parseInt(offsetParam, 10) || 0);
+
 		const where = { scan_id: scanId };
-		if (status) where.status = status;
+		if (status) {
+			const db_values = statusFilterToDbValues(status);
+			where.status = db_values.length === 1 ? db_values[0] : { in: db_values };
+		}
 
-		const results = await prisma.compliance_results.findMany({
-			where,
-			include: {
-				compliance_rules: true,
+		// Severity filter: apply via relation (required for count and findMany)
+		if (severity) {
+			where.compliance_rules = { severity };
+		}
+
+		const baseWhere = { scan_id: scanId };
+
+		const [all_results, statusCounts, severityRows] = await Promise.all([
+			prisma.compliance_results.findMany({
+				where,
+				include: {
+					compliance_rules: true,
+				},
+			}),
+			offset === 0
+				? prisma.compliance_results.groupBy({
+						by: ["status"],
+						where: baseWhere,
+						_count: true,
+					})
+				: Promise.resolve([]),
+			offset === 0
+				? (async () => {
+						const rows = await prisma.compliance_results.findMany({
+							where: {
+								scan_id: scanId,
+								status: { in: ["fail", "failed", "failure"] },
+							},
+							select: { compliance_rules: { select: { severity: true } } },
+						});
+						const bySeverity = rows.reduce((acc, r) => {
+							const s = r.compliance_rules?.severity ?? "unknown";
+							acc[s] = (acc[s] || 0) + 1;
+							return acc;
+						}, {});
+						return Object.entries(bySeverity).map(([severity, count]) => ({
+							severity,
+							count,
+						}));
+					})()
+				: Promise.resolve([]),
+		]);
+
+		// Order: Failed first, then Warning, then Passed, then N/A/skip/error
+		all_results.sort(
+			(a, b) => status_rank_for_sort(a.status) - status_rank_for_sort(b.status),
+		);
+		const total = all_results.length;
+		const results = all_results.slice(offset, offset + limit);
+
+		const payload = {
+			results,
+			pagination: {
+				total,
+				limit,
+				offset,
 			},
-			orderBy: [{ status: "asc" }],
-		});
-
-		// Filter by severity if specified
-		const filteredResults = severity
-			? results.filter((r) => r.compliance_rules.severity === severity)
-			: results;
-
-		res.json(filteredResults);
+		};
+		if (offset === 0 && (statusCounts.length > 0 || severityRows.length > 0)) {
+			payload.severity_breakdown = {
+				by_status: Object.fromEntries(
+					statusCounts.map((s) => [s.status, s._count]),
+				),
+				by_severity: Object.fromEntries(
+					severityRows.map((r) => [r.severity || "unknown", r.count]),
+				),
+			};
+		}
+		res.json(payload);
 	} catch (error) {
 		logger.error("[Compliance] Error fetching results:", error);
 		res.status(500).json({ error: "Failed to fetch results" });
@@ -1211,7 +1773,14 @@ router.post("/trigger/bulk", async (req, res) => {
 		// Get all hosts
 		const hosts = await prisma.hosts.findMany({
 			where: { id: { in: hostIds } },
-			select: { id: true, api_id: true, hostname: true, friendly_name: true },
+			select: {
+				id: true,
+				api_id: true,
+				hostname: true,
+				friendly_name: true,
+				compliance_openscap_enabled: true,
+				compliance_docker_bench_enabled: true,
+			},
 		});
 
 		const hostMap = new Map(hosts.map((h) => [h.id, h]));
@@ -1287,15 +1856,41 @@ router.post("/trigger/bulk", async (req, res) => {
 				continue;
 			}
 
+			const oscapOn = host.compliance_openscap_enabled ?? true;
+			const dbenchOn = host.compliance_docker_bench_enabled ?? false;
+
+			let hostProfileType = profile_type;
+			if (profile_type === "all" || profile_type === "" || !profile_type) {
+				if (oscapOn && !dbenchOn) hostProfileType = "openscap";
+				else if (!oscapOn && dbenchOn) hostProfileType = "docker-bench";
+				else if (!oscapOn && !dbenchOn) {
+					results.failed.push({
+						hostId,
+						hostName: host.friendly_name || host.hostname,
+						error: "Both scanners disabled",
+					});
+					continue;
+				}
+			}
+
+			const hostScanOptions = {
+				...scanOptions,
+				openscapEnabled: oscapOn,
+				dockerBenchEnabled: dbenchOn,
+			};
 			const success = agentWs.pushComplianceScan(
 				host.api_id,
-				profile_type,
-				scanOptions,
+				hostProfileType,
+				hostScanOptions,
 			);
 
 			if (success) {
-				// Create "running" scan records for tracking
-				for (const profile of profilesToUse) {
+				// Create "running" scan records only for the profile type we actually sent to the agent
+				const profilesForHost =
+					hostProfileType === "all"
+						? profilesToUse
+						: profilesToUse.filter((p) => p.type === hostProfileType);
+				for (const profile of profilesForHost) {
 					try {
 						await prisma.compliance_scans.create({
 							data: {
@@ -1392,20 +1987,13 @@ router.post("/trigger/:hostId", async (req, res) => {
 			return res.status(404).json({ error: "Host not found" });
 		}
 
-		// Use agentWs service to send compliance scan trigger
-		if (!agentWs.isConnected(host.api_id)) {
-			return res.status(400).json({ error: "Host is not connected" });
-		}
-
-		// Build scan options
-		const scanOptions = {
-			profileId: profile_id,
-			enableRemediation: Boolean(enable_remediation),
-			fetchRemoteResources: Boolean(fetch_remote_resources),
-		};
-
-		// Handle Docker image CVE scanning separately
+		// Docker image CVE scan: must be connected, no queue
 		if (profile_type === "oscap-docker") {
+			if (!agentWs.isConnected(host.api_id)) {
+				return res.status(400).json({
+					error: "Docker image CVE scan requires the agent to be connected.",
+				});
+			}
 			const dockerScanOptions = {
 				imageName: image_name || null,
 				scanAllImages: Boolean(scan_all_images),
@@ -1422,103 +2010,260 @@ router.post("/trigger/:hostId", async (req, res) => {
 					scan_all_images: Boolean(scan_all_images),
 					image_name: image_name || null,
 				});
-			} else {
-				return res
-					.status(400)
-					.json({ error: "Failed to send Docker image scan trigger" });
 			}
+			return res
+				.status(400)
+				.json({ error: "Failed to send Docker image scan trigger" });
 		}
 
-		// Use the dedicated pushComplianceScan function with options
-		const success = agentWs.pushComplianceScan(
-			host.api_id,
-			profile_type,
-			scanOptions,
-		);
-
-		if (success) {
-			// Create "running" scan records for tracking
-			const profilesToUse = [];
-			if (profile_type === "all" || profile_type === "openscap") {
-				let oscapProfile = await prisma.compliance_profiles.findFirst({
-					where: { type: "openscap" },
-					orderBy: { name: "asc" },
-				});
-				if (!oscapProfile) {
-					oscapProfile = await prisma.compliance_profiles.create({
-						data: {
-							id: uuidv4(),
-							name: "OpenSCAP Scan",
-							type: "openscap",
-						},
+		// All other scans (all, openscap, docker-bench): always go through BullMQ so we always have a job_id
+		const queue = queueManager.queues[QUEUE_NAMES.COMPLIANCE];
+		if (!queue) {
+			logger.error("[Compliance] Compliance queue not initialized");
+			return res.status(503).json({
+				error: "Scan queue is not available. Please try again later.",
+			});
+		}
+		const job_id = `${COMPLIANCE_SCAN_JOB_ID_PREFIX}${hostId}`;
+		try {
+			const existing = await queue.getJob(job_id);
+			if (existing) {
+				const state = await existing.getState();
+				if (state === "waiting" || state === "delayed") {
+					return res.json({
+						message: "Scan already queued for this host",
+						host_id: hostId,
+						queued: true,
+						already_queued: true,
+						job_id: existing.id,
 					});
 				}
-				profilesToUse.push(oscapProfile);
+				// Completed/failed: remove so we can add a fresh job (max 1 per host)
+				await existing.remove().catch(() => {});
 			}
-			if (profile_type === "all" || profile_type === "docker-bench") {
-				let dockerProfile = await prisma.compliance_profiles.findFirst({
-					where: { type: "docker-bench" },
-					orderBy: { name: "asc" },
-				});
-				if (!dockerProfile) {
-					dockerProfile = await prisma.compliance_profiles.create({
-						data: {
-							id: uuidv4(),
-							name: "Docker Bench Security",
-							type: "docker-bench",
-						},
-					});
-				}
-				profilesToUse.push(dockerProfile);
-			}
-
-			logger.info(
-				`[Compliance] Creating ${profilesToUse.length} running scan records for host ${hostId}`,
+			const job = await queue.add(
+				"run_scan",
+				{
+					type: "run_scan",
+					hostId,
+					api_id: host.api_id,
+					profile_type,
+					profile_id: profile_id || null,
+					enable_remediation: Boolean(enable_remediation),
+					fetch_remote_resources: Boolean(fetch_remote_resources),
+				},
+				{
+					jobId: job_id,
+					attempts: 1,
+					backoff: {
+						type: "fixed",
+						delay: COMPLIANCE_SCAN_QUEUE_RETRY_DELAY_MS,
+					},
+				},
 			);
-
-			for (const profile of profilesToUse) {
-				try {
-					const runningScan = await prisma.compliance_scans.create({
-						data: {
-							id: uuidv4(),
-							host_id: hostId,
-							profile_id: profile.id,
-							started_at: new Date(),
-							completed_at: null,
-							status: "running",
-							total_rules: 0,
-							passed: 0,
-							failed: 0,
-							warnings: 0,
-							skipped: 0,
-							not_applicable: 0,
-							score: null,
-						},
-					});
-					logger.info(
-						`[Compliance] Created running scan record: ${runningScan.id} for profile ${profile.name}`,
-					);
-				} catch (err) {
-					logger.warn(
-						`[Compliance] Could not create running scan record: ${err.message}`,
-					);
-				}
-			}
-
-			res.json({
-				message: enable_remediation
-					? "Compliance scan with remediation triggered"
-					: "Compliance scan triggered",
+			const connected = agentWs.isConnected(host.api_id);
+			const safe_host_id = String(hostId).replace(/\r|\n/g, "");
+			logger.info(
+				`[Compliance] Scan queued for host ${safe_host_id}; job_id=${job.id} agent_connected=${connected}`,
+			);
+			return res.json({
+				message: connected
+					? enable_remediation
+						? "Compliance scan with remediation triggered"
+						: "Compliance scan triggered"
+					: "Scan queued; will run when agent is online",
 				host_id: hostId,
+				queued: true,
+				job_id: job.id,
 				profile_type,
 				enable_remediation,
 			});
-		} else {
-			res.status(400).json({ error: "Failed to send scan trigger" });
+		} catch (err) {
+			logger.error("[Compliance] Error queuing scan:", err);
+			return res.status(500).json({
+				error: "Failed to queue scan. Please try again.",
+			});
 		}
 	} catch (error) {
 		logger.error("[Compliance] Error triggering scan:", error);
 		res.status(500).json({ error: "Failed to trigger scan" });
+	}
+});
+
+/**
+ * POST /api/v1/compliance/cancel/:hostId
+ * Request the agent to cancel the currently running compliance scan (if any)
+ */
+router.post("/cancel/:hostId", async (req, res) => {
+	try {
+		const { hostId } = req.params;
+
+		if (!isValidUUID(hostId)) {
+			return res.status(400).json({ error: "Invalid host ID format" });
+		}
+
+		const host = await prisma.hosts.findUnique({
+			where: { id: hostId },
+		});
+
+		if (!host) {
+			return res.status(404).json({ error: "Host not found" });
+		}
+
+		if (!agentWs.isConnected(host.api_id)) {
+			return res.status(400).json({ error: "Host is not connected" });
+		}
+
+		const success = agentWs.pushComplianceScanCancel(host.api_id);
+
+		if (success) {
+			res.json({
+				message: "Cancel scan request sent",
+				host_id: hostId,
+			});
+		} else {
+			res.status(400).json({ error: "Failed to send cancel request" });
+		}
+	} catch (error) {
+		logger.error("[Compliance] Error sending cancel scan:", error);
+		res.status(500).json({ error: "Failed to send cancel request" });
+	}
+});
+
+/**
+ * GET /api/v1/compliance/install-job/:hostId
+ * Return current install job status for progress polling.
+ */
+router.get("/install-job/:hostId", async (req, res) => {
+	try {
+		const { hostId } = req.params;
+
+		if (!isValidUUID(hostId)) {
+			return res.status(400).json({ error: "Invalid host ID format" });
+		}
+
+		const host = await prisma.hosts.findUnique({
+			where: { id: hostId },
+			select: { id: true },
+		});
+
+		if (!host) {
+			return res.status(404).json({ error: "Host not found" });
+		}
+
+		const jobKey = `${COMPLIANCE_INSTALL_JOB_PREFIX}${hostId}`;
+		const jobId = await redis.get(jobKey);
+
+		if (!jobId) {
+			return res.json({
+				status: "none",
+				message: "No active or recent install job",
+			});
+		}
+
+		const queue = queueManager.queues[QUEUE_NAMES.COMPLIANCE];
+		const job = await queue.getJob(jobId);
+
+		if (!job) {
+			await redis.del(jobKey).catch(() => {});
+			return res.json({
+				job_id: jobId,
+				status: "completed",
+				message: "Job no longer in queue (completed or expired)",
+			});
+		}
+
+		const state = await job.getState();
+		res.json({
+			job_id: job.id,
+			status: state,
+			progress: job.progress,
+			message: job.data?.message,
+			install_events: job.data?.install_events || [],
+			error: job.failedReason,
+		});
+	} catch (error) {
+		logger.error("[Compliance] Error getting install job status:", error);
+		res.status(500).json({ error: "Failed to get install job status" });
+	}
+});
+
+/**
+ * POST /api/v1/compliance/install-scanner/:hostId/cancel
+ * Signal worker to cancel the current install job for this host.
+ * Defined before /install-scanner/:hostId so "cancel" is not parsed as hostId.
+ */
+router.post("/install-scanner/:hostId/cancel", async (req, res) => {
+	try {
+		const { hostId } = req.params;
+
+		if (!isValidUUID(hostId)) {
+			return res.status(400).json({ error: "Invalid host ID format" });
+		}
+
+		const jobKey = `${COMPLIANCE_INSTALL_JOB_PREFIX}${hostId}`;
+		const jobId = await redis.get(jobKey);
+
+		if (!jobId) {
+			return res
+				.status(404)
+				.json({ error: "No active install job for this host" });
+		}
+
+		const cancelKey = `${COMPLIANCE_INSTALL_CANCEL_PREFIX}${jobId}`;
+		await redis.set(cancelKey, "1", "EX", 300);
+
+		await redis.del(jobKey).catch(() => {});
+
+		res.json({ message: "Cancel requested" });
+	} catch (error) {
+		logger.error("[Compliance] Error cancelling install job:", error);
+		res.status(500).json({ error: "Failed to cancel install job" });
+	}
+});
+
+/**
+ * POST /api/v1/compliance/install-scanner/:hostId
+ * Enqueue OpenSCAP/SSG install job; worker sends install_scanner to agent and polls until ready.
+ */
+router.post("/install-scanner/:hostId", async (req, res) => {
+	try {
+		const { hostId } = req.params;
+
+		if (!isValidUUID(hostId)) {
+			return res.status(400).json({ error: "Invalid host ID format" });
+		}
+
+		const host = await prisma.hosts.findUnique({
+			where: { id: hostId },
+		});
+
+		if (!host) {
+			return res.status(404).json({ error: "Host not found" });
+		}
+
+		if (!agentWs.isConnected(host.api_id)) {
+			return res.status(400).json({ error: "Host is not connected" });
+		}
+
+		const queue = queueManager.queues[QUEUE_NAMES.COMPLIANCE];
+		const job = await queue.add(
+			"install_compliance_tools",
+			{ hostId, api_id: host.api_id, type: "install_compliance_tools" },
+			{ attempts: 1 },
+		);
+
+		const jobKey = `${COMPLIANCE_INSTALL_JOB_PREFIX}${hostId}`;
+		await redis.setex(jobKey, COMPLIANCE_INSTALL_JOB_TTL, job.id);
+
+		res.json({
+			job_id: job.id,
+			host_id: hostId,
+			message: "Install job queued",
+		});
+	} catch (error) {
+		logger.error("[Compliance] Error enqueueing install scanner:", error);
+		res.status(500).json({ error: "Failed to enqueue install scanner" });
 	}
 });
 
@@ -1653,6 +2398,398 @@ router.get("/trends/:hostId", async (req, res) => {
 	} catch (error) {
 		logger.error("[Compliance] Error fetching trends:", error);
 		res.status(500).json({ error: "Failed to fetch trends" });
+	}
+});
+
+// ==========================================
+// Rule-centric endpoints (cross-host view)
+// ==========================================
+
+/**
+ * GET /api/v1/compliance/rules
+ * List all compliance rules with aggregated pass/fail/warn counts across hosts.
+ * Uses only the latest completed scan per host per profile to avoid counting old results.
+ * Query params: severity, status, search, limit, offset, profile_type
+ */
+router.get("/rules", async (req, res) => {
+	try {
+		const limit = sanitizeInt(req.query.limit, 50, 1, 200);
+		const offset = sanitizeInt(req.query.offset, 0, 0, 100000);
+		const severity = req.query.severity;
+		const status_filter = req.query.status; // "fail", "warn", "pass", or null for all
+		const search = req.query.search ? String(req.query.search).trim() : null;
+		const profile_type = req.query.profile_type;
+		const host_id = req.query.host_id;
+		const sort_by = req.query.sort_by || "status"; // status, severity, title, hosts_failed, hosts_warned, hosts_passed, total_hosts, profile_type
+		const sort_dir = req.query.sort_dir === "asc" ? "asc" : "desc";
+
+		// Validate optional params
+		if (severity && !VALID_SEVERITIES.includes(severity)) {
+			return res.status(400).json({ error: "Invalid severity filter" });
+		}
+		if (status_filter && !["pass", "fail", "warn"].includes(status_filter)) {
+			return res.status(400).json({ error: "Invalid status filter" });
+		}
+		if (profile_type && !VALID_PROFILE_TYPES.includes(profile_type)) {
+			return res.status(400).json({ error: "Invalid profile_type filter" });
+		}
+		if (host_id && !isValidUUID(host_id)) {
+			return res.status(400).json({ error: "Invalid host_id format" });
+		}
+
+		// Build rule where clause
+		const rule_where = {};
+		if (severity) {
+			if (severity === "unknown") {
+				// Match both null and string "unknown"
+				rule_where.OR = [{ severity: null }, { severity: "unknown" }];
+			} else {
+				rule_where.severity = severity;
+			}
+		}
+		if (search) {
+			const search_or = [
+				{ title: { contains: search, mode: "insensitive" } },
+				{ rule_ref: { contains: search, mode: "insensitive" } },
+				{ section: { contains: search, mode: "insensitive" } },
+			];
+			if (rule_where.OR) {
+				// severity=unknown already set OR; combine with AND
+				rule_where.AND = [{ OR: rule_where.OR }, { OR: search_or }];
+				delete rule_where.OR;
+			} else {
+				rule_where.OR = search_or;
+			}
+		}
+		if (profile_type && profile_type !== "all") {
+			rule_where.compliance_profiles = { type: profile_type };
+		}
+
+		// Get latest completed scan ID per host per profile (avoids counting old results)
+		const latest_scans_list = await getLatestCompletedScans(prisma, {
+			select: { id: true, host_id: true, profile_id: true },
+		});
+		const filtered_scans = host_id
+			? latest_scans_list.filter((s) => s.host_id === host_id)
+			: latest_scans_list;
+		const latest_scan_ids = filtered_scans.map((s) => s.id);
+
+		if (latest_scan_ids.length === 0) {
+			return res.json({ rules: [], pagination: { total: 0, limit, offset } });
+		}
+
+		// Restrict to rules that appear in scan results: only failing or compliant (passing) rules; exclude not discovered and warning-only
+		// Use status variants (fail/failed/failure, etc.) so stored values match
+		if (status_filter) {
+			const status_values = statusFilterToDbValues(status_filter);
+			const rule_results = await prisma.compliance_results.findMany({
+				where: {
+					scan_id: { in: latest_scan_ids },
+					status: { in: status_values },
+				},
+				select: { rule_id: true },
+				distinct: ["rule_id"],
+			});
+			const ids = rule_results.map((r) => r.rule_id).filter(Boolean);
+			if (ids.length === 0) {
+				return res.json({ rules: [], pagination: { total: 0, limit, offset } });
+			}
+			rule_where.id = { in: ids };
+		} else {
+			// No status filter: show all rules that have at least one result in any latest scan (pass, fail, warn, skip, notapplicable)
+			const rule_results = await prisma.compliance_results.findMany({
+				where: { scan_id: { in: latest_scan_ids } },
+				select: { rule_id: true },
+				distinct: ["rule_id"],
+			});
+			const ids = rule_results.map((r) => r.rule_id).filter(Boolean);
+			if (ids.length === 0) {
+				return res.json({ rules: [], pagination: { total: 0, limit, offset } });
+			}
+			rule_where.id = { in: ids };
+		}
+
+		// Fetch ALL matching rules with result aggregation (needed for server-side sort before pagination)
+		const all_rules = await prisma.compliance_rules.findMany({
+			where: rule_where,
+			select: {
+				id: true,
+				rule_ref: true,
+				title: true,
+				severity: true,
+				section: true,
+				profile_id: true,
+				compliance_profiles: { select: { type: true, name: true } },
+				compliance_results: {
+					where: { scan_id: { in: latest_scan_ids } },
+					select: { status: true },
+				},
+			},
+		});
+
+		// Aggregate counts per rule
+		const count_by_status = (results, statuses) =>
+			results.filter((x) => statuses.includes(x.status)).length;
+		const rules_with_counts = all_rules.map((r) => {
+			const results = r.compliance_results || [];
+			const hosts_passed = count_by_status(results, ["pass", "passed"]);
+			const hosts_failed = count_by_status(results, [
+				"fail",
+				"failed",
+				"failure",
+			]);
+			const hosts_warned = count_by_status(results, [
+				"warn",
+				"warning",
+				"warned",
+			]);
+			const total_hosts = results.length;
+			return {
+				id: r.id,
+				rule_ref: r.rule_ref,
+				title: r.title,
+				severity: r.severity,
+				section: r.section,
+				profile_id: r.profile_id,
+				profile_type: r.compliance_profiles?.type,
+				profile_name: r.compliance_profiles?.name,
+				hosts_passed,
+				hosts_failed,
+				hosts_warned,
+				total_hosts,
+			};
+		});
+
+		// Server-side sort so pagination returns the correct slice
+		// Higher rank = worse: fail=3, warn=2, pass=1, none=0 — so "desc" means worst first
+		const severity_rank = {
+			critical: 4,
+			high: 3,
+			medium: 2,
+			low: 1,
+			unknown: 0,
+		};
+		const get_status_rank = (r) => {
+			if (r.hosts_failed > 0) return 3;
+			if (r.hosts_warned > 0) return 2;
+			if (r.hosts_passed > 0) return 1;
+			return 0;
+		};
+		const asc = sort_dir === "asc";
+		rules_with_counts.sort((a, b) => {
+			let va, vb;
+			switch (sort_by) {
+				case "status": {
+					va = get_status_rank(a);
+					vb = get_status_rank(b);
+					if (va !== vb) return asc ? va - vb : vb - va;
+					// Secondary: severity (worst first when desc)
+					va = severity_rank[a.severity] ?? 0;
+					vb = severity_rank[b.severity] ?? 0;
+					if (va !== vb) return asc ? va - vb : vb - va;
+					// Tertiary: fail count (most fails first when desc)
+					if (a.hosts_failed !== b.hosts_failed)
+						return asc
+							? a.hosts_failed - b.hosts_failed
+							: b.hosts_failed - a.hosts_failed;
+					return (a.title || "").localeCompare(b.title || "", undefined, {
+						sensitivity: "base",
+					});
+				}
+				case "severity":
+					va = severity_rank[a.severity] ?? 0;
+					vb = severity_rank[b.severity] ?? 0;
+					if (va !== vb) return asc ? va - vb : vb - va;
+					// Secondary: status (worst first)
+					va = get_status_rank(a);
+					vb = get_status_rank(b);
+					if (va !== vb) return vb - va;
+					return b.hosts_failed - a.hosts_failed;
+				case "title":
+					return asc
+						? (a.title || "").localeCompare(b.title || "", undefined, {
+								sensitivity: "base",
+							})
+						: (b.title || "").localeCompare(a.title || "", undefined, {
+								sensitivity: "base",
+							});
+				case "profile_type":
+					va = a.profile_type || "";
+					vb = b.profile_type || "";
+					if (va !== vb)
+						return asc ? va.localeCompare(vb) : vb.localeCompare(va);
+					return (a.title || "").localeCompare(b.title || "", undefined, {
+						sensitivity: "base",
+					});
+				case "hosts_passed":
+				case "hosts_failed":
+				case "hosts_warned":
+				case "total_hosts":
+					va = a[sort_by] ?? 0;
+					vb = b[sort_by] ?? 0;
+					if (va !== vb) return asc ? va - vb : vb - va;
+					return (a.title || "").localeCompare(b.title || "", undefined, {
+						sensitivity: "base",
+					});
+				default:
+					return 0;
+			}
+		});
+
+		const total = rules_with_counts.length;
+		const paginated = rules_with_counts.slice(offset, offset + limit);
+
+		res.json({
+			rules: paginated,
+			pagination: { total, limit, offset },
+		});
+	} catch (error) {
+		logger.error("[Compliance] Error fetching rules:", error);
+		res.status(500).json({ error: "Failed to fetch rules" });
+	}
+});
+
+/**
+ * GET /api/v1/compliance/rules/:ruleId
+ * Get detailed rule information plus affected hosts with their latest result status.
+ */
+router.get("/rules/:ruleId", async (req, res) => {
+	try {
+		const { ruleId } = req.params;
+		if (!isValidUUID(ruleId)) {
+			return res.status(400).json({ error: "Invalid rule ID format" });
+		}
+
+		const rule = await prisma.compliance_rules.findUnique({
+			where: { id: ruleId },
+			include: {
+				compliance_profiles: { select: { id: true, type: true, name: true } },
+			},
+		});
+
+		if (!rule) {
+			return res.status(404).json({ error: "Rule not found" });
+		}
+
+		// Get latest completed scan per host for this rule's profile
+		const latest_scans_list = await getLatestCompletedScans(prisma, {
+			profile_id: rule.profile_id,
+			select: { id: true, host_id: true, completed_at: true },
+		});
+		const latest_scan_ids = latest_scans_list.map((s) => s.id);
+		const _scan_map = new Map(latest_scans_list.map((s) => [s.id, s]));
+
+		// Get results for this rule from those latest scans (include remediation for fallback)
+		const results = await prisma.compliance_results.findMany({
+			where: {
+				rule_id: ruleId,
+				scan_id: { in: latest_scan_ids },
+			},
+			select: {
+				status: true,
+				finding: true,
+				actual: true,
+				expected: true,
+				remediation: true,
+				scan_id: true,
+				compliance_scans: {
+					select: {
+						host_id: true,
+						completed_at: true,
+						hosts: {
+							select: {
+								id: true,
+								hostname: true,
+								friendly_name: true,
+								ip: true,
+							},
+						},
+					},
+				},
+			},
+		});
+
+		const affected_hosts = results.map((r) => ({
+			host_id: r.compliance_scans.host_id,
+			hostname: r.compliance_scans.hosts.hostname,
+			friendly_name: r.compliance_scans.hosts.friendly_name,
+			ip: r.compliance_scans.hosts.ip,
+			status: r.status,
+			finding: r.finding,
+			actual: r.actual,
+			expected: r.expected,
+			scan_date: r.compliance_scans.completed_at,
+		}));
+
+		// Sort: failures first, then warnings, then passes
+		const status_order = {
+			fail: 0,
+			warn: 1,
+			error: 2,
+			skip: 3,
+			notapplicable: 4,
+			pass: 5,
+		};
+		affected_hosts.sort(
+			(a, b) => (status_order[a.status] ?? 99) - (status_order[b.status] ?? 99),
+		);
+
+		// When rule has no rationale, derive "why this failed" from first fail/warn host that has content
+		// (affected_hosts already sorted: fail first, then warn, then pass)
+		const fail_warn_hosts = affected_hosts.filter(
+			(h) => h.status === "fail" || h.status === "warn" || h.status === "error",
+		);
+		let rationale_display = rule.rationale?.trim() || null;
+		if (!rationale_display && fail_warn_hosts.length > 0) {
+			const with_content = fail_warn_hosts.find(
+				(h) => h.finding?.trim() || h.actual?.trim() || h.expected?.trim(),
+			);
+			const src = with_content || fail_warn_hosts[0];
+			if (src.finding?.trim()) {
+				rationale_display = src.finding.trim();
+			} else if (src.actual?.trim() || src.expected?.trim()) {
+				const parts = [];
+				if (src.actual?.trim()) parts.push(`Actual: ${src.actual.trim()}`);
+				if (src.expected?.trim())
+					parts.push(`Expected: ${src.expected.trim()}`);
+				rationale_display = parts.join("\n");
+			} else {
+				// No finding/actual/expected on any fail/warn result: use rule description or title
+				rationale_display =
+					rule.description?.trim() ||
+					rule.title ||
+					"This check did not meet the benchmark requirement on one or more hosts. See the table below for per-host status.";
+			}
+		}
+
+		// When rule has no remediation, use first result that has remediation (same as host page)
+		let remediation_display = rule.remediation?.trim() || null;
+		if (!remediation_display && results.length > 0) {
+			const with_remediation = results.find((r) => r.remediation?.trim());
+			if (with_remediation?.remediation?.trim()) {
+				remediation_display = with_remediation.remediation.trim();
+			}
+		}
+
+		res.json({
+			rule: {
+				id: rule.id,
+				rule_ref: rule.rule_ref,
+				title: rule.title,
+				description: rule.description,
+				rationale: rationale_display ?? rule.rationale,
+				severity: rule.severity,
+				section: rule.section,
+				remediation: remediation_display ?? rule.remediation,
+				profile_id: rule.profile_id,
+				profile_type: rule.compliance_profiles?.type,
+				profile_name: rule.compliance_profiles?.name,
+			},
+			affected_hosts,
+		});
+	} catch (error) {
+		logger.error("[Compliance] Error fetching rule detail:", error);
+		res.status(500).json({ error: "Failed to fetch rule detail" });
 	}
 });
 

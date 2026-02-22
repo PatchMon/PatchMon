@@ -623,26 +623,64 @@ router.post("/collect", async (req, res) => {
 
 		// Process containers
 		if (containers && Array.isArray(containers)) {
-			for (const containerData of containers) {
-				const containerId = uuidv4();
+			// Batch fetch existing images and containers
+			const imageKeys = containers
+				.filter((c) => c.image_repository && c.image_tag)
+				.map((c) => ({
+					repository: c.image_repository,
+					tag: c.image_tag,
+					image_id: c.image_id || "unknown",
+				}));
 
-				// Find or create image
-				let imageId = null;
+			const existingImages = await prisma.docker_images.findMany({
+				where: {
+					OR: imageKeys.map((k) => ({
+						repository: k.repository,
+						tag: k.tag,
+						image_id: k.image_id,
+					})),
+				},
+			});
+
+			const existingImagesMap = new Map(
+				existingImages.map((img) => [
+					`${img.repository}|${img.tag}|${img.image_id}`,
+					img,
+				]),
+			);
+
+			const existingContainers = await prisma.docker_containers.findMany({
+				where: {
+					host_id: host.id,
+					container_id: { in: containers.map((c) => c.container_id) },
+				},
+			});
+
+			const existingContainersMap = new Map(
+				existingContainers.map((c) => [c.container_id, c]),
+			);
+
+			// Separate images into create and update batches
+			const imagesToCreate = [];
+			const imagesToUpdate = [];
+			const imageIdMap = new Map();
+
+			for (const containerData of containers) {
 				if (containerData.image_repository && containerData.image_tag) {
-					const image = await prisma.docker_images.upsert({
-						where: {
-							repository_tag_image_id: {
-								repository: containerData.image_repository,
-								tag: containerData.image_tag,
-								image_id: containerData.image_id || "unknown",
-							},
-						},
-						update: {
+					const key = `${containerData.image_repository}|${containerData.image_tag}|${containerData.image_id || "unknown"}`;
+					const existingImage = existingImagesMap.get(key);
+
+					if (existingImage) {
+						imagesToUpdate.push({
+							id: existingImage.id,
 							last_checked: now,
 							updated_at: now,
-						},
-						create: {
-							id: uuidv4(),
+						});
+						imageIdMap.set(key, existingImage.id);
+					} else if (!imageIdMap.has(key)) {
+						const newImageId = uuidv4();
+						imagesToCreate.push({
+							id: newImageId,
 							repository: containerData.image_repository,
 							tag: containerData.image_tag,
 							image_id: containerData.image_id || "unknown",
@@ -650,20 +688,47 @@ router.post("/collect", async (req, res) => {
 							created_at: parse_date(containerData.created_at, now),
 							last_checked: now,
 							updated_at: now,
-						},
-					});
-					imageId = image.id;
+						});
+						imageIdMap.set(key, newImageId);
+					}
 				}
+			}
 
-				// Upsert container
-				await prisma.docker_containers.upsert({
-					where: {
-						host_id_container_id: {
-							host_id: host.id,
-							container_id: containerData.container_id,
-						},
-					},
-					update: {
+			// Batch create new images
+			if (imagesToCreate.length > 0) {
+				await prisma.docker_images.createMany({
+					data: imagesToCreate,
+					skipDuplicates: true,
+				});
+			}
+
+			// Batch update existing images
+			for (const update of imagesToUpdate) {
+				const { id, ...updateData } = update;
+				await prisma.docker_images.update({
+					where: { id },
+					data: updateData,
+				});
+			}
+
+			// Separate containers into create and update batches
+			const containersToCreate = [];
+			const containersToUpdate = [];
+
+			for (const containerData of containers) {
+				const imageKey =
+					containerData.image_repository && containerData.image_tag
+						? `${containerData.image_repository}|${containerData.image_tag}|${containerData.image_id || "unknown"}`
+						: null;
+				const imageId = imageKey ? imageIdMap.get(imageKey) : null;
+
+				const existingContainer = existingContainersMap.get(
+					containerData.container_id,
+				);
+
+				if (existingContainer) {
+					containersToUpdate.push({
+						id: existingContainer.id,
 						name: containerData.name,
 						image_id: imageId,
 						image_name: containerData.image_name,
@@ -677,9 +742,10 @@ router.post("/collect", async (req, res) => {
 							: null,
 						updated_at: now,
 						last_checked: now,
-					},
-					create: {
-						id: containerId,
+					});
+				} else {
+					containersToCreate.push({
+						id: uuidv4(),
 						host_id: host.id,
 						container_id: containerData.container_id,
 						name: containerData.name,
@@ -695,30 +761,71 @@ router.post("/collect", async (req, res) => {
 							? parse_date(containerData.started_at, null)
 							: null,
 						updated_at: now,
-					},
+					});
+				}
+			}
+
+			// Batch create new containers
+			if (containersToCreate.length > 0) {
+				await prisma.docker_containers.createMany({
+					data: containersToCreate,
+					skipDuplicates: true,
 				});
 			}
-		}
 
-		// Process standalone images
+			// Batch update existing containers
+			for (const update of containersToUpdate) {
+				const { id, ...updateData } = update;
+				await prisma.docker_containers.update({
+					where: { id },
+					data: updateData,
+				});
+			}
+		} // Process standalone images
 		if (images && Array.isArray(images)) {
+			// Batch fetch existing standalone images
+			const standaloneImageKeys = images.map((img) => ({
+				repository: img.repository,
+				tag: img.tag,
+				image_id: img.image_id,
+			}));
+
+			const existingStandaloneImages = await prisma.docker_images.findMany({
+				where: {
+					OR: standaloneImageKeys.map((k) => ({
+						repository: k.repository,
+						tag: k.tag,
+						image_id: k.image_id,
+					})),
+				},
+			});
+
+			const existingStandaloneImagesMap = new Map(
+				existingStandaloneImages.map((img) => [
+					`${img.repository}|${img.tag}|${img.image_id}`,
+					img,
+				]),
+			);
+
+			// Separate into create and update batches
+			const standaloneImagesToCreate = [];
+			const standaloneImagesToUpdate = [];
+
 			for (const imageData of images) {
-				await prisma.docker_images.upsert({
-					where: {
-						repository_tag_image_id: {
-							repository: imageData.repository,
-							tag: imageData.tag,
-							image_id: imageData.image_id,
-						},
-					},
-					update: {
+				const key = `${imageData.repository}|${imageData.tag}|${imageData.image_id}`;
+				const existingImage = existingStandaloneImagesMap.get(key);
+
+				if (existingImage) {
+					standaloneImagesToUpdate.push({
+						id: existingImage.id,
 						size_bytes: imageData.size_bytes
 							? BigInt(imageData.size_bytes)
 							: null,
 						last_checked: now,
 						updated_at: now,
-					},
-					create: {
+					});
+				} else {
+					standaloneImagesToCreate.push({
 						id: uuidv4(),
 						repository: imageData.repository,
 						tag: imageData.tag,
@@ -730,12 +837,27 @@ router.post("/collect", async (req, res) => {
 						source: imageData.source || "docker-hub",
 						created_at: parse_date(imageData.created_at, now),
 						updated_at: now,
-					},
+					});
+				}
+			}
+
+			// Batch create new standalone images
+			if (standaloneImagesToCreate.length > 0) {
+				await prisma.docker_images.createMany({
+					data: standaloneImagesToCreate,
+					skipDuplicates: true,
 				});
 			}
-		}
 
-		// Process updates
+			// Batch update existing standalone images
+			for (const update of standaloneImagesToUpdate) {
+				const { id, ...updateData } = update;
+				await prisma.docker_images.update({
+					where: { id },
+					data: updateData,
+				});
+			}
+		} // Process updates
 		// First, get all images for this host to clean up old updates
 		const hostImageIds = await prisma.docker_containers
 			.findMany({
@@ -751,15 +873,49 @@ router.post("/collect", async (req, res) => {
 
 			// Process new updates
 			if (updates && Array.isArray(updates)) {
+				// Batch fetch images for all updates
+				const updateImageKeys = updates.map((u) => ({
+					repository: u.repository,
+					tag: u.current_tag,
+					image_id: u.image_id,
+				}));
+
+				const updatesImages = await prisma.docker_images.findMany({
+					where: {
+						OR: updateImageKeys.map((k) => ({
+							repository: k.repository,
+							tag: k.tag,
+							image_id: k.image_id,
+						})),
+					},
+				});
+
+				const updatesImagesMap = new Map(
+					updatesImages.map((img) => [
+						`${img.repository}|${img.tag}|${img.image_id}`,
+						img,
+					]),
+				);
+
+				// Get existing update records
+				const updateImageIds = updatesImages.map((img) => img.id);
+				const existingUpdates = await prisma.docker_image_updates.findMany({
+					where: {
+						image_id: { in: updateImageIds },
+					},
+				});
+
+				const existingUpdatesMap = new Map(
+					existingUpdates.map((u) => [`${u.image_id}|${u.available_tag}`, u]),
+				);
+
+				// Separate into create and update batches
+				const imageUpdatesToCreate = [];
+				const imageUpdatesToUpdate = [];
+
 				for (const updateData of updates) {
-					// Find the image by repository, tag, and image_id
-					const image = await prisma.docker_images.findFirst({
-						where: {
-							repository: updateData.repository,
-							tag: updateData.current_tag,
-							image_id: updateData.image_id,
-						},
-					});
+					const imageKey = `${updateData.repository}|${updateData.current_tag}|${updateData.image_id}`;
+					const image = updatesImagesMap.get(imageKey);
 
 					if (image) {
 						reportedImageIds.push(image.id);
@@ -771,34 +927,48 @@ router.post("/collect", async (req, res) => {
 							available_digest: updateData.available_digest,
 						});
 
-						// Upsert the update record
-						await prisma.docker_image_updates.upsert({
-							where: {
-								image_id_available_tag: {
-									image_id: image.id,
-									available_tag: updateData.available_tag,
-								},
-							},
-							update: {
+						const updateKey = `${image.id}|${updateData.available_tag}`;
+						const existingUpdate = existingUpdatesMap.get(updateKey);
+
+						if (existingUpdate) {
+							imageUpdatesToUpdate.push({
+								id: existingUpdate.id,
 								updated_at: now,
 								changelog_url: digestInfo,
 								severity: "digest_changed",
-							},
-							create: {
+							});
+						} else {
+							imageUpdatesToCreate.push({
 								id: uuidv4(),
 								image_id: image.id,
 								current_tag: updateData.current_tag,
 								available_tag: updateData.available_tag,
 								severity: "digest_changed",
 								changelog_url: digestInfo,
+								created_at: now,
 								updated_at: now,
-							},
-						});
+							});
+						}
 					}
 				}
-			}
 
-			// Remove stale updates for images on this host that are no longer in the updates list
+				// Batch create new image updates
+				if (imageUpdatesToCreate.length > 0) {
+					await prisma.docker_image_updates.createMany({
+						data: imageUpdatesToCreate,
+						skipDuplicates: true,
+					});
+				}
+
+				// Batch update existing image updates
+				for (const update of imageUpdatesToUpdate) {
+					const { id, ...updateData } = update;
+					await prisma.docker_image_updates.update({
+						where: { id },
+						data: updateData,
+					});
+				}
+			} // Remove stale updates for images on this host that are no longer in the updates list
 			const imageIdsToCleanup = hostImageIds.filter(
 				(id) => !reportedImageIds.includes(id),
 			);

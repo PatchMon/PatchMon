@@ -218,7 +218,7 @@ class AlertConfigService {
 				cutoffDate.setDate(cutoffDate.getDate() - config.retention_days);
 
 				const where = {
-					alert_type: config.alert_type,
+					type: config.alert_type,
 					created_at: { lte: cutoffDate },
 				};
 

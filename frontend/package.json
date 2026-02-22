@@ -1,7 +1,7 @@
 {
 	"name": "patchmon-frontend",
 	"private": true,
-	"version": "1.4.0",
+	"version": "1.4.2",
 	"license": "AGPL-3.0",
 	"type": "module",
 	"scripts": {
@@ -17,9 +17,9 @@
 		"@dnd-kit/core": "6.3.1",
 		"@dnd-kit/sortable": "10.0.0",
 		"@dnd-kit/utilities": "3.2.2",
-		"@tanstack/react-query": "5.87.4",
+		"@tanstack/react-query": "5.90.21",
 		"axios": "^1.13.2",
-		"chart.js": "4.4.7",
+		"chart.js": "4.5.1",
 		"clsx": "2.1.1",
 		"cors": "2.8.5",
 		"date-fns": "4.1.0",
@@ -28,32 +28,29 @@
 		"http-proxy-middleware": "^3.0.5",
 		"lucide-react": "0.468.0",
 		"react": "18.3.1",
-		"react-chartjs-2": "5.2.0",
+		"react-chartjs-2": "5.3.1",
 		"react-dom": "18.3.1",
 		"react-icons": "5.5.0",
 		"react-is": "18.3.1",
 		"react-markdown": "9.0.1",
-		"react-router-dom": "6.30.1",
+		"react-router-dom": "6.30.3",
 		"recharts": "2.15.0",
 		"xterm": "5.3.0",
 		"xterm-addon-fit": "0.8.0"
 	},
 	"devDependencies": {
-		"@testing-library/jest-dom": "6.1.5",
+		"@testing-library/jest-dom": "6.9.1",
 		"@testing-library/react": "14.1.2",
 		"@testing-library/user-event": "14.5.1",
 		"@types/react": "18.3.14",
 		"@types/react-dom": "18.3.1",
-		"@vitejs/plugin-react": "5.1.2",
+		"@vitejs/plugin-react": "5.1.4",
 		"@vitest/ui": "^1.6.1",
 		"autoprefixer": "10.4.20",
 		"jsdom": "^23.0.1",
 		"postcss": "8.5.6",
 		"tailwindcss": "3.4.17",
-		"vite": "6.0.7",
+		"vite": "^6.4.1",
 		"vitest": "^1.6.1"
-	},
-	"overrides": {
-		"esbuild": "0.24.2"
 	}
 }

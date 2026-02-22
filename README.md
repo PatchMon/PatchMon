@@ -72,7 +72,15 @@ Fully managed PatchMon hosting with zero infrastructure overhead. We handle prov
 
 ### Self-Hosted Installation
 
-#### Docker (recommended)
+Three deployment methods are available:
+
+1. **Docker** (supported and preferred)
+2. **Proxmox Community Script** – one-command LXC deployment
+3. **Bare metal scripted installation** (`setup.sh`) – Ubuntu / Debian
+
+---
+
+#### 1) Docker (Supported and preferred)
 
 The quickest way to get running. See the full guide on our documentation site:
 
@@ -99,7 +107,23 @@ Once all containers are healthy, open your browser at `http://localhost:3000` or
 
 **Windows hosts:** The agent can be installed on Windows Server and Windows 10/11. Optional in-browser RDP (via Apache Guacamole) is available for Windows hosts from the host detail page. See **[WINDOWS.md](WINDOWS.md)** for requirements, installation, uninstall, and RDP setup.
 
-#### Native Install (Ubuntu / Debian)
+---
+
+#### 2) Proxmox Community Script
+
+Deploy PatchMon as an LXC container on Proxmox VE using the [Proxmox VE Helper-Scripts](https://community-scripts.github.io/ProxmoxVE/scripts?id=patchmon) community script.
+
+**Quick start:**
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/patchmon.sh)"
+```
+
+Script details and options: **[PatchMon – Proxmox VE Helper-Scripts](https://community-scripts.github.io/ProxmoxVE/scripts?id=patchmon)**
+
+---
+
+#### 3) Bare metal scripted installation (setup.sh)
 
 For a bare-metal or VM install without Docker, see the documentation:
 
@@ -184,7 +208,7 @@ Track upcoming features and progress on the roadmap board:
 
 ## License
 
-AGPLv3 - see [LICENSE](LICENSE) for details.
+AGPL v3 - see [LICENSE](LICENSE) for details.
 
 ---
 

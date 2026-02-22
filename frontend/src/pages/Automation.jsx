@@ -111,6 +111,20 @@ const Automation = () => {
 				year: "numeric",
 			});
 		}
+		if (schedule === "Daily at 1 AM") {
+			const now = new Date();
+			const tomorrow = new Date(now);
+			tomorrow.setDate(tomorrow.getDate() + 1);
+			tomorrow.setHours(1, 0, 0, 0);
+			return tomorrow.toLocaleString([], {
+				hour12: true,
+				hour: "numeric",
+				minute: "2-digit",
+				day: "numeric",
+				month: "numeric",
+				year: "numeric",
+			});
+		}
 		if (schedule === "Daily at 2 AM") {
 			const now = new Date();
 			const tomorrow = new Date(now);
@@ -218,6 +232,13 @@ const Automation = () => {
 			tomorrow.setHours(0, 0, 0, 0);
 			return tomorrow.getTime();
 		}
+		if (schedule === "Daily at 1 AM") {
+			const now = new Date();
+			const tomorrow = new Date(now);
+			tomorrow.setDate(tomorrow.getDate() + 1);
+			tomorrow.setHours(1, 0, 0, 0);
+			return tomorrow.getTime();
+		}
 		if (schedule === "Daily at 2 AM") {
 			const now = new Date();
 			const tomorrow = new Date(now);
@@ -323,6 +344,8 @@ const Automation = () => {
 				endpoint = "/automation/trigger/alert-cleanup";
 			} else if (jobType === "host-status-monitor") {
 				endpoint = "/automation/trigger/host-status-monitor";
+			} else if (jobType === "compliance-scan-cleanup") {
+				endpoint = "/compliance/scans/cleanup";
 			}
 
 			const _response = await api.post(endpoint, data);
@@ -614,6 +637,12 @@ const Automation = () => {
 															automation.queue.includes("host-status-monitor")
 														) {
 															triggerManualJob("host-status-monitor");
+														} else if (
+															automation.queue.includes(
+																"compliance-scan-cleanup",
+															)
+														) {
+															triggerManualJob("compliance-scan-cleanup");
 														}
 													}}
 													className="inline-flex items-center justify-center w-8 h-8 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200 flex-shrink-0"
@@ -771,6 +800,12 @@ const Automation = () => {
 																	)
 																) {
 																	triggerManualJob("host-status-monitor");
+																} else if (
+																	automation.queue.includes(
+																		"compliance-scan-cleanup",
+																	)
+																) {
+																	triggerManualJob("compliance-scan-cleanup");
 																}
 															}}
 															className="inline-flex items-center justify-center w-6 h-6 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200"

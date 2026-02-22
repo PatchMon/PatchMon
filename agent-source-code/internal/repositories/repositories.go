@@ -1,8 +1,10 @@
 package repositories
 
 import (
+	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 
 	"patchmon-agent/pkg/models"
 
@@ -11,23 +13,25 @@ import (
 
 // Manager handles repository information collection
 type Manager struct {
-	logger        *logrus.Logger
-	aptManager    *APTManager
-	dnfManager    *DNFManager
-	apkManager    *APKManager
-	pacmanManager *PacmanManager
-	winManager    *WindowsManager
+	logger         *logrus.Logger
+	aptManager     *APTManager
+	dnfManager     *DNFManager
+	apkManager     *APKManager
+	pacmanManager  *PacmanManager
+	freebsdManager *FreeBSDManager
+	winManager     *WindowsManager
 }
 
 // New creates a new repository manager
 func New(logger *logrus.Logger) *Manager {
 	return &Manager{
-		logger:        logger,
-		aptManager:    NewAPTManager(logger),
-		dnfManager:    NewDNFManager(logger),
-		apkManager:    NewAPKManager(logger),
-		pacmanManager: NewPacmanManager(logger),
-		winManager:    NewWindowsManager(logger),
+		logger:         logger,
+		aptManager:     NewAPTManager(logger),
+		dnfManager:     NewDNFManager(logger),
+		apkManager:     NewAPKManager(logger),
+		pacmanManager:  NewPacmanManager(logger),
+		freebsdManager: NewFreeBSDManager(logger),
+		winManager:     NewWindowsManager(logger),
 	}
 }
 
@@ -49,6 +53,8 @@ func (m *Manager) GetRepositories() ([]models.Repository, error) {
 		return m.apkManager.GetRepositories()
 	case "pacman":
 		return m.pacmanManager.GetRepositories()
+	case "pkg":
+		return m.freebsdManager.GetRepositories()
 	default:
 		m.logger.WithField("package_manager", packageManager).Warn("Unsupported package manager")
 		return []models.Repository{}, nil
@@ -61,8 +67,22 @@ func (m *Manager) detectPackageManager() string {
 	if runtime.GOOS == "windows" {
 		return "windows"
 	}
-
-	// Check for APK first (Alpine Linux)
+	// Check for FreeBSD pkg first. When the agent runs as rc.d service, PATH may be minimal.
+	if runtime.GOOS == "freebsd" {
+		for _, pkgPath := range []string{"/usr/sbin/pkg", "/usr/local/sbin/pkg"} {
+			if info, err := os.Stat(pkgPath); err == nil && info.Mode().IsRegular() && (info.Mode()&0111) != 0 {
+				return "pkg"
+			}
+		}
+	}
+	if _, err := exec.LookPath("pkg"); err == nil {
+		if output, err := exec.Command("uname", "-s").Output(); err == nil {
+			if strings.TrimSpace(string(output)) == "FreeBSD" {
+				return "pkg"
+			}
+		}
+	}
+	// Check for APK (Alpine Linux)
 	if _, err := exec.LookPath("apk"); err == nil {
 		return "apk"
 	}

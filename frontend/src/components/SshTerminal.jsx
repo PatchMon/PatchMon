@@ -215,12 +215,16 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 		return blocks;
 	}, []);
 
-	// Build agent install command
+	// Build agent install command (OS-specific URL and shell: no sudo on FreeBSD)
 	const getInstallCommand = () => {
 		if (!host?.api_id || !host?.api_key) return "";
 		const curlFlags = getCurlFlags();
-		const installUrl = `${serverUrl}/api/v1/hosts/install`;
-		return `curl ${curlFlags} ${installUrl} -H "X-API-ID: ${host.api_id}" -H "X-API-KEY: ${host.api_key}" | sh`;
+		const base = `${serverUrl}/api/v1/hosts/install`;
+		const params = new URLSearchParams();
+		if (host?.expected_platform === "freebsd") params.set("os", "freebsd");
+		const installUrl = params.toString() ? `${base}?${params}` : base;
+		const shell_cmd = host?.expected_platform === "freebsd" ? "sh" : "sudo sh";
+		return `curl ${curlFlags} "${installUrl}" -H "X-API-ID: ${host.api_id}" -H "X-API-KEY: ${host.api_key}" | ${shell_cmd}`;
 	};
 
 	// Paste command to terminal

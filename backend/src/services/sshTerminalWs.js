@@ -14,6 +14,7 @@ const {
 const { getPrismaClient } = require("../config/prisma");
 const { logAuditEvent } = require("../utils/auditLogger");
 const { redis } = require("./automation/shared/redis");
+const { reject_upgrade } = require("../utils/wsUpgradeReject");
 
 const prisma = getPrismaClient();
 
@@ -140,7 +141,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 				logger.info(
 					`[ssh-terminal] Ticket validation failed for host ${hostId}: ${ticketResult.reason}`,
 				);
-				socket.destroy();
+				reject_upgrade(socket, 401, "Invalid or expired ticket");
 				return true;
 			}
 
@@ -160,7 +161,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 				logger.info(
 					`[ssh-terminal] User not found or inactive for host ${hostId}`,
 				);
-				socket.destroy();
+				reject_upgrade(socket, 401, "User not found or inactive");
 				return true;
 			}
 
@@ -184,7 +185,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 					`[ssh-terminal] Token verification failed for host ${hostId}:`,
 					err.message,
 				);
-				socket.destroy();
+				reject_upgrade(socket, 401, "Invalid or expired token");
 				return true;
 			}
 
@@ -196,7 +197,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 					logger.info(
 						`[ssh-terminal] WS token session validation failed for host ${hostId}`,
 					);
-					socket.destroy();
+					reject_upgrade(socket, 401, "Invalid or expired session");
 					return true;
 				}
 			} else {
@@ -205,7 +206,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 					logger.info(
 						`[ssh-terminal] Session validation failed for host ${hostId}`,
 					);
-					socket.destroy();
+					reject_upgrade(socket, 401, "Invalid or expired session");
 					return true;
 				}
 			}
@@ -219,7 +220,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 			logger.info(
 				`[ssh-terminal] No ticket or token provided for host ${hostId}`,
 			);
-			socket.destroy();
+			reject_upgrade(socket, 401, "Authentication required");
 			return true;
 		}
 
@@ -233,7 +234,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 
 		if (!host) {
 			logger.info(`[ssh-terminal] Host ${hostId} not found`);
-			socket.destroy();
+			reject_upgrade(socket, 404, "Host not found");
 			return true;
 		}
 
@@ -264,7 +265,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 				success: false,
 			});
 
-			socket.destroy();
+			reject_upgrade(socket, 403, "Access denied");
 			return true;
 		}
 
@@ -747,7 +748,7 @@ async function handleSshTerminalUpgrade(request, socket, head, pathname) {
 				`[ssh-terminal] Failed to handle upgrade for host ${host.friendly_name}:`,
 				upgradeErr,
 			);
-			socket.destroy();
+			reject_upgrade(socket, 500, "Internal server error");
 			return true;
 		}
 

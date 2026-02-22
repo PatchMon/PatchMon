@@ -170,25 +170,46 @@ router.get("/agent/download", async (req, res) => {
 		const fs = require("node:fs");
 		const path = require("node:path");
 
-		// Serve Go agent binary (OS-aware: linux or windows)
+		// Serve Go agent binary (OS-aware: linux, freebsd, or windows)
 		const architecture = req.query.arch || "amd64";
+		let os = req.query.os;
+		if (!os && host?.os_type) {
+			const reported = String(host.os_type).toLowerCase();
+			os =
+				reported.includes("freebsd") || reported.includes("pfsense")
+					? "freebsd"
+					: reported.includes("windows")
+						? "windows"
+						: "linux";
+		}
+		os = os || "linux";
 
-		// Validate architecture
-		const validArchitectures = ["amd64", "386", "arm64", "arm"];
-		if (!validArchitectures.includes(architecture)) {
+		const validOss = ["linux", "freebsd", "windows"];
+		if (!validOss.includes(os)) {
 			return res.status(400).json({
-				error: "Invalid architecture. Must be one of: amd64, 386, arm64, arm",
+				error: "Invalid os. Must be one of: linux, freebsd, windows",
 			});
 		}
 
-		// Determine OS (default to linux for backward compatibility)
-		const os = req.query.os || "linux";
+		const validArchitecturesLinux = ["amd64", "386", "arm64", "arm"];
+		const validArchitecturesFreebsd = ["amd64", "arm64"];
+		const validArchitecturesWindows = ["amd64", "386"];
+		const validArchitectures =
+			os === "freebsd"
+				? validArchitecturesFreebsd
+				: os === "windows"
+					? validArchitecturesWindows
+					: validArchitecturesLinux;
+		if (!validArchitectures.includes(architecture)) {
+			return res.status(400).json({
+				error: `Invalid architecture for ${os}. Must be one of: ${validArchitectures.join(", ")}`,
+			});
+		}
 
-		// Determine binary name based on OS
 		const binaryName =
 			os === "windows"
 				? `patchmon-agent-windows-${architecture}.exe`
-				: `patchmon-agent-linux-${architecture}`;
+				: `patchmon-agent-${os}-${architecture}`;
 		const binaryPath = path.join(__dirname, "../../../agents", binaryName);
 
 		if (!fs.existsSync(binaryPath)) {
@@ -249,63 +270,82 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 
 		// Get architecture parameter (default to amd64 for Go agents)
 		const architecture = req.query.arch || "amd64";
-		const os = req.query.os || "linux";
-
-		// Go agent version check
-		// Always check the server's local binary for the requested architecture
-		// The server's agents folder is the source of truth, not GitHub
-		const { execFile } = require("node:child_process");
-		const { promisify } = require("node:util");
-		const execFileAsync = promisify(execFile);
-
+		const query_os = req.query.os;
+		const valid_os = ["linux", "freebsd", "windows"];
+		let os = query_os && valid_os.includes(query_os) ? query_os : null;
+		if (!os && host?.os_type) {
+			const reported = String(host.os_type).toLowerCase();
+			os =
+				reported.includes("freebsd") || reported.includes("pfsense")
+					? "freebsd"
+					: reported.includes("windows")
+						? "windows"
+						: "linux";
+		}
+		if (!os) {
+			os = host?.expected_platform === "freebsd" ? "freebsd" : "linux";
+		}
+		const validArchitecturesLinux = ["amd64", "386", "arm64", "arm"];
+		const validArchitecturesFreebsd = ["amd64", "arm64"];
+		const validArchitecturesWindows = ["amd64", "386"];
+		const validArchitectures =
+			os === "freebsd"
+				? validArchitecturesFreebsd
+				: os === "windows"
+					? validArchitecturesWindows
+					: validArchitecturesLinux;
+		if (!validArchitectures.includes(architecture)) {
+			return res.status(400).json({
+				error: `Invalid architecture for ${os}. Must be one of: ${validArchitectures.join(", ")}`,
+			});
+		}
 		const binaryName =
 			os === "windows"
 				? `patchmon-agent-windows-${architecture}.exe`
-				: `patchmon-agent-linux-${architecture}`;
+				: `patchmon-agent-${os}-${architecture}`;
+
+		// Go agent version check: server's agents folder is the source of truth
+		const { execFile } = require("node:child_process");
+		const { promisify } = require("node:util");
+		const execFileAsync = promisify(execFile);
 		if (binaryName.includes("..")) {
 			return res.status(400).json({ error: "Invalid architecture specified" });
 		}
 		const binaryPath = path.join(__dirname, "../../../agents", binaryName);
 
 		if (fs.existsSync(binaryPath)) {
-			// Binary exists in server's agents folder - use its version
 			let serverVersion = null;
+			const server_platform = process.platform;
+			const binary_matches_server =
+				(os === "linux" && server_platform === "linux") ||
+				(os === "freebsd" && server_platform === "freebsd") ||
+				(os === "windows" && server_platform === "win32");
 
-			// Try method 1: Execute binary directly (works for same architecture)
-			// Using execFile instead of exec to prevent shell injection
-			try {
-				const { stdout } = await execFileAsync(binaryPath, ["--help"], {
-					timeout: 10000,
-				});
-
-				// Parse version from help output (e.g., "PatchMon Agent v1.3.1")
-				const versionMatch = stdout.match(
-					/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
-				);
-
-				if (versionMatch) {
-					serverVersion = versionMatch[1];
+			if (binary_matches_server) {
+				try {
+					const { stdout } = await execFileAsync(binaryPath, ["--help"], {
+						timeout: 10000,
+					});
+					const versionMatch = stdout.match(
+						/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
+					);
+					if (versionMatch) serverVersion = versionMatch[1];
+				} catch (execError) {
+					logger.warn(
+						`Failed to execute binary ${binaryName} to get version: ${execError.message}`,
+					);
 				}
-			} catch (execError) {
-				// Execution failed (likely cross-architecture) - try alternative method
-				logger.warn(
-					`Failed to execute binary ${binaryName} to get version (may be cross-architecture): ${execError.message}`,
-				);
-
-				// Try method 2: Extract version using strings command (works for cross-architecture)
-				// Using execFile with strings command to avoid shell injection
+			}
+			if (!serverVersion) {
 				try {
 					const { stdout: stringsOutput } = await execFileAsync(
 						"strings",
 						[binaryPath],
 						{ timeout: 10000, maxBuffer: 10 * 1024 * 1024 },
 					);
-
-					// Filter in Node.js instead of piping through grep
 					const versionMatch = stringsOutput.match(
 						/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
 					);
-
 					if (versionMatch) {
 						serverVersion = versionMatch[1];
 						logger.info(
@@ -420,6 +460,10 @@ router.post(
 			.optional()
 			.isBoolean()
 			.withMessage("Compliance enabled must be a boolean"),
+		body("expected_platform")
+			.optional()
+			.isIn(["linux", "freebsd"])
+			.withMessage("expected_platform must be linux or freebsd"),
 	],
 	async (req, res) => {
 		try {
@@ -433,6 +477,7 @@ router.post(
 				hostGroupIds,
 				docker_enabled,
 				compliance_enabled,
+				expected_platform,
 			} = req.body;
 
 			// Generate unique API credentials for this host
@@ -487,6 +532,7 @@ router.post(
 					docker_enabled: docker_enabled ?? false, // Set integration state if provided
 					compliance_enabled: finalComplianceEnabled,
 					compliance_on_demand_only: finalComplianceOnDemandOnly,
+					expected_platform: expected_platform ?? null,
 					updated_at: new Date(),
 					// Create host group memberships if hostGroupIds are provided
 					host_group_memberships:
@@ -618,8 +664,11 @@ router.post(
 			.isFloat({ min: 0 })
 			.withMessage("Swap size must be a non-negative number"),
 		body("diskDetails")
-			.optional()
-			.isArray()
+			.optional({ values: "null" })
+			.custom(
+				(value) =>
+					value === undefined || value === null || Array.isArray(value),
+			)
 			.withMessage("Disk details must be an array"),
 		// Network Information
 		body("gatewayIp")
@@ -713,7 +762,12 @@ router.post(
 				updateData.ram_installed = req.body.ramInstalled;
 			if (req.body.swapSize !== undefined)
 				updateData.swap_size = req.body.swapSize;
-			if (req.body.diskDetails) updateData.disk_details = req.body.diskDetails;
+			// Only update when sent; normalise null to [] (agent may send null on overlay/read-only roots)
+			if (Object.hasOwn(req.body, "diskDetails")) {
+				updateData.disk_details = Array.isArray(req.body.diskDetails)
+					? req.body.diskDetails
+					: [];
+			}
 
 			// Network Information
 			if (req.body.gatewayIp) {
@@ -844,38 +898,28 @@ router.post(
 					});
 				}
 
-				// Now process host_packages
-				for (const packageData of packages) {
+				// Now process host_packages in batch
+				// Since we already cleared host_packages, we can use createMany
+				const hostPackagesToCreate = packages.map((packageData) => {
 					const pkg = existingPackageMap.get(packageData.name);
+					return {
+						id: uuidv4(),
+						host_id: host.id,
+						package_id: pkg.id,
+						current_version: packageData.currentVersion,
+						available_version: packageData.availableVersion || null,
+						needs_update: packageData.needsUpdate,
+						is_security_update: packageData.isSecurityUpdate || false,
+						last_checked: new Date(),
+					};
+				});
 
-					await tx.host_packages.upsert({
-						where: {
-							host_id_package_id: {
-								host_id: host.id,
-								package_id: pkg.id,
-							},
-						},
-						update: {
-							current_version: packageData.currentVersion,
-							available_version: packageData.availableVersion || null,
-							needs_update: packageData.needsUpdate,
-							is_security_update: packageData.isSecurityUpdate || false,
-							last_checked: new Date(),
-						},
-						create: {
-							id: uuidv4(),
-							host_id: host.id,
-							package_id: pkg.id,
-							current_version: packageData.currentVersion,
-							available_version: packageData.availableVersion || null,
-							needs_update: packageData.needsUpdate,
-							is_security_update: packageData.isSecurityUpdate || false,
-							last_checked: new Date(),
-						},
+				if (hostPackagesToCreate.length > 0) {
+					await tx.host_packages.createMany({
+						data: hostPackagesToCreate,
+						skipDuplicates: true,
 					});
-				}
-
-				// Process repositories if provided
+				} // Process repositories if provided
 				if (repositories && Array.isArray(repositories)) {
 					// Clear existing host repositories
 					await tx.host_repositories.deleteMany({
@@ -891,43 +935,79 @@ router.post(
 						}
 					}
 
-					// Process each unique repository
-					for (const repoData of uniqueRepos.values()) {
-						// Find or create repository
-						let repo = await tx.repositories.findFirst({
-							where: {
+					// Batch fetch all existing repositories
+					const uniqueReposArray = Array.from(uniqueRepos.values());
+					const existingRepos = await tx.repositories.findMany({
+						where: {
+							OR: uniqueReposArray.map((repoData) => ({
 								url: repoData.url,
 								distribution: repoData.distribution,
 								components: repoData.components,
-							},
-						});
+							})),
+						},
+					});
 
-						if (!repo) {
-							repo = await tx.repositories.create({
-								data: {
-									id: uuidv4(),
-									name: repoData.name,
-									url: repoData.url,
-									distribution: repoData.distribution,
-									components: repoData.components,
-									repo_type: repoData.repoType,
-									is_active: true,
-									is_secure: repoData.isSecure || false,
-									description: `${repoData.repoType} repository for ${repoData.distribution}`,
-									updated_at: new Date(),
-								},
+					// Map existing repos for quick lookup
+					const existingRepoMap = new Map(
+						existingRepos.map((r) => [
+							`${r.url}|${r.distribution}|${r.components}`,
+							r,
+						]),
+					);
+
+					// Separate repos into create and existing
+					const reposToCreate = [];
+					const repoIdMap = new Map(); // Maps key to repo id
+
+					for (const repoData of uniqueReposArray) {
+						const key = `${repoData.url}|${repoData.distribution}|${repoData.components}`;
+						const existingRepo = existingRepoMap.get(key);
+
+						if (existingRepo) {
+							repoIdMap.set(key, existingRepo.id);
+						} else {
+							const newRepoId = uuidv4();
+							repoIdMap.set(key, newRepoId);
+							reposToCreate.push({
+								id: newRepoId,
+								name: repoData.name,
+								url: repoData.url,
+								distribution: repoData.distribution,
+								components: repoData.components,
+								repo_type: repoData.repoType,
+								is_active: true,
+								is_secure: repoData.isSecure || false,
+								description: `${repoData.repoType} repository for ${repoData.distribution}`,
+								created_at: new Date(),
+								updated_at: new Date(),
 							});
 						}
+					}
 
-						// Create host repository relationship
-						await tx.host_repositories.create({
-							data: {
-								id: uuidv4(),
-								host_id: host.id,
-								repository_id: repo.id,
-								is_enabled: repoData.isEnabled !== false, // Default to enabled
-								last_checked: new Date(),
-							},
+					// Batch create new repositories
+					if (reposToCreate.length > 0) {
+						await tx.repositories.createMany({
+							data: reposToCreate,
+							skipDuplicates: true,
+						});
+					}
+
+					// Batch create host repository relationships
+					const hostReposToCreate = uniqueReposArray.map((repoData) => {
+						const key = `${repoData.url}|${repoData.distribution}|${repoData.components}`;
+						return {
+							id: uuidv4(),
+							host_id: host.id,
+							repository_id: repoIdMap.get(key),
+							is_enabled: repoData.isEnabled !== false, // Default to enabled
+							last_checked: new Date(),
+						};
+					});
+
+					if (hostReposToCreate.length > 0) {
+						await tx.host_repositories.createMany({
+							data: hostReposToCreate,
+							skipDuplicates: true,
 						});
 					}
 				}
@@ -1065,8 +1145,15 @@ router.get("/integrations", validateApiCredentials, async (req, res) => {
 // Receive integration setup status from agent
 router.post("/integration-status", validateApiCredentials, async (req, res) => {
 	try {
-		const { integration, enabled, status, message, components, scanner_info } =
-			req.body;
+		const {
+			integration,
+			enabled,
+			status,
+			message,
+			components,
+			scanner_info,
+			install_events,
+		} = req.body;
 		const hostId = req.hostRecord.id;
 		const apiId = req.hostRecord.api_id;
 
@@ -1077,6 +1164,9 @@ router.post("/integration-status", validateApiCredentials, async (req, res) => {
 			message,
 			components,
 			scanner_info: scanner_info ? "present" : "not provided",
+			install_events_count: Array.isArray(install_events)
+				? install_events.length
+				: 0,
 		});
 
 		// Store the status update in Redis for real-time UI updates
@@ -1088,11 +1178,12 @@ router.post("/integration-status", validateApiCredentials, async (req, res) => {
 			message,
 			components: components || {},
 			scanner_info: scanner_info || null,
+			install_events: Array.isArray(install_events) ? install_events : [],
 			timestamp: new Date().toISOString(),
 		};
 
-		// Store with 1 hour expiry
-		await redis.setex(statusKey, 3600, JSON.stringify(statusData));
+		// Store in Redis with 2 hour expiry so UI has fresh data without constant agent reports
+		await redis.setex(statusKey, 7200, JSON.stringify(statusData));
 
 		// Also broadcast via WebSocket if available
 		try {
@@ -1107,13 +1198,16 @@ router.post("/integration-status", validateApiCredentials, async (req, res) => {
 			logger.info("WebSocket broadcast not available:", wsError.message);
 		}
 
-		// Update host record with compliance setup status
-		if (integration === "compliance" && status === "ready") {
+		// Persist compliance scanner status to host record for accurate display when Redis is empty
+		if (integration === "compliance") {
+			const now = new Date();
 			await prisma.hosts.update({
 				where: { id: hostId },
 				data: {
-					compliance_enabled: enabled,
-					updated_at: new Date(),
+					compliance_scanner_status: statusData,
+					compliance_scanner_updated_at: now,
+					...(status === "ready" ? { compliance_enabled: enabled } : {}),
+					updated_at: now,
 				},
 			});
 		}
@@ -1182,8 +1276,7 @@ router.post("/ping", validateApiCredentials, async (req, res) => {
 			);
 			response.crontabUpdate = {
 				shouldUpdate: true,
-				message:
-					"Update interval changed, please run: /usr/local/bin/patchmon-agent.sh update-crontab",
+				message: "Update interval changed. Restart the agent service to apply.",
 				command: "update-crontab",
 			};
 		}
@@ -2364,7 +2457,7 @@ router.get("/install", async (req, res) => {
 			);
 			res.send(script);
 		} else {
-			// Serve bash script for Linux/Unix (existing behavior)
+			// Serve bash script for Linux/FreeBSD
 			const scriptPath = path.join(
 				__dirname,
 				"../../../agents/patchmon_install.sh",
@@ -2378,6 +2471,13 @@ router.get("/install", async (req, res) => {
 
 			// Convert Windows line endings to Unix line endings
 			script = script.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+			// OS for script (linux | freebsd); default linux for backward compatibility
+			let os = req.query.os || "linux";
+			const validOss = ["linux", "freebsd"];
+			if (!validOss.includes(os)) {
+				os = "linux";
+			}
 
 			// Determine curl flags dynamically from settings (ignore self-signed)
 			let curlFlags = "-s";
@@ -2397,8 +2497,6 @@ router.get("/install", async (req, res) => {
 			// Get architecture parameter (only set if explicitly provided, otherwise let script auto-detect)
 			const architecture = req.query.arch;
 
-			// Generate bootstrap token (secure flow - no embedding of API key)
-			const apiKey = req.headers["x-api-key"];
 			const bootstrapToken = await generateBootstrapToken(host.api_id, apiKey);
 
 			const archExport = architecture
@@ -2406,6 +2504,7 @@ router.get("/install", async (req, res) => {
 				: "";
 			const envVars = `#!/bin/sh
 export PATCHMON_URL="${serverUrl}"
+export PATCHMON_OS="${os}"
 export BOOTSTRAP_TOKEN="${bootstrapToken}"
 export CURL_FLAGS="${curlFlags}"
 export SKIP_SSL_VERIFY="${skipSSLVerify}"
@@ -2568,49 +2667,76 @@ router.get("/remove", async (req, res) => {
 
 // ==================== AGENT FILE MANAGEMENT ====================
 
-// Get agent file information (admin only)
+// Get agent binary information (admin only). Returns info for the Go agent binary in agents/.
 router.get(
 	"/agent/info",
 	authenticateToken,
 	requireManageSettings,
 	async (_req, res) => {
 		try {
-			const fs = require("node:fs").promises;
+			const fs = require("node:fs");
+			const fsPromises = require("node:fs").promises;
 			const path = require("node:path");
+			const { execFile } = require("node:child_process");
+			const { promisify } = require("node:util");
+			const execFileAsync = promisify(execFile);
 
-			const agentPath = path.join(
-				__dirname,
-				"../../../agents/patchmon-agent.sh",
-			);
+			const agentsDir = path.join(__dirname, "../../../agents");
+			const platform =
+				process.platform === "linux"
+					? "linux"
+					: process.platform === "freebsd"
+						? "freebsd"
+						: "linux";
+			// Prefer binary matching server platform (e.g. patchmon-agent-linux-amd64)
+			const preferredName = `patchmon-agent-${platform}-amd64`;
+			const preferredPath = path.join(agentsDir, preferredName);
 
-			try {
-				const stats = await fs.stat(agentPath);
-				const content = await fs.readFile(agentPath, "utf8");
-
-				// Extract version from agent script (look for AGENT_VERSION= line)
-				const versionMatch = content.match(/^AGENT_VERSION="([^"]+)"/m);
-				const version = versionMatch ? versionMatch[1] : "unknown";
-
-				res.json({
-					exists: true,
-					version,
-					lastModified: stats.mtime,
-					size: stats.size,
-					sizeFormatted: `${(stats.size / 1024).toFixed(1)} KB`,
-				});
-			} catch (error) {
-				if (error.code === "ENOENT") {
-					res.json({
-						exists: false,
-						version: null,
-						lastModified: null,
-						size: 0,
-						sizeFormatted: "0 KB",
-					});
-				} else {
-					throw error;
-				}
+			let binaryPath = null;
+			if (fs.existsSync(preferredPath)) {
+				binaryPath = preferredPath;
+			} else {
+				const entries = await fsPromises.readdir(agentsDir).catch(() => []);
+				const binary = entries.find(
+					(e) =>
+						e.startsWith("patchmon-agent-") &&
+						!e.endsWith(".sh") &&
+						e !== "patchmon-agent.sh",
+				);
+				if (binary) binaryPath = path.join(agentsDir, binary);
 			}
+
+			if (!binaryPath || !fs.existsSync(binaryPath)) {
+				return res.json({
+					exists: false,
+					version: null,
+					lastModified: null,
+					size: 0,
+					sizeFormatted: "0 KB",
+				});
+			}
+
+			const stats = await fsPromises.stat(binaryPath);
+			let version = "unknown";
+			try {
+				const { stdout } = await execFileAsync(binaryPath, ["--help"], {
+					timeout: 5000,
+				});
+				const versionMatch = stdout.match(
+					/PatchMon Agent v([0-9]+\.[0-9]+\.[0-9]+)/i,
+				);
+				if (versionMatch) version = versionMatch[1];
+			} catch (_) {
+				// ignore
+			}
+
+			res.json({
+				exists: true,
+				version,
+				lastModified: stats.mtime,
+				size: stats.size,
+				sizeFormatted: `${(stats.size / 1024).toFixed(1)} KB`,
+			});
 		} catch (error) {
 			logger.error("Get agent info error:", error);
 			res.status(500).json({ error: "Failed to get agent information" });
@@ -2618,72 +2744,9 @@ router.get(
 	},
 );
 
-// Update agent file (admin only)
-router.post(
-	"/agent/upload",
-	authenticateToken,
-	requireManageSettings,
-	async (req, res) => {
-		try {
-			const { scriptContent } = req.body;
-
-			if (!scriptContent || typeof scriptContent !== "string") {
-				return res.status(400).json({ error: "Script content is required" });
-			}
-
-			// Basic validation - check if it looks like a shell script
-			if (!scriptContent.trim().startsWith("#!/")) {
-				return res.status(400).json({
-					error: "Invalid script format - must start with shebang (#!/...)",
-				});
-			}
-
-			const fs = require("node:fs").promises;
-			const path = require("node:path");
-
-			const agentPath = path.join(
-				__dirname,
-				"../../../agents/patchmon-agent.sh",
-			);
-
-			// Create backup of existing file
-			try {
-				const backupPath = `${agentPath}.backup.${Date.now()}`;
-				await fs.copyFile(agentPath, backupPath);
-				logger.info(`Created backup: ${backupPath}`);
-			} catch (error) {
-				// Ignore if original doesn't exist
-				if (error.code !== "ENOENT") {
-					logger.warn("Failed to create backup:", error.message);
-				}
-			}
-
-			// Write new agent script
-			await fs.writeFile(agentPath, scriptContent, { mode: 0o755 });
-
-			// Get updated file info
-			const stats = await fs.stat(agentPath);
-			const versionMatch = scriptContent.match(/^AGENT_VERSION="([^"]+)"/m);
-			const version = versionMatch ? versionMatch[1] : "unknown";
-
-			res.json({
-				message: "Agent script updated successfully",
-				version,
-				lastModified: stats.mtime,
-				size: stats.size,
-				sizeFormatted: `${(stats.size / 1024).toFixed(1)} KB`,
-			});
-		} catch (error) {
-			logger.error("Upload agent error:", error);
-			res.status(500).json({ error: "Failed to update agent script" });
-		}
-	},
-);
-
-// Get agent file timestamp for update checking (requires API credentials)
+// Get agent binary timestamp for update checking (requires API credentials)
 router.get("/agent/timestamp", async (req, res) => {
 	try {
-		// Check for API credentials
 		const apiId = req.headers["x-api-id"];
 		const apiKey = req.headers["x-api-key"];
 
@@ -2691,7 +2754,6 @@ router.get("/agent/timestamp", async (req, res) => {
 			return res.status(401).json({ error: "API credentials required" });
 		}
 
-		// Verify API credentials
 		const host = await prisma.hosts.findUnique({
 			where: { api_id: apiId },
 		});
@@ -2700,43 +2762,54 @@ router.get("/agent/timestamp", async (req, res) => {
 			return res.status(401).json({ error: "Invalid API credentials" });
 		}
 
-		// Verify API key using bcrypt (or timing-safe comparison for legacy keys)
 		const isValidKey = await verifyApiKey(apiKey, host.api_key);
 		if (!isValidKey) {
 			return res.status(401).json({ error: "Invalid API credentials" });
 		}
 
-		const fs = require("node:fs").promises;
+		const fs = require("node:fs");
+		const fsPromises = require("node:fs").promises;
 		const path = require("node:path");
 
-		const agentPath = path.join(__dirname, "../../../agents/patchmon-agent.sh");
+		const agentsDir = path.join(__dirname, "../../../agents");
+		const platform =
+			process.platform === "linux"
+				? "linux"
+				: process.platform === "freebsd"
+					? "freebsd"
+					: "linux";
+		const preferredPath = path.join(
+			agentsDir,
+			`patchmon-agent-${platform}-amd64`,
+		);
 
-		try {
-			const stats = await fs.stat(agentPath);
-			const content = await fs.readFile(agentPath, "utf8");
-
-			// Extract version from agent script
-			const versionMatch = content.match(/^AGENT_VERSION="([^"]+)"/m);
-			const version = versionMatch ? versionMatch[1] : "unknown";
-
-			res.json({
-				version,
-				lastModified: stats.mtime,
-				timestamp: Math.floor(stats.mtime.getTime() / 1000), // Unix timestamp
-				exists: true,
-			});
-		} catch (error) {
-			if (error.code === "ENOENT") {
-				res.json({
-					version: null,
-					lastModified: null,
-					timestamp: 0,
-					exists: false,
-				});
-			} else {
-				throw error;
-			}
+		let binaryPath = null;
+		if (fs.existsSync(preferredPath)) {
+			binaryPath = preferredPath;
+		} else {
+			const entries = await fsPromises.readdir(agentsDir).catch(() => []);
+			const binary = entries.find(
+				(e) => e.startsWith("patchmon-agent-") && !e.endsWith(".sh"),
+			);
+			if (binary) binaryPath = path.join(agentsDir, binary);
 		}
+
+		if (!binaryPath || !fs.existsSync(binaryPath)) {
+			return res.json({
+				version: null,
+				lastModified: null,
+				timestamp: 0,
+				exists: false,
+			});
+		}
+
+		const stats = await fsPromises.stat(binaryPath);
+		res.json({
+			version: null,
+			lastModified: stats.mtime,
+			timestamp: Math.floor(stats.mtime.getTime() / 1000),
+			exists: true,
+		});
 	} catch (error) {
 		logger.error("Get agent timestamp error:", error);
 		res.status(500).json({ error: "Failed to get agent timestamp" });
@@ -3036,6 +3109,8 @@ router.get(
 					docker_enabled: true,
 					compliance_enabled: true,
 					compliance_on_demand_only: true,
+					compliance_openscap_enabled: true,
+					compliance_docker_bench_enabled: true,
 				},
 			});
 
@@ -3069,11 +3144,17 @@ router.get(
 			res.json({
 				success: true,
 				compliance_mode: complianceMode,
-				compliance_on_demand_only: host.compliance_on_demand_only ?? true, // Legacy - kept for backward compatibility
+				compliance_on_demand_only: host.compliance_on_demand_only ?? true,
+				compliance_openscap_enabled: host.compliance_openscap_enabled ?? true,
+				compliance_docker_bench_enabled:
+					host.compliance_docker_bench_enabled ?? false,
 				data: {
 					integrations,
 					connected,
-					compliance_mode: complianceMode, // Also include in data for easy access
+					compliance_mode: complianceMode,
+					compliance_openscap_enabled: host.compliance_openscap_enabled ?? true,
+					compliance_docker_bench_enabled:
+						host.compliance_docker_bench_enabled ?? false,
 					host: {
 						id: host.id,
 						friendlyName: host.friendly_name,
@@ -3089,6 +3170,7 @@ router.get(
 );
 
 // Get integration setup status for a host (frontend-facing)
+// For compliance: returns Redis if present, else fallback to last persisted status on host
 router.get(
 	"/:hostId/integrations/:integrationName/status",
 	authenticateToken,
@@ -3096,35 +3178,102 @@ router.get(
 		try {
 			const { hostId, integrationName } = req.params;
 
-			// Get host to get api_id
 			const host = await prisma.hosts.findUnique({
 				where: { id: hostId },
-				select: { api_id: true },
+				select: {
+					api_id: true,
+					compliance_scanner_status: true,
+					compliance_scanner_updated_at: true,
+				},
 			});
 
 			if (!host) {
 				return res.status(404).json({ error: "Host not found" });
 			}
 
-			// Get status from Redis
 			const statusKey = `integration_status:${host.api_id}:${integrationName}`;
 			const statusData = await redis.get(statusKey);
 
-			if (!statusData) {
+			if (statusData) {
 				return res.json({
 					success: true,
-					status: null,
-					message: "No status available",
+					status: JSON.parse(statusData),
+					source: "live",
+				});
+			}
+
+			// Fallback to persisted compliance scanner status when Redis is empty
+			if (
+				integrationName === "compliance" &&
+				host.compliance_scanner_status &&
+				typeof host.compliance_scanner_status === "object"
+			) {
+				return res.json({
+					success: true,
+					status: host.compliance_scanner_status,
+					source: "cached",
+					cached_at: host.compliance_scanner_updated_at,
 				});
 			}
 
 			res.json({
 				success: true,
-				status: JSON.parse(statusData),
+				status: null,
+				message: "No status available",
 			});
 		} catch (error) {
 			logger.error("Get integration setup status error:", error);
 			res.status(500).json({ error: "Failed to get integration setup status" });
+		}
+	},
+);
+
+// Request fresh compliance scanner status from agent (view permission)
+// Triggers agent to re-check and report; use when opening Compliance tab or clicking Refresh
+router.post(
+	"/:hostId/integrations/compliance/request-status",
+	authenticateToken,
+	requireViewHosts,
+	async (req, res) => {
+		try {
+			const { hostId } = req.params;
+
+			const host = await prisma.hosts.findUnique({
+				where: { id: hostId },
+				select: { id: true, api_id: true },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			const queue = queueManager.queues[QUEUE_NAMES.AGENT_COMMANDS];
+			if (!queue) {
+				return res.status(500).json({ error: "Queue not available" });
+			}
+
+			await queue.add(
+				"refresh_integration_status",
+				{
+					api_id: host.api_id,
+					type: "refresh_integration_status",
+				},
+				{
+					attempts: 2,
+					backoff: { type: "exponential", delay: 1000 },
+				},
+			);
+
+			res.json({
+				success: true,
+				message: "Compliance status refresh requested",
+			});
+		} catch (error) {
+			logger.error("Request compliance status error:", error);
+			res.status(500).json({
+				error: "Failed to request compliance status",
+				details: error?.message,
+			});
 		}
 	},
 );
@@ -3349,6 +3498,67 @@ router.post(
 		} catch (error) {
 			logger.error("Set compliance mode error:", error);
 			res.status(500).json({ error: "Failed to set compliance mode" });
+		}
+	},
+);
+
+// Set individual scanner enables (OpenSCAP, Docker Bench) for a host
+router.post(
+	"/:hostId/integrations/compliance/scanners",
+	authenticateToken,
+	requireManageHosts,
+	async (req, res) => {
+		try {
+			const { hostId } = req.params;
+			const { openscap_enabled, docker_bench_enabled } = req.body;
+
+			if (
+				openscap_enabled === undefined &&
+				docker_bench_enabled === undefined
+			) {
+				return res.status(400).json({
+					error:
+						"At least one of openscap_enabled or docker_bench_enabled must be provided",
+				});
+			}
+
+			const host = await prisma.hosts.findUnique({
+				where: { id: hostId },
+				select: { id: true, api_id: true, friendly_name: true },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			const data = {};
+			if (openscap_enabled !== undefined) {
+				data.compliance_openscap_enabled = !!openscap_enabled;
+			}
+			if (docker_bench_enabled !== undefined) {
+				data.compliance_docker_bench_enabled = !!docker_bench_enabled;
+			}
+
+			await prisma.hosts.update({
+				where: { id: hostId },
+				data,
+			});
+
+			res.json({
+				success: true,
+				message: "Scanner settings updated",
+				data: {
+					openscap_enabled:
+						openscap_enabled !== undefined ? !!openscap_enabled : undefined,
+					docker_bench_enabled:
+						docker_bench_enabled !== undefined
+							? !!docker_bench_enabled
+							: undefined,
+				},
+			});
+		} catch (error) {
+			logger.error("Set scanner settings error:", error);
+			res.status(500).json({ error: "Failed to update scanner settings" });
 		}
 	},
 );

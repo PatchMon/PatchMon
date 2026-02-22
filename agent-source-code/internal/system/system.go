@@ -96,8 +96,80 @@ func (d *Detector) parseOSRelease() (*OSReleaseInfo, error) {
 	return info, nil
 }
 
+// isFreeBSD checks if running on FreeBSD using uname -s
+func (d *Detector) isFreeBSD() bool {
+	cmd := exec.Command("uname", "-s")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(output)) == "FreeBSD"
+}
+
+// isPfSense checks if running on pfSense (FreeBSD-based firewall)
+func (d *Detector) isPfSense() bool {
+	// pfSense uses /cf/conf/config.xml for its config; vanilla FreeBSD does not
+	_, err := os.Stat("/cf/conf/config.xml")
+	return err == nil
+}
+
+// getPfSenseInfo gets pfSense OS type and version
+func (d *Detector) getPfSenseInfo() (osType, osVersion string, err error) {
+	osType = "pfSense"
+	// pfSense stores its version in /etc/version (e.g. "2.5.2-RELEASE")
+	data, err := os.ReadFile("/etc/version")
+	if err != nil {
+		d.logger.WithError(err).Debug("Failed to read /etc/version, using Unknown")
+		return osType, "Unknown", nil
+	}
+	osVersion = strings.TrimSpace(string(data))
+	if osVersion == "" {
+		osVersion = "Unknown"
+	}
+	d.logger.WithFields(logrus.Fields{
+		"os_type":    osType,
+		"os_version": osVersion,
+	}).Debug("Detected pfSense system")
+	return osType, osVersion, nil
+}
+
+// getFreeBSDInfo gets FreeBSD OS type and version
+func (d *Detector) getFreeBSDInfo() (osType, osVersion string, err error) {
+	osType = "FreeBSD"
+
+	// Use freebsd-version for accurate version info
+	cmd := exec.Command("freebsd-version")
+	output, err := cmd.Output()
+	if err != nil {
+		d.logger.WithError(err).Warn("Failed to get FreeBSD version, falling back to uname -r")
+		// Fallback to uname -r
+		cmd = exec.Command("uname", "-r")
+		output, err = cmd.Output()
+		if err != nil {
+			return osType, "Unknown", nil
+		}
+	}
+
+	osVersion = strings.TrimSpace(string(output))
+
+	d.logger.WithFields(logrus.Fields{
+		"os_type":    osType,
+		"os_version": osVersion,
+	}).Debug("Detected FreeBSD system")
+
+	return osType, osVersion, nil
+}
+
 // DetectOS detects the operating system and version using /etc/os-release
 func (d *Detector) DetectOS() (osType, osVersion string, err error) {
+	// Check for FreeBSD first (doesn't have /etc/os-release)
+	if d.isFreeBSD() {
+		if d.isPfSense() {
+			return d.getPfSenseInfo()
+		}
+		return d.getFreeBSDInfo()
+	}
+
 	// Try to parse /etc/os-release first
 	osReleaseInfo, err := d.parseOSRelease()
 	if err != nil {
@@ -243,6 +315,11 @@ func (d *Detector) GetKernelVersion() string {
 
 // getSELinuxStatus gets SELinux status using file reading
 func (d *Detector) getSELinuxStatus() string {
+	// FreeBSD doesn't use SELinux (uses MAC framework instead)
+	if d.isFreeBSD() {
+		return constants.SELinuxDisabled
+	}
+
 	// Try getenforce command first
 	if cmd := exec.Command("getenforce"); cmd != nil {
 		if output, err := cmd.Output(); err == nil {

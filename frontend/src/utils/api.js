@@ -147,11 +147,15 @@ export const adminHostsAPI = {
 		}),
 	getIntegrationSetupStatus: (hostId, integrationName) =>
 		api.get(`/hosts/${hostId}/integrations/${integrationName}/status`),
+	requestComplianceStatus: (hostId) =>
+		api.post(`/hosts/${hostId}/integrations/compliance/request-status`),
 	refreshDocker: (hostId) => api.post(`/hosts/${hostId}/refresh-docker`),
 	setComplianceMode: (hostId, mode) =>
 		api.post(`/hosts/${hostId}/integrations/compliance/mode`, {
-			mode: mode, // "disabled", "on-demand", or "enabled"
+			mode: mode,
 		}),
+	setComplianceScanners: (hostId, settings) =>
+		api.post(`/hosts/${hostId}/integrations/compliance/scanners`, settings),
 	setComplianceOnDemandOnly: (hostId, onDemandOnly) =>
 		api.post(`/hosts/${hostId}/compliance/on-demand-only`, {
 			on_demand_only: onDemandOnly,
@@ -196,6 +200,7 @@ export const settingsAPI = {
 	getPublic: () => api.get("/settings/public"), // Public endpoint for read-only settings (auto_update, etc.)
 	update: (settings) => api.put("/settings", settings),
 	getServerUrl: () => api.get("/settings/server-url"),
+	getEnvConfig: () => api.get("/settings/env-config"),
 };
 
 // User Preferences API
@@ -207,7 +212,6 @@ export const userPreferencesAPI = {
 // Agent File Management API
 export const agentFileAPI = {
 	getInfo: () => api.get("/hosts/agent/info"),
-	upload: (scriptContent) => api.post("/hosts/agent/upload", { scriptContent }),
 	download: () => api.get("/hosts/agent/download", { responseType: "blob" }),
 };
 
@@ -232,6 +236,8 @@ export const dashboardPreferencesAPI = {
 	get: () => api.get("/dashboard-preferences"),
 	update: (preferences) => api.put("/dashboard-preferences", { preferences }),
 	getDefaults: () => api.get("/dashboard-preferences/defaults"),
+	getLayout: () => api.get("/dashboard-preferences/layout"),
+	updateLayout: (layout) => api.put("/dashboard-preferences/layout", layout),
 };
 
 // Hosts API (for agent communication - kept for compatibility)
@@ -443,6 +449,15 @@ export const aiAPI = {
 	testConnection: () => api.post("/ai/test"),
 	assist: (data) => api.post("/ai/assist", data),
 	complete: (data) => api.post("/ai/complete", data),
+};
+
+// Discord OAuth API
+export const discordAPI = {
+	getConfig: () => api.get("/auth/discord/config"),
+	getSettings: () => api.get("/auth/discord/settings"),
+	updateSettings: (data) => api.put("/auth/discord/settings", data),
+	link: () => api.post("/auth/discord/link"),
+	unlink: () => api.post("/auth/discord/unlink"),
 };
 
 // Alerts API

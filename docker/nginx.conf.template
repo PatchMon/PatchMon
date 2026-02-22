@@ -37,7 +37,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header Cookie $http_cookie;  # Forward cookies to backend
         proxy_cache_bypass $http_upgrade;
@@ -71,7 +71,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
         proxy_set_header X-Forwarded-Host $host;
 
         # Allow larger request bodies for logo/branding uploads (base64-encoded)
@@ -105,14 +105,15 @@ server {
         alias /usr/share/nginx/html/assets/;
         expires 1h;
         add_header Cache-Control "public, must-revalidate";
-        # Allow CORS for assets if needed
         add_header Access-Control-Allow-Origin *;
+        access_log off;
     }
 
     # Static assets caching (exclude Bull Board and API assets like Swagger UI)
     location ~* ^/(?!bullboard|api/).*\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
         expires 1y;
         add_header Cache-Control "public, immutable";
+        access_log off;
     }
 
     # Health check endpoint

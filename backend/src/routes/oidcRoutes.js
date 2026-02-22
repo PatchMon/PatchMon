@@ -177,20 +177,23 @@ router.get("/login", async (_req, res) => {
 				.json({ error: "OIDC authentication is not enabled" });
 		}
 
+		logger.debug("OIDC: login initiated, redirecting to IdP");
 		const { url, state, codeVerifier, nonce } = getAuthorizationUrl();
 
 		// Store state, code verifier, and nonce in Redis for validation in callback
 		await storeOIDCSession(state, {
 			codeVerifier,
 			nonce,
+			state,
 			createdAt: Date.now(),
 		});
 
 		// Set state in a secure cookie as backup validation
+		// Use 'lax' instead of 'strict' so the cookie is sent on cross-origin redirects from the IdP
 		res.cookie("oidc_state", state, {
 			httpOnly: true,
 			secure: process.env.NODE_ENV === "production",
-			sameSite: "strict",
+			sameSite: "lax",
 			maxAge: OIDC_SESSION_TTL * 1000,
 		});
 
@@ -214,6 +217,10 @@ router.get("/callback", async (req, res) => {
 		}
 
 		const { code, state, error, error_description } = req.query;
+
+		logger.debug(
+			`OIDC callback: code=${code ? "present" : "missing"}, state=${state ? "present" : "missing"}, error=${error || "none"}`,
+		);
 
 		// Check for errors from the IdP
 		if (error) {
@@ -250,15 +257,20 @@ router.get("/callback", async (req, res) => {
 			logger.error("OIDC state not found or expired");
 			return res.redirect("/login?error=Session+expired");
 		}
+		logger.debug(
+			"OIDC: session retrieved from Redis, exchanging code for tokens",
+		);
 
 		// Clear the state cookie
 		res.clearCookie("oidc_state");
 
 		// Exchange code for tokens and get user info (with nonce validation)
+		// Pass full query params so openid-client can validate iss, session_state, etc.
 		const userInfo = await handleCallback(
-			code,
+			req.query,
 			session.codeVerifier,
 			session.nonce,
+			state,
 		);
 
 		// Find existing user by OIDC subject or email
@@ -267,6 +279,9 @@ router.get("/callback", async (req, res) => {
 				OR: [{ oidc_sub: userInfo.sub }, { email: userInfo.email }],
 			},
 		});
+		logger.debug(
+			`OIDC: user lookup by sub/email: ${user ? user.email : "not found"}, autoCreate=${process.env.OIDC_AUTO_CREATE_USERS === "true"}`,
+		);
 
 		// Create new user if auto-creation is enabled
 		if (!user && process.env.OIDC_AUTO_CREATE_USERS === "true") {
@@ -421,16 +436,25 @@ router.get("/callback", async (req, res) => {
 			req,
 		);
 
+		// Store the OIDC id_token in Redis for RP-initiated logout (id_token_hint)
+		// Keyed by user ID so we can retrieve it at logout time
+		if (userInfo.idToken) {
+			const idTokenKey = `oidc:id_token:${user.id}`;
+			// Store for 7 days (matching refresh token lifetime)
+			await redis.setex(idTokenKey, 7 * 24 * 60 * 60, userInfo.idToken);
+		}
+
 		// Set tokens in secure HTTP-only cookies instead of URL parameters
 		// Check if we're actually using HTTPS (not just NODE_ENV)
 		const isSecure = req.secure || req.headers["x-forwarded-proto"] === "https";
 		const isProduction = process.env.NODE_ENV === "production";
 		// Only use secure cookies if actually using HTTPS
 		const useSecureCookies = isSecure && isProduction;
-		const sameSiteValue = isProduction ? "strict" : "lax";
+		// Strict would block cookies on the redirect from IdP back to our app
+		const sameSiteValue = "lax";
 
-		logger.info(
-			`OIDC: Setting cookies - Secure: ${useSecureCookies}, SameSite: ${sameSiteValue}, IsHTTPS: ${isSecure}`,
+		logger.debug(
+			`OIDC: setting cookies - Secure: ${useSecureCookies}, SameSite: ${sameSiteValue}, IsHTTPS: ${isSecure}`,
 		);
 
 		const cookieOptions = {
@@ -466,6 +490,9 @@ router.get("/callback", async (req, res) => {
 
 		// Redirect to frontend with success indicator (no tokens in URL)
 		const frontendUrl = process.env.CORS_ORIGIN || "http://localhost:3000";
+		logger.debug(
+			`OIDC: login success for ${user.email}, redirecting to ${frontendUrl}/login?oidc=success`,
+		);
 		res.redirect(`${frontendUrl}/login?oidc=success`);
 	} catch (error) {
 		logger.error("OIDC callback error:", error);
@@ -486,15 +513,25 @@ router.get("/callback", async (req, res) => {
  * GET /api/v1/auth/oidc/logout
  * Handles OIDC RP-initiated logout
  */
-router.get("/logout", async (_req, res) => {
+router.get("/logout", async (req, res) => {
 	try {
 		if (!isOIDCEnabled()) {
 			return res.redirect("/login");
 		}
 
-		// Get the OIDC logout URL
+		// Retrieve the stored id_token for id_token_hint (RP-initiated logout)
+		let idTokenHint = null;
+		if (req.user?.id) {
+			const idTokenKey = `oidc:id_token:${req.user.id}`;
+			idTokenHint = await redis.get(idTokenKey);
+			if (idTokenHint) {
+				await redis.del(idTokenKey);
+			}
+		}
+
+		// Get the OIDC logout URL with id_token_hint
 		const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
-		const logoutUrl = getLogoutUrl(`${frontendUrl}/login`);
+		const logoutUrl = getLogoutUrl(`${frontendUrl}/login`, idTokenHint);
 
 		// Clear session cookies
 		res.clearCookie("token", { path: "/" });

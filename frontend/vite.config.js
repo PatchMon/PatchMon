@@ -17,6 +17,12 @@ export default defineConfig({
 		strictPort: true, // Exit if port is already in use
 		allowedHosts: true, // Allow all hosts in development
 		proxy: {
+			"/bullboard": {
+				target: `http://${process.env.BACKEND_HOST || "localhost"}:${process.env.BACKEND_PORT || "3001"}`,
+				changeOrigin: true,
+				secure: false,
+				ws: true,
+			},
 			"/api": {
 				target: `http://${process.env.BACKEND_HOST || "localhost"}:${process.env.BACKEND_PORT || "3001"}`,
 				changeOrigin: true,
@@ -31,28 +37,39 @@ export default defineConfig({
 					timeout: 60000,
 					keepAliveMsecs: 1000,
 				}),
-				configure:
-					process.env.VITE_ENABLE_LOGGING === "true"
-						? (proxy, _options) => {
-								proxy.on("error", (err, _req, _res) => {
-									console.log("proxy error", err);
-								});
-								proxy.on("proxyReq", (_proxyReq, req, _res) => {
-									console.log(
-										"Sending Request to the Target:",
-										req.method,
-										req.url,
-									);
-								});
-								proxy.on("proxyRes", (proxyRes, req, _res) => {
-									console.log(
-										"Received Response from the Target:",
-										proxyRes.statusCode,
-										req.url,
-									);
-								});
-							}
-						: undefined,
+				// Handle proxy errors so unauthenticated/invalid WS attempts don't flood the console with stack traces
+				configure: (proxy, _options) => {
+					proxy.removeAllListeners("error");
+					proxy.on("error", (err, _req, _res) => {
+						const benign =
+							err.code === "ECONNRESET" ||
+							err.message === "socket hang up" ||
+							err.code === "EPIPE";
+						if (benign) {
+							console.log(
+								"[vite] ws proxy: connection closed (client disconnect or server rejected auth)",
+							);
+						} else {
+							console.error("[vite] ws proxy error:", err.message || err);
+						}
+					});
+					if (process.env.VITE_ENABLE_LOGGING === "true") {
+						proxy.on("proxyReq", (_proxyReq, req, _res) => {
+							console.log(
+								"Sending Request to the Target:",
+								req.method,
+								req.url,
+							);
+						});
+						proxy.on("proxyRes", (proxyRes, req, _res) => {
+							console.log(
+								"Received Response from the Target:",
+								proxyRes.statusCode,
+								req.url,
+							);
+						});
+					}
+				},
 			},
 			"/admin": {
 				target: `http://${process.env.BACKEND_HOST || "localhost"}:${process.env.BACKEND_PORT || "3001"}`,

@@ -8,6 +8,7 @@ import {
 	Eye,
 	EyeOff,
 	Key,
+	Link2,
 	LogOut,
 	Mail,
 	MapPin,
@@ -19,15 +20,16 @@ import {
 	Smartphone,
 	Sun,
 	Trash2,
+	Unlink,
 	User,
 } from "lucide-react";
 
 import { useEffect, useId, useState } from "react";
-
+import DiscordIcon from "../components/DiscordIcon";
 import { useAuth } from "../contexts/AuthContext";
 import { THEME_PRESETS, useColorTheme } from "../contexts/ColorThemeContext";
 import { useTheme } from "../contexts/ThemeContext";
-import { isCorsError, tfaAPI } from "../utils/api";
+import { discordAPI, isCorsError, tfaAPI } from "../utils/api";
 
 const Profile = () => {
 	const usernameId = useId();
@@ -66,11 +68,27 @@ const Profile = () => {
 		}
 	}, [user]);
 
+	// Handle discord_linked query param on mount
+	useEffect(() => {
+		const urlParams = new URLSearchParams(window.location.search);
+		if (urlParams.get("discord_linked") === "true") {
+			setMessage({
+				type: "success",
+				text: "Discord account linked successfully!",
+			});
+			setActiveTab("connections");
+			window.history.replaceState({}, document.title, "/settings/profile");
+		}
+	}, []);
+
 	const [passwordData, setPasswordData] = useState({
 		currentPassword: "",
 		newPassword: "",
 		confirmPassword: "",
 	});
+
+	const [discordLinking, setDiscordLinking] = useState(false);
+	const [discordUnlinking, setDiscordUnlinking] = useState(false);
 
 	const [showPasswords, setShowPasswords] = useState({
 		current: false,
@@ -189,6 +207,7 @@ const Profile = () => {
 			? []
 			: [{ id: "tfa", name: "Multi-Factor Authentication", icon: Smartphone }]), // Hide TFA tab for OIDC users
 		{ id: "sessions", name: "Active Sessions", icon: Monitor },
+		{ id: "connections", name: "Connected Accounts", icon: Link2 },
 	];
 
 	return (
@@ -729,6 +748,152 @@ const Profile = () => {
 
 					{/* Sessions Tab */}
 					{activeTab === "sessions" && <SessionsTab />}
+
+					{/* Connected Accounts Tab */}
+					{activeTab === "connections" && (
+						<div className="space-y-6">
+							<div>
+								<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-1">
+									Connected Accounts
+								</h3>
+								<p className="text-sm text-secondary-500 dark:text-secondary-400">
+									Manage your linked external accounts
+								</p>
+							</div>
+
+							{/* Discord Connection */}
+							<div className="border border-secondary-200 dark:border-secondary-700 rounded-lg p-4">
+								<div className="flex items-center justify-between">
+									<div className="flex items-center gap-3">
+										<div
+											className="p-2 rounded-lg"
+											style={{ backgroundColor: "#5865F2" }}
+										>
+											<DiscordIcon className="h-5 w-5 text-white" />
+										</div>
+										<div>
+											<h4 className="font-medium text-secondary-900 dark:text-white">
+												Discord
+											</h4>
+											{user?.discord_id ? (
+												<p className="text-sm text-secondary-500 dark:text-secondary-400">
+													{user.discord_username || `ID: ${user.discord_id}`}
+												</p>
+											) : (
+												<p className="text-sm text-secondary-500 dark:text-secondary-400">
+													Not connected
+												</p>
+											)}
+										</div>
+									</div>
+									<div>
+										{user?.discord_id ? (
+											<button
+												type="button"
+												onClick={async () => {
+													if (!user?.has_password && !user?.oidc_sub) {
+														setMessage({
+															type: "error",
+															text: "Cannot unlink Discord — you need at least one login method. Set a password first.",
+														});
+														return;
+													}
+													setDiscordUnlinking(true);
+													try {
+														await discordAPI.unlink();
+														setMessage({
+															type: "success",
+															text: "Discord account unlinked.",
+														});
+														window.location.reload();
+													} catch (err) {
+														setMessage({
+															type: "error",
+															text:
+																err.response?.data?.error ||
+																"Failed to unlink Discord account.",
+														});
+													} finally {
+														setDiscordUnlinking(false);
+													}
+												}}
+												disabled={
+													discordUnlinking ||
+													(!user?.has_password && !user?.oidc_sub)
+												}
+												className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-red-300 dark:border-red-700 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
+												title={
+													!user?.has_password && !user?.oidc_sub
+														? "Cannot unlink — no other login method available"
+														: ""
+												}
+											>
+												{discordUnlinking ? (
+													<RefreshCw className="h-4 w-4 animate-spin" />
+												) : (
+													<Unlink className="h-4 w-4" />
+												)}
+												Unlink
+											</button>
+										) : (
+											<button
+												type="button"
+												onClick={async () => {
+													setDiscordLinking(true);
+													try {
+														const res = await discordAPI.link();
+														window.location.href = res.data.url;
+													} catch (err) {
+														setMessage({
+															type: "error",
+															text:
+																err.response?.data?.error ||
+																"Failed to start Discord linking.",
+														});
+														setDiscordLinking(false);
+													}
+												}}
+												disabled={discordLinking}
+												className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md text-white hover:opacity-90 disabled:opacity-50"
+												style={{ backgroundColor: "#5865F2" }}
+											>
+												{discordLinking ? (
+													<RefreshCw className="h-4 w-4 animate-spin" />
+												) : (
+													<Link2 className="h-4 w-4" />
+												)}
+												Link
+											</button>
+										)}
+									</div>
+								</div>
+							</div>
+
+							{/* OIDC Connection (read-only) */}
+							{user?.oidc_sub && (
+								<div className="border border-secondary-200 dark:border-secondary-700 rounded-lg p-4">
+									<div className="flex items-center justify-between">
+										<div className="flex items-center gap-3">
+											<div className="p-2 bg-primary-100 dark:bg-primary-900/30 rounded-lg">
+												<Shield className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+											</div>
+											<div>
+												<h4 className="font-medium text-secondary-900 dark:text-white">
+													SSO / OIDC
+												</h4>
+												<p className="text-sm text-secondary-500 dark:text-secondary-400">
+													{user.oidc_provider || "Connected"}
+												</p>
+											</div>
+										</div>
+										<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+											Active
+										</span>
+									</div>
+								</div>
+							)}
+						</div>
+					)}
 				</div>
 			</div>
 		</div>

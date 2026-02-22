@@ -7,7 +7,6 @@ import {
 	CheckCircle,
 	CheckSquare,
 	ChevronDown,
-	ChevronUp,
 	Clock,
 	Columns,
 	Container,
@@ -29,8 +28,9 @@ import {
 	Wifi,
 	X,
 } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import AddHostWizard from "../components/AddHostWizard";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import InlineToggle from "../components/InlineToggle";
@@ -40,279 +40,9 @@ import {
 	formatRelativeTime,
 	hostGroupsAPI,
 	settingsAPI,
+	userPreferencesAPI,
 } from "../utils/api";
 import { getOSDisplayName, OSIcon } from "../utils/osIcons.jsx";
-
-// Add Host Modal Component
-const AddHostModal = ({ isOpen, onClose, onSuccess }) => {
-	const friendlyNameId = useId();
-	const [formData, setFormData] = useState({
-		friendly_name: "",
-		hostGroupIds: [], // Changed to array for multiple selection
-		docker_enabled: false, // Integration states
-		compliance_enabled: false,
-	});
-	const [isSubmitting, setIsSubmitting] = useState(false);
-	const [error, setError] = useState("");
-	const [integrationsExpanded, setIntegrationsExpanded] = useState(false);
-
-	// Fetch host groups for selection
-	const { data: hostGroups } = useQuery({
-		queryKey: ["hostGroups"],
-		queryFn: () => hostGroupsAPI.list().then((res) => res.data),
-		enabled: isOpen,
-	});
-
-	const handleSubmit = async (e) => {
-		e.preventDefault();
-		setIsSubmitting(true);
-		setError("");
-
-		try {
-			const response = await adminHostsAPI.create(formData);
-			onSuccess(response.data);
-			setFormData({
-				friendly_name: "",
-				hostGroupIds: [],
-				docker_enabled: false,
-				compliance_enabled: false,
-			});
-			setIntegrationsExpanded(false);
-			onClose();
-		} catch (err) {
-			let errorMessage = "Failed to create host";
-
-			if (err.response?.data?.errors) {
-				// Validation errors
-				errorMessage = err.response.data.errors.map((e) => e.msg).join(", ");
-			} else if (err.response?.data?.error) {
-				// Single error message
-				errorMessage = err.response.data.error;
-			} else if (err.message) {
-				// Network or other error
-				errorMessage = err.message;
-			}
-
-			setError(errorMessage);
-		} finally {
-			setIsSubmitting(false);
-		}
-	};
-
-	if (!isOpen) return null;
-
-	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-			<div className="bg-white dark:bg-secondary-800 rounded-lg p-4 sm:p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
-				<div className="flex justify-between items-center mb-4">
-					<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
-						Add New Host
-					</h3>
-					<button
-						type="button"
-						onClick={onClose}
-						className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
-					>
-						<X className="h-5 w-5" />
-					</button>
-				</div>
-
-				<form onSubmit={handleSubmit} className="space-y-6">
-					<div>
-						<label
-							htmlFor={friendlyNameId}
-							className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2"
-						>
-							Friendly Name *
-						</label>
-						<input
-							type="text"
-							id={friendlyNameId}
-							required
-							value={formData.friendly_name}
-							onChange={(e) =>
-								setFormData({ ...formData, friendly_name: e.target.value })
-							}
-							className="block w-full px-3 py-3 sm:py-2.5 text-base border-2 border-secondary-300 dark:border-secondary-600 rounded-lg shadow-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white transition-all duration-200 min-h-[44px]"
-							placeholder="server.example.com"
-						/>
-						<p className="mt-2 text-sm text-secondary-500 dark:text-secondary-400">
-							System information (OS, IP, architecture) will be automatically
-							detected when the agent connects.
-						</p>
-					</div>
-
-					<div>
-						<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-3">
-							Host Groups
-						</span>
-						<div className="space-y-2 max-h-48 overflow-y-auto">
-							{/* Host Group Options */}
-							{hostGroups?.map((group) => (
-								<label
-									key={group.id}
-									className={`flex items-center gap-3 p-3 border-2 rounded-lg transition-all duration-200 cursor-pointer ${
-										formData.hostGroupIds.includes(group.id)
-											? "border-primary-500 bg-primary-50 dark:bg-primary-900/30"
-											: "border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 hover:border-secondary-400 dark:hover:border-secondary-500"
-									}`}
-								>
-									<input
-										type="checkbox"
-										checked={formData.hostGroupIds.includes(group.id)}
-										onChange={(e) => {
-											if (e.target.checked) {
-												setFormData({
-													...formData,
-													hostGroupIds: [...formData.hostGroupIds, group.id],
-												});
-											} else {
-												setFormData({
-													...formData,
-													hostGroupIds: formData.hostGroupIds.filter(
-														(id) => id !== group.id,
-													),
-												});
-											}
-										}}
-										className="w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-									/>
-									<div className="flex items-center gap-2 flex-1">
-										{group.color && (
-											<div
-												className="w-3 h-3 rounded-full border border-secondary-300 dark:border-secondary-500 flex-shrink-0"
-												style={{ backgroundColor: group.color }}
-											></div>
-										)}
-										<div className="text-sm font-medium text-secondary-700 dark:text-secondary-200">
-											{group.name}
-										</div>
-									</div>
-								</label>
-							))}
-						</div>
-						<p className="mt-2 text-sm text-secondary-500 dark:text-secondary-400">
-							Optional: Select one or more groups to assign this host to for
-							better organization.
-						</p>
-					</div>
-
-					{/* Integrations Section */}
-					<div className="border-2 border-secondary-200 dark:border-secondary-700 rounded-lg">
-						<button
-							type="button"
-							onClick={() => setIntegrationsExpanded(!integrationsExpanded)}
-							className="w-full flex items-center justify-between p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors rounded-t-lg"
-						>
-							<div className="flex items-center gap-2">
-								<span className="text-sm font-medium text-secondary-700 dark:text-secondary-200">
-									Integrations
-								</span>
-								<span className="text-xs text-secondary-500 dark:text-secondary-400">
-									(Optional)
-								</span>
-							</div>
-							{integrationsExpanded ? (
-								<ChevronUp className="h-5 w-5 text-secondary-400 dark:text-secondary-500" />
-							) : (
-								<ChevronDown className="h-5 w-5 text-secondary-400 dark:text-secondary-500" />
-							)}
-						</button>
-
-						{integrationsExpanded && (
-							<div className="p-4 pt-0 space-y-4 border-t border-secondary-200 dark:border-secondary-700">
-								{/* Docker Integration */}
-								<label className="flex items-center justify-between p-3 border-2 rounded-lg transition-all duration-200 cursor-pointer bg-white dark:bg-secondary-700 hover:border-secondary-400 dark:hover:border-secondary-500 border-secondary-300 dark:border-secondary-600">
-									<div className="flex items-center gap-3">
-										<div className="flex-shrink-0">
-											<Server className="h-5 w-5 text-secondary-600 dark:text-secondary-400" />
-										</div>
-										<div>
-											<div className="text-sm font-medium text-secondary-700 dark:text-secondary-200">
-												Docker Integration
-											</div>
-											<div className="text-xs text-secondary-500 dark:text-secondary-400">
-												Enable Docker container monitoring for this host
-											</div>
-										</div>
-									</div>
-									<input
-										type="checkbox"
-										checked={formData.docker_enabled}
-										onChange={(e) =>
-											setFormData({
-												...formData,
-												docker_enabled: e.target.checked,
-											})
-										}
-										className="w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-									/>
-								</label>
-
-								{/* Compliance Integration */}
-								<label className="flex items-center justify-between p-3 border-2 rounded-lg transition-all duration-200 cursor-pointer bg-white dark:bg-secondary-700 hover:border-secondary-400 dark:hover:border-secondary-500 border-secondary-300 dark:border-secondary-600">
-									<div className="flex items-center gap-3">
-										<div className="flex-shrink-0">
-											<Shield className="h-5 w-5 text-secondary-600 dark:text-secondary-400" />
-										</div>
-										<div>
-											<div className="text-sm font-medium text-secondary-700 dark:text-secondary-200">
-												Compliance Integration
-											</div>
-											<div className="text-xs text-secondary-500 dark:text-secondary-400">
-												Enable compliance scanning and reporting for this host
-											</div>
-										</div>
-									</div>
-									<input
-										type="checkbox"
-										checked={formData.compliance_enabled}
-										onChange={(e) =>
-											setFormData({
-												...formData,
-												compliance_enabled: e.target.checked,
-											})
-										}
-										className="w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-									/>
-								</label>
-								<p className="text-xs text-secondary-500 dark:text-secondary-400">
-									Integration settings will be synced to the agent's config.yml
-									during installation.
-								</p>
-							</div>
-						)}
-					</div>
-
-					{error && (
-						<div className="bg-danger-50 dark:bg-danger-900 border border-danger-200 dark:border-danger-700 rounded-md p-3">
-							<p className="text-sm text-danger-700 dark:text-danger-300">
-								{error}
-							</p>
-						</div>
-					)}
-
-					<div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-2">
-						<button
-							type="button"
-							onClick={onClose}
-							className="px-6 py-3 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-700 border-2 border-secondary-300 dark:border-secondary-600 rounded-lg hover:bg-secondary-50 dark:hover:bg-secondary-600 transition-all duration-200 min-h-[44px] w-full sm:w-auto"
-						>
-							Cancel
-						</button>
-						<button
-							type="submit"
-							disabled={isSubmitting}
-							className="px-6 py-3 text-sm font-medium text-white bg-primary-600 border-2 border-transparent rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-all duration-200 min-h-[44px] w-full sm:w-auto"
-						>
-							{isSubmitting ? "Creating..." : "Create Host"}
-						</button>
-					</div>
-				</form>
-			</div>
-		</div>
-	);
-};
 
 const Hosts = () => {
 	const hostGroupFilterId = useId();
@@ -416,9 +146,9 @@ const Hosts = () => {
 		}
 	}, [searchParams, navigate]);
 
-	// Column configuration
-	const [columnConfig, setColumnConfig] = useState(() => {
-		const defaultConfig = [
+	// Default column config (shared for initial state and reset)
+	const default_column_config = useMemo(
+		() => [
 			{ id: "select", label: "Select", visible: true, order: 0 },
 			{ id: "host", label: "Friendly Name", visible: true, order: 1 },
 			{ id: "hostname", label: "System Hostname", visible: true, order: 2 },
@@ -448,61 +178,94 @@ const Hosts = () => {
 			{ id: "notes", label: "Notes", visible: false, order: 16 },
 			{ id: "last_update", label: "Last Update", visible: true, order: 17 },
 			{ id: "actions", label: "Actions", visible: true, order: 18 },
-		];
+		],
+		[],
+	);
 
-		const saved = localStorage.getItem("hosts-column-config");
-		if (saved) {
-			try {
-				const savedConfig = JSON.parse(saved);
-
-				// Check if we have old camelCase column IDs that need to be migrated
-				const hasOldColumns = savedConfig.some(
-					(col) =>
-						col.id === "agentVersion" ||
-						col.id === "autoUpdate" ||
-						col.id === "osVersion" ||
-						col.id === "lastUpdate",
-				);
-
-				if (hasOldColumns) {
-					// Clear the old configuration and use the default snake_case configuration
-					localStorage.removeItem("hosts-column-config");
-					return defaultConfig;
-				} else {
-					// Merge saved config with defaults to handle new columns
-					// This preserves user's visibility preferences while adding new columns
-					const mergedConfig = defaultConfig.map((defaultCol) => {
-						const savedCol = savedConfig.find(
-							(col) => col.id === defaultCol.id,
-						);
-						if (savedCol) {
-							// Use saved visibility preference, but keep default order and label
-							return {
-								...defaultCol,
-								visible: savedCol.visible,
-							};
-						}
-						// New column not in saved config, use default
-						return defaultCol;
-					});
-
-					// Ensure ws_status column is visible
-					const updatedConfig = mergedConfig.map((col) =>
-						col.id === "ws_status" ? { ...col, visible: true } : col,
-					);
-					return updatedConfig;
-				}
-			} catch {
-				// If there's an error parsing the config, clear it and use default
-				localStorage.removeItem("hosts-column-config");
-				return defaultConfig;
-			}
-		}
-
-		return defaultConfig;
-	});
+	// Column configuration: server-backed so it persists across browsers
+	const [columnConfig, setColumnConfig] = useState(default_column_config);
 
 	const queryClient = useQueryClient();
+
+	// Fetch user preferences (includes hosts_column_config from server)
+	const { data: user_preferences, isFetched: user_preferences_fetched } =
+		useQuery({
+			queryKey: ["userPreferences"],
+			queryFn: () => userPreferencesAPI.get().then((res) => res.data),
+			staleTime: 2 * 60 * 1000,
+		});
+
+	// Apply server or localStorage config once preferences fetch has settled (so server wins)
+	const column_config_initialized = useRef(false);
+	useEffect(() => {
+		if (column_config_initialized.current) return;
+		if (!user_preferences_fetched) return;
+		// Prefer server config; if request failed or no config on server, fall back to localStorage
+		const server_config = user_preferences?.hosts_column_config;
+		const defaultConfig = default_column_config;
+		let saved_config = null;
+		if (server_config?.length) {
+			saved_config = server_config;
+		} else {
+			const from_storage = localStorage.getItem("hosts-column-config");
+			if (from_storage) {
+				try {
+					const parsed = JSON.parse(from_storage);
+					const has_old_columns = parsed.some(
+						(col) =>
+							col.id === "agentVersion" ||
+							col.id === "autoUpdate" ||
+							col.id === "osVersion" ||
+							col.id === "lastUpdate",
+					);
+					if (!has_old_columns) saved_config = parsed;
+					else localStorage.removeItem("hosts-column-config");
+				} catch {
+					localStorage.removeItem("hosts-column-config");
+				}
+			}
+		}
+		column_config_initialized.current = true;
+		if (!saved_config) return;
+		const merged = defaultConfig.map((defaultCol) => {
+			const savedCol = saved_config.find((col) => col.id === defaultCol.id);
+			if (savedCol) {
+				const order =
+					typeof savedCol.order === "number"
+						? savedCol.order
+						: defaultCol.order;
+				return { ...defaultCol, visible: savedCol.visible, order };
+			}
+			return defaultCol;
+		});
+		const sorted = merged
+			.slice()
+			.sort((a, b) => a.order - b.order)
+			.map((col, index) => ({ ...col, order: index }));
+		const updated = sorted.map((col) =>
+			col.id === "ws_status" ? { ...col, visible: true } : col,
+		);
+		setColumnConfig(updated);
+		// If we had only localStorage and no server config, persist to server for cross-browser sync
+		if (!server_config?.length) {
+			const payload = updated.map((col) => ({
+				id: col.id,
+				visible: col.visible,
+				order: col.order,
+			}));
+			userPreferencesAPI
+				.update({ hosts_column_config: payload })
+				.catch(() => {})
+				.then(() =>
+					queryClient.invalidateQueries({ queryKey: ["userPreferences"] }),
+				);
+		}
+	}, [
+		user_preferences,
+		user_preferences_fetched,
+		default_column_config,
+		queryClient,
+	]);
 
 	const {
 		data: hosts,
@@ -526,7 +289,7 @@ const Hosts = () => {
 	// Fetch settings to check global auto-update status
 	// Try public endpoint first (works for all users), fallback to full settings if user has permissions
 	const { data: settings } = useQuery({
-		queryKey: ["settings"],
+		queryKey: ["settings", "public"],
 		queryFn: async () => {
 			try {
 				// Try public endpoint first (available to all authenticated users)
@@ -1118,10 +881,21 @@ const Hosts = () => {
 		);
 	};
 
-	// Column management functions
+	// Column management functions (persist to server so config is shared across browsers)
 	const updateColumnConfig = (newConfig) => {
 		setColumnConfig(newConfig);
 		localStorage.setItem("hosts-column-config", JSON.stringify(newConfig));
+		const payload = newConfig.map((col) => ({
+			id: col.id,
+			visible: col.visible,
+			order: col.order,
+		}));
+		userPreferencesAPI
+			.update({ hosts_column_config: payload })
+			.catch(() => {})
+			.then(() =>
+				queryClient.invalidateQueries({ queryKey: ["userPreferences"] }),
+			);
 	};
 
 	const toggleColumnVisibility = (columnId) => {
@@ -1145,38 +919,7 @@ const Hosts = () => {
 	};
 
 	const resetColumns = () => {
-		const defaultConfig = [
-			{ id: "select", label: "Select", visible: true, order: 0 },
-			{ id: "host", label: "Friendly Name", visible: true, order: 1 },
-			{ id: "hostname", label: "System Hostname", visible: true, order: 2 },
-			{ id: "ip", label: "IP Address", visible: false, order: 3 },
-			{ id: "group", label: "Group", visible: true, order: 4 },
-			{ id: "os", label: "OS", visible: true, order: 5 },
-			{ id: "os_version", label: "OS Version", visible: false, order: 6 },
-			{ id: "agent_version", label: "Agent Version", visible: true, order: 7 },
-			{
-				id: "auto_update",
-				label: "Agent Auto-Update",
-				visible: true,
-				order: 8,
-			},
-			{ id: "ws_status", label: "Connection", visible: true, order: 9 },
-			{ id: "integrations", label: "Integrations", visible: true, order: 10 },
-			{ id: "status", label: "Status", visible: true, order: 11 },
-			{ id: "needs_reboot", label: "Reboot", visible: true, order: 12 },
-			{ id: "uptime", label: "Uptime", visible: true, order: 13 },
-			{ id: "updates", label: "Updates", visible: true, order: 14 },
-			{
-				id: "security_updates",
-				label: "Security Updates",
-				visible: true,
-				order: 15,
-			},
-			{ id: "notes", label: "Notes", visible: false, order: 16 },
-			{ id: "last_update", label: "Last Update", visible: true, order: 17 },
-			{ id: "actions", label: "Actions", visible: true, order: 18 },
-		];
-		updateColumnConfig(defaultConfig);
+		updateColumnConfig([...default_column_config]);
 	};
 
 	// Get visible columns in order
@@ -1448,15 +1191,6 @@ const Hosts = () => {
 			default:
 				return null;
 		}
-	};
-
-	const handleHostCreated = (newHost) => {
-		queryClient.invalidateQueries(["hosts"]);
-		// Navigate to host detail page to show credentials and setup instructions
-		// Pass the plaintext apiKey through navigation state (only available once from creation)
-		navigate(`/hosts/${newHost.hostId}`, {
-			state: { apiKey: newHost.apiKey, apiId: newHost.apiId },
-		});
 	};
 
 	// Stats card click handlers
@@ -2144,11 +1878,8 @@ const Hosts = () => {
 												</div>
 
 												{/* Desktop Table Layout */}
-												<div className="hidden md:block overflow-x-auto">
-													<table
-														className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600"
-														style={{ minWidth: "max-content" }}
-													>
+												<div className="hidden md:block">
+													<table className="w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 														<thead className="bg-secondary-50 dark:bg-secondary-700">
 															<tr>
 																{visibleColumns.map((column) => (
@@ -2372,10 +2103,10 @@ const Hosts = () => {
 			</div>
 
 			{/* Modals */}
-			<AddHostModal
+			<AddHostWizard
 				isOpen={showAddModal}
 				onClose={() => setShowAddModal(false)}
-				onSuccess={handleHostCreated}
+				onSuccess={() => queryClient.invalidateQueries(["hosts"])}
 			/>
 
 			{/* Bulk Assign Modal */}

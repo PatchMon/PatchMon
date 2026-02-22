@@ -11,6 +11,7 @@ const {
 	handleSshProxyMessage,
 } = require("./sshTerminalWs");
 const { verifyApiKey } = require("../utils/apiKeyUtils");
+const { reject_upgrade } = require("../utils/wsUpgradeReject");
 
 // Lazy load alert services to avoid circular dependencies
 let alertService = null;
@@ -38,6 +39,13 @@ const connectionChangeSubscribers = new Map();
 // Map<api_id, Set<callback>>
 const complianceProgressSubscribers = new Map();
 
+// Optional callback when an agent connects (e.g. to expedite queued compliance scans)
+let on_agent_connect_callback = null;
+
+function registerOnAgentConnect(callback) {
+	on_agent_connect_callback = callback;
+}
+
 let wss;
 let prisma;
 
@@ -61,7 +69,7 @@ function init(server, prismaClient) {
 		try {
 			const { pathname } = url.parse(request.url);
 			if (!pathname) {
-				socket.destroy();
+				reject_upgrade(socket, 400, "Missing path");
 				return;
 			}
 
@@ -75,7 +83,7 @@ function init(server, prismaClient) {
 				const authHeader = request.headers.authorization;
 
 				if (!sessionCookie && !authHeader) {
-					socket.destroy();
+					reject_upgrade(socket, 401, "Authentication required");
 					return;
 				}
 
@@ -124,28 +132,28 @@ function init(server, prismaClient) {
 
 			// Handle agent WebSocket connections
 			if (!pathname.startsWith("/api/")) {
-				socket.destroy();
+				reject_upgrade(socket, 404, "Not found");
 				return;
 			}
 
 			// Expected path: /api/{v}/agents/ws
 			const parts = pathname.split("/").filter(Boolean); // [api, v1, agents, ws]
 			if (parts.length !== 4 || parts[2] !== "agents" || parts[3] !== "ws") {
-				socket.destroy();
+				reject_upgrade(socket, 404, "Not found");
 				return;
 			}
 
 			const apiId = request.headers["x-api-id"];
 			const apiKey = request.headers["x-api-key"];
 			if (!apiId || !apiKey) {
-				socket.destroy();
+				reject_upgrade(socket, 401, "Missing or invalid credentials");
 				return;
 			}
 
 			// Validate credentials
 			const host = await prisma.hosts.findUnique({ where: { api_id: apiId } });
 			if (!host) {
-				socket.destroy();
+				reject_upgrade(socket, 401, "Invalid credentials");
 				return;
 			}
 
@@ -153,7 +161,7 @@ function init(server, prismaClient) {
 			const isValidKey = await verifyApiKey(apiKey, host.api_key);
 			if (!isValidKey) {
 				logger.info(`[agent-ws] invalid API key for api_id=${apiId}`);
-				socket.destroy();
+				reject_upgrade(socket, 401, "Invalid credentials");
 				return;
 			}
 
@@ -161,8 +169,9 @@ function init(server, prismaClient) {
 				ws.apiId = apiId;
 
 				// Detect if connection is secure (wss://) or not (ws://)
+				const proto = request.headers["x-forwarded-proto"];
 				const isSecure =
-					socket.encrypted || request.headers["x-forwarded-proto"] === "https";
+					socket.encrypted || proto === "https" || proto === "wss";
 
 				apiIdToSocket.set(apiId, ws);
 				connectionMetadata.set(apiId, { ws, secure: isSecure });
@@ -173,6 +182,13 @@ function init(server, prismaClient) {
 
 				// Notify subscribers of connection
 				notifyConnectionChange(apiId, true);
+
+				// Expedite any queued compliance scan for this host (runs in background)
+				if (on_agent_connect_callback) {
+					on_agent_connect_callback(apiId).catch((err) =>
+						logger.error("[agent-ws] Error in onAgentConnect callback:", err),
+					);
+				}
 
 				// Resolve any existing host_down alerts when host reconnects
 				(async () => {
@@ -587,11 +603,7 @@ function init(server, prismaClient) {
 				safeSend(ws, JSON.stringify({ type: "connected" }));
 			});
 		} catch (_err) {
-			try {
-				socket.destroy();
-			} catch {
-				/* ignore */
-			}
+			reject_upgrade(socket, 500, "Internal server error");
 		}
 	});
 }
@@ -734,6 +746,12 @@ function pushComplianceScan(apiId, profileType = "all", options = {}) {
 			profile_id: options.profileId || null,
 			enable_remediation: options.enableRemediation || false,
 			fetch_remote_resources: options.fetchRemoteResources || false,
+			openscap_enabled:
+				options.openscapEnabled !== undefined ? options.openscapEnabled : true,
+			docker_bench_enabled:
+				options.dockerBenchEnabled !== undefined
+					? options.dockerBenchEnabled
+					: true,
 		};
 		safeSend(ws, JSON.stringify(payload));
 		const remediationStatus = options.enableRemediation
@@ -745,6 +763,16 @@ function pushComplianceScan(apiId, profileType = "all", options = {}) {
 		logger.info(
 			`[agent-ws] Triggered compliance scan for ${apiId}: ${profileType}${profileInfo}${remediationStatus}`,
 		);
+		return true;
+	}
+	return false;
+}
+
+function pushComplianceScanCancel(apiId) {
+	const ws = apiIdToSocket.get(apiId);
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		safeSend(ws, JSON.stringify({ type: "compliance_scan_cancel" }));
+		logger.info(`[agent-ws] Sent compliance scan cancel for ${apiId}`);
 		return true;
 	}
 	return false;
@@ -770,6 +798,29 @@ function pushUpgradeSSG(apiId) {
 	}
 	logger.info(
 		`[agent-ws] Cannot send SSG upgrade - WebSocket not ready for ${apiId}`,
+	);
+	return false;
+}
+
+function pushInstallScanner(apiId) {
+	logger.info(`[agent-ws] pushInstallScanner called for api_id=${apiId}`);
+	const ws = apiIdToSocket.get(apiId);
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		const payload = JSON.stringify({ type: "install_scanner" });
+		try {
+			ws.send(payload);
+			logger.info(`[agent-ws] Triggered install scanner for ${apiId}`);
+			return true;
+		} catch (err) {
+			logger.error(
+				`[agent-ws] Failed to send install_scanner to ${apiId}:`,
+				err,
+			);
+			return false;
+		}
+	}
+	logger.info(
+		`[agent-ws] Cannot send install_scanner - WebSocket not ready for ${apiId}`,
 	);
 	return false;
 }
@@ -1063,7 +1114,9 @@ module.exports = {
 	pushUpdateNotification,
 	pushUpdateNotificationToAll,
 	pushComplianceScan,
+	pushComplianceScanCancel,
 	pushUpgradeSSG,
+	pushInstallScanner,
 	pushRemediateRule,
 	pushDockerImageScan,
 	// Expose read-only view of connected agents
@@ -1083,4 +1136,6 @@ module.exports = {
 	subscribeToConnectionChanges,
 	// Subscribe to compliance progress updates (for SSE)
 	subscribeToComplianceProgress,
+	// Register callback when agent connects (used to expedite queued compliance scans)
+	registerOnAgentConnect,
 };

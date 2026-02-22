@@ -19,10 +19,10 @@ import (
 const (
 	initialBackoffDuration = 1 * time.Second
 	maxBackoffDuration     = 30 * time.Second
-	maxReconnectAttempts   = -1 // -1 means unlimited with backoff strategy
-	dockerPingTimeout      = 3 * time.Second  // Timeout for Docker ping check
-	dockerPingInterval     = 1 * time.Second  // How often to check if Docker is ready
-	dockerPingRetries      = 2                // Number of consecutive successful pings required
+	maxReconnectAttempts   = -1                     // -1 means unlimited with backoff strategy
+	dockerPingTimeout      = 3 * time.Second        // Timeout for Docker ping check
+	dockerPingInterval     = 1 * time.Second        // How often to check if Docker is ready
+	dockerPingRetries      = 2                      // Number of consecutive successful pings required
 	dockerPingRetryDelay   = 200 * time.Millisecond // Delay between ping retries
 )
 
@@ -189,12 +189,20 @@ func (d *Integration) monitorEvents(ctx context.Context, eventChan chan<- interf
 
 	d.logger.Debug("Docker event stream established")
 
+	// OPTIMIZATION: Create a ticker to periodically check context and prevent goroutine buildup
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
 	// Process events until stream ends or context is cancelled
 	for {
 		select {
 		case <-ctx.Done():
 			d.logger.Debug("Docker event monitoring context cancelled")
 			return ctx.Err()
+
+		case <-ticker.C:
+			// Periodic health check to prevent stuck goroutines
+			continue
 
 		case err := <-errCh:
 			if err == nil {
@@ -226,14 +234,25 @@ func (d *Integration) monitorEvents(ctx context.Context, eventChan chan<- interf
 			}
 
 			if event.Type == events.ContainerEventType {
-				d.handleContainerEvent(event, eventChan)
+				// OPTIMIZATION: Non-blocking send to prevent goroutine blockage
+				select {
+				case eventChan <- d.createContainerEvent(event):
+				default:
+					// Channel full, skip this event to prevent blocking
+					d.logger.Debug("Event channel full, skipping event")
+				}
 			}
 		}
 	}
 }
 
-// handleContainerEvent processes container events and sends status updates
-func (d *Integration) handleContainerEvent(event events.Message, eventChan chan<- interface{}) {
+// createContainerEvent creates a container event from Docker event
+func (d *Integration) createContainerEvent(event events.Message) interface{} {
+	return d.handleContainerEvent(event)
+}
+
+// handleContainerEvent processes container events and creates status updates
+func (d *Integration) handleContainerEvent(event events.Message) interface{} {
 	// We're interested in these actions:
 	// - start: container started
 	// - stop: container stopped
@@ -255,7 +274,7 @@ func (d *Integration) handleContainerEvent(event events.Message, eventChan chan<
 
 	eventType, relevant := relevantActions[string(event.Action)]
 	if !relevant {
-		return
+		return nil
 	}
 
 	// Extract container information
@@ -293,12 +312,7 @@ func (d *Integration) handleContainerEvent(event events.Message, eventChan chan<
 		"status":       status,
 	}).Info("Docker container event")
 
-	// Send event to channel (non-blocking)
-	select {
-	case eventChan <- statusEvent:
-	default:
-		d.logger.Warn("Event channel full, dropping event")
-	}
+	return statusEvent
 }
 
 // mapActionToStatus maps Docker event actions to status strings

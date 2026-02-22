@@ -56,6 +56,7 @@ const passwordOperationLimiter = rateLimit({
 		const userId = req.user?.id || "unauthenticated";
 		return `password:${ip}:${userId}`;
 	},
+	validate: { trustProxy: false },
 });
 
 /**
@@ -132,8 +133,8 @@ function setAuthCookies(
 	// 'strict' is more secure but can cause issues with local development setups
 	const sameSiteValue = isProduction ? "strict" : "lax";
 
-	logger.info(
-		`Setting cookies - Secure: ${useSecureCookies}, SameSite: ${sameSiteValue}, IsHTTPS: ${isSecure}, NODE_ENV: ${process.env.NODE_ENV}`,
+	logger.debug(
+		`Auth: setting cookies - Secure: ${useSecureCookies}, SameSite: ${sameSiteValue}, IsHTTPS: ${isSecure}`,
 	);
 
 	const cookieOptions = {
@@ -268,67 +269,9 @@ async function clearFailedTFAAttempts(userId) {
 	await redis.del(key);
 }
 
-/**
- * Password complexity requirements
- * - Minimum 8 characters
- * - At least one uppercase letter
- * - At least one lowercase letter
- * - At least one number
- * - At least one special character
- */
-const PASSWORD_MIN_LENGTH = parseInt(process.env.PASSWORD_MIN_LENGTH, 10) || 8;
-const PASSWORD_REQUIRE_UPPERCASE =
-	process.env.PASSWORD_REQUIRE_UPPERCASE !== "false";
-const PASSWORD_REQUIRE_LOWERCASE =
-	process.env.PASSWORD_REQUIRE_LOWERCASE !== "false";
-const PASSWORD_REQUIRE_NUMBER = process.env.PASSWORD_REQUIRE_NUMBER !== "false";
-const PASSWORD_REQUIRE_SPECIAL =
-	process.env.PASSWORD_REQUIRE_SPECIAL !== "false";
-
-/**
- * Validate password complexity
- * @param {string} password - The password to validate
- * @returns {{valid: boolean, errors: string[]}}
- */
-function validatePasswordComplexity(password) {
-	const errors = [];
-
-	if (!password || password.length < PASSWORD_MIN_LENGTH) {
-		errors.push(`Password must be at least ${PASSWORD_MIN_LENGTH} characters`);
-	}
-
-	if (PASSWORD_REQUIRE_UPPERCASE && !/[A-Z]/.test(password)) {
-		errors.push("Password must contain at least one uppercase letter");
-	}
-
-	if (PASSWORD_REQUIRE_LOWERCASE && !/[a-z]/.test(password)) {
-		errors.push("Password must contain at least one lowercase letter");
-	}
-
-	if (PASSWORD_REQUIRE_NUMBER && !/[0-9]/.test(password)) {
-		errors.push("Password must contain at least one number");
-	}
-
-	if (
-		PASSWORD_REQUIRE_SPECIAL &&
-		!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)
-	) {
-		errors.push("Password must contain at least one special character");
-	}
-
-	return { valid: errors.length === 0, errors };
-}
-
-/**
- * Express-validator custom validator for password complexity
- */
-const passwordComplexityValidator = (value) => {
-	const result = validatePasswordComplexity(value);
-	if (!result.valid) {
-		throw new Error(result.errors.join(". "));
-	}
-	return true;
-};
+const {
+	password_complexity_validator: passwordComplexityValidator,
+} = require("../config/passwordPolicy");
 
 /**
  * Parse user agent string to extract browser and OS info
@@ -1279,19 +1222,16 @@ router.post(
 	],
 	async (req, res) => {
 		try {
-			logger.info("=== LOGIN ATTEMPT START ===");
-			logger.info(`Login attempt for username: ${req.body.username}`);
-			logger.info(`IP Address: ${req.ip}`);
-			logger.info(`User Agent: ${req.get("user-agent")}`);
+			logger.info(
+				`Login attempt for username: ${req.body.username} from ${req.ip}`,
+			);
 
 			// Check if local auth is disabled via OIDC
 			// Only disable if OIDC is actually enabled and working
 			const { isLocalAuthDisabled } = require("../auth/oidc");
 			const localAuthDisabled = isLocalAuthDisabled();
-			logger.info(`OIDC check - isLocalAuthDisabled(): ${localAuthDisabled}`);
-			logger.info(`OIDC_ENABLED: ${process.env.OIDC_ENABLED}`);
-			logger.info(
-				`OIDC_DISABLE_LOCAL_AUTH: ${process.env.OIDC_DISABLE_LOCAL_AUTH}`,
+			logger.debug(
+				`Auth: OIDC isLocalAuthDisabled=${localAuthDisabled}, OIDC_ENABLED=${process.env.OIDC_ENABLED}, OIDC_DISABLE_LOCAL_AUTH=${process.env.OIDC_DISABLE_LOCAL_AUTH}`,
 			);
 
 			if (localAuthDisabled) {
@@ -1308,12 +1248,12 @@ router.post(
 			}
 
 			const { username, password } = req.body;
-			logger.info(`Processing login for username: ${username}`);
+			logger.debug(`Auth: processing login for username: ${username}`);
 
 			// Check if account is locked due to too many failed attempts
 			const lockStatus = await isAccountLocked(username);
-			logger.info(
-				`Account lock status: ${lockStatus.locked ? "LOCKED" : "NOT LOCKED"}`,
+			logger.debug(
+				`Auth: account lock status: ${lockStatus.locked ? "LOCKED" : "NOT LOCKED"}`,
 			);
 			if (lockStatus.locked) {
 				const remainingMinutes = Math.ceil(lockStatus.remainingTime / 60);
@@ -1376,10 +1316,9 @@ router.post(
 				return res.status(401).json({ error: "Invalid credentials" });
 			}
 
-			logger.info(`User found: ${user.username} (ID: ${user.id})`);
-			logger.info(`User active: ${user.is_active}`);
-			logger.info(`User has password_hash: ${!!user.password_hash}`);
-			logger.info(`User OIDC-only: ${!user.password_hash}`);
+			logger.debug(
+				`Auth: user found: ${user.username} (id=${user.id}), active=${user.is_active}, has_password=${!!user.password_hash}`,
+			);
 
 			// Check if user is OIDC-only (no password_hash)
 			if (!user.password_hash) {
@@ -1403,13 +1342,13 @@ router.post(
 			}
 
 			// Verify password
-			logger.info("Verifying password...");
+			logger.debug("Auth: verifying password");
 			const isValidPassword = await bcrypt.compare(
 				password,
 				user.password_hash,
 			);
-			logger.info(
-				`Password verification result: ${isValidPassword ? "VALID" : "INVALID"}`,
+			logger.debug(
+				`Auth: password verification: ${isValidPassword ? "VALID" : "INVALID"}`,
 			);
 			if (!isValidPassword) {
 				logger.warn(`Invalid password for user: ${user.username}`);
@@ -1443,11 +1382,11 @@ router.post(
 			}
 
 			// Clear failed attempts on successful password verification
-			logger.info("Password verified successfully, clearing failed attempts");
+			logger.debug("Auth: password verified, clearing failed attempts");
 			await clearFailedAttempts(username);
 
 			// Check if TFA is enabled
-			logger.info(`TFA enabled for user: ${user.tfa_enabled}`);
+			logger.debug(`Auth: TFA enabled for user: ${user.tfa_enabled}`);
 			if (user.tfa_enabled) {
 				// Get device fingerprint from X-Device-ID header
 				const device_fingerprint = generate_device_fingerprint(req);
@@ -1494,7 +1433,7 @@ router.post(
 			});
 
 			// Create session with access and refresh tokens
-			logger.info("Creating session for user...");
+			logger.debug("Auth: creating session");
 			const ip_address = req.ip || req.connection.remoteAddress;
 			const user_agent = req.get("user-agent");
 			const session = await create_session(
@@ -1504,8 +1443,8 @@ router.post(
 				false,
 				req,
 			);
-			logger.info(
-				`Session created successfully. Session ID: ${session.session_id || "N/A"}`,
+			logger.debug(
+				`Auth: session created, session_id=${session.session_id || "N/A"}`,
 			);
 
 			// Audit log successful login
@@ -1519,6 +1458,8 @@ router.post(
 				success: true,
 				details: { role: user.role },
 			});
+
+			logger.info(`Login successful for ${user.username} (${user.email})`);
 
 			// Get accepted release notes versions
 			let acceptedVersions = [];
@@ -1570,10 +1511,9 @@ router.post(
 				},
 			});
 		} catch (error) {
-			logger.error("=== LOGIN ERROR ===");
-			logger.error(`Error message: ${error.message}`);
-			logger.error(`Error stack: ${error.stack}`);
-			logger.error("Full error:", error);
+			logger.error(`Login error: ${error.message}`);
+			logger.debug(`Login error stack: ${error.stack}`);
+			logger.debug("Login error object:", error);
 			res.status(500).json({ error: "Login failed" });
 		}
 	},
@@ -2024,6 +1964,11 @@ router.get("/profile", authenticateToken, async (req, res) => {
 				accepted_release_notes_versions: acceptedVersions,
 				oidc_sub: req.user.oidc_sub || null,
 				oidc_provider: req.user.oidc_provider || null,
+				discord_id: req.user.discord_id || null,
+				discord_username: req.user.discord_username || null,
+				discord_avatar: req.user.discord_avatar || null,
+				discord_linked_at: req.user.discord_linked_at || null,
+				has_password: !!req.user.password_hash,
 			},
 		});
 	} catch (error) {
@@ -2260,6 +2205,9 @@ router.put(
 // Logout (revoke current session)
 router.post("/logout", authenticateToken, async (req, res) => {
 	try {
+		logger.debug(
+			`Auth: logout for user ${req.user?.username}, session_id=${req.session_id}`,
+		);
 		// Revoke the current session
 		if (req.session_id) {
 			await revoke_session(req.session_id);
@@ -2305,16 +2253,21 @@ router.post(
 				req.cookies?.refresh_token || req.body.refresh_token;
 
 			if (!refresh_token) {
+				logger.debug("Auth: refresh-token called without refresh_token");
 				return res.status(400).json({ error: "Refresh token is required" });
 			}
 
+			logger.debug("Auth: refreshing access token");
 			const result = await refresh_access_token(refresh_token);
 
 			if (!result.success) {
+				logger.debug(`Auth: refresh failed - ${result.error}`);
 				// Clear invalid cookies
 				clearAuthCookies(res);
 				return res.status(401).json({ error: result.error });
 			}
+
+			logger.debug(`Auth: token refreshed for user ${result.user?.username}`);
 
 			// Set new access token cookie
 			const isProduction = process.env.NODE_ENV === "production";

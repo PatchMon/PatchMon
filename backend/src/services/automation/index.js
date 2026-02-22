@@ -1,10 +1,16 @@
-const { Queue, Worker } = require("bullmq");
+const { Queue, Worker, DelayedError } = require("bullmq");
 const logger = require("../../utils/logger");
 const { redis, redisConnection } = require("./shared/redis");
 const { prisma } = require("./shared/prisma");
 const agentWs = require("../agentWs");
 const { v4: uuidv4 } = require("uuid");
 const { get_current_time } = require("../../utils/timezone");
+
+const COMPLIANCE_INSTALL_JOB_PREFIX = "compliance_install_job:";
+const COMPLIANCE_INSTALL_CANCEL_PREFIX = "compliance_install_cancel:";
+const _COMPLIANCE_INSTALL_JOB_TTL = 3600; // 1 hour
+const COMPLIANCE_POLL_INTERVAL_MS = 2500;
+const COMPLIANCE_INSTALL_TIMEOUT_MS = 5 * 60 * 1000; // 5 min
 
 // Import automation classes
 const VersionUpdateCheck = require("./versionUpdateCheck");
@@ -17,6 +23,7 @@ const MetricsReporting = require("./metricsReporting");
 const SystemStatistics = require("./systemStatistics");
 const AlertCleanup = require("./alertCleanup");
 const HostStatusMonitor = require("./hostStatusMonitor");
+const ComplianceScanCleanup = require("./complianceScanCleanup");
 
 // Queue names
 const QUEUE_NAMES = {
@@ -31,6 +38,8 @@ const QUEUE_NAMES = {
 	AGENT_COMMANDS: "agent-commands",
 	ALERT_CLEANUP: "alert-cleanup",
 	HOST_STATUS_MONITOR: "host-status-monitor",
+	COMPLIANCE: "compliance",
+	COMPLIANCE_SCAN_CLEANUP: "compliance-scan-cleanup",
 };
 
 /**
@@ -120,6 +129,8 @@ class QueueManager {
 		this.automations[QUEUE_NAMES.HOST_STATUS_MONITOR] = new HostStatusMonitor(
 			this,
 		);
+		this.automations[QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP] =
+			new ComplianceScanCleanup(this);
 
 		logger.info("✅ All automation classes initialized");
 	}
@@ -249,6 +260,15 @@ class QueueManager {
 			workerOptions,
 		);
 
+		// Compliance Scan Cleanup Worker
+		this.workers[QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP] = new Worker(
+			QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP,
+			this.automations[QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP].process.bind(
+				this.automations[QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP],
+			),
+			workerOptions,
+		);
+
 		// Agent Commands Worker
 		this.workers[QUEUE_NAMES.AGENT_COMMANDS] = new Worker(
 			QUEUE_NAMES.AGENT_COMMANDS,
@@ -289,6 +309,9 @@ class QueueManager {
 					// Send command via WebSocket based on type
 					if (type === "report_now") {
 						agentWs.pushReportNow(api_id);
+						logger.info(
+							`Collect host statistics: report_now sent to agent ${api_id}`,
+						);
 					} else if (type === "settings_update") {
 						// For settings update, we need additional data
 						const { update_interval } = job.data;
@@ -406,6 +429,383 @@ class QueueManager {
 			workerOptions,
 		);
 
+		// Compliance Worker (install compliance tools + run_scan when agent offline)
+		const COMPLIANCE_SCAN_RETRY_DELAY_MS = 60 * 1000; // 1 min
+		this.workers[QUEUE_NAMES.COMPLIANCE] = new Worker(
+			QUEUE_NAMES.COMPLIANCE,
+			async (job, token) => {
+				const { hostId, api_id, type } = job.data;
+
+				if (type === "run_scan") {
+					const {
+						profile_type = "all",
+						profile_id,
+						enable_remediation,
+						fetch_remote_resources,
+					} = job.data;
+
+					// Create job_history record so the Agent Queue tab can track this job
+					let historyRecord = null;
+					try {
+						historyRecord = await prisma.job_history.create({
+							data: {
+								id: uuidv4(),
+								job_id: job.id,
+								queue_name: QUEUE_NAMES.COMPLIANCE,
+								job_name: "run_scan",
+								host_id: hostId,
+								api_id: api_id,
+								status: "active",
+								attempt_number: job.attemptsMade + 1,
+								created_at: get_current_time(),
+								updated_at: get_current_time(),
+							},
+						});
+					} catch (err) {
+						logger.error(
+							"[Compliance] run_scan: failed to create job_history:",
+							err,
+						);
+					}
+
+					if (!agentWs.isConnected(api_id)) {
+						logger.info(
+							`[Compliance] run_scan: agent ${api_id} offline, re-queuing in ${COMPLIANCE_SCAN_RETRY_DELAY_MS / 1000}s`,
+						);
+						if (historyRecord) {
+							await prisma.job_history
+								.updateMany({
+									where: { job_id: job.id },
+									data: { status: "delayed", updated_at: get_current_time() },
+								})
+								.catch(() => {});
+						}
+						await job.moveToDelayed(
+							Date.now() + COMPLIANCE_SCAN_RETRY_DELAY_MS,
+							token,
+						);
+						throw new DelayedError();
+					}
+					// Fetch per-host scanner toggles and adjust profile_type accordingly
+					let openscapEnabled = true;
+					let dockerBenchEnabled = false;
+					try {
+						const hostRecord = await prisma.hosts.findUnique({
+							where: { id: hostId },
+							select: {
+								compliance_openscap_enabled: true,
+								compliance_docker_bench_enabled: true,
+							},
+						});
+						if (hostRecord) {
+							openscapEnabled = hostRecord.compliance_openscap_enabled ?? true;
+							dockerBenchEnabled =
+								hostRecord.compliance_docker_bench_enabled ?? false;
+						}
+					} catch (_e) {
+						/* proceed with defaults */
+					}
+
+					// Rewrite profile_type based on per-host toggles so existing
+					// agents (that don't know about the toggle fields) still
+					// run only the scanners the user enabled.
+					let effectiveProfileType = profile_type;
+					if (profile_type === "all" || profile_type === "" || !profile_type) {
+						if (openscapEnabled && !dockerBenchEnabled) {
+							effectiveProfileType = "openscap";
+						} else if (!openscapEnabled && dockerBenchEnabled) {
+							effectiveProfileType = "docker-bench";
+						} else if (!openscapEnabled && !dockerBenchEnabled) {
+							logger.warn(
+								`[Compliance] Both scanners disabled for host ${hostId}, skipping scan`,
+							);
+							return;
+						}
+						// both enabled → keep "all"
+					}
+
+					const scanOptions = {
+						profileId: profile_id || null,
+						enableRemediation: Boolean(enable_remediation),
+						fetchRemoteResources: Boolean(fetch_remote_resources),
+						openscapEnabled,
+						dockerBenchEnabled,
+					};
+					const sent = agentWs.pushComplianceScan(
+						api_id,
+						effectiveProfileType,
+						scanOptions,
+					);
+					if (!sent) {
+						if (historyRecord) {
+							await prisma.job_history
+								.updateMany({
+									where: { job_id: job.id },
+									data: { status: "delayed", updated_at: get_current_time() },
+								})
+								.catch(() => {});
+						}
+						await job.moveToDelayed(
+							Date.now() + COMPLIANCE_SCAN_RETRY_DELAY_MS,
+							token,
+						);
+						throw new DelayedError();
+					}
+					// Create "running" scan records for UI - only for the profile type we actually sent to the agent
+					const profilesToUse = [];
+					if (
+						effectiveProfileType === "all" ||
+						effectiveProfileType === "openscap"
+					) {
+						let oscapProfile = await prisma.compliance_profiles.findFirst({
+							where: { type: "openscap" },
+							orderBy: { name: "asc" },
+						});
+						if (!oscapProfile) {
+							oscapProfile = await prisma.compliance_profiles.create({
+								data: {
+									id: uuidv4(),
+									name: "OpenSCAP Scan",
+									type: "openscap",
+								},
+							});
+						}
+						profilesToUse.push(oscapProfile);
+					}
+					if (
+						effectiveProfileType === "all" ||
+						effectiveProfileType === "docker-bench"
+					) {
+						let dockerProfile = await prisma.compliance_profiles.findFirst({
+							where: { type: "docker-bench" },
+							orderBy: { name: "asc" },
+						});
+						if (!dockerProfile) {
+							dockerProfile = await prisma.compliance_profiles.create({
+								data: {
+									id: uuidv4(),
+									name: "Docker Bench Security",
+									type: "docker-bench",
+								},
+							});
+						}
+						profilesToUse.push(dockerProfile);
+					}
+					for (const profile of profilesToUse) {
+						try {
+							await prisma.compliance_scans.create({
+								data: {
+									id: uuidv4(),
+									host_id: hostId,
+									profile_id: profile.id,
+									started_at: new Date(),
+									completed_at: null,
+									status: "running",
+									total_rules: 0,
+									passed: 0,
+									failed: 0,
+									warnings: 0,
+									skipped: 0,
+									not_applicable: 0,
+									score: null,
+								},
+							});
+						} catch (err) {
+							logger.warn(
+								`[Compliance] run_scan: could not create running record: ${err.message}`,
+							);
+						}
+					}
+
+					// Mark job_history as completed
+					if (historyRecord) {
+						await prisma.job_history
+							.updateMany({
+								where: { job_id: job.id },
+								data: {
+									status: "completed",
+									completed_at: get_current_time(),
+									updated_at: get_current_time(),
+								},
+							})
+							.catch(() => {});
+					}
+
+					logger.info(
+						`[Compliance] run_scan: triggered for host ${hostId} (agent online)`,
+					);
+					return;
+				}
+
+				if (type !== "install_compliance_tools") {
+					logger.warn(`[Compliance] Unknown job type: ${type}`);
+					return;
+				}
+				logger.info(
+					`[Compliance] Processing install_compliance_tools for host ${hostId} (${api_id})`,
+				);
+
+				let historyRecord = null;
+				try {
+					const host = await prisma.hosts.findUnique({
+						where: { id: hostId },
+						select: { id: true, api_id: true },
+					});
+					if (!host) {
+						throw new Error(`Host not found: ${hostId}`);
+					}
+					historyRecord = await prisma.job_history.create({
+						data: {
+							id: uuidv4(),
+							job_id: job.id,
+							queue_name: QUEUE_NAMES.COMPLIANCE,
+							job_name: "install_compliance_tools",
+							host_id: host.id,
+							api_id: host.api_id,
+							status: "active",
+							attempt_number: job.attemptsMade + 1,
+							created_at: get_current_time(),
+							updated_at: get_current_time(),
+						},
+					});
+				} catch (err) {
+					logger.error("[Compliance] Failed to create job_history:", err);
+				}
+
+				const jobKey = `${COMPLIANCE_INSTALL_JOB_PREFIX}${hostId}`;
+				const cancelKey = `${COMPLIANCE_INSTALL_CANCEL_PREFIX}${job.id}`;
+
+				try {
+					const connected = agentWs.isConnected(api_id);
+					logger.info(
+						`[Compliance] Agent connection check for ${api_id}: ${connected ? "connected" : "not connected"}`,
+					);
+					if (!connected) {
+						throw new Error("Agent is not connected. Cannot run install.");
+					}
+
+					await job.updateData({
+						...job.data,
+						message: "Sending install command to agent...",
+						install_events: [],
+					});
+					await job.updateProgress(5);
+
+					const sent = agentWs.pushInstallScanner(api_id);
+					if (!sent) {
+						throw new Error(
+							"Failed to send install_scanner command to agent (WebSocket not ready or send failed).",
+						);
+					}
+
+					await job.updateData({
+						...job.data,
+						message: "Waiting for agent to begin installation...",
+					});
+					await job.updateProgress(10);
+
+					const statusKey = `integration_status:${api_id}:compliance`;
+					const deadline = Date.now() + COMPLIANCE_INSTALL_TIMEOUT_MS;
+					let lastEventCount = 0;
+
+					while (Date.now() < deadline) {
+						const cancelled = await redis.get(cancelKey);
+						if (cancelled) {
+							await redis.del(cancelKey);
+							throw new Error("Cancelled by user");
+						}
+
+						const raw = await redis.get(statusKey);
+						if (raw) {
+							const data = JSON.parse(raw);
+							const status = data.status;
+							const message = data.message || status;
+							const install_events = data.install_events || [];
+
+							await job.updateData({
+								...job.data,
+								message,
+								install_events,
+							});
+
+							// Compute progress from event steps
+							if (
+								install_events.length > 0 &&
+								install_events.length !== lastEventCount
+							) {
+								lastEventCount = install_events.length;
+								const doneCount = install_events.filter(
+									(e) =>
+										e.status === "done" ||
+										e.status === "skipped" ||
+										e.status === "failed",
+								).length;
+								const total = Math.max(install_events.length, 5);
+								const eventProgress = Math.min(
+									95,
+									Math.round(10 + (doneCount / total) * 85),
+								);
+								await job.updateProgress(eventProgress);
+							}
+
+							if (status === "ready") {
+								await job.updateProgress(100);
+								break;
+							} else if (status === "error") {
+								throw new Error(data.message || "Agent reported error");
+							} else if (status === "partial") {
+								await job.updateProgress(95);
+								break;
+							}
+						}
+
+						await new Promise((r) =>
+							setTimeout(r, COMPLIANCE_POLL_INTERVAL_MS),
+						);
+					}
+
+					if (Date.now() >= deadline) {
+						throw new Error("Install timed out after 5 minutes");
+					}
+
+					await redis.del(jobKey);
+					if (historyRecord) {
+						await prisma.job_history.updateMany({
+							where: { job_id: job.id },
+							data: {
+								status: "completed",
+								completed_at: get_current_time(),
+								updated_at: get_current_time(),
+							},
+						});
+					}
+					logger.info(`[Compliance] Install completed for host ${hostId}`);
+				} catch (error) {
+					await redis.del(jobKey);
+					await redis.del(cancelKey).catch(() => {});
+					if (historyRecord) {
+						await prisma.job_history.updateMany({
+							where: { job_id: job.id },
+							data: {
+								status: "failed",
+								error_message: error.message,
+								completed_at: get_current_time(),
+								updated_at: get_current_time(),
+							},
+						});
+					}
+					const errMsg =
+						error?.message ??
+						(typeof error === "string" ? error : String(error));
+					logger.warn(
+						`[Compliance] Install failed for host ${hostId}: ${errMsg}`,
+					);
+					throw error;
+				}
+			},
+			workerOptions,
+		);
+
 		logger.info(
 			"✅ All workers initialized with optimized connection settings",
 		);
@@ -445,6 +845,7 @@ class QueueManager {
 		await this.automations[QUEUE_NAMES.SYSTEM_STATISTICS].schedule();
 		await this.automations[QUEUE_NAMES.ALERT_CLEANUP].schedule();
 		await this.automations[QUEUE_NAMES.HOST_STATUS_MONITOR].schedule();
+		await this.automations[QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP].schedule();
 	}
 
 	/**
@@ -494,6 +895,12 @@ class QueueManager {
 
 	async triggerHostStatusMonitor() {
 		return this.automations[QUEUE_NAMES.HOST_STATUS_MONITOR].triggerManual();
+	}
+
+	async triggerComplianceScanCleanup() {
+		return this.automations[
+			QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP
+		].triggerManual();
 	}
 
 	/**
@@ -556,35 +963,56 @@ class QueueManager {
 	 * Get jobs for a specific host (by API ID)
 	 */
 	async getHostJobs(apiId, limit = 20) {
-		const queue = this.queues[QUEUE_NAMES.AGENT_COMMANDS];
-		if (!queue) {
-			throw new Error(`Queue ${QUEUE_NAMES.AGENT_COMMANDS} not found`);
-		}
+		// Collect jobs from all queues that carry host-specific work
+		const queue_names_to_check = [
+			QUEUE_NAMES.AGENT_COMMANDS,
+			QUEUE_NAMES.COMPLIANCE,
+		];
 
-		logger.info(`[getHostJobs] Looking for jobs with api_id: ${apiId}`);
-
-		// Get active queue status (waiting, active, delayed, failed)
-		const [waiting, active, delayed, failed] = await Promise.all([
-			queue.getWaiting(),
-			queue.getActive(),
-			queue.getDelayed(),
-			queue.getFailed(),
-		]);
-
-		// Filter by API ID
 		const filterByApiId = (jobs) =>
 			jobs.filter((job) => job.data && job.data.api_id === apiId);
 
-		const waitingCount = filterByApiId(waiting).length;
-		const activeCount = filterByApiId(active).length;
-		const delayedCount = filterByApiId(delayed).length;
-		const failedCount = filterByApiId(failed).length;
+		let waitingCount = 0;
+		let activeCount = 0;
+		let delayedCount = 0;
+		let failedCount = 0;
 
-		logger.info(
-			`[getHostJobs] Queue status - Waiting: ${waitingCount}, Active: ${activeCount}, Delayed: ${delayedCount}, Failed: ${failedCount}`,
-		);
+		// Collect live BullMQ jobs for this host (across all queues)
+		const liveJobs = [];
 
-		// Get job history from database (shows all attempts and status changes)
+		for (const qn of queue_names_to_check) {
+			const q = this.queues[qn];
+			if (!q) continue;
+			const [waiting, active, delayed, failed, completed] = await Promise.all([
+				q.getWaiting(),
+				q.getActive(),
+				q.getDelayed(),
+				q.getFailed(),
+				q.getCompleted(0, limit - 1),
+			]);
+			const hostWaiting = filterByApiId(waiting);
+			const hostActive = filterByApiId(active);
+			const hostDelayed = filterByApiId(delayed);
+			const hostFailed = filterByApiId(failed);
+			const hostCompleted = filterByApiId(completed);
+			waitingCount += hostWaiting.length;
+			activeCount += hostActive.length;
+			delayedCount += hostDelayed.length;
+			failedCount += hostFailed.length;
+
+			for (const j of hostWaiting)
+				liveJobs.push({ job: j, state: "waiting", queue: qn });
+			for (const j of hostActive)
+				liveJobs.push({ job: j, state: "active", queue: qn });
+			for (const j of hostDelayed)
+				liveJobs.push({ job: j, state: "delayed", queue: qn });
+			for (const j of hostFailed)
+				liveJobs.push({ job: j, state: "failed", queue: qn });
+			for (const j of hostCompleted)
+				liveJobs.push({ job: j, state: "completed", queue: qn });
+		}
+
+		// Get job history from database (shows completed attempts and status changes)
 		const jobHistory = await prisma.job_history.findMany({
 			where: {
 				api_id: apiId,
@@ -595,19 +1023,16 @@ class QueueManager {
 			take: limit,
 		});
 
-		logger.info(
-			`[getHostJobs] Found ${jobHistory.length} job history records for api_id: ${apiId}`,
-		);
-
-		return {
-			waiting: waitingCount,
-			active: activeCount,
-			delayed: delayedCount,
-			failed: failedCount,
-			jobHistory: jobHistory.map((job) => ({
+		// Merge live BullMQ jobs with DB history; live jobs first, then history.
+		// Avoid duplicates: if a live job's id matches a history record's job_id, skip the history one.
+		const liveJobIds = new Set(liveJobs.map((l) => l.job.id));
+		const historyRows = jobHistory
+			.filter((h) => !liveJobIds.has(h.job_id))
+			.map((job) => ({
 				id: job.id,
 				job_id: job.job_id,
 				job_name: job.job_name,
+				queue_name: job.queue_name || null,
 				status: job.status,
 				attempt_number: job.attempt_number,
 				error_message: job.error_message,
@@ -615,7 +1040,30 @@ class QueueManager {
 				created_at: job.created_at,
 				updated_at: job.updated_at,
 				completed_at: job.completed_at,
-			})),
+			}));
+
+		const liveRows = liveJobs.map((l) => ({
+			id: l.job.id,
+			job_id: l.job.id,
+			job_name: l.job.name || l.job.data?.type || "unknown",
+			queue_name: l.queue,
+			status: l.state,
+			attempt_number: (l.job.attemptsMade || 0) + 1,
+			error_message: l.job.failedReason || null,
+			output: null,
+			created_at: l.job.timestamp ? new Date(l.job.timestamp) : null,
+			updated_at: null,
+			completed_at: l.job.finishedOn ? new Date(l.job.finishedOn) : null,
+		}));
+
+		const merged = [...liveRows, ...historyRows].slice(0, limit);
+
+		return {
+			waiting: waitingCount,
+			active: activeCount,
+			delayed: delayedCount,
+			failed: failedCount,
+			jobHistory: merged,
 		};
 	}
 

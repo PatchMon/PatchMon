@@ -73,18 +73,23 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 		return settings?.ignore_ssl_self_signed ? "-sk" : "-s";
 	};
 
-	// Helper function to get the install URL (os=windows forces PowerShell script, force is Linux-only)
+	// Helper function to get the install URL (os=windows for PowerShell, os=freebsd for FreeBSD, force for Linux/FreeBSD)
 	const getInstallUrl = (os) => {
-		const baseUrl = `${serverUrl}/api/v1/hosts/install`;
-		const params = [];
-		if (os === "windows") params.push("os=windows");
-		if (forceInstall && os !== "windows") params.push("force=true");
-		return params.length ? `${baseUrl}?${params.join("&")}` : baseUrl;
+		const base = `${serverUrl}/api/v1/hosts/install`;
+		const params = new URLSearchParams();
+		if (os === "windows") params.set("os", "windows");
+		else if (host?.expected_platform === "freebsd") params.set("os", "freebsd");
+		if (forceInstall && os !== "windows") params.set("force", "true");
+		const qs = params.toString();
+		return qs ? `${base}?${qs}` : base;
 	};
 
-	// Helper function to build the shell command suffix (sudo sh with optional --force)
-	const getShellCommand = () =>
-		forceInstall ? "sudo sh -s -- --force" : "sudo sh";
+	// Helper function to build the shell command suffix (no sudo on FreeBSD/pfSense)
+	const getShellCommand = () => {
+		const use_sudo = host?.expected_platform !== "freebsd";
+		const base = use_sudo ? "sudo sh" : "sh";
+		return forceInstall ? `${base} -s -- --force` : base;
+	};
 
 	const copyToClipboard = async (text) => {
 		try {
@@ -319,7 +324,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 											value={
 												isApiKeyHash
 													? "API key not available - click Regenerate above"
-													: `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`
+													: `curl ${getCurlFlags()} "${getInstallUrl("linux")}" -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`
 											}
 											readOnly
 											disabled={isApiKeyHash}
@@ -328,7 +333,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 										<button
 											type="button"
 											onClick={async () => {
-												const command = `curl ${getCurlFlags()} ${getInstallUrl()} -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`;
+												const command = `curl ${getCurlFlags()} "${getInstallUrl("linux")}" -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`;
 												await copyToClipboard(command);
 												if (!isApiKeyHash) {
 													setShowWaitingScreen(true);

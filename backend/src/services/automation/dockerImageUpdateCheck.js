@@ -332,7 +332,7 @@ class DockerImageUpdateCheck {
 				const batch = images.slice(i, i + batchSize);
 
 				// Process batch concurrently with Promise.allSettled for error tolerance
-				const _results = await Promise.allSettled(
+				const results = await Promise.allSettled(
 					batch.map(async (image) => {
 						try {
 							checkedCount++;
@@ -367,79 +367,114 @@ class DockerImageUpdateCheck {
 									checked_at: new Date().toISOString(),
 								});
 
-								// Upsert the update record
-								await prisma.docker_image_updates.upsert({
-									where: {
-										image_id_available_tag: {
-											image_id: image.id,
-											available_tag: image.tag || "latest",
-										},
-									},
-									update: {
-										updated_at: new Date(),
-										changelog_url: digestInfo,
-										severity: "digest_changed",
-									},
-									create: {
-										id: uuidv4(),
-										image_id: image.id,
-										current_tag: image.tag || "latest",
-										available_tag: image.tag || "latest",
-										severity: "digest_changed",
-										changelog_url: digestInfo,
-										updated_at: new Date(),
-									},
-								});
-
-								// Update last_checked timestamp on image
-								await prisma.docker_images.update({
-									where: { id: image.id },
-									data: { last_checked: new Date() },
-								});
-
-								updateCount++;
-								return { image, updated: true };
-							} else {
-								// No update - still update last_checked
-								await prisma.docker_images.update({
-									where: { id: image.id },
-									data: { last_checked: new Date() },
-								});
-
-								// Remove existing update record if digest matches now
-								const existingUpdate = image.docker_image_updates?.find(
-									(u) => u.available_tag === (image.tag || "latest"),
-								);
-								if (existingUpdate) {
-									await prisma.docker_image_updates.delete({
-										where: { id: existingUpdate.id },
-									});
-								}
-
-								return { image, updated: false };
+								return {
+									image,
+									updated: true,
+									digestInfo,
+									localDigest,
+									remoteDigest,
+								};
 							}
+
+							return { image, updated: false };
 						} catch (error) {
 							errorCount++;
 							const errorMsg = `Error checking ${image.repository}:${image.tag}: ${error.message}`;
 							errors.push(errorMsg);
 							logger.error(`❌ ${errorMsg}`);
-
-							// Still update last_checked even on error
-							try {
-								await prisma.docker_images.update({
-									where: { id: image.id },
-									data: { last_checked: new Date() },
-								});
-							} catch (_updateError) {
-								// Ignore update errors
-							}
-
 							return { image, error: error.message };
 						}
 					}),
 				);
 
-				// Log batch progress
+				// Collect database operations for batch processing
+				const imagesToUpdate = [];
+				const updatesToCreate = [];
+				const updatesToUpdate = [];
+				const updatesToDelete = [];
+
+				for (const result of results) {
+					if (result.status === "fulfilled" && result.value) {
+						const { image, updated, digestInfo } = result.value;
+
+						if (updated) {
+							// Add to image updates list
+							imagesToUpdate.push(image.id);
+
+							// Check if update record exists
+							const existingUpdate = image.docker_image_updates?.find(
+								(u) => u.available_tag === (image.tag || "latest"),
+							);
+
+							if (existingUpdate) {
+								updatesToUpdate.push({
+									id: existingUpdate.id,
+									updated_at: new Date(),
+									changelog_url: digestInfo,
+									severity: "digest_changed",
+								});
+							} else {
+								updatesToCreate.push({
+									id: uuidv4(),
+									image_id: image.id,
+									current_tag: image.tag || "latest",
+									available_tag: image.tag || "latest",
+									severity: "digest_changed",
+									changelog_url: digestInfo,
+									created_at: new Date(),
+									updated_at: new Date(),
+								});
+							}
+							updateCount++;
+						} else if (!result.value.skipped && !result.value.error) {
+							// No update - add to images to update last_checked
+							imagesToUpdate.push(image.id);
+
+							// Remove existing update record if digest matches now
+							const existingUpdate = image.docker_image_updates?.find(
+								(u) => u.available_tag === (image.tag || "latest"),
+							);
+							if (existingUpdate) {
+								updatesToDelete.push(existingUpdate.id);
+							}
+						} else if (result.value.error) {
+							// Error - still update last_checked
+							imagesToUpdate.push(image.id);
+						}
+					}
+				}
+
+				// Batch update last_checked for all processed images
+				if (imagesToUpdate.length > 0) {
+					await prisma.docker_images.updateMany({
+						where: { id: { in: imagesToUpdate } },
+						data: { last_checked: new Date() },
+					});
+				}
+
+				// Batch create new update records
+				if (updatesToCreate.length > 0) {
+					await prisma.docker_image_updates.createMany({
+						data: updatesToCreate,
+						skipDuplicates: true,
+					});
+				}
+
+				// Batch update existing update records
+				for (const update of updatesToUpdate) {
+					const { id, ...updateData } = update;
+					await prisma.docker_image_updates.update({
+						where: { id },
+						data: updateData,
+					});
+				}
+
+				// Batch delete obsolete update records
+				if (updatesToDelete.length > 0) {
+					await prisma.docker_image_updates.deleteMany({
+						where: { id: { in: updatesToDelete } },
+					});
+				} // Log batch progress
 				if (i + batchSize < images.length) {
 					logger.info(
 						`⏳ Processed ${Math.min(i + batchSize, images.length)}/${images.length} images...`,

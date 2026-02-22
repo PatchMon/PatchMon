@@ -14,11 +14,20 @@ model dashboard_preferences {
   card_id    String
   enabled    Boolean  @default(true)
   order      Int      @default(0)
+  col_span   Int      @default(1)
   created_at DateTime @default(now())
   updated_at DateTime
   users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@unique([user_id, card_id])
+}
+
+model dashboard_layout {
+  user_id        String   @id
+  stats_columns  Int      @default(5)
+  charts_columns Int      @default(3)
+  updated_at     DateTime
+  users          users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
 }
 
 model host_groups {
@@ -109,9 +118,9 @@ model hosts {
   installed_kernel_version String?
   load_average             Json?
   network_interfaces       Json?
-  ram_installed            Int?
+  ram_installed            Float?
   selinux_status           String?
-  swap_size                Int?
+  swap_size                Float?
   system_uptime            String?
   notes                    String?
   needs_reboot             Boolean?                 @default(false)
@@ -119,7 +128,12 @@ model hosts {
   docker_enabled           Boolean                  @default(false)
   compliance_enabled       Boolean                  @default(false)
   compliance_on_demand_only Boolean                 @default(true)
+  compliance_openscap_enabled Boolean               @default(true)  // individually enable/disable OpenSCAP scanning
+  compliance_docker_bench_enabled Boolean            @default(false) // individually enable/disable Docker Bench scanning
+  compliance_scanner_status Json?                  // last known scanner status from agent (status, message, components, scanner_info)
+  compliance_scanner_updated_at DateTime?           // when agent last reported compliance scanner status
   host_down_alerts_enabled Boolean?                 // null = inherit from global config, true = enabled, false = disabled
+  expected_platform       String?                  // linux | freebsd | windows (for OS-specific install command)
   host_packages            host_packages[]
   host_repositories        host_repositories[]
   host_group_memberships   host_group_memberships[]
@@ -224,6 +238,12 @@ model settings {
   ai_api_key                   String?   // Encrypted API key
   // Alerts system settings
   alerts_enabled               Boolean   @default(true) // Master switch for alerts system
+  // Discord OAuth settings
+  discord_oauth_enabled        Boolean   @default(false)
+  discord_client_id            String?
+  discord_client_secret        String?   // Encrypted via encrypt()
+  discord_redirect_uri         String?
+  discord_button_text          String?   @default("Login with Discord")
 }
 
 model update_history {
@@ -274,10 +294,16 @@ model users {
   last_name                 String?
   theme_preference          String?                     @default("dark")
   color_theme               String?                     @default("cyber_blue")
+  ui_preferences            Json?                       // e.g. { hosts_column_config: [...] }
   oidc_sub                  String?                     @unique
   oidc_provider             String?
   avatar_url                String?
+  discord_id                String?                     @unique
+  discord_username          String?
+  discord_avatar            String?
+  discord_linked_at         DateTime?
   dashboard_preferences     dashboard_preferences[]
+  dashboard_layout          dashboard_layout?
   user_sessions             user_sessions[]
   auto_enrollment_tokens    auto_enrollment_tokens[]
   release_notes_acceptances release_notes_acceptances[]
@@ -287,6 +313,7 @@ model users {
   alert_config_auto_assign  alert_config[]           @relation("AlertConfigAutoAssign")
 
   @@index([role])
+  @@index([last_login])
 }
 
 model user_sessions {

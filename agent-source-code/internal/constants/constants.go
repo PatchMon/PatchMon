@@ -36,13 +36,14 @@ const (
 
 // Repository type constants
 const (
-	RepoTypeDeb    = "deb"
-	RepoTypeDebSrc = "deb-src"
-	RepoTypeRPM    = "rpm"
-	RepoTypeAPK    = "apk"
-	RepoTypePacman = "pacman"
-	RepoTypeWU     = "windows-update" // Windows Update
-	RepoTypeWSUS   = "wsus"           // Windows Server Update Services
+	RepoTypeDeb     = "deb"
+	RepoTypeDebSrc  = "deb-src"
+	RepoTypeRPM     = "rpm"
+	RepoTypeAPK     = "apk"
+	RepoTypePacman  = "pacman"
+	RepoTypeFreeBSD = "freebsd"
+	RepoTypeWU      = "windows-update" // Windows Update
+	RepoTypeWSUS    = "wsus"           // Windows Server Update Services
 )
 
 // Log level constants

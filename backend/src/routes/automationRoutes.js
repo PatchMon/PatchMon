@@ -224,9 +224,13 @@ router.post(
 	authenticateToken,
 	async (_req, res) => {
 		try {
+			logger.info("🧹 Collect host statistics triggered (manual run)");
 			const queue = queueManager.queues[QUEUE_NAMES.AGENT_COMMANDS];
 			const apiIds = getConnectedApiIds();
 			if (!apiIds || apiIds.length === 0) {
+				logger.info(
+					"Collect host statistics: no connected agents; nothing enqueued",
+				);
 				return res.json({ success: true, data: { enqueued: 0 } });
 			}
 			const jobs = apiIds.map((apiId) => ({
@@ -235,6 +239,9 @@ router.post(
 				opts: { attempts: 3, backoff: { type: "fixed", delay: 2000 } },
 			}));
 			await queue.addBulk(jobs);
+			logger.info(
+				`Collect host statistics: enqueued ${jobs.length} report_now job(s) for connected agents`,
+			);
 			res.json({ success: true, data: { enqueued: jobs.length } });
 		} catch (error) {
 			logger.error("Error triggering agent collection:", error);
@@ -448,6 +455,7 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 			queueManager.getRecentJobs(QUEUE_NAMES.SYSTEM_STATISTICS, 1),
 			queueManager.getRecentJobs(QUEUE_NAMES.ALERT_CLEANUP, 1),
 			queueManager.getRecentJobs(QUEUE_NAMES.HOST_STATUS_MONITOR, 1),
+			queueManager.getRecentJobs(QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP, 1),
 		]);
 
 		// Calculate overview metrics
@@ -460,7 +468,8 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 				stats[QUEUE_NAMES.DOCKER_INVENTORY_CLEANUP].delayed +
 				stats[QUEUE_NAMES.SYSTEM_STATISTICS].delayed +
 				stats[QUEUE_NAMES.ALERT_CLEANUP].delayed +
-				stats[QUEUE_NAMES.HOST_STATUS_MONITOR].delayed,
+				stats[QUEUE_NAMES.HOST_STATUS_MONITOR].delayed +
+				stats[QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP].delayed,
 
 			runningTasks:
 				stats[QUEUE_NAMES.VERSION_UPDATE_CHECK].active +
@@ -470,7 +479,8 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 				stats[QUEUE_NAMES.DOCKER_INVENTORY_CLEANUP].active +
 				stats[QUEUE_NAMES.SYSTEM_STATISTICS].active +
 				stats[QUEUE_NAMES.ALERT_CLEANUP].active +
-				stats[QUEUE_NAMES.HOST_STATUS_MONITOR].active,
+				stats[QUEUE_NAMES.HOST_STATUS_MONITOR].active +
+				stats[QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP].active,
 
 			failedTasks:
 				stats[QUEUE_NAMES.VERSION_UPDATE_CHECK].failed +
@@ -480,7 +490,8 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 				stats[QUEUE_NAMES.DOCKER_INVENTORY_CLEANUP].failed +
 				stats[QUEUE_NAMES.SYSTEM_STATISTICS].failed +
 				stats[QUEUE_NAMES.ALERT_CLEANUP].failed +
-				stats[QUEUE_NAMES.HOST_STATUS_MONITOR].failed,
+				stats[QUEUE_NAMES.HOST_STATUS_MONITOR].failed +
+				stats[QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP].failed,
 
 			totalAutomations: Object.values(stats).reduce((sum, queueStats) => {
 				return (
@@ -646,6 +657,23 @@ router.get("/overview", authenticateToken, async (_req, res) => {
 								? "Success"
 								: "Never run",
 					stats: stats[QUEUE_NAMES.HOST_STATUS_MONITOR],
+				},
+				{
+					name: "Compliance Scan Cleanup",
+					queue: QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP,
+					description:
+						"Automatically terminates compliance scans running over 3 hours",
+					schedule: "Daily at 1 AM",
+					lastRun: recentJobs[9][0]?.finishedOn
+						? new Date(recentJobs[9][0].finishedOn).toLocaleString()
+						: "Never",
+					lastRunTimestamp: recentJobs[9][0]?.finishedOn || 0,
+					status: recentJobs[9][0]?.failedReason
+						? "Failed"
+						: recentJobs[9][0]
+							? "Success"
+							: "Never run",
+					stats: stats[QUEUE_NAMES.COMPLIANCE_SCAN_CLEANUP],
 				},
 			].sort((a, b) => {
 				// Sort by last run timestamp (most recent first)

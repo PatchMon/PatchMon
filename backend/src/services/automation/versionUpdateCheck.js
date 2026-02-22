@@ -57,6 +57,9 @@ class VersionUpdateCheck {
 				compareVersions(latestVersion, currentVersion) > 0;
 
 			if (isUpdateAvailable) {
+				logger.info(
+					`📋 ${alertType}: still outdated (${currentVersion} < ${latestVersion}) - keeping alert open`,
+				);
 				// Check if alert already exists for this specific update version
 				const existingAlert = await prisma.alerts.findFirst({
 					where: {
@@ -127,7 +130,7 @@ class VersionUpdateCheck {
 
 				if (activeAlerts.length > 0) {
 					logger.info(
-						`✅ Resolving ${activeAlerts.length} active ${alertType} alert(s) - system is up to date`,
+						`📋 ${alertType}: new upgrade has been applied (${currentVersion}). Auto-resolving ${activeAlerts.length} open alert(s).`,
 					);
 					for (const alert of activeAlerts) {
 						await alertService.performAlertAction(null, alert.id, "resolved", {
@@ -268,7 +271,7 @@ class VersionUpdateCheck {
 			invalidateCache();
 
 			// ===== CREATE ALERTS =====
-			// Check server update alert
+			// Checking for open notification alerts on agent / server version ..
 			if (serverCurrentVersion && serverLatestVersion) {
 				logger.info("🔍 Checking server update alert...");
 				await this.checkAndCreateUpdateAlert(

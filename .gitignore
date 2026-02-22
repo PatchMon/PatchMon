@@ -1,3 +1,8 @@
+# CodeQL local scan
+.codeql-db/
+codeql-results.sarif
+*.sarif
+
 # Dependencies
 node_modules/
 npm-debug.log*
