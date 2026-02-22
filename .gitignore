@@ -136,6 +136,9 @@ __pycache__/
 # Binaries for programs and plugins
 *.exe
 *.exe~
+# Allow Windows agent deliverables in agents/ (served by backend)
+!agents/patchmon-agent-windows-amd64.exe
+!agents/patchmon-agent-windows-386.exe
 *.dll
 *.dylib
 
