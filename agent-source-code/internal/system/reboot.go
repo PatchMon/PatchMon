@@ -89,17 +89,22 @@ func (d *Detector) GetLatestInstalledKernel() string {
 func (d *Detector) getLatestInstalledKernel() string {
 	// Try different methods based on common distro patterns
 
-	// Method 1: Debian/Ubuntu - check /boot for vmlinuz files
+	// Method 1: Check for pacman (Arch-based systems)
+	if latest := d.getLatestKernelFromPacman(); latest != "" {
+		return latest
+	}
+
+	// Method 2: Debian/Ubuntu - check /boot for vmlinuz files
 	if latest := d.getLatestKernelFromBoot(); latest != "" {
 		return latest
 	}
 
-	// Method 2: RHEL/Fedora - use rpm to query installed kernels
+	// Method 3: RHEL/Fedora - use rpm to query installed kernels
 	if latest := d.getLatestKernelFromRPM(); latest != "" {
 		return latest
 	}
 
-	// Method 3: Try dpkg for Debian-based systems
+	// Method 4: Try dpkg for Debian-based systems
 	if latest := d.getLatestKernelFromDpkg(); latest != "" {
 		return latest
 	}
@@ -288,6 +293,38 @@ func (d *Detector) getLatestKernelFromDpkg() string {
 	for metaPkg := range metaPackages {
 		if actualVersion := d.resolveMetaPackage(metaPkg); actualVersion != "" {
 			return actualVersion
+		}
+	}
+
+	return ""
+}
+
+func (d *Detector) getLatestKernelFromPacman() string {
+	// Check if pacman command exists
+	if _, err := exec.LookPath("pacman"); err != nil {
+		return ""
+	}
+
+	cmd := exec.Command("pacman", "-Q", "linux")
+	output, err := cmd.Output()
+	if err != nil {
+		d.logger.WithError(err).Debug("Failed to query pacman for kernel packages")
+		return ""
+	}
+
+	// Parse pacman output to find kernel packages
+	// Format is "package version", e.g. "linux 6.19.3-1" or "linux-aarch64 6.19.3-1"
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		// Check if the package name starts with "linux" and just use the first that
+		// matches (Note: this breaks if you have linux and linux-lts installed)
+		if strings.HasPrefix(fields[0], "linux") {
+			return fields[1]
 		}
 	}
 
