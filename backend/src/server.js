@@ -105,6 +105,7 @@ const complianceRoutes = require("./routes/complianceRoutes");
 const { initializeOIDC } = require("./auth/oidc");
 const aiRoutes = require("./routes/aiRoutes");
 const alertRoutes = require("./routes/alertRoutes");
+const apiTokenRoutes = require("./routes/apiTokenRoutes");
 const { initSettings } = require("./services/settingsService");
 const { queueManager } = require("./services/automation");
 const {
@@ -392,6 +393,7 @@ app.use(`/api/${apiVersion}/auth/oidc`, authLimiter, oidcRoutes);
 app.use(`/api/${apiVersion}/auth/discord`, authLimiter, discordRoutes);
 app.use(`/api/${apiVersion}/hosts`, agentLimiter, hostRoutes);
 app.use(`/api/${apiVersion}/host-groups`, hostGroupRoutes);
+app.use(`/api/${apiVersion}/api-tokens`, apiTokenRoutes);
 app.use(`/api/${apiVersion}/packages`, packageRoutes);
 app.use(`/api/${apiVersion}/dashboard`, dashboardRoutes);
 app.use(`/api/${apiVersion}/permissions`, permissionsRoutes);

@@ -306,6 +306,7 @@ model users {
   dashboard_layout          dashboard_layout?
   user_sessions             user_sessions[]
   auto_enrollment_tokens    auto_enrollment_tokens[]
+  api_tokens                api_tokens[]
   release_notes_acceptances release_notes_acceptances[]
   alerts_assigned           alerts[]                @relation("AlertAssignedTo")
   alerts_resolved           alerts[]                 @relation("AlertResolvedBy")
@@ -339,6 +340,20 @@ model user_sessions {
   @@index([expires_at])
   @@index([tfa_bypass_until])
   @@index([device_fingerprint])
+}
+
+model api_tokens {
+  id           String    @id @default(uuid())
+  user_id      String
+  name         String
+  token_hash   String    @unique
+  created_at   DateTime  @default(now())
+  expires_at   DateTime?
+  last_used_at DateTime?
+  users        users     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([token_hash])
 }
 
 model auto_enrollment_tokens {

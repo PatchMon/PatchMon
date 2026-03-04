@@ -52,6 +52,7 @@ Whether you manage ten servers or ten thousand, PatchMon provides the tooling, a
 | 🎨 **Branding & Theming** | Upload custom logos and favicon. Choose from multiple colour themes and toggle between light and dark mode - per user. |
 | ⚙️ **Automation Engine** | View and trigger scheduled background jobs (version checks, session cleanup, Docker inventory, host status monitor and more) from one page. |
 | 🔗 **Integrations** | Proxmox LXC auto-enrolment, GetHomepage dashboard widget, scoped API credentials, and an Ansible dynamic inventory library. |
+| 🔑 **API Tokens** | Generate long-lived API tokens (Settings → API Tokens) for headless automation such as Ansible and CI/CD. Tokens authenticate via `Authorization: Bearer <token>` and are independently revocable with optional expiry. |
 | 📡 **REST API** | Full API under `/api/v1` with JWT authentication and interactive Swagger / OpenAPI docs at `/api-docs`. |
 | 🛡️ **Security by Design** | Outbound-only agent model (no inbound ports on monitored hosts), rate limiting on all endpoints, httpOnly cookie auth, and configurable IP allow-lists for enrolment tokens. |
 
@@ -161,7 +162,8 @@ After installation visit `http(s)://<your-domain>` and complete the first-time a
 ## Communication Model
 
 - **Outbound-only agents** - your servers initiate all connections to PatchMon; no inbound ports required on monitored hosts.
-- **JWT + httpOnly cookie authentication** on every API call.
+- **JWT + httpOnly cookie authentication** on every UI API call.
+- **Long-lived API tokens** (`patchmon_at_*`) for headless automation — accepted via `Authorization: Bearer <token>` on all host-group and host-management endpoints.
 - **Rate limiting** on general, auth and agent endpoints.
 
 ---

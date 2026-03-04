@@ -172,6 +172,13 @@ export const hostGroupsAPI = {
 	getHosts: (id) => api.get(`/host-groups/${id}/hosts`),
 };
 
+// API Tokens API (long-lived tokens for automation)
+export const apiTokensAPI = {
+	list: () => api.get("/api-tokens"),
+	create: (data) => api.post("/api-tokens", data),
+	revoke: (id) => api.delete(`/api-tokens/${id}`),
+};
+
 // Admin Users API (for user management)
 export const adminUsersAPI = {
 	list: () => api.get("/auth/admin/users"),
