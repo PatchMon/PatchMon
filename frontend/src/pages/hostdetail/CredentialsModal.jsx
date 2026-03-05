@@ -72,19 +72,21 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 		return settings?.ignore_ssl_self_signed ? "-sk" : "-s";
 	};
 
-	// Helper function to get the install URL (OS-specific for FreeBSD)
+	// Helper function to get the install URL (OS-specific)
 	const getInstallUrl = () => {
 		const base = `${serverUrl}/api/v1/hosts/install`;
 		const params = new URLSearchParams();
 		if (host?.expected_platform === "freebsd") params.set("os", "freebsd");
+		else if (host?.expected_platform === "openbsd") params.set("os", "openbsd");
 		if (forceInstall) params.set("force", "true");
 		const qs = params.toString();
 		return qs ? `${base}?${qs}` : base;
 	};
 
-	// Helper function to build the shell command suffix (no sudo on FreeBSD/pfSense)
+	// Helper function to build the shell command suffix (no sudo on BSDs)
 	const getShellCommand = () => {
-		const use_sudo = host?.expected_platform !== "freebsd";
+		const platform = host?.expected_platform;
+		const use_sudo = platform !== "freebsd" && platform !== "openbsd";
 		const base = use_sudo ? "sudo sh" : "sh";
 		return forceInstall ? `${base} -s -- --force` : base;
 	};

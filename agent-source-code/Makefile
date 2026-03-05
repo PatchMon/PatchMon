@@ -43,9 +43,16 @@ build-freebsd:
 	@GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-freebsd-amd64 ./cmd/patchmon-agent
 	@GOOS=freebsd GOARCH=arm64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-freebsd-arm64 ./cmd/patchmon-agent
 
-# Build for multiple architectures (Linux + FreeBSD)
+# Build OpenBSD binaries only (amd64, arm64)
+.PHONY: build-openbsd
+build-openbsd:
+	@mkdir -p $(BUILD_DIR)
+	@GOOS=openbsd GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-openbsd-amd64 ./cmd/patchmon-agent
+	@GOOS=openbsd GOARCH=arm64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-openbsd-arm64 ./cmd/patchmon-agent
+
+# Build for multiple architectures (Linux + FreeBSD + OpenBSD)
 .PHONY: build-all
-build-all: build-linux build-freebsd
+build-all: build-linux build-freebsd build-openbsd
 
 # Install dependencies
 .PHONY: deps

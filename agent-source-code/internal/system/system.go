@@ -106,6 +106,41 @@ func (d *Detector) isFreeBSD() bool {
 	return strings.TrimSpace(string(output)) == "FreeBSD"
 }
 
+// isOpenBSD checks if running on OpenBSD using uname -s
+func (d *Detector) isOpenBSD() bool {
+	cmd := exec.Command("uname", "-s")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(output)) == "OpenBSD"
+}
+
+// getOpenBSDInfo gets OpenBSD OS type and version
+func (d *Detector) getOpenBSDInfo() (osType, osVersion string, err error) {
+	osType = "OpenBSD"
+
+	// uname -r returns the release version (e.g. "7.5")
+	cmd := exec.Command("uname", "-r")
+	output, err := cmd.Output()
+	if err != nil {
+		d.logger.WithError(err).Warn("Failed to get OpenBSD version via uname -r")
+		return osType, "Unknown", nil
+	}
+
+	osVersion = strings.TrimSpace(string(output))
+	if osVersion == "" {
+		osVersion = "Unknown"
+	}
+
+	d.logger.WithFields(logrus.Fields{
+		"os_type":    osType,
+		"os_version": osVersion,
+	}).Debug("Detected OpenBSD system")
+
+	return osType, osVersion, nil
+}
+
 // isPfSense checks if running on pfSense (FreeBSD-based firewall)
 func (d *Detector) isPfSense() bool {
 	// pfSense uses /cf/conf/config.xml for its config; vanilla FreeBSD does not
@@ -162,7 +197,10 @@ func (d *Detector) getFreeBSDInfo() (osType, osVersion string, err error) {
 
 // DetectOS detects the operating system and version using /etc/os-release
 func (d *Detector) DetectOS() (osType, osVersion string, err error) {
-	// Check for FreeBSD first (doesn't have /etc/os-release)
+	// Check for BSDs first (they don't have /etc/os-release)
+	if d.isOpenBSD() {
+		return d.getOpenBSDInfo()
+	}
 	if d.isFreeBSD() {
 		if d.isPfSense() {
 			return d.getPfSenseInfo()
@@ -315,8 +353,8 @@ func (d *Detector) GetKernelVersion() string {
 
 // getSELinuxStatus gets SELinux status using file reading
 func (d *Detector) getSELinuxStatus() string {
-	// FreeBSD doesn't use SELinux (uses MAC framework instead)
-	if d.isFreeBSD() {
+	// BSDs don't use SELinux
+	if d.isFreeBSD() || d.isOpenBSD() {
 		return constants.SELinuxDisabled
 	}
 

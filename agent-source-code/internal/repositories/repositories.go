@@ -19,6 +19,7 @@ type Manager struct {
 	apkManager     *APKManager
 	pacmanManager  *PacmanManager
 	freebsdManager *FreeBSDManager
+	openbsdManager *OpenBSDManager
 }
 
 // New creates a new repository manager
@@ -30,6 +31,7 @@ func New(logger *logrus.Logger) *Manager {
 		apkManager:     NewAPKManager(logger),
 		pacmanManager:  NewPacmanManager(logger),
 		freebsdManager: NewFreeBSDManager(logger),
+		openbsdManager: NewOpenBSDManager(logger),
 	}
 }
 
@@ -51,6 +53,8 @@ func (m *Manager) GetRepositories() ([]models.Repository, error) {
 		return m.pacmanManager.GetRepositories()
 	case "pkg":
 		return m.freebsdManager.GetRepositories()
+	case "pkg_info":
+		return m.openbsdManager.GetRepositories()
 	default:
 		m.logger.WithField("package_manager", packageManager).Warn("Unsupported package manager")
 		return []models.Repository{}, nil
@@ -59,6 +63,19 @@ func (m *Manager) GetRepositories() ([]models.Repository, error) {
 
 // detectPackageManager detects which package manager is available on the system
 func (m *Manager) detectPackageManager() string {
+	// OpenBSD: pkg_info is the package tool
+	if runtime.GOOS == "openbsd" {
+		if _, err := exec.LookPath("pkg_info"); err == nil {
+			return "pkg_info"
+		}
+	}
+	if _, err := exec.LookPath("pkg_info"); err == nil {
+		if output, err := exec.Command("uname", "-s").Output(); err == nil {
+			if strings.TrimSpace(string(output)) == "OpenBSD" {
+				return "pkg_info"
+			}
+		}
+	}
 	// Check for FreeBSD pkg first. When the agent runs as rc.d service, PATH may be minimal.
 	if runtime.GOOS == "freebsd" {
 		for _, pkgPath := range []string{"/usr/sbin/pkg", "/usr/local/sbin/pkg"} {

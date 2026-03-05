@@ -38,6 +38,8 @@ class AgentVersionService {
 			"linux-arm",
 			"freebsd-amd64",
 			"freebsd-arm64",
+			"openbsd-amd64",
+			"openbsd-arm64",
 		];
 		this.currentVersion = null;
 		this.latestVersion = null;

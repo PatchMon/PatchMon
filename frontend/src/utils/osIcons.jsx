@@ -12,6 +12,7 @@ import {
 	SiFedora,
 	SiFreebsd,
 	SiGentoo,
+	SiOpenbsd,
 	SiKalilinux,
 	SiLinux,
 	SiLinuxmint,
@@ -116,6 +117,9 @@ export const getOSIcon = (osType) => {
 
 	// FreeBSD
 	if (os.includes("freebsd")) return SiFreebsd;
+
+	// OpenBSD
+	if (os.includes("openbsd")) return SiOpenbsd;
 
 	// Default fallback
 	return Monitor;
@@ -228,6 +232,9 @@ export const getOSDisplayName = (osType) => {
 
 	// FreeBSD
 	if (os.includes("freebsd")) return "FreeBSD";
+
+	// OpenBSD
+	if (os.includes("openbsd")) return "OpenBSD";
 
 	// Return original if no match
 	return osType;
