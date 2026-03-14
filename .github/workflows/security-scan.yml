@@ -50,6 +50,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Node
+        if: matrix.working-dir == 'server-source-code'
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: "package.json"
+          cache: "npm"
+
+      - name: Build frontend for embed
+        if: matrix.working-dir == 'server-source-code'
+        run: |
+          npm ci
+          npm run build --workspace=frontend
+          mkdir -p server-source-code/cmd/server/static/frontend
+          cp -r frontend/dist server-source-code/cmd/server/static/frontend/
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:

@@ -43,13 +43,22 @@ jobs:
   lint:
     name: Lint (server)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: server-source-code
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: "package.json"
+          cache: "npm"
+
+      - name: Build frontend for embed
+        run: |
+          npm ci
+          npm run build --workspace=frontend
+          mkdir -p server-source-code/cmd/server/static/frontend
+          cp -r frontend/dist server-source-code/cmd/server/static/frontend/
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -65,13 +74,22 @@ jobs:
   fmt-check:
     name: Format Check (server)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: server-source-code
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: "package.json"
+          cache: "npm"
+
+      - name: Build frontend for embed
+        run: |
+          npm ci
+          npm run build --workspace=frontend
+          mkdir -p server-source-code/cmd/server/static/frontend
+          cp -r frontend/dist server-source-code/cmd/server/static/frontend/
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -79,6 +97,7 @@ jobs:
           go-version-file: "server-source-code/go.mod"
 
       - name: Check formatting
+        working-directory: server-source-code
         run: |
           unformatted=$(gofmt -l . 2>/dev/null)
           if [ -n "$unformatted" ]; then
