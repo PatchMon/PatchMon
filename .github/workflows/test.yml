@@ -12,13 +12,23 @@ jobs:
   test:
     name: Test (server)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: server-source-code
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: "package.json"
+          cache: "npm"
+
+      - name: Build frontend for embed
+        run: |
+          npm ci
+          npm run build --workspace=frontend
+          mkdir -p server-source-code/cmd/server/static/frontend
+          cp -r frontend/dist server-source-code/cmd/server/static/frontend/
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -26,12 +36,15 @@ jobs:
           go-version-file: "server-source-code/go.mod"
 
       - name: Download dependencies
+        working-directory: server-source-code
         run: go mod download
 
       - name: Run tests
+        working-directory: server-source-code
         run: go test -v -race -coverprofile=coverage.out ./...
 
       - name: Generate coverage report
+        working-directory: server-source-code
         run: go tool cover -html=coverage.out -o coverage.html
 
       - name: Upload coverage report
