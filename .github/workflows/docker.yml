@@ -1,5 +1,7 @@
 name: Build and Push Docker Images
 
+# pull_request_target: needed for fork PRs to receive secrets when approved via label.
+# Same-repo PRs run automatically; fork PRs run only when labeled "approved-for-build".
 on:
   push:
     branches:
@@ -7,6 +9,7 @@ on:
     tags:
       - 'v*'
   pull_request_target:
+    types: [opened, synchronize, labeled]
   workflow_dispatch:
     inputs:
       push:
@@ -28,6 +31,11 @@ jobs:
   build-agents:
     name: Build agent binaries
     runs-on: ubuntu-latest
+    # Same-repo PRs: always run. Fork PRs: run only when maintainer adds "approved-for-build" label.
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      contains(join(github.event.pull_request.labels.*.name, ', '), 'approved-for-build')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5

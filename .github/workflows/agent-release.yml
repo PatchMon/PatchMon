@@ -32,6 +32,10 @@ jobs:
             goarch: '386'
           - goos: freebsd
             goarch: 'arm'
+          - goos: windows
+            goarch: 'amd64'
+          - goos: windows
+            goarch: 'arm64'
 
     steps:
       - name: Checkout code
@@ -54,41 +58,52 @@ jobs:
           GOARM: ${{ (matrix.goos == 'linux' || matrix.goos == 'freebsd') && matrix.goarch == 'arm' && '6' || '' }}
           CGO_ENABLED: 0
         run: |
-          OUTPUT_NAME="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
+          OUTPUT_BASE="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
+          OUTPUT_NAME="${OUTPUT_BASE}${{ matrix.goos == 'windows' && '.exe' || '' }}"
           go build -buildvcs=false -ldflags="-s -w -X patchmon-agent/internal/pkgversion.Version=${{ github.event.release.tag_name }}" -o "${OUTPUT_NAME}" ./cmd/patchmon-agent
 
       - name: Verify binary exists and is executable
         working-directory: agent-source-code
         run: |
-          OUTPUT_NAME="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
+          OUTPUT_BASE="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
+          OUTPUT_NAME="${OUTPUT_BASE}${{ matrix.goos == 'windows' && '.exe' || '' }}"
           if [ ! -f "${OUTPUT_NAME}" ]; then
             echo "❌ Error: Binary ${OUTPUT_NAME} was not created"
             exit 1
           fi
-          chmod +x "${OUTPUT_NAME}"
+          [ "${{ matrix.goos }}" != "windows" ] && chmod +x "${OUTPUT_NAME}" || true
           ls -lh "${OUTPUT_NAME}"
           echo "✅ Binary ${OUTPUT_NAME} created successfully"
 
       - name: Verify binary architecture and type
         working-directory: agent-source-code
         run: |
-          OUTPUT_NAME="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
+          OUTPUT_BASE="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
+          OUTPUT_NAME="${OUTPUT_BASE}${{ matrix.goos == 'windows' && '.exe' || '' }}"
           echo "📋 Binary information:"
           file "${OUTPUT_NAME}"
 
-          # Verify it's a Linux binary (for linux builds)
+          # Verify it's a Linux/FreeBSD binary (ELF format)
           if [ "${{ matrix.goos }}" = "linux" ] || [ "${{ matrix.goos }}" = "freebsd" ]; then
             if ! file "${OUTPUT_NAME}" | grep -qE "(ELF|Linux)"; then
               echo "❌ Error: Binary is not a Linux/FreeBSD binary (expected ELF format)"
               exit 1
             fi
             echo "✅ Verified: ${{ matrix.goos }} binary (ELF format)"
+          # Verify it's a Windows binary (PE format)
+          elif [ "${{ matrix.goos }}" = "windows" ]; then
+            if ! file "${OUTPUT_NAME}" | grep -qE "(PE32|Windows)"; then
+              echo "❌ Error: Binary is not a Windows binary (expected PE format)"
+              exit 1
+            fi
+            echo "✅ Verified: Windows binary (PE format)"
           fi
 
       - name: Test binary basic functionality
         working-directory: agent-source-code
         run: |
-          OUTPUT_NAME="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
+          OUTPUT_BASE="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
+          OUTPUT_NAME="${OUTPUT_BASE}${{ matrix.goos == 'windows' && '.exe' || '' }}"
 
           # Test version command (if available)
           if [ "${{ matrix.goos }}" = "linux" ] && [ "${{ matrix.goarch }}" = "amd64" ]; then
@@ -140,7 +155,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.release.tag_name }}
-          files: agent-source-code/patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+          files: agent-source-code/patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
 
       - name: Build summary
         run: |
