@@ -2,7 +2,7 @@ patchmon-server
 patchmon-server-*
 migrate-linux-*
 server-source-code/migrate
-server
+/server
 *.exe
 *.exe~
 *.dll

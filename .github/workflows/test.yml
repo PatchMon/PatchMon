@@ -112,6 +112,13 @@ jobs:
         with:
           go-version-file: "server-source-code/go.mod"
 
+      - name: Verify server source structure
+        run: |
+          echo "=== server-source-code structure ==="
+          ls -la server-source-code/ || true
+          echo "=== cmd/server contents ==="
+          ls -la server-source-code/cmd/server/ 2>/dev/null || echo "cmd/server not found or empty"
+
       - name: Build
         working-directory: server-source-code
         env:
