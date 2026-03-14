@@ -27,6 +27,7 @@ import (
 	"patchmon-agent/internal/integrations"
 	"patchmon-agent/internal/integrations/compliance"
 	"patchmon-agent/internal/integrations/docker"
+	"patchmon-agent/internal/logsafe"
 	"patchmon-agent/internal/packages"
 	"patchmon-agent/internal/pkgversion"
 	"patchmon-agent/internal/system"
@@ -358,17 +359,17 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 				if err := toggleIntegration(m.integrationName, m.integrationEnabled); err != nil {
 					logger.WithError(err).Warn("integration_toggle failed")
 				} else {
-					logger.WithFields(map[string]interface{}{
+					logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 						"integration": m.integrationName,
 						"enabled":     m.integrationEnabled,
-					}).Info("Integration toggled successfully, service will restart")
+					})).Info("Integration toggled successfully, service will restart")
 				}
 			case "compliance_scan":
-				logger.WithFields(map[string]interface{}{
+				logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 					"profile_type":       m.profileType,
 					"profile_id":         m.profileID,
 					"enable_remediation": m.enableRemediation,
-				}).Info("Running on-demand compliance scan...")
+				})).Info("Running on-demand compliance scan...")
 				go func(msg wsMsg) {
 					ctx, cancel := context.WithCancel(context.Background())
 					complianceScanCancelMu.Lock()
@@ -430,20 +431,20 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					}
 				}()
 			case "remediate_rule":
-				logger.WithField("rule_id", m.ruleID).Info("Remediating single rule...")
+				logger.WithField("rule_id", logsafe.SanitizeForLog(m.ruleID)).Info("Remediating single rule...")
 				go func(ruleID string) {
 					if err := remediateSingleRule(ruleID); err != nil {
-						logger.WithError(err).WithField("rule_id", ruleID).Warn("remediate_rule failed")
+						logger.WithError(err).WithField("rule_id", logsafe.SanitizeForLog(ruleID)).Warn("remediate_rule failed")
 					} else {
-						logger.WithField("rule_id", ruleID).Info("Single rule remediation completed")
+						logger.WithField("rule_id", logsafe.SanitizeForLog(ruleID)).Info("Single rule remediation completed")
 					}
 				}(m.ruleID)
 			case "docker_image_scan":
-				logger.WithFields(map[string]interface{}{
+				logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 					"image_name":      m.imageName,
 					"container_name":  m.containerName,
 					"scan_all_images": m.scanAllImages,
-				}).Info("Running Docker image CVE scan...")
+				})).Info("Running Docker image CVE scan...")
 				go func(msg wsMsg) {
 					if err := runDockerImageScan(msg.imageName, msg.containerName, msg.scanAllImages); err != nil {
 						logger.WithError(err).Warn("docker_image_scan failed")
@@ -452,7 +453,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					}
 				}(m)
 			case "set_compliance_mode":
-				logger.WithField("mode", m.complianceMode).Info("Setting compliance mode...")
+				logger.WithField("mode", logsafe.SanitizeForLog(m.complianceMode)).Info("Setting compliance mode...")
 				// Convert string mode to ComplianceMode type
 				var mode config.ComplianceMode
 				switch m.complianceMode {
@@ -463,13 +464,13 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 				case "enabled":
 					mode = config.ComplianceEnabled
 				default:
-					logger.WithField("mode", m.complianceMode).Warn("Invalid compliance mode, ignoring")
+					logger.WithField("mode", logsafe.SanitizeForLog(m.complianceMode)).Warn("Invalid compliance mode, ignoring")
 					continue
 				}
 				if err := cfgManager.SetComplianceMode(mode); err != nil {
 					logger.WithError(err).Warn("Failed to set compliance mode")
 				} else {
-					logger.WithField("mode", m.complianceMode).Info("Compliance mode updated in config.yml")
+					logger.WithField("mode", logsafe.SanitizeForLog(m.complianceMode)).Info("Compliance mode updated in config.yml")
 				}
 			case "apply_config":
 				if err := applyConfig(m.applyConfig); err != nil {
@@ -492,7 +493,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					logger.WithField("mode", string(mode)).Info("Compliance mode updated in config.yml (from legacy on-demand-only)")
 				}
 			case "ssh_proxy":
-				logger.WithField("session_id", m.sshProxySessionID).Info("Handling SSH proxy connection request")
+				logger.WithField("session_id", logsafe.SanitizeForLog(m.sshProxySessionID)).Info("Handling SSH proxy connection request")
 				globalWsConnMu.RLock()
 				wsConn := globalWsConn
 				globalWsConnMu.RUnlock()
@@ -521,7 +522,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					handleSSHProxyDisconnect(m, wsConn)
 				}
 			case "rdp_proxy":
-				logger.WithField("session_id", m.rdpProxySessionID).Info("Handling RDP proxy connection request")
+				logger.WithField("session_id", logsafe.SanitizeForLog(m.rdpProxySessionID)).Info("Handling RDP proxy connection request")
 				globalWsConnMu.RLock()
 				wsConn := globalWsConn
 				globalWsConnMu.RUnlock()
@@ -735,7 +736,7 @@ func remediateSingleRule(ruleID string) error {
 		return fmt.Errorf("rule ID is required")
 	}
 
-	logger.WithField("rule_id", ruleID).Info("Starting single rule remediation")
+	logger.WithField("rule_id", logsafe.SanitizeForLog(ruleID)).Info("Starting single rule remediation")
 
 	// Create compliance integration to run remediation
 	complianceInteg := compliance.New(logger)
@@ -755,17 +756,17 @@ func remediateSingleRule(ruleID string) error {
 		EnableRemediation: true,
 	}
 
-	logger.WithFields(map[string]interface{}{
+	logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 		"profile_id": options.ProfileID,
 		"rule_id":    options.RuleID,
-	}).Info("Running single rule remediation with oscap")
+	})).Info("Running single rule remediation with oscap")
 
 	_, err := complianceInteg.CollectWithOptions(ctx, options)
 	if err != nil {
 		return fmt.Errorf("remediation failed: %w", err)
 	}
 
-	logger.WithField("rule_id", ruleID).Info("Single rule remediation completed successfully")
+	logger.WithField("rule_id", logsafe.SanitizeForLog(ruleID)).Info("Single rule remediation completed successfully")
 	return nil
 }
 
@@ -1165,7 +1166,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		_ = wsURL // URL is already in correct format, no action needed
 	} else {
 		// No protocol prefix - assume HTTPS and use WSS
-		logger.WithField("server", server).Warn("Server URL missing protocol prefix, assuming HTTPS")
+		logger.WithField("server", logsafe.SanitizeForLog(server)).Warn("Server URL missing protocol prefix, assuming HTTPS")
 		wsURL = "wss://" + wsURL
 	}
 	if strings.HasSuffix(wsURL, "/") {
@@ -1227,7 +1228,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 	// SECURITY: Limit WebSocket message size to prevent DoS attacks (64KB max)
 	conn.SetReadLimit(64 * 1024)
 
-	logger.WithField("url", wsURL).Info("WebSocket connected")
+	logger.WithField("url", logsafe.SanitizeForLog(wsURL)).Info("WebSocket connected")
 
 	// Store connection globally for SSH proxy handlers
 	globalWsConnMu.Lock()
@@ -1324,10 +1325,10 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 					logger.WithError(err).Debug("Failed to send compliance progress via WebSocket")
 					return
 				}
-				logger.WithFields(map[string]interface{}{
+				logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 					"phase":   progress.Phase,
 					"message": progress.Message,
-				}).Debug("Sent compliance progress update via WebSocket")
+				})).Debug("Sent compliance progress update via WebSocket")
 			}
 		}
 	}()
@@ -1337,7 +1338,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		if err != nil {
 			return err
 		}
-		logger.WithField("raw_message", string(data)).Debug("WebSocket message received")
+		logger.WithField("raw_message", logsafe.SanitizeForLog(string(data))).Debug("WebSocket message received")
 		var payload struct {
 			Type                 string                 `json:"type"`
 			UpdateInterval       int                    `json:"update_interval"`
@@ -1379,10 +1380,10 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 			DryRun       bool     `json:"dry_run"`
 		}
 		if err := json.Unmarshal(data, &payload); err != nil {
-			logger.WithError(err).WithField("data", string(data)).Warn("Failed to parse WebSocket message")
+			logger.WithError(err).WithField("data", logsafe.SanitizeForLog(string(data))).Warn("Failed to parse WebSocket message")
 			continue
 		}
-		logger.WithField("type", payload.Type).Debug("Parsed WebSocket message type")
+		logger.WithField("type", logsafe.SanitizeForLog(payload.Type)).Debug("Parsed WebSocket message type")
 		switch payload.Type {
 		case "settings_update":
 			logger.WithField("interval", payload.UpdateInterval).Info("settings_update received")
@@ -1409,7 +1410,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				patchType = "patch_all"
 			}
 			if patchType != "patch_all" && patchType != "patch_package" {
-				logger.WithField("patch_type", patchType).Warn("Invalid patch_type in run_patch")
+				logger.WithField("patch_type", logsafe.SanitizeForLog(patchType)).Warn("Invalid patch_type in run_patch")
 				continue
 			}
 			var packageNames []string
@@ -1418,7 +1419,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 					if validAptPackagePattern.MatchString(n) {
 						packageNames = append(packageNames, n)
 					} else {
-						logger.WithError(fmt.Errorf("invalid package name")).WithField("package_name", n).Warn("Invalid package name in run_patch package_names")
+						logger.WithError(fmt.Errorf("invalid package name")).WithField("package_name", logsafe.SanitizeForLog(n)).Warn("Invalid package name in run_patch package_names")
 					}
 				}
 				if len(packageNames) == 0 {
@@ -1429,19 +1430,19 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				if validAptPackagePattern.MatchString(payload.PackageName) {
 					packageNames = []string{payload.PackageName}
 				} else {
-					logger.WithError(fmt.Errorf("invalid package name")).WithField("package_name", payload.PackageName).Warn("Invalid package_name in run_patch")
+					logger.WithError(fmt.Errorf("invalid package name")).WithField("package_name", logsafe.SanitizeForLog(payload.PackageName)).Warn("Invalid package_name in run_patch")
 					continue
 				}
 			} else if patchType == "patch_package" {
 				logger.Warn("run_patch patch_package requires package_name or package_names")
 				continue
 			}
-			logger.WithFields(map[string]interface{}{
+			logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 				"patch_run_id":  payload.PatchRunID,
 				"patch_type":    patchType,
 				"package_names": packageNames,
 				"dry_run":       payload.DryRun,
-			}).Info("run_patch received")
+			})).Info("run_patch received")
 			out <- wsMsg{
 				kind:         "run_patch",
 				patchRunID:   payload.PatchRunID,
@@ -1450,21 +1451,21 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				dryRun:       payload.DryRun,
 			}
 		case "update_notification":
-			logger.WithFields(map[string]interface{}{
+			logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 				"version": payload.Version,
 				"force":   payload.Force,
 				"message": payload.Message,
-			}).Info("update_notification received")
+			})).Info("update_notification received")
 			out <- wsMsg{
 				kind:    "update_notification",
 				version: payload.Version,
 				force:   payload.Force,
 			}
 		case "integration_toggle":
-			logger.WithFields(map[string]interface{}{
+			logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 				"integration": payload.Integration,
 				"enabled":     payload.Enabled,
-			}).Info("integration_toggle received")
+			})).Info("integration_toggle received")
 			out <- wsMsg{
 				kind:               "integration_toggle",
 				integrationName:    payload.Integration,
@@ -1473,18 +1474,18 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		case "compliance_scan":
 			// Validate profile ID to prevent command injection
 			if err := validateProfileID(payload.ProfileID); err != nil {
-				logger.WithError(err).WithField("profile_id", payload.ProfileID).Warn("Invalid profile ID in compliance_scan message")
+				logger.WithError(err).WithField("profile_id", logsafe.SanitizeForLog(payload.ProfileID)).Warn("Invalid profile ID in compliance_scan message")
 				continue
 			}
 			profileType := payload.ProfileType
 			if profileType == "" {
 				profileType = "all"
 			}
-			logger.WithFields(map[string]interface{}{
+			logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 				"profile_type":       profileType,
 				"profile_id":         payload.ProfileID,
 				"enable_remediation": payload.EnableRemediation,
-			}).Info("compliance_scan received")
+			})).Info("compliance_scan received")
 			out <- wsMsg{
 				kind:                 "compliance_scan",
 				profileType:          profileType,
@@ -1507,26 +1508,26 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		case "remediate_rule":
 			// Validate rule ID to prevent command injection
 			if err := validateRuleID(payload.RuleID); err != nil {
-				logger.WithError(err).WithField("rule_id", payload.RuleID).Warn("Invalid rule ID in remediate_rule message")
+				logger.WithError(err).WithField("rule_id", logsafe.SanitizeForLog(payload.RuleID)).Warn("Invalid rule ID in remediate_rule message")
 				continue
 			}
-			logger.WithField("rule_id", payload.RuleID).Info("remediate_rule received")
+			logger.WithField("rule_id", logsafe.SanitizeForLog(payload.RuleID)).Info("remediate_rule received")
 			out <- wsMsg{kind: "remediate_rule", ruleID: payload.RuleID}
 		case "docker_image_scan":
 			// Validate Docker image and container names to prevent command injection
 			if err := validateDockerImageName(payload.ImageName); err != nil {
-				logger.WithError(err).WithField("image_name", payload.ImageName).Warn("Invalid image name in docker_image_scan message")
+				logger.WithError(err).WithField("image_name", logsafe.SanitizeForLog(payload.ImageName)).Warn("Invalid image name in docker_image_scan message")
 				continue
 			}
 			if err := validateDockerContainerName(payload.ContainerName); err != nil {
-				logger.WithError(err).WithField("container_name", payload.ContainerName).Warn("Invalid container name in docker_image_scan message")
+				logger.WithError(err).WithField("container_name", logsafe.SanitizeForLog(payload.ContainerName)).Warn("Invalid container name in docker_image_scan message")
 				continue
 			}
-			logger.WithFields(map[string]interface{}{
+			logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 				"image_name":      payload.ImageName,
 				"container_name":  payload.ContainerName,
 				"scan_all_images": payload.ScanAllImages,
-			}).Info("docker_image_scan received")
+			})).Info("docker_image_scan received")
 			out <- wsMsg{
 				kind:          "docker_image_scan",
 				imageName:     payload.ImageName,
@@ -1534,11 +1535,11 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				scanAllImages: payload.ScanAllImages,
 			}
 		case "set_compliance_mode":
-			logger.WithField("mode", payload.Mode).Info("set_compliance_mode received")
+			logger.WithField("mode", logsafe.SanitizeForLog(payload.Mode)).Info("set_compliance_mode received")
 			// Validate mode
 			validModes := map[string]bool{"disabled": true, "on-demand": true, "enabled": true}
 			if !validModes[payload.Mode] {
-				logger.WithField("mode", payload.Mode).Warn("Invalid compliance mode, ignoring")
+				logger.WithField("mode", logsafe.SanitizeForLog(payload.Mode)).Warn("Invalid compliance mode, ignoring")
 				continue
 			}
 			out <- wsMsg{
@@ -1604,12 +1605,12 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				}
 				continue
 			}
-			logger.WithFields(map[string]interface{}{
+			logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 				"session_id": payload.SessionID,
 				"host":       payload.Host,
 				"port":       payload.Port,
 				"username":   payload.Username,
-			}).Info("ssh_proxy received")
+			})).Info("ssh_proxy received")
 			out <- wsMsg{
 				kind:               "ssh_proxy",
 				sshProxySessionID:  payload.SessionID,
@@ -1678,7 +1679,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				rdpHost = "localhost"
 			}
 			if err := validateSSHProxyHost(rdpHost); err != nil {
-				logger.WithError(err).WithField("host", payload.Host).Warn("Invalid RDP proxy host")
+				logger.WithError(err).WithField("host", logsafe.SanitizeForLog(payload.Host)).Warn("Invalid RDP proxy host")
 				globalWsConnMu.RLock()
 				wsConn := globalWsConn
 				globalWsConnMu.RUnlock()
@@ -1691,11 +1692,11 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 			if port < 1 || port > 65535 {
 				port = 3389
 			}
-			logger.WithFields(map[string]interface{}{
+			logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 				"session_id": payload.SessionID,
 				"host":       rdpHost,
 				"port":       port,
-			}).Info("rdp_proxy received")
+			})).Info("rdp_proxy received")
 			out <- wsMsg{
 				kind:              "rdp_proxy",
 				rdpProxySessionID: payload.SessionID,
@@ -1723,7 +1724,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 			}
 		default:
 			if payload.Type != "" && payload.Type != "connected" {
-				logger.WithField("type", payload.Type).Warn("Unknown WebSocket message type")
+				logger.WithField("type", logsafe.SanitizeForLog(payload.Type)).Warn("Unknown WebSocket message type")
 			}
 		}
 	}
@@ -2138,13 +2139,13 @@ func applyConfig(cfg map[string]interface{}) error {
 				mode = config.ComplianceOnDemand
 			}
 		default:
-			logger.WithField("compliance", complianceVal).Warn("Unknown compliance value type, skipping")
+			logger.WithField("compliance", logsafe.SanitizeForLog(fmt.Sprintf("%v", complianceVal))).Warn("Unknown compliance value type, skipping")
 		}
 		if mode != "" {
 			if err := cfgManager.SetComplianceMode(mode); err != nil {
 				return fmt.Errorf("set compliance mode: %w", err)
 			}
-			logger.WithField("mode", mode).Info("Compliance mode updated")
+			logger.WithField("mode", logsafe.SanitizeForLog(string(mode))).Info("Compliance mode updated")
 		}
 	}
 
@@ -2184,10 +2185,10 @@ func applyConfig(cfg map[string]interface{}) error {
 
 // toggleIntegration toggles an integration on or off and restarts the service
 func toggleIntegration(integrationName string, enabled bool) error {
-	logger.WithFields(map[string]interface{}{
+	logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 		"integration": integrationName,
 		"enabled":     enabled,
-	}).Info("Toggling integration")
+	})).Info("Toggling integration")
 
 	// Handle compliance tools installation/removal
 	if integrationName == "compliance" {
@@ -2487,7 +2488,7 @@ func toggleIntegration(integrationName string, enabled bool) error {
 			logger.WithError(err).Warn("Failed to restart service (this is not critical)")
 			return fmt.Errorf("failed to restart service: %w, output: %s", err, string(output))
 		}
-		logger.WithField("output", string(output)).Debug("Service restart command completed")
+		logger.WithField("output", logsafe.SanitizeForLog(string(output))).Debug("Service restart command completed")
 		logger.Info("Service restarted successfully")
 		return nil
 	} else if runtime.GOOS == "freebsd" {
@@ -2800,10 +2801,10 @@ func runComplianceScanWithOptions(ctx context.Context, options *models.Complianc
 		return fmt.Errorf("compliance integration is not enabled")
 	}
 
-	logger.WithFields(map[string]interface{}{
+	logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 		"profile_id":         options.ProfileID,
 		"enable_remediation": options.EnableRemediation,
-	}).Info("Starting on-demand compliance scan")
+	})).Info("Starting on-demand compliance scan")
 
 	// Send progress: started
 	sendComplianceProgress("started", profileName, "Initializing compliance scan...", 5, "")
@@ -2873,7 +2874,7 @@ func runComplianceScanWithOptions(ctx context.Context, options *models.Complianc
 		for _, r := range scan.Results {
 			statusCounts[r.Status]++
 		}
-		logger.WithFields(map[string]interface{}{
+		logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 			"scan_index":      i,
 			"profile_name":    scan.ProfileName,
 			"profile_type":    scan.ProfileType,
@@ -2883,7 +2884,7 @@ func runComplianceScanWithOptions(ctx context.Context, options *models.Complianc
 			"scan_failed":     scan.Failed,
 			"scan_warnings":   scan.Warnings,
 			"scan_skipped":    scan.Skipped,
-		}).Info("DEBUG: Compliance payload scan details before sending")
+		})).Info("DEBUG: Compliance payload scan details before sending")
 	}
 
 	// Send to server
@@ -2919,11 +2920,11 @@ func runComplianceScanWithOptions(ctx context.Context, options *models.Complianc
 
 // runDockerImageScan runs a CVE scan on Docker images using oscap-docker
 func runDockerImageScan(imageName, containerName string, scanAllImages bool) error {
-	logger.WithFields(map[string]interface{}{
+	logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 		"image_name":      imageName,
 		"container_name":  containerName,
 		"scan_all_images": scanAllImages,
-	}).Info("Starting Docker image CVE scan")
+	})).Info("Starting Docker image CVE scan")
 
 	// Check if Docker integration is enabled
 	if !cfgManager.IsIntegrationEnabled("docker") {
@@ -3132,12 +3133,12 @@ func handleSSHProxy(m wsMsg, conn *websocket.Conn) {
 		username = "root"
 	}
 
-	logger.WithFields(map[string]interface{}{
+	logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 		"session_id": sessionID,
 		"host":       host,
 		"port":       port,
 		"username":   username,
-	}).Info("Establishing SSH proxy connection")
+	})).Info("Establishing SSH proxy connection")
 
 	// Create SSH client config
 	config := &ssh.ClientConfig{
@@ -3353,7 +3354,7 @@ func handleSSHProxyInput(m wsMsg, _ *websocket.Conn) {
 	sshProxySessionsMu.RUnlock()
 
 	if !exists {
-		logger.WithField("session_id", m.sshProxySessionID).Warn("SSH proxy session not found for input")
+		logger.WithField("session_id", logsafe.SanitizeForLog(m.sshProxySessionID)).Warn("SSH proxy session not found for input")
 		return
 	}
 
@@ -3374,7 +3375,7 @@ func handleSSHProxyResize(m wsMsg, _ *websocket.Conn) {
 	sshProxySessionsMu.RUnlock()
 
 	if !exists {
-		logger.WithField("session_id", m.sshProxySessionID).Warn("SSH proxy session not found for resize")
+		logger.WithField("session_id", logsafe.SanitizeForLog(m.sshProxySessionID)).Warn("SSH proxy session not found for resize")
 		return
 	}
 
@@ -3407,7 +3408,7 @@ func handleSSHProxyDisconnect(m wsMsg, conn *websocket.Conn) {
 		return
 	}
 
-	logger.WithField("session_id", m.sshProxySessionID).Info("Closing SSH proxy session")
+	logger.WithField("session_id", logsafe.SanitizeForLog(m.sshProxySessionID)).Info("Closing SSH proxy session")
 
 	// Close stdin
 	if proxySession.stdin != nil {
@@ -3495,11 +3496,11 @@ func handleRDPProxy(m wsMsg, conn *websocket.Conn) {
 		port = 3389
 	}
 
-	logger.WithFields(map[string]interface{}{
+	logger.WithFields(logsafe.SanitizeMap(map[string]interface{}{
 		"session_id": sessionID,
 		"host":       host,
 		"port":       port,
-	}).Info("Establishing RDP proxy connection")
+	})).Info("Establishing RDP proxy connection")
 
 	address := net.JoinHostPort(host, strconv.Itoa(port))
 	tcpConn, err := net.DialTimeout("tcp", address, 15*time.Second)
@@ -3560,7 +3561,7 @@ func handleRDPProxyInput(m wsMsg, _ *websocket.Conn) {
 	rdpProxySessionsMu.RUnlock()
 
 	if !exists {
-		logger.WithField("session_id", m.rdpProxySessionID).Warn("RDP proxy session not found for input")
+		logger.WithField("session_id", logsafe.SanitizeForLog(m.rdpProxySessionID)).Warn("RDP proxy session not found for input")
 		return
 	}
 
@@ -3591,11 +3592,11 @@ func handleRDPProxyDisconnect(m wsMsg, conn *websocket.Conn) {
 	rdpProxySessionsMu.Unlock()
 
 	if !exists {
-		logger.WithField("session_id", sessionID).Debug("RDP proxy session already closed")
+		logger.WithField("session_id", logsafe.SanitizeForLog(sessionID)).Debug("RDP proxy session already closed")
 		return
 	}
 
-	logger.WithField("session_id", sessionID).Info("Closing RDP proxy session")
+	logger.WithField("session_id", logsafe.SanitizeForLog(sessionID)).Info("Closing RDP proxy session")
 
 	if proxySession.tcpConn != nil {
 		if err := proxySession.tcpConn.Close(); err != nil {
