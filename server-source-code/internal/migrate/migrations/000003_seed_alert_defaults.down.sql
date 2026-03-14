@@ -1,0 +1,5 @@
+-- Rollback for alert seed data.
+-- We do not DELETE the seeded rows: they may have been customized by users,
+-- and Prisma-migrated DBs may have had this data from the legacy migration.
+-- Re-running the up migration is idempotent (ON CONFLICT DO NOTHING).
+-- No-op.

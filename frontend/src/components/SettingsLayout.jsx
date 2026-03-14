@@ -8,19 +8,22 @@ import {
 	Code,
 	Folder,
 	Image,
+	KeyRound,
 	RefreshCw,
 	Settings,
 	Shield,
 	UserCircle,
 	Users,
+	Variable,
 	Wrench,
 } from "lucide-react";
 import { useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import DiscordIcon from "./DiscordIcon";
 
 const SettingsLayout = ({ children }) => {
+	const content = children ?? <Outlet />;
 	const location = useLocation();
 	const { canManageSettings, canViewUsers, canManageUsers } = useAuth();
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -31,25 +34,40 @@ const SettingsLayout = ({ children }) => {
 
 		// Users section
 		if (canViewUsers() || canManageUsers()) {
+			const userItems = [
+				{
+					name: "Users",
+					href: "/settings/users",
+					icon: Users,
+				},
+				{
+					name: "Roles",
+					href: "/settings/roles",
+					icon: Shield,
+				},
+				{
+					name: "My Profile",
+					href: "/settings/profile",
+					icon: UserCircle,
+				},
+			];
+			if (canManageSettings()) {
+				userItems.push(
+					{
+						name: "Discord Auth",
+						href: "/settings/discord-auth",
+						icon: DiscordIcon,
+					},
+					{
+						name: "OIDC / SSO",
+						href: "/settings/oidc-auth",
+						icon: KeyRound,
+					},
+				);
+			}
 			nav.push({
 				section: "User Management",
-				items: [
-					{
-						name: "Users",
-						href: "/settings/users",
-						icon: Users,
-					},
-					{
-						name: "Roles",
-						href: "/settings/roles",
-						icon: Shield,
-					},
-					{
-						name: "My Profile",
-						href: "/settings/profile",
-						icon: UserCircle,
-					},
-				],
+				items: userItems,
 			});
 		}
 
@@ -93,12 +111,6 @@ const SettingsLayout = ({ children }) => {
 						icon: Bell,
 						comingSoon: true,
 					},
-					{
-						name: "Notifications",
-						href: "/settings/notifications",
-						icon: Bell,
-						comingSoon: true,
-					},
 				],
 			});
 		}
@@ -134,11 +146,6 @@ const SettingsLayout = ({ children }) => {
 						href: "/settings/ai-terminal",
 						icon: Bot,
 					},
-					{
-						name: "Discord Auth",
-						href: "/settings/discord-auth",
-						icon: DiscordIcon,
-					},
 				],
 			});
 
@@ -146,9 +153,14 @@ const SettingsLayout = ({ children }) => {
 				section: "Server",
 				items: [
 					{
-						name: "URL Config",
+						name: "Server URL",
 						href: "/settings/server-url",
 						icon: Wrench,
+					},
+					{
+						name: "Environment",
+						href: "/settings/environment",
+						icon: Variable,
 					},
 					{
 						name: "Branding",
@@ -210,7 +222,7 @@ const SettingsLayout = ({ children }) => {
 				<div className="md:hidden mb-4">
 					<label
 						htmlFor="settings-select"
-						className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2"
+						className="block text-sm font-medium text-secondary-700 dark:text-white mb-2"
 					>
 						Settings Section
 					</label>
@@ -242,7 +254,7 @@ const SettingsLayout = ({ children }) => {
 								<button
 									type="button"
 									onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-									className="p-1 text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300 rounded transition-colors"
+									className="p-1 text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300 rounded transition-colors"
 									title={
 										sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
 									}
@@ -263,7 +275,7 @@ const SettingsLayout = ({ children }) => {
 										{secondaryNavigation.map((item) => (
 											<li key={item.section}>
 												{!sidebarCollapsed && (
-													<h4 className="text-xs font-semibold text-secondary-500 dark:text-secondary-300 uppercase tracking-wider mb-2">
+													<h4 className="text-xs font-semibold text-secondary-500 dark:text-white uppercase tracking-wider mb-2">
 														{item.section}
 													</h4>
 												)}
@@ -307,7 +319,7 @@ const SettingsLayout = ({ children }) => {
 																				className={`block px-3 py-1 text-xs font-medium rounded transition-colors ${
 																					isActive(subTab.href)
 																						? "bg-primary-100 dark:bg-primary-700 text-primary-700 dark:text-primary-200"
-																						: "text-secondary-600 dark:text-secondary-400 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
+																						: "text-secondary-600 dark:text-white hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
 																				}`}
 																			>
 																				{subTab.name}
@@ -330,7 +342,7 @@ const SettingsLayout = ({ children }) => {
 					{/* Right content */}
 					<section className="flex-1 min-w-0">
 						<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4">
-							{children}
+							{content}
 						</div>
 					</section>
 				</div>

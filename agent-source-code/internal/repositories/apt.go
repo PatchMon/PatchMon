@@ -81,8 +81,10 @@ func (m *APTManager) GetRepositories() ([]models.Repository, error) {
 func (m *APTManager) findAptListFiles() ([]string, error) {
 	var listFiles []string
 
-	// Add main sources.list file
-	listFiles = append(listFiles, "/etc/apt/sources.list")
+	// Add main sources.list file if it exists (absent on Debian 13+ which uses Deb822 exclusively)
+	if _, err := os.Stat("/etc/apt/sources.list"); err == nil {
+		listFiles = append(listFiles, "/etc/apt/sources.list")
+	}
 
 	// Add .list files from sources.list.d
 	sourcesDir := "/etc/apt/sources.list.d"

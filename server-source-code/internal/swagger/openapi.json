@@ -1,0 +1,1614 @@
+{
+	"openapi": "3.0.3",
+	"info": {
+		"title": "PatchMon Integration API",
+		"version": "1.0.0",
+		"description": "PatchMon API documentation for integrations. Covers scoped credentials, GetHomepage widget, agent endpoints, and auto-enrollment. For full application documentation, see: https://docs.patchmon.net/books/patchmon-application-documentation/page/integration-api-documentation"
+	},
+	"servers": [
+		{
+			"url": "/api/v1",
+			"description": "API base path"
+		}
+	],
+	"components": {
+		"securitySchemes": {
+			"basicAuth": {
+				"type": "http",
+				"scheme": "basic",
+				"description": "Basic Auth using API credentials (token_key:token_secret). Used for Scoped API and GetHomepage endpoints."
+			},
+			"apiKeyAuth": {
+				"type": "apiKey",
+				"in": "header",
+				"name": "X-API-ID",
+				"description": "Agent API ID (host api_id). Used with X-API-KEY for agent/integration endpoints."
+			},
+			"apiKeySecret": {
+				"type": "apiKey",
+				"in": "header",
+				"name": "X-API-KEY",
+				"description": "Agent API key. Used with X-API-ID for agent/integration endpoints."
+			},
+			"autoEnrollmentKey": {
+				"type": "apiKey",
+				"in": "header",
+				"name": "X-Auto-Enrollment-Key",
+				"description": "Auto-enrollment token key. Used with X-Auto-Enrollment-Secret."
+			},
+			"autoEnrollmentSecret": {
+				"type": "apiKey",
+				"in": "header",
+				"name": "X-Auto-Enrollment-Secret",
+				"description": "Auto-enrollment token secret."
+			}
+		}
+	},
+	"tags": [
+		{
+			"name": "Scoped API - Hosts",
+			"description": "Endpoints using scoped credentials (Basic Auth, integration_type api)"
+		},
+		{
+			"name": "GetHomepage",
+			"description": "Widget statistics for GetHomepage dashboard (Basic Auth, integration_type gethomepage)"
+		},
+		{
+			"name": "Agent / Install",
+			"description": "Agent installation and lifecycle (X-API-ID, X-API-KEY)"
+		},
+		{
+			"name": "Integrations",
+			"description": "Docker and integration status (X-API-ID, X-API-KEY)"
+		},
+		{
+			"name": "Auto-enrollment",
+			"description": "Host enrollment and script (token in headers or query)"
+		}
+	],
+	"paths": {
+		"/api/hosts": {
+			"get": {
+				"tags": ["Scoped API - Hosts"],
+				"summary": "List hosts with IP, groups, and optional stats",
+				"description": "Retrieve a list of all hosts with their IP addresses and associated host groups. Use include=stats to add package update counts (updates_count, security_updates_count, total_packages) to each host. Requires Basic Auth with scoped credentials (host:get permission).",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "hostgroup",
+						"in": "query",
+						"description": "Filter by host group name(s) or UUID(s). Comma-separated.",
+						"schema": { "type": "string" }
+					},
+					{
+						"name": "include",
+						"in": "query",
+						"description": "Comma-separated. Supported: stats (adds updates_count, security_updates_count, total_packages, needs_reboot, os_type, os_version, last_update, status).",
+						"schema": { "type": "string" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"hosts": [
+										{
+											"id": "550e8400-e29b-41d4-a716-446655440000",
+											"friendly_name": "web-server-1",
+											"hostname": "web1",
+											"ip": "192.168.1.10",
+											"host_groups": [{ "id": "g1", "name": "Production" }],
+											"updates_count": 5,
+											"security_updates_count": 2,
+											"total_packages": 342,
+											"needs_reboot": false,
+											"os_type": "Ubuntu",
+											"os_version": "22.04",
+											"last_update": "2025-03-01T12:00:00Z",
+											"status": "online"
+										}
+									],
+									"total": 1
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": { "example": { "error": "Unauthorized" } }
+						}
+					},
+					"403": {
+						"description": "Forbidden",
+						"content": {
+							"application/json": { "example": { "error": "Forbidden" } }
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/stats": {
+			"get": {
+				"tags": ["Scoped API - Hosts"],
+				"summary": "Get host statistics",
+				"description": "Retrieve package and repository statistics for a specific host. Requires Basic Auth (host:get).",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "format": "uuid" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"host_id": "550e8400-e29b-41d4-a716-446655440000",
+									"total_installed_packages": 342,
+									"outdated_packages": 5,
+									"security_updates": 2,
+									"total_repos": 4
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": { "example": { "error": "Unauthorized" } }
+						}
+					},
+					"403": {
+						"description": "Forbidden",
+						"content": {
+							"application/json": { "example": { "error": "Forbidden" } }
+						}
+					},
+					"404": {
+						"description": "Not Found",
+						"content": {
+							"application/json": { "example": { "error": "Host not found" } }
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/info": {
+			"get": {
+				"tags": ["Scoped API - Hosts"],
+				"summary": "Get detailed host information",
+				"description": "Retrieve detailed information about a specific host including OS details, hostname, IP, and host groups. Requires Basic Auth (host:get).",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "format": "uuid" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"id": "550e8400-e29b-41d4-a716-446655440000",
+									"machine_id": "abc123",
+									"friendly_name": "web-server-1",
+									"hostname": "web1",
+									"ip": "192.168.1.10",
+									"os_type": "Ubuntu",
+									"os_version": "22.04",
+									"agent_version": "1.4.5",
+									"host_groups": [{ "id": "g1", "name": "Production" }]
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": { "example": { "error": "Unauthorized" } }
+						}
+					},
+					"403": {
+						"description": "Forbidden",
+						"content": {
+							"application/json": { "example": { "error": "Forbidden" } }
+						}
+					},
+					"404": {
+						"description": "Not Found",
+						"content": {
+							"application/json": { "example": { "error": "Host not found" } }
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/network": {
+			"get": {
+				"tags": ["Scoped API - Hosts"],
+				"summary": "Get host network information",
+				"description": "Retrieve network configuration details for a specific host. Requires Basic Auth (host:get).",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "format": "uuid" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"id": "550e8400-e29b-41d4-a716-446655440000",
+									"ip": "192.168.1.10",
+									"gateway_ip": "192.168.1.1",
+									"dns_servers": ["8.8.8.8", "8.8.4.4"],
+									"network_interfaces": [
+										{ "name": "eth0", "address": "192.168.1.10" }
+									]
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": { "example": { "error": "Unauthorized" } }
+						}
+					},
+					"403": {
+						"description": "Forbidden",
+						"content": {
+							"application/json": { "example": { "error": "Forbidden" } }
+						}
+					},
+					"404": {
+						"description": "Not Found",
+						"content": {
+							"application/json": { "example": { "error": "Host not found" } }
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/system": {
+			"get": {
+				"tags": ["Scoped API - Hosts"],
+				"summary": "Get host system information",
+				"description": "Retrieve system-level information for a specific host including architecture, kernel, CPU, RAM, disk. Requires Basic Auth (host:get).",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "format": "uuid" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"id": "550e8400-e29b-41d4-a716-446655440000",
+									"architecture": "amd64",
+									"kernel_version": "5.15.0-91-generic",
+									"installed_kernel_version": "5.15.0-91-generic",
+									"selinux_status": "disabled",
+									"system_uptime": "15 days",
+									"cpu_model": "Intel Xeon",
+									"cpu_cores": 4,
+									"ram_installed": 8192,
+									"swap_size": 2048,
+									"load_average": { "1": 0.5, "5": 0.4, "15": 0.3 },
+									"disk_details": [],
+									"needs_reboot": false,
+									"reboot_reason": ""
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": { "example": { "error": "Unauthorized" } }
+						}
+					},
+					"403": {
+						"description": "Forbidden",
+						"content": {
+							"application/json": { "example": { "error": "Forbidden" } }
+						}
+					},
+					"404": {
+						"description": "Not Found",
+						"content": {
+							"application/json": { "example": { "error": "Host not found" } }
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/packages": {
+			"get": {
+				"tags": ["Scoped API - Hosts"],
+				"summary": "Get host packages",
+				"description": "Retrieve the list of packages installed on a specific host. Use updates_only=true to return only packages with available updates. Requires Basic Auth (host:get).",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "format": "uuid" }
+					},
+					{
+						"name": "updates_only",
+						"in": "query",
+						"description": "If true, return only packages with available updates. Default: false.",
+						"schema": { "type": "boolean" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"host": {
+										"id": "550e8400-e29b-41d4-a716-446655440000",
+										"hostname": "web1",
+										"friendly_name": "web-server-1"
+									},
+									"packages": [
+										{
+											"id": "pkg-uuid",
+											"name": "openssl",
+											"description": "Secure Socket Layer",
+											"category": "security",
+											"current_version": "3.0.2",
+											"available_version": "3.0.5",
+											"needs_update": true,
+											"is_security_update": true,
+											"last_checked": "2025-03-01T12:00:00Z"
+										}
+									],
+									"total": 1
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": { "example": { "error": "Unauthorized" } }
+						}
+					},
+					"403": {
+						"description": "Forbidden",
+						"content": {
+							"application/json": { "example": { "error": "Forbidden" } }
+						}
+					},
+					"404": {
+						"description": "Not Found",
+						"content": {
+							"application/json": { "example": { "error": "Host not found" } }
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/package_reports": {
+			"get": {
+				"tags": ["Scoped API - Hosts"],
+				"summary": "Get host package update reports",
+				"description": "Retrieve package update history reports for a specific host. Requires Basic Auth (host:get).",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "format": "uuid" }
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"description": "Maximum number of reports to return. Default: 10, max: 100.",
+						"schema": { "type": "integer" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"host_id": "550e8400-e29b-41d4-a716-446655440000",
+									"reports": [
+										{
+											"id": "rpt-uuid",
+											"status": "success",
+											"date": "2025-03-01T12:00:00Z",
+											"total_packages": 342,
+											"outdated_packages": 5,
+											"security_updates": 2,
+											"payload_kb": 12.5,
+											"execution_time_seconds": 45.2,
+											"error_message": null
+										}
+									],
+									"total": 1
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": { "example": { "error": "Unauthorized" } }
+						}
+					},
+					"403": {
+						"description": "Forbidden",
+						"content": {
+							"application/json": { "example": { "error": "Forbidden" } }
+						}
+					},
+					"404": {
+						"description": "Not Found",
+						"content": {
+							"application/json": { "example": { "error": "Host not found" } }
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/agent_queue": {
+			"get": {
+				"tags": ["Scoped API - Hosts"],
+				"summary": "Get host agent queue status",
+				"description": "Retrieve agent queue status and job history for a specific host. Requires Basic Auth (host:get).",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "format": "uuid" }
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"description": "Maximum number of jobs to return in job_history. Default: 10, max: 100.",
+						"schema": { "type": "integer" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"host_id": "550e8400-e29b-41d4-a716-446655440000",
+									"queue_status": {
+										"waiting": 0,
+										"active": 1,
+										"delayed": 0,
+										"failed": 0
+									},
+									"job_history": [
+										{
+											"id": "job-uuid",
+											"job_id": "asynq-job-id",
+											"job_name": "fetch_report",
+											"status": "completed",
+											"attempt": 1,
+											"created_at": "2025-03-01T12:00:00Z",
+											"completed_at": "2025-03-01T12:01:00Z",
+											"error_message": null,
+											"output": null
+										}
+									],
+									"total_jobs": 1
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": { "example": { "error": "Unauthorized" } }
+						}
+					},
+					"403": {
+						"description": "Forbidden",
+						"content": {
+							"application/json": { "example": { "error": "Forbidden" } }
+						}
+					},
+					"404": {
+						"description": "Not Found",
+						"content": {
+							"application/json": { "example": { "error": "Host not found" } }
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/notes": {
+			"get": {
+				"tags": ["Scoped API - Hosts"],
+				"summary": "Get host notes",
+				"description": "Retrieve notes associated with a specific host. Requires Basic Auth (host:get).",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "format": "uuid" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"host_id": "550e8400-e29b-41d4-a716-446655440000",
+									"notes": "Production web server - handle with care"
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": { "example": { "error": "Unauthorized" } }
+						}
+					},
+					"403": {
+						"description": "Forbidden",
+						"content": {
+							"application/json": { "example": { "error": "Forbidden" } }
+						}
+					},
+					"404": {
+						"description": "Not Found",
+						"content": {
+							"application/json": { "example": { "error": "Host not found" } }
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}/integrations": {
+			"get": {
+				"tags": ["Scoped API - Hosts"],
+				"summary": "Get host integrations status",
+				"description": "Retrieve integration status and details for a specific host (e.g., Docker). Requires Basic Auth (host:get).",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "format": "uuid" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"host_id": "550e8400-e29b-41d4-a716-446655440000",
+									"integrations": {
+										"docker": {
+											"enabled": true,
+											"description": "Monitor Docker containers, images, volumes, and networks.",
+											"containers_count": 5,
+											"volumes_count": 3,
+											"networks_count": 2
+										}
+									}
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": { "example": { "error": "Unauthorized" } }
+						}
+					},
+					"403": {
+						"description": "Forbidden",
+						"content": {
+							"application/json": { "example": { "error": "Forbidden" } }
+						}
+					},
+					"404": {
+						"description": "Not Found",
+						"content": {
+							"application/json": { "example": { "error": "Host not found" } }
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/hosts/{id}": {
+			"delete": {
+				"tags": ["Scoped API - Hosts"],
+				"summary": "Delete a host",
+				"description": "Delete a specific host and all related data (cascade). Requires Basic Auth with scoped credentials (host:delete permission).",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "format": "uuid" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"message": "Host deleted successfully",
+									"deleted": {
+										"id": "550e8400-e29b-41d4-a716-446655440000",
+										"friendly_name": "web-server-1",
+										"hostname": "web1"
+									}
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Bad Request",
+						"content": {
+							"application/json": {
+								"example": { "error": "Invalid host ID format" }
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": { "example": { "error": "Unauthorized" } }
+						}
+					},
+					"403": {
+						"description": "Forbidden",
+						"content": {
+							"application/json": { "example": { "error": "Forbidden" } }
+						}
+					},
+					"404": {
+						"description": "Not Found",
+						"content": {
+							"application/json": { "example": { "error": "Host not found" } }
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/gethomepage/stats": {
+			"get": {
+				"tags": ["GetHomepage"],
+				"summary": "Get homepage widget statistics",
+				"description": "Returns widget statistics for GetHomepage dashboard (total hosts, outdated packages, security updates, OS distribution, etc.). Requires Basic Auth with GetHomepage credentials.",
+				"security": [{ "basicAuth": [] }],
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"total_hosts": 42,
+									"total_outdated_packages": 156,
+									"total_repos": 12,
+									"hosts_needing_updates": 8,
+									"up_to_date_hosts": 34,
+									"security_updates": 23,
+									"hosts_with_security_updates": 5,
+									"recent_updates_24h": 3,
+									"os_distribution": [
+										{ "name": "Ubuntu", "count": 25 },
+										{ "name": "Debian", "count": 12 }
+									],
+									"top_os_1_name": "Ubuntu",
+									"top_os_1_count": 25,
+									"top_os_2_name": "Debian",
+									"top_os_2_count": 12,
+									"top_os_3_name": "None",
+									"top_os_3_count": 0,
+									"last_updated": "2025-03-01T12:00:00Z"
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": { "example": { "error": "Unauthorized" } }
+						}
+					},
+					"403": {
+						"description": "Forbidden",
+						"content": {
+							"application/json": { "example": { "error": "Forbidden" } }
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/gethomepage/health": {
+			"get": {
+				"tags": ["GetHomepage"],
+				"summary": "GetHomepage health check",
+				"description": "Simple health check for the GetHomepage API. Requires Basic Auth with GetHomepage credentials.",
+				"security": [{ "basicAuth": [] }],
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"status": "ok",
+									"timestamp": "2025-03-01T12:00:00Z",
+									"api_key": "GetHomepage Widget"
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": { "example": { "error": "Unauthorized" } }
+						}
+					},
+					"403": {
+						"description": "Forbidden",
+						"content": {
+							"application/json": { "example": { "error": "Forbidden" } }
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/hosts/install": {
+			"get": {
+				"tags": ["Agent / Install"],
+				"summary": "Get agent install script",
+				"description": "Returns the PatchMon agent installation script. Requires X-API-ID and X-API-KEY headers.",
+				"parameters": [
+					{
+						"name": "X-API-ID",
+						"in": "header",
+						"required": true,
+						"schema": { "type": "string" }
+					},
+					{
+						"name": "X-API-KEY",
+						"in": "header",
+						"required": true,
+						"schema": { "type": "string" }
+					},
+					{ "name": "force", "in": "query", "schema": { "type": "string" } },
+					{ "name": "arch", "in": "query", "schema": { "type": "string" } }
+				],
+				"responses": {
+					"200": {
+						"description": "OK - Returns text/plain shell script with env vars and bootstrap token"
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": {
+								"example": { "error": "API credentials required" }
+							}
+						}
+					},
+					"404": {
+						"description": "Not Found",
+						"content": {
+							"application/json": {
+								"example": { "error": "Installation script not found" }
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/hosts/agent/version": {
+			"get": {
+				"tags": ["Agent / Install"],
+				"summary": "Get agent version info",
+				"description": "Returns available agent version. Requires X-API-ID and X-API-KEY for authenticated hosts.",
+				"parameters": [
+					{
+						"name": "X-API-ID",
+						"in": "header",
+						"schema": { "type": "string" }
+					},
+					{
+						"name": "X-API-KEY",
+						"in": "header",
+						"schema": { "type": "string" }
+					},
+					{ "name": "arch", "in": "query", "schema": { "type": "string" } },
+					{ "name": "type", "in": "query", "schema": { "type": "string" } },
+					{
+						"name": "currentVersion",
+						"in": "query",
+						"schema": { "type": "string" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"currentVersion": "1.4.4",
+									"latestVersion": "1.4.5",
+									"hasUpdate": true,
+									"autoUpdateDisabled": false,
+									"autoUpdateDisabledReason": "",
+									"downloadUrl": "/api/v1/hosts/agent/download?arch=amd64&os=linux",
+									"releaseNotes": "PatchMon Agent v1.4.5",
+									"minServerVersion": null,
+									"architecture": "amd64",
+									"agentType": "go",
+									"hash": "sha256-hex-hash"
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": {
+								"example": { "error": "API credentials required" }
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/hosts/agent/download": {
+			"get": {
+				"tags": ["Agent / Install"],
+				"summary": "Download agent binary",
+				"description": "Downloads the agent binary for the host architecture. Requires X-API-ID and X-API-KEY.",
+				"parameters": [
+					{
+						"name": "X-API-ID",
+						"in": "header",
+						"required": true,
+						"schema": { "type": "string" }
+					},
+					{
+						"name": "X-API-KEY",
+						"in": "header",
+						"required": true,
+						"schema": { "type": "string" }
+					},
+					{ "name": "force", "in": "query", "schema": { "type": "string" } },
+					{ "name": "arch", "in": "query", "schema": { "type": "string" } }
+				],
+				"responses": {
+					"200": {
+						"description": "OK - Returns application/octet-stream (agent binary)"
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": {
+								"example": { "error": "API credentials required" }
+							}
+						}
+					},
+					"404": {
+						"description": "Not Found",
+						"content": {
+							"application/json": {
+								"example": { "error": "Agent binary not found for linux/amd64" }
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/hosts/ping": {
+			"post": {
+				"tags": ["Agent / Install"],
+				"summary": "Agent ping",
+				"description": "Agent heartbeat / ping. Requires X-API-ID and X-API-KEY.",
+				"parameters": [
+					{
+						"name": "X-API-ID",
+						"in": "header",
+						"required": true,
+						"schema": { "type": "string" }
+					},
+					{
+						"name": "X-API-KEY",
+						"in": "header",
+						"required": true,
+						"schema": { "type": "string" }
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"triggerCrontabUpdate": { "type": "boolean" },
+									"req": { "type": "object" }
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"message": "Ping successful",
+									"timestamp": "2025-03-01T12:00:00Z",
+									"friendlyName": "web-server-1",
+									"agentStartup": true,
+									"integrations": { "docker": true, "compliance": false }
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": {
+								"example": { "error": "API credentials required" }
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/hosts/update": {
+			"post": {
+				"tags": ["Agent / Install"],
+				"summary": "Agent update",
+				"description": "Trigger or report agent update. Requires X-API-ID and X-API-KEY.",
+				"parameters": [
+					{
+						"name": "X-API-ID",
+						"in": "header",
+						"required": true,
+						"schema": { "type": "string" }
+					},
+					{
+						"name": "X-API-KEY",
+						"in": "header",
+						"required": true,
+						"schema": { "type": "string" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"message": "Host updated successfully",
+									"packagesProcessed": 342,
+									"updatesAvailable": 5,
+									"securityUpdates": 2
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": {
+								"example": { "error": "API credentials required" }
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/hosts/bootstrap/exchange": {
+			"post": {
+				"tags": ["Agent / Install"],
+				"summary": "Bootstrap token exchange",
+				"description": "Exchange a bootstrap token for host credentials. Uses token in request body.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"token": { "type": "string" }
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"apiId": "host-api-id-here",
+									"apiKey": "generated-api-key-here"
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Bad Request",
+						"content": {
+							"application/json": {
+								"example": { "error": "Bootstrap token required" }
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": {
+								"example": { "error": "Invalid or expired bootstrap token" }
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/hosts/integrations": {
+			"get": {
+				"tags": ["Integrations"],
+				"summary": "Get agent integration status",
+				"description": "Returns integration status for the agent. Requires X-API-ID and X-API-KEY.",
+				"parameters": [
+					{
+						"name": "X-API-ID",
+						"in": "header",
+						"required": true,
+						"schema": { "type": "string" }
+					},
+					{
+						"name": "X-API-KEY",
+						"in": "header",
+						"required": true,
+						"schema": { "type": "string" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"success": true,
+									"integrations": { "docker": true, "compliance": false },
+									"compliance_mode": "disabled",
+									"compliance_openscap_enabled": false,
+									"compliance_docker_bench_enabled": false
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": {
+								"example": { "error": "API credentials required" }
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/integrations/docker": {
+			"post": {
+				"tags": ["Integrations"],
+				"summary": "Submit Docker data",
+				"description": "Submit Docker container/image data from the agent. Requires X-API-ID and X-API-KEY.",
+				"parameters": [
+					{
+						"name": "X-API-ID",
+						"in": "header",
+						"required": true,
+						"schema": { "type": "string" }
+					},
+					{
+						"name": "X-API-KEY",
+						"in": "header",
+						"required": true,
+						"schema": { "type": "string" }
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"containers": { "type": "array" },
+									"images": { "type": "array" }
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"message": "Docker data collected successfully",
+									"containers_received": 5,
+									"images_received": 12,
+									"volumes_received": 3,
+									"networks_received": 2,
+									"updates_found": 1
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": {
+								"example": { "error": "API credentials required" }
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/hosts/integration-status": {
+			"post": {
+				"tags": ["Integrations"],
+				"summary": "Submit integration status",
+				"description": "Submit integration status from the agent. Requires X-API-ID and X-API-KEY.",
+				"parameters": [
+					{
+						"name": "X-API-ID",
+						"in": "header",
+						"required": true,
+						"schema": { "type": "string" }
+					},
+					{
+						"name": "X-API-KEY",
+						"in": "header",
+						"required": true,
+						"schema": { "type": "string" }
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": { "type": "object" }
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"success": true,
+									"message": "Integration status received"
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": {
+								"example": { "error": "API credentials required" }
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/auto-enrollment/script": {
+			"get": {
+				"tags": ["Auto-enrollment"],
+				"summary": "Get enrollment script",
+				"description": "Returns the auto-enrollment script. Authenticate via token_key and token_secret query params, or X-Auto-Enrollment-Key and X-Auto-Enrollment-Secret headers.",
+				"parameters": [
+					{
+						"name": "token_key",
+						"in": "query",
+						"schema": { "type": "string" }
+					},
+					{
+						"name": "token_secret",
+						"in": "query",
+						"schema": { "type": "string" }
+					},
+					{
+						"name": "type",
+						"in": "query",
+						"description": "Script type (e.g. direct-host, proxmox-lxc)",
+						"schema": { "type": "string" }
+					},
+					{ "name": "force", "in": "query", "schema": { "type": "string" } }
+				],
+				"responses": {
+					"200": {
+						"description": "OK - Returns text/plain shell script (direct-host or proxmox-lxc)"
+					},
+					"400": {
+						"description": "Bad Request",
+						"content": {
+							"application/json": {
+								"example": {
+									"error": "Script type required as query parameter (e.g., ?type=proxmox-lxc or ?type=direct-host)"
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": {
+								"example": { "error": "Invalid or inactive token" }
+							}
+						}
+					},
+					"404": {
+						"description": "Not Found",
+						"content": {
+							"application/json": {
+								"example": {
+									"error": "Enrollment script not found: invalid-type"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/auto-enrollment/enroll": {
+			"post": {
+				"tags": ["Auto-enrollment"],
+				"summary": "Enroll a host",
+				"description": "Enroll a new host. Requires X-Auto-Enrollment-Key and X-Auto-Enrollment-Secret headers.",
+				"parameters": [
+					{
+						"name": "X-Auto-Enrollment-Key",
+						"in": "header",
+						"required": true,
+						"schema": { "type": "string" }
+					},
+					{
+						"name": "X-Auto-Enrollment-Secret",
+						"in": "header",
+						"required": true,
+						"schema": { "type": "string" }
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"friendly_name": { "type": "string" },
+									"machine_id": { "type": "string" }
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Created",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"message": "Host enrolled successfully",
+									"host": {
+										"id": "550e8400-e29b-41d4-a716-446655440000",
+										"friendly_name": "new-host",
+										"api_id": "generated-api-id",
+										"api_key": "generated-api-key",
+										"host_group": {
+											"id": "g1",
+											"name": "Production",
+											"color": "#3b82f6"
+										},
+										"status": "active"
+									}
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Bad Request",
+						"content": {
+							"application/json": { "example": { "error": "Invalid request" } }
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": {
+								"example": { "error": "Invalid or inactive token" }
+							}
+						}
+					},
+					"403": {
+						"description": "Forbidden",
+						"content": {
+							"application/json": {
+								"example": {
+									"error": "IP address not authorized for this token"
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Too Many Requests",
+						"content": {
+							"application/json": {
+								"example": {
+									"error": "Rate limit exceeded",
+									"message": "Maximum hosts per day allowed for this token"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

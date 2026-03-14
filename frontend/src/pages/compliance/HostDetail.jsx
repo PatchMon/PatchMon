@@ -10,17 +10,27 @@ import {
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import HostComplianceDetail from "../../components/compliance/HostComplianceDetail";
+import { useToast } from "../../contexts/ToastContext";
 import { dashboardAPI } from "../../utils/api";
 import { complianceAPI } from "../../utils/complianceApi";
 
 const ComplianceHostDetail = () => {
 	const { id } = useParams();
 	const queryClient = useQueryClient();
+	const toast = useToast();
 
 	const triggerScanMutation = useMutation({
 		mutationFn: () => complianceAPI.triggerScan(id, { profile_type: "all" }),
-		onSuccess: () => {
+		onSuccess: (response) => {
+			const msg = response?.data?.message || "Compliance scan triggered";
+			const jobId = response?.data?.job_id || response?.data?.jobId;
+			toast.success(jobId ? `${msg} — Job ID: ${jobId}` : msg);
 			queryClient.invalidateQueries({ queryKey: ["compliance-latest", id] });
+			queryClient.invalidateQueries({ queryKey: ["compliance-active-scans"] });
+		},
+		onError: (error) => {
+			const errorMsg = error.response?.data?.error || error.message;
+			toast.error(`Failed to start scan: ${errorMsg}`);
 		},
 	});
 
@@ -141,7 +151,7 @@ const ComplianceHostDetail = () => {
 									{triggerScanMutation.isPending ? "Scanning…" : "Run Scan"}
 								</button>
 							</div>
-							<p className="mt-1 text-sm text-secondary-600 dark:text-secondary-400">
+							<p className="mt-1 text-sm text-secondary-600 dark:text-white">
 								{host.ip} &middot; Compliance Overview
 							</p>
 						</div>
@@ -152,7 +162,7 @@ const ComplianceHostDetail = () => {
 							className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${
 								ws_status?.connected
 									? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
-									: "bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-400"
+									: "bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-white"
 							}`}
 						>
 							<span

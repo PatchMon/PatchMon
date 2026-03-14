@@ -43,7 +43,7 @@ const LastScanAgeBar = ({ data }) => {
 					{has_data ? (
 						<Doughnut data={chart_data} options={options} />
 					) : (
-						<div className="flex items-center justify-center h-full text-secondary-500 dark:text-secondary-400 text-sm">
+						<div className="flex items-center justify-center h-full text-secondary-500 dark:text-white text-sm">
 							No scan data yet
 						</div>
 					)}

@@ -1,24 +1,22 @@
 {
 	"name": "patchmon",
-	"version": "1.4.2",
+	"version": "1.4.7",
 	"description": "Linux Patch Monitoring System",
 	"license": "AGPL-3.0",
 	"private": true,
 	"workspaces": [
-		"backend",
 		"frontend"
 	],
 	"scripts": {
-		"install:all": "npm install && npm run install:backend && npm run install:frontend",
-		"install:backend": "cd backend && npm install",
+		"install:all": "npm install && npm run install:frontend",
 		"install:frontend": "cd frontend && npm install",
 		"prepare": "lefthook install",
-		"dev:backend": "cd backend && npm run dev",
+		"dev:server": "cd server-source-code && go run ./cmd/server",
 		"dev:frontend": "cd frontend && npm run dev",
-		"dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
-		"build:backend": "cd backend && npm run build",
+		"dev": "concurrently \"npm run dev:server\" \"npm run dev:frontend\"",
+		"build:server": "cd server-source-code && make build",
 		"build:frontend": "cd frontend && npm run build",
-		"build": "npm run build:backend && npm run build:frontend",
+		"build": "npm run build:frontend",
 		"format": "biome format --write .",
 		"format:check": "biome format .",
 		"lint": "biome check .",
@@ -26,18 +24,20 @@
 		"audit": "npm audit --audit-level=high",
 		"audit:all": "npm audit",
 		"outdated": "npm outdated --long",
+		"vuln:go": "bash -c '(cd server-source-code && govulncheck ./...) && (cd agent-source-code && govulncheck ./...)'",
+		"vuln": "npm run audit && npm run vuln:go",
 		"security:secrets": "docker run --rm -v \"${PWD}:/repo\" zricethezav/gitleaks:latest detect --source /repo --no-git",
 		"security:codeql": "bash -c 'command -v codeql >/dev/null 2>&1 || { echo \"CodeQL CLI not found. Install from https://github.com/github/codeql-action#running-codeql-cli-in-your-ci-system\"; exit 1; }; rm -rf .codeql-db; codeql database create .codeql-db --language=javascript --source-root=. && codeql database analyze .codeql-db javascript-security-extended --format=sarif-latest --output=codeql-results.sarif && echo \"Results in codeql-results.sarif\"'",
 		"security": "npm run security:secrets && npm run security:codeql"
 	},
 	"overrides": {
-		"minimatch": "10.2.2",
+		"minimatch": "10.2.4",
 		"glob": "13.0.6",
 		"filelist": {
-			"minimatch": "10.2.2"
+			"minimatch": "10.2.4"
 		},
 		"test-exclude": {
-			"minimatch": "10.2.2"
+			"minimatch": "10.2.4"
 		},
 		"esbuild": "0.25.12"
 	},
@@ -45,7 +45,7 @@
 		"@biomejs/biome": "^2.4.3",
 		"concurrently": "^8.2.2",
 		"lefthook": "^1.13.4",
-		"minimatch": "10.2.2"
+		"minimatch": "10.2.4"
 	},
 	"engines": {
 		"node": ">=18.0.0"

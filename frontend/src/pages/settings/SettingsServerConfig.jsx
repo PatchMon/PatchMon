@@ -1,7 +1,6 @@
 import { Code, Image, Server } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import SettingsLayout from "../../components/SettingsLayout";
 import BrandingTab from "../../components/settings/BrandingTab";
 import ProtocolUrlTab from "../../components/settings/ProtocolUrlTab";
 import VersionUpdateTab from "../../components/settings/VersionUpdateTab";
@@ -37,7 +36,7 @@ const SettingsServerConfig = () => {
 	const tabs = [
 		{
 			id: "protocol",
-			name: "URL Config",
+			name: "Server URL",
 			icon: Server,
 			href: "/settings/server-url",
 		},
@@ -69,39 +68,38 @@ const SettingsServerConfig = () => {
 	};
 
 	return (
-		<SettingsLayout>
-			<div className="space-y-6">
-				{/* Tab Navigation */}
-				<div className="border-b border-secondary-200 dark:border-secondary-600">
-					<nav className="-mb-px flex space-x-8">
-						{tabs.map((tab) => {
-							const Icon = tab.icon;
-							return (
-								<button
-									type="button"
-									key={tab.id}
-									onClick={() => {
-										setActiveTab(tab.id);
-										navigate(tab.href);
-									}}
-									className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${
-										activeTab === tab.id
-											? "border-primary-500 text-primary-600 dark:text-primary-400"
-											: "border-transparent text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:border-secondary-300 dark:hover:border-secondary-500"
-									}`}
-								>
-									<Icon className="h-4 w-4" />
-									{tab.name}
-								</button>
-							);
-						})}
-					</nav>
-				</div>
-
-				{/* Tab Content */}
-				<div className="mt-6">{renderTabContent()}</div>
+		<div className="space-y-6">
+			{/* Tab Navigation */}
+			<div className="border-b border-secondary-200 dark:border-secondary-600">
+				<nav className="-mb-px flex space-x-8">
+					{tabs.map((tab) => {
+						const Icon = tab.icon;
+						return (
+							<button
+								type="button"
+								key={tab.id}
+								onClick={() => {
+									setActiveTab(tab.id);
+									navigate(tab.href);
+								}}
+								className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${
+									activeTab === tab.id
+										? "border-primary-500 text-primary-600 dark:text-primary-400"
+										: "border-transparent text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300 hover:border-secondary-300 dark:hover:border-secondary-500"
+								}`}
+								title={tab.name}
+							>
+								<Icon className="h-4 w-4" />
+								{tab.name}
+							</button>
+						);
+					})}
+				</nav>
 			</div>
-		</SettingsLayout>
+
+			{/* Tab Content */}
+			<div className="mt-6">{renderTabContent()}</div>
+		</div>
 	);
 };
 

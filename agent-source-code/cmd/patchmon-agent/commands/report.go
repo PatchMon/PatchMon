@@ -205,6 +205,7 @@ func sendReport(outputJSON bool) error {
 		ExecutionTime:          executionTime,
 		NeedsReboot:            needsReboot,
 		RebootReason:           rebootReason,
+		PackageManager:         packageMgr.DetectPackageManager(),
 	}
 
 	// If --report-json flag is set, output JSON and exit
@@ -337,6 +338,9 @@ func sendIntegrationData() {
 		// Compliance is enabled (true) - register for automatic scheduled scans
 		complianceInteg := compliance.New(logger)
 		complianceInteg.SetDockerIntegrationEnabled(cfgManager.IsIntegrationEnabled("docker"))
+		complianceInteg.SetScannerOptionsGetter(func() (bool, bool) {
+			return cfgManager.GetComplianceOpenscapEnabled(), cfgManager.GetComplianceDockerBenchEnabled()
+		})
 		integrationMgr.Register(complianceInteg)
 		logger.Debug("Compliance integration registered for automatic scheduled scans")
 	} else if cfgManager.IsIntegrationEnabled("compliance") && cfgManager.IsComplianceOnDemandOnly() {

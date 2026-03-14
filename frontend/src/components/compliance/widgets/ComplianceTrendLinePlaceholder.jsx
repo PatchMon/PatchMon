@@ -5,7 +5,7 @@ const ComplianceTrendLinePlaceholder = () => {
 				Compliance Trend
 			</h3>
 			<div className="h-64 w-full flex items-center justify-center bg-secondary-50 dark:bg-secondary-800/50 rounded-lg border border-dashed border-secondary-200 dark:border-secondary-600">
-				<p className="text-sm text-secondary-500 dark:text-secondary-400">
+				<p className="text-sm text-secondary-500 dark:text-white">
 					Coming soon
 				</p>
 			</div>

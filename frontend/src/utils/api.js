@@ -54,15 +54,17 @@ api.interceptors.response.use(
 	(response) => response,
 	(error) => {
 		if (error.response?.status === 401) {
-			// Don't redirect if we're on the login page or if it's a TFA verification error
+			// Don't redirect if we're on the login page or if it's a TFA-related error
 			const currentPath = window.location.pathname;
-			const isTfaError = error.config?.url?.includes("/verify-tfa");
+			const requestUrl = error.config?.url || "";
+			const isTfaError =
+				requestUrl.includes("/verify-tfa") || requestUrl.includes("/tfa/");
 
 			if (currentPath !== "/login" && !isTfaError) {
-				// Handle unauthorized - clear user state and redirect
-				// Note: Token is in httpOnly cookie (server clears on logout)
+				// Dispatch event for AuthContext to handle - avoids race with React updates
+				// that could trigger ErrorBoundary "Something went wrong" before redirect
 				localStorage.removeItem("user");
-				window.location.href = "/login";
+				window.dispatchEvent(new CustomEvent("auth:session-expired"));
 			}
 		}
 		return Promise.reject(error);
@@ -72,7 +74,10 @@ api.interceptors.response.use(
 // Dashboard API
 export const dashboardAPI = {
 	getStats: () => api.get("/dashboard/stats"),
-	getHosts: () => api.get("/dashboard/hosts"),
+	getHosts: (params = {}) => {
+		const queryString = new URLSearchParams(params).toString();
+		return api.get(`/dashboard/hosts${queryString ? `?${queryString}` : ""}`);
+	},
 	getPackages: () => api.get("/dashboard/packages"),
 	getHostDetail: (hostId, params = {}) => {
 		const queryString = new URLSearchParams(params).toString();
@@ -136,6 +141,10 @@ export const adminHostsAPI = {
 		}),
 	updateConnection: (hostId, connectionInfo) =>
 		api.patch(`/hosts/${hostId}/connection`, connectionInfo),
+	setPrimaryInterface: (hostId, interfaceName) =>
+		api.patch(`/hosts/${hostId}/primary-interface`, {
+			interface_name: interfaceName,
+		}),
 	updateNotes: (hostId, notes) =>
 		api.patch(`/hosts/${hostId}/notes`, {
 			notes: notes,
@@ -156,6 +165,8 @@ export const adminHostsAPI = {
 		}),
 	setComplianceScanners: (hostId, settings) =>
 		api.post(`/hosts/${hostId}/integrations/compliance/scanners`, settings),
+	applyPendingConfig: (hostId) =>
+		api.post(`/hosts/${hostId}/integrations/apply-pending-config`),
 	setComplianceOnDemandOnly: (hostId, onDemandOnly) =>
 		api.post(`/hosts/${hostId}/compliance/on-demand-only`, {
 			on_demand_only: onDemandOnly,
@@ -200,7 +211,33 @@ export const settingsAPI = {
 	getPublic: () => api.get("/settings/public"), // Public endpoint for read-only settings (auto_update, etc.)
 	update: (settings) => api.put("/settings", settings),
 	getServerUrl: () => api.get("/settings/server-url"),
+	getCurrentUrl: () => api.get("/settings/current-url"),
 	getEnvConfig: () => api.get("/settings/env-config"),
+	getEnvironmentConfig: () => api.get("/settings/environment"),
+	updateEnvironmentConfig: (key, value) =>
+		api.patch(`/settings/environment/${key}`, { value }),
+};
+
+// Community links API (public - used in nav, login, wizard)
+export const communityAPI = {
+	getLinks: () => api.get("/community/links").then((res) => res.data),
+};
+
+// Marketing API (public - used during first-time setup)
+export const marketingAPI = {
+	subscribe: (data) =>
+		fetch("/api/v1/marketing/subscribe", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(data),
+		}).then((res) => {
+			if (!res.ok) {
+				return res.json().then((d) => {
+					throw new Error(d.error || "Subscribe failed");
+				});
+			}
+			return res.json();
+		}),
 };
 
 // User Preferences API
@@ -217,7 +254,7 @@ export const agentFileAPI = {
 
 // Repository API
 export const repositoryAPI = {
-	list: () => api.get("/repositories"),
+	list: (params = {}) => api.get("/repositories", { params }),
 	getById: (repositoryId) => api.get(`/repositories/${repositoryId}`),
 	getByHost: (hostId) => api.get(`/repositories/host/${hostId}`),
 	update: (repositoryId, data) =>
@@ -302,7 +339,7 @@ export const isCorsError = (error) => {
 		return true;
 	}
 
-	// Check for backend CORS errors that get converted to 500 by proxy
+	// Check for server CORS errors that get converted to 500 by proxy
 	if (error.response?.status === 500) {
 		// Check if the error message contains CORS-related text
 		if (
@@ -324,7 +361,7 @@ export const isCorsError = (error) => {
 			return true;
 		}
 
-		// Check for specific CORS error patterns from backend logs
+		// Check for specific CORS error patterns from server logs
 		if (
 			error.message?.includes("origin") &&
 			error.message?.includes("callback")
@@ -376,8 +413,27 @@ export const formatError = (error) => {
 	return "An unexpected error occurred";
 };
 
-export const formatDate = (date) => {
-	return new Date(date).toLocaleString();
+/**
+ * Format a date for display. When timezone is provided (e.g. from settings.timezone),
+ * formats in that IANA timezone; otherwise uses browser locale.
+ * @param {string|Date|number} date - ISO string, Date, or timestamp
+ * @param {string} [timezone] - Optional IANA timezone (e.g. America/New_York)
+ */
+export const formatDate = (date, timezone) => {
+	const d = new Date(date);
+	if (Number.isNaN(d.getTime())) return "—";
+	if (timezone) {
+		try {
+			return new Intl.DateTimeFormat(undefined, {
+				timeZone: timezone,
+				dateStyle: "short",
+				timeStyle: "medium",
+			}).format(d);
+		} catch {
+			return d.toLocaleString();
+		}
+	}
+	return d.toLocaleString();
 };
 
 // Version API
@@ -385,6 +441,20 @@ export const versionAPI = {
 	getCurrent: () => api.get("/version/current"),
 	checkUpdates: () => api.get("/version/check-updates"),
 	testSshKey: (data) => api.post("/version/test-ssh-key", data),
+};
+
+// Agent Version API (Settings > Agent Version)
+export const agentVersionAPI = {
+	getInfo: () => api.get("/agent/version"),
+	checkUpdates: () => api.post("/agent/version/check"),
+	refresh: () => api.post("/agent/version/refresh"),
+	download: (arch, os) =>
+		api.get("/agent/download", { params: { arch, os }, responseType: "blob" }),
+};
+
+// RDP API (in-browser RDP for Windows hosts via guacd)
+export const rdpAPI = {
+	createTicket: (data) => api.post("/auth/rdp-ticket", data),
 };
 
 // Auth API
@@ -414,6 +484,7 @@ export const tfaAPI = {
 };
 
 export const formatRelativeTime = (date) => {
+	if (date == null) return "—";
 	const now = new Date();
 	const diff = now - new Date(date);
 	const seconds = Math.floor(diff / 1000);
@@ -450,6 +521,13 @@ export const discordAPI = {
 	updateSettings: (data) => api.put("/auth/discord/settings", data),
 	link: () => api.post("/auth/discord/link"),
 	unlink: () => api.post("/auth/discord/unlink"),
+};
+
+// OIDC / SSO API
+export const oidcAPI = {
+	getSettings: () => api.get("/auth/oidc/settings"),
+	updateSettings: (data) => api.put("/auth/oidc/settings", data),
+	importFromEnv: () => api.post("/auth/oidc/settings/import-from-env"),
 };
 
 // Alerts API

@@ -35,7 +35,7 @@ const HostComplianceStatusBar = ({ data }) => {
 			label: "Never scanned",
 			value: unscanned,
 			Icon: ShieldOff,
-			icon_class: "text-secondary-600",
+			icon_class: "text-secondary-600 dark:text-white",
 		},
 	];
 

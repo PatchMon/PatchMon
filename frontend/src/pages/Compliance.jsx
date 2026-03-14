@@ -476,7 +476,7 @@ const Compliance = () => {
 				<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
 					Security Compliance
 				</h1>
-				<p className="text-sm text-secondary-600 dark:text-secondary-400 mt-1">
+				<p className="text-sm text-secondary-600 dark:text-white mt-1">
 					Monitor and manage compliance across your hosts
 				</p>
 			</div>
@@ -581,7 +581,7 @@ const Compliance = () => {
 								className={`${
 									activeTab === tab.id
 										? "border-primary-500 text-primary-600 dark:text-primary-400"
-										: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-secondary-400 dark:hover:text-secondary-300"
+										: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-white"
 								} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
 							>
 								<Icon className="h-4 w-4 mr-2" />
@@ -607,37 +607,37 @@ const Compliance = () => {
 							<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 								<thead className="bg-secondary-50 dark:bg-secondary-700">
 									<tr>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 whitespace-nowrap w-16">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white whitespace-nowrap w-16">
 											Run
 										</th>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white">
 											Host name
 										</th>
 										<th
-											className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 w-12"
+											className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white w-12"
 											title="Compliance status"
 										>
 											Status
 										</th>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white">
 											Last activity
 										</th>
-										<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300">
+										<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-white">
 											Passed
 										</th>
-										<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300">
+										<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-white">
 											Failed
 										</th>
-										<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300">
+										<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-white">
 											Skipped
 										</th>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white">
 											Scanner status
 										</th>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white">
 											Mode
 										</th>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white">
 											Scanners
 										</th>
 									</tr>
@@ -647,7 +647,7 @@ const Compliance = () => {
 										<tr>
 											<td
 												colSpan={10}
-												className="px-4 py-8 text-center text-secondary-500 dark:text-secondary-400"
+												className="px-4 py-8 text-center text-secondary-500 dark:text-white"
 											>
 												No hosts
 											</td>
@@ -749,13 +749,13 @@ const Compliance = () => {
 															)
 														) : (
 															<ShieldOff
-																className="h-5 w-5 text-secondary-400"
+																className="h-5 w-5 text-secondary-400 dark:text-white"
 																title="Not scanned"
 															/>
 														)}
 													</td>
 													<td
-														className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-secondary-300"
+														className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-white"
 														title={
 															is_scanning
 																? `Scan running${active_scan?.startedAt ? ` · started ${formatDistanceToNow(new Date(active_scan.startedAt), { addSuffix: true })}` : ""}`
@@ -834,7 +834,7 @@ const Compliance = () => {
 																	});
 																	setActiveTab("scan-results");
 																}}
-																className="text-secondary-600 dark:text-secondary-400 hover:underline font-medium tabular-nums"
+																className="text-secondary-600 dark:text-white hover:underline font-medium tabular-nums"
 																title="View skipped/N/A rules for this host"
 															>
 																{row.skipped}
@@ -850,7 +850,7 @@ const Compliance = () => {
 																	? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
 																	: row.scanner_status === "Enabled"
 																		? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
-																		: "bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-400"
+																		: "bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-white"
 															}`}
 														>
 															{row.scanner_status}
@@ -858,7 +858,7 @@ const Compliance = () => {
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap">
 														{row.compliance_mode === "disabled" ? (
-															<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-400">
+															<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-white">
 																Disabled
 															</span>
 														) : (
@@ -875,7 +875,7 @@ const Compliance = () => {
 															</span>
 														)}
 													</td>
-													<td className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-secondary-300">
+													<td className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-white">
 														{row.compliance_enabled && row.docker_enabled
 															? "OpenSCAP, Docker"
 															: row.compliance_enabled
@@ -909,7 +909,7 @@ const Compliance = () => {
 									setShowBulkScanModal(false);
 									setBulkScanResult(null);
 								}}
-								className="text-secondary-400 hover:text-white"
+								className="text-white hover:text-white"
 							>
 								<X className="h-5 w-5" />
 							</button>
@@ -919,12 +919,10 @@ const Compliance = () => {
 						<div className="p-4 space-y-4 max-h-[60vh] overflow-y-auto">
 							{/* Scan Options */}
 							<div className="space-y-3">
-								<h3 className="text-sm font-medium text-secondary-300">
-									Scan Options
-								</h3>
+								<h3 className="text-sm font-medium text-white">Scan Options</h3>
 								<div className="flex flex-wrap gap-4">
 									<div className="flex-1 min-w-[200px]">
-										<label className="block text-xs text-secondary-400 mb-1">
+										<label className="block text-xs text-white mb-1">
 											Profile Type
 										</label>
 										<select
@@ -957,7 +955,7 @@ const Compliance = () => {
 										/>
 										<label
 											htmlFor="enableRemediation"
-											className="text-sm text-secondary-300"
+											className="text-sm text-white"
 										>
 											Enable Remediation
 										</label>
@@ -968,7 +966,7 @@ const Compliance = () => {
 							{/* Host Selection */}
 							<div className="space-y-3">
 								<div className="flex items-center justify-between">
-									<h3 className="text-sm font-medium text-secondary-300">
+									<h3 className="text-sm font-medium text-white">
 										Select Hosts ({selectedHosts.length} of {allHosts.length})
 									</h3>
 									<button
@@ -1000,7 +998,7 @@ const Compliance = () => {
 												<p className="text-sm font-medium text-white truncate">
 													{host.friendly_name || host.hostname}
 												</p>
-												<p className="text-xs text-secondary-400 truncate">
+												<p className="text-xs text-white truncate">
 													{host.hostname}
 												</p>
 											</div>
@@ -1045,7 +1043,7 @@ const Compliance = () => {
 									setShowBulkScanModal(false);
 									setBulkScanResult(null);
 								}}
-								className="px-4 py-2 text-secondary-300 hover:text-white transition-colors"
+								className="px-4 py-2 text-white hover:text-white transition-colors"
 							>
 								Cancel
 							</button>
@@ -1130,7 +1128,7 @@ const Compliance = () => {
 												/>
 											)}
 										</div>
-										<div className="flex items-center gap-2 text-sm text-secondary-400">
+										<div className="flex items-center gap-2 text-sm text-white">
 											<span
 												className={`px-2 py-0.5 rounded text-xs ${
 													scan.isPending
@@ -1188,7 +1186,7 @@ const Compliance = () => {
 							>
 								<div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6">
 									<div className="text-center">
-										<p className="text-xs text-secondary-400 uppercase tracking-wide mb-1">
+										<p className="text-xs text-white uppercase tracking-wide mb-1">
 											Hosts
 										</p>
 										<p className="text-3xl font-bold text-white">
@@ -1196,7 +1194,7 @@ const Compliance = () => {
 										</p>
 									</div>
 									<div className="text-center">
-										<p className="text-xs text-secondary-400 uppercase tracking-wide mb-1">
+										<p className="text-xs text-white uppercase tracking-wide mb-1">
 											Avg Score
 										</p>
 										<p
@@ -1241,7 +1239,7 @@ const Compliance = () => {
 										</div>
 									)}
 									<div className="text-center">
-										<p className="text-xs text-secondary-400 uppercase tracking-wide mb-1">
+										<p className="text-xs text-white uppercase tracking-wide mb-1">
 											Total Rules
 										</p>
 										<p className="text-3xl font-bold text-white">
@@ -1249,7 +1247,7 @@ const Compliance = () => {
 										</p>
 									</div>
 									<div className="text-center">
-										<p className="text-xs text-secondary-400 uppercase tracking-wide mb-1">
+										<p className="text-xs text-white uppercase tracking-wide mb-1">
 											Pass Rate
 										</p>
 										<p className="text-3xl font-bold text-white">
@@ -1267,9 +1265,7 @@ const Compliance = () => {
 								{profileTypeFilter === "docker-bench" &&
 									filteredSummary.total_rules > 0 && (
 										<div className="mt-4 pt-4 border-t border-secondary-700 text-center">
-											<span className="text-sm text-secondary-400">
-												Warning Rate:{" "}
-											</span>
+											<span className="text-sm text-white">Warning Rate: </span>
 											<span className="text-sm font-bold text-yellow-400">
 												{(
 													(filteredSummary.total_warnings /
@@ -1287,7 +1283,7 @@ const Compliance = () => {
 					{/* No data message */}
 					{!filteredSummary && (
 						<div className="card p-8 text-center">
-							<p className="text-secondary-400">
+							<p className="text-white">
 								No {getFilterDisplayName()} scan data available
 							</p>
 						</div>
@@ -1314,7 +1310,7 @@ const Compliance = () => {
 											<CheckCircle className="h-4 w-4 text-green-400" />
 											Rule Results
 										</h3>
-										<p className="text-xs text-secondary-500 mb-3">
+										<p className="text-xs text-secondary-500 dark:text-white mb-3">
 											{(
 												openscapStats.total_passed + openscapStats.total_failed
 											).toLocaleString()}{" "}
@@ -1410,7 +1406,7 @@ const Compliance = () => {
 													<AlertTriangle className="h-4 w-4 text-red-400" />
 													Failures by Severity
 												</h3>
-												<p className="text-xs text-secondary-500 mb-3">
+												<p className="text-xs text-secondary-500 dark:text-white mb-3">
 													{totalFailures.toLocaleString()} total failures
 												</p>
 												<div className="h-40">
@@ -1490,7 +1486,7 @@ const Compliance = () => {
 													<BarChart3 className="h-4 w-4 text-green-400" />
 													Score Distribution
 												</h3>
-												<p className="text-xs text-secondary-500 mb-3">
+												<p className="text-xs text-secondary-500 dark:text-white mb-3">
 													{filteredScans.length} scans
 												</p>
 												<div className="h-40">
@@ -1564,7 +1560,7 @@ const Compliance = () => {
 													<Clock className="h-4 w-4 text-green-400" />
 													Scan Freshness
 												</h3>
-												<p className="text-xs text-secondary-500 mb-3">
+												<p className="text-xs text-secondary-500 dark:text-white mb-3">
 													{totalScans} OpenSCAP scans
 												</p>
 												<div className="h-40">
@@ -1624,7 +1620,7 @@ const Compliance = () => {
 											<CheckCircle className="h-4 w-4 text-blue-400" />
 											Rule Results
 										</h3>
-										<p className="text-xs text-secondary-500 mb-3">
+										<p className="text-xs text-secondary-500 dark:text-white mb-3">
 											{(
 												dockerBenchStats.total_passed +
 												dockerBenchStats.total_warnings
@@ -1716,7 +1712,7 @@ const Compliance = () => {
 													<Container className="h-4 w-4 text-yellow-400" />
 													Warnings by Section
 												</h3>
-												<p className="text-xs text-secondary-500 mb-3">
+												<p className="text-xs text-secondary-500 dark:text-white mb-3">
 													{totalWarnings.toLocaleString()} total warnings
 												</p>
 												<div className="h-40">
@@ -1825,7 +1821,7 @@ const Compliance = () => {
 													<BarChart3 className="h-4 w-4 text-blue-400" />
 													Score Distribution
 												</h3>
-												<p className="text-xs text-secondary-500 mb-3">
+												<p className="text-xs text-secondary-500 dark:text-white mb-3">
 													{filteredScans.length} scans
 												</p>
 												<div className="h-40">
@@ -1905,7 +1901,7 @@ const Compliance = () => {
 													<Clock className="h-4 w-4 text-blue-400" />
 													Scan Freshness
 												</h3>
-												<p className="text-xs text-secondary-500 mb-3">
+												<p className="text-xs text-secondary-500 dark:text-white mb-3">
 													{totalScans} Docker Bench scans
 												</p>
 												<div className="h-40">

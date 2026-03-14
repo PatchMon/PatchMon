@@ -5,10 +5,11 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"patchmon-agent/internal/config"
-	"patchmon-agent/internal/utils"
 	"patchmon-agent/pkg/models"
 
 	"github.com/go-resty/resty/v2"
@@ -33,6 +34,12 @@ func truncateResponse(s string, maxLen int) string {
 	return s[:maxLen] + "... (truncated)"
 }
 
+// IsSkipSSLVerifyEnvSet returns true if PATCHMON_SKIP_SSL_VERIFY is set to "true" or "1"
+func IsSkipSSLVerifyEnvSet() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("PATCHMON_SKIP_SSL_VERIFY")))
+	return v == "true" || v == "1"
+}
+
 // New creates a new HTTP client
 func New(configMgr *config.Manager, logger *logrus.Logger) *Client {
 	client := resty.New()
@@ -43,26 +50,11 @@ func New(configMgr *config.Manager, logger *logrus.Logger) *Client {
 	// Configure Resty to use our logger
 	client.SetLogger(logger)
 
-	// Configure TLS based on skip_ssl_verify setting
-	// SECURITY WARNING: Disabling TLS verification exposes the agent to MITM attacks
+	// Configure TLS based on skip_ssl_verify (config or PATCHMON_SKIP_SSL_VERIFY env)
 	cfg := configMgr.GetConfig()
-	if cfg.SkipSSLVerify {
-		// SECURITY: Block skip_ssl_verify in production environments
-		if utils.IsProductionEnvironment() {
-			logger.Error("╔══════════════════════════════════════════════════════════════════╗")
-			logger.Error("║  SECURITY ERROR: skip_ssl_verify is BLOCKED in production!       ║")
-			logger.Error("║  Set PATCHMON_ENV to 'development' to enable insecure mode.      ║")
-			logger.Error("║  This setting cannot be used when PATCHMON_ENV=production        ║")
-			logger.Error("╚══════════════════════════════════════════════════════════════════╝")
-			logger.Fatal("Refusing to start with skip_ssl_verify=true in production environment")
-		}
-
-		logger.Error("╔══════════════════════════════════════════════════════════════════╗")
-		logger.Error("║  SECURITY WARNING: TLS certificate verification is DISABLED!     ║")
-		logger.Error("║  This exposes the agent to man-in-the-middle attacks.            ║")
-		logger.Error("║  An attacker could intercept and modify communications.          ║")
-		logger.Error("║  Do NOT use skip_ssl_verify=true in production environments!     ║")
-		logger.Error("╚══════════════════════════════════════════════════════════════════╝")
+	skipVerify := cfg.SkipSSLVerify || IsSkipSSLVerifyEnvSet()
+	if skipVerify {
+		logger.Warn("TLS certificate verification disabled - use only with trusted self-signed or internal CA certificates")
 		client.SetTLSClientConfig(&tls.Config{
 			InsecureSkipVerify: true,
 		})
@@ -319,4 +311,37 @@ func (c *Client) SendComplianceData(ctx context.Context, payload *models.Complia
 	}
 
 	return result, nil
+}
+
+// SendPatchOutput sends patch run output/status to the server (agent-facing patching endpoint)
+func (c *Client) SendPatchOutput(ctx context.Context, patchRunID, stage, output, errorMessage string) error {
+	url := fmt.Sprintf("%s/api/%s/patching/runs/%s/output", c.config.PatchmonServer, c.config.APIVersion, patchRunID)
+
+	body := map[string]interface{}{
+		"stage": stage,
+	}
+	if output != "" {
+		body["output"] = output
+	}
+	if errorMessage != "" {
+		body["error_message"] = errorMessage
+	}
+
+	resp, err := c.client.R().
+		SetContext(ctx).
+		SetHeader("Content-Type", "application/json").
+		SetHeader("X-API-ID", c.credentials.APIID).
+		SetHeader("X-API-KEY", c.credentials.APIKey).
+		SetBody(body).
+		Post(url)
+
+	if err != nil {
+		return fmt.Errorf("patch output request failed: %w", err)
+	}
+
+	if resp.StatusCode() != 200 {
+		return fmt.Errorf("patch output request failed with status %d: %s", resp.StatusCode(), truncateResponse(resp.String(), 200))
+	}
+
+	return nil
 }

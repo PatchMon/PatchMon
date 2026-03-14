@@ -1,3 +1,39 @@
+patchmon-server
+patchmon-server-*
+migrate-linux-*
+server-source-code/migrate
+server
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# pprof profiles (make profile-heap, make profile-allocs)
+*.prof
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Environment
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.production
+
 # CodeQL local scan
 .codeql-db/
 codeql-results.sarif
@@ -10,14 +46,6 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Environment variables
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-.env.production
-
 # Build outputs
 dist/
 build/
@@ -28,53 +56,18 @@ logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log*
 lerna-debug.log*
 
-# Runtime data
-pids/
-*.pid
-*.seed
-*.pid.lock
-
-# Coverage directory used by tools like istanbul
+# Coverage (Node)
 coverage/
 *.lcov
-
-# nyc test coverage
 .nyc_output
 
-# Dependency directories
-jspm_packages/
-
-# Optional npm cache directory
-.npm
-
-# Optional eslint cache
-.eslintcache
-
-# Optional REPL history
-.node_repl_history
-
-# Output of 'npm pack'
-*.tgz
-
-# Yarn Integrity file
-.yarn-integrity
-
-# parcel-bundler cache (https://parceljs.org/)
+# Cache
 .cache
 .parcel-cache
-
-# Next.js build output
 .next
-
-# Nuxt.js build / generate output
 .nuxt
-
-# Gatsby files
-.cache/
-public
 
 # Exception: Allow frontend/public/assets for logo files
 !frontend/public/
@@ -83,42 +76,29 @@ public
 !frontend/public/assets/*.svg
 !frontend/public/assets/*.jpg
 
-# Storybook build outputs
-.out
-.storybook-out
-
 # Temporary folders
 tmp/
 temp/
 
-# Editor directories and files
-.vscode/
+# IDE
 .idea/
+.vscode/
 *.swp
 *.swo
 *~
 
-# OS generated files
+# OS
 .DS_Store
 .DS_Store?
 ._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
+build.sh
 
-# Database
-*.db
-*.sqlite
-*.sqlite3
-
-# Prisma
-prisma/migrations/dev.db*
-
-# Backend specific
-backend/logs/
-backend/uploads/
-backend/temp/
+# Server specific
+server-source-code/cmd/server/static/frontend/dist/
+server/logs/
+server/uploads/
+server/temp/
 
 # Frontend specific
 frontend/dist/
@@ -126,33 +106,11 @@ frontend/.vite/
 
 # Agent specific
 agents/*.log
+agents/patchmon-agent-*
+agents-prebuilt/
+agent-source-code/patchmon-agent-*
 __pycache__/
 *.py[cod]
-*$py.class
-.Python
-*.so
-
-# Go/Agent source code specific
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.dylib
-
-# Test binary, built with `go test -c`
-*.test
-
-# Code coverage profiles and other test artifacts
-*.out
-coverage.*
-*.coverprofile
-profile.cov
-
-# Go workspace file
-go.work
-go.work.sum
-
-# Agent source code build directory
 agent-source-code/build/
 agent-source-code/dist/
 
@@ -162,25 +120,7 @@ agent-source-code/dist/
 *.crt
 *.csr
 
-# Backup files
-*.bak
-*.backup
-*.old
-
-# Test files
-test-results/
-playwright-report/
-test-results.xml
-test_*.sh
-test-*.sh
-*.code-workspace
-
-# Package manager lock files (uncomment if you want to ignore them)
-# package-lock.json
-# yarn.lock
-# pnpm-lock.yaml
-
-# Deployment scripts (production deployment tools)
+# Deployment scripts
 deploy-patchmon.sh
 manage-instances.sh
 manage-patchmon.sh
@@ -190,7 +130,19 @@ install-server.*
 notify-clients-upgrade.sh
 debug-agent.sh
 docker/compose_dev_*
+forcemigrate1.sh
 
-# Conductor agent prompts (keep local, not public)
+# Secrets
 docs/conductor-prompts/
 .encryption_key
+
+# Test artifacts
+test-results/
+playwright-report/
+test-results.xml
+test_*.sh
+test-*.sh
+*.code-workspace
+
+# Git backup (moved from old repo)
+.git-moved/

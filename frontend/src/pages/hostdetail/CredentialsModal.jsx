@@ -8,7 +8,7 @@ import {
 	RotateCcw,
 	X,
 } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { adminHostsAPI, settingsAPI } from "../../utils/api";
 import WaitingForConnection from "./WaitingForConnection";
 
@@ -16,6 +16,8 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 	const [showApiKey, setShowApiKey] = useState(false);
 	const [activeTab, setActiveTab] = useState("quick-install");
 	const [forceInstall, setForceInstall] = useState(false);
+	const [windowsIgnoreSsl, setWindowsIgnoreSsl] = useState(false);
+	const [windowsUseCurl, setWindowsUseCurl] = useState(false);
 	const [regeneratedCredentials, setRegeneratedCredentials] = useState(null);
 	const [isRegenerating, setIsRegenerating] = useState(false);
 	const [showWaitingScreen, setShowWaitingScreen] = useState(false);
@@ -23,15 +25,16 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 	const apiKeyInputId = useId();
 	const queryClient = useQueryClient();
 
-	// Use plaintext API key if available (from host creation or regeneration), otherwise the stored key is a hash
-	// Priority: regenerated > navigation state > stored (which is a hash)
+	// Use plaintext API key if available (from host creation or regeneration).
+	// The API never returns the stored hash for security, so we only have a valid key
+	// when it was just created (plaintextApiKey) or regenerated (regeneratedCredentials).
 	const effectiveApiKey =
 		regeneratedCredentials?.apiKey || plaintextApiKey || host.api_key;
 	const effectiveApiId = regeneratedCredentials?.apiId || host.api_id;
-	const isApiKeyHash =
-		!regeneratedCredentials &&
-		!plaintextApiKey &&
-		host.api_key?.startsWith("$2");
+	const hasValidPlaintextKey = !!(
+		regeneratedCredentials?.apiKey || plaintextApiKey
+	);
+	const isApiKeyHash = !hasValidPlaintextKey;
 
 	const handleRegenerateCredentials = async () => {
 		setIsRegenerating(true);
@@ -72,12 +75,15 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 		return settings?.ignore_ssl_self_signed ? "-sk" : "-s";
 	};
 
-	// Helper function to get the install URL (OS-specific for FreeBSD)
+	// Helper function to get the install URL (OS-specific)
 	const getInstallUrl = () => {
 		const base = `${serverUrl}/api/v1/hosts/install`;
 		const params = new URLSearchParams();
 		if (host?.expected_platform === "freebsd") params.set("os", "freebsd");
-		if (forceInstall) params.set("force", "true");
+		if (host?.expected_platform === "windows" || host?.os_type === "windows")
+			params.set("os", "windows");
+		if (forceInstall && host?.expected_platform !== "windows")
+			params.set("force", "true");
 		const qs = params.toString();
 		return qs ? `${base}?${qs}` : base;
 	};
@@ -88,6 +94,31 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 		const base = use_sudo ? "sudo sh" : "sh";
 		return forceInstall ? `${base} -s -- --force` : base;
 	};
+
+	const isWindowsHost =
+		host?.expected_platform === "windows" || host?.os_type === "windows";
+
+	// Sync Windows SSL bypass with global setting when it loads
+	useEffect(() => {
+		if (settings?.ignore_ssl_self_signed !== undefined) {
+			setWindowsIgnoreSsl(settings.ignore_ssl_self_signed);
+		}
+	}, [settings?.ignore_ssl_self_signed]);
+
+	const getWindowsInstallCommand = () => {
+		const installUrl = getInstallUrl();
+		const sslBlock = windowsIgnoreSsl
+			? "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }; "
+			: "";
+		if (windowsUseCurl) {
+			const curlInsecure = windowsIgnoreSsl ? " -k" : "";
+			return `${sslBlock}curl.exe${curlInsecure} -s -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" -o "$env:TEMP\\patchmon-install.ps1" "${installUrl}"; if ($LASTEXITCODE -eq 0) { & "$env:TEMP\\patchmon-install.ps1" } else { Write-Error "curl failed with exit code $LASTEXITCODE" }`;
+		}
+		return `${sslBlock}$r = Invoke-WebRequest -Uri "${installUrl}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing; $r.Content | Set-Content "$env:TEMP\\patchmon-install.ps1" -Encoding UTF8; & "$env:TEMP\\patchmon-install.ps1"`;
+	};
+
+	const getLinuxInstallCommand = () =>
+		`curl ${getCurlFlags()} "${getInstallUrl()}" -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`;
 
 	const copyToClipboard = async (text) => {
 		try {
@@ -139,6 +170,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 				curlFlags={getCurlFlags()}
 				installUrl={getInstallUrl()}
 				shellCommand={getShellCommand()}
+				installCommand={isWindowsHost ? getWindowsInstallCommand() : null}
 			/>
 		);
 	}
@@ -153,7 +185,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 					<button
 						type="button"
 						onClick={onClose}
-						className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300 flex-shrink-0"
+						className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300 flex-shrink-0"
 					>
 						<X className="h-5 w-5" />
 					</button>
@@ -167,7 +199,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 						className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
 							activeTab === "quick-install"
 								? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
-								: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+								: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-white border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
 						}`}
 					>
 						<span>Quick Install</span>
@@ -181,7 +213,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 						className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
 							activeTab === "credentials"
 								? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
-								: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+								: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-white border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
 						}`}
 					>
 						<span>API Credentials</span>
@@ -200,7 +232,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 							className={`py-2 px-1 border-b-2 font-medium text-sm ${
 								activeTab === "quick-install"
 									? "border-primary-500 text-primary-600 dark:text-primary-400"
-									: "border-transparent text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:border-secondary-300 dark:hover:border-secondary-500"
+									: "border-transparent text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300 hover:border-secondary-300 dark:hover:border-secondary-500"
 							}`}
 						>
 							Quick Install
@@ -211,7 +243,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 							className={`py-2 px-1 border-b-2 font-medium text-sm ${
 								activeTab === "credentials"
 									? "border-primary-500 text-primary-600 dark:text-primary-400"
-									: "border-transparent text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:border-secondary-300 dark:hover:border-secondary-500"
+									: "border-transparent text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300 hover:border-secondary-300 dark:hover:border-secondary-500"
 							}`}
 						>
 							API Credentials
@@ -231,24 +263,54 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 								and configure the PatchMon agent:
 							</p>
 
-							{/* Force Install Toggle */}
-							<div className="mb-3">
-								<label className="flex items-center gap-2 text-xs md:text-sm">
-									<input
-										type="checkbox"
-										checked={forceInstall}
-										onChange={(e) => setForceInstall(e.target.checked)}
-										className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400 dark:bg-secondary-700"
-									/>
-									<span className="text-primary-800 dark:text-primary-200">
-										Force install (bypass broken packages)
-									</span>
-								</label>
-								<p className="text-xs text-primary-600 dark:text-primary-400 mt-1">
-									Enable this if the target host has broken packages
-									(CloudPanel, WHM, etc.) that block apt-get operations
-								</p>
-							</div>
+							{/* Force Install Toggle (Linux/FreeBSD only) */}
+							{!isWindowsHost && (
+								<div className="mb-3">
+									<label className="flex items-center gap-2 text-xs md:text-sm">
+										<input
+											type="checkbox"
+											checked={forceInstall}
+											onChange={(e) => setForceInstall(e.target.checked)}
+											className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400 dark:bg-secondary-700"
+										/>
+										<span className="text-primary-800 dark:text-primary-200">
+											Force install (bypass broken packages)
+										</span>
+									</label>
+									<p className="text-xs text-primary-600 dark:text-primary-400 mt-1">
+										Enable this if the target host has broken packages
+										(CloudPanel, WHM, etc.) that block apt-get operations
+									</p>
+								</div>
+							)}
+
+							{/* Windows options: SSL bypass and curl alternative */}
+							{isWindowsHost && (
+								<div className="mb-3 flex flex-wrap items-center gap-4">
+									<label className="flex items-center gap-2 cursor-pointer">
+										<input
+											type="checkbox"
+											checked={windowsIgnoreSsl}
+											onChange={(e) => setWindowsIgnoreSsl(e.target.checked)}
+											className="rounded border-secondary-400 text-primary-600 focus:ring-primary-500"
+										/>
+										<span className="text-xs md:text-sm text-primary-800 dark:text-primary-200">
+											Self-signed certificate (SSL bypass)
+										</span>
+									</label>
+									<label className="flex items-center gap-2 cursor-pointer">
+										<input
+											type="checkbox"
+											checked={windowsUseCurl}
+											onChange={(e) => setWindowsUseCurl(e.target.checked)}
+											className="rounded border-secondary-400 text-primary-600 focus:ring-primary-500"
+										/>
+										<span className="text-xs md:text-sm text-primary-800 dark:text-primary-200">
+											Use curl instead of Invoke-WebRequest
+										</span>
+									</label>
+								</div>
+							)}
 
 							{isApiKeyHash && (
 								<div className="mb-3 p-3 bg-warning-50 dark:bg-warning-900/20 border border-warning-200 dark:border-warning-700 rounded-lg">
@@ -281,21 +343,37 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 							)}
 
 							<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-								<input
-									type="text"
-									value={
-										isApiKeyHash
-											? "API key not available - click Regenerate above"
-											: `curl ${getCurlFlags()} "${getInstallUrl()}" -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`
-									}
-									readOnly
-									disabled={isApiKeyHash}
-									className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-primary-300 dark:border-primary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
-								/>
+								{isWindowsHost ? (
+									<textarea
+										readOnly
+										rows={windowsIgnoreSsl && !windowsUseCurl ? 6 : 2}
+										value={
+											isApiKeyHash
+												? "API key not available - click Regenerate above"
+												: getWindowsInstallCommand()
+										}
+										disabled={isApiKeyHash}
+										className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all resize-none ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-primary-300 dark:border-primary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
+									/>
+								) : (
+									<input
+										type="text"
+										value={
+											isApiKeyHash
+												? "API key not available - click Regenerate above"
+												: getLinuxInstallCommand()
+										}
+										readOnly
+										disabled={isApiKeyHash}
+										className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-primary-300 dark:border-primary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
+									/>
+								)}
 								<button
 									type="button"
 									onClick={async () => {
-										const command = `curl ${getCurlFlags()} "${getInstallUrl()}" -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`;
+										const command = isWindowsHost
+											? getWindowsInstallCommand()
+											: getLinuxInstallCommand();
 										await copyToClipboard(command);
 										// Show waiting screen after copying
 										if (!isApiKeyHash) {

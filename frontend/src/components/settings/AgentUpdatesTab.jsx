@@ -6,12 +6,11 @@ import { settingsAPI } from "../../utils/api";
 const AgentUpdatesTab = () => {
 	const updateIntervalId = useId();
 	const autoUpdateId = useId();
-	const ignoreSslId = useId();
 	const [formData, setFormData] = useState({
 		updateInterval: 60,
 		autoUpdate: false,
-		ignoreSslSelfSigned: false,
 	});
+	const [uninstallOs, setUninstallOs] = useState("linux");
 	const [errors, setErrors] = useState({});
 	const [isDirty, setIsDirty] = useState(false);
 	const [toast, setToast] = useState(null);
@@ -78,13 +77,18 @@ const AgentUpdatesTab = () => {
 		queryFn: () => settingsAPI.get().then((res) => res.data),
 	});
 
+	const { data: serverUrlData } = useQuery({
+		queryKey: ["serverUrl"],
+		queryFn: () => settingsAPI.getServerUrl().then((res) => res.data),
+	});
+	const serverUrl = serverUrlData?.server_url || window.location.origin;
+
 	// Update form data when settings are loaded
 	useEffect(() => {
 		if (settings) {
 			const newFormData = {
 				updateInterval: settings.update_interval || 60,
 				autoUpdate: settings.auto_update || false,
-				ignoreSslSelfSigned: settings.ignore_ssl_self_signed === true,
 			};
 			setFormData(newFormData);
 			setIsDirty(false);
@@ -98,6 +102,7 @@ const AgentUpdatesTab = () => {
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries(["settings"]);
+			queryClient.invalidateQueries(["serverUrl"]);
 			setIsDirty(false);
 			setErrors({});
 		},
@@ -348,7 +353,7 @@ const AgentUpdatesTab = () => {
 					)}
 
 					{/* Helper text */}
-					<div className="mt-2 text-sm text-secondary-600 dark:text-secondary-300">
+					<div className="mt-2 text-sm text-secondary-600 dark:text-white">
 						<span className="font-medium">Effective cadence:</span> {(() => {
 							const mins = parseInt(formData.updateInterval, 10) || 60;
 							if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"}`;
@@ -358,7 +363,7 @@ const AgentUpdatesTab = () => {
 						})()}
 					</div>
 
-					<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+					<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 						This affects new installations and will update existing ones when
 						they next reach out.
 					</p>
@@ -378,7 +383,7 @@ const AgentUpdatesTab = () => {
 								Master
 							</span>
 						</div>
-						<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
+						<p className="mt-1 text-sm text-secondary-500 dark:text-white">
 							Master switch for all agent auto-updates. Per-host toggles in the
 							dashboard control individual agents. Enabling a host toggle will
 							automatically enable this master switch.
@@ -390,65 +395,27 @@ const AgentUpdatesTab = () => {
 						onClick={() =>
 							handleInputChange("autoUpdate", !formData.autoUpdate)
 						}
-						className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+						className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-md border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
 							formData.autoUpdate
 								? "bg-primary-600 dark:bg-primary-500"
 								: "bg-secondary-200 dark:bg-secondary-600"
 						}`}
 					>
 						<span
-							className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+							className={`pointer-events-none inline-block h-5 w-5 transform rounded-md bg-white shadow ring-0 transition duration-200 ease-in-out ${
 								formData.autoUpdate ? "translate-x-5" : "translate-x-0"
 							}`}
 						/>
 					</button>
 				</div>
 
-				{/* SSL Certificate Setting */}
-				<div className="flex items-start justify-between gap-4 p-4 bg-warning-50 dark:bg-warning-900/20 rounded-lg border border-warning-200 dark:border-warning-700">
-					<div className="flex-1">
-						<div className="flex items-center gap-2">
-							<label
-								htmlFor={ignoreSslId}
-								className="text-sm font-medium text-secondary-900 dark:text-secondary-100"
-							>
-								Ignore SSL Self-Signed Certificates
-							</label>
-							<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-warning-100 text-warning-800 dark:bg-warning-900/50 dark:text-warning-300">
-								Security
-							</span>
-						</div>
-						<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
-							When enabled, curl commands in agent scripts will use the -k flag
-							to ignore SSL certificate validation errors. Use with caution on
-							production systems as this reduces security.
-						</p>
-					</div>
-					<button
-						type="button"
-						id={ignoreSslId}
-						onClick={() =>
-							handleInputChange(
-								"ignoreSslSelfSigned",
-								!formData.ignoreSslSelfSigned,
-							)
-						}
-						className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
-							formData.ignoreSslSelfSigned
-								? "bg-warning-500 dark:bg-warning-600"
-								: "bg-secondary-200 dark:bg-secondary-600"
-						}`}
-					>
-						<span
-							className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-								formData.ignoreSslSelfSigned ? "translate-x-5" : "translate-x-0"
-							}`}
-						/>
-					</button>
-				</div>
-
 				{/* Save Button */}
-				<div className="flex justify-end">
+				<div className="flex flex-col items-end gap-2">
+					<p className="text-sm text-secondary-600 dark:text-secondary-400">
+						Note: This will push out the change to each connected agent
+						immediately. Their report schedule will update without restarting
+						the service.
+					</p>
 					<button
 						type="button"
 						onClick={handleSave}
@@ -462,12 +429,12 @@ const AgentUpdatesTab = () => {
 						{updateSettingsMutation.isPending ? (
 							<>
 								<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-								Saving...
+								Deploying...
 							</>
 						) : (
 							<>
 								<Save className="h-4 w-4 mr-2" />
-								Save Settings
+								Save and deploy
 							</>
 						)}
 					</button>
@@ -498,90 +465,205 @@ const AgentUpdatesTab = () => {
 						<div className="mt-2 text-sm text-red-700 dark:text-red-300">
 							<p className="mb-3">To completely remove PatchMon from a host:</p>
 
-							{/* Agent Removal Script - Standard */}
-							<div className="mb-3">
-								<div className="space-y-2">
-									<div className="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">
-										Standard Removal (preserves backups):
-									</div>
-									<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-										<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
-											curl {formData.ignoreSslSelfSigned ? "-sk" : "-s"}{" "}
-											{window.location.origin}/api/v1/hosts/remove | sudo sh
-										</div>
-										<button
-											type="button"
-											onClick={async () => {
-												try {
-													const curlFlags = formData.ignoreSslSelfSigned
-														? "-sk"
-														: "-s";
-													await copyToClipboard(
-														`curl ${curlFlags} ${window.location.origin}/api/v1/hosts/remove | sudo sh`,
-													);
-													showToast(
-														"Standard removal command copied!",
-														"success",
-													);
-												} catch (err) {
-													console.error("Failed to copy:", err);
-													showToast("Failed to copy to clipboard", "error");
-												}
-											}}
-											className="px-3 py-2 bg-red-200 dark:bg-red-700 text-red-800 dark:text-red-200 rounded text-xs hover:bg-red-300 dark:hover:bg-red-600 transition-colors flex-shrink-0 whitespace-nowrap"
-										>
-											Copy
-										</button>
-									</div>
-								</div>
+							{/* OS Selector */}
+							<div className="flex gap-2 mb-3">
+								<button
+									type="button"
+									onClick={() => setUninstallOs("linux")}
+									className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+										uninstallOs === "linux"
+											? "bg-red-500 text-white"
+											: "bg-red-200 dark:bg-red-800 text-red-800 dark:text-red-200 hover:bg-red-300 dark:hover:bg-red-700"
+									}`}
+								>
+									Linux / Unix
+								</button>
+								<button
+									type="button"
+									onClick={() => setUninstallOs("windows")}
+									className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+										uninstallOs === "windows"
+											? "bg-red-500 text-white"
+											: "bg-red-200 dark:bg-red-800 text-red-800 dark:text-red-200 hover:bg-red-300 dark:hover:bg-red-700"
+									}`}
+								>
+									Windows
+								</button>
 							</div>
 
-							{/* Agent Removal Script - Complete */}
-							<div className="mb-3">
-								<div className="space-y-2">
-									<div className="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">
-										Complete Removal (includes backups):
-									</div>
-									<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-										<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
-											curl {formData.ignoreSslSelfSigned ? "-sk" : "-s"}{" "}
-											{window.location.origin}/api/v1/hosts/remove | sudo
-											REMOVE_BACKUPS=1 sh
+							{uninstallOs === "linux" && (
+								<>
+									{/* Agent Removal Script - Standard */}
+									<div className="mb-3">
+										<div className="space-y-2">
+											<div className="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">
+												Standard Removal (preserves backups):
+											</div>
+											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+												<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
+													curl {settings?.ignore_ssl_self_signed ? "-sk" : "-s"}{" "}
+													{serverUrl}/api/v1/hosts/remove | sudo sh
+												</div>
+												<button
+													type="button"
+													onClick={async () => {
+														try {
+															const curlFlags = settings?.ignore_ssl_self_signed
+																? "-sk"
+																: "-s";
+															await copyToClipboard(
+																`curl ${curlFlags} ${serverUrl}/api/v1/hosts/remove | sudo sh`,
+															);
+															showToast(
+																"Standard removal command copied!",
+																"success",
+															);
+														} catch (err) {
+															console.error("Failed to copy:", err);
+															showToast("Failed to copy to clipboard", "error");
+														}
+													}}
+													className="px-3 py-2 bg-red-200 dark:bg-red-700 text-red-800 dark:text-red-200 rounded text-xs hover:bg-red-300 dark:hover:bg-red-600 transition-colors flex-shrink-0 whitespace-nowrap"
+												>
+													Copy
+												</button>
+											</div>
 										</div>
-										<button
-											type="button"
-											onClick={async () => {
-												try {
-													const curlFlags = formData.ignoreSslSelfSigned
-														? "-sk"
-														: "-s";
-													await copyToClipboard(
-														`curl ${curlFlags} ${window.location.origin}/api/v1/hosts/remove | sudo REMOVE_BACKUPS=1 sh`,
-													);
-													showToast(
-														"Complete removal command copied!",
-														"success",
-													);
-												} catch (err) {
-													console.error("Failed to copy:", err);
-													showToast("Failed to copy to clipboard", "error");
-												}
-											}}
-											className="px-3 py-2 bg-red-200 dark:bg-red-700 text-red-800 dark:text-red-200 rounded text-xs hover:bg-red-300 dark:hover:bg-red-600 transition-colors flex-shrink-0 whitespace-nowrap"
-										>
-											Copy
-										</button>
 									</div>
-									<div className="text-xs text-red-600 dark:text-red-400">
-										This removes: binaries, systemd/OpenRC services,
-										configuration files, logs, crontab entries, and backup files
+
+									{/* Agent Removal Script - Complete */}
+									<div className="mb-3">
+										<div className="space-y-2">
+											<div className="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">
+												Complete Removal (includes backups):
+											</div>
+											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+												<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
+													curl {settings?.ignore_ssl_self_signed ? "-sk" : "-s"}{" "}
+													{serverUrl}/api/v1/hosts/remove | sudo
+													REMOVE_BACKUPS=1 sh
+												</div>
+												<button
+													type="button"
+													onClick={async () => {
+														try {
+															const curlFlags = settings?.ignore_ssl_self_signed
+																? "-sk"
+																: "-s";
+															await copyToClipboard(
+																`curl ${curlFlags} ${serverUrl}/api/v1/hosts/remove | sudo REMOVE_BACKUPS=1 sh`,
+															);
+															showToast(
+																"Complete removal command copied!",
+																"success",
+															);
+														} catch (err) {
+															console.error("Failed to copy:", err);
+															showToast("Failed to copy to clipboard", "error");
+														}
+													}}
+													className="px-3 py-2 bg-red-200 dark:bg-red-700 text-red-800 dark:text-red-200 rounded text-xs hover:bg-red-300 dark:hover:bg-red-600 transition-colors flex-shrink-0 whitespace-nowrap"
+												>
+													Copy
+												</button>
+											</div>
+											<div className="text-xs text-red-600 dark:text-red-400">
+												This removes: binaries, systemd/OpenRC services,
+												configuration files, logs, crontab entries, and backup
+												files
+											</div>
+										</div>
 									</div>
-								</div>
-							</div>
+								</>
+							)}
+
+							{uninstallOs === "windows" && (
+								<>
+									<p className="mb-2 text-xs">
+										Run PowerShell as Administrator.
+									</p>
+									{/* Windows - Standard Removal */}
+									<div className="mb-3">
+										<div className="space-y-2">
+											<div className="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">
+												Standard Removal (preserves config/logs):
+											</div>
+											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+												<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
+													$script = Invoke-WebRequest -Uri "{serverUrl}
+													/api/v1/hosts/remove?os=windows " -UseBasicParsing;
+													$script.Content | Out-File -FilePath
+													"$env:TEMP\patchmon-remove.ps1" -Encoding utf8;
+													powershell.exe -ExecutionPolicy Bypass -File
+													"$env:TEMP\patchmon-remove.ps1"
+												</div>
+												<button
+													type="button"
+													onClick={async () => {
+														try {
+															const cmd = `$script = Invoke-WebRequest -Uri "${serverUrl}/api/v1/hosts/remove?os=windows" -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-remove.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-remove.ps1"`;
+															await copyToClipboard(cmd);
+															showToast(
+																"Standard removal command copied!",
+																"success",
+															);
+														} catch (_err) {
+															showToast("Failed to copy to clipboard", "error");
+														}
+													}}
+													className="px-3 py-2 bg-red-200 dark:bg-red-700 text-red-800 dark:text-red-200 rounded text-xs hover:bg-red-300 dark:hover:bg-red-600 transition-colors flex-shrink-0 whitespace-nowrap"
+												>
+													Copy
+												</button>
+											</div>
+										</div>
+									</div>
+									{/* Windows - Complete Removal */}
+									<div className="mb-3">
+										<div className="space-y-2">
+											<div className="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">
+												Complete Removal (config + logs):
+											</div>
+											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+												<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
+													$script = Invoke-WebRequest -Uri "{serverUrl}
+													/api/v1/hosts/remove?os=windows " -UseBasicParsing;
+													$script.Content | Out-File -FilePath
+													"$env:TEMP\patchmon-remove.ps1" -Encoding utf8;
+													powershell.exe -ExecutionPolicy Bypass -File
+													"$env:TEMP\patchmon-remove.ps1" -RemoveAll -Force
+												</div>
+												<button
+													type="button"
+													onClick={async () => {
+														try {
+															const cmd = `$script = Invoke-WebRequest -Uri "${serverUrl}/api/v1/hosts/remove?os=windows" -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-remove.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-remove.ps1" -RemoveAll -Force`;
+															await copyToClipboard(cmd);
+															showToast(
+																"Complete removal command copied!",
+																"success",
+															);
+														} catch (_err) {
+															showToast("Failed to copy to clipboard", "error");
+														}
+													}}
+													className="px-3 py-2 bg-red-200 dark:bg-red-700 text-red-800 dark:text-red-200 rounded text-xs hover:bg-red-300 dark:hover:bg-red-600 transition-colors flex-shrink-0 whitespace-nowrap"
+												>
+													Copy
+												</button>
+											</div>
+											<div className="text-xs text-red-600 dark:text-red-400">
+												Removes: Windows Service, binaries, configuration, logs,
+												and backup files
+											</div>
+										</div>
+									</div>
+								</>
+							)}
 
 							<p className="mt-2 text-xs text-red-700 dark:text-red-400">
-								⚠️ Standard removal preserves backup files for safety. Use
-								complete removal to delete everything.
+								⚠️ Standard removal preserves backup files (and config/logs on
+								Windows). Use complete removal to delete everything.
 							</p>
 						</div>
 					</div>

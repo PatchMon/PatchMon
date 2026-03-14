@@ -424,7 +424,7 @@ const AddRoleModal = ({ isOpen, onClose, onSuccess }) => {
 							className="block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
 							placeholder="e.g., host_manager, readonly"
 						/>
-						<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+						<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 							Use lowercase with underscores (e.g., host_manager)
 						</p>
 					</div>

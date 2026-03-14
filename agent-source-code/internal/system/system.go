@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -162,6 +163,20 @@ func (d *Detector) getFreeBSDInfo() (osType, osVersion string, err error) {
 
 // DetectOS detects the operating system and version using /etc/os-release
 func (d *Detector) DetectOS() (osType, osVersion string, err error) {
+	// Check for Windows first (uses gopsutil)
+	if runtime.GOOS == "windows" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		info, infoErr := host.InfoWithContext(ctx)
+		if infoErr != nil {
+			return "Windows", "Unknown", nil
+		}
+		osVer := info.PlatformVersion
+		if osVer == "" {
+			osVer = "Unknown"
+		}
+		return "Windows", osVer, nil
+	}
 	// Check for FreeBSD first (doesn't have /etc/os-release)
 	if d.isFreeBSD() {
 		if d.isPfSense() {
@@ -315,8 +330,8 @@ func (d *Detector) GetKernelVersion() string {
 
 // getSELinuxStatus gets SELinux status using file reading
 func (d *Detector) getSELinuxStatus() string {
-	// FreeBSD doesn't use SELinux (uses MAC framework instead)
-	if d.isFreeBSD() {
+	// Windows and FreeBSD don't use SELinux
+	if runtime.GOOS == "windows" || d.isFreeBSD() {
 		return constants.SELinuxDisabled
 	}
 

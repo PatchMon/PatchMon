@@ -19,6 +19,7 @@ type Manager struct {
 	apkManager     *APKManager
 	pacmanManager  *PacmanManager
 	freebsdManager *FreeBSDManager
+	winManager     *WindowsManager
 }
 
 // New creates a new repository manager
@@ -30,6 +31,7 @@ func New(logger *logrus.Logger) *Manager {
 		apkManager:     NewAPKManager(logger),
 		pacmanManager:  NewPacmanManager(logger),
 		freebsdManager: NewFreeBSDManager(logger),
+		winManager:     NewWindowsManager(logger),
 	}
 }
 
@@ -40,6 +42,8 @@ func (m *Manager) GetRepositories() ([]models.Repository, error) {
 	m.logger.WithField("package_manager", packageManager).Debug("Detected package manager")
 
 	switch packageManager {
+	case "windows":
+		return m.winManager.GetRepositories()
 	case "apt":
 		return m.aptManager.GetRepositories()
 	case "dnf", "yum":
@@ -59,6 +63,10 @@ func (m *Manager) GetRepositories() ([]models.Repository, error) {
 
 // detectPackageManager detects which package manager is available on the system
 func (m *Manager) detectPackageManager() string {
+	// Check for Windows first (runtime check, no exec)
+	if runtime.GOOS == "windows" {
+		return "windows"
+	}
 	// Check for FreeBSD pkg first. When the agent runs as rc.d service, PATH may be minimal.
 	if runtime.GOOS == "freebsd" {
 		for _, pkgPath := range []string{"/usr/sbin/pkg", "/usr/local/sbin/pkg"} {

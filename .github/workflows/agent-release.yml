@@ -1,4 +1,4 @@
-name: Agent Release
+name: Release Binaries
 
 on:
   release:
@@ -10,8 +10,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build Agent Binaries (Manual Upload)
+  agent:
+    name: Build Agent Binaries
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -24,6 +24,14 @@ jobs:
             goarch: 'arm'
           - goos: linux
             goarch: '386'
+          - goos: freebsd
+            goarch: 'amd64'
+          - goos: freebsd
+            goarch: 'arm64'
+          - goos: freebsd
+            goarch: '386'
+          - goos: freebsd
+            goarch: 'arm'
 
     steps:
       - name: Checkout code
@@ -43,12 +51,12 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          GOARM: ${{ matrix.goarch == 'arm' && '6' || '' }}
+          GOARM: ${{ (matrix.goos == 'linux' || matrix.goos == 'freebsd') && matrix.goarch == 'arm' && '6' || '' }}
           CGO_ENABLED: 0
         run: |
           OUTPUT_NAME="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
-          go build -buildvcs=false -ldflags="-s -w -X patchmon-agent/internal/version.Version=${{ github.event.release.tag_name }}" -o "${OUTPUT_NAME}" ./cmd/patchmon-agent
-          
+          go build -buildvcs=false -ldflags="-s -w -X patchmon-agent/internal/pkgversion.Version=${{ github.event.release.tag_name }}" -o "${OUTPUT_NAME}" ./cmd/patchmon-agent
+
       - name: Verify binary exists and is executable
         working-directory: agent-source-code
         run: |
@@ -60,28 +68,28 @@ jobs:
           chmod +x "${OUTPUT_NAME}"
           ls -lh "${OUTPUT_NAME}"
           echo "✅ Binary ${OUTPUT_NAME} created successfully"
-          
+
       - name: Verify binary architecture and type
         working-directory: agent-source-code
         run: |
           OUTPUT_NAME="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
           echo "📋 Binary information:"
           file "${OUTPUT_NAME}"
-          
+
           # Verify it's a Linux binary (for linux builds)
-          if [ "${{ matrix.goos }}" = "linux" ]; then
+          if [ "${{ matrix.goos }}" = "linux" ] || [ "${{ matrix.goos }}" = "freebsd" ]; then
             if ! file "${OUTPUT_NAME}" | grep -qE "(ELF|Linux)"; then
-              echo "❌ Error: Binary is not a Linux binary (expected ELF format)"
+              echo "❌ Error: Binary is not a Linux/FreeBSD binary (expected ELF format)"
               exit 1
             fi
-            echo "✅ Verified: Linux binary (ELF format)"
+            echo "✅ Verified: ${{ matrix.goos }} binary (ELF format)"
           fi
-          
+
       - name: Test binary basic functionality
         working-directory: agent-source-code
         run: |
           OUTPUT_NAME="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
-          
+
           # Test version command (if available)
           if [ "${{ matrix.goos }}" = "linux" ] && [ "${{ matrix.goarch }}" = "amd64" ]; then
             echo "🧪 Testing binary functionality..."
@@ -91,14 +99,14 @@ jobs:
           else
             echo "⏭️  Skipping functionality test for ${{ matrix.goos }}/${{ matrix.goarch }} (requires native architecture)"
           fi
-          
-      - name: Verify static linking (Linux only)
-        if: matrix.goos == 'linux'
+
+      - name: Verify static linking (Linux/FreeBSD)
+        if: matrix.goos == 'linux' || matrix.goos == 'freebsd'
         working-directory: agent-source-code
         run: |
           OUTPUT_NAME="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
           echo "🔍 Checking binary dependencies..."
-          
+
           # Check if binary is statically linked (should have minimal or no dynamic dependencies)
           if command -v ldd &> /dev/null; then
             DEPS=$(ldd "${OUTPUT_NAME}" 2>/dev/null | wc -l || echo "0")
@@ -109,7 +117,7 @@ jobs:
               echo "✅ Binary appears to be statically linked (minimal dependencies)"
             fi
           fi
-          
+
           # Check for GLIBC version requirements
           if command -v objdump &> /dev/null; then
             echo "🔍 Checking GLIBC version requirements..."
@@ -127,7 +135,13 @@ jobs:
               echo "✅ No GLIBC version requirements found (statically linked)"
             fi
           fi
-          
+
+      - name: Upload agent binary to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: agent-source-code/patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+
       - name: Build summary
         run: |
           echo "📦 Build Summary:"
@@ -135,6 +149,63 @@ jobs:
           echo "  Architecture: ${{ matrix.goarch }}"
           echo "  CGO_ENABLED: 0 (static linking)"
           echo ""
-          echo "✅ Binary built and verified successfully"
-          echo "📝 Note: Manually attach tested binaries from PatchMon/agents/ to the GitHub release"
+          echo "✅ Binary built and uploaded to release"
 
+  patchmon-server:
+    name: Build patchmon-server Binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: arm
+          - goos: linux
+            goarch: 386
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: "package.json"
+          cache: "npm"
+
+      - name: Build frontend for embed
+        run: |
+          npm ci
+          npm run build --workspace=frontend
+          mkdir -p server-source-code/cmd/server/static/frontend
+          cp -r frontend/dist server-source-code/cmd/server/static/frontend/
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'server-source-code/go.mod'
+
+      - name: Download dependencies
+        working-directory: server-source-code
+        run: go mod download
+
+      - name: Build patchmon-server
+        working-directory: server-source-code
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ (matrix.goos == 'linux' || matrix.goos == 'freebsd') && matrix.goarch == 'arm' && '6' || '' }}
+          CGO_ENABLED: 0
+        run: |
+          OUTPUT_NAME="patchmon-server-${{ matrix.goos }}-${{ matrix.goarch }}"
+          go build -buildvcs=false -ldflags="-s -w" -o "${OUTPUT_NAME}" ./cmd/server
+          mv "${OUTPUT_NAME}" ../
+
+      - name: Upload patchmon-server to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: patchmon-server-${{ matrix.goos }}-${{ matrix.goarch }}

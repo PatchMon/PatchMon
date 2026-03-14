@@ -51,8 +51,8 @@ func (m *PacmanManager) GetPackages() ([]models.Package, error) {
 		return nil, err
 	}
 
-	// Merge and deduplicate packages
-	packages := CombinePackageData(installedPackages, upgradablePackages)
+	// Merge and deduplicate packages (pacman -Q doesn't provide descriptions)
+	packages := CombinePackageData(stringMapToPackageMap(installedPackages), upgradablePackages)
 	return packages, nil
 }
 

@@ -21,7 +21,7 @@ const SEVERITY_COLORS = {
 		"bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
 	low: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
 	unknown:
-		"bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-400",
+		"bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-white",
 };
 
 const LIMIT = 25;
@@ -45,7 +45,12 @@ const get_status_icon = (status) => {
 		return <ShieldAlert className="h-4 w-4 text-yellow-500" title="Warning" />;
 	if (["pass", "passed"].includes(s))
 		return <ShieldCheck className="h-4 w-4 text-green-500" title="Passed" />;
-	return <Shield className="h-4 w-4 text-secondary-400" title="N/A" />;
+	return (
+		<Shield
+			className="h-4 w-4 text-secondary-400 dark:text-white"
+			title="N/A"
+		/>
+	);
 };
 
 const HostComplianceDetail = ({ hostId }) => {
@@ -111,7 +116,7 @@ const HostComplianceDetail = ({ hostId }) => {
 	if (scan_loading) {
 		return (
 			<div className="flex items-center justify-center py-12">
-				<RefreshCw className="h-8 w-8 animate-spin text-secondary-400" />
+				<RefreshCw className="h-8 w-8 animate-spin text-secondary-400 dark:text-white" />
 			</div>
 		);
 	}
@@ -200,7 +205,7 @@ const HostComplianceDetail = ({ hostId }) => {
 				>
 					<div className="flex items-center">
 						<div className="flex-shrink-0">
-							<Shield className="h-5 w-5 text-secondary-500 dark:text-secondary-400 mr-2" />
+							<Shield className="h-5 w-5 text-secondary-500 dark:text-white mr-2" />
 						</div>
 						<div className="w-0 flex-1">
 							<p className="text-sm text-secondary-500 dark:text-white">N/A</p>
@@ -225,7 +230,7 @@ const HostComplianceDetail = ({ hostId }) => {
 									: "No scan yet"}
 							</p>
 							{completed_at && (
-								<p className="mt-0.5 text-xs text-secondary-500 dark:text-secondary-400 font-normal">
+								<p className="mt-0.5 text-xs text-secondary-500 dark:text-white font-normal">
 									{completed_at.toLocaleString()}
 								</p>
 							)}
@@ -240,7 +245,7 @@ const HostComplianceDetail = ({ hostId }) => {
 					<h2 className="text-lg font-semibold text-secondary-900 dark:text-white">
 						Rule results
 					</h2>
-					<p className="text-sm text-secondary-500 dark:text-secondary-400 mt-0.5">
+					<p className="text-sm text-secondary-500 dark:text-white mt-0.5">
 						Results for this host from the latest scan
 						{profile_label ? ` (${profile_label})` : ""}
 					</p>
@@ -248,8 +253,8 @@ const HostComplianceDetail = ({ hostId }) => {
 
 				{!scan_id ? (
 					<div className="p-12 text-center">
-						<Shield className="h-12 w-12 text-secondary-400 mx-auto mb-3" />
-						<p className="text-secondary-600 dark:text-secondary-400">
+						<Shield className="h-12 w-12 text-secondary-400 dark:text-white mx-auto mb-3" />
+						<p className="text-secondary-600 dark:text-white">
 							No scan yet. Run a compliance scan from the main Compliance page
 							to see results here.
 						</p>
@@ -294,19 +299,19 @@ const HostComplianceDetail = ({ hostId }) => {
 								<option value="unknown">Unknown</option>
 							</select>
 							{results_loading && (
-								<RefreshCw className="h-4 w-4 text-secondary-400 animate-spin" />
+								<RefreshCw className="h-4 w-4 text-secondary-400 dark:text-white animate-spin" />
 							)}
 						</div>
 
 						{results_loading && results.length === 0 ? (
 							<div className="flex items-center justify-center py-12">
-								<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
+								<RefreshCw className="h-6 w-6 animate-spin text-secondary-400 dark:text-white" />
 							</div>
 						) : results.length === 0 ? (
-							<div className="p-8 text-center text-secondary-500 dark:text-secondary-400">
+							<div className="p-8 text-center text-secondary-500 dark:text-white">
 								{total === 0 && !status_filter && !severity_filter ? (
 									<>
-										<p className="font-medium text-secondary-700 dark:text-secondary-300">
+										<p className="font-medium text-secondary-700 dark:text-white">
 											This scan has no rule results.
 										</p>
 										<p className="mt-2 text-sm">
@@ -329,16 +334,16 @@ const HostComplianceDetail = ({ hostId }) => {
 									<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 										<thead className="bg-secondary-50 dark:bg-secondary-700">
 											<tr>
-												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider w-28">
+												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider w-28">
 													Status
 												</th>
-												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 													Rule
 												</th>
-												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider w-24">
+												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider w-24">
 													Severity
 												</th>
-												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider w-28">
+												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider w-28">
 													Profile
 												</th>
 											</tr>
@@ -359,7 +364,7 @@ const HostComplianceDetail = ({ hostId }) => {
 														<td className="px-4 py-2 whitespace-nowrap text-sm">
 															<div className="flex items-center gap-2">
 																{get_status_icon(row.status)}
-																<span className="text-secondary-700 dark:text-secondary-300">
+																<span className="text-secondary-700 dark:text-white">
 																	{normalize_status_display(row.status)}
 																</span>
 															</div>
@@ -391,7 +396,7 @@ const HostComplianceDetail = ({ hostId }) => {
 																	(severity || "unknown").slice(1)}
 															</span>
 														</td>
-														<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-500 dark:text-secondary-400">
+														<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-500 dark:text-white">
 															{profile_type === "docker-bench"
 																? "Docker Bench"
 																: "OpenSCAP"}
@@ -405,7 +410,7 @@ const HostComplianceDetail = ({ hostId }) => {
 
 								{total_pages > 1 && (
 									<div className="flex items-center justify-between px-4 py-3 border-t border-secondary-200 dark:border-secondary-600">
-										<p className="text-sm text-secondary-500 dark:text-secondary-400">
+										<p className="text-sm text-secondary-500 dark:text-white">
 											Showing {page * LIMIT + 1}–
 											{Math.min((page + 1) * LIMIT, total)} of {total} rules
 										</p>
@@ -414,11 +419,11 @@ const HostComplianceDetail = ({ hostId }) => {
 												type="button"
 												onClick={() => set_page((p) => Math.max(0, p - 1))}
 												disabled={page === 0}
-												className="p-1.5 rounded-lg bg-secondary-100 dark:bg-secondary-700 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-200 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center"
+												className="p-1.5 rounded-lg bg-secondary-100 dark:bg-secondary-700 text-secondary-600 dark:text-white hover:bg-secondary-200 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center"
 											>
 												<ChevronLeft className="h-4 w-4" />
 											</button>
-											<span className="text-sm text-secondary-500 dark:text-secondary-400">
+											<span className="text-sm text-secondary-500 dark:text-white">
 												Page {page + 1} of {total_pages}
 											</span>
 											<button
@@ -427,7 +432,7 @@ const HostComplianceDetail = ({ hostId }) => {
 													set_page((p) => Math.min(total_pages - 1, p + 1))
 												}
 												disabled={page >= total_pages - 1}
-												className="p-1.5 rounded-lg bg-secondary-100 dark:bg-secondary-700 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-200 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center"
+												className="p-1.5 rounded-lg bg-secondary-100 dark:bg-secondary-700 text-secondary-600 dark:text-white hover:bg-secondary-200 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center"
 											>
 												<ChevronRight className="h-4 w-4" />
 											</button>

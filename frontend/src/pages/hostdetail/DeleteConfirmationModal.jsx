@@ -20,14 +20,14 @@ const DeleteConfirmationModal = ({
 						<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
 							Delete Host
 						</h3>
-						<p className="text-sm text-secondary-600 dark:text-secondary-300">
+						<p className="text-sm text-secondary-600 dark:text-white">
 							This action cannot be undone
 						</p>
 					</div>
 				</div>
 
 				<div className="mb-6">
-					<p className="text-secondary-700 dark:text-secondary-300">
+					<p className="text-secondary-700 dark:text-white">
 						Are you sure you want to delete the host{" "}
 						<span className="font-semibold">"{host.friendly_name}"</span>?
 					</p>

@@ -9,7 +9,7 @@ const AlertChannels = () => {
 					<h1 className="text-2xl font-bold text-secondary-900 dark:text-white">
 						Alert Channels
 					</h1>
-					<p className="mt-1 text-sm text-secondary-600 dark:text-secondary-400">
+					<p className="mt-1 text-sm text-secondary-600 dark:text-white">
 						Configure how PatchMon sends notifications and alerts
 					</p>
 				</div>
@@ -27,7 +27,7 @@ const AlertChannels = () => {
 						<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
 							Alert Channels Coming Soon
 						</h3>
-						<p className="mt-1 text-sm text-secondary-600 dark:text-secondary-400">
+						<p className="mt-1 text-sm text-secondary-600 dark:text-white">
 							We're working on adding support for multiple alert channels
 							including email, Slack, Discord, and webhooks.
 						</p>
@@ -46,7 +46,7 @@ const AlertChannels = () => {
 					<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
 						Alert Channels
 					</h3>
-					<p className="mt-1 text-sm text-secondary-600 dark:text-secondary-400">
+					<p className="mt-1 text-sm text-secondary-600 dark:text-white">
 						No alert channels configured yet
 					</p>
 				</div>
@@ -55,7 +55,7 @@ const AlertChannels = () => {
 					<h3 className="mt-2 text-sm font-medium text-secondary-900 dark:text-white">
 						No channels
 					</h3>
-					<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
+					<p className="mt-1 text-sm text-secondary-500 dark:text-white">
 						Get started by adding your first alert channel.
 					</p>
 				</div>

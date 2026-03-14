@@ -34,14 +34,14 @@ const DashboardSettingsChoiceModal = ({
 							<button
 								type="button"
 								onClick={on_close}
-								className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+								className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
 								aria-label="Close"
 							>
 								<X className="h-5 w-5" />
 							</button>
 						</div>
 
-						<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-4">
+						<p className="text-sm text-secondary-600 dark:text-white mb-4">
 							Choose how you want to reorder your dashboard cards:
 						</p>
 
@@ -59,7 +59,7 @@ const DashboardSettingsChoiceModal = ({
 									<span className="font-medium text-secondary-900 dark:text-white block">
 										Change order through list
 									</span>
-									<span className="text-sm text-secondary-500 dark:text-secondary-400">
+									<span className="text-sm text-secondary-500 dark:text-white">
 										Open a list of all cards to reorder and show/hide them
 									</span>
 								</div>
@@ -78,7 +78,7 @@ const DashboardSettingsChoiceModal = ({
 									<span className="font-medium text-secondary-900 dark:text-white block">
 										Drag cards on dashboard
 									</span>
-									<span className="text-sm text-secondary-500 dark:text-secondary-400">
+									<span className="text-sm text-secondary-500 dark:text-white">
 										Drag and drop cards directly on the dashboard to reorder
 									</span>
 								</div>

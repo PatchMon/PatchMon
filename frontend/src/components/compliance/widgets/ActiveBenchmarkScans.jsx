@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
-import { RefreshCw, Shield, ShieldCheck } from "lucide-react";
+import { ChevronRight, RefreshCw, Shield, ShieldCheck } from "lucide-react";
 import { Link } from "react-router-dom";
 import { complianceAPI } from "../../../utils/complianceApi";
+
+const DISPLAY_LIMIT = 5;
 
 const ActiveBenchmarkScans = () => {
 	const { data, isLoading } = useQuery({
@@ -13,6 +15,8 @@ const ActiveBenchmarkScans = () => {
 	});
 
 	const scans = data?.activeScans || [];
+	const displayScans = scans.slice(0, DISPLAY_LIMIT);
+	const hasMore = scans.length > DISPLAY_LIMIT;
 
 	return (
 		<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
@@ -33,70 +37,82 @@ const ActiveBenchmarkScans = () => {
 					<RefreshCw className="h-5 w-5 animate-spin text-secondary-400" />
 				</div>
 			) : scans.length === 0 ? (
-				<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-secondary-500 flex-1">
+				<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-white flex-1">
 					<ShieldCheck className="h-8 w-8 mb-2" />
 					<p className="text-sm">No scans currently running</p>
 				</div>
 			) : (
-				<div className="overflow-hidden rounded-lg border border-secondary-200 dark:border-secondary-700 flex-1 min-h-0 flex flex-col">
-					<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700 text-sm">
-						<thead className="bg-secondary-50 dark:bg-secondary-700/50">
-							<tr>
-								<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase">
-									Host
-								</th>
-								<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase">
-									Profile
-								</th>
-								<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase">
-									Started
-								</th>
-							</tr>
-						</thead>
-						<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-700">
-							{scans.map((scan) => (
-								<tr
-									key={scan.id}
-									className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
-								>
-									<td className="px-3 py-1.5 whitespace-nowrap">
-										<Link
-											to={`/compliance/hosts/${scan.hostId}`}
-											className="font-medium text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300 hover:underline"
-										>
-											{scan.hostName || "Unknown"}
-										</Link>
-									</td>
-									<td className="px-3 py-1.5 whitespace-nowrap">
-										<span className="inline-flex items-center gap-1.5">
-											<RefreshCw className="h-3 w-3 animate-spin text-blue-600 dark:text-blue-400" />
-											<span
-												className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
-													scan.profileType === "docker-bench"
-														? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
-														: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
-												}`}
-											>
-												<Shield className="h-3 w-3" />
-												{scan.profileType === "docker-bench"
-													? "Docker Bench"
-													: scan.profileType === "openscap"
-														? "OpenSCAP"
-														: scan.profileName || "Scanning"}
-											</span>
-										</span>
-									</td>
-									<td className="px-3 py-1.5 whitespace-nowrap text-secondary-500 dark:text-secondary-400 text-xs">
-										{scan.startedAt
-											? formatDistanceToNow(new Date(scan.startedAt), {
-													addSuffix: true,
-												})
-											: "—"}
-									</td>
+				<div className="flex flex-col flex-1 min-h-0">
+					<div className="overflow-hidden rounded-lg border border-secondary-200 dark:border-secondary-700 flex-1 min-h-0">
+						<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700 text-sm">
+							<thead className="bg-secondary-50 dark:bg-secondary-700/50">
+								<tr>
+									<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase">
+										Host
+									</th>
+									<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase">
+										Profile
+									</th>
+									<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase">
+										Started
+									</th>
 								</tr>
-							))}
-						</tbody>
-					</table>
+							</thead>
+							<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-700">
+								{displayScans.map((scan) => (
+									<tr
+										key={scan.id}
+										className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
+									>
+										<td className="px-3 py-1.5 whitespace-nowrap">
+											<Link
+												to={`/compliance/hosts/${scan.hostId}`}
+												className="font-medium text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300 hover:underline"
+											>
+												{scan.hostName || "Unknown"}
+											</Link>
+										</td>
+										<td className="px-3 py-1.5 whitespace-nowrap">
+											<span className="inline-flex items-center gap-1.5">
+												<RefreshCw className="h-3 w-3 animate-spin text-blue-600 dark:text-blue-400" />
+												<span
+													className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
+														scan.profileType === "docker-bench"
+															? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
+															: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
+													}`}
+												>
+													<Shield className="h-3 w-3" />
+													{scan.profileType === "docker-bench"
+														? "Docker Bench"
+														: scan.profileType === "openscap"
+															? "OpenSCAP"
+															: scan.profileName || "Scanning"}
+												</span>
+											</span>
+										</td>
+										<td className="px-3 py-1.5 whitespace-nowrap text-secondary-500 dark:text-white text-xs">
+											{scan.startedAt
+												? formatDistanceToNow(new Date(scan.startedAt), {
+														addSuffix: true,
+													})
+												: "—"}
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+					<Link
+						to="/compliance"
+						state={{ complianceTab: "hosts" }}
+						className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline"
+					>
+						{hasMore
+							? `View all ${scans.length} scans`
+							: "View compliance hosts"}
+						<ChevronRight className="h-4 w-4" />
+					</Link>
 				</div>
 			)}
 		</div>

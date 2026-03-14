@@ -1,7 +1,6 @@
 # Environment files
 **/.env
 **/.env.*
-**/env.example
 
 # Node modules
 **/node_modules
@@ -13,6 +12,7 @@
 # Git
 **/.git
 **/.gitignore
+.git-moved
 
 # IDE files
 **/.vscode
@@ -28,6 +28,15 @@
 **/dist
 **/build
 **/coverage
+
+# Go binaries and test artifacts (built during Docker build, not from repo)
+**/*.exe
+**/*.test
+**/*.out
+**/*.prof
+**/patchmon-server
+**/patchmon-server-*
+**/agents/patchmon-agent-*
 
 # Temporary files
 **/tmp

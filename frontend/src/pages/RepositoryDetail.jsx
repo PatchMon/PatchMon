@@ -189,7 +189,7 @@ const RepositoryDetail = () => {
 					<h3 className="mt-2 text-sm font-medium text-secondary-900 dark:text-white">
 						Repository not found
 					</h3>
-					<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-300">
+					<p className="mt-1 text-sm text-secondary-500 dark:text-white">
 						The repository you're looking for doesn't exist.
 					</p>
 				</div>
@@ -210,7 +210,7 @@ const RepositoryDetail = () => {
 							</h3>
 						</div>
 						<div className="mb-6">
-							<p className="text-secondary-700 dark:text-secondary-300 mb-2">
+							<p className="text-secondary-700 dark:text-white mb-2">
 								Are you sure you want to delete{" "}
 								<strong>"{repository?.name}"</strong>?
 							</p>
@@ -229,7 +229,7 @@ const RepositoryDetail = () => {
 							<button
 								type="button"
 								onClick={cancelDelete}
-								className="px-4 py-2 text-secondary-600 dark:text-secondary-400 hover:text-secondary-800 dark:hover:text-secondary-200 transition-colors"
+								className="px-4 py-2 text-secondary-600 dark:text-white hover:text-secondary-800 dark:hover:text-secondary-200 transition-colors"
 								disabled={deleteRepositoryMutation.isPending}
 							>
 								Cancel
@@ -339,7 +339,7 @@ const RepositoryDetail = () => {
 							<div>
 								<label
 									htmlFor={repositoryNameId}
-									className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1"
+									className="block text-sm font-medium text-secondary-700 dark:text-white mb-1"
 								>
 									Repository Name
 								</label>
@@ -356,7 +356,7 @@ const RepositoryDetail = () => {
 							<div>
 								<label
 									htmlFor={priorityId}
-									className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1"
+									className="block text-sm font-medium text-secondary-700 dark:text-white mb-1"
 								>
 									Priority
 								</label>
@@ -374,7 +374,7 @@ const RepositoryDetail = () => {
 							<div className="md:col-span-2">
 								<label
 									htmlFor={descriptionId}
-									className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1"
+									className="block text-sm font-medium text-secondary-700 dark:text-white mb-1"
 								>
 									Description
 								</label>
@@ -411,7 +411,7 @@ const RepositoryDetail = () => {
 						<div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 							<div className="space-y-4">
 								<div>
-									<span className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+									<span className="text-sm font-medium text-secondary-500 dark:text-white">
 										URL
 									</span>
 									<div className="flex items-center mt-1">
@@ -422,7 +422,7 @@ const RepositoryDetail = () => {
 									</div>
 								</div>
 								<div>
-									<span className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+									<span className="text-sm font-medium text-secondary-500 dark:text-white">
 										Distribution
 									</span>
 									<p className="text-secondary-900 dark:text-white mt-1">
@@ -430,7 +430,7 @@ const RepositoryDetail = () => {
 									</p>
 								</div>
 								<div>
-									<span className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+									<span className="text-sm font-medium text-secondary-500 dark:text-white">
 										Components
 									</span>
 									<p className="text-secondary-900 dark:text-white mt-1">
@@ -438,7 +438,7 @@ const RepositoryDetail = () => {
 									</p>
 								</div>
 								<div>
-									<span className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+									<span className="text-sm font-medium text-secondary-500 dark:text-white">
 										Repository Type
 									</span>
 									<p className="text-secondary-900 dark:text-white mt-1">
@@ -448,7 +448,7 @@ const RepositoryDetail = () => {
 							</div>
 							<div className="space-y-4">
 								<div>
-									<span className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+									<span className="text-sm font-medium text-secondary-500 dark:text-white">
 										Security
 									</span>
 									<div className="flex items-center mt-1">
@@ -467,7 +467,7 @@ const RepositoryDetail = () => {
 								</div>
 								{repository.priority && (
 									<div>
-										<span className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+										<span className="text-sm font-medium text-secondary-500 dark:text-white">
 											Priority
 										</span>
 										<p className="text-secondary-900 dark:text-white mt-1">
@@ -477,7 +477,7 @@ const RepositoryDetail = () => {
 								)}
 								{repository.description && (
 									<div>
-										<span className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+										<span className="text-sm font-medium text-secondary-500 dark:text-white">
 											Description
 										</span>
 										<p className="text-secondary-900 dark:text-white mt-1">
@@ -486,7 +486,7 @@ const RepositoryDetail = () => {
 									</div>
 								)}
 								<div>
-									<span className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+									<span className="text-sm font-medium text-secondary-500 dark:text-white">
 										Created
 									</span>
 									<div className="flex items-center mt-1">
@@ -534,7 +534,7 @@ const RepositoryDetail = () => {
 					{filteredAndPaginatedHosts.length === 0 ? (
 						<div className="text-center py-8">
 							<Server className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
-							<p className="text-secondary-500 dark:text-secondary-300">
+							<p className="text-secondary-500 dark:text-white">
 								{searchTerm
 									? "No hosts match your search"
 									: "This repository hasn't been reported by any hosts yet."}
@@ -545,19 +545,19 @@ const RepositoryDetail = () => {
 							<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 								<thead className="bg-secondary-50 dark:bg-secondary-700">
 									<tr>
-										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Host
 										</th>
-										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Operating System
 										</th>
-										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Last Checked
 										</th>
-										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Last Update
 										</th>
-										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Reboot Required
 										</th>
 									</tr>
@@ -588,7 +588,7 @@ const RepositoryDetail = () => {
 														</div>
 														{hostRepo.hosts.friendly_name &&
 															hostRepo.hosts.hostname && (
-																<div className="text-sm text-secondary-500 dark:text-secondary-300">
+																<div className="text-sm text-secondary-500 dark:text-white">
 																	{hostRepo.hosts.hostname}
 																</div>
 															)}
@@ -598,12 +598,12 @@ const RepositoryDetail = () => {
 											<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
 												{hostRepo.hosts.os_type} {hostRepo.hosts.os_version}
 											</td>
-											<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500 dark:text-secondary-300">
+											<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500 dark:text-white">
 												{hostRepo.last_checked
 													? formatRelativeTime(hostRepo.last_checked)
 													: "Never"}
 											</td>
-											<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500 dark:text-secondary-300">
+											<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500 dark:text-white">
 												{hostRepo.hosts.last_update
 													? formatRelativeTime(hostRepo.hosts.last_update)
 													: "Never"}
@@ -620,7 +620,7 @@ const RepositoryDetail = () => {
 														Required
 													</span>
 												) : (
-													<span className="text-sm text-secondary-500 dark:text-secondary-300">
+													<span className="text-sm text-secondary-500 dark:text-white">
 														No
 													</span>
 												)}
@@ -634,7 +634,7 @@ const RepositoryDetail = () => {
 							{totalPages > 1 && (
 								<div className="px-6 py-3 bg-white dark:bg-secondary-800 border-t border-secondary-200 dark:border-secondary-600 flex items-center justify-between">
 									<div className="flex items-center gap-2">
-										<span className="text-sm text-secondary-700 dark:text-secondary-300">
+										<span className="text-sm text-secondary-700 dark:text-white">
 											Rows per page:
 										</span>
 										<select
@@ -659,7 +659,7 @@ const RepositoryDetail = () => {
 										>
 											Previous
 										</button>
-										<span className="text-sm text-secondary-700 dark:text-secondary-300">
+										<span className="text-sm text-secondary-700 dark:text-white">
 											Page {currentPage} of {totalPages}
 										</span>
 										<button

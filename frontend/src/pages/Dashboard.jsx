@@ -15,6 +15,7 @@ import {
 	useSortable,
 } from "@dnd-kit/sortable";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import confetti from "canvas-confetti";
 import {
 	ArcElement,
 	BarElement,
@@ -61,6 +62,7 @@ import {
 } from "../components/compliance/widgets";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
+import { useToast } from "../contexts/ToastContext";
 import {
 	dashboardAPI,
 	dashboardPreferencesAPI,
@@ -209,8 +211,22 @@ const Dashboard = () => {
 	const [active_drag_rect, set_active_drag_rect] = useState(null);
 	const navigate = useNavigate();
 	const query_client = useQueryClient();
+	const toast = useToast();
 	const { isDark } = useTheme();
 	const { user, permissions } = useAuth();
+
+	// First-time setup celebration
+	useEffect(() => {
+		if (localStorage.getItem("patchmon_first_time_complete") === "1") {
+			localStorage.removeItem("patchmon_first_time_complete");
+			confetti({
+				particleCount: 100,
+				spread: 70,
+				origin: { y: 0.6 },
+			});
+			toast.success("Welcome to PatchMon!");
+		}
+	}, [toast]);
 
 	// Navigation handlers
 	const handleTotalHostsClick = () => {
@@ -272,16 +288,19 @@ const Dashboard = () => {
 		navigate("/hosts?filter=needsUpdates", { replace: true });
 	};
 
-	// Chart click handlers
+	// Chart click handlers - OS distribution (bar/pie/doughnut) click navigates to hosts filtered by os_type + os_version
 	const handleOSChartClick = (_, elements) => {
 		if (elements.length > 0 && stats?.charts?.osDistribution) {
 			const elementIndex = elements[0].index;
 			const osItem = stats.charts.osDistribution[elementIndex];
 			if (osItem?.name) {
-				navigate(
-					`/hosts?osFilter=${osItem.name.toLowerCase()}&showFilters=true`,
-					{ replace: true },
-				);
+				const params = new URLSearchParams();
+				params.set("osFilter", (osItem.os_type || osItem.name).toLowerCase());
+				if (osItem.os_version) {
+					params.set("osVersionFilter", osItem.os_version);
+				}
+				params.set("showFilters", "true");
+				navigate(`/hosts?${params.toString()}`, { replace: true });
 			}
 		}
 	};
@@ -373,12 +392,11 @@ const Dashboard = () => {
 		isFetching: packageTrendsFetching,
 	} = useQuery({
 		queryKey: ["packageTrends", packageTrendsPeriod, packageTrendsHost],
-		queryFn: () => {
-			const params = {
-				days: packageTrendsPeriod,
-			};
-			if (packageTrendsHost !== "all") {
-				params.hostId = packageTrendsHost;
+		queryFn: ({ queryKey }) => {
+			const [, period, host] = queryKey;
+			const params = { days: period };
+			if (host && host !== "all") {
+				params.hostId = host;
 			}
 			return dashboardAPI.getPackageTrends(params).then((res) => res.data);
 		},
@@ -1463,6 +1481,7 @@ const Dashboard = () => {
 								</div>
 							) : packageTrendsData?.chartData ? (
 								<Line
+									key={`${packageTrendsPeriod}-${packageTrendsHost}`}
 									data={packageTrendsData.chartData}
 									options={packageTrendsChartOptions}
 								/>
@@ -1586,7 +1605,7 @@ const Dashboard = () => {
 							)}
 						</div>
 						{!recentUsers || recentUsers.length === 0 ? (
-							<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-secondary-500 flex-1">
+							<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-white flex-1">
 								<Users className="h-8 w-8 mb-2" />
 								<p className="text-sm">No users found</p>
 							</div>
@@ -1595,10 +1614,10 @@ const Dashboard = () => {
 								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700 text-sm">
 									<thead className="bg-secondary-50 dark:bg-secondary-700/50">
 										<tr>
-											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase">
+											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase">
 												Username
 											</th>
-											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase">
+											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase">
 												Last Login
 											</th>
 										</tr>
@@ -1614,7 +1633,7 @@ const Dashboard = () => {
 														{u.username}
 													</span>
 												</td>
-												<td className="px-3 py-1.5 whitespace-nowrap text-secondary-500 dark:text-secondary-400 text-xs">
+												<td className="px-3 py-1.5 whitespace-nowrap text-secondary-500 dark:text-white text-xs">
 													{u.last_login
 														? formatRelativeTime(u.last_login)
 														: "Never"}
@@ -1643,7 +1662,7 @@ const Dashboard = () => {
 							)}
 						</div>
 						{!recentCollection || recentCollection.length === 0 ? (
-							<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-secondary-500 flex-1">
+							<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-white flex-1">
 								<Server className="h-8 w-8 mb-2" />
 								<p className="text-sm">No hosts found</p>
 							</div>
@@ -1652,10 +1671,10 @@ const Dashboard = () => {
 								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700 text-sm">
 									<thead className="bg-secondary-50 dark:bg-secondary-700/50">
 										<tr>
-											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase">
+											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase">
 												Host
 											</th>
-											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase">
+											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase">
 												Last Update
 											</th>
 										</tr>
@@ -1675,7 +1694,7 @@ const Dashboard = () => {
 														{host.friendly_name || host.hostname}
 													</button>
 												</td>
-												<td className="px-3 py-1.5 whitespace-nowrap text-secondary-500 dark:text-secondary-400 text-xs">
+												<td className="px-3 py-1.5 whitespace-nowrap text-secondary-500 dark:text-white text-xs">
 													{host.last_update
 														? formatRelativeTime(host.last_update)
 														: "Never"}

@@ -48,7 +48,7 @@ const ComplianceProfilesPie = ({ data }) => {
 				{has_data ? (
 					<Bar data={chart_data} options={options} />
 				) : (
-					<div className="flex items-center justify-center h-full text-secondary-500 dark:text-secondary-400 text-sm">
+					<div className="flex items-center justify-center h-full text-secondary-500 dark:text-white text-sm">
 						No profile data yet
 					</div>
 				)}

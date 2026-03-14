@@ -186,11 +186,11 @@ const Users = () => {
 													<XCircle className="ml-2 h-4 w-4 text-red-500" />
 												)}
 											</div>
-											<div className="flex items-center mt-1 text-sm text-secondary-500 dark:text-secondary-300">
+											<div className="flex items-center mt-1 text-sm text-secondary-500 dark:text-white">
 												<Mail className="h-4 w-4 mr-1" />
 												{user.email}
 											</div>
-											<div className="flex items-center mt-1 text-sm text-secondary-500 dark:text-secondary-300">
+											<div className="flex items-center mt-1 text-sm text-secondary-500 dark:text-white">
 												<Calendar className="h-4 w-4 mr-1" />
 												Created:{" "}
 												{new Date(user.created_at).toLocaleDateString()}
@@ -208,7 +208,7 @@ const Users = () => {
 										<button
 											type="button"
 											onClick={() => handleEditUser(user)}
-											className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+											className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
 											title="Edit user"
 										>
 											<Edit className="h-4 w-4" />
@@ -255,10 +255,10 @@ const Users = () => {
 						<li>
 							<div className="px-4 py-8 text-center">
 								<User className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
-								<p className="text-secondary-500 dark:text-secondary-300">
+								<p className="text-secondary-500 dark:text-white">
 									No users found
 								</p>
-								<p className="text-sm text-secondary-400 dark:text-secondary-400 mt-2">
+								<p className="text-sm text-secondary-400 dark:text-white mt-2">
 									Click "Add User" to create the first user
 								</p>
 							</div>
@@ -449,7 +449,7 @@ const AddUserModal = ({ isOpen, onClose, onUserCreated, roles }) => {
 							onChange={handleInputChange}
 							className="block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
 						/>
-						<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+						<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 							Minimum 6 characters
 						</p>
 					</div>

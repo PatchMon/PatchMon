@@ -10,7 +10,7 @@ PatchMon's monitoring agent collects and reports package, system, hardware, and 
 - Arch Linux / Manjaro (pacman)
 - Alpine Linux (apk)
 
-**FreeBSD** (amd64, arm64):
+**FreeBSD** (amd64, 386, arm64, arm):
 - FreeBSD
 
 ## Installation
@@ -28,7 +28,7 @@ sudo mv patchmon-agent-linux-amd64 /usr/local/bin/patchmon-agent
 ### From Source
 
 1. **Prerequisites**:
-   - Go 1.24 or later
+   - Go 1.26 or later
    - Root access on the target system
 
 2. **Build and Install**:
@@ -98,7 +98,10 @@ report_offset: 0
 skip_ssl_verify: false
 integrations:
   docker: false
-  compliance: "on-demand"
+  compliance:
+    enabled: "on-demand"
+    openscap_enabled: true
+    docker_bench_enabled: false
   ssh-proxy-enabled: false
 ```
 
@@ -111,7 +114,7 @@ integrations:
 | `log_level` | Log verbosity: `debug`, `info`, `warn`, `error` |
 | `update_interval` | Report interval in minutes (synced from server) |
 | `report_offset` | Stagger offset in seconds (auto-calculated from API ID) |
-| `skip_ssl_verify` | Skip TLS verification (blocked in production) |
+| `skip_ssl_verify` | Skip TLS verification (for self-signed or internal CA certs) |
 | `integrations` | Toggle integrations on/off (synced from server) |
 
 ### Example Credentials File
@@ -198,7 +201,10 @@ Compliance scanning supports three modes:
 
 ```yaml
 integrations:
-  compliance: "on-demand"
+  compliance:
+    enabled: "on-demand"
+    openscap_enabled: true
+    docker_bench_enabled: false
 ```
 
 When enabled, the agent installs OpenSCAP and SCAP Security Guide content. Available scan tools:
@@ -225,7 +231,7 @@ The agent supports automatic updates with security protections:
 - **Atomic replacement** - the binary is replaced using `os.Rename` for atomicity
 - **Backup retention** - the last 3 binary backups are kept
 - **Loop prevention** - a timestamp marker prevents repeated update attempts within 5 minutes
-- **TLS enforcement** - `skip_ssl_verify` is blocked in production environments
+- **TLS** - `skip_ssl_verify` allows self-signed or internal CA certificates
 
 To manually check for updates:
 
@@ -318,7 +324,7 @@ Uninstall functionality is handled by the `patchmon_remove.sh` script rather tha
 make deps            # Install Go dependencies
 make build           # Build for current platform
 make build-linux     # Build Linux binaries (amd64, 386, arm64, arm)
-make build-freebsd   # Build FreeBSD binaries (amd64, arm64)
+make build-freebsd   # Build FreeBSD binaries (amd64, 386, arm64, arm)
 make build-all       # Build all platforms
 make test            # Run tests
 make test-coverage   # Run tests with coverage report

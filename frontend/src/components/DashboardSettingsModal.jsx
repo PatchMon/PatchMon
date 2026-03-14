@@ -58,7 +58,7 @@ const SortableCardItem = ({ card, onToggle }) => {
 				<button
 					{...attributes}
 					{...listeners}
-					className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300 cursor-grab active:cursor-grabbing"
+					className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300 cursor-grab active:cursor-grabbing"
 				>
 					<GripVertical className="h-4 w-4" />
 				</button>
@@ -66,7 +66,7 @@ const SortableCardItem = ({ card, onToggle }) => {
 					<div className="text-sm font-medium text-secondary-900 dark:text-white">
 						{card.title}
 						{card.typeLabel ? (
-							<span className="ml-2 text-xs font-normal text-secondary-500 dark:text-secondary-400">
+							<span className="ml-2 text-xs font-normal text-secondary-500 dark:text-white">
 								({card.typeLabel})
 							</span>
 						) : null}
@@ -80,7 +80,7 @@ const SortableCardItem = ({ card, onToggle }) => {
 				className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
 					card.enabled
 						? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 hover:bg-green-200 dark:hover:bg-green-800"
-						: "bg-secondary-100 dark:bg-secondary-700 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-200 dark:hover:bg-secondary-600"
+						: "bg-secondary-100 dark:bg-secondary-700 text-secondary-600 dark:text-white hover:bg-secondary-200 dark:hover:bg-secondary-600"
 				}`}
 			>
 				{card.enabled ? (
@@ -344,13 +344,13 @@ const DashboardSettingsModal = ({ isOpen, onClose }) => {
 							<button
 								type="button"
 								onClick={onClose}
-								className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+								className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
 							>
 								<X className="h-5 w-5" />
 							</button>
 						</div>
 
-						<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-4">
+						<p className="text-sm text-secondary-600 dark:text-white mb-4">
 							Customize your dashboard by reordering cards and toggling their
 							visibility. Drag cards to reorder them, and click the visibility
 							toggle to show/hide cards.
@@ -365,7 +365,7 @@ const DashboardSettingsModal = ({ isOpen, onClose }) => {
 								<div>
 									<label
 										htmlFor="stats-columns"
-										className="block text-xs text-secondary-500 dark:text-secondary-400 mb-1"
+										className="block text-xs text-secondary-500 dark:text-white mb-1"
 									>
 										Stats row (small cards)
 									</label>
@@ -392,7 +392,7 @@ const DashboardSettingsModal = ({ isOpen, onClose }) => {
 								<div>
 									<label
 										htmlFor="charts-columns"
-										className="block text-xs text-secondary-500 dark:text-secondary-400 mb-1"
+										className="block text-xs text-secondary-500 dark:text-white mb-1"
 									>
 										Charts row
 									</label>

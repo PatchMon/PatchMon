@@ -34,7 +34,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Global variables
-SCRIPT_VERSION="self-hosting-install.sh v1.4.2-selfhost-2026-02-18"
+SCRIPT_VERSION="self-hosting-install.sh v1.4.7-selfhost-2026-03-14"
 DEFAULT_GITHUB_REPO="https://github.com/PatchMon/PatchMon.git"
 FQDN=""
 CUSTOM_FQDN=""
@@ -1039,8 +1039,8 @@ setup_node_environment() {
     
     cd "$APP_DIR"
     
-    # Set Node.js environment
-    export NODE_ENV=production
+    # Set app environment
+    export APP_ENV=production
     export PATH="/usr/bin:/usr/local/bin:$PATH"
     
     print_status "Node.js environment configured"
@@ -1166,7 +1166,7 @@ JWT_REFRESH_EXPIRES_IN=7d
 
 # Server Configuration
 PORT=$BACKEND_PORT
-NODE_ENV=production
+APP_ENV=production
 
 # API Configuration
 API_VERSION=v1
@@ -1214,7 +1214,7 @@ TFA_SUSPICIOUS_ACTIVITY_THRESHOLD=3
 EOF
 
     # Frontend .env (VITE_API_URL must match CORS/base URL so dashboard can reach backend)
-    local app_version="1.4.2"
+    local app_version="1.4.7"
     if [ -f "backend/package.json" ]; then
         app_version=$(grep '"version"' backend/package.json | head -1 | sed 's/.*"version": "\([^"]*\)".*/\1/')
     fi
@@ -1363,7 +1363,7 @@ WorkingDirectory=$APP_DIR/backend
 ExecStart=/usr/bin/node src/server.js
 Restart=always
 RestartSec=10
-Environment=NODE_ENV=production
+Environment=APP_ENV=production
 Environment=PATH=/usr/bin:/usr/local/bin
 NoNewPrivileges=true
 PrivateTmp=true
@@ -1495,34 +1495,6 @@ server {
         try_files \$uri \$uri/ /index.html;
     }
     
-    # Bull Board proxy
-    location /bullboard {
-        proxy_pass http://127.0.0.1:$backend_port;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header X-Forwarded-Host \$host;
-        proxy_set_header Cookie \$http_cookie;
-        proxy_cache_bypass \$http_upgrade;
-        proxy_read_timeout 300s;
-        proxy_connect_timeout 75s;
-        
-        # Enable cookie passthrough
-        proxy_pass_header Set-Cookie;
-        proxy_cookie_path / /;
-        
-        # Preserve original client IP
-        proxy_set_header X-Original-Forwarded-For \$http_x_forwarded_for;
-        
-        if (\$request_method = 'OPTIONS') {
-            return 204;
-        }
-    }
-    
     # API proxy
     location /api/ {
         proxy_pass http://127.0.0.1:$backend_port;
@@ -1545,8 +1517,8 @@ server {
         }
     }
     
-    # Static assets caching (exclude Bull Board and API assets like Swagger UI)
-    location ~* ^/(?!bullboard|api/).*\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+    # Static assets caching (exclude API assets like Swagger UI)
+    location ~* ^/(?!api/).*\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
         root $app_dir/frontend/dist;
         expires 1y;
         add_header Cache-Control "public, immutable";
@@ -1579,34 +1551,6 @@ server {
         try_files \$uri \$uri/ /index.html;
     }
     
-    # Bull Board proxy
-    location /bullboard {
-        proxy_pass http://127.0.0.1:$backend_port;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header X-Forwarded-Host \$host;
-        proxy_set_header Cookie \$http_cookie;
-        proxy_cache_bypass \$http_upgrade;
-        proxy_read_timeout 300s;
-        proxy_connect_timeout 75s;
-        
-        # Enable cookie passthrough
-        proxy_pass_header Set-Cookie;
-        proxy_cookie_path / /;
-        
-        # Preserve original client IP
-        proxy_set_header X-Original-Forwarded-For \$http_x_forwarded_for;
-        
-        if (\$request_method = 'OPTIONS') {
-            return 204;
-        }
-    }
-    
     # API proxy
     location /api/ {
         proxy_pass http://127.0.0.1:$backend_port;
@@ -1629,8 +1573,8 @@ server {
         }
     }
     
-    # Static assets caching (exclude Bull Board and API assets like Swagger UI)
-    location ~* ^/(?!bullboard|api/).*\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+    # Static assets caching (exclude API assets like Swagger UI)
+    location ~* ^/(?!api/).*\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
         root $app_dir/frontend/dist;
         expires 1y;
         add_header Cache-Control "public, immutable";
@@ -2768,7 +2712,7 @@ update_env_file() {
     : ${JWT_REFRESH_EXPIRES_IN:=7d}
     
     # Server
-    : ${NODE_ENV:=production}
+    : ${APP_ENV:=production}
     
     # API
     : ${API_VERSION:=v1}
@@ -3038,7 +2982,7 @@ update_frontend_env_file() {
     local base_url="${cors_origin%/}"
     local vite_api_url="$base_url/api/v1"
     
-    local app_version="1.4.2"
+    local app_version="1.4.7"
     if [ -f "$instance_dir/backend/package.json" ]; then
         app_version=$(grep '"version"' "$instance_dir/backend/package.json" | head -1 | sed 's/.*"version": "\([^"]*\)".*/\1/')
     fi

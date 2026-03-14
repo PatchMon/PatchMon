@@ -190,18 +190,18 @@ const AgentQueueTab = ({ hostId }) => {
 										</span>
 										<div className="flex items-center gap-1.5 text-xs flex-1 justify-center min-w-0">
 											<div className="flex items-center gap-1 px-1.5 py-0.5 bg-secondary-50 dark:bg-secondary-700/50 rounded border border-secondary-200 dark:border-secondary-600">
-												<span className="text-secondary-500 dark:text-secondary-400 whitespace-nowrap">
+												<span className="text-secondary-500 dark:text-white whitespace-nowrap">
 													Job:
 												</span>
-												<span className="font-mono text-secondary-600 dark:text-secondary-300 truncate">
+												<span className="font-mono text-secondary-600 dark:text-white truncate">
 													{job.job_id}
 												</span>
 											</div>
 											<div className="flex items-center gap-1 px-1.5 py-0.5 bg-secondary-50 dark:bg-secondary-700/50 rounded border border-secondary-200 dark:border-secondary-600">
-												<span className="text-secondary-500 dark:text-secondary-400 whitespace-nowrap">
+												<span className="text-secondary-500 dark:text-white whitespace-nowrap">
 													Attempt:
 												</span>
-												<span className="text-secondary-600 dark:text-secondary-300">
+												<span className="text-secondary-600 dark:text-white">
 													{job.attempt_number}
 												</span>
 											</div>
@@ -219,8 +219,8 @@ const AgentQueueTab = ({ hostId }) => {
 
 									{/* Second Line: Date/Time with Clock Icon */}
 									<div className="space-y-0.5">
-										<div className="flex items-center gap-1.5 text-xs text-secondary-600 dark:text-secondary-300">
-											<Clock className="h-3.5 w-3.5 text-secondary-500 dark:text-secondary-400" />
+										<div className="flex items-center gap-1.5 text-xs text-secondary-600 dark:text-white">
+											<Clock className="h-3.5 w-3.5 text-secondary-500 dark:text-white" />
 											{new Date(job.created_at).toLocaleString()}
 										</div>
 										{(job.error_message || job.output) && (
@@ -246,22 +246,22 @@ const AgentQueueTab = ({ hostId }) => {
 							<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 								<thead className="bg-secondary-50 dark:bg-secondary-700">
 									<tr>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Job ID
 										</th>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Job Name
 										</th>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Status
 										</th>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Attempt
 										</th>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Date/Time
 										</th>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Error/Output
 										</th>
 									</tr>
@@ -305,7 +305,7 @@ const AgentQueueTab = ({ hostId }) => {
 														{JSON.stringify(job.output)}
 													</span>
 												) : (
-													<span className="text-secondary-500 dark:text-secondary-400">
+													<span className="text-secondary-500 dark:text-white">
 														-
 													</span>
 												)}

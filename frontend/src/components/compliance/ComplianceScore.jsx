@@ -7,7 +7,8 @@ import {
 
 const ComplianceScore = ({ score, size = "md" }) => {
 	const getScoreColor = (score) => {
-		if (score === null || score === undefined) return "text-secondary-400";
+		if (score === null || score === undefined)
+			return "text-secondary-400 dark:text-white";
 		if (score >= 80) return "text-green-400";
 		if (score >= 60) return "text-yellow-400";
 		return "text-red-400";

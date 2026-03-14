@@ -6,13 +6,12 @@ PatchMon is a containerised application that monitors system patches and updates
 
 - **Database**: PostgreSQL 17
 - **Redis**: Redis 7 for BullMQ job queues and caching
-- **Backend**: Node.js API server
-- **Frontend**: React application served via NGINX
+- **Server**: Go API server with embedded frontend (serves both API and static files)
+- **guacd**: Apache Guacamole daemon for in-browser RDP (Windows hosts)
 
 ## Images
 
-- **Backend**: [ghcr.io/patchmon/patchmon-backend](https://github.com/patchmon/patchmon.net/pkgs/container/patchmon-backend)
-- **Frontend**: [ghcr.io/patchmon/patchmon-frontend](https://github.com/patchmon/patchmon.net/pkgs/container/patchmon-frontend)
+- **Server**: [ghcr.io/patchmon/patchmon-server](https://github.com/patchmon/patchmon.net/pkgs/container/patchmon-server)
 
 ### Tags
 
@@ -21,8 +20,6 @@ PatchMon is a containerised application that monitors system patches and updates
 - `x.y`: Minor version tags (e.g. `1.2`) - Use this to get the latest patch release in a minor version series.
 - `x`: Major version tags (e.g. `1`) - Use this to get the latest minor and patch release in a major version series.
 - `edge`: The latest development build in main branch. This tag may often be unstable and is intended only for testing and development purposes.
-
-These tags are available for both backend and frontend images as they are versioned together.
 
 ## Quick Start
 
@@ -60,7 +57,7 @@ The `docker-compose.yml` reads all configuration from your `.env` file. You do n
 
 ## Updating
 
-By default, the compose file uses the `latest` tag for both backend and frontend images.
+By default, the compose file uses the `latest` tag for the server image.
 
 This means you can update PatchMon to the latest version as easily as:
 
@@ -80,14 +77,11 @@ If you'd like to pin your Docker deployment of PatchMon to a specific version, y
 
 When you do this, updating to a new version requires manually updating the image tags in the compose file yourself:
 
-1. Update the image tags in `docker-compose.yml`. For example:
+1. Update the image tag in `docker-compose.yml`. For example:
    ```yaml
    services:
-     backend:
-       image: ghcr.io/patchmon/patchmon-backend:1.2.3  # Update version here
-      ...
-     frontend:
-       image: ghcr.io/patchmon/patchmon-frontend:1.2.3  # Update version here
+     server:
+       image: ghcr.io/patchmon/patchmon-server:1.2.3  # Update version here
       ...
    ```
 
@@ -143,21 +137,20 @@ See `env.example` for the full list with defaults and descriptions.
 > - **Medium deployment (10-50 hosts)**: `DB_CONNECTION_LIMIT=30` (default)
 > - **Large deployment (50+ hosts)**: `DB_CONNECTION_LIMIT=50` or higher
 > 
-> Each connection pool serves one backend instance. If you have concurrent operations (multiple users, background jobs, agent checkins), increase the pool size accordingly.
+> Each connection pool serves one server instance. If you have concurrent operations (multiple users, background jobs, agent checkins), increase the pool size accordingly.
 
 ### Volumes
 
-The compose file creates four Docker volumes:
+The compose file creates two Docker volumes:
 
 * `postgres_data`: PostgreSQL's data directory.
 * `redis_data`: Redis's data directory.
-* `agent_files`: PatchMon's agent files.
-* `branding_assets`: Custom branding files (logos, favicons) - optional, new in 1.4.0.
+
+Agent binaries are included in the server image at `/app/agents` and served read-only. Deploy or pull a new image to update agents.
+
+Frontend assets (JS, CSS, default logos) are embedded in the server binary. Custom logos are stored in the database and served via the API.
 
 If you wish to bind any of their respective container paths to a host path rather than a Docker volume, you can do so in the Docker Compose file.
-
-> [!TIP]
-> The backend container runs as user & group ID 1000. If you plan to rebind the agent files or branding assets directory, ensure that the same user and/or group ID has permission to write to the host path to which it's bound.
 
 ---
 
@@ -176,12 +169,12 @@ networks:
     driver: bridge
 ```
 
-All services (database, redis, backend, and frontend) connect to this internal network, allowing them to discover each other by service name.
+All services (database, redis, and server) connect to this internal network, allowing them to discover each other by service name.
 
 **Important**: If you're using an external reverse proxy network (like `traefik-net`), ensure that:
 
 1. All PatchMon services remain on the `patchmon-internal` network for internal communication
-2. The frontend service (NGINX) can be configured to also bind to the reverse proxy network if needed
+2. The server service can be configured to also bind to the reverse proxy network if needed
 3. Service names resolve correctly within the same network
 
 ### Service Discovery in Swarm
@@ -195,16 +188,16 @@ In Docker Swarm, service discovery works through:
 
 If you're using Traefik as a reverse proxy:
 
-1. Keep the default `patchmon-internal` network for backend services
+1. Keep the default `patchmon-internal` network for server services
 2. Configure Traefik in your Swarm deployment with its own network
-3. Ensure the frontend service can reach the backend through the internal network
+3. Ensure the server service is reachable through the internal network
 
 Example modification for Swarm:
 
 ```yaml
 services:
-  frontend:
-    image: ghcr.io/patchmon/patchmon-frontend:latest
+  server:
+    image: ghcr.io/patchmon/patchmon-server:latest
     networks:
       - patchmon-internal
     deploy:
@@ -215,14 +208,14 @@ services:
         # ... other Traefik labels
 ```
 
-The frontend reaches the backend via the `patchmon-internal` network using the hostname `backend`, while Traefik routes external traffic to the frontend service.
+Traefik routes external traffic to the server service, which serves both the API and frontend.
 
 ### Troubleshooting Network Issues
 
-**Error: `host not found in upstream "backend"`**
+**Error: `host not found in upstream "server"`**
 
 This typically occurs when:
-1. Frontend and backend services are on different networks
+1. Services are on different networks
 2. Services haven't fully started (check health checks)
 3. Service names haven't propagated through DNS
 
@@ -230,7 +223,7 @@ This typically occurs when:
 - Verify all services are on the same internal network
 - Check service health status: `docker ps` (production) or `docker service ps` (Swarm)
 - Wait for health checks to pass before accessing the application
-- Confirm network connectivity: `docker exec <container> ping backend`
+- Confirm network connectivity: `docker exec <container> ping server`
 
 ---
 
@@ -255,8 +248,7 @@ For development with live reload and source code mounting:
    _See [Development Commands](#development-commands) for more options._
 
 3. Access the application:
-   - Frontend: `http://localhost:3000`
-   - Backend API: `http://localhost:3001`
+   - Application (API + frontend): `http://localhost:3000`
    - Database: `localhost:5432`
    - Redis: `localhost:6379`
 
@@ -271,16 +263,18 @@ The development compose file (`docker/docker-compose.dev.yml`):
 
 ## Building Images Locally
 
-Both Dockerfiles use multi-stage builds with separate development and production targets:
+Both Dockerfiles use multi-stage builds with separate development and production targets.
+
+**Note:** When using locally-built images (e.g. `patchmon-server:dev`), do **not** run `docker compose pull` for the full stack—Compose will try to pull that name from Docker Hub and fail (it exists only on your machine). Use `docker compose up -d` so Compose uses your local image, or run `docker compose pull database redis` if you only want to refresh Postgres/Redis.
+
+**Server agent binaries:** The server image includes agent scripts and prebuilt binaries. To build locally, run `make build-all-for-docker` in `agent-source-code/` first so `agents-prebuilt/` is populated.
 
 ```bash
-# Build development images
-docker build -f docker/backend.Dockerfile --target development --provenance=false --sbom=false -t patchmon-backend:dev .
-docker build -f docker/frontend.Dockerfile --target development --provenance=false --sbom=false -t patchmon-frontend:dev .
+# Build development image
+docker build -f docker/server.Dockerfile --target development --provenance=false --sbom=false -t patchmon-server:dev .
 
-# Build production images (default target)
-docker build -f docker/backend.Dockerfile --provenance=false --sbom=false -t patchmon-backend:latest .
-docker build -f docker/frontend.Dockerfile --provenance=false --sbom=false -t patchmon-frontend:latest .
+# Build production image (default target)
+docker build -f docker/server.Dockerfile --provenance=false --sbom=false -t patchmon-server:latest .
 ```
 
 ## Development Commands
@@ -303,7 +297,7 @@ docker compose -f docker/docker-compose.dev.yml watch
 ### Rebuild Services
 ```bash
 # Rebuild specific service
-docker compose -f docker/docker-compose.dev.yml up -d --build backend
+docker compose -f docker/docker-compose.dev.yml up -d --build server
 
 # Rebuild all services
 docker compose -f docker/docker-compose.dev.yml up -d --build

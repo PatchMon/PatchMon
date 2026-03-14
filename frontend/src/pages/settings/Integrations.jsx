@@ -16,7 +16,7 @@ import {
 	X,
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
-import SettingsLayout from "../../components/SettingsLayout";
+import { Link } from "react-router-dom";
 import api, { dashboardAPI, settingsAPI } from "../../utils/api";
 
 // Checkmk CSV export: format per https://docs.checkmk.com/latest/en/hosts_setup.html#import
@@ -160,12 +160,10 @@ const Integrations = () => {
 	const [edit_token, setEditToken] = useState(null);
 	const [new_token, setNewToken] = useState(null);
 	const [show_secret, setShowSecret] = useState(false);
-	const [server_url, setServerUrl] = useState("");
 	const [force_proxmox_install, setForceProxmoxInstall] = useState(false);
 	const [_usage_type, setUsageType] = useState("proxmox-lxc");
 	const [_selected_script_type, setSelectedScriptType] =
 		useState("proxmox-lxc");
-	const [curl_flags, setCurlFlags] = useState("-s");
 
 	// Compliance mode settings state
 	const defaultComplianceModeId = useId();
@@ -227,6 +225,13 @@ const Integrations = () => {
 		queryFn: () => settingsAPI.get().then((res) => res.data),
 	});
 
+	const { data: serverUrlData } = useQuery({
+		queryKey: ["serverUrl"],
+		queryFn: () => settingsAPI.getServerUrl().then((res) => res.data),
+	});
+	const server_url = serverUrlData?.server_url || window.location.origin;
+	const curl_flags = settings?.ignore_ssl_self_signed ? "-sk" : "-s";
+
 	// Update compliance form data when settings are loaded
 	useEffect(() => {
 		if (settings) {
@@ -244,6 +249,7 @@ const Integrations = () => {
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries(["settings"]);
+			queryClient.invalidateQueries(["serverUrl"]);
 			setComplianceIsDirty(false);
 			setComplianceToast({
 				message: "Compliance settings saved successfully!",
@@ -279,7 +285,6 @@ const Integrations = () => {
 	useEffect(() => {
 		load_tokens();
 		load_host_groups();
-		load_server_url();
 	}, []);
 
 	const load_tokens = async () => {
@@ -300,19 +305,6 @@ const Integrations = () => {
 			setHostGroups(response.data);
 		} catch (error) {
 			console.error("Failed to load host groups:", error);
-		}
-	};
-
-	const load_server_url = async () => {
-		try {
-			const response = await api.get("/settings");
-			setServerUrl(response.data.server_url || window.location.origin);
-			// Set curl flags based on SSL settings
-			setCurlFlags(response.data.ignore_ssl_self_signed ? "-sk" : "-s");
-		} catch (error) {
-			console.error("Failed to load server URL:", error);
-			setServerUrl(window.location.origin);
-			setCurlFlags("-s");
 		}
 	};
 
@@ -375,6 +367,7 @@ const Integrations = () => {
 			});
 		} catch (error) {
 			console.error("Failed to create token:", error);
+			console.error("Server response:", error.response?.data);
 			const error_message = error.response?.data?.errors
 				? error.response.data.errors.map((e) => e.msg).join(", ")
 				: error.response?.data?.error || "Failed to create token";
@@ -535,1041 +528,1032 @@ const Integrations = () => {
 	};
 
 	return (
-		<SettingsLayout>
-			<div className="space-y-6">
-				{/* Header */}
-				<div>
-					<h1 className="text-xl md:text-2xl font-bold text-secondary-900 dark:text-white">
-						Integrations
-					</h1>
-					<p className="mt-1 text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-						Manage auto-enrollment tokens for Proxmox and other integrations
-					</p>
+		<div className="space-y-6">
+			{/* Header */}
+			<div>
+				<h1 className="text-xl md:text-2xl font-bold text-secondary-900 dark:text-white">
+					Integrations
+				</h1>
+				<p className="mt-1 text-xs md:text-sm text-secondary-600 dark:text-white">
+					Manage auto-enrollment tokens for Proxmox and other integrations
+				</p>
+			</div>
+
+			{/* Tabs Navigation */}
+			<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg overflow-hidden">
+				{/* Mobile Button Navigation */}
+				<div className="md:hidden space-y-2 p-4">
+					<button
+						type="button"
+						onClick={() => handleTabChange("proxmox")}
+						className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+							activeTab === "proxmox"
+								? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
+								: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-white border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+						}`}
+					>
+						<span>Proxmox</span>
+						{activeTab === "proxmox" && (
+							<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+						)}
+					</button>
+					<button
+						type="button"
+						onClick={() => handleTabChange("auto-enrollment-direct")}
+						className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+							activeTab === "auto-enrollment-direct"
+								? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
+								: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-white border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+						}`}
+					>
+						<span>Auto-Enrollment (Direct)</span>
+						{activeTab === "auto-enrollment-direct" && (
+							<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+						)}
+					</button>
+					<button
+						type="button"
+						onClick={() => handleTabChange("scoped-credentials")}
+						className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+							activeTab === "scoped-credentials"
+								? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
+								: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-white border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+						}`}
+					>
+						<span>Scoped Credentials</span>
+						{activeTab === "scoped-credentials" && (
+							<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+						)}
+					</button>
+					<button
+						type="button"
+						onClick={() => handleTabChange("gethomepage")}
+						className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+							activeTab === "gethomepage"
+								? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
+								: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-white border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+						}`}
+					>
+						<span>GetHomepage</span>
+						{activeTab === "gethomepage" && (
+							<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+						)}
+					</button>
+					<button
+						type="button"
+						onClick={() => handleTabChange("docker")}
+						className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+							activeTab === "docker"
+								? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
+								: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-white border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+						}`}
+					>
+						<span>Docker</span>
+						{activeTab === "docker" && (
+							<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+						)}
+					</button>
+					<button
+						type="button"
+						onClick={() => handleTabChange("compliance")}
+						className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+							activeTab === "compliance"
+								? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
+								: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-white border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+						}`}
+					>
+						<span>Compliance</span>
+						{activeTab === "compliance" && (
+							<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+						)}
+					</button>
+					<button
+						type="button"
+						onClick={() => handleTabChange("checkmk")}
+						className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+							activeTab === "checkmk"
+								? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
+								: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-white border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+						}`}
+					>
+						<span>Checkmk</span>
+						{activeTab === "checkmk" && (
+							<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+						)}
+					</button>
 				</div>
 
-				{/* Tabs Navigation */}
-				<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg overflow-hidden">
-					{/* Mobile Button Navigation */}
-					<div className="md:hidden space-y-2 p-4">
+				{/* Desktop Tab Navigation */}
+				<div className="hidden md:block border-b border-secondary-200 dark:border-secondary-600">
+					<div className="flex">
 						<button
 							type="button"
 							onClick={() => handleTabChange("proxmox")}
-							className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+							className={`px-6 py-3 text-sm font-medium ${
 								activeTab === "proxmox"
-									? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
-									: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
 							}`}
 						>
-							<span>Proxmox</span>
-							{activeTab === "proxmox" && (
-								<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-							)}
+							Proxmox
 						</button>
 						<button
 							type="button"
 							onClick={() => handleTabChange("auto-enrollment-direct")}
-							className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+							className={`px-6 py-3 text-sm font-medium ${
 								activeTab === "auto-enrollment-direct"
-									? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
-									: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
 							}`}
 						>
-							<span>Auto-Enrollment (Direct)</span>
-							{activeTab === "auto-enrollment-direct" && (
-								<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-							)}
+							Auto-Enrollment (Direct)
 						</button>
 						<button
 							type="button"
 							onClick={() => handleTabChange("scoped-credentials")}
-							className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+							className={`px-6 py-3 text-sm font-medium ${
 								activeTab === "scoped-credentials"
-									? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
-									: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
 							}`}
 						>
-							<span>Scoped Credentials</span>
-							{activeTab === "scoped-credentials" && (
-								<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-							)}
+							Scoped Credentials
 						</button>
 						<button
 							type="button"
 							onClick={() => handleTabChange("gethomepage")}
-							className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+							className={`px-6 py-3 text-sm font-medium ${
 								activeTab === "gethomepage"
-									? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
-									: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
 							}`}
 						>
-							<span>GetHomepage</span>
-							{activeTab === "gethomepage" && (
-								<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-							)}
+							GetHomepage
 						</button>
 						<button
 							type="button"
 							onClick={() => handleTabChange("docker")}
-							className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+							className={`px-6 py-3 text-sm font-medium ${
 								activeTab === "docker"
-									? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
-									: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
 							}`}
 						>
-							<span>Docker</span>
-							{activeTab === "docker" && (
-								<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-							)}
+							Docker
 						</button>
 						<button
 							type="button"
 							onClick={() => handleTabChange("compliance")}
-							className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+							className={`px-6 py-3 text-sm font-medium ${
 								activeTab === "compliance"
-									? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
-									: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
 							}`}
 						>
-							<span>Compliance</span>
-							{activeTab === "compliance" && (
-								<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-							)}
+							Compliance
 						</button>
 						<button
 							type="button"
 							onClick={() => handleTabChange("checkmk")}
-							className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
+							className={`px-6 py-3 text-sm font-medium ${
 								activeTab === "checkmk"
-									? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
-									: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
 							}`}
 						>
-							<span>Checkmk</span>
-							{activeTab === "checkmk" && (
-								<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-							)}
+							Checkmk
 						</button>
 					</div>
+				</div>
 
-					{/* Desktop Tab Navigation */}
-					<div className="hidden md:block border-b border-secondary-200 dark:border-secondary-600">
-						<div className="flex">
-							<button
-								type="button"
-								onClick={() => handleTabChange("proxmox")}
-								className={`px-6 py-3 text-sm font-medium ${
-									activeTab === "proxmox"
-										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
-										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
-								}`}
-							>
-								Proxmox
-							</button>
-							<button
-								type="button"
-								onClick={() => handleTabChange("auto-enrollment-direct")}
-								className={`px-6 py-3 text-sm font-medium ${
-									activeTab === "auto-enrollment-direct"
-										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
-										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
-								}`}
-							>
-								Auto-Enrollment (Direct)
-							</button>
-							<button
-								type="button"
-								onClick={() => handleTabChange("scoped-credentials")}
-								className={`px-6 py-3 text-sm font-medium ${
-									activeTab === "scoped-credentials"
-										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
-										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
-								}`}
-							>
-								Scoped Credentials
-							</button>
-							<button
-								type="button"
-								onClick={() => handleTabChange("gethomepage")}
-								className={`px-6 py-3 text-sm font-medium ${
-									activeTab === "gethomepage"
-										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
-										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
-								}`}
-							>
-								GetHomepage
-							</button>
-							<button
-								type="button"
-								onClick={() => handleTabChange("docker")}
-								className={`px-6 py-3 text-sm font-medium ${
-									activeTab === "docker"
-										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
-										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
-								}`}
-							>
-								Docker
-							</button>
-							<button
-								type="button"
-								onClick={() => handleTabChange("compliance")}
-								className={`px-6 py-3 text-sm font-medium ${
-									activeTab === "compliance"
-										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
-										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
-								}`}
-							>
-								Compliance
-							</button>
-							<button
-								type="button"
-								onClick={() => handleTabChange("checkmk")}
-								className={`px-6 py-3 text-sm font-medium ${
-									activeTab === "checkmk"
-										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
-										: "text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
-								}`}
-							>
-								Checkmk
-							</button>
-						</div>
-					</div>
-
-					{/* Tab Content */}
-					<div className="p-4 md:p-6">
-						{/* Proxmox Tab */}
-						{activeTab === "proxmox" && (
-							<div className="space-y-6">
-								{/* Header with New Token Button */}
-								<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-									<div className="flex items-center gap-3 flex-1 min-w-0">
-										<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
-											<Server className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-										</div>
-										<div className="min-w-0">
-											<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
-												Proxmox Auto-Enrollment
-											</h3>
-											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-												Manage tokens for Proxmox LXC container auto-enrollment
-											</p>
-										</div>
+				{/* Tab Content */}
+				<div className="p-4 md:p-6">
+					{/* Proxmox Tab */}
+					{activeTab === "proxmox" && (
+						<div className="space-y-6">
+							{/* Header with New Token Button */}
+							<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+								<div className="flex items-center gap-3 flex-1 min-w-0">
+									<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
+										<Server className="h-5 w-5 text-primary-600 dark:text-primary-400" />
 									</div>
-									<button
-										type="button"
-										onClick={() => setShowCreateModal(true)}
-										className="btn-primary flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-start"
-									>
-										<Plus className="h-4 w-4" />
-										New Token
-									</button>
-								</div>
-
-								{/* Token List */}
-								{loading ? (
-									<div className="text-center py-8">
-										<div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
-									</div>
-								) : tokens.filter(
-										(token) =>
-											token.metadata?.integration_type === "proxmox-lxc",
-									).length === 0 ? (
-									<div className="text-center py-8 text-secondary-600 dark:text-secondary-400">
-										<p>No Proxmox tokens created yet.</p>
-										<p className="text-sm mt-2">
-											Create a token to enable Proxmox LXC container
-											auto-enrollment.
+									<div className="min-w-0">
+										<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
+											Proxmox Auto-Enrollment
+										</h3>
+										<p className="text-xs md:text-sm text-secondary-600 dark:text-white">
+											Manage tokens for Proxmox LXC container auto-enrollment
 										</p>
 									</div>
-								) : (
-									<div className="space-y-3">
-										{tokens
-											.filter(
-												(token) =>
-													token.metadata?.integration_type === "proxmox-lxc",
-											)
-											.map((token) => (
-												<div
-													key={token.id}
-													className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 hover:border-primary-300 dark:hover:border-primary-700 transition-colors"
-												>
-													<div className="flex justify-between items-start">
-														<div className="flex-1">
-															<div className="flex items-center gap-2 flex-wrap">
-																<h4 className="font-medium text-secondary-900 dark:text-white">
-																	{token.token_name}
-																</h4>
-																{token.metadata?.integration_type ===
-																"proxmox-lxc" ? (
-																	<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-																		Proxmox LXC
-																	</span>
-																) : (
-																	<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-																		API
-																	</span>
-																)}
-																{token.is_active ? (
-																	<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-																		Active
-																	</span>
-																) : (
-																	<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
-																		Inactive
-																	</span>
-																)}
-															</div>
-															<div className="mt-2 space-y-1 text-sm text-secondary-600 dark:text-secondary-400">
-																<div className="flex items-center gap-2">
-																	<span className="font-mono text-xs bg-secondary-100 dark:bg-secondary-700 px-2 py-1 rounded">
-																		{token.token_key}
-																	</span>
-																	<button
-																		type="button"
-																		onClick={() =>
-																			copy_to_clipboard(
-																				token.token_key,
-																				`key-${token.id}`,
-																			)
-																		}
-																		className="text-primary-600 hover:text-primary-700 dark:text-primary-400"
-																	>
-																		{copy_success[`key-${token.id}`] ? (
-																			<CheckCircle className="h-4 w-4" />
-																		) : (
-																			<Copy className="h-4 w-4" />
-																		)}
-																	</button>
-																</div>
-																{token.metadata?.integration_type ===
-																	"proxmox-lxc" && (
-																	<p>
-																		Usage: {token.hosts_created_today}/
-																		{token.max_hosts_per_day} hosts today
-																	</p>
-																)}
-																{token.metadata?.integration_type ===
-																	"proxmox-lxc" &&
-																	token.host_groups && (
-																		<p>
-																			Default Group:{" "}
-																			<span
-																				className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
-																				style={{
-																					backgroundColor: `${token.host_groups.color}20`,
-																					color: token.host_groups.color,
-																				}}
-																			>
-																				{token.host_groups.name}
-																			</span>
-																		</p>
-																	)}
-																{token.metadata?.integration_type === "api" &&
-																	token.scopes && (
-																		<p>
-																			Scopes:{" "}
-																			{Object.entries(token.scopes)
-																				.map(
-																					([resource, actions]) =>
-																						`${resource}: ${Array.isArray(actions) ? actions.join(", ") : actions}`,
-																				)
-																				.join(" | ")}
-																		</p>
-																	)}
-																{token.allowed_ip_ranges?.length > 0 && (
-																	<p>
-																		Allowed IPs:{" "}
-																		{token.allowed_ip_ranges.join(", ")}
-																	</p>
-																)}
-																<p>Created: {formatDate(token.created_at)}</p>
-																{token.last_used_at && (
-																	<p>
-																		Last Used: {formatDate(token.last_used_at)}
-																	</p>
-																)}
-																{token.expires_at && (
-																	<p>
-																		Expires: {formatDate(token.expires_at)}
-																		{new Date(token.expires_at) <
-																			new Date() && (
-																			<span className="ml-2 text-red-600 dark:text-red-400">
-																				(Expired)
-																			</span>
-																		)}
-																	</p>
-																)}
-															</div>
-														</div>
-														<div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
-															<button
-																type="button"
-																onClick={() => open_edit_modal(token)}
-																className="px-3 py-1 text-xs md:text-sm rounded bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300 dark:hover:bg-blue-800"
-															>
-																Edit
-															</button>
-															<button
-																type="button"
-																onClick={() =>
-																	toggle_token_active(token.id, token.is_active)
-																}
-																className={`px-3 py-1 text-xs md:text-sm rounded ${
-																	token.is_active
-																		? "bg-secondary-100 text-secondary-700 hover:bg-secondary-200 dark:bg-secondary-700 dark:text-secondary-300"
-																		: "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900 dark:text-green-300"
-																}`}
-															>
-																{token.is_active ? "Disable" : "Enable"}
-															</button>
-															<button
-																type="button"
-																onClick={() =>
-																	delete_token(token.id, token.token_name)
-																}
-																className="text-red-600 hover:text-red-800 dark:text-red-400 p-2"
-															>
-																<Trash2 className="h-4 w-4" />
-															</button>
-														</div>
-													</div>
-												</div>
-											))}
-									</div>
-								)}
-
-								{/* Documentation Section */}
-								<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
-									<h3 className="text-base md:text-lg font-semibold text-primary-900 dark:text-primary-200 mb-4">
-										Documentation
-									</h3>
-									<div className="border border-primary-200 dark:border-primary-700 rounded-lg p-4 bg-white dark:bg-secondary-800">
-										<div className="flex items-center gap-2 mb-3">
-											<Server className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-											<h4 className="font-semibold text-secondary-900 dark:text-white">
-												Proxmox LXC Auto-Enrollment
-											</h4>
-										</div>
-										<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-3">
-											Automatically discover and enroll LXC containers from your
-											Proxmox hosts.
-										</p>
-										<a
-											href="https://docs.patchmon.net/books/patchmon-application-documentation/page/proxmox-lxc-auto-enrollment-guide"
-											target="_blank"
-											rel="noopener noreferrer"
-											className="inline-flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg text-sm transition-colors"
-										>
-											<BookOpen className="h-4 w-4" />
-											View Guide
-										</a>
-									</div>
 								</div>
+								<button
+									type="button"
+									onClick={() => setShowCreateModal(true)}
+									className="btn-primary flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-start"
+								>
+									<Plus className="h-4 w-4" />
+									New Token
+								</button>
 							</div>
-						)}
 
-						{/* Auto-Enrollment (Direct) Tab */}
-						{activeTab === "auto-enrollment-direct" && (
-							<div className="space-y-6">
-								{/* Header with New Token Button */}
-								<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-									<div className="flex items-center gap-3 flex-1 min-w-0">
-										<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
-											<Server className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-										</div>
-										<div className="min-w-0">
-											<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
-												Direct Host Auto-Enrollment
-											</h3>
-											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-												Manage tokens for direct host enrollment without Proxmox
-											</p>
-										</div>
-									</div>
-									<button
-										type="button"
-										onClick={() => setShowCreateModal(true)}
-										className="btn-primary flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-start"
-									>
-										<Plus className="h-4 w-4" />
-										New Token
-									</button>
+							{/* Token List */}
+							{loading ? (
+								<div className="text-center py-8">
+									<div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
 								</div>
-
-								{/* Token List */}
-								{loading ? (
-									<div className="text-center py-8">
-										<div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
-									</div>
-								) : tokens.filter(
-										(token) =>
-											token.metadata?.integration_type === "direct-host",
-									).length === 0 ? (
-									<div className="text-center py-8 text-secondary-600 dark:text-secondary-400">
-										<p>No direct enrollment tokens created yet.</p>
-										<p className="text-sm mt-2">
-											Create a token to enable direct host enrollment.
-										</p>
-									</div>
-								) : (
-									<div className="space-y-3">
-										{tokens
-											.filter(
-												(token) =>
-													token.metadata?.integration_type === "direct-host",
-											)
-											.map((token) => (
-												<div
-													key={token.id}
-													className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 hover:border-primary-300 dark:hover:border-primary-700 transition-colors"
-												>
-													<div className="flex justify-between items-start">
-														<div className="flex-1">
-															<div className="flex items-center gap-2 flex-wrap">
-																<h4 className="font-medium text-secondary-900 dark:text-white">
-																	{token.token_name}
-																</h4>
-																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
-																	Direct Host
+							) : tokens.filter(
+									(token) => token.metadata?.integration_type === "proxmox-lxc",
+								).length === 0 ? (
+								<div className="text-center py-8 text-secondary-600 dark:text-white">
+									<p>No Proxmox tokens created yet.</p>
+									<p className="text-sm mt-2">
+										Create a token to enable Proxmox LXC container
+										auto-enrollment.
+									</p>
+								</div>
+							) : (
+								<div className="space-y-3">
+									{tokens
+										.filter(
+											(token) =>
+												token.metadata?.integration_type === "proxmox-lxc",
+										)
+										.map((token) => (
+											<div
+												key={token.id}
+												className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 hover:border-primary-300 dark:hover:border-primary-700 transition-colors"
+											>
+												<div className="flex justify-between items-start">
+													<div className="flex-1">
+														<div className="flex items-center gap-2 flex-wrap">
+															<h4 className="font-medium text-secondary-900 dark:text-white">
+																{token.token_name}
+															</h4>
+															{token.metadata?.integration_type ===
+															"proxmox-lxc" ? (
+																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+																	Proxmox LXC
 																</span>
-																{token.is_active ? (
-																	<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-																		Active
-																	</span>
-																) : (
-																	<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
-																		Inactive
-																	</span>
-																)}
-															</div>
-															<div className="mt-2 space-y-1 text-sm text-secondary-600 dark:text-secondary-400">
-																<div className="flex items-center gap-2">
-																	<span className="font-mono text-xs bg-secondary-100 dark:bg-secondary-700 px-2 py-1 rounded">
-																		{token.token_key}
-																	</span>
-																	<button
-																		type="button"
-																		onClick={() =>
-																			copy_to_clipboard(
-																				token.token_key,
-																				`key-${token.id}`,
-																			)
-																		}
-																		className="text-primary-600 hover:text-primary-700 dark:text-primary-400"
-																	>
-																		{copy_success[`key-${token.id}`] ? (
-																			<CheckCircle className="h-4 w-4" />
-																		) : (
-																			<Copy className="h-4 w-4" />
-																		)}
-																	</button>
-																</div>
-																{token.metadata?.integration_type ===
-																	"direct-host" && (
-																	<p>
-																		Usage: {token.hosts_created_today}/
-																		{token.max_hosts_per_day} hosts today
-																	</p>
-																)}
-																{token.metadata?.integration_type ===
-																	"direct-host" &&
-																	token.host_groups && (
-																		<p>
-																			Default Group:{" "}
-																			<span
-																				className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
-																				style={{
-																					backgroundColor: `${token.host_groups.color}20`,
-																					color: token.host_groups.color,
-																				}}
-																			>
-																				{token.host_groups.name}
-																			</span>
-																		</p>
-																	)}
-																{token.allowed_ip_ranges?.length > 0 && (
-																	<p>
-																		Allowed IPs:{" "}
-																		{token.allowed_ip_ranges.join(", ")}
-																	</p>
-																)}
-																<p>Created: {formatDate(token.created_at)}</p>
-																{token.last_used_at && (
-																	<p>
-																		Last Used: {formatDate(token.last_used_at)}
-																	</p>
-																)}
-																{token.expires_at && (
-																	<p>
-																		Expires: {formatDate(token.expires_at)}
-																		{new Date(token.expires_at) <
-																			new Date() && (
-																			<span className="ml-2 text-red-600 dark:text-red-400">
-																				(Expired)
-																			</span>
-																		)}
-																	</p>
-																)}
-															</div>
-														</div>
-														<div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
-															<button
-																type="button"
-																onClick={() => open_edit_modal(token)}
-																className="px-3 py-1 text-xs md:text-sm rounded bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300 dark:hover:bg-blue-800"
-															>
-																Edit
-															</button>
-															<button
-																type="button"
-																onClick={() =>
-																	toggle_token_active(token.id, token.is_active)
-																}
-																className={`px-3 py-1 text-xs md:text-sm rounded ${
-																	token.is_active
-																		? "bg-secondary-100 text-secondary-700 hover:bg-secondary-200 dark:bg-secondary-700 dark:text-secondary-300"
-																		: "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900 dark:text-green-300"
-																}`}
-															>
-																{token.is_active ? "Disable" : "Enable"}
-															</button>
-															<button
-																type="button"
-																onClick={() =>
-																	delete_token(token.id, token.token_name)
-																}
-																className="text-red-600 hover:text-red-800 dark:text-red-400 p-2"
-															>
-																<Trash2 className="h-4 w-4" />
-															</button>
-														</div>
-													</div>
-												</div>
-											))}
-									</div>
-								)}
-
-								{/* Documentation Section */}
-								<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
-									<h3 className="text-base md:text-lg font-semibold text-primary-900 dark:text-primary-200 mb-4">
-										Documentation
-									</h3>
-									<div className="border border-primary-200 dark:border-primary-700 rounded-lg p-4 bg-white dark:bg-secondary-800">
-										<div className="flex items-center gap-2 mb-3">
-											<Server className="h-5 w-5 text-purple-600 dark:text-purple-400" />
-											<h4 className="font-semibold text-secondary-900 dark:text-white">
-												Direct Host Enrollment
-											</h4>
-										</div>
-										<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-3">
-											Enroll individual hosts directly without Proxmox
-											infrastructure.
-										</p>
-										<a
-											href="https://docs.patchmon.net/books/patchmon-application-documentation/page/proxmox-lxc-auto-enrollment-guide"
-											target="_blank"
-											rel="noopener noreferrer"
-											className="inline-flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg text-sm transition-colors"
-										>
-											<BookOpen className="h-4 w-4" />
-											View Guide
-										</a>
-									</div>
-								</div>
-							</div>
-						)}
-
-						{/* Scoped Credentials Tab */}
-						{activeTab === "scoped-credentials" && (
-							<div className="space-y-6">
-								{/* Header with New Token Button */}
-								<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-									<div className="flex items-center gap-3 flex-1 min-w-0">
-										<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
-											<Shield className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-										</div>
-										<div className="min-w-0">
-											<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
-												Scoped API Credentials
-											</h3>
-											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-												Manage API credentials with granular scope-based
-												permissions
-											</p>
-										</div>
-									</div>
-									<button
-										type="button"
-										onClick={() => setShowCreateModal(true)}
-										className="btn-primary flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-start"
-									>
-										<Plus className="h-4 w-4" />
-										New Credential
-									</button>
-								</div>
-
-								{/* Token List */}
-								{loading ? (
-									<div className="text-center py-8">
-										<div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
-									</div>
-								) : tokens.filter(
-										(token) => token.metadata?.integration_type === "api",
-									).length === 0 ? (
-									<div className="text-center py-8 text-secondary-600 dark:text-secondary-400">
-										<p>No scoped credentials created yet.</p>
-										<p className="text-sm mt-2">
-											Create a credential to enable programmatic API access with
-											granular permissions.
-										</p>
-									</div>
-								) : (
-									<div className="space-y-3">
-										{tokens
-											.filter(
-												(token) => token.metadata?.integration_type === "api",
-											)
-											.map((token) => (
-												<div
-													key={token.id}
-													className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 hover:border-primary-300 dark:hover:border-primary-700 transition-colors"
-												>
-													<div className="flex justify-between items-start">
-														<div className="flex-1">
-															<div className="flex items-center gap-2 flex-wrap">
-																<h4 className="font-medium text-secondary-900 dark:text-white">
-																	{token.token_name}
-																</h4>
+															) : (
 																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
 																	API
 																</span>
-																{token.is_active ? (
-																	<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-																		Active
-																	</span>
-																) : (
-																	<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
-																		Inactive
-																	</span>
-																)}
-															</div>
-															<div className="mt-2 space-y-1 text-sm text-secondary-600 dark:text-secondary-400">
-																<div className="flex items-center gap-2">
-																	<span className="font-mono text-xs bg-secondary-100 dark:bg-secondary-700 px-2 py-1 rounded">
-																		{token.token_key}
-																	</span>
-																	<button
-																		type="button"
-																		onClick={() =>
-																			copy_to_clipboard(
-																				token.token_key,
-																				`key-${token.id}`,
-																			)
-																		}
-																		className="text-primary-600 hover:text-primary-700 dark:text-primary-400"
-																	>
-																		{copy_success[`key-${token.id}`] ? (
-																			<CheckCircle className="h-4 w-4" />
-																		) : (
-																			<Copy className="h-4 w-4" />
-																		)}
-																	</button>
-																</div>
-																{token.metadata?.integration_type === "api" &&
-																	token.scopes && (
-																		<p>
-																			Scopes:{" "}
-																			{Object.entries(token.scopes)
-																				.map(
-																					([resource, actions]) =>
-																						`${resource}: ${Array.isArray(actions) ? actions.join(", ") : actions}`,
-																				)
-																				.join(" | ")}
-																		</p>
-																	)}
-																{token.allowed_ip_ranges?.length > 0 && (
-																	<p>
-																		Allowed IPs:{" "}
-																		{token.allowed_ip_ranges.join(", ")}
-																	</p>
-																)}
-																<p>Created: {formatDate(token.created_at)}</p>
-																{token.last_used_at && (
-																	<p>
-																		Last Used: {formatDate(token.last_used_at)}
-																	</p>
-																)}
-																{token.expires_at && (
-																	<p>
-																		Expires: {formatDate(token.expires_at)}
-																		{new Date(token.expires_at) <
-																			new Date() && (
-																			<span className="ml-2 text-red-600 dark:text-red-400">
-																				(Expired)
-																			</span>
-																		)}
-																	</p>
-																)}
-															</div>
+															)}
+															{token.is_active ? (
+																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+																	Active
+																</span>
+															) : (
+																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
+																	Inactive
+																</span>
+															)}
 														</div>
-														<div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
-															<button
-																type="button"
-																onClick={() => open_edit_modal(token)}
-																className="px-3 py-1 text-xs md:text-sm rounded bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300 dark:hover:bg-blue-800"
-															>
-																Edit
-															</button>
-															<button
-																type="button"
-																onClick={() =>
-																	toggle_token_active(token.id, token.is_active)
-																}
-																className={`px-3 py-1 text-xs md:text-sm rounded ${
-																	token.is_active
-																		? "bg-secondary-100 text-secondary-700 hover:bg-secondary-200 dark:bg-secondary-700 dark:text-secondary-300"
-																		: "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900 dark:text-green-300"
-																}`}
-															>
-																{token.is_active ? "Disable" : "Enable"}
-															</button>
-															<button
-																type="button"
-																onClick={() =>
-																	delete_token(token.id, token.token_name)
-																}
-																className="text-red-600 hover:text-red-800 dark:text-red-400 p-2"
-															>
-																<Trash2 className="h-4 w-4" />
-															</button>
+														<div className="mt-2 space-y-1 text-sm text-secondary-600 dark:text-white">
+															<div className="flex items-center gap-2">
+																<span className="font-mono text-xs bg-secondary-100 dark:bg-secondary-700 px-2 py-1 rounded">
+																	{token.token_key}
+																</span>
+																<button
+																	type="button"
+																	onClick={() =>
+																		copy_to_clipboard(
+																			token.token_key,
+																			`key-${token.id}`,
+																		)
+																	}
+																	className="text-primary-600 hover:text-primary-700 dark:text-primary-400"
+																>
+																	{copy_success[`key-${token.id}`] ? (
+																		<CheckCircle className="h-4 w-4" />
+																	) : (
+																		<Copy className="h-4 w-4" />
+																	)}
+																</button>
+															</div>
+															{token.metadata?.integration_type ===
+																"proxmox-lxc" && (
+																<p>
+																	Usage: {token.hosts_created_today}/
+																	{token.max_hosts_per_day} hosts today
+																</p>
+															)}
+															{token.metadata?.integration_type ===
+																"proxmox-lxc" &&
+																token.host_groups && (
+																	<p>
+																		Default Group:{" "}
+																		<span
+																			className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+																			style={{
+																				backgroundColor: `${token.host_groups.color}20`,
+																				color: token.host_groups.color,
+																			}}
+																		>
+																			{token.host_groups.name}
+																		</span>
+																	</p>
+																)}
+															{token.metadata?.integration_type === "api" &&
+																token.scopes && (
+																	<p>
+																		Scopes:{" "}
+																		{Object.entries(token.scopes)
+																			.map(
+																				([resource, actions]) =>
+																					`${resource}: ${Array.isArray(actions) ? actions.join(", ") : actions}`,
+																			)
+																			.join(" | ")}
+																	</p>
+																)}
+															{token.allowed_ip_ranges?.length > 0 && (
+																<p>
+																	Allowed IPs:{" "}
+																	{token.allowed_ip_ranges.join(", ")}
+																</p>
+															)}
+															<p>Created: {formatDate(token.created_at)}</p>
+															{token.last_used_at && (
+																<p>
+																	Last Used: {formatDate(token.last_used_at)}
+																</p>
+															)}
+															{token.expires_at && (
+																<p>
+																	Expires: {formatDate(token.expires_at)}
+																	{new Date(token.expires_at) < new Date() && (
+																		<span className="ml-2 text-red-600 dark:text-red-400">
+																			(Expired)
+																		</span>
+																	)}
+																</p>
+															)}
 														</div>
 													</div>
+													<div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+														<button
+															type="button"
+															onClick={() => open_edit_modal(token)}
+															className="px-3 py-1 text-xs md:text-sm rounded bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300 dark:hover:bg-blue-800"
+														>
+															Edit
+														</button>
+														<button
+															type="button"
+															onClick={() =>
+																toggle_token_active(token.id, token.is_active)
+															}
+															className={`px-3 py-1 text-xs md:text-sm rounded ${
+																token.is_active
+																	? "bg-secondary-100 text-secondary-700 hover:bg-secondary-200 dark:bg-secondary-700 dark:text-white"
+																	: "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900 dark:text-green-300"
+															}`}
+														>
+															{token.is_active ? "Disable" : "Enable"}
+														</button>
+														<button
+															type="button"
+															onClick={() =>
+																delete_token(token.id, token.token_name)
+															}
+															className="text-red-600 hover:text-red-800 dark:text-red-400 p-2"
+														>
+															<Trash2 className="h-4 w-4" />
+														</button>
+													</div>
 												</div>
-											))}
-									</div>
-								)}
+											</div>
+										))}
+								</div>
+							)}
 
-								{/* Documentation Section */}
-								<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
-									<h3 className="text-base md:text-lg font-semibold text-primary-900 dark:text-primary-200 mb-4">
-										Documentation
-									</h3>
-									<div className="border border-primary-200 dark:border-primary-700 rounded-lg p-4 bg-white dark:bg-secondary-800">
-										<div className="flex items-center gap-2 mb-3">
-											<Shield className="h-5 w-5 text-green-600 dark:text-green-400" />
-											<h4 className="font-semibold text-secondary-900 dark:text-white">
-												Scoped Credentials
-											</h4>
-										</div>
-										<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-3">
-											Programmatic access to PatchMon data with granular
-											scope-based permissions.
+							{/* Documentation Section */}
+							<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
+								<h3 className="text-base md:text-lg font-semibold text-primary-900 dark:text-primary-200 mb-4">
+									Documentation
+								</h3>
+								<div className="border border-primary-200 dark:border-primary-700 rounded-lg p-4 bg-white dark:bg-secondary-800">
+									<div className="flex items-center gap-2 mb-3">
+										<Server className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+										<h4 className="font-semibold text-secondary-900 dark:text-white">
+											Proxmox LXC Auto-Enrollment
+										</h4>
+									</div>
+									<p className="text-sm text-secondary-600 dark:text-white mb-3">
+										Automatically discover and enroll LXC containers from your
+										Proxmox hosts.
+									</p>
+									<a
+										href="https://docs.patchmon.net/books/patchmon-application-documentation/page/proxmox-lxc-auto-enrollment-guide"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="inline-flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg text-sm transition-colors"
+									>
+										<BookOpen className="h-4 w-4" />
+										View Guide
+									</a>
+								</div>
+							</div>
+						</div>
+					)}
+
+					{/* Auto-Enrollment (Direct) Tab */}
+					{activeTab === "auto-enrollment-direct" && (
+						<div className="space-y-6">
+							{/* Header with New Token Button */}
+							<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+								<div className="flex items-center gap-3 flex-1 min-w-0">
+									<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
+										<Server className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+									</div>
+									<div className="min-w-0">
+										<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
+											Direct Host Auto-Enrollment
+										</h3>
+										<p className="text-xs md:text-sm text-secondary-600 dark:text-white">
+											Manage tokens for direct host enrollment without Proxmox
 										</p>
-										<div className="flex flex-wrap gap-2">
-											<a
-												href="https://docs.patchmon.net/books/patchmon-application-documentation/page/integration-api-documentation"
-												target="_blank"
-												rel="noopener noreferrer"
-												className="inline-flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg text-sm transition-colors"
+									</div>
+								</div>
+								<button
+									type="button"
+									onClick={() => setShowCreateModal(true)}
+									className="btn-primary flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-start"
+								>
+									<Plus className="h-4 w-4" />
+									New Token
+								</button>
+							</div>
+
+							{/* Token List */}
+							{loading ? (
+								<div className="text-center py-8">
+									<div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+								</div>
+							) : tokens.filter(
+									(token) => token.metadata?.integration_type === "direct-host",
+								).length === 0 ? (
+								<div className="text-center py-8 text-secondary-600 dark:text-white">
+									<p>No direct enrollment tokens created yet.</p>
+									<p className="text-sm mt-2">
+										Create a token to enable direct host enrollment.
+									</p>
+								</div>
+							) : (
+								<div className="space-y-3">
+									{tokens
+										.filter(
+											(token) =>
+												token.metadata?.integration_type === "direct-host",
+										)
+										.map((token) => (
+											<div
+												key={token.id}
+												className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 hover:border-primary-300 dark:hover:border-primary-700 transition-colors"
 											>
-												<BookOpen className="h-4 w-4" />
-												View Guide
-											</a>
-											<a
-												href="/api/v1/api-docs"
-												target="_blank"
-												rel="noopener noreferrer"
-												className="inline-flex items-center gap-2 px-3 py-2 bg-secondary-600 hover:bg-secondary-700 dark:bg-secondary-500 dark:hover:bg-secondary-600 text-white rounded-lg text-sm transition-colors"
+												<div className="flex justify-between items-start">
+													<div className="flex-1">
+														<div className="flex items-center gap-2 flex-wrap">
+															<h4 className="font-medium text-secondary-900 dark:text-white">
+																{token.token_name}
+															</h4>
+															<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+																Direct Host
+															</span>
+															{token.is_active ? (
+																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+																	Active
+																</span>
+															) : (
+																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
+																	Inactive
+																</span>
+															)}
+														</div>
+														<div className="mt-2 space-y-1 text-sm text-secondary-600 dark:text-white">
+															<div className="flex items-center gap-2">
+																<span className="font-mono text-xs bg-secondary-100 dark:bg-secondary-700 px-2 py-1 rounded">
+																	{token.token_key}
+																</span>
+																<button
+																	type="button"
+																	onClick={() =>
+																		copy_to_clipboard(
+																			token.token_key,
+																			`key-${token.id}`,
+																		)
+																	}
+																	className="text-primary-600 hover:text-primary-700 dark:text-primary-400"
+																>
+																	{copy_success[`key-${token.id}`] ? (
+																		<CheckCircle className="h-4 w-4" />
+																	) : (
+																		<Copy className="h-4 w-4" />
+																	)}
+																</button>
+															</div>
+															{token.metadata?.integration_type ===
+																"direct-host" && (
+																<p>
+																	Usage: {token.hosts_created_today}/
+																	{token.max_hosts_per_day} hosts today
+																</p>
+															)}
+															{token.metadata?.integration_type ===
+																"direct-host" &&
+																token.host_groups && (
+																	<p>
+																		Default Group:{" "}
+																		<span
+																			className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+																			style={{
+																				backgroundColor: `${token.host_groups.color}20`,
+																				color: token.host_groups.color,
+																			}}
+																		>
+																			{token.host_groups.name}
+																		</span>
+																	</p>
+																)}
+															{token.allowed_ip_ranges?.length > 0 && (
+																<p>
+																	Allowed IPs:{" "}
+																	{token.allowed_ip_ranges.join(", ")}
+																</p>
+															)}
+															<p>Created: {formatDate(token.created_at)}</p>
+															{token.last_used_at && (
+																<p>
+																	Last Used: {formatDate(token.last_used_at)}
+																</p>
+															)}
+															{token.expires_at && (
+																<p>
+																	Expires: {formatDate(token.expires_at)}
+																	{new Date(token.expires_at) < new Date() && (
+																		<span className="ml-2 text-red-600 dark:text-red-400">
+																			(Expired)
+																		</span>
+																	)}
+																</p>
+															)}
+														</div>
+													</div>
+													<div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+														<button
+															type="button"
+															onClick={() => open_edit_modal(token)}
+															className="px-3 py-1 text-xs md:text-sm rounded bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300 dark:hover:bg-blue-800"
+														>
+															Edit
+														</button>
+														<button
+															type="button"
+															onClick={() =>
+																toggle_token_active(token.id, token.is_active)
+															}
+															className={`px-3 py-1 text-xs md:text-sm rounded ${
+																token.is_active
+																	? "bg-secondary-100 text-secondary-700 hover:bg-secondary-200 dark:bg-secondary-700 dark:text-white"
+																	: "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900 dark:text-green-300"
+															}`}
+														>
+															{token.is_active ? "Disable" : "Enable"}
+														</button>
+														<button
+															type="button"
+															onClick={() =>
+																delete_token(token.id, token.token_name)
+															}
+															className="text-red-600 hover:text-red-800 dark:text-red-400 p-2"
+														>
+															<Trash2 className="h-4 w-4" />
+														</button>
+													</div>
+												</div>
+											</div>
+										))}
+								</div>
+							)}
+
+							{/* Documentation Section */}
+							<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
+								<h3 className="text-base md:text-lg font-semibold text-primary-900 dark:text-primary-200 mb-4">
+									Documentation
+								</h3>
+								<div className="border border-primary-200 dark:border-primary-700 rounded-lg p-4 bg-white dark:bg-secondary-800">
+									<div className="flex items-center gap-2 mb-3">
+										<Server className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+										<h4 className="font-semibold text-secondary-900 dark:text-white">
+											Direct Host Enrollment
+										</h4>
+									</div>
+									<p className="text-sm text-secondary-600 dark:text-white mb-3">
+										Enroll individual hosts directly without Proxmox
+										infrastructure.
+									</p>
+									<a
+										href="https://docs.patchmon.net/books/patchmon-application-documentation/page/proxmox-lxc-auto-enrollment-guide"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="inline-flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg text-sm transition-colors"
+									>
+										<BookOpen className="h-4 w-4" />
+										View Guide
+									</a>
+								</div>
+							</div>
+						</div>
+					)}
+
+					{/* Scoped Credentials Tab */}
+					{activeTab === "scoped-credentials" && (
+						<div className="space-y-6">
+							{/* Header with New Token Button */}
+							<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+								<div className="flex items-center gap-3 flex-1 min-w-0">
+									<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
+										<Shield className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+									</div>
+									<div className="min-w-0">
+										<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
+											Scoped API Credentials
+										</h3>
+										<p className="text-xs md:text-sm text-secondary-600 dark:text-white">
+											Manage API credentials with granular scope-based
+											permissions
+										</p>
+									</div>
+								</div>
+								<button
+									type="button"
+									onClick={() => setShowCreateModal(true)}
+									className="btn-primary flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-start"
+								>
+									<Plus className="h-4 w-4" />
+									New Credential
+								</button>
+							</div>
+
+							{/* Token List */}
+							{loading ? (
+								<div className="text-center py-8">
+									<div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+								</div>
+							) : tokens.filter(
+									(token) => token.metadata?.integration_type === "api",
+								).length === 0 ? (
+								<div className="text-center py-8 text-secondary-600 dark:text-white">
+									<p>No scoped credentials created yet.</p>
+									<p className="text-sm mt-2">
+										Create a credential to enable programmatic API access with
+										granular permissions.
+									</p>
+								</div>
+							) : (
+								<div className="space-y-3">
+									{tokens
+										.filter(
+											(token) => token.metadata?.integration_type === "api",
+										)
+										.map((token) => (
+											<div
+												key={token.id}
+												className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 hover:border-primary-300 dark:hover:border-primary-700 transition-colors"
 											>
-												<BookOpen className="h-4 w-4" />
-												Swagger documentation
-											</a>
-										</div>
+												<div className="flex justify-between items-start">
+													<div className="flex-1">
+														<div className="flex items-center gap-2 flex-wrap">
+															<h4 className="font-medium text-secondary-900 dark:text-white">
+																{token.token_name}
+															</h4>
+															<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+																API
+															</span>
+															{token.is_active ? (
+																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+																	Active
+																</span>
+															) : (
+																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
+																	Inactive
+																</span>
+															)}
+														</div>
+														<div className="mt-2 space-y-1 text-sm text-secondary-600 dark:text-white">
+															<div className="flex items-center gap-2">
+																<span className="font-mono text-xs bg-secondary-100 dark:bg-secondary-700 px-2 py-1 rounded">
+																	{token.token_key}
+																</span>
+																<button
+																	type="button"
+																	onClick={() =>
+																		copy_to_clipboard(
+																			token.token_key,
+																			`key-${token.id}`,
+																		)
+																	}
+																	className="text-primary-600 hover:text-primary-700 dark:text-primary-400"
+																>
+																	{copy_success[`key-${token.id}`] ? (
+																		<CheckCircle className="h-4 w-4" />
+																	) : (
+																		<Copy className="h-4 w-4" />
+																	)}
+																</button>
+															</div>
+															{token.metadata?.integration_type === "api" &&
+																token.scopes && (
+																	<p>
+																		Scopes:{" "}
+																		{Object.entries(token.scopes)
+																			.map(
+																				([resource, actions]) =>
+																					`${resource}: ${Array.isArray(actions) ? actions.join(", ") : actions}`,
+																			)
+																			.join(" | ")}
+																	</p>
+																)}
+															{token.allowed_ip_ranges?.length > 0 && (
+																<p>
+																	Allowed IPs:{" "}
+																	{token.allowed_ip_ranges.join(", ")}
+																</p>
+															)}
+															<p>Created: {formatDate(token.created_at)}</p>
+															{token.last_used_at && (
+																<p>
+																	Last Used: {formatDate(token.last_used_at)}
+																</p>
+															)}
+															{token.expires_at && (
+																<p>
+																	Expires: {formatDate(token.expires_at)}
+																	{new Date(token.expires_at) < new Date() && (
+																		<span className="ml-2 text-red-600 dark:text-red-400">
+																			(Expired)
+																		</span>
+																	)}
+																</p>
+															)}
+														</div>
+													</div>
+													<div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+														<button
+															type="button"
+															onClick={() => open_edit_modal(token)}
+															className="px-3 py-1 text-xs md:text-sm rounded bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300 dark:hover:bg-blue-800"
+														>
+															Edit
+														</button>
+														<button
+															type="button"
+															onClick={() =>
+																toggle_token_active(token.id, token.is_active)
+															}
+															className={`px-3 py-1 text-xs md:text-sm rounded ${
+																token.is_active
+																	? "bg-secondary-100 text-secondary-700 hover:bg-secondary-200 dark:bg-secondary-700 dark:text-white"
+																	: "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900 dark:text-green-300"
+															}`}
+														>
+															{token.is_active ? "Disable" : "Enable"}
+														</button>
+														<button
+															type="button"
+															onClick={() =>
+																delete_token(token.id, token.token_name)
+															}
+															className="text-red-600 hover:text-red-800 dark:text-red-400 p-2"
+														>
+															<Trash2 className="h-4 w-4" />
+														</button>
+													</div>
+												</div>
+											</div>
+										))}
+								</div>
+							)}
+
+							{/* Documentation Section */}
+							<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
+								<h3 className="text-base md:text-lg font-semibold text-primary-900 dark:text-primary-200 mb-4">
+									Documentation
+								</h3>
+								<div className="border border-primary-200 dark:border-primary-700 rounded-lg p-4 bg-white dark:bg-secondary-800">
+									<div className="flex items-center gap-2 mb-3">
+										<Shield className="h-5 w-5 text-green-600 dark:text-green-400" />
+										<h4 className="font-semibold text-secondary-900 dark:text-white">
+											Scoped Credentials
+										</h4>
+									</div>
+									<p className="text-sm text-secondary-600 dark:text-white mb-3">
+										Programmatic access to PatchMon data with granular
+										scope-based permissions.
+									</p>
+									<div className="flex flex-wrap gap-2">
+										<a
+											href="https://docs.patchmon.net/books/patchmon-application-documentation/page/integration-api-documentation"
+											target="_blank"
+											rel="noopener noreferrer"
+											className="inline-flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg text-sm transition-colors"
+										>
+											<BookOpen className="h-4 w-4" />
+											View Guide
+										</a>
+										<a
+											href="/api/v1/api-docs"
+											target="_blank"
+											rel="noopener noreferrer"
+											className="inline-flex items-center gap-2 px-3 py-2 bg-secondary-600 hover:bg-secondary-700 dark:bg-secondary-500 dark:hover:bg-secondary-600 text-white rounded-lg text-sm transition-colors"
+										>
+											<BookOpen className="h-4 w-4" />
+											Swagger documentation
+										</a>
 									</div>
 								</div>
 							</div>
-						)}
+						</div>
+					)}
 
-						{/* GetHomepage Tab */}
-						{activeTab === "gethomepage" && (
-							<div className="space-y-6">
-								{/* Header with New API Key Button */}
-								<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-									<div className="flex items-center gap-3 flex-1 min-w-0">
-										<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
-											<Server className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-										</div>
-										<div className="min-w-0">
-											<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
-												GetHomepage Widget Integration
-											</h3>
-											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-												Create API keys to display PatchMon statistics in your
-												GetHomepage dashboard
-											</p>
-										</div>
+					{/* GetHomepage Tab */}
+					{activeTab === "gethomepage" && (
+						<div className="space-y-6">
+							{/* Header with New API Key Button */}
+							<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+								<div className="flex items-center gap-3 flex-1 min-w-0">
+									<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
+										<Server className="h-5 w-5 text-primary-600 dark:text-primary-400" />
 									</div>
-									<button
-										type="button"
-										onClick={() => setShowCreateModal(true)}
-										className="btn-primary flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-start"
-									>
-										<Plus className="h-4 w-4" />
-										New API Key
-									</button>
-								</div>
-
-								{/* API Keys List */}
-								{loading ? (
-									<div className="text-center py-8">
-										<div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
-									</div>
-								) : tokens.filter(
-										(token) =>
-											token.metadata?.integration_type === "gethomepage",
-									).length === 0 ? (
-									<div className="text-center py-8 text-secondary-600 dark:text-secondary-400">
-										<p>No GetHomepage API keys created yet.</p>
-										<p className="text-sm mt-2">
-											Create an API key to enable GetHomepage widget
-											integration.
+									<div className="min-w-0">
+										<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
+											GetHomepage Widget Integration
+										</h3>
+										<p className="text-xs md:text-sm text-secondary-600 dark:text-white">
+											Create API keys to display PatchMon statistics in your
+											GetHomepage dashboard
 										</p>
 									</div>
-								) : (
-									<div className="space-y-3">
-										{tokens
-											.filter(
-												(token) =>
-													token.metadata?.integration_type === "gethomepage",
-											)
-											.map((token) => (
-												<div
-													key={token.id}
-													className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-3 md:p-4 hover:border-primary-300 dark:hover:border-primary-700 transition-colors"
-												>
-													<div className="flex flex-col sm:flex-row justify-between items-start gap-3">
-														<div className="flex-1 min-w-0">
-															<div className="flex items-center gap-2 flex-wrap">
-																<h4 className="text-sm md:text-base font-medium text-secondary-900 dark:text-white truncate">
-																	{token.token_name}
-																</h4>
-																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
-																	GetHomepage
+								</div>
+								<button
+									type="button"
+									onClick={() => setShowCreateModal(true)}
+									className="btn-primary flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-start"
+								>
+									<Plus className="h-4 w-4" />
+									New API Key
+								</button>
+							</div>
+
+							{/* API Keys List */}
+							{loading ? (
+								<div className="text-center py-8">
+									<div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+								</div>
+							) : tokens.filter(
+									(token) => token.metadata?.integration_type === "gethomepage",
+								).length === 0 ? (
+								<div className="text-center py-8 text-secondary-600 dark:text-white">
+									<p>No GetHomepage API keys created yet.</p>
+									<p className="text-sm mt-2">
+										Create an API key to enable GetHomepage widget integration.
+									</p>
+								</div>
+							) : (
+								<div className="space-y-3">
+									{tokens
+										.filter(
+											(token) =>
+												token.metadata?.integration_type === "gethomepage",
+										)
+										.map((token) => (
+											<div
+												key={token.id}
+												className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-3 md:p-4 hover:border-primary-300 dark:hover:border-primary-700 transition-colors"
+											>
+												<div className="flex flex-col sm:flex-row justify-between items-start gap-3">
+													<div className="flex-1 min-w-0">
+														<div className="flex items-center gap-2 flex-wrap">
+															<h4 className="text-sm md:text-base font-medium text-secondary-900 dark:text-white truncate">
+																{token.token_name}
+															</h4>
+															<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+																GetHomepage
+															</span>
+															{token.is_active ? (
+																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+																	Active
 																</span>
-																{token.is_active ? (
-																	<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-																		Active
-																	</span>
-																) : (
-																	<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
-																		Inactive
-																	</span>
-																)}
-															</div>
-															<div className="mt-2 space-y-1 text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-																<div className="flex items-center gap-2">
-																	<span className="font-mono text-xs bg-secondary-100 dark:bg-secondary-700 px-2 py-1 rounded break-all flex-1 min-w-0">
-																		{token.token_key}
-																	</span>
-																	<button
-																		type="button"
-																		onClick={() =>
-																			copy_to_clipboard(
-																				token.token_key,
-																				`key-${token.id}`,
-																			)
-																		}
-																		className="text-primary-600 hover:text-primary-700 dark:text-primary-400 flex-shrink-0"
-																	>
-																		{copy_success[`key-${token.id}`] ? (
-																			<CheckCircle className="h-4 w-4" />
-																		) : (
-																			<Copy className="h-4 w-4" />
-																		)}
-																	</button>
-																</div>
-																<p>Created: {formatDate(token.created_at)}</p>
-																{token.last_used_at && (
-																	<p>
-																		Last Used: {formatDate(token.last_used_at)}
-																	</p>
-																)}
-																{token.expires_at && (
-																	<p>
-																		Expires: {formatDate(token.expires_at)}
-																		{new Date(token.expires_at) <
-																			new Date() && (
-																			<span className="ml-2 text-red-600 dark:text-red-400">
-																				(Expired)
-																			</span>
-																		)}
-																	</p>
-																)}
-															</div>
+															) : (
+																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
+																	Inactive
+																</span>
+															)}
 														</div>
-														<div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
-															<button
-																type="button"
-																onClick={() =>
-																	toggle_token_active(token.id, token.is_active)
-																}
-																className={`px-3 py-1 text-xs md:text-sm rounded ${
-																	token.is_active
-																		? "bg-secondary-100 text-secondary-700 hover:bg-secondary-200 dark:bg-secondary-700 dark:text-secondary-300"
-																		: "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900 dark:text-green-300"
-																}`}
-															>
-																{token.is_active ? "Disable" : "Enable"}
-															</button>
-															<button
-																type="button"
-																onClick={() =>
-																	delete_token(token.id, token.token_name)
-																}
-																className="text-red-600 hover:text-red-800 dark:text-red-400 p-2"
-															>
-																<Trash2 className="h-4 w-4" />
-															</button>
+														<div className="mt-2 space-y-1 text-xs md:text-sm text-secondary-600 dark:text-white">
+															<div className="flex items-center gap-2">
+																<span className="font-mono text-xs bg-secondary-100 dark:bg-secondary-700 px-2 py-1 rounded break-all flex-1 min-w-0">
+																	{token.token_key}
+																</span>
+																<button
+																	type="button"
+																	onClick={() =>
+																		copy_to_clipboard(
+																			token.token_key,
+																			`key-${token.id}`,
+																		)
+																	}
+																	className="text-primary-600 hover:text-primary-700 dark:text-primary-400 flex-shrink-0"
+																>
+																	{copy_success[`key-${token.id}`] ? (
+																		<CheckCircle className="h-4 w-4" />
+																	) : (
+																		<Copy className="h-4 w-4" />
+																	)}
+																</button>
+															</div>
+															<p>Created: {formatDate(token.created_at)}</p>
+															{token.last_used_at && (
+																<p>
+																	Last Used: {formatDate(token.last_used_at)}
+																</p>
+															)}
+															{token.expires_at && (
+																<p>
+																	Expires: {formatDate(token.expires_at)}
+																	{new Date(token.expires_at) < new Date() && (
+																		<span className="ml-2 text-red-600 dark:text-red-400">
+																			(Expired)
+																		</span>
+																	)}
+																</p>
+															)}
 														</div>
 													</div>
+													<div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+														<button
+															type="button"
+															onClick={() =>
+																toggle_token_active(token.id, token.is_active)
+															}
+															className={`px-3 py-1 text-xs md:text-sm rounded ${
+																token.is_active
+																	? "bg-secondary-100 text-secondary-700 hover:bg-secondary-200 dark:bg-secondary-700 dark:text-white"
+																	: "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900 dark:text-green-300"
+															}`}
+														>
+															{token.is_active ? "Disable" : "Enable"}
+														</button>
+														<button
+															type="button"
+															onClick={() =>
+																delete_token(token.id, token.token_name)
+															}
+															className="text-red-600 hover:text-red-800 dark:text-red-400 p-2"
+														>
+															<Trash2 className="h-4 w-4" />
+														</button>
+													</div>
 												</div>
-											))}
-									</div>
-								)}
+											</div>
+										))}
+								</div>
+							)}
 
-								{/* Documentation Section */}
-								<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
-									<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
-										<h3 className="text-base md:text-lg font-semibold text-primary-900 dark:text-primary-200">
-											How to Use GetHomepage Integration
-										</h3>
-										<a
-											href="https://docs.patchmon.net/books/patchmon-application-documentation/page/gethomepagedev-dashboard-card"
-											target="_blank"
-											rel="noopener noreferrer"
-											className="px-4 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg flex items-center gap-2 transition-colors w-full sm:w-auto justify-center sm:justify-start"
-										>
-											<BookOpen className="h-4 w-4" />
-											Documentation
-										</a>
-									</div>
-									<ol className="list-decimal list-inside space-y-2 text-sm text-primary-800 dark:text-primary-300">
-										<li>Create a new API key using the button above</li>
-										<li>Copy the API key and secret from the success dialog</li>
-										<li>
-											Add the following widget configuration to your GetHomepage{" "}
-											<code className="bg-primary-100 dark:bg-primary-900/40 px-1 py-0.5 rounded text-xs">
-												services.yml
-											</code>{" "}
-											file:
-										</li>
-									</ol>
+							{/* Documentation Section */}
+							<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
+								<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+									<h3 className="text-base md:text-lg font-semibold text-primary-900 dark:text-primary-200">
+										How to Use GetHomepage Integration
+									</h3>
+									<a
+										href="https://docs.patchmon.net/books/patchmon-application-documentation/page/gethomepagedev-dashboard-card"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="px-4 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg flex items-center gap-2 transition-colors w-full sm:w-auto justify-center sm:justify-start"
+									>
+										<BookOpen className="h-4 w-4" />
+										Documentation
+									</a>
+								</div>
+								<ol className="list-decimal list-inside space-y-2 text-sm text-primary-800 dark:text-primary-300">
+									<li>Create a new API key using the button above</li>
+									<li>Copy the API key and secret from the success dialog</li>
+									<li>
+										Add the following widget configuration to your GetHomepage{" "}
+										<code className="bg-primary-100 dark:bg-primary-900/40 px-1 py-0.5 rounded text-xs">
+											services.yml
+										</code>{" "}
+										file:
+									</li>
+								</ol>
 
-									<div className="mt-4 p-3 bg-primary-100 dark:bg-primary-900/40 rounded border border-primary-200 dark:border-primary-700">
-										<pre className="text-xs text-primary-800 dark:text-primary-300 whitespace-pre-wrap overflow-x-auto font-mono">
-											{`- PatchMon:
+								<div className="mt-4 p-3 bg-primary-100 dark:bg-primary-900/40 rounded border border-primary-200 dark:border-primary-700">
+									<pre className="text-xs text-primary-800 dark:text-primary-300 whitespace-pre-wrap overflow-x-auto font-mono">
+										{`- PatchMon:
     href: ${server_url}
     description: PatchMon Statistics
-    icon: ${server_url}/assets/favicon.svg
+    icon: ${server_url}/assets/logo_square_default.svg
     widget:
       type: customapi
       url: ${server_url}/api/v1/gethomepage/stats
@@ -1582,634 +1566,625 @@ const Integrations = () => {
           label: Needs Updates
         - field: security_updates
           label: Security Updates`}
-										</pre>
-									</div>
-
-									<div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded">
-										<p className="text-xs text-blue-800 dark:text-blue-300 mb-2">
-											<strong>
-												How to generate BASE64_ENCODED_CREDENTIALS:
-											</strong>
-										</p>
-										<pre className="text-xs text-blue-800 dark:text-blue-300 font-mono bg-blue-100 dark:bg-blue-900/40 p-2 rounded overflow-x-auto">
-											{`echo -n "YOUR_API_KEY:YOUR_API_SECRET" | base64`}
-										</pre>
-										<p className="text-xs text-blue-800 dark:text-blue-300 mt-2">
-											Replace YOUR_API_KEY and YOUR_API_SECRET with your actual
-											credentials, then run this command to get the base64
-											string.
-										</p>
-									</div>
-
-									<div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded">
-										<h4 className="text-sm font-semibold text-blue-900 dark:text-blue-200 mb-2">
-											Additional Widget Examples
-										</h4>
-										<p className="text-xs text-blue-800 dark:text-blue-300 mb-2">
-											You can create multiple widgets to display different
-											statistics:
-										</p>
-										<div className="space-y-2 text-xs text-blue-800 dark:text-blue-300 font-mono">
-											<div className="bg-blue-100 dark:bg-blue-900/40 p-2 rounded">
-												<strong>Security Updates Widget:</strong>
-												<br />
-												type: customapi
-												<br />
-												key: security_updates
-												<br />
-												value: hosts_with_security_updates
-												<br />
-												label: Security Updates
-											</div>
-											<div className="bg-blue-100 dark:bg-blue-900/40 p-2 rounded">
-												<strong>Up-to-Date Hosts Widget:</strong>
-												<br />
-												type: customapi
-												<br />
-												key: up_to_date_hosts
-												<br />
-												value: total_hosts
-												<br />
-												label: Up-to-Date Hosts
-											</div>
-											<div className="bg-blue-100 dark:bg-blue-900/40 p-2 rounded">
-												<strong>Recent Activity Widget:</strong>
-												<br />
-												type: customapi
-												<br />
-												key: recent_updates_24h
-												<br />
-												value: total_hosts
-												<br />
-												label: Updates (24h)
-											</div>
-										</div>
-									</div>
-								</div>
-							</div>
-						)}
-
-						{/* Docker Tab */}
-						{activeTab === "docker" && (
-							<div className="space-y-6">
-								{/* Header */}
-								<div className="flex items-center gap-3">
-									<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
-										<Container className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-									</div>
-									<div className="min-w-0">
-										<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
-											Docker Inventory Collection
-										</h3>
-										<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-											Docker monitoring is now built into the PatchMon Go agent
-										</p>
-									</div>
+									</pre>
 								</div>
 
-								{/* Info Message */}
-								<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
-									<div className="flex items-start gap-3">
-										<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400 flex-shrink-0 mt-0.5" />
-										<div className="min-w-0">
-											<h4 className="text-sm md:text-base font-semibold text-primary-900 dark:text-primary-200 mb-2">
-												Automatic Docker Discovery
-											</h4>
-											<p className="text-xs md:text-sm text-primary-800 dark:text-primary-300 mb-3">
-												The PatchMon Go agent automatically discovers Docker
-												when it's available on your host and collects
-												comprehensive inventory information:
-											</p>
-											<ul className="list-disc list-inside space-y-2 text-xs md:text-sm text-primary-800 dark:text-primary-300 ml-2">
-												<li>
-													<strong>Containers</strong> - Running and stopped
-													containers with status, images, ports, and labels
-												</li>
-												<li>
-													<strong>Images</strong> - All Docker images with
-													repository, tags, sizes, and sources
-												</li>
-												<li>
-													<strong>Volumes</strong> - Named and anonymous volumes
-													with drivers, mountpoints, and usage
-												</li>
-												<li>
-													<strong>Networks</strong> - Docker networks with
-													drivers, IPAM configuration, and connected containers
-												</li>
-												<li>
-													<strong>Real-time Updates</strong> - Container status
-													changes are pushed instantly via WebSocket
-												</li>
-											</ul>
-										</div>
-									</div>
-								</div>
-
-								{/* How It Works */}
-								<div className="bg-white dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 md:p-6">
-									<h4 className="text-sm md:text-base font-semibold text-secondary-900 dark:text-white mb-4">
-										How It Works
-									</h4>
-									<ol className="list-decimal list-inside space-y-3 text-xs md:text-sm text-secondary-700 dark:text-secondary-300">
-										<li>
-											Install the PatchMon Go agent on your host (see the Hosts
-											page for installation instructions)
-										</li>
-										<li>
-											The agent automatically detects if Docker is installed and
-											running on the host
-										</li>
-										<li>
-											During each collection cycle, the agent gathers Docker
-											inventory data and sends it to the PatchMon server
-										</li>
-										<li>
-											View your complete Docker inventory (containers, images,
-											volumes, networks) in the{" "}
-											<a
-												href="/docker"
-												className="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 underline"
-											>
-												Docker page
-											</a>
-										</li>
-										<li>
-											Container status changes are pushed to the server in
-											real-time via WebSocket connection
-										</li>
-									</ol>
-								</div>
-
-								{/* No Configuration Required */}
-								<div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 md:p-4">
-									<div className="flex items-start gap-2">
-										<CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
-										<div className="text-xs md:text-sm text-green-800 dark:text-green-200">
-											<p className="font-semibold mb-1">
-												No Additional Configuration Required
-											</p>
-											<p>
-												Once the Go agent is installed and Docker is running on
-												your host, Docker inventory collection happens
-												automatically. No separate Docker agent or cron jobs
-												needed.
-											</p>
-										</div>
-									</div>
-								</div>
-
-								{/* Requirements */}
-								<div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 md:p-4">
-									<div className="flex items-start gap-2">
-										<AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
-										<div className="text-xs md:text-sm text-blue-800 dark:text-blue-200">
-											<p className="font-semibold mb-2">Requirements:</p>
-											<ul className="list-disc list-inside space-y-1 ml-2">
-												<li>PatchMon Go agent must be installed and running</li>
-												<li>Docker daemon must be installed and running</li>
-												<li>
-													Agent must have access to the Docker socket (
-													<code className="bg-blue-100 dark:bg-blue-900/40 px-1 py-0.5 rounded text-xs">
-														/var/run/docker.sock
-													</code>
-													)
-												</li>
-												<li>
-													Typically requires running the agent as root or with
-													Docker group permissions
-												</li>
-											</ul>
-										</div>
-									</div>
-								</div>
-							</div>
-						)}
-
-						{/* Compliance Tab */}
-						{activeTab === "compliance" && (
-							<div className="space-y-6">
-								{/* Toast Notification */}
-								{complianceToast && (
-									<div
-										className={`rounded-lg shadow-lg border-2 p-4 flex items-start space-x-3 animate-in slide-in-from-top-5 ${
-											complianceToast.type === "success"
-												? "bg-green-50 dark:bg-green-900/90 border-green-500 dark:border-green-600"
-												: "bg-red-50 dark:bg-red-900/90 border-red-500 dark:border-red-600"
-										}`}
-									>
-										<div
-											className={`flex-shrink-0 rounded-full p-1 ${
-												complianceToast.type === "success"
-													? "bg-green-100 dark:bg-green-800"
-													: "bg-red-100 dark:bg-red-800"
-											}`}
-										>
-											{complianceToast.type === "success" ? (
-												<CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />
-											) : (
-												<AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
-											)}
-										</div>
-										<div className="flex-1">
-											<p
-												className={`text-sm font-medium ${
-													complianceToast.type === "success"
-														? "text-green-800 dark:text-green-100"
-														: "text-red-800 dark:text-red-100"
-												}`}
-											>
-												{complianceToast.message}
-											</p>
-										</div>
-										<button
-											type="button"
-											onClick={() => setComplianceToast(null)}
-											className={`flex-shrink-0 rounded-lg p-1 transition-colors ${
-												complianceToast.type === "success"
-													? "hover:bg-green-100 dark:hover:bg-green-800 text-green-600 dark:text-green-400"
-													: "hover:bg-red-100 dark:hover:bg-red-800 text-red-600 dark:text-red-400"
-											}`}
-										>
-											<X className="h-4 w-4" />
-										</button>
-									</div>
-								)}
-
-								{/* Header */}
-								<div className="flex items-center gap-3">
-									<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
-										<Shield className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-									</div>
-									<div className="min-w-0">
-										<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
-											Compliance Scanning
-										</h3>
-										<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-											Security compliance scanning is built into the PatchMon Go
-											agent
-										</p>
-									</div>
-								</div>
-
-								{/* Default Compliance Mode Setting (Master Toggle) */}
-								<div className="p-4 bg-secondary-50 dark:bg-secondary-800/50 rounded-lg border border-secondary-200 dark:border-secondary-700">
-									<div className="flex items-center gap-2 mb-3">
-										<label
-											htmlFor={defaultComplianceModeId}
-											className="text-sm font-medium text-secondary-900 dark:text-secondary-100"
-										>
-											Default Compliance Mode
-										</label>
-										<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900/50 dark:text-primary-300">
-											Master
-										</span>
-									</div>
-									<p className="text-sm text-secondary-500 dark:text-secondary-400 mb-4">
-										Default compliance mode for all new hosts. Per-host settings
-										in the dashboard can override this default. This setting
-										applies to newly registered hosts.
+								<div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded">
+									<p className="text-xs text-blue-800 dark:text-blue-300 mb-2">
+										<strong>How to generate BASE64_ENCODED_CREDENTIALS:</strong>
 									</p>
-									<div className="flex flex-col gap-2">
-										{["disabled", "on-demand", "enabled"].map((modeOption) => (
-											<label
-												key={modeOption}
-												className={`flex items-center justify-between p-3 border-2 rounded-lg transition-all duration-200 cursor-pointer ${
-													complianceFormData.defaultComplianceMode ===
-													modeOption
-														? "border-primary-500 bg-primary-50 dark:bg-primary-900/20"
-														: "bg-white dark:bg-secondary-700 hover:border-secondary-400 dark:hover:border-secondary-500 border-secondary-300 dark:border-secondary-600"
-												}`}
-											>
-												<div className="flex items-center gap-3">
-													<input
-														type="radio"
-														name="defaultComplianceMode"
-														id={`${defaultComplianceModeId}-${modeOption}`}
-														value={modeOption}
-														checked={
-															complianceFormData.defaultComplianceMode ===
-															modeOption
-														}
-														onChange={() =>
-															handleComplianceInputChange(
-																"defaultComplianceMode",
-																modeOption,
-															)
-														}
-														className="h-4 w-4 text-primary-600 border-secondary-300 focus:ring-primary-500"
-													/>
-													<div>
-														<div className="text-sm font-medium text-secondary-700 dark:text-secondary-200 capitalize">
-															{modeOption === "on-demand"
-																? "On-Demand Only"
-																: modeOption}
-														</div>
-														<div className="text-xs text-secondary-500 dark:text-secondary-400">
-															{modeOption === "disabled" &&
-																"Compliance scanning is completely off for new hosts."}
-															{modeOption === "on-demand" &&
-																"Compliance scans run only when manually triggered from the UI for new hosts."}
-															{modeOption === "enabled" &&
-																"Compliance scans run automatically during scheduled reports for new hosts."}
-														</div>
-													</div>
-												</div>
-											</label>
-										))}
-									</div>
-									{/* Save Button */}
-									<div className="flex justify-end mt-4">
-										<button
-											type="button"
-											onClick={handleComplianceSave}
-											disabled={
-												!complianceIsDirty ||
-												updateComplianceSettingsMutation.isPending
-											}
-											className={`inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white w-full sm:w-auto ${
-												!complianceIsDirty ||
-												updateComplianceSettingsMutation.isPending
-													? "bg-secondary-400 cursor-not-allowed"
-													: "bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-											}`}
-										>
-											{updateComplianceSettingsMutation.isPending ? (
-												<>
-													<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-													Saving...
-												</>
-											) : (
-												<>
-													<Save className="h-4 w-4 mr-2" />
-													Save Settings
-												</>
-											)}
-										</button>
-									</div>
+									<pre className="text-xs text-blue-800 dark:text-blue-300 font-mono bg-blue-100 dark:bg-blue-900/40 p-2 rounded overflow-x-auto">
+										{`echo -n "YOUR_API_KEY:YOUR_API_SECRET" | base64`}
+									</pre>
+									<p className="text-xs text-blue-800 dark:text-blue-300 mt-2">
+										Replace YOUR_API_KEY and YOUR_API_SECRET with your actual
+										credentials, then run this command to get the base64 string.
+									</p>
 								</div>
 
-								{/* Info Message */}
-								<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
-									<div className="flex items-start gap-3">
-										<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400 flex-shrink-0 mt-0.5" />
-										<div className="min-w-0">
-											<h4 className="text-sm md:text-base font-semibold text-primary-900 dark:text-primary-200 mb-2">
-												Automatic Security Compliance Scanning
-											</h4>
-											<p className="text-xs md:text-sm text-primary-800 dark:text-primary-300 mb-3">
-												The PatchMon Go agent includes built-in compliance
-												scanning capabilities that automatically assess your
-												hosts against industry security benchmarks:
-											</p>
-											<ul className="list-disc list-inside space-y-2 text-xs md:text-sm text-primary-800 dark:text-primary-300 ml-2">
-												<li>
-													<strong>OpenSCAP</strong> - CIS benchmark scanning for
-													Linux hosts with automatic tool installation
-												</li>
-												<li>
-													<strong>Docker Bench</strong> - CIS Docker Benchmark
-													security assessment for container hosts
-												</li>
-												<li>
-													<strong>Docker Image CVE Scanning</strong> -
-													Vulnerability scanning for Docker images using
-													oscap-docker
-												</li>
-												<li>
-													<strong>Scoring</strong> - Compliance scores
-													calculated based on passed vs failed rules
-												</li>
-												<li>
-													<strong>Trending</strong> - Track compliance
-													improvements over time with historical data
-												</li>
-												<li>
-													<strong>On-Demand Scans</strong> - Trigger compliance
-													scans from the dashboard at any time
-												</li>
-												<li>
-													<strong>Auto-Remediation</strong> - Automatically fix
-													failing rules when enabled
-												</li>
-											</ul>
-										</div>
-									</div>
-								</div>
-
-								{/* How It Works */}
-								<div className="bg-white dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 md:p-6">
-									<h4 className="text-sm md:text-base font-semibold text-secondary-900 dark:text-white mb-4">
-										How It Works
+								<div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded">
+									<h4 className="text-sm font-semibold text-blue-900 dark:text-blue-200 mb-2">
+										Additional Widget Examples
 									</h4>
-									<ol className="list-decimal list-inside space-y-3 text-xs md:text-sm text-secondary-700 dark:text-secondary-300">
-										<li>
-											Install the PatchMon Go agent on your host (see the Hosts
-											page for installation instructions)
-										</li>
-										<li>
-											Enable the Compliance integration from the dashboard
-										</li>
-										<li>
-											The agent automatically installs required scanning tools
-											(OpenSCAP, SCAP Security Guide)
-										</li>
-										<li>
-											If Docker integration is also enabled, Docker Bench and
-											oscap-docker are set up automatically
-										</li>
-										<li>
-											Compliance scans run periodically and results are sent to
-											the PatchMon server
-										</li>
-										<li>
-											View compliance scores, failing rules, and remediation
-											guidance in the{" "}
-											<a
-												href="/compliance"
-												className="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 underline"
-											>
-												Compliance page
-											</a>
-										</li>
-										<li>
-											Trigger on-demand scans or enable auto-remediation from
-											the host details page
-										</li>
-									</ol>
-								</div>
-
-								{/* Supported Profiles */}
-								<div className="bg-white dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 md:p-6">
-									<h4 className="text-sm md:text-base font-semibold text-secondary-900 dark:text-white mb-4">
-										Supported Compliance Profiles
-									</h4>
-									<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-										<div className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4">
-											<div className="flex items-center gap-2 mb-2">
-												<Shield className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-												<h5 className="font-semibold text-secondary-900 dark:text-white">
-													OpenSCAP
-												</h5>
-											</div>
-											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-												CIS benchmarks for Ubuntu, Debian, RHEL, CentOS, Rocky,
-												AlmaLinux, Fedora, SLES, and OpenSUSE. Supports Level 1
-												and Level 2 server profiles.
-											</p>
+									<p className="text-xs text-blue-800 dark:text-blue-300 mb-2">
+										You can create multiple widgets to display different
+										statistics:
+									</p>
+									<div className="space-y-2 text-xs text-blue-800 dark:text-blue-300 font-mono">
+										<div className="bg-blue-100 dark:bg-blue-900/40 p-2 rounded">
+											<strong>Security Updates Widget:</strong>
+											<br />
+											type: customapi
+											<br />
+											key: security_updates
+											<br />
+											value: hosts_with_security_updates
+											<br />
+											label: Security Updates
 										</div>
-										<div className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4">
-											<div className="flex items-center gap-2 mb-2">
-												<Container className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-												<h5 className="font-semibold text-secondary-900 dark:text-white">
-													Docker Bench
-												</h5>
-											</div>
-											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-												CIS Docker Benchmark security checks. Assesses Docker
-												daemon configuration, container images, and runtime
-												security. Requires Docker integration enabled.
-											</p>
+										<div className="bg-blue-100 dark:bg-blue-900/40 p-2 rounded">
+											<strong>Up-to-Date Hosts Widget:</strong>
+											<br />
+											type: customapi
+											<br />
+											key: up_to_date_hosts
+											<br />
+											value: total_hosts
+											<br />
+											label: Up-to-Date Hosts
 										</div>
-										<div className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4">
-											<div className="flex items-center gap-2 mb-2">
-												<AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-												<h5 className="font-semibold text-secondary-900 dark:text-white">
-													Docker Image CVE
-												</h5>
-											</div>
-											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-												Vulnerability scanning for Docker container images using
-												oscap-docker. Identifies known CVEs in your images.
-												Requires both Docker and Compliance enabled.
-											</p>
-										</div>
-									</div>
-								</div>
-
-								{/* Automatic Tool Installation */}
-								<div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 md:p-4">
-									<div className="flex items-start gap-2">
-										<CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
-										<div className="text-xs md:text-sm text-green-800 dark:text-green-200">
-											<p className="font-semibold mb-1">
-												Automatic Tool Installation
-											</p>
-											<p>
-												When you enable the Compliance integration, the agent
-												automatically installs openscap-scanner and
-												scap-security-guide packages. If Docker integration is
-												also enabled, oscap-docker is set up automatically for
-												container image scanning.
-											</p>
-										</div>
-									</div>
-								</div>
-
-								{/* Requirements */}
-								<div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 md:p-4">
-									<div className="flex items-start gap-2">
-										<AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
-										<div className="text-xs md:text-sm text-blue-800 dark:text-blue-200">
-											<p className="font-semibold mb-2">Requirements:</p>
-											<ul className="list-disc list-inside space-y-1 ml-2">
-												<li>PatchMon Go agent must be installed and running</li>
-												<li>
-													Agent must run as root for full compliance scanning
-													capabilities
-												</li>
-												<li>
-													For Docker scanning: Docker must be installed and
-													Docker integration must be enabled
-												</li>
-											</ul>
+										<div className="bg-blue-100 dark:bg-blue-900/40 p-2 rounded">
+											<strong>Recent Activity Widget:</strong>
+											<br />
+											type: customapi
+											<br />
+											key: recent_updates_24h
+											<br />
+											value: total_hosts
+											<br />
+											label: Updates (24h)
 										</div>
 									</div>
 								</div>
 							</div>
-						)}
+						</div>
+					)}
 
-						{/* Checkmk Tab */}
-						{activeTab === "checkmk" && (
-							<div className="space-y-6">
-								<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-									<div className="flex items-center gap-3 flex-1 min-w-0">
-										<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
-											<Server className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-										</div>
-										<div className="min-w-0">
-											<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
-												Checkmk integration
-											</h3>
-											<p className="text-xs md:text-sm text-secondary-600 dark:text-secondary-400">
-												Export hosts as CSV for import into Checkmk
-											</p>
-										</div>
+					{/* Docker Tab */}
+					{activeTab === "docker" && (
+						<div className="space-y-6">
+							{/* Header */}
+							<div className="flex items-center gap-3">
+								<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
+									<Container className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+								</div>
+								<div className="min-w-0">
+									<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
+										Docker Inventory Collection
+									</h3>
+									<p className="text-xs md:text-sm text-secondary-600 dark:text-white">
+										Docker monitoring is now built into the PatchMon Go agent
+									</p>
+								</div>
+							</div>
+
+							{/* Info Message */}
+							<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
+								<div className="flex items-start gap-3">
+									<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400 flex-shrink-0 mt-0.5" />
+									<div className="min-w-0">
+										<h4 className="text-sm md:text-base font-semibold text-primary-900 dark:text-primary-200 mb-2">
+											Automatic Docker Discovery
+										</h4>
+										<p className="text-xs md:text-sm text-primary-800 dark:text-primary-300 mb-3">
+											The PatchMon Go agent automatically discovers Docker when
+											it's available on your host and collects comprehensive
+											inventory information:
+										</p>
+										<ul className="list-disc list-inside space-y-2 text-xs md:text-sm text-primary-800 dark:text-primary-300 ml-2">
+											<li>
+												<strong>Containers</strong> - Running and stopped
+												containers with status, images, ports, and labels
+											</li>
+											<li>
+												<strong>Images</strong> - All Docker images with
+												repository, tags, sizes, and sources
+											</li>
+											<li>
+												<strong>Volumes</strong> - Named and anonymous volumes
+												with drivers, mountpoints, and usage
+											</li>
+											<li>
+												<strong>Networks</strong> - Docker networks with
+												drivers, IPAM configuration, and connected containers
+											</li>
+											<li>
+												<strong>Real-time Updates</strong> - Container status
+												changes are pushed instantly via WebSocket
+											</li>
+										</ul>
 									</div>
 								</div>
+							</div>
 
-								<div className="bg-secondary-50 dark:bg-secondary-800/50 rounded-lg border border-secondary-200 dark:border-secondary-700 p-4 md:p-6">
-									<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-4">
-										Export your PatchMon host list in the{" "}
-										<a
-											href="https://docs.checkmk.com/latest/en/hosts_setup.html#import"
-											target="_blank"
-											rel="noopener noreferrer"
+							{/* How It Works */}
+							<div className="bg-white dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 md:p-6">
+								<h4 className="text-sm md:text-base font-semibold text-secondary-900 dark:text-white mb-4">
+									How It Works
+								</h4>
+								<ol className="list-decimal list-inside space-y-3 text-xs md:text-sm text-secondary-700 dark:text-white">
+									<li>
+										Install the PatchMon Go agent on your host (see the Hosts
+										page for installation instructions)
+									</li>
+									<li>
+										The agent automatically detects if Docker is installed and
+										running on the host
+									</li>
+									<li>
+										During each collection cycle, the agent gathers Docker
+										inventory data and sends it to the PatchMon server
+									</li>
+									<li>
+										View your complete Docker inventory (containers, images,
+										volumes, networks) in the{" "}
+										<Link
+											to="/docker"
 											className="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 underline"
 										>
-											Checkmk CSV import format
-										</a>
-										. Use the file in Checkmk under Setup → Hosts → Import hosts
-										via CSV file.
-									</p>
-									<p className="text-xs text-secondary-500 dark:text-secondary-500 mb-4">
-										{checkmk_additional_fields
-											? "Full set of Checkmk import attributes (Host name, Alias, Monitored on site, IPv4, IPv6, SNMP community, Tag: Criticality, Tag: Networking Segment, Tag: Checkmk agent / API integrations, Tag: Piggyback, Tag: SNMP, Tag: IP address family). Empty columns can be filled in Checkmk or in the CSV before import."
-											: "Columns: hostname, IPv4 address, alias, and Checkmk agent tag (cmk-agent). Hostnames are limited to 240 characters per Checkmk."}
-									</p>
-									<div className="flex items-center gap-3 mb-4">
-										<button
-											id="checkmk-additional-fields"
-											type="button"
-											role="switch"
-											aria-checked={checkmk_additional_fields}
-											onClick={() =>
-												setCheckmkAdditionalFields((prev) => !prev)
-											}
-											className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:focus:ring-offset-secondary-900 ${
-												checkmk_additional_fields
-													? "bg-primary-600"
-													: "bg-secondary-200 dark:bg-secondary-600"
-											}`}
-										>
-											<span
-												className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-													checkmk_additional_fields
-														? "translate-x-5"
-														: "translate-x-1"
-												}`}
-											/>
-										</button>
-										<label
-											htmlFor="checkmk-additional-fields"
-											className="text-sm font-medium text-secondary-700 dark:text-secondary-300 cursor-pointer"
-										>
-											Add additional fields
-										</label>
+											Docker page
+										</Link>
+									</li>
+									<li>
+										Container status changes are pushed to the server in
+										real-time via WebSocket connection
+									</li>
+								</ol>
+							</div>
+
+							{/* No Configuration Required */}
+							<div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 md:p-4">
+								<div className="flex items-start gap-2">
+									<CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+									<div className="text-xs md:text-sm text-green-800 dark:text-green-200">
+										<p className="font-semibold mb-1">
+											No Additional Configuration Required
+										</p>
+										<p>
+											Once the Go agent is installed and Docker is running on
+											your host, Docker inventory collection happens
+											automatically. No separate Docker agent or cron jobs
+											needed.
+										</p>
 									</div>
-									<p className="text-xs text-secondary-500 dark:text-secondary-500 mb-4">
-										When enabled, the CSV includes all attributes from the
-										Checkmk import docs (section 6.1). PatchMon only fills
-										hostname, alias, IPv4, and agent; other columns are empty
-										for you to edit in Checkmk or before re-import.
-									</p>
-									<CheckmkExportButton
-										include_additional_fields={checkmk_additional_fields}
-									/>
 								</div>
 							</div>
-						)}
-					</div>
+
+							{/* Requirements */}
+							<div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 md:p-4">
+								<div className="flex items-start gap-2">
+									<AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+									<div className="text-xs md:text-sm text-blue-800 dark:text-blue-200">
+										<p className="font-semibold mb-2">Requirements:</p>
+										<ul className="list-disc list-inside space-y-1 ml-2">
+											<li>PatchMon Go agent must be installed and running</li>
+											<li>Docker daemon must be installed and running</li>
+											<li>
+												Agent must have access to the Docker socket (
+												<code className="bg-blue-100 dark:bg-blue-900/40 px-1 py-0.5 rounded text-xs">
+													/var/run/docker.sock
+												</code>
+												)
+											</li>
+											<li>
+												Typically requires running the agent as root or with
+												Docker group permissions
+											</li>
+										</ul>
+									</div>
+								</div>
+							</div>
+						</div>
+					)}
+
+					{/* Compliance Tab */}
+					{activeTab === "compliance" && (
+						<div className="space-y-6">
+							{/* Toast Notification */}
+							{complianceToast && (
+								<div
+									className={`rounded-lg shadow-lg border-2 p-4 flex items-start space-x-3 animate-in slide-in-from-top-5 ${
+										complianceToast.type === "success"
+											? "bg-green-50 dark:bg-green-900/90 border-green-500 dark:border-green-600"
+											: "bg-red-50 dark:bg-red-900/90 border-red-500 dark:border-red-600"
+									}`}
+								>
+									<div
+										className={`flex-shrink-0 rounded-full p-1 ${
+											complianceToast.type === "success"
+												? "bg-green-100 dark:bg-green-800"
+												: "bg-red-100 dark:bg-red-800"
+										}`}
+									>
+										{complianceToast.type === "success" ? (
+											<CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />
+										) : (
+											<AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+										)}
+									</div>
+									<div className="flex-1">
+										<p
+											className={`text-sm font-medium ${
+												complianceToast.type === "success"
+													? "text-green-800 dark:text-green-100"
+													: "text-red-800 dark:text-red-100"
+											}`}
+										>
+											{complianceToast.message}
+										</p>
+									</div>
+									<button
+										type="button"
+										onClick={() => setComplianceToast(null)}
+										className={`flex-shrink-0 rounded-lg p-1 transition-colors ${
+											complianceToast.type === "success"
+												? "hover:bg-green-100 dark:hover:bg-green-800 text-green-600 dark:text-green-400"
+												: "hover:bg-red-100 dark:hover:bg-red-800 text-red-600 dark:text-red-400"
+										}`}
+									>
+										<X className="h-4 w-4" />
+									</button>
+								</div>
+							)}
+
+							{/* Header */}
+							<div className="flex items-center gap-3">
+								<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
+									<Shield className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+								</div>
+								<div className="min-w-0">
+									<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
+										Compliance Scanning
+									</h3>
+									<p className="text-xs md:text-sm text-secondary-600 dark:text-white">
+										Security compliance scanning is built into the PatchMon Go
+										agent
+									</p>
+								</div>
+							</div>
+
+							{/* Default Compliance Mode Setting (Master Toggle) */}
+							<div className="p-4 bg-secondary-50 dark:bg-secondary-800/50 rounded-lg border border-secondary-200 dark:border-secondary-700">
+								<div className="flex items-center gap-2 mb-3">
+									<label
+										htmlFor={defaultComplianceModeId}
+										className="text-sm font-medium text-secondary-900 dark:text-secondary-100"
+									>
+										Default Compliance Mode
+									</label>
+									<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900/50 dark:text-primary-300">
+										Master
+									</span>
+								</div>
+								<p className="text-sm text-secondary-500 dark:text-white mb-4">
+									Default compliance mode for all new hosts. Per-host settings
+									in the dashboard can override this default. This setting
+									applies to newly registered hosts.
+								</p>
+								<div className="flex flex-col gap-2">
+									{["disabled", "on-demand", "enabled"].map((modeOption) => (
+										<label
+											key={modeOption}
+											className={`flex items-center justify-between p-3 border-2 rounded-lg transition-all duration-200 cursor-pointer ${
+												complianceFormData.defaultComplianceMode === modeOption
+													? "border-primary-500 bg-primary-50 dark:bg-primary-900/20"
+													: "bg-white dark:bg-secondary-700 hover:border-secondary-400 dark:hover:border-secondary-500 border-secondary-300 dark:border-secondary-600"
+											}`}
+										>
+											<div className="flex items-center gap-3">
+												<input
+													type="radio"
+													name="defaultComplianceMode"
+													id={`${defaultComplianceModeId}-${modeOption}`}
+													value={modeOption}
+													checked={
+														complianceFormData.defaultComplianceMode ===
+														modeOption
+													}
+													onChange={() =>
+														handleComplianceInputChange(
+															"defaultComplianceMode",
+															modeOption,
+														)
+													}
+													className="h-4 w-4 text-primary-600 border-secondary-300 focus:ring-primary-500"
+												/>
+												<div>
+													<div className="text-sm font-medium text-secondary-700 dark:text-secondary-200 capitalize">
+														{modeOption === "on-demand"
+															? "On-Demand Only"
+															: modeOption}
+													</div>
+													<div className="text-xs text-secondary-500 dark:text-white">
+														{modeOption === "disabled" &&
+															"Compliance scanning is completely off for new hosts."}
+														{modeOption === "on-demand" &&
+															"Compliance scans run only when manually triggered from the UI for new hosts."}
+														{modeOption === "enabled" &&
+															"Compliance scans run automatically during scheduled reports for new hosts."}
+													</div>
+												</div>
+											</div>
+										</label>
+									))}
+								</div>
+								{/* Save Button */}
+								<div className="flex justify-end mt-4">
+									<button
+										type="button"
+										onClick={handleComplianceSave}
+										disabled={
+											!complianceIsDirty ||
+											updateComplianceSettingsMutation.isPending
+										}
+										className={`inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white w-full sm:w-auto ${
+											!complianceIsDirty ||
+											updateComplianceSettingsMutation.isPending
+												? "bg-secondary-400 cursor-not-allowed"
+												: "bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+										}`}
+									>
+										{updateComplianceSettingsMutation.isPending ? (
+											<>
+												<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+												Saving...
+											</>
+										) : (
+											<>
+												<Save className="h-4 w-4 mr-2" />
+												Save Settings
+											</>
+										)}
+									</button>
+								</div>
+							</div>
+
+							{/* Info Message */}
+							<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
+								<div className="flex items-start gap-3">
+									<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400 flex-shrink-0 mt-0.5" />
+									<div className="min-w-0">
+										<h4 className="text-sm md:text-base font-semibold text-primary-900 dark:text-primary-200 mb-2">
+											Automatic Security Compliance Scanning
+										</h4>
+										<p className="text-xs md:text-sm text-primary-800 dark:text-primary-300 mb-3">
+											The PatchMon Go agent includes built-in compliance
+											scanning capabilities that automatically assess your hosts
+											against industry security benchmarks:
+										</p>
+										<ul className="list-disc list-inside space-y-2 text-xs md:text-sm text-primary-800 dark:text-primary-300 ml-2">
+											<li>
+												<strong>OpenSCAP</strong> - CIS benchmark scanning for
+												Linux hosts with automatic tool installation
+											</li>
+											<li>
+												<strong>Docker Bench</strong> - CIS Docker Benchmark
+												security assessment for container hosts
+											</li>
+											<li>
+												<strong>Docker Image CVE Scanning</strong> -
+												Vulnerability scanning for Docker images using
+												oscap-docker
+											</li>
+											<li>
+												<strong>Scoring</strong> - Compliance scores calculated
+												based on passed vs failed rules
+											</li>
+											<li>
+												<strong>Trending</strong> - Track compliance
+												improvements over time with historical data
+											</li>
+											<li>
+												<strong>On-Demand Scans</strong> - Trigger compliance
+												scans from the dashboard at any time
+											</li>
+											<li>
+												<strong>Auto-Remediation</strong> - Automatically fix
+												failing rules when enabled
+											</li>
+										</ul>
+									</div>
+								</div>
+							</div>
+
+							{/* How It Works */}
+							<div className="bg-white dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 md:p-6">
+								<h4 className="text-sm md:text-base font-semibold text-secondary-900 dark:text-white mb-4">
+									How It Works
+								</h4>
+								<ol className="list-decimal list-inside space-y-3 text-xs md:text-sm text-secondary-700 dark:text-white">
+									<li>
+										Install the PatchMon Go agent on your host (see the Hosts
+										page for installation instructions)
+									</li>
+									<li>Enable the Compliance integration from the dashboard</li>
+									<li>
+										The agent automatically installs required scanning tools
+										(OpenSCAP, SCAP Security Guide)
+									</li>
+									<li>
+										If Docker integration is also enabled, Docker Bench and
+										oscap-docker are set up automatically
+									</li>
+									<li>
+										Compliance scans run periodically and results are sent to
+										the PatchMon server
+									</li>
+									<li>
+										View compliance scores, failing rules, and remediation
+										guidance in the{" "}
+										<Link
+											to="/compliance"
+											className="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 underline"
+										>
+											Compliance page
+										</Link>
+									</li>
+									<li>
+										Trigger on-demand scans or enable auto-remediation from the
+										host details page
+									</li>
+								</ol>
+							</div>
+
+							{/* Supported Profiles */}
+							<div className="bg-white dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 md:p-6">
+								<h4 className="text-sm md:text-base font-semibold text-secondary-900 dark:text-white mb-4">
+									Supported Compliance Profiles
+								</h4>
+								<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+									<div className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4">
+										<div className="flex items-center gap-2 mb-2">
+											<Shield className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+											<h5 className="font-semibold text-secondary-900 dark:text-white">
+												OpenSCAP
+											</h5>
+										</div>
+										<p className="text-xs md:text-sm text-secondary-600 dark:text-white">
+											CIS benchmarks for Ubuntu, Debian, RHEL, CentOS, Rocky,
+											AlmaLinux, Fedora, SLES, and OpenSUSE. Supports Level 1
+											and Level 2 server profiles.
+										</p>
+									</div>
+									<div className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4">
+										<div className="flex items-center gap-2 mb-2">
+											<Container className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+											<h5 className="font-semibold text-secondary-900 dark:text-white">
+												Docker Bench
+											</h5>
+										</div>
+										<p className="text-xs md:text-sm text-secondary-600 dark:text-white">
+											CIS Docker Benchmark security checks. Assesses Docker
+											daemon configuration, container images, and runtime
+											security. Requires Docker integration enabled.
+										</p>
+									</div>
+									<div className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4">
+										<div className="flex items-center gap-2 mb-2">
+											<AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+											<h5 className="font-semibold text-secondary-900 dark:text-white">
+												Docker Image CVE
+											</h5>
+										</div>
+										<p className="text-xs md:text-sm text-secondary-600 dark:text-white">
+											Vulnerability scanning for Docker container images using
+											oscap-docker. Identifies known CVEs in your images.
+											Requires both Docker and Compliance enabled.
+										</p>
+									</div>
+								</div>
+							</div>
+
+							{/* Automatic Tool Installation */}
+							<div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 md:p-4">
+								<div className="flex items-start gap-2">
+									<CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+									<div className="text-xs md:text-sm text-green-800 dark:text-green-200">
+										<p className="font-semibold mb-1">
+											Automatic Tool Installation
+										</p>
+										<p>
+											When you enable the Compliance integration, the agent
+											automatically installs openscap-scanner and
+											scap-security-guide packages. If Docker integration is
+											also enabled, oscap-docker is set up automatically for
+											container image scanning.
+										</p>
+									</div>
+								</div>
+							</div>
+
+							{/* Requirements */}
+							<div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 md:p-4">
+								<div className="flex items-start gap-2">
+									<AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+									<div className="text-xs md:text-sm text-blue-800 dark:text-blue-200">
+										<p className="font-semibold mb-2">Requirements:</p>
+										<ul className="list-disc list-inside space-y-1 ml-2">
+											<li>PatchMon Go agent must be installed and running</li>
+											<li>
+												Agent must run as root for full compliance scanning
+												capabilities
+											</li>
+											<li>
+												For Docker scanning: Docker must be installed and Docker
+												integration must be enabled
+											</li>
+										</ul>
+									</div>
+								</div>
+							</div>
+						</div>
+					)}
+
+					{/* Checkmk Tab */}
+					{activeTab === "checkmk" && (
+						<div className="space-y-6">
+							<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+								<div className="flex items-center gap-3 flex-1 min-w-0">
+									<div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center flex-shrink-0">
+										<Server className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+									</div>
+									<div className="min-w-0">
+										<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
+											Checkmk integration
+										</h3>
+										<p className="text-xs md:text-sm text-secondary-600 dark:text-white">
+											Export hosts as CSV for import into Checkmk
+										</p>
+									</div>
+								</div>
+							</div>
+
+							<div className="bg-secondary-50 dark:bg-secondary-800/50 rounded-lg border border-secondary-200 dark:border-secondary-700 p-4 md:p-6">
+								<p className="text-sm text-secondary-600 dark:text-white mb-4">
+									Export your PatchMon host list in the{" "}
+									<a
+										href="https://docs.checkmk.com/latest/en/hosts_setup.html#import"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 underline"
+									>
+										Checkmk CSV import format
+									</a>
+									. Use the file in Checkmk under Setup → Hosts → Import hosts
+									via CSV file.
+								</p>
+								<p className="text-xs text-secondary-500 dark:text-white mb-4">
+									{checkmk_additional_fields
+										? "Full set of Checkmk import attributes (Host name, Alias, Monitored on site, IPv4, IPv6, SNMP community, Tag: Criticality, Tag: Networking Segment, Tag: Checkmk agent / API integrations, Tag: Piggyback, Tag: SNMP, Tag: IP address family). Empty columns can be filled in Checkmk or in the CSV before import."
+										: "Columns: hostname, IPv4 address, alias, and Checkmk agent tag (cmk-agent). Hostnames are limited to 240 characters per Checkmk."}
+								</p>
+								<div className="flex items-center gap-3 mb-4">
+									<button
+										id="checkmk-additional-fields"
+										type="button"
+										role="switch"
+										aria-checked={checkmk_additional_fields}
+										onClick={() => setCheckmkAdditionalFields((prev) => !prev)}
+										className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-md border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:focus:ring-offset-secondary-900 ${
+											checkmk_additional_fields
+												? "bg-primary-600"
+												: "bg-secondary-200 dark:bg-secondary-600"
+										}`}
+									>
+										<span
+											className={`pointer-events-none inline-block h-5 w-5 transform rounded-md bg-white shadow ring-0 transition duration-200 ease-in-out ${
+												checkmk_additional_fields
+													? "translate-x-5"
+													: "translate-x-1"
+											}`}
+										/>
+									</button>
+									<label
+										htmlFor="checkmk-additional-fields"
+										className="text-sm font-medium text-secondary-700 dark:text-white cursor-pointer"
+									>
+										Add additional fields
+									</label>
+								</div>
+								<p className="text-xs text-secondary-500 dark:text-white mb-4">
+									When enabled, the CSV includes all attributes from the Checkmk
+									import docs (section 6.1). PatchMon only fills hostname,
+									alias, IPv4, and agent; other columns are empty for you to
+									edit in Checkmk or before re-import.
+								</p>
+								<CheckmkExportButton
+									include_additional_fields={checkmk_additional_fields}
+								/>
+							</div>
+						</div>
+					)}
 				</div>
 			</div>
 
@@ -2245,7 +2220,7 @@ const Integrations = () => {
 
 							<form onSubmit={create_token} className="space-y-4">
 								<label className="block">
-									<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+									<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
 										Token Name *
 									</span>
 									<input
@@ -2274,7 +2249,7 @@ const Integrations = () => {
 									activeTab === "auto-enrollment-direct") && (
 									<>
 										<label className="block">
-											<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+											<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
 												Max Hosts Per Day
 											</span>
 											<input
@@ -2290,14 +2265,14 @@ const Integrations = () => {
 												}
 												className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
 											/>
-											<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+											<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 												Maximum number of hosts that can be enrolled per day
 												using this token
 											</p>
 										</label>
 
 										<label className="block">
-											<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+											<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
 												Default Host Group (Optional)
 											</span>
 											<select
@@ -2317,7 +2292,7 @@ const Integrations = () => {
 													</option>
 												))}
 											</select>
-											<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+											<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 												Auto-enrolled hosts will be assigned to this group
 											</p>
 										</label>
@@ -2326,12 +2301,12 @@ const Integrations = () => {
 
 								{activeTab === "scoped-credentials" && (
 									<div className="block">
-										<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2">
+										<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
 											Scopes *
 										</span>
 										<div className="border border-secondary-300 dark:border-secondary-600 rounded-md p-4 bg-secondary-50 dark:bg-secondary-900">
 											<div className="mb-3">
-												<p className="text-xs font-semibold text-secondary-700 dark:text-secondary-300 mb-2">
+												<p className="text-xs font-semibold text-secondary-700 dark:text-white mb-2">
 													Host Permissions
 												</p>
 												<div className="space-y-2">
@@ -2352,10 +2327,10 @@ const Integrations = () => {
 																	}
 																	className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400"
 																/>
-																<span className="text-sm text-secondary-700 dark:text-secondary-300 uppercase">
+																<span className="text-sm text-secondary-700 dark:text-white uppercase">
 																	{action}
 																</span>
-																<span className="text-xs text-secondary-500 dark:text-secondary-400">
+																<span className="text-xs text-secondary-500 dark:text-white">
 																	{action === "get" && "- Read host data"}
 																	{action === "put" && "- Replace host data"}
 																	{action === "patch" && "- Update host data"}
@@ -2368,14 +2343,14 @@ const Integrations = () => {
 												</div>
 											</div>
 										</div>
-										<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+										<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 											Select the permissions this API credential should have
 										</p>
 									</div>
 								)}
 
 								<label className="block">
-									<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+									<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
 										Allowed IP Addresses (Optional)
 									</span>
 									<input
@@ -2390,14 +2365,14 @@ const Integrations = () => {
 										placeholder="e.g., 192.168.1.100, 10.0.0.50"
 										className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
 									/>
-									<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+									<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 										Comma-separated list of IP addresses allowed to use this
 										token
 									</p>
 								</label>
 
 								<label className="block">
-									<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+									<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
 										Expiration Date (Optional)
 									</span>
 									<input
@@ -2422,7 +2397,7 @@ const Integrations = () => {
 										onClick={() => {
 											setShowCreateModal(false);
 										}}
-										className="flex-1 bg-secondary-100 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 py-2 px-4 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600 w-full sm:w-auto"
+										className="flex-1 bg-secondary-100 dark:bg-secondary-700 text-secondary-700 dark:text-white py-2 px-4 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600 w-full sm:w-auto"
 									>
 										Cancel
 									</button>
@@ -2482,7 +2457,7 @@ const Integrations = () => {
 								<div>
 									<label
 										htmlFor={token_name_id}
-										className="block text-xs font-medium text-secondary-700 dark:text-secondary-300 mb-1"
+										className="block text-xs font-medium text-secondary-700 dark:text-white mb-1"
 									>
 										Token Name
 									</label>
@@ -2499,7 +2474,7 @@ const Integrations = () => {
 									<div>
 										<label
 											htmlFor={token_key_id}
-											className="block text-xs font-medium text-secondary-700 dark:text-secondary-300 mb-1"
+											className="block text-xs font-medium text-secondary-700 dark:text-white mb-1"
 										>
 											Token Key
 										</label>
@@ -2531,7 +2506,7 @@ const Integrations = () => {
 									<div>
 										<label
 											htmlFor={token_secret_id}
-											className="block text-xs font-medium text-secondary-700 dark:text-secondary-300 mb-1"
+											className="block text-xs font-medium text-secondary-700 dark:text-white mb-1"
 										>
 											Token Secret
 										</label>
@@ -2546,7 +2521,7 @@ const Integrations = () => {
 											<button
 												type="button"
 												onClick={() => setShowSecret(!show_secret)}
-												className="p-2 text-secondary-600 hover:text-secondary-800 dark:text-secondary-400 flex-shrink-0"
+												className="p-2 text-secondary-600 hover:text-secondary-800 dark:text-white flex-shrink-0"
 												title="Toggle visibility"
 											>
 												{show_secret ? (
@@ -2580,7 +2555,7 @@ const Integrations = () => {
 									activeTab === "scoped-credentials") &&
 									new_token.scopes && (
 										<div className="mt-4">
-											<div className="block text-xs font-medium text-secondary-700 dark:text-secondary-300 mb-2">
+											<div className="block text-xs font-medium text-secondary-700 dark:text-white mb-2">
 												Granted Scopes
 											</div>
 											<div className="bg-secondary-50 dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md p-3">
@@ -2590,7 +2565,7 @@ const Integrations = () => {
 															<span className="font-semibold text-secondary-800 dark:text-secondary-200 capitalize">
 																{resource}:
 															</span>{" "}
-															<span className="text-secondary-600 dark:text-secondary-400">
+															<span className="text-secondary-600 dark:text-white">
 																{Array.isArray(actions)
 																	? actions.join(", ").toUpperCase()
 																	: actions}
@@ -2605,12 +2580,12 @@ const Integrations = () => {
 								{(new_token.metadata?.integration_type === "api" ||
 									activeTab === "scoped-credentials") && (
 									<div className="mt-6">
-										<div className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2">
+										<div className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
 											Usage Examples
 										</div>
 										<div className="space-y-3">
 											<div>
-												<p className="text-xs text-secondary-600 dark:text-secondary-400 mb-2">
+												<p className="text-xs text-secondary-600 dark:text-white mb-2">
 													Basic cURL request:
 												</p>
 												<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
@@ -2640,7 +2615,7 @@ const Integrations = () => {
 												</div>
 											</div>
 											<div>
-												<p className="text-xs text-secondary-600 dark:text-secondary-400 mb-2">
+												<p className="text-xs text-secondary-600 dark:text-white mb-2">
 													Filter by host group:
 												</p>
 												<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
@@ -2670,7 +2645,7 @@ const Integrations = () => {
 												</div>
 											</div>
 										</div>
-										<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-3">
+										<p className="text-xs text-secondary-500 dark:text-white mt-3">
 											💡 Replace "Production" with your host group name or UUID
 										</p>
 									</div>
@@ -2679,11 +2654,11 @@ const Integrations = () => {
 								{(new_token.metadata?.integration_type === "proxmox-lxc" ||
 									activeTab === "proxmox") && (
 									<div className="mt-6">
-										<div className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2">
+										<div className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
 											Proxmox Auto-Enrollment Command
 										</div>
 
-										<p className="text-xs text-secondary-600 dark:text-secondary-400 mb-2">
+										<p className="text-xs text-secondary-600 dark:text-white mb-2">
 											Run this command on your Proxmox host to automatically
 											discover and enroll all running LXC containers:
 										</p>
@@ -2703,7 +2678,7 @@ const Integrations = () => {
 													Force install (bypass broken packages)
 												</span>
 											</label>
-											<p className="text-xs text-secondary-600 dark:text-secondary-400 mt-1">
+											<p className="text-xs text-secondary-600 dark:text-white mt-1">
 												Enable this if hosts have broken packages (CloudPanel,
 												WHM, etc.) that block apt-get operations
 											</p>
@@ -2745,11 +2720,11 @@ const Integrations = () => {
 								{(new_token.metadata?.integration_type === "direct-host" ||
 									activeTab === "auto-enrollment-direct") && (
 									<div className="mt-6">
-										<div className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2">
+										<div className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
 											Direct Host Enrollment Command
 										</div>
 
-										<p className="text-xs text-secondary-600 dark:text-secondary-400 mb-2">
+										<p className="text-xs text-secondary-600 dark:text-white mb-2">
 											Run this command on individual hosts to enroll them
 											directly:
 										</p>
@@ -2769,7 +2744,7 @@ const Integrations = () => {
 													Force install (bypass broken packages)
 												</span>
 											</label>
-											<p className="text-xs text-secondary-600 dark:text-secondary-400 mt-1">
+											<p className="text-xs text-secondary-600 dark:text-white mt-1">
 												Enable this if hosts have broken packages (CloudPanel,
 												WHM, etc.) that block apt-get operations
 											</p>
@@ -2806,7 +2781,7 @@ const Integrations = () => {
 											</button>
 										</div>
 
-										<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-3 p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
+										<p className="text-xs text-secondary-500 dark:text-white mt-3 p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
 											💡 <strong>Tip:</strong> Specify a custom name:{" "}
 											<code className="text-xs bg-secondary-200 dark:bg-secondary-700 px-1 py-0.5 rounded">
 												FRIENDLY_NAME="My Server" sh
@@ -2821,7 +2796,7 @@ const Integrations = () => {
 										<div>
 											<label
 												htmlFor={token_base64_id}
-												className="block text-xs font-medium text-secondary-700 dark:text-secondary-300 mb-1"
+												className="block text-xs font-medium text-secondary-700 dark:text-white mb-1"
 											>
 												Base64 Encoded Credentials
 											</label>
@@ -2861,7 +2836,7 @@ const Integrations = () => {
 											<div className="flex items-center justify-between mb-1">
 												<label
 													htmlFor={gethomepage_config_id}
-													className="text-xs font-medium text-secondary-700 dark:text-secondary-300"
+													className="text-xs font-medium text-secondary-700 dark:text-white"
 												>
 													GetHomepage Configuration
 												</label>
@@ -2874,7 +2849,7 @@ const Integrations = () => {
 														const config = `- PatchMon:
     href: ${server_url}
     description: PatchMon Statistics
-    icon: ${server_url}/assets/favicon.svg
+    icon: ${server_url}/assets/logo_square_default.svg
     widget:
       type: customapi
       url: ${server_url}/api/v1/gethomepage/stats
@@ -2913,7 +2888,7 @@ const Integrations = () => {
 													return `- PatchMon:
     href: ${server_url}
     description: PatchMon Statistics
-    icon: ${server_url}/assets/favicon.svg
+    icon: ${server_url}/assets/logo_square_default.svg
     widget:
       type: customapi
       url: ${server_url}/api/v1/gethomepage/stats
@@ -2931,7 +2906,7 @@ const Integrations = () => {
 												rows={12}
 												className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono text-xs resize-none"
 											/>
-											<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-1">
+											<p className="text-xs text-secondary-500 dark:text-white mt-1">
 												💡 Paste into your GetHomepage{" "}
 												<code className="bg-secondary-100 dark:bg-secondary-700 px-1 rounded">
 													services.yml
@@ -2983,7 +2958,7 @@ const Integrations = () => {
 
 							<form onSubmit={update_token} className="space-y-4">
 								<label className="block">
-									<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+									<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
 										Token Name
 									</span>
 									<input
@@ -2996,13 +2971,13 @@ const Integrations = () => {
 										className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
 										required
 									/>
-									<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+									<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 										Update the token name for better organization
 									</p>
 								</label>
 
 								<label className="block">
-									<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+									<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
 										Max Hosts Per Day
 									</span>
 									<input
@@ -3018,7 +2993,7 @@ const Integrations = () => {
 										}
 										className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
 									/>
-									<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+									<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 										Maximum number of hosts that can be enrolled per day with
 										this token
 									</p>
@@ -3027,7 +3002,7 @@ const Integrations = () => {
 								{(edit_token?.metadata?.integration_type === "proxmox-lxc" ||
 									edit_token?.metadata?.integration_type === "direct-host") && (
 									<label className="block">
-										<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+										<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
 											Default Host Group (Optional)
 										</span>
 										<select
@@ -3047,7 +3022,7 @@ const Integrations = () => {
 												</option>
 											))}
 										</select>
-										<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+										<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 											Auto-enrolled hosts will be assigned to this group
 										</p>
 									</label>
@@ -3055,12 +3030,12 @@ const Integrations = () => {
 
 								{edit_token?.metadata?.integration_type === "api" && (
 									<div className="block">
-										<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2">
+										<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
 											Scopes
 										</span>
 										<div className="border border-secondary-300 dark:border-secondary-600 rounded-md p-4 bg-secondary-50 dark:bg-secondary-900">
 											<div className="mb-3">
-												<p className="text-xs font-semibold text-secondary-700 dark:text-secondary-300 mb-2">
+												<p className="text-xs font-semibold text-secondary-700 dark:text-white mb-2">
 													Host Permissions
 												</p>
 												<div className="space-y-2">
@@ -3081,10 +3056,10 @@ const Integrations = () => {
 																	}
 																	className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400"
 																/>
-																<span className="text-sm text-secondary-700 dark:text-secondary-300 uppercase">
+																<span className="text-sm text-secondary-700 dark:text-white uppercase">
 																	{action}
 																</span>
-																<span className="text-xs text-secondary-500 dark:text-secondary-400">
+																<span className="text-xs text-secondary-500 dark:text-white">
 																	{action === "get" && "- Read host data"}
 																	{action === "put" && "- Replace host data"}
 																	{action === "patch" && "- Update host data"}
@@ -3097,14 +3072,14 @@ const Integrations = () => {
 												</div>
 											</div>
 										</div>
-										<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+										<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 											Update the permissions for this API credential
 										</p>
 									</div>
 								)}
 
 								<label className="block">
-									<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+									<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
 										Allowed IP Addresses (Optional)
 									</span>
 									<input
@@ -3119,14 +3094,14 @@ const Integrations = () => {
 										placeholder="e.g., 192.168.1.100, 10.0.0.50"
 										className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
 									/>
-									<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+									<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 										Comma-separated list of IP addresses allowed to use this
 										token
 									</p>
 								</label>
 
 								<label className="block">
-									<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+									<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
 										Expiration Date (Optional)
 									</span>
 									<input
@@ -3152,7 +3127,7 @@ const Integrations = () => {
 											setShowEditModal(false);
 											setEditToken(null);
 										}}
-										className="flex-1 bg-secondary-100 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 py-2 px-4 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600 w-full sm:w-auto"
+										className="flex-1 bg-secondary-100 dark:bg-secondary-700 text-secondary-700 dark:text-white py-2 px-4 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600 w-full sm:w-auto"
 									>
 										Cancel
 									</button>
@@ -3162,7 +3137,7 @@ const Integrations = () => {
 					</div>
 				</div>
 			)}
-		</SettingsLayout>
+		</div>
 	);
 };
 

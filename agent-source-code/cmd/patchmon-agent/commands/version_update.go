@@ -15,12 +15,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
+	"patchmon-agent/internal/client"
 	"patchmon-agent/internal/config"
 	"patchmon-agent/internal/pkgversion"
-	"patchmon-agent/internal/utils"
 
 	"github.com/spf13/cobra"
 )
@@ -335,20 +334,9 @@ func getServerVersionInfo() (*ServerVersionInfo, error) {
 		},
 	}
 
-	// SECURITY: Configure for insecure SSL if needed (NOT RECOMMENDED)
-	// Even with hash verification, TLS provides important protections
-	if cfg.SkipSSLVerify {
-		// SECURITY: Block skip_ssl_verify in production environments
-		if utils.IsProductionEnvironment() {
-			logger.Error("╔══════════════════════════════════════════════════════════════════╗")
-			logger.Error("║  SECURITY ERROR: skip_ssl_verify is BLOCKED in production!       ║")
-			logger.Error("║  Set PATCHMON_ENV to 'development' to enable insecure mode.      ║")
-			logger.Error("║  This setting cannot be used when PATCHMON_ENV=production        ║")
-			logger.Error("╚══════════════════════════════════════════════════════════════════╝")
-			return nil, fmt.Errorf("skip_ssl_verify is blocked in production environment")
-		}
-
-		logger.Warn("⚠️  TLS verification disabled for version check - NOT RECOMMENDED")
+	// SECURITY: Configure for insecure SSL if needed (config or env)
+	if cfg.SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
+		logger.Warn("TLS verification disabled for version check")
 		httpClient.Transport = &http.Transport{
 			ResponseHeaderTimeout: 5 * time.Second,
 			TLSClientConfig: &tls.Config{
@@ -394,7 +382,8 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 	credentials := cfgManager.GetCredentials()
 
 	architecture := getArchitecture()
-	url := fmt.Sprintf("%s/api/v1/hosts/agent/download?arch=%s", cfg.PatchmonServer, architecture)
+	platform := getPlatform()
+	url := fmt.Sprintf("%s/api/v1/hosts/agent/download?arch=%s&os=%s", cfg.PatchmonServer, architecture, platform)
 
 	ctx, cancel := context.WithTimeout(context.Background(), serverTimeout)
 	defer cancel()
@@ -413,24 +402,8 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 	// An attacker could provide both a malicious binary AND a matching hash.
 	// TLS ensures we're talking to the legitimate server.
 	httpClient := http.DefaultClient
-	if cfg.SkipSSLVerify {
-		// SECURITY: Block skip_ssl_verify in production environments
-		if utils.IsProductionEnvironment() {
-			logger.Error("╔══════════════════════════════════════════════════════════════════╗")
-			logger.Error("║  SECURITY ERROR: skip_ssl_verify is BLOCKED in production!       ║")
-			logger.Error("║  Set PATCHMON_ENV to 'development' to enable insecure mode.      ║")
-			logger.Error("║  This setting cannot be used when PATCHMON_ENV=production        ║")
-			logger.Error("╚══════════════════════════════════════════════════════════════════╝")
-			return nil, fmt.Errorf("skip_ssl_verify is blocked in production environment")
-		}
-
-		logger.Error("╔══════════════════════════════════════════════════════════════════╗")
-		logger.Error("║  CRITICAL: TLS verification DISABLED for binary download!        ║")
-		logger.Error("║  This is a severe security risk - MITM attacks are possible.     ║")
-		logger.Error("║  Hash verification provides some protection, but TLS ensures     ║")
-		logger.Error("║  you're communicating with the legitimate server.                ║")
-		logger.Error("║  Use a valid TLS certificate in production!                      ║")
-		logger.Error("╚══════════════════════════════════════════════════════════════════╝")
+	if cfg.SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
+		logger.Warn("TLS verification disabled for binary download")
 		httpClient = &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
@@ -635,7 +608,12 @@ func restartService(_ string, _ string) error {
 		}
 		helperScript := `#!/bin/sh
 sleep 2
-service patchmon_agent restart 2>&1 || service patchmon_agent start 2>&1
+# Prefer service, fallback to rc.d script (pfSense, minimal env)
+if [ -x /usr/sbin/service ]; then
+    /usr/sbin/service patchmon_agent restart 2>/dev/null || /usr/sbin/service patchmon_agent start 2>/dev/null
+else
+    /usr/local/etc/rc.d/patchmon_agent restart 2>/dev/null || /usr/local/etc/rc.d/patchmon_agent start 2>/dev/null
+fi
 rm -f "$0"
 `
 		randomBytes := make([]byte, 8)
@@ -672,7 +650,7 @@ rm -f "$0"
 		}
 		cmd.Stdout = nil
 		cmd.Stderr = nil
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		cmd.SysProcAttr = sysProcAttrForDetach()
 		if err := cmd.Start(); err != nil {
 			_ = os.Remove(helperPath)
 			logger.WithError(err).Warn("Failed to start restart helper, exiting to let daemon -r respawn")
@@ -771,11 +749,7 @@ rm -f "$0"
 				cmd.Stdout = nil
 				cmd.Stderr = nil
 				// Create a new session to fully detach the child process
-				// Setsid ensures the helper script is not killed when systemd cleans up
-				// the service's cgroup, as the new session may escape cgroup tracking
-				cmd.SysProcAttr = &syscall.SysProcAttr{
-					Setsid: true,
-				}
+				cmd.SysProcAttr = sysProcAttrForDetach()
 				if err := cmd.Start(); err != nil {
 					logger.WithError(err).Warn("Failed to start restart helper script, will exit and rely on systemd auto-restart")
 					// Clean up script
@@ -889,11 +863,7 @@ rm -f "$0"
 				cmd.Stdout = nil
 				cmd.Stderr = nil
 				// Create a new session to fully detach the child process
-				// Setsid is stronger than Setpgid — it creates a new session,
-				// ensuring the helper script survives even if the parent's cgroup is cleaned up
-				cmd.SysProcAttr = &syscall.SysProcAttr{
-					Setsid: true,
-				}
+				cmd.SysProcAttr = sysProcAttrForDetach()
 				if err := cmd.Start(); err != nil {
 					logger.WithError(err).Warn("Failed to start restart helper script, supervise-daemon will handle restart")
 					// Clean up script
@@ -1006,9 +976,7 @@ rm -f "$0"
 	cmd.Stderr = nil
 	// Create a new session to fully detach the child process from the current process
 	// This ensures the helper script survives even after the parent exits
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true,
-	}
+	cmd.SysProcAttr = sysProcAttrForDetach()
 
 	if err := cmd.Start(); err != nil {
 		logger.WithError(err).Error("Failed to start restart helper script")

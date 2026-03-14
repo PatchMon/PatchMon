@@ -111,6 +111,20 @@
 }
 
 @layer utilities {
+	/* Page transition animation for seamless navigation */
+	@keyframes page-fade-in {
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
+	}
+
+	.page-transition-enter {
+		animation: page-fade-in 120ms ease-out;
+	}
+
 	/* Theme-aware backgrounds for general elements */
 	.dark .bg-secondary-800 {
 		background-color: var(--card-bg, #1e293b) !important;

@@ -10,12 +10,13 @@ import {
 	Zap,
 } from "lucide-react";
 import { useState } from "react";
-import { useAuth } from "../contexts/AuthContext";
+import { useToast } from "../contexts/ToastContext";
 import api from "../utils/api";
 
 const Automation = () => {
-	const { user } = useAuth();
+	const toast = useToast();
 	const [activeTab, setActiveTab] = useState("overview");
+	const [triggeringJob, setTriggeringJob] = useState(null);
 	const [sortField, setSortField] = useState("nextRunTimestamp");
 	const [sortDirection, setSortDirection] = useState("asc");
 
@@ -59,35 +60,68 @@ const Automation = () => {
 		refetchInterval: 30000,
 	});
 
+	const getJobTypeForQueue = (queue) => {
+		if (queue?.includes("version-update-check")) return "github";
+		if (queue?.includes("session")) return "sessions";
+		if (queue?.includes("orphaned-repo")) return "orphaned-repos";
+		if (queue?.includes("orphaned-package")) return "orphaned-packages";
+		if (queue?.includes("docker-inventory")) return "docker-inventory";
+		if (queue?.includes("agent-commands")) return "agent-collection";
+		if (queue?.includes("system-statistics")) return "system-statistics";
+		if (queue?.includes("alert-cleanup")) return "alert-cleanup";
+		if (queue?.includes("host-status-monitor")) return "host-status-monitor";
+		if (queue?.includes("compliance-scan-cleanup"))
+			return "compliance-scan-cleanup";
+		return null;
+	};
+
 	const getStatusBadge = (status) => {
 		switch (status) {
 			case "Success":
 				return (
-					<span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+					<span className="px-2 py-1 text-xs font-medium rounded-md bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
 						Success
 					</span>
 				);
 			case "Failed":
 				return (
-					<span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+					<span className="px-2 py-1 text-xs font-medium rounded-md bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
 						Failed
+					</span>
+				);
+			case "Running":
+				return (
+					<span className="px-2 py-1 text-xs font-medium rounded-md bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+						Running
+					</span>
+				);
+			case "Retrying":
+				return (
+					<span className="px-2 py-1 text-xs font-medium rounded-md bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
+						Retrying
+					</span>
+				);
+			case "Archived":
+				return (
+					<span className="px-2 py-1 text-xs font-medium rounded-md bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+						Archived
 					</span>
 				);
 			case "Skipped (Disabled)":
 				return (
-					<span className="px-2 py-1 text-xs font-medium rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+					<span className="px-2 py-1 text-xs font-medium rounded-md bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
 						Skipped (Disabled)
 					</span>
 				);
 			case "Never run":
 				return (
-					<span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+					<span className="px-2 py-1 text-xs font-medium rounded-md bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
 						Never run
 					</span>
 				);
 			default:
 				return (
-					<span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+					<span className="px-2 py-1 text-xs font-medium rounded-md bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
 						{status}
 					</span>
 				);
@@ -293,36 +327,8 @@ const Automation = () => {
 		return Number.MAX_SAFE_INTEGER; // Unknown schedules go to bottom
 	};
 
-	const openBullBoard = async () => {
-		// SECURITY: Use ticket-based authentication instead of passing token in URL
-		// Tickets are one-time use and short-lived (30 seconds)
-		if (!user) {
-			alert("Please log in to access the Queue Monitor");
-			return;
-		}
-
-		try {
-			// Request a one-time ticket from the backend
-			const response = await api.post("/automation/bullboard-ticket");
-			const { ticket } = response.data;
-
-			if (!ticket) {
-				alert("Failed to generate access ticket");
-				return;
-			}
-
-			// Use the proxied URL through the frontend (port 3000)
-			// This avoids CORS issues as everything goes through the same origin
-			const url = `/bullboard?ticket=${encodeURIComponent(ticket)}`;
-			// Open in a new tab instead of a new window
-			window.open(url, "_blank");
-		} catch (error) {
-			console.error("Failed to open Bull Board:", error);
-			alert(error.response?.data?.error || "Failed to access Queue Monitor");
-		}
-	};
-
 	const triggerManualJob = async (jobType, data = {}) => {
+		setTriggeringJob(jobType);
 		try {
 			let endpoint;
 
@@ -348,16 +354,26 @@ const Automation = () => {
 				endpoint = "/compliance/scans/cleanup";
 			}
 
-			const _response = await api.post(endpoint, data);
+			const response = await api.post(endpoint, data);
+			const dataPayload = response.data?.data || {};
 
-			// Refresh data
-			window.location.reload();
+			// Show success feedback with job ID or enqueued count
+			// (Overview auto-refreshes every 30s via refetchInterval)
+			const msg = dataPayload.message || "Job triggered successfully";
+			if (dataPayload.jobId) {
+				toast.success(`${msg} — Job ID: ${dataPayload.jobId}`);
+			} else if (typeof dataPayload.enqueued === "number") {
+				toast.success(`${msg} — ${dataPayload.enqueued} job(s) queued`);
+			} else {
+				toast.success(msg);
+			}
 		} catch (error) {
 			console.error("Error triggering job:", error);
-			alert(
-				"Failed to trigger job: " +
-					(error.response?.data?.error || error.message),
-			);
+			const errorMsg =
+				error.response?.data?.error || error.message || "Unknown error";
+			toast.error(`Failed to trigger job: ${errorMsg}`);
+		} finally {
+			setTriggeringJob(null);
 		}
 	};
 
@@ -431,49 +447,10 @@ const Automation = () => {
 					<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
 						Automation Management
 					</h1>
-					<p className="text-sm text-secondary-600 dark:text-secondary-400 mt-1">
+					<p className="text-sm text-secondary-600 dark:text-white mt-1">
 						Monitor and manage automated server operations, agent
 						communications, and patch deployments
 					</p>
-				</div>
-				<div className="flex items-center gap-3">
-					<button
-						type="button"
-						onClick={openBullBoard}
-						className="btn-outline flex items-center gap-2"
-						title="Open Bull Board Queue Monitor"
-					>
-						<svg
-							className="h-4 w-4"
-							xmlns="http://www.w3.org/2000/svg"
-							viewBox="0 0 36 36"
-							role="img"
-							aria-label="Bull Board"
-						>
-							<circle fill="#DD2E44" cx="18" cy="18" r="18" />
-							<circle fill="#FFF" cx="18" cy="18" r="13.5" />
-							<circle fill="#DD2E44" cx="18" cy="18" r="10" />
-							<circle fill="#FFF" cx="18" cy="18" r="6" />
-							<circle fill="#DD2E44" cx="18" cy="18" r="3" />
-							<path
-								opacity=".2"
-								d="M18.24 18.282l13.144 11.754s-2.647 3.376-7.89 5.109L17.579 18.42l.661-.138z"
-							/>
-							<path
-								fill="#FFAC33"
-								d="M18.294 19a.994.994 0 01-.704-1.699l.563-.563a.995.995 0 011.408 1.407l-.564.563a.987.987 0 01-.703.292z"
-							/>
-							<path
-								fill="#55ACEE"
-								d="M24.016 6.981c-.403 2.079 0 4.691 0 4.691l7.054-7.388c.291-1.454-.528-3.932-1.718-4.238-1.19-.306-4.079.803-5.336 6.935zm5.003 5.003c-2.079.403-4.691 0-4.691 0l7.388-7.054c1.454-.291 3.932.528 4.238 1.718.306 1.19-.803 4.079-6.935 5.336z"
-							/>
-							<path
-								fill="#3A87C2"
-								d="M32.798 4.485L21.176 17.587c-.362.362-1.673.882-2.51.046-.836-.836-.419-2.08-.057-2.443L31.815 3.501s.676-.635 1.159-.152-.176 1.136-.176 1.136z"
-							/>
-						</svg>
-						Queue Monitor
-					</button>
 				</div>
 			</div>
 
@@ -594,7 +571,7 @@ const Automation = () => {
 													{automation.name}
 												</div>
 												{automation.description && (
-													<div className="text-sm text-secondary-500 dark:text-secondary-400 mt-1">
+													<div className="text-sm text-secondary-500 dark:text-white mt-1">
 														{automation.description}
 													</div>
 												)}
@@ -603,55 +580,27 @@ const Automation = () => {
 												<button
 													type="button"
 													onClick={() => {
-														if (
-															automation.queue.includes("version-update-check")
-														) {
-															triggerManualJob("github");
-														} else if (automation.queue.includes("session")) {
-															triggerManualJob("sessions");
-														} else if (
-															automation.queue.includes("orphaned-repo")
-														) {
-															triggerManualJob("orphaned-repos");
-														} else if (
-															automation.queue.includes("orphaned-package")
-														) {
-															triggerManualJob("orphaned-packages");
-														} else if (
-															automation.queue.includes("docker-inventory")
-														) {
-															triggerManualJob("docker-inventory");
-														} else if (
-															automation.queue.includes("agent-commands")
-														) {
-															triggerManualJob("agent-collection");
-														} else if (
-															automation.queue.includes("system-statistics")
-														) {
-															triggerManualJob("system-statistics");
-														} else if (
-															automation.queue.includes("alert-cleanup")
-														) {
-															triggerManualJob("alert-cleanup");
-														} else if (
-															automation.queue.includes("host-status-monitor")
-														) {
-															triggerManualJob("host-status-monitor");
-														} else if (
-															automation.queue.includes(
-																"compliance-scan-cleanup",
-															)
-														) {
-															triggerManualJob("compliance-scan-cleanup");
-														}
+														const jobType = getJobTypeForQueue(
+															automation.queue,
+														);
+														if (jobType) triggerManualJob(jobType);
 													}}
-													className="inline-flex items-center justify-center w-8 h-8 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200 flex-shrink-0"
+													disabled={
+														triggeringJob ===
+														getJobTypeForQueue(automation.queue)
+													}
+													className="inline-flex items-center justify-center w-8 h-8 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200 flex-shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
 													title="Run Now"
 												>
-													<Play className="h-4 w-4" />
+													{triggeringJob ===
+													getJobTypeForQueue(automation.queue) ? (
+														<span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+													) : (
+														<Play className="h-4 w-4" />
+													)}
 												</button>
 											) : (
-												<span className="text-xs text-secondary-400 dark:text-secondary-500 flex-shrink-0">
+												<span className="text-xs text-secondary-400 dark:text-white flex-shrink-0">
 													Manual
 												</span>
 											)}
@@ -663,7 +612,7 @@ const Automation = () => {
 										{/* Schedule and Run Times */}
 										<div className="space-y-2 pt-2 border-t border-secondary-200 dark:border-secondary-600">
 											<div className="flex items-center justify-between text-sm">
-												<span className="text-secondary-500 dark:text-secondary-400">
+												<span className="text-secondary-500 dark:text-white">
 													Frequency:
 												</span>
 												<span className="text-secondary-900 dark:text-white font-medium">
@@ -671,7 +620,7 @@ const Automation = () => {
 												</span>
 											</div>
 											<div className="flex items-center justify-between text-sm">
-												<span className="text-secondary-500 dark:text-secondary-400">
+												<span className="text-secondary-500 dark:text-white">
 													Last Run:
 												</span>
 												<span className="text-secondary-900 dark:text-white">
@@ -679,7 +628,7 @@ const Automation = () => {
 												</span>
 											</div>
 											<div className="flex items-center justify-between text-sm">
-												<span className="text-secondary-500 dark:text-secondary-400">
+												<span className="text-secondary-500 dark:text-white">
 													Next Run:
 												</span>
 												<span className="text-secondary-900 dark:text-white">
@@ -699,11 +648,11 @@ const Automation = () => {
 								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 									<thead className="bg-secondary-50 dark:bg-secondary-700">
 										<tr>
-											<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+											<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 												Run
 											</th>
 											<th
-												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
+												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
 												onClick={() => handleSort("name")}
 											>
 												<div className="flex items-center gap-1">
@@ -712,7 +661,7 @@ const Automation = () => {
 												</div>
 											</th>
 											<th
-												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
+												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
 												onClick={() => handleSort("schedule")}
 											>
 												<div className="flex items-center gap-1">
@@ -721,7 +670,7 @@ const Automation = () => {
 												</div>
 											</th>
 											<th
-												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
+												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
 												onClick={() => handleSort("lastRunTimestamp")}
 											>
 												<div className="flex items-center gap-1">
@@ -730,7 +679,7 @@ const Automation = () => {
 												</div>
 											</th>
 											<th
-												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
+												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
 												onClick={() => handleSort("nextRunTimestamp")}
 											>
 												<div className="flex items-center gap-1">
@@ -739,7 +688,7 @@ const Automation = () => {
 												</div>
 											</th>
 											<th
-												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
+												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600"
 												onClick={() => handleSort("status")}
 											>
 												<div className="flex items-center gap-1">
@@ -760,58 +709,24 @@ const Automation = () => {
 														<button
 															type="button"
 															onClick={() => {
-																if (
-																	automation.queue.includes(
-																		"version-update-check",
-																	)
-																) {
-																	triggerManualJob("github");
-																} else if (
-																	automation.queue.includes("session")
-																) {
-																	triggerManualJob("sessions");
-																} else if (
-																	automation.queue.includes("orphaned-repo")
-																) {
-																	triggerManualJob("orphaned-repos");
-																} else if (
-																	automation.queue.includes("orphaned-package")
-																) {
-																	triggerManualJob("orphaned-packages");
-																} else if (
-																	automation.queue.includes("docker-inventory")
-																) {
-																	triggerManualJob("docker-inventory");
-																} else if (
-																	automation.queue.includes("agent-commands")
-																) {
-																	triggerManualJob("agent-collection");
-																} else if (
-																	automation.queue.includes("system-statistics")
-																) {
-																	triggerManualJob("system-statistics");
-																} else if (
-																	automation.queue.includes("alert-cleanup")
-																) {
-																	triggerManualJob("alert-cleanup");
-																} else if (
-																	automation.queue.includes(
-																		"host-status-monitor",
-																	)
-																) {
-																	triggerManualJob("host-status-monitor");
-																} else if (
-																	automation.queue.includes(
-																		"compliance-scan-cleanup",
-																	)
-																) {
-																	triggerManualJob("compliance-scan-cleanup");
-																}
+																const jobType = getJobTypeForQueue(
+																	automation.queue,
+																);
+																if (jobType) triggerManualJob(jobType);
 															}}
-															className="inline-flex items-center justify-center w-6 h-6 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200"
+															disabled={
+																triggeringJob ===
+																getJobTypeForQueue(automation.queue)
+															}
+															className="inline-flex items-center justify-center w-6 h-6 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
 															title="Run Now"
 														>
-															<Play className="h-3 w-3" />
+															{triggeringJob ===
+															getJobTypeForQueue(automation.queue) ? (
+																<span className="animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full" />
+															) : (
+																<Play className="h-3 w-3" />
+															)}
 														</button>
 													) : (
 														<span className="text-gray-400 text-xs">
@@ -824,7 +739,7 @@ const Automation = () => {
 														<div className="text-sm font-medium text-secondary-900 dark:text-white">
 															{automation.name}
 														</div>
-														<div className="text-xs text-secondary-500 dark:text-secondary-400">
+														<div className="text-xs text-secondary-500 dark:text-white">
 															{automation.description}
 														</div>
 													</div>

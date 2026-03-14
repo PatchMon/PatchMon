@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,10 +16,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"patchmon-agent/internal/client"
@@ -26,6 +27,7 @@ import (
 	"patchmon-agent/internal/integrations"
 	"patchmon-agent/internal/integrations/compliance"
 	"patchmon-agent/internal/integrations/docker"
+	"patchmon-agent/internal/packages"
 	"patchmon-agent/internal/pkgversion"
 	"patchmon-agent/internal/system"
 	"patchmon-agent/internal/utils"
@@ -44,7 +46,7 @@ var serveCmd = &cobra.Command{
 		if err := checkRoot(); err != nil {
 			return err
 		}
-		return runService()
+		return runAsService()
 	},
 }
 
@@ -52,9 +54,32 @@ func init() {
 	rootCmd.AddCommand(serveCmd)
 }
 
-func runService() error {
-	if err := cfgManager.LoadCredentials(); err != nil {
-		return err
+// runServiceLoop is the main service loop. stopCh signals shutdown (nil = run forever on Unix)
+func runServiceLoop(stopCh <-chan struct{}) error {
+	// When running as Windows service, allow a brief delay for system initialization
+	// (network, filesystem) to be ready after SCM starts the process. This addresses
+	// first-start issues where the report task would not run.
+	if runtime.GOOS == "windows" && isWindowsService() {
+		logger.Info("Windows service detected, waiting briefly for system initialization...")
+		time.Sleep(5 * time.Second)
+	}
+
+	// Load credentials with retry on Windows service (first start may race with installer)
+	var loadErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		loadErr = cfgManager.LoadCredentials()
+		if loadErr == nil {
+			break
+		}
+		if runtime.GOOS == "windows" && isWindowsService() && attempt < 2 {
+			logger.WithError(loadErr).Warn("Failed to load credentials, retrying in 2s...")
+			time.Sleep(2 * time.Second)
+		} else {
+			return loadErr
+		}
+	}
+	if loadErr != nil {
+		return loadErr
 	}
 
 	httpClient := client.New(cfgManager, logger)
@@ -113,6 +138,32 @@ func runService() error {
 						"integration": integrationName,
 						"enabled":     serverEnabled,
 					}).Info("Updated integration status in config.yml")
+				}
+			}
+		}
+
+		// Sync compliance scanner toggles from server (when server sends them)
+		if integrationResp.ComplianceOpenscapEnabled != nil || integrationResp.ComplianceDockerBenchEnabled != nil {
+			configOpenscap := cfgManager.GetComplianceOpenscapEnabled()
+			configDockerBench := cfgManager.GetComplianceDockerBenchEnabled()
+			serverOpenscap := configOpenscap
+			serverDockerBench := configDockerBench
+			if integrationResp.ComplianceOpenscapEnabled != nil {
+				serverOpenscap = *integrationResp.ComplianceOpenscapEnabled
+			}
+			if integrationResp.ComplianceDockerBenchEnabled != nil {
+				serverDockerBench = *integrationResp.ComplianceDockerBenchEnabled
+			}
+			if serverOpenscap != configOpenscap || serverDockerBench != configDockerBench {
+				logger.WithFields(map[string]interface{}{
+					"config_openscap": configOpenscap, "server_openscap": serverOpenscap,
+					"config_docker_bench": configDockerBench, "server_docker_bench": serverDockerBench,
+				}).Info("Compliance scanner toggles differ, updating config.yml")
+				if err := cfgManager.SetComplianceScanners(serverOpenscap, serverDockerBench); err != nil {
+					logger.WithError(err).Warn("Failed to save compliance scanner toggles to config.yml")
+				} else {
+					configUpdated = true
+					logger.Info("Updated compliance scanner toggles in config.yml")
 				}
 			}
 		}
@@ -210,8 +261,18 @@ func runService() error {
 	// Track current interval for offset recalculation on updates
 	currentInterval := intervalMinutes
 
+	// Create a stop channel that never closes if none provided (for Unix systems)
+	effectiveStopCh := stopCh
+	if effectiveStopCh == nil {
+		effectiveStopCh = make(chan struct{}) // never closed
+	}
+
 	for {
 		select {
+		case <-effectiveStopCh:
+			// Shutdown requested
+			logger.Info("Shutdown signal received, stopping service...")
+			return nil
 		case <-offsetTimer.C:
 			// Offset period completed, start consuming from ticker normally
 			offsetPassed = true
@@ -275,6 +336,14 @@ func runService() error {
 			case "docker_inventory_refresh":
 				logger.Info("Refreshing Docker inventory on server request...")
 				go refreshDockerInventory(ctx)
+			case "run_patch":
+				go func(msg wsMsg) {
+					if err := runPatch(msg.patchRunID, msg.patchType, msg.packageNames, msg.dryRun); err != nil {
+						logger.WithError(err).Warn("run_patch failed")
+					} else {
+						logger.Info("run_patch completed successfully")
+					}
+				}(m)
 			case "update_notification":
 				logger.WithField("version", m.version).Info("Update notification received from server")
 				if m.force {
@@ -402,6 +471,12 @@ func runService() error {
 				} else {
 					logger.WithField("mode", m.complianceMode).Info("Compliance mode updated in config.yml")
 				}
+			case "apply_config":
+				if err := applyConfig(m.applyConfig); err != nil {
+					logger.WithError(err).Warn("apply_config failed")
+				} else {
+					logger.Info("apply_config completed, service will restart")
+				}
 			case "set_compliance_on_demand_only":
 				// Legacy handler - convert to mode and use new handler
 				logger.WithField("on_demand_only", m.complianceOnDemandOnly).Info("Setting compliance on-demand only mode (legacy)...")
@@ -444,6 +519,28 @@ func runService() error {
 				globalWsConnMu.RUnlock()
 				if wsConn != nil {
 					handleSSHProxyDisconnect(m, wsConn)
+				}
+			case "rdp_proxy":
+				logger.WithField("session_id", m.rdpProxySessionID).Info("Handling RDP proxy connection request")
+				globalWsConnMu.RLock()
+				wsConn := globalWsConn
+				globalWsConnMu.RUnlock()
+				if wsConn != nil {
+					go handleRDPProxy(m, wsConn)
+				}
+			case "rdp_proxy_input":
+				globalWsConnMu.RLock()
+				wsConn := globalWsConn
+				globalWsConnMu.RUnlock()
+				if wsConn != nil {
+					handleRDPProxyInput(m, wsConn)
+				}
+			case "rdp_proxy_disconnect":
+				globalWsConnMu.RLock()
+				wsConn := globalWsConn
+				globalWsConnMu.RUnlock()
+				if wsConn != nil {
+					handleRDPProxyDisconnect(m, wsConn)
 				}
 			}
 		}
@@ -908,18 +1005,19 @@ type wsMsg struct {
 	force                  bool
 	integrationName        string
 	integrationEnabled     bool
-	profileType            string // For compliance_scan: openscap, docker-bench, all
-	profileID              string // For compliance_scan: specific XCCDF profile ID
-	enableRemediation      bool   // For compliance_scan: enable auto-remediation
-	fetchRemoteResources   bool   // For compliance_scan: fetch remote resources
-	openscapEnabled        *bool  // For compliance_scan: per-host OpenSCAP scanner toggle
-	dockerBenchEnabled     *bool  // For compliance_scan: per-host Docker Bench scanner toggle
-	ruleID                 string // For remediate_rule: specific rule ID to remediate
-	imageName              string // For docker_image_scan: Docker image to scan
-	containerName          string // For docker_image_scan: Docker container to scan
-	scanAllImages          bool   // For docker_image_scan: scan all images on system
-	complianceOnDemandOnly bool   // For set_compliance_on_demand_only (legacy)
-	complianceMode         string // For set_compliance_mode: "disabled", "on-demand", or "enabled"
+	profileType            string                 // For compliance_scan: openscap, docker-bench, all
+	profileID              string                 // For compliance_scan: specific XCCDF profile ID
+	enableRemediation      bool                   // For compliance_scan: enable auto-remediation
+	fetchRemoteResources   bool                   // For compliance_scan: fetch remote resources
+	openscapEnabled        *bool                  // For compliance_scan: per-host OpenSCAP scanner toggle
+	dockerBenchEnabled     *bool                  // For compliance_scan: per-host Docker Bench scanner toggle
+	ruleID                 string                 // For remediate_rule: specific rule ID to remediate
+	imageName              string                 // For docker_image_scan: Docker image to scan
+	containerName          string                 // For docker_image_scan: Docker container to scan
+	scanAllImages          bool                   // For docker_image_scan: scan all images on system
+	complianceOnDemandOnly bool                   // For set_compliance_on_demand_only (legacy)
+	complianceMode         string                 // For set_compliance_mode: "disabled", "on-demand", or "enabled"
+	applyConfig            map[string]interface{} // For apply_config: full config to apply
 	// SSH proxy fields
 	sshProxySessionID  string // Unique session ID for SSH proxy
 	sshProxyHost       string // SSH target host
@@ -931,7 +1029,17 @@ type wsMsg struct {
 	sshProxyTerminal   string // Terminal type
 	sshProxyCols       int    // Terminal columns
 	sshProxyRows       int    // Terminal rows
-	sshProxyData       string // SSH input data
+	// run_patch fields
+	patchRunID   string
+	patchType    string
+	packageNames []string
+	dryRun       bool
+	sshProxyData string // SSH input data
+	// RDP proxy fields
+	rdpProxySessionID string // Unique session ID for RDP proxy
+	rdpProxyHost      string // RDP target host (default localhost)
+	rdpProxyPort      int    // RDP target port (default 3389)
+	rdpProxyData      string // RDP input data (base64)
 }
 
 // Input validation patterns for WebSocket message fields
@@ -941,6 +1049,8 @@ var (
 	validProfileIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_.\-]+$`)
 	// Rule IDs: same as profile IDs (e.g., xccdf_org.ssgproject.content_rule_audit_rules_...)
 	validRuleIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_.\-]+$`)
+	// APT package names: alphanumeric, dots, plus, minus, underscores (no path/command injection)
+	validAptPackagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+-_]*$`)
 	// Docker image names: alphanumeric, slashes, colons, dots, hyphens, underscores (e.g., ubuntu:22.04, myregistry.io/app:v1)
 	validDockerImagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.\-/:@]*$`)
 	// Docker container names: alphanumeric, underscores, hyphens (e.g., my-container, container_1)
@@ -1069,22 +1179,8 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 	// SECURITY: Configure WebSocket dialer for insecure connections if needed
 	// WARNING: This exposes the agent to man-in-the-middle attacks!
 	dialer := websocket.DefaultDialer
-	if cfgManager.GetConfig().SkipSSLVerify {
-		// SECURITY: Block skip_ssl_verify in production environments
-		if utils.IsProductionEnvironment() {
-			logger.Error("╔══════════════════════════════════════════════════════════════════╗")
-			logger.Error("║  SECURITY ERROR: skip_ssl_verify is BLOCKED in production!       ║")
-			logger.Error("║  Set PATCHMON_ENV to 'development' to enable insecure mode.      ║")
-			logger.Error("║  This setting cannot be used when PATCHMON_ENV=production        ║")
-			logger.Error("╚══════════════════════════════════════════════════════════════════╝")
-			logger.Fatal("Refusing to start with skip_ssl_verify=true in production environment")
-		}
-
-		logger.Error("╔══════════════════════════════════════════════════════════════════╗")
-		logger.Error("║  SECURITY WARNING: TLS verification DISABLED for WebSocket!      ║")
-		logger.Error("║  Commands from server could be intercepted or modified.          ║")
-		logger.Error("║  Use a valid TLS certificate in production!                      ║")
-		logger.Error("╚══════════════════════════════════════════════════════════════════╝")
+	if cfgManager.GetConfig().SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
+		logger.Warn("TLS verification disabled for WebSocket")
 		dialer = &websocket.Dialer{
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true,
@@ -1243,25 +1339,26 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		}
 		logger.WithField("raw_message", string(data)).Debug("WebSocket message received")
 		var payload struct {
-			Type                 string `json:"type"`
-			UpdateInterval       int    `json:"update_interval"`
-			Version              string `json:"version"`
-			Force                bool   `json:"force"`
-			Message              string `json:"message"`
-			Integration          string `json:"integration"`
-			Enabled              bool   `json:"enabled"`
-			ProfileType          string `json:"profile_type"`           // For compliance_scan
-			ProfileID            string `json:"profile_id"`             // For compliance_scan: specific XCCDF profile ID
-			EnableRemediation    bool   `json:"enable_remediation"`     // For compliance_scan
-			FetchRemoteResources bool   `json:"fetch_remote_resources"` // For compliance_scan
-			OpenSCAPEnabled      *bool  `json:"openscap_enabled"`       // For compliance_scan: per-host toggle
-			DockerBenchEnabled   *bool  `json:"docker_bench_enabled"`   // For compliance_scan: per-host toggle
-			RuleID               string `json:"rule_id"`                // For remediate_rule: specific rule to remediate
-			ImageName            string `json:"image_name"`             // For docker_image_scan: Docker image to scan
-			ContainerName        string `json:"container_name"`         // For docker_image_scan: container to scan
-			ScanAllImages        bool   `json:"scan_all_images"`        // For docker_image_scan: scan all images
-			OnDemandOnly         bool   `json:"on_demand_only"`         // For set_compliance_on_demand_only (legacy)
-			Mode                 string `json:"mode"`                   // For set_compliance_mode: "disabled", "on-demand", or "enabled"
+			Type                 string                 `json:"type"`
+			UpdateInterval       int                    `json:"update_interval"`
+			Version              string                 `json:"version"`
+			Force                bool                   `json:"force"`
+			Message              string                 `json:"message"`
+			Integration          string                 `json:"integration"`
+			Enabled              bool                   `json:"enabled"`
+			ProfileType          string                 `json:"profile_type"`           // For compliance_scan
+			ProfileID            string                 `json:"profile_id"`             // For compliance_scan: specific XCCDF profile ID
+			EnableRemediation    bool                   `json:"enable_remediation"`     // For compliance_scan
+			FetchRemoteResources bool                   `json:"fetch_remote_resources"` // For compliance_scan
+			OpenSCAPEnabled      *bool                  `json:"openscap_enabled"`       // For compliance_scan: per-host toggle
+			DockerBenchEnabled   *bool                  `json:"docker_bench_enabled"`   // For compliance_scan: per-host toggle
+			RuleID               string                 `json:"rule_id"`                // For remediate_rule: specific rule to remediate
+			ImageName            string                 `json:"image_name"`             // For docker_image_scan: Docker image to scan
+			ContainerName        string                 `json:"container_name"`         // For docker_image_scan: container to scan
+			ScanAllImages        bool                   `json:"scan_all_images"`        // For docker_image_scan: scan all images
+			OnDemandOnly         bool                   `json:"on_demand_only"`         // For set_compliance_on_demand_only (legacy)
+			Mode                 string                 `json:"mode"`                   // For set_compliance_mode: "disabled", "on-demand", or "enabled"
+			Config               map[string]interface{} `json:"config"`                 // For apply_config: full config to apply
 			// SSH proxy fields
 			SessionID  string `json:"session_id"`  // SSH proxy session ID
 			Host       string `json:"host"`        // SSH proxy target host
@@ -1274,6 +1371,12 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 			Cols       int    `json:"cols"`        // Terminal columns
 			Rows       int    `json:"rows"`        // Terminal rows
 			Data       string `json:"data"`        // SSH input data
+			// run_patch fields
+			PatchRunID   string   `json:"patch_run_id"`
+			PatchType    string   `json:"patch_type"`
+			PackageName  string   `json:"package_name"`
+			PackageNames []string `json:"package_names"`
+			DryRun       bool     `json:"dry_run"`
 		}
 		if err := json.Unmarshal(data, &payload); err != nil {
 			logger.WithError(err).WithField("data", string(data)).Warn("Failed to parse WebSocket message")
@@ -1296,6 +1399,56 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		case "docker_inventory_refresh":
 			logger.Info("docker_inventory_refresh received")
 			out <- wsMsg{kind: "docker_inventory_refresh"}
+		case "run_patch":
+			if payload.PatchRunID == "" {
+				logger.Warn("run_patch missing patch_run_id")
+				continue
+			}
+			patchType := payload.PatchType
+			if patchType == "" {
+				patchType = "patch_all"
+			}
+			if patchType != "patch_all" && patchType != "patch_package" {
+				logger.WithField("patch_type", patchType).Warn("Invalid patch_type in run_patch")
+				continue
+			}
+			var packageNames []string
+			if len(payload.PackageNames) > 0 {
+				for _, n := range payload.PackageNames {
+					if validAptPackagePattern.MatchString(n) {
+						packageNames = append(packageNames, n)
+					} else {
+						logger.WithError(fmt.Errorf("invalid package name")).WithField("package_name", n).Warn("Invalid package name in run_patch package_names")
+					}
+				}
+				if len(packageNames) == 0 {
+					logger.Warn("run_patch package_names had no valid names")
+					continue
+				}
+			} else if payload.PackageName != "" {
+				if validAptPackagePattern.MatchString(payload.PackageName) {
+					packageNames = []string{payload.PackageName}
+				} else {
+					logger.WithError(fmt.Errorf("invalid package name")).WithField("package_name", payload.PackageName).Warn("Invalid package_name in run_patch")
+					continue
+				}
+			} else if patchType == "patch_package" {
+				logger.Warn("run_patch patch_package requires package_name or package_names")
+				continue
+			}
+			logger.WithFields(map[string]interface{}{
+				"patch_run_id":  payload.PatchRunID,
+				"patch_type":    patchType,
+				"package_names": packageNames,
+				"dry_run":       payload.DryRun,
+			}).Info("run_patch received")
+			out <- wsMsg{
+				kind:         "run_patch",
+				patchRunID:   payload.PatchRunID,
+				patchType:    patchType,
+				packageNames: packageNames,
+				dryRun:       payload.DryRun,
+			}
 		case "update_notification":
 			logger.WithFields(map[string]interface{}{
 				"version": payload.Version,
@@ -1392,6 +1545,9 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				kind:           "set_compliance_mode",
 				complianceMode: payload.Mode,
 			}
+		case "apply_config":
+			logger.Info("apply_config received")
+			out <- wsMsg{kind: "apply_config", applyConfig: payload.Config}
 		case "set_compliance_on_demand_only":
 			// Legacy handler - convert to new format
 			logger.WithField("on_demand_only", payload.OnDemandOnly).Info("set_compliance_on_demand_only received (legacy)")
@@ -1497,12 +1653,533 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				kind:              "ssh_proxy_disconnect",
 				sshProxySessionID: payload.SessionID,
 			}
+		case "rdp_proxy":
+			if !cfgManager.IsIntegrationEnabled("rdp-proxy-enabled") {
+				logger.Warn("RDP proxy requested but not enabled in config.yml")
+				globalWsConnMu.RLock()
+				wsConn := globalWsConn
+				globalWsConnMu.RUnlock()
+				if wsConn != nil {
+					errorMsg := "RDP proxy is not enabled.\n\n" +
+						"To enable RDP proxy, edit the file /etc/patchmon/config.yml and add:\n\n" +
+						"integrations:\n" +
+						"    rdp-proxy-enabled: true\n\n" +
+						"Note: This cannot be pushed from the server and requires manual configuration for security."
+					sendRDPProxyError(wsConn, payload.SessionID, errorMsg)
+				}
+				continue
+			}
+			if payload.SessionID == "" {
+				logger.Warn("rdp_proxy request missing session_id")
+				continue
+			}
+			rdpHost := payload.Host
+			if rdpHost == "" {
+				rdpHost = "localhost"
+			}
+			if err := validateSSHProxyHost(rdpHost); err != nil {
+				logger.WithError(err).WithField("host", payload.Host).Warn("Invalid RDP proxy host")
+				globalWsConnMu.RLock()
+				wsConn := globalWsConn
+				globalWsConnMu.RUnlock()
+				if wsConn != nil {
+					sendRDPProxyError(wsConn, payload.SessionID, fmt.Sprintf("Invalid host: %v", err))
+				}
+				continue
+			}
+			port := payload.Port
+			if port < 1 || port > 65535 {
+				port = 3389
+			}
+			logger.WithFields(map[string]interface{}{
+				"session_id": payload.SessionID,
+				"host":       rdpHost,
+				"port":       port,
+			}).Info("rdp_proxy received")
+			out <- wsMsg{
+				kind:              "rdp_proxy",
+				rdpProxySessionID: payload.SessionID,
+				rdpProxyHost:      rdpHost,
+				rdpProxyPort:      port,
+			}
+		case "rdp_proxy_input":
+			if payload.SessionID == "" {
+				logger.Warn("rdp_proxy_input missing session_id")
+				continue
+			}
+			out <- wsMsg{
+				kind:              "rdp_proxy_input",
+				rdpProxySessionID: payload.SessionID,
+				rdpProxyData:      payload.Data,
+			}
+		case "rdp_proxy_disconnect":
+			if payload.SessionID == "" {
+				logger.Warn("rdp_proxy_disconnect missing session_id")
+				continue
+			}
+			out <- wsMsg{
+				kind:              "rdp_proxy_disconnect",
+				rdpProxySessionID: payload.SessionID,
+			}
 		default:
 			if payload.Type != "" && payload.Type != "connected" {
 				logger.WithField("type", payload.Type).Warn("Unknown WebSocket message type")
 			}
 		}
 	}
+}
+
+// dryRunOutputIndicatesError returns true if the output contains dependency or
+// resolution error messages. Used to distinguish "declined" (exit 1, success)
+// from actual dependency/validation failures (exit 1, failure).
+func dryRunOutputIndicatesError(output string) bool {
+	lower := strings.ToLower(output)
+	errorPatterns := []string{
+		"error:", "error ", "unable to find", "unable to resolve", "no match for",
+		"problem:", "transaction check error", "cannot install", "could not find",
+		"failed to synchronize", "dependency resolution", "conflict",
+		"no packages available to install", "pkg: no packages available",
+		"cannot find package",
+		// pacman-specific
+		"error: failed to prepare transaction", "could not satisfy dependencies",
+		"failed to commit transaction", "error: target not found",
+		"unresolvable package conflicts",
+	}
+	for _, p := range errorPatterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDryRunExit1Success returns true if err is exit code 1 with output and the
+// output does not indicate a dependency/validation error. dnf/yum --assumeno
+// and pkg -n return exit 1 when they "decline" the operation (expected for
+// dry-run); we treat that as success. But if the output contains error messages
+// (e.g. "Unable to resolve", "Problem:"), we treat it as failure.
+func isDryRunExit1Success(err error, output string) bool {
+	if output == "" {
+		return false
+	}
+	if dryRunOutputIndicatesError(output) {
+		return false
+	}
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 1
+}
+
+// runPatch runs package manager update and upgrade (patch_all) or install (patch_package).
+// Supports apt-get (Debian/Ubuntu), dnf, yum (RHEL-based), and pkg (FreeBSD). Uses DetectPackageManager() to choose.
+// When dryRun is true, simulates and sends dry_run_completed instead of completed.
+func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	httpClient := client.New(cfgManager, logger)
+	packageMgr := packages.New(logger)
+	pkgManager := packageMgr.DetectPackageManager()
+
+	if pkgManager != "apt" && pkgManager != "dnf" && pkgManager != "yum" && pkgManager != "pkg" && pkgManager != "pacman" {
+		errMsg := fmt.Sprintf("package manager %q not supported for patching (apt, dnf, yum, pkg, pacman required)", pkgManager)
+		_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", errMsg)
+		return fmt.Errorf("%s", errMsg)
+	}
+
+	var env []string
+	var upgradeBin string
+	switch pkgManager {
+	case "apt":
+		if _, err := exec.LookPath("apt-get"); err != nil {
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "apt-get not found: not a Debian/Ubuntu system or apt not installed")
+			return fmt.Errorf("apt-get not found: %w", err)
+		}
+		env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+		upgradeBin = "apt-get"
+	case "pkg":
+		upgradeBin = packages.GetPkgBinaryPath()
+		env = append(os.Environ(), "ASSUME_ALWAYS_YES=YES", "PAGER=cat")
+	case "pacman":
+		if _, err := exec.LookPath("pacman"); err != nil {
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "pacman not found: Arch Linux package manager not installed")
+			return fmt.Errorf("pacman not found: %w", err)
+		}
+		upgradeBin = "pacman"
+	default: // dnf, yum
+		if _, err := exec.LookPath(pkgManager); err != nil {
+			errMsg := fmt.Sprintf("%s not found: RHEL/Fedora package manager not installed", pkgManager)
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", errMsg)
+			return fmt.Errorf("%s not found: %w", pkgManager, err)
+		}
+		upgradeBin = pkgManager
+	}
+
+	if err := httpClient.SendPatchOutput(ctx, patchRunID, "started", "", ""); err != nil {
+		logger.WithError(err).Warn("Failed to send patch started to server")
+	}
+
+	var fullOutput strings.Builder
+	fullOutput.Grow(8192) // Pre-allocate for typical patch output to reduce allocations
+
+	// Update package cache
+	switch pkgManager {
+	case "apt":
+		updateCmd := exec.CommandContext(ctx, "apt-get", "update", "-qq")
+		updateCmd.Env = env
+		updateOut, updateErr := updateCmd.CombinedOutput()
+		fullOutput.Write(updateOut)
+		if updateErr != nil {
+			logger.WithError(updateErr).Warn("apt-get update failed")
+			fullOutput.WriteString("\n[apt-get update error] " + updateErr.Error() + "\n")
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), updateErr.Error())
+			return fmt.Errorf("apt-get update failed: %w", updateErr)
+		}
+	case "pkg":
+		updateCmd := exec.CommandContext(ctx, upgradeBin, "update")
+		updateCmd.Env = env
+		updateOut, updateErr := updateCmd.CombinedOutput()
+		fullOutput.Write(updateOut)
+		if updateErr != nil {
+			logger.WithError(updateErr).Warn("pkg update failed")
+			fullOutput.WriteString("\n[pkg update error] " + updateErr.Error() + "\n")
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), updateErr.Error())
+			return fmt.Errorf("pkg update failed: %w", updateErr)
+		}
+	case "pacman":
+		refreshCmd := exec.CommandContext(ctx, "pacman", "-Sy", "--noconfirm")
+		refreshOut, refreshErr := refreshCmd.CombinedOutput()
+		fullOutput.Write(refreshOut)
+		if refreshErr != nil {
+			logger.WithError(refreshErr).Warn("pacman -Sy failed")
+			fullOutput.WriteString("\n[pacman refresh error] " + refreshErr.Error() + "\n")
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), refreshErr.Error())
+			return fmt.Errorf("pacman -Sy failed: %w", refreshErr)
+		}
+	default:
+		makecacheCmd := exec.CommandContext(ctx, upgradeBin, "makecache", "-q")
+		makecacheOut, makecacheErr := makecacheCmd.CombinedOutput()
+		fullOutput.Write(makecacheOut)
+		if makecacheErr != nil {
+			logger.WithError(makecacheErr).Warn(upgradeBin + " makecache failed")
+			fullOutput.WriteString("\n[" + upgradeBin + " makecache error] " + makecacheErr.Error() + "\n")
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), makecacheErr.Error())
+			return fmt.Errorf("%s makecache failed: %w", upgradeBin, makecacheErr)
+		}
+	}
+
+	if patchType == "patch_all" {
+		switch pkgManager {
+		case "apt":
+			if dryRun {
+				upgradeCmd := exec.CommandContext(ctx, "apt-get", "-s", "upgrade")
+				upgradeCmd.Env = env
+				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
+				fullOutput.Write(upgradeOut)
+				if upgradeErr != nil {
+					logger.WithError(upgradeErr).Warn("apt-get -s upgrade failed")
+					fullOutput.WriteString("\n[apt-get upgrade error] " + upgradeErr.Error() + "\n")
+					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), upgradeErr.Error())
+					return fmt.Errorf("apt-get -s upgrade failed: %w", upgradeErr)
+				}
+			} else {
+				upgradeCmd := exec.CommandContext(ctx, "apt-get", "upgrade", "-y", "-qq")
+				upgradeCmd.Env = env
+				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
+				fullOutput.Write(upgradeOut)
+				if upgradeErr != nil {
+					logger.WithError(upgradeErr).Warn("apt-get upgrade failed")
+					fullOutput.WriteString("\n[apt-get upgrade error] " + upgradeErr.Error() + "\n")
+					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), upgradeErr.Error())
+					return fmt.Errorf("apt-get upgrade failed: %w", upgradeErr)
+				}
+			}
+		case "pkg":
+			if dryRun {
+				upgradeCmd := exec.CommandContext(ctx, upgradeBin, "upgrade", "-n")
+				upgradeCmd.Env = env
+				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
+				fullOutput.Write(upgradeOut)
+				if upgradeErr != nil && !isDryRunExit1Success(upgradeErr, string(upgradeOut)) {
+					logger.WithError(upgradeErr).Warn("pkg upgrade -n failed")
+					fullOutput.WriteString("\n[pkg upgrade error] " + upgradeErr.Error() + "\n")
+					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), upgradeErr.Error())
+					return fmt.Errorf("pkg upgrade -n failed: %w", upgradeErr)
+				}
+			} else {
+				upgradeCmd := exec.CommandContext(ctx, upgradeBin, "upgrade", "-y")
+				upgradeCmd.Env = env
+				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
+				fullOutput.Write(upgradeOut)
+				if upgradeErr != nil {
+					logger.WithError(upgradeErr).Warn("pkg upgrade failed")
+					fullOutput.WriteString("\n[pkg upgrade error] " + upgradeErr.Error() + "\n")
+					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), upgradeErr.Error())
+					return fmt.Errorf("pkg upgrade failed: %w", upgradeErr)
+				}
+			}
+		case "pacman":
+			if dryRun {
+				upgradeCmd := exec.CommandContext(ctx, "pacman", "-Syu", "-p")
+				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
+				fullOutput.Write(upgradeOut)
+				if upgradeErr != nil && !isDryRunExit1Success(upgradeErr, string(upgradeOut)) {
+					logger.WithError(upgradeErr).Warn("pacman -Syu -p failed")
+					fullOutput.WriteString("\n[pacman upgrade error] " + upgradeErr.Error() + "\n")
+					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), upgradeErr.Error())
+					return fmt.Errorf("pacman -Syu -p failed: %w", upgradeErr)
+				}
+			} else {
+				upgradeCmd := exec.CommandContext(ctx, "pacman", "-Syu", "--noconfirm")
+				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
+				fullOutput.Write(upgradeOut)
+				if upgradeErr != nil {
+					logger.WithError(upgradeErr).Warn("pacman -Syu failed")
+					fullOutput.WriteString("\n[pacman upgrade error] " + upgradeErr.Error() + "\n")
+					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), upgradeErr.Error())
+					return fmt.Errorf("pacman -Syu failed: %w", upgradeErr)
+				}
+			}
+		default: // dnf, yum
+			if dryRun {
+				upgradeCmd := exec.CommandContext(ctx, upgradeBin, "upgrade", "--assumeno")
+				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
+				fullOutput.Write(upgradeOut)
+				if upgradeErr != nil && !isDryRunExit1Success(upgradeErr, string(upgradeOut)) {
+					logger.WithError(upgradeErr).Warn(upgradeBin + " upgrade --assumeno failed")
+					fullOutput.WriteString("\n[" + upgradeBin + " upgrade error] " + upgradeErr.Error() + "\n")
+					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), upgradeErr.Error())
+					return fmt.Errorf("%s upgrade --assumeno failed: %w", upgradeBin, upgradeErr)
+				}
+			} else {
+				upgradeCmd := exec.CommandContext(ctx, upgradeBin, "upgrade", "-y", "-q")
+				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
+				fullOutput.Write(upgradeOut)
+				if upgradeErr != nil {
+					logger.WithError(upgradeErr).Warn(upgradeBin + " upgrade failed")
+					fullOutput.WriteString("\n[" + upgradeBin + " upgrade error] " + upgradeErr.Error() + "\n")
+					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), upgradeErr.Error())
+					return fmt.Errorf("%s upgrade failed: %w", upgradeBin, upgradeErr)
+				}
+			}
+		}
+	} else {
+		if len(packageNames) == 0 {
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), "package_names required for patch_package")
+			return fmt.Errorf("package_names required for patch_package")
+		}
+		switch pkgManager {
+		case "apt":
+			if dryRun {
+				installArgs := append([]string{"-s", "install"}, packageNames...)
+				installCmd := exec.CommandContext(ctx, "apt-get", installArgs...)
+				installCmd.Env = env
+				installOut, installErr := installCmd.CombinedOutput()
+				fullOutput.Write(installOut)
+				if installErr != nil {
+					logger.WithError(installErr).Warn("apt-get -s install failed")
+					fullOutput.WriteString("\n[apt-get install error] " + installErr.Error() + "\n")
+					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), installErr.Error())
+					return fmt.Errorf("apt-get -s install %v failed: %w", packageNames, installErr)
+				}
+			} else {
+				installArgs := append([]string{"install", "-y", "-qq"}, packageNames...)
+				installCmd := exec.CommandContext(ctx, "apt-get", installArgs...)
+				installCmd.Env = env
+				installOut, installErr := installCmd.CombinedOutput()
+				fullOutput.Write(installOut)
+				if installErr != nil {
+					logger.WithError(installErr).Warn("apt-get install failed")
+					fullOutput.WriteString("\n[apt-get install error] " + installErr.Error() + "\n")
+					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), installErr.Error())
+					return fmt.Errorf("apt-get install %v failed: %w", packageNames, installErr)
+				}
+			}
+		case "pkg":
+			if dryRun {
+				installArgs := append([]string{"install", "-n"}, packageNames...)
+				installCmd := exec.CommandContext(ctx, upgradeBin, installArgs...)
+				installCmd.Env = env
+				installOut, installErr := installCmd.CombinedOutput()
+				fullOutput.Write(installOut)
+				if installErr != nil && !isDryRunExit1Success(installErr, string(installOut)) {
+					logger.WithError(installErr).Warn("pkg install -n failed")
+					fullOutput.WriteString("\n[pkg install error] " + installErr.Error() + "\n")
+					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), installErr.Error())
+					return fmt.Errorf("pkg install -n %v failed: %w", packageNames, installErr)
+				}
+			} else {
+				installArgs := append([]string{"install", "-y"}, packageNames...)
+				installCmd := exec.CommandContext(ctx, upgradeBin, installArgs...)
+				installCmd.Env = env
+				installOut, installErr := installCmd.CombinedOutput()
+				fullOutput.Write(installOut)
+				if installErr != nil {
+					logger.WithError(installErr).Warn("pkg install failed")
+					fullOutput.WriteString("\n[pkg install error] " + installErr.Error() + "\n")
+					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), installErr.Error())
+					return fmt.Errorf("pkg install %v failed: %w", packageNames, installErr)
+				}
+			}
+		case "pacman":
+			if dryRun {
+				installArgs := append([]string{"-S", "-p"}, packageNames...)
+				installCmd := exec.CommandContext(ctx, "pacman", installArgs...)
+				installOut, installErr := installCmd.CombinedOutput()
+				fullOutput.Write(installOut)
+				if installErr != nil && !isDryRunExit1Success(installErr, string(installOut)) {
+					logger.WithError(installErr).Warn("pacman -S -p failed")
+					fullOutput.WriteString("\n[pacman install error] " + installErr.Error() + "\n")
+					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), installErr.Error())
+					return fmt.Errorf("pacman -S -p %v failed: %w", packageNames, installErr)
+				}
+			} else {
+				installArgs := append([]string{"-S", "--noconfirm"}, packageNames...)
+				installCmd := exec.CommandContext(ctx, "pacman", installArgs...)
+				installOut, installErr := installCmd.CombinedOutput()
+				fullOutput.Write(installOut)
+				if installErr != nil {
+					logger.WithError(installErr).Warn("pacman -S failed")
+					fullOutput.WriteString("\n[pacman install error] " + installErr.Error() + "\n")
+					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), installErr.Error())
+					return fmt.Errorf("pacman -S %v failed: %w", packageNames, installErr)
+				}
+			}
+		default: // dnf, yum
+			if dryRun {
+				installArgs := append([]string{"install", "--assumeno"}, packageNames...)
+				installCmd := exec.CommandContext(ctx, upgradeBin, installArgs...)
+				installOut, installErr := installCmd.CombinedOutput()
+				fullOutput.Write(installOut)
+				if installErr != nil && !isDryRunExit1Success(installErr, string(installOut)) {
+					logger.WithError(installErr).Warn(upgradeBin + " install --assumeno failed")
+					fullOutput.WriteString("\n[" + upgradeBin + " install error] " + installErr.Error() + "\n")
+					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), installErr.Error())
+					return fmt.Errorf("%s install --assumeno %v failed: %w", upgradeBin, packageNames, installErr)
+				}
+			} else {
+				installArgs := append([]string{"install", "-y", "-q"}, packageNames...)
+				installCmd := exec.CommandContext(ctx, upgradeBin, installArgs...)
+				installOut, installErr := installCmd.CombinedOutput()
+				fullOutput.Write(installOut)
+				if installErr != nil {
+					logger.WithError(installErr).Warn(upgradeBin + " install failed")
+					fullOutput.WriteString("\n[" + upgradeBin + " install error] " + installErr.Error() + "\n")
+					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), installErr.Error())
+					return fmt.Errorf("%s install %v failed: %w", upgradeBin, packageNames, installErr)
+				}
+			}
+		}
+	}
+
+	stage := "completed"
+	if dryRun {
+		stage = "dry_run_completed"
+	}
+	if err := httpClient.SendPatchOutput(ctx, patchRunID, stage, fullOutput.String(), ""); err != nil {
+		logger.WithError(err).Warn("Failed to send patch output to server")
+		return err
+	}
+
+	if !dryRun {
+		go func() {
+			logger.Info("Sending report after patch to refresh package lists...")
+			if err := sendReport(false); err != nil {
+				logger.WithError(err).Warn("Post-patch report failed")
+			} else {
+				logger.Info("Post-patch report sent successfully")
+			}
+		}()
+	}
+
+	return nil
+}
+
+// applyConfig applies a full config update from the server and restarts the service.
+func applyConfig(cfg map[string]interface{}) error {
+	if cfg == nil {
+		return fmt.Errorf("config is nil")
+	}
+	logger.Info("Applying configuration from server...")
+
+	// Apply docker
+	if v, ok := cfg["docker"]; ok {
+		if b, ok := v.(bool); ok {
+			if err := cfgManager.SetIntegrationEnabled("docker", b); err != nil {
+				return fmt.Errorf("set docker: %w", err)
+			}
+			logger.WithField("enabled", b).Info("Docker integration updated")
+		}
+	}
+
+	// Apply compliance (can be bool, string "on-demand", or nested map)
+	complianceVal := cfg["compliance"]
+	if complianceVal != nil {
+		var mode config.ComplianceMode
+		modeVal := complianceVal
+		if nm, ok := complianceVal.(map[string]interface{}); ok {
+			modeVal = nm["enabled"]
+		}
+		switch val := modeVal.(type) {
+		case bool:
+			if val {
+				mode = config.ComplianceEnabled
+			} else {
+				mode = config.ComplianceDisabled
+			}
+		case string:
+			switch val {
+			case "on-demand", "on_demand":
+				mode = config.ComplianceOnDemand
+			case "true":
+				mode = config.ComplianceEnabled
+			case "false":
+				mode = config.ComplianceDisabled
+			default:
+				mode = config.ComplianceOnDemand
+			}
+		default:
+			logger.WithField("compliance", complianceVal).Warn("Unknown compliance value type, skipping")
+		}
+		if mode != "" {
+			if err := cfgManager.SetComplianceMode(mode); err != nil {
+				return fmt.Errorf("set compliance mode: %w", err)
+			}
+			logger.WithField("mode", mode).Info("Compliance mode updated")
+		}
+	}
+
+	// Apply compliance scanner toggles (flat keys or nested under compliance)
+	openscap := cfgManager.GetComplianceOpenscapEnabled()
+	dockerBench := cfgManager.GetComplianceDockerBenchEnabled()
+	if v, ok := cfg["compliance_openscap_enabled"]; ok {
+		if b, ok := v.(bool); ok {
+			openscap = b
+		}
+	} else if nm, ok := cfg["compliance"].(map[string]interface{}); ok {
+		if v, ok := nm["openscap_enabled"]; ok {
+			if b, ok := v.(bool); ok {
+				openscap = b
+			}
+		}
+	}
+	if v, ok := cfg["compliance_docker_bench_enabled"]; ok {
+		if b, ok := v.(bool); ok {
+			dockerBench = b
+		}
+	} else if nm, ok := cfg["compliance"].(map[string]interface{}); ok {
+		if v, ok := nm["docker_bench_enabled"]; ok {
+			if b, ok := v.(bool); ok {
+				dockerBench = b
+			}
+		}
+	}
+	if err := cfgManager.SetComplianceScanners(openscap, dockerBench); err != nil {
+		return fmt.Errorf("set compliance scanners: %w", err)
+	}
+	logger.WithFields(map[string]interface{}{"openscap": openscap, "docker_bench": dockerBench}).Info("Compliance scanner toggles updated")
+
+	logger.Info("Config updated, restarting patchmon-agent service...")
+	return restartService("", "")
 }
 
 // toggleIntegration toggles an integration on or off and restarts the service
@@ -1813,6 +2490,66 @@ func toggleIntegration(integrationName string, enabled bool) error {
 		logger.WithField("output", string(output)).Debug("Service restart command completed")
 		logger.Info("Service restarted successfully")
 		return nil
+	} else if runtime.GOOS == "freebsd" {
+		// FreeBSD / pfSense: use rc.d helper script (same approach as version_update.go)
+		logger.Debug("Detected FreeBSD, scheduling service restart via helper script")
+		if err := os.MkdirAll("/etc/patchmon", 0700); err != nil {
+			logger.WithError(err).Warn("Failed to create /etc/patchmon directory, will try anyway")
+		}
+		helperScript := `#!/bin/sh
+sleep 2
+# Prefer service, fallback to rc.d script (pfSense, minimal env)
+if [ -x /usr/sbin/service ]; then
+    /usr/sbin/service patchmon_agent restart 2>/dev/null || /usr/sbin/service patchmon_agent start 2>/dev/null
+else
+    /usr/local/etc/rc.d/patchmon_agent restart 2>/dev/null || /usr/local/etc/rc.d/patchmon_agent start 2>/dev/null
+fi
+rm -f "$0"
+`
+		randomBytes := make([]byte, 8)
+		if _, err := rand.Read(randomBytes); err != nil {
+			randomBytes = []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
+		}
+		helperPath := filepath.Join("/etc/patchmon", fmt.Sprintf("restart-%s.sh", hex.EncodeToString(randomBytes)))
+		dirInfo, err := os.Lstat("/etc/patchmon")
+		if err == nil && dirInfo.Mode()&os.ModeSymlink != 0 {
+			logger.Warn("Security: /etc/patchmon is a symlink, refusing to create helper script")
+			os.Exit(0)
+		}
+		file, err := os.OpenFile(helperPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
+		if err != nil {
+			logger.WithError(err).Warn("Failed to create restart helper script, exiting to let daemon -r respawn")
+			os.Exit(0)
+		}
+		if _, err := file.WriteString(helperScript); err != nil {
+			_ = file.Close()
+			_ = os.Remove(helperPath)
+			os.Exit(0)
+		}
+		_ = file.Close()
+		fileInfo, err := os.Lstat(helperPath)
+		if err != nil || fileInfo.Mode()&os.ModeSymlink != 0 {
+			_ = os.Remove(helperPath)
+			os.Exit(0)
+		}
+		var cmd *exec.Cmd
+		if _, nohupErr := exec.LookPath("nohup"); nohupErr == nil {
+			cmd = exec.Command("nohup", helperPath)
+		} else {
+			cmd = exec.Command("/bin/sh", helperPath)
+		}
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		cmd.SysProcAttr = sysProcAttrForDetach()
+		if err := cmd.Start(); err != nil {
+			_ = os.Remove(helperPath)
+			logger.WithError(err).Warn("Failed to start restart helper, exiting to let daemon -r respawn")
+			os.Exit(0)
+		}
+		logger.Info("Scheduled service restart via helper script (FreeBSD), exiting now...")
+		time.Sleep(500 * time.Millisecond)
+		os.Exit(0)
+		return nil
 	} else if _, err := exec.LookPath("rc-service"); err == nil {
 		// OpenRC is available (Alpine Linux)
 		// Since we're running inside the service, we can't stop ourselves directly
@@ -1902,12 +2639,8 @@ rm -f "$0"
 				}
 				cmd.Stdout = nil
 				cmd.Stderr = nil
-				// Create a new session to fully detach the child process
-				// Setsid is stronger than Setpgid — it creates a new session,
-				// ensuring the helper script survives even if the parent's cgroup is cleaned up
-				cmd.SysProcAttr = &syscall.SysProcAttr{
-					Setsid: true,
-				}
+				// Create a new session to fully detach the child process (Linux only)
+				cmd.SysProcAttr = sysProcAttrForDetach()
 				if err := cmd.Start(); err != nil {
 					logger.WithError(err).Warn("Failed to start restart helper script, supervise-daemon will handle restart")
 					// Clean up script
@@ -2017,9 +2750,7 @@ rm -f "$0"
 	}
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true,
-	}
+	cmd.SysProcAttr = sysProcAttrForDetach()
 
 	if err := cmd.Start(); err != nil {
 		logger.WithError(err).Error("Failed to start restart helper script")
@@ -2055,10 +2786,18 @@ func sendComplianceProgress(phase, profileName, message string, progress float64
 
 // runComplianceScanWithOptions runs an on-demand compliance scan with options and sends results to server.
 // ctx can be cancelled from the server (e.g. user clicks Cancel) to abort the scan.
+// Run scan now works for both on-demand and scheduled compliance modes.
 func runComplianceScanWithOptions(ctx context.Context, options *models.ComplianceScanOptions) error {
 	profileName := options.ProfileID
 	if profileName == "" {
 		profileName = "default"
+	}
+
+	// Run scan now works for both on-demand and scheduled compliance modes.
+	// Only reject if compliance is disabled.
+	if !cfgManager.IsIntegrationEnabled("compliance") {
+		sendComplianceProgress("failed", profileName, "Compliance scanning is disabled", 0, "compliance integration is not enabled")
+		return fmt.Errorf("compliance integration is not enabled")
 	}
 
 	logger.WithFields(map[string]interface{}{
@@ -2693,4 +3432,176 @@ func handleSSHProxyDisconnect(m wsMsg, conn *websocket.Conn) {
 
 	// Send closed message
 	sendSSHProxyClosed(conn, m.sshProxySessionID)
+}
+
+// RDP proxy session management (raw TCP stream to localhost:3389)
+type rdpProxySession struct {
+	tcpConn   net.Conn
+	conn      *websocket.Conn
+	sessionID string
+	mu        sync.Mutex
+}
+
+var rdpProxySessions = make(map[string]*rdpProxySession)
+var rdpProxySessionsMu sync.RWMutex
+
+func sendRDPProxyMessage(conn *websocket.Conn, msgType string, sessionID string, data interface{}) {
+	msg := map[string]interface{}{
+		"type":       msgType,
+		"session_id": sessionID,
+	}
+	if data != nil {
+		msg["data"] = data
+	}
+	if msgType == "rdp_proxy_error" {
+		if errMsg, ok := data.(string); ok {
+			msg["message"] = errMsg
+		}
+	}
+	msgJSON, err := json.Marshal(msg)
+	if err != nil {
+		logger.WithError(err).Error("Failed to marshal RDP proxy message")
+		return
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, msgJSON); err != nil {
+		logger.WithError(err).Error("Failed to send RDP proxy message")
+	}
+}
+
+func sendRDPProxyError(conn *websocket.Conn, sessionID string, message string) {
+	sendRDPProxyMessage(conn, "rdp_proxy_error", sessionID, message)
+}
+
+func sendRDPProxyData(conn *websocket.Conn, sessionID string, data string) {
+	sendRDPProxyMessage(conn, "rdp_proxy_data", sessionID, data)
+}
+
+func sendRDPProxyConnected(conn *websocket.Conn, sessionID string) {
+	sendRDPProxyMessage(conn, "rdp_proxy_connected", sessionID, nil)
+}
+
+func sendRDPProxyClosed(conn *websocket.Conn, sessionID string) {
+	sendRDPProxyMessage(conn, "rdp_proxy_closed", sessionID, nil)
+}
+
+func handleRDPProxy(m wsMsg, conn *websocket.Conn) {
+	sessionID := m.rdpProxySessionID
+	host := m.rdpProxyHost
+	if host == "" {
+		host = "localhost"
+	}
+	port := m.rdpProxyPort
+	if port <= 0 {
+		port = 3389
+	}
+
+	logger.WithFields(map[string]interface{}{
+		"session_id": sessionID,
+		"host":       host,
+		"port":       port,
+	}).Info("Establishing RDP proxy connection")
+
+	address := net.JoinHostPort(host, strconv.Itoa(port))
+	tcpConn, err := net.DialTimeout("tcp", address, 15*time.Second)
+	if err != nil {
+		logger.WithError(err).Error("Failed to connect to RDP server")
+		sendRDPProxyError(conn, sessionID, fmt.Sprintf("Failed to connect: %v", err))
+		return
+	}
+
+	proxySession := &rdpProxySession{
+		tcpConn:   tcpConn,
+		conn:      conn,
+		sessionID: sessionID,
+	}
+
+	rdpProxySessionsMu.Lock()
+	rdpProxySessions[sessionID] = proxySession
+	rdpProxySessionsMu.Unlock()
+
+	sendRDPProxyConnected(conn, sessionID)
+
+	// Forward TCP -> WebSocket (base64)
+	go func() {
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := tcpConn.Read(buf)
+			if n > 0 {
+				sendRDPProxyData(conn, sessionID, base64.StdEncoding.EncodeToString(buf[:n]))
+			}
+			if err != nil {
+				if err != io.EOF {
+					logger.WithError(err).Debug("RDP proxy TCP read error")
+				}
+				break
+			}
+		}
+		handleRDPProxyDisconnect(wsMsg{rdpProxySessionID: sessionID}, conn)
+	}()
+
+	// Wait for disconnect
+	go func() {
+		// Keep session alive until explicitly disconnected
+		rdpProxySessionsMu.RLock()
+		_, exists := rdpProxySessions[sessionID]
+		rdpProxySessionsMu.RUnlock()
+		for exists {
+			time.Sleep(1 * time.Second)
+			rdpProxySessionsMu.RLock()
+			_, exists = rdpProxySessions[sessionID]
+			rdpProxySessionsMu.RUnlock()
+		}
+	}()
+}
+
+func handleRDPProxyInput(m wsMsg, _ *websocket.Conn) {
+	rdpProxySessionsMu.RLock()
+	proxySession, exists := rdpProxySessions[m.rdpProxySessionID]
+	rdpProxySessionsMu.RUnlock()
+
+	if !exists {
+		logger.WithField("session_id", m.rdpProxySessionID).Warn("RDP proxy session not found for input")
+		return
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(m.rdpProxyData)
+	if err != nil {
+		logger.WithError(err).Warn("Failed to decode RDP proxy input")
+		return
+	}
+
+	proxySession.mu.Lock()
+	defer proxySession.mu.Unlock()
+
+	if proxySession.tcpConn != nil {
+		if _, err := proxySession.tcpConn.Write(decoded); err != nil {
+			logger.WithError(err).Error("Failed to write to RDP TCP connection")
+		}
+	}
+}
+
+func handleRDPProxyDisconnect(m wsMsg, conn *websocket.Conn) {
+	sessionID := m.rdpProxySessionID
+
+	rdpProxySessionsMu.Lock()
+	proxySession, exists := rdpProxySessions[sessionID]
+	if exists {
+		delete(rdpProxySessions, sessionID)
+	}
+	rdpProxySessionsMu.Unlock()
+
+	if !exists {
+		logger.WithField("session_id", sessionID).Debug("RDP proxy session already closed")
+		return
+	}
+
+	logger.WithField("session_id", sessionID).Info("Closing RDP proxy session")
+
+	if proxySession.tcpConn != nil {
+		if err := proxySession.tcpConn.Close(); err != nil {
+			logger.WithError(err).Warn("Failed to close RDP proxy TCP connection")
+		}
+	}
+
+	sendRDPProxyClosed(conn, sessionID)
 }

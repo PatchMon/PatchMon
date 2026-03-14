@@ -4,6 +4,7 @@ package models
 type Package struct {
 	Name             string `json:"name"`
 	Description      string `json:"description,omitempty"`
+	Category         string `json:"category,omitempty"`
 	CurrentVersion   string `json:"currentVersion"`
 	AvailableVersion string `json:"availableVersion,omitempty"`
 	NeedsUpdate      bool   `json:"needsUpdate"`
@@ -99,6 +100,7 @@ type ReportPayload struct {
 	ExecutionTime          float64            `json:"executionTime"` // Collection time in seconds
 	NeedsReboot            bool               `json:"needsReboot"`
 	RebootReason           string             `json:"rebootReason,omitempty"`
+	PackageManager         string             `json:"packageManager,omitempty"`
 }
 
 // PingResponse represents server ping response
@@ -163,8 +165,10 @@ type HostSettingsResponse struct {
 
 // IntegrationStatusResponse represents integration status response from server
 type IntegrationStatusResponse struct {
-	Success      bool            `json:"success"`
-	Integrations map[string]bool `json:"integrations"`
+	Success                      bool            `json:"success"`
+	Integrations                 map[string]bool `json:"integrations"`
+	ComplianceOpenscapEnabled    *bool           `json:"compliance_openscap_enabled,omitempty"`
+	ComplianceDockerBenchEnabled *bool           `json:"compliance_docker_bench_enabled,omitempty"`
 }
 
 // InstallEvent represents a single notable event during scanner installation

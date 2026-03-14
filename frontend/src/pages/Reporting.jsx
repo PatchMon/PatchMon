@@ -240,6 +240,13 @@ const Reporting = () => {
 
 	// Get type badge
 	const getTypeBadge = (type) => {
+		if (type == null || typeof type !== "string") {
+			return (
+				<span className="px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+					—
+				</span>
+			);
+		}
 		const typeColors = {
 			server_update:
 				"bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
@@ -357,7 +364,9 @@ const Reporting = () => {
 
 	// Get unique alert types for filter
 	const alertTypes = useMemo(() => {
-		const types = new Set(alerts.map((alert) => alert.type));
+		const types = new Set(
+			alerts.map((alert) => alert.type).filter((t) => t != null && t !== ""),
+		);
 		return Array.from(types).sort();
 	}, [alerts]);
 
@@ -550,7 +559,7 @@ const Reporting = () => {
 					<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
 						Reporting
 					</h1>
-					<p className="text-sm text-secondary-600 dark:text-secondary-400 mt-1">
+					<p className="text-sm text-secondary-600 dark:text-white mt-1">
 						View and manage system alerts and notifications
 					</p>
 				</div>
@@ -679,7 +688,7 @@ const Reporting = () => {
 							<option value="all">All Types</option>
 							{alertTypes.map((type) => (
 								<option key={type} value={type}>
-									{type.replace("_", " ")}
+									{String(type).replace("_", " ")}
 								</option>
 							))}
 						</select>
@@ -715,7 +724,7 @@ const Reporting = () => {
 				{/* Bulk Actions Bar */}
 				{selectedAlerts.size > 0 && (
 					<div className="px-4 py-2 bg-primary-50 dark:bg-primary-900 border-b border-secondary-200 dark:border-secondary-700 flex items-center justify-between">
-						<div className="text-sm text-secondary-700 dark:text-secondary-300">
+						<div className="text-sm text-secondary-700 dark:text-white">
 							{selectedAlerts.size} alert(s) selected
 						</div>
 						<button
@@ -753,7 +762,7 @@ const Reporting = () => {
 								<tr>
 									<th
 										scope="col"
-										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider"
+										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 										onClick={(e) => e.stopPropagation()}
 									>
 										<input
@@ -772,7 +781,7 @@ const Reporting = () => {
 									</th>
 									<th
 										scope="col"
-										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer"
+										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider cursor-pointer"
 										onClick={() => handleSort("severity")}
 									>
 										<div className="flex items-center gap-2">
@@ -782,7 +791,7 @@ const Reporting = () => {
 									</th>
 									<th
 										scope="col"
-										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer"
+										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider cursor-pointer"
 										onClick={() => handleSort("type")}
 									>
 										<div className="flex items-center gap-2">
@@ -792,31 +801,31 @@ const Reporting = () => {
 									</th>
 									<th
 										scope="col"
-										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider"
+										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 									>
 										Title
 									</th>
 									<th
 										scope="col"
-										className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider"
+										className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 									>
 										Message
 									</th>
 									<th
 										scope="col"
-										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider"
+										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 									>
 										Assigned To
 									</th>
 									<th
 										scope="col"
-										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider"
+										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 									>
 										Status
 									</th>
 									<th
 										scope="col"
-										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider cursor-pointer"
+										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider cursor-pointer"
 										onClick={() => handleSort("created_at")}
 									>
 										<div className="flex items-center gap-2">
@@ -826,7 +835,7 @@ const Reporting = () => {
 									</th>
 									<th
 										scope="col"
-										className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider"
+										className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 									>
 										Actions
 									</th>
@@ -877,7 +886,7 @@ const Reporting = () => {
 											className="hidden md:table-cell px-4 py-2 cursor-pointer"
 											onClick={() => handleRowClick(alert)}
 										>
-											<div className="text-sm text-secondary-500 dark:text-secondary-400 max-w-md truncate">
+											<div className="text-sm text-secondary-500 dark:text-white max-w-md truncate">
 												{alert.message}
 											</div>
 										</td>
@@ -913,10 +922,12 @@ const Reporting = () => {
 											{getStatusBadge(alert)}
 										</td>
 										<td
-											className="px-4 py-2 whitespace-nowrap text-sm text-secondary-500 dark:text-secondary-400 cursor-pointer"
+											className="px-4 py-2 whitespace-nowrap text-sm text-secondary-500 dark:text-white cursor-pointer"
 											onClick={() => handleRowClick(alert)}
 										>
-											{formatRelativeTime(alert.created_at)}
+											{alert.created_at
+												? formatRelativeTime(alert.created_at)
+												: "—"}
 										</td>
 										<td
 											className="px-4 py-2 whitespace-nowrap text-right text-sm font-medium"
@@ -991,7 +1002,7 @@ const Reporting = () => {
 											handleAction(openActionMenu, action.name, e);
 											setOpenActionMenu(null);
 										}}
-										className="w-full text-left px-4 py-2 text-sm text-secondary-700 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+										className="w-full text-left px-4 py-2 text-sm text-secondary-700 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700"
 										disabled={performActionMutation.isPending}
 									>
 										{action.display_name}
@@ -1026,7 +1037,7 @@ const Reporting = () => {
 										setShowAlertModal(false);
 										setSelectedAlert(null);
 									}}
-									className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+									className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
 								>
 									<X className="h-5 w-5" />
 								</button>
@@ -1036,7 +1047,7 @@ const Reporting = () => {
 							{/* Alert Info */}
 							<div className="grid grid-cols-2 gap-4">
 								<div>
-									<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
+									<label className="text-xs font-medium text-secondary-500 dark:text-white">
 										Severity
 									</label>
 									<div className="mt-1">
@@ -1044,19 +1055,19 @@ const Reporting = () => {
 									</div>
 								</div>
 								<div>
-									<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
+									<label className="text-xs font-medium text-secondary-500 dark:text-white">
 										Type
 									</label>
 									<div className="mt-1">{getTypeBadge(selectedAlert.type)}</div>
 								</div>
 								<div>
-									<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
+									<label className="text-xs font-medium text-secondary-500 dark:text-white">
 										Status
 									</label>
 									<div className="mt-1">{getStatusBadge(selectedAlert)}</div>
 								</div>
 								<div>
-									<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
+									<label className="text-xs font-medium text-secondary-500 dark:text-white">
 										Created
 									</label>
 									<div className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -1064,7 +1075,7 @@ const Reporting = () => {
 									</div>
 								</div>
 								<div>
-									<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
+									<label className="text-xs font-medium text-secondary-500 dark:text-white">
 										Assigned To
 									</label>
 									<select
@@ -1091,7 +1102,7 @@ const Reporting = () => {
 
 							{/* Title */}
 							<div>
-								<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
+								<label className="text-xs font-medium text-secondary-500 dark:text-white">
 									Title
 								</label>
 								<div className="mt-1 text-sm font-medium text-secondary-900 dark:text-white">
@@ -1101,10 +1112,10 @@ const Reporting = () => {
 
 							{/* Message */}
 							<div>
-								<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
+								<label className="text-xs font-medium text-secondary-500 dark:text-white">
 									Message
 								</label>
-								<div className="mt-1 text-sm text-secondary-700 dark:text-secondary-300 whitespace-pre-wrap">
+								<div className="mt-1 text-sm text-secondary-700 dark:text-white whitespace-pre-wrap">
 									{selectedAlert.message}
 								</div>
 							</div>
@@ -1113,10 +1124,10 @@ const Reporting = () => {
 							{selectedAlert.metadata &&
 								Object.keys(selectedAlert.metadata).length > 0 && (
 									<div>
-										<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
+										<label className="text-xs font-medium text-secondary-500 dark:text-white">
 											Metadata
 										</label>
-										<div className="mt-1 text-sm text-secondary-700 dark:text-secondary-300 bg-secondary-50 dark:bg-secondary-900 p-3 rounded-md">
+										<div className="mt-1 text-sm text-secondary-700 dark:text-white bg-secondary-50 dark:bg-secondary-900 p-3 rounded-md">
 											<pre className="whitespace-pre-wrap">
 												{JSON.stringify(selectedAlert.metadata, null, 2)}
 											</pre>
@@ -1126,7 +1137,7 @@ const Reporting = () => {
 
 							{/* Actions */}
 							<div>
-								<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 mb-2 block">
+								<label className="text-xs font-medium text-secondary-500 dark:text-white mb-2 block">
 									Actions
 								</label>
 								<div className="flex flex-wrap gap-2">
@@ -1152,7 +1163,7 @@ const Reporting = () => {
 
 							{/* History */}
 							<div>
-								<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 mb-2 block">
+								<label className="text-xs font-medium text-secondary-500 dark:text-white mb-2 block">
 									History
 								</label>
 								<div className="space-y-2 max-h-64 overflow-y-auto">
@@ -1166,7 +1177,7 @@ const Reporting = () => {
 													<div className="text-sm font-medium text-secondary-900 dark:text-white">
 														{historyItem.action}
 													</div>
-													<div className="text-xs text-secondary-500 dark:text-secondary-400">
+													<div className="text-xs text-secondary-500 dark:text-white">
 														by{" "}
 														{historyItem.users?.username ||
 															historyItem.users?.email ||
@@ -1179,7 +1190,7 @@ const Reporting = () => {
 											</div>
 										))
 									) : (
-										<div className="text-sm text-secondary-500 dark:text-secondary-400">
+										<div className="text-sm text-secondary-500 dark:text-white">
 											No history available
 										</div>
 									)}

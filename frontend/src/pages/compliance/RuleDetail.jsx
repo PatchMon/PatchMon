@@ -28,7 +28,7 @@ const SEVERITY_COLORS = {
 		"bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800",
 	low: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 border-blue-200 dark:border-blue-800",
 	unknown:
-		"bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-400 border-secondary-200 dark:border-secondary-600",
+		"bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-white border-secondary-200 dark:border-secondary-600",
 };
 
 const STATUS_CONFIG = {
@@ -59,13 +59,13 @@ const STATUS_CONFIG = {
 	skip: {
 		label: "Skipped",
 		icon: Shield,
-		color: "text-secondary-500 dark:text-secondary-400",
+		color: "text-secondary-500 dark:text-white",
 		bg: "bg-secondary-100 dark:bg-secondary-700/50",
 	},
 	notapplicable: {
 		label: "N/A",
 		icon: Shield,
-		color: "text-secondary-500 dark:text-secondary-400",
+		color: "text-secondary-500 dark:text-white",
 		bg: "bg-secondary-100 dark:bg-secondary-700/50",
 	},
 };
@@ -137,7 +137,7 @@ export default function RuleDetail() {
 		return (
 			<div className="card p-8 text-center">
 				<ShieldAlert className="h-12 w-12 text-amber-500 mx-auto mb-3" />
-				<p className="text-secondary-600 dark:text-secondary-400">
+				<p className="text-secondary-600 dark:text-white">
 					{error?.message || "Rule not found"}
 				</p>
 				<Link
@@ -184,7 +184,7 @@ export default function RuleDetail() {
 			{/* Back link */}
 			<Link
 				to="/compliance"
-				className="inline-flex items-center gap-2 text-sm text-secondary-600 dark:text-secondary-400 hover:text-primary-600 dark:hover:text-primary-400"
+				className="inline-flex items-center gap-2 text-sm text-secondary-600 dark:text-white hover:text-primary-600 dark:hover:text-primary-400"
 			>
 				<ArrowLeft className="h-4 w-4" />
 				Back to Compliance
@@ -198,12 +198,12 @@ export default function RuleDetail() {
 					</h1>
 					<div className="flex flex-wrap items-center gap-2 mt-2">
 						{rule.rule_ref && (
-							<span className="text-xs font-mono text-secondary-500 dark:text-secondary-400">
+							<span className="text-xs font-mono text-secondary-500 dark:text-white">
 								{rule.rule_ref}
 							</span>
 						)}
 						{rule.section && (
-							<span className="text-xs text-secondary-500 dark:text-secondary-400">
+							<span className="text-xs text-secondary-500 dark:text-white">
 								Section {rule.section}
 							</span>
 						)}
@@ -232,7 +232,7 @@ export default function RuleDetail() {
 				<button
 					type="button"
 					onClick={() => refetch()}
-					className="p-2 rounded-lg border border-secondary-200 dark:border-secondary-600 text-secondary-600 dark:text-secondary-400 hover:bg-secondary-50 dark:hover:bg-secondary-700"
+					className="p-2 rounded-lg border border-secondary-200 dark:border-secondary-600 text-secondary-600 dark:text-white hover:bg-secondary-50 dark:hover:bg-secondary-700"
 					title="Refresh"
 				>
 					<RefreshCw className="h-4 w-4" />
@@ -307,7 +307,7 @@ export default function RuleDetail() {
 								Description
 							</h2>
 						</div>
-						<p className="text-sm text-secondary-600 dark:text-secondary-300 whitespace-pre-wrap leading-relaxed">
+						<p className="text-sm text-secondary-600 dark:text-white whitespace-pre-wrap leading-relaxed">
 							{rule.description || "—"}
 						</p>
 					</div>
@@ -320,7 +320,7 @@ export default function RuleDetail() {
 								Why this failed
 							</h2>
 						</div>
-						<p className="text-sm text-secondary-600 dark:text-secondary-300 whitespace-pre-wrap leading-relaxed">
+						<p className="text-sm text-secondary-600 dark:text-white whitespace-pre-wrap leading-relaxed">
 							{rule.rationale || "No rationale provided."}
 						</p>
 					</div>
@@ -339,7 +339,7 @@ export default function RuleDetail() {
 										What the fix does
 									</h2>
 								</div>
-								<p className="text-sm text-secondary-700 dark:text-secondary-300 leading-relaxed">
+								<p className="text-sm text-secondary-700 dark:text-white leading-relaxed">
 									{what_fix}
 								</p>
 							</div>
@@ -358,7 +358,7 @@ export default function RuleDetail() {
 								<button
 									type="button"
 									onClick={copy_remediation}
-									className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-secondary-100 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 hover:bg-secondary-200 dark:hover:bg-secondary-600 border border-secondary-200 dark:border-secondary-600 transition-colors"
+									className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-secondary-100 dark:bg-secondary-700 text-secondary-700 dark:text-white hover:bg-secondary-200 dark:hover:bg-secondary-600 border border-secondary-200 dark:border-secondary-600 transition-colors"
 								>
 									{remediation_copied ? (
 										<>
@@ -375,11 +375,11 @@ export default function RuleDetail() {
 							)}
 						</div>
 						{rule.remediation ? (
-							<pre className="text-xs font-mono text-secondary-700 dark:text-secondary-300 bg-secondary-100 dark:bg-secondary-700/50 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 overflow-x-auto whitespace-pre-wrap leading-relaxed">
+							<pre className="text-xs font-mono text-secondary-700 dark:text-white bg-secondary-100 dark:bg-secondary-700/50 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 overflow-x-auto whitespace-pre-wrap leading-relaxed">
 								{rule.remediation}
 							</pre>
 						) : (
-							<p className="text-sm text-secondary-500 dark:text-secondary-400">
+							<p className="text-sm text-secondary-500 dark:text-white">
 								No remediation steps available.
 							</p>
 						)}
@@ -393,7 +393,7 @@ export default function RuleDetail() {
 					Hosts this rule affects ({affected_hosts.length})
 				</h2>
 				{affected_hosts.length === 0 ? (
-					<div className="py-8 text-center text-secondary-500 dark:text-secondary-400 text-sm">
+					<div className="py-8 text-center text-secondary-500 dark:text-white text-sm">
 						No hosts have been scanned with this rule yet
 					</div>
 				) : (
@@ -401,13 +401,13 @@ export default function RuleDetail() {
 						<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 							<thead className="bg-secondary-50 dark:bg-secondary-700">
 								<tr>
-									<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider whitespace-nowrap">
+									<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap">
 										Host
 									</th>
-									<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider whitespace-nowrap w-24">
+									<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap w-24">
 										Status
 									</th>
-									<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 whitespace-nowrap">
+									<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white whitespace-nowrap">
 										Why (this host)
 									</th>
 								</tr>
@@ -437,7 +437,7 @@ export default function RuleDetail() {
 												{host.hostname &&
 													host.friendly_name &&
 													host.hostname !== host.friendly_name && (
-														<p className="text-xs text-secondary-500 dark:text-secondary-400 truncate">
+														<p className="text-xs text-secondary-500 dark:text-white truncate">
 															{host.hostname}
 														</p>
 													)}
@@ -450,7 +450,7 @@ export default function RuleDetail() {
 													{config.label}
 												</span>
 											</td>
-											<td className="px-4 py-2 text-secondary-600 dark:text-secondary-400 max-w-md">
+											<td className="px-4 py-2 text-secondary-600 dark:text-white max-w-md">
 												{why_text ? (
 													<span className="line-clamp-2 text-xs">
 														{why_text}

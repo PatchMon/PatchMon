@@ -103,8 +103,8 @@ func (m *FreeBSDManager) getPkgPackages() ([]models.Package, error) {
 		m.logger.WithField("count", len(upgradablePackages)).Debug("Found upgradable packages")
 	}
 
-	// Combine installed and upgradable packages
-	packages := CombinePackageData(installedPackages, upgradablePackages)
+	// Combine installed and upgradable packages (pkg info doesn't parse descriptions yet)
+	packages := CombinePackageData(stringMapToPackageMap(installedPackages), upgradablePackages)
 	return packages, nil
 }
 

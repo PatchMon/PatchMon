@@ -699,7 +699,9 @@ const ComplianceTab = ({
 			case "warn":
 				return <AlertTriangle className="h-4 w-4 text-yellow-400" />;
 			default:
-				return <MinusCircle className="h-4 w-4 text-secondary-400" />;
+				return (
+					<MinusCircle className="h-4 w-4 text-secondary-400 dark:text-white" />
+				);
 		}
 	};
 
@@ -708,9 +710,9 @@ const ComplianceTab = ({
 			pass: "bg-green-900/30 text-green-400 border-green-700",
 			fail: "bg-red-900/30 text-red-400 border-red-700",
 			warn: "bg-yellow-900/30 text-yellow-400 border-yellow-700",
-			skip: "bg-secondary-700/50 text-secondary-400 border-secondary-600",
+			skip: "bg-secondary-700/50 text-secondary-400 dark:text-white border-secondary-600",
 			notapplicable:
-				"bg-secondary-700/50 text-secondary-500 border-secondary-600",
+				"bg-secondary-700/50 text-secondary-500 dark:text-white border-secondary-600",
 		};
 		return styles[status] || styles.skip;
 	};
@@ -848,7 +850,7 @@ const ComplianceTab = ({
 								</div>
 								<div className="flex-1">
 									<h3 className="text-lg font-semibold text-white">OpenSCAP</h3>
-									<p className="text-xs text-secondary-400">
+									<p className="text-xs text-secondary-400 dark:text-white">
 										CIS Benchmark Scanning
 									</p>
 								</div>
@@ -867,32 +869,40 @@ const ComplianceTab = ({
 											<p className="text-lg font-bold text-white">
 												{scansByType.openscap.total_rules}
 											</p>
-											<p className="text-xs text-secondary-400">Total</p>
+											<p className="text-xs text-secondary-400 dark:text-white">
+												Total
+											</p>
 										</div>
 										<div className="bg-green-900/20 rounded p-2 text-center">
 											<p className="text-lg font-bold text-green-400">
 												{scansByType.openscap.passed}
 											</p>
-											<p className="text-xs text-secondary-400">Passed</p>
+											<p className="text-xs text-secondary-400 dark:text-white">
+												Passed
+											</p>
 										</div>
 										<div className="bg-red-900/20 rounded p-2 text-center">
 											<p className="text-lg font-bold text-red-400">
 												{scansByType.openscap.failed}
 											</p>
-											<p className="text-xs text-secondary-400">Failed</p>
+											<p className="text-xs text-secondary-400 dark:text-white">
+												Failed
+											</p>
 										</div>
 										<div className="bg-secondary-700/50 rounded p-2 text-center">
-											<p className="text-lg font-bold text-secondary-400">
+											<p className="text-lg font-bold text-secondary-400 dark:text-white">
 												{scansByType.openscap.skipped || 0}
 											</p>
-											<p className="text-xs text-secondary-400">N/A</p>
+											<p className="text-xs text-secondary-400 dark:text-white">
+												N/A
+											</p>
 										</div>
 									</div>
 
 									{/* Severity Breakdown Chart */}
 									{scansByType.openscap.severity_breakdown?.length > 0 && (
 										<div className="mb-4 p-3 bg-secondary-700/30 rounded-lg">
-											<p className="text-xs text-secondary-400 mb-2">
+											<p className="text-xs text-secondary-400 dark:text-white mb-2">
 												Failures by Severity
 											</p>
 											<div className="h-24">
@@ -960,7 +970,7 @@ const ComplianceTab = ({
 										</div>
 									)}
 
-									<p className="text-xs text-secondary-500 mb-3">
+									<p className="text-xs text-secondary-500 dark:text-white mb-3">
 										Last scan:{" "}
 										{new Date(
 											scansByType.openscap.completed_at,
@@ -980,7 +990,7 @@ const ComplianceTab = ({
 								</>
 							) : (
 								<div className="text-center py-6">
-									<p className="text-secondary-500 text-sm mb-3">
+									<p className="text-secondary-500 dark:text-white text-sm mb-3">
 										No OpenSCAP scan data
 									</p>
 									<button
@@ -1005,7 +1015,7 @@ const ComplianceTab = ({
 									<h3 className="text-lg font-semibold text-white">
 										Docker Bench
 									</h3>
-									<p className="text-xs text-secondary-400">
+									<p className="text-xs text-secondary-400 dark:text-white">
 										CIS Docker Benchmark
 									</p>
 								</div>
@@ -1024,25 +1034,33 @@ const ComplianceTab = ({
 											<p className="text-lg font-bold text-white">
 												{scansByType["docker-bench"].total_rules}
 											</p>
-											<p className="text-xs text-secondary-400">Total</p>
+											<p className="text-xs text-secondary-400 dark:text-white">
+												Total
+											</p>
 										</div>
 										<div className="bg-green-900/20 rounded p-2 text-center">
 											<p className="text-lg font-bold text-green-400">
 												{scansByType["docker-bench"].passed}
 											</p>
-											<p className="text-xs text-secondary-400">Passed</p>
+											<p className="text-xs text-secondary-400 dark:text-white">
+												Passed
+											</p>
 										</div>
 										<div className="bg-yellow-900/20 rounded p-2 text-center">
 											<p className="text-lg font-bold text-yellow-400">
 												{scansByType["docker-bench"].warnings}
 											</p>
-											<p className="text-xs text-secondary-400">Warnings</p>
+											<p className="text-xs text-secondary-400 dark:text-white">
+												Warnings
+											</p>
 										</div>
 										<div className="bg-secondary-700/50 rounded p-2 text-center">
-											<p className="text-lg font-bold text-secondary-400">
+											<p className="text-lg font-bold text-secondary-400 dark:text-white">
 												{scansByType["docker-bench"].skipped || 0}
 											</p>
-											<p className="text-xs text-secondary-400">Info</p>
+											<p className="text-xs text-secondary-400 dark:text-white">
+												Info
+											</p>
 										</div>
 									</div>
 
@@ -1050,7 +1068,7 @@ const ComplianceTab = ({
 									{scansByType["docker-bench"].section_breakdown?.length >
 										0 && (
 										<div className="mb-4 p-3 bg-secondary-700/30 rounded-lg">
-											<p className="text-xs text-secondary-400 mb-2">
+											<p className="text-xs text-secondary-400 dark:text-white mb-2">
 												Warnings by Section
 											</p>
 											<div className="h-24">
@@ -1126,7 +1144,7 @@ const ComplianceTab = ({
 										</div>
 									)}
 
-									<p className="text-xs text-secondary-500 mb-3">
+									<p className="text-xs text-secondary-500 dark:text-white mb-3">
 										Last scan:{" "}
 										{new Date(
 											scansByType["docker-bench"].completed_at,
@@ -1146,7 +1164,7 @@ const ComplianceTab = ({
 								</>
 							) : (
 								<div className="text-center py-6">
-									<p className="text-secondary-500 text-sm mb-3">
+									<p className="text-secondary-500 dark:text-white text-sm mb-3">
 										No Docker Bench scan data
 									</p>
 									<button
@@ -1173,15 +1191,15 @@ const ComplianceTab = ({
 				</>
 			) : (
 				<div className="card p-12 text-center">
-					<Shield className="h-16 w-16 text-secondary-600 mx-auto mb-4" />
+					<Shield className="h-16 w-16 text-secondary-600 dark:text-white mx-auto mb-4" />
 					<h3 className="text-lg font-medium text-white mb-2">
 						No Compliance Scans Yet
 					</h3>
-					<p className="text-secondary-400 mb-2">
+					<p className="text-secondary-400 dark:text-white mb-2">
 						Run a security compliance scan to check this host against CIS
 						benchmarks.
 					</p>
-					<p className="text-sm text-secondary-500 mb-6">
+					<p className="text-sm text-secondary-500 dark:text-white mb-6">
 						Ensure OpenSCAP (and Docker if using Docker Bench) is installed on
 						this host.
 					</p>
@@ -1276,7 +1294,7 @@ const ComplianceTab = ({
 			{/* Scan In Progress */}
 			{scanInProgress ? (
 				<div className="bg-secondary-800 rounded-lg border border-primary-600 p-6">
-					<p className="text-xs text-secondary-400 mb-3">
+					<p className="text-xs text-secondary-400 dark:text-white mb-3">
 						The scan runs on the host in the background. You can leave this tab
 						and come back; use Cancel to stop it.
 					</p>
@@ -1289,7 +1307,7 @@ const ComplianceTab = ({
 								<h3 className="text-lg font-medium text-white">
 									Scan In Progress
 								</h3>
-								<p className="text-sm text-secondary-400">
+								<p className="text-sm text-secondary-400 dark:text-white">
 									Running{" "}
 									{availableProfiles.find((p) => p.id === selectedProfile)
 										?.name || selectedProfile}
@@ -1302,7 +1320,9 @@ const ComplianceTab = ({
 									{Math.floor(elapsedTime / 60)}:
 									{(elapsedTime % 60).toString().padStart(2, "0")}
 								</p>
-								<p className="text-xs text-secondary-500">elapsed</p>
+								<p className="text-xs text-secondary-500 dark:text-white">
+									elapsed
+								</p>
 							</div>
 							<button
 								type="button"
@@ -1337,16 +1357,16 @@ const ComplianceTab = ({
 								{scanProgress.message}
 							</p>
 							{scanProgress.phase && (
-								<p className="text-xs text-secondary-500">
+								<p className="text-xs text-secondary-500 dark:text-white">
 									Phase:{" "}
-									<span className="capitalize font-medium text-secondary-400">
+									<span className="capitalize font-medium text-secondary-400 dark:text-white">
 										{scanProgress.phase}
 									</span>
 								</p>
 							)}
 						</div>
 					) : (
-						<p className="text-sm text-secondary-400 flex items-center gap-2">
+						<p className="text-sm text-secondary-400 dark:text-white flex items-center gap-2">
 							<Clock className="h-4 w-4" />
 							{(() => {
 								const currentProfile = availableProfiles.find(
@@ -1377,7 +1397,7 @@ const ComplianceTab = ({
 							<h3 className="text-lg font-medium text-white">
 								Select Scan Profile
 							</h3>
-							<span className="text-sm text-secondary-400">
+							<span className="text-sm text-secondary-400 dark:text-white">
 								{availableProfiles.length} profiles available
 							</span>
 						</div>
@@ -1424,7 +1444,7 @@ const ComplianceTab = ({
 								},
 								other: {
 									name: "Other Profiles",
-									color: "text-secondary-400",
+									color: "text-secondary-400 dark:text-white",
 									bg: "bg-secondary-700/50",
 								},
 							};
@@ -1490,7 +1510,7 @@ const ComplianceTab = ({
 															{profile.name}
 														</p>
 														{profile.description && (
-															<p className="text-xs text-secondary-400 truncate">
+															<p className="text-xs text-secondary-400 dark:text-white truncate">
 																{profile.description}
 															</p>
 														)}
@@ -1536,12 +1556,12 @@ const ComplianceTab = ({
 										className={`p-2 rounded-lg ${enableRemediation ? "bg-orange-600/20" : "bg-secondary-600/50"}`}
 									>
 										<Wrench
-											className={`h-5 w-5 ${enableRemediation ? "text-orange-400" : "text-secondary-400"}`}
+											className={`h-5 w-5 ${enableRemediation ? "text-orange-400" : "text-secondary-400 dark:text-white"}`}
 										/>
 									</div>
 									<div>
 										<p className="text-white font-medium">Auto-Remediation</p>
-										<p className="text-sm text-secondary-400">
+										<p className="text-sm text-secondary-400 dark:text-white">
 											Automatically fix failed rules during scan
 										</p>
 									</div>
@@ -1553,7 +1573,7 @@ const ComplianceTab = ({
 									{enableRemediation ? (
 										<ToggleRight className="h-8 w-8 text-orange-400" />
 									) : (
-										<ToggleLeft className="h-8 w-8 text-secondary-500" />
+										<ToggleLeft className="h-8 w-8 text-secondary-500 dark:text-white" />
 									)}
 								</button>
 							</div>
@@ -1594,7 +1614,7 @@ const ComplianceTab = ({
 										<h3 className="text-lg font-medium text-white">
 											Docker Image Selection
 										</h3>
-										<p className="text-sm text-secondary-400">
+										<p className="text-sm text-secondary-400 dark:text-white">
 											Choose which Docker images to scan for CVEs
 										</p>
 									</div>
@@ -1609,7 +1629,7 @@ const ComplianceTab = ({
 												<p className="text-white font-medium">
 													Scan All Images
 												</p>
-												<p className="text-sm text-secondary-400">
+												<p className="text-sm text-secondary-400 dark:text-white">
 													Scan all Docker images on this host
 												</p>
 											</div>
@@ -1623,7 +1643,7 @@ const ComplianceTab = ({
 											{scanAllDockerImages ? (
 												<ToggleRight className="h-8 w-8 text-blue-500" />
 											) : (
-												<ToggleLeft className="h-8 w-8 text-secondary-500" />
+												<ToggleLeft className="h-8 w-8 text-secondary-500 dark:text-white" />
 											)}
 										</button>
 									</div>
@@ -1631,7 +1651,7 @@ const ComplianceTab = ({
 									{/* Specific Image Input - Only show when Scan All is off */}
 									{!scanAllDockerImages && (
 										<div className="space-y-2">
-											<label className="block text-sm font-medium text-secondary-300">
+											<label className="block text-sm font-medium text-secondary-300 dark:text-white">
 												Image Name (e.g., nginx:latest or ubuntu:22.04)
 											</label>
 											<input
@@ -1677,7 +1697,7 @@ const ComplianceTab = ({
 								<h3 className="text-lg font-medium text-white">
 									Ready to Scan
 								</h3>
-								<p className="text-sm text-secondary-400">
+								<p className="text-sm text-secondary-400 dark:text-white">
 									Selected:{" "}
 									{availableProfiles.find(
 										(p) => (p.xccdf_id || p.id) === selectedProfile,
@@ -1762,7 +1782,7 @@ const ComplianceTab = ({
 							<ComplianceScore score={latestScan.score} size="sm" />
 							<div>
 								<p className="text-sm text-white">Last Scan Result</p>
-								<p className="text-xs text-secondary-400">
+								<p className="text-xs text-secondary-400 dark:text-white">
 									{new Date(latestScan.completed_at).toLocaleString()}
 								</p>
 							</div>
@@ -1894,7 +1914,7 @@ const ComplianceTab = ({
 						label: "Info/Note",
 						count: counts.skipped,
 						icon: MinusCircle,
-						color: "text-secondary-400",
+						color: "text-secondary-400 dark:text-white",
 						bgColor: "bg-secondary-700/50",
 						borderColor: "border-secondary-600",
 					},
@@ -1933,7 +1953,7 @@ const ComplianceTab = ({
 						label: "Skipped/N/A",
 						count: counts.skipped,
 						icon: MinusCircle,
-						color: "text-secondary-400",
+						color: "text-secondary-400 dark:text-white",
 						bgColor: "bg-secondary-700/50",
 						borderColor: "border-secondary-600",
 					},
@@ -2082,7 +2102,7 @@ const ComplianceTab = ({
 
 						{/* Profile Type Selection - Click to switch between scan types */}
 						<div className="mb-2">
-							<h3 className="text-sm font-medium text-secondary-400 mb-2">
+							<h3 className="text-sm font-medium text-secondary-400 dark:text-white mb-2">
 								Select Scan Type to View
 							</h3>
 						</div>
@@ -2122,7 +2142,7 @@ const ComplianceTab = ({
 													<RefreshCw className="h-5 w-5 text-primary-400 animate-spin" />
 												) : (
 													<Icon
-														className={`h-5 w-5 ${isActive ? "text-primary-400" : "text-secondary-400"}`}
+														className={`h-5 w-5 ${isActive ? "text-primary-400" : "text-secondary-400 dark:text-white"}`}
 													/>
 												)}
 												<span
@@ -2151,7 +2171,7 @@ const ComplianceTab = ({
 											)}
 										</div>
 										{tab.available ? (
-											<div className="flex items-center gap-4 text-xs text-secondary-400">
+											<div className="flex items-center gap-4 text-xs text-secondary-400 dark:text-white">
 												{tab.id === "docker-bench" ? (
 													<>
 														<span className="text-green-400">
@@ -2175,12 +2195,12 @@ const ComplianceTab = ({
 												)}
 											</div>
 										) : (
-											<p className="text-xs text-secondary-500">
+											<p className="text-xs text-secondary-500 dark:text-white">
 												No scan data available
 											</p>
 										)}
 										{tab.date && (
-											<p className="text-xs text-secondary-500 mt-1">
+											<p className="text-xs text-secondary-500 dark:text-white mt-1">
 												{new Date(tab.date).toLocaleDateString()}
 											</p>
 										)}
@@ -2208,7 +2228,7 @@ const ComplianceTab = ({
 												{latestScan.compliance_profiles?.name ||
 													(isDockerBenchResults ? "Docker Bench" : "OpenSCAP")}
 											</p>
-											<p className="text-xs text-secondary-400">
+											<p className="text-xs text-secondary-400 dark:text-white">
 												{new Date(latestScan.completed_at).toLocaleString()} •{" "}
 												{latestScan.total_rules} rules evaluated
 											</p>
@@ -2224,7 +2244,7 @@ const ComplianceTab = ({
 											className="p-2 hover:bg-secondary-700 rounded-lg transition-colors"
 											title="Refresh results"
 										>
-											<RefreshCw className="h-4 w-4 text-secondary-400" />
+											<RefreshCw className="h-4 w-4 text-secondary-400 dark:text-white" />
 										</button>
 									</div>
 								</div>
@@ -2252,7 +2272,7 @@ const ComplianceTab = ({
 						{isFetching && (
 							<div className="flex items-center justify-center py-8 bg-secondary-800 rounded-lg border border-secondary-700 mb-4">
 								<RefreshCw className="h-6 w-6 text-primary-400 animate-spin mr-3" />
-								<span className="text-secondary-400">
+								<span className="text-secondary-400 dark:text-white">
 									Loading{" "}
 									{profileTypeFilter === "docker-bench"
 										? "Docker Bench"
@@ -2283,7 +2303,7 @@ const ComplianceTab = ({
 												className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
 													isActive
 														? `${tab.color} border-current bg-secondary-700/50`
-														: "text-secondary-400 border-transparent hover:text-secondary-200 hover:bg-secondary-700/30"
+														: "text-secondary-400 dark:text-white border-transparent hover:text-secondary-200 hover:bg-secondary-700/30"
 												}`}
 											>
 												<Icon className="h-4 w-4" />
@@ -2303,7 +2323,7 @@ const ComplianceTab = ({
 								{/* Severity subtabs - only show for Failed tab in OpenSCAP results (Docker Bench doesn't have severity) */}
 								{statusFilter === "fail" && !isDockerBenchResults && (
 									<div className="flex items-center gap-2 px-4 py-2 border-b border-secondary-700 bg-secondary-750">
-										<span className="text-xs text-secondary-400 mr-2">
+										<span className="text-xs text-secondary-400 dark:text-white mr-2">
 											Severity:
 										</span>
 										{severitySubtabs.map((tab) => {
@@ -2318,7 +2338,7 @@ const ComplianceTab = ({
 													className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${
 														isActive
 															? `bg-secondary-600 ${tab.color || "text-white"}`
-															: "text-secondary-400 hover:text-secondary-200 hover:bg-secondary-700"
+															: "text-secondary-400 dark:text-white hover:text-secondary-200 hover:bg-secondary-700"
 													}`}
 												>
 													{tab.label}
@@ -2337,7 +2357,7 @@ const ComplianceTab = ({
 								<div className="px-4 py-2 border-b border-secondary-700">
 									<div className="flex items-center gap-3">
 										<div className="relative flex-1">
-											<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400" />
+											<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-white" />
 											<input
 												type="text"
 												placeholder="Search rules by title or ID..."
@@ -2354,7 +2374,7 @@ const ComplianceTab = ({
 														setRuleSearch("");
 														setCurrentPage(1);
 													}}
-													className="absolute right-3 top-1/2 transform -translate-y-1/2 text-secondary-400 hover:text-white"
+													className="absolute right-3 top-1/2 transform -translate-y-1/2 text-secondary-400 dark:text-white hover:text-white"
 												>
 													<XCircle className="h-4 w-4" />
 												</button>
@@ -2369,7 +2389,7 @@ const ComplianceTab = ({
 											className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
 												groupBySection
 													? "bg-primary-600 text-white"
-													: "bg-secondary-700 text-secondary-300 hover:bg-secondary-600"
+													: "bg-secondary-700 text-secondary-300 dark:text-white hover:bg-secondary-600"
 											}`}
 											title={
 												groupBySection
@@ -2388,7 +2408,7 @@ const ComplianceTab = ({
 									(scanResultsFetching && !scanResultsData)) && (
 									<div className="flex items-center justify-center py-12 border-b border-secondary-700">
 										<RefreshCw className="h-8 w-8 text-primary-400 animate-spin mr-3" />
-										<span className="text-secondary-400">
+										<span className="text-secondary-400 dark:text-white">
 											Loading scan results...
 										</span>
 									</div>
@@ -2417,7 +2437,7 @@ const ComplianceTab = ({
 									!scanResultsError &&
 									displayResults &&
 									displayResults.length > 0 && (
-										<div className="px-4 py-2 border-b border-secondary-700 flex items-center justify-between text-xs text-secondary-400">
+										<div className="px-4 py-2 border-b border-secondary-700 flex items-center justify-between text-xs text-secondary-400 dark:text-white">
 											<span>
 												Showing {startIndex + 1}-
 												{Math.min(endIndex, totalResults)} of {totalResults}{" "}
@@ -2447,18 +2467,18 @@ const ComplianceTab = ({
 														{expandedSections[section] ? (
 															<FolderOpen className="h-5 w-5 text-primary-400" />
 														) : (
-															<Folder className="h-5 w-5 text-secondary-400" />
+															<Folder className="h-5 w-5 text-secondary-400 dark:text-white" />
 														)}
 														<span className="text-white font-medium">
 															Section {section}
 														</span>
-														<span className="px-2 py-0.5 rounded-full text-xs bg-secondary-600 text-secondary-300">
+														<span className="px-2 py-0.5 rounded-full text-xs bg-secondary-600 text-secondary-300 dark:text-white">
 															{groupedResults[section].length} rules
 														</span>
 														{expandedSections[section] ? (
-															<ChevronDown className="h-4 w-4 text-secondary-400 ml-auto" />
+															<ChevronDown className="h-4 w-4 text-secondary-400 dark:text-white ml-auto" />
 														) : (
-															<ChevronRight className="h-4 w-4 text-secondary-400 ml-auto" />
+															<ChevronRight className="h-4 w-4 text-secondary-400 dark:text-white ml-auto" />
 														)}
 													</button>
 													{expandedSections[section] && (
@@ -2470,9 +2490,9 @@ const ComplianceTab = ({
 																		className="w-full flex items-center gap-3 text-left"
 																	>
 																		{expandedRules[result.id] ? (
-																			<ChevronDown className="h-4 w-4 text-secondary-400 flex-shrink-0" />
+																			<ChevronDown className="h-4 w-4 text-secondary-400 dark:text-white flex-shrink-0" />
 																		) : (
-																			<ChevronRight className="h-4 w-4 text-secondary-400 flex-shrink-0" />
+																			<ChevronRight className="h-4 w-4 text-secondary-400 dark:text-white flex-shrink-0" />
 																		)}
 																		{getStatusIcon(result.status)}
 																		<div className="flex-1 min-w-0">
@@ -2482,7 +2502,7 @@ const ComplianceTab = ({
 																					result.title ||
 																					"Unknown Rule"}
 																			</p>
-																			<p className="text-xs text-secondary-400">
+																			<p className="text-xs text-secondary-400 dark:text-white">
 																				{(result.compliance_rules?.severity ||
 																					result.rule?.severity ||
 																					result.severity) && (
@@ -2507,7 +2527,7 @@ const ComplianceTab = ({
 																												result.severity) ===
 																											"medium"
 																										? "text-yellow-400"
-																										: "text-secondary-400"
+																										: "text-secondary-400 dark:text-white"
 																						}`}
 																					>
 																						{result.compliance_rules
@@ -2531,10 +2551,10 @@ const ComplianceTab = ({
 																				result.rule?.rule_ref ||
 																				result.rule_id) && (
 																				<div className="flex items-center gap-2 text-xs">
-																					<span className="text-secondary-500">
+																					<span className="text-secondary-500 dark:text-white">
 																						Rule ID:
 																					</span>
-																					<code className="bg-secondary-700 px-2 py-0.5 rounded text-secondary-300 font-mono">
+																					<code className="bg-secondary-700 px-2 py-0.5 rounded text-secondary-300 dark:text-white font-mono">
 																						{result.compliance_rules
 																							?.rule_ref ||
 																							result.rule?.rule_ref ||
@@ -2546,11 +2566,11 @@ const ComplianceTab = ({
 																				result.rule?.description ||
 																				result.description) && (
 																				<div>
-																					<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+																					<p className="text-secondary-400 dark:text-white font-medium mb-1 flex items-center gap-1">
 																						<Info className="h-3.5 w-3.5" />
 																						Description
 																					</p>
-																					<p className="text-secondary-300">
+																					<p className="text-secondary-300 dark:text-white">
 																						{result.compliance_rules
 																							?.description ||
 																							result.rule?.description ||
@@ -2608,7 +2628,7 @@ const ComplianceTab = ({
 																								</div>
 																							</>
 																						) : (
-																							<p className="text-secondary-400 text-xs italic">
+																							<p className="text-secondary-400 dark:text-white text-xs italic">
 																								No failure details in the
 																								database (finding, actual,
 																								expected are empty). The agent
@@ -2626,11 +2646,11 @@ const ComplianceTab = ({
 																				result.rule?.rationale ||
 																				result.rationale) && (
 																				<div>
-																					<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+																					<p className="text-secondary-400 dark:text-white font-medium mb-1 flex items-center gap-1">
 																						<BookOpen className="h-3.5 w-3.5" />
 																						Why This Matters
 																					</p>
-																					<p className="text-secondary-300 text-sm leading-relaxed">
+																					<p className="text-secondary-300 dark:text-white text-sm leading-relaxed">
 																						{result.compliance_rules
 																							?.rationale ||
 																							result.rule?.rationale ||
@@ -2642,7 +2662,7 @@ const ComplianceTab = ({
 																				<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
 																					{result.actual && (
 																						<div className="bg-secondary-700/50 rounded p-2">
-																							<p className="text-secondary-400 text-xs font-medium mb-1">
+																							<p className="text-secondary-400 dark:text-white text-xs font-medium mb-1">
 																								Current Value
 																							</p>
 																							<code className="text-red-300 text-xs break-all">
@@ -2652,7 +2672,7 @@ const ComplianceTab = ({
 																					)}
 																					{result.expected && (
 																						<div className="bg-secondary-700/50 rounded p-2">
-																							<p className="text-secondary-400 text-xs font-medium mb-1">
+																							<p className="text-secondary-400 dark:text-white text-xs font-medium mb-1">
 																								Required Value
 																							</p>
 																							<code className="text-green-300 text-xs break-all">
@@ -2765,11 +2785,11 @@ const ComplianceTab = ({
 																				result.rule?.remediation ||
 																				result.remediation) && (
 																				<div>
-																					<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+																					<p className="text-secondary-400 dark:text-white font-medium mb-1 flex items-center gap-1">
 																						<Wrench className="h-3.5 w-3.5" />
 																						Remediation
 																					</p>
-																					<pre className="text-secondary-300 whitespace-pre-wrap bg-secondary-700/30 rounded p-2 text-xs font-mono overflow-x-auto">
+																					<pre className="text-secondary-300 dark:text-white whitespace-pre-wrap bg-secondary-700/30 rounded p-2 text-xs font-mono overflow-x-auto">
 																						{result.compliance_rules
 																							?.remediation ||
 																							result.rule?.remediation ||
@@ -2794,9 +2814,9 @@ const ComplianceTab = ({
 														className="w-full flex items-center gap-3 text-left"
 													>
 														{expandedRules[result.id] ? (
-															<ChevronDown className="h-4 w-4 text-secondary-400 flex-shrink-0" />
+															<ChevronDown className="h-4 w-4 text-secondary-400 dark:text-white flex-shrink-0" />
 														) : (
-															<ChevronRight className="h-4 w-4 text-secondary-400 flex-shrink-0" />
+															<ChevronRight className="h-4 w-4 text-secondary-400 dark:text-white flex-shrink-0" />
 														)}
 														{getStatusIcon(result.status)}
 														<div className="flex-1 min-w-0">
@@ -2806,7 +2826,7 @@ const ComplianceTab = ({
 																	result.title ||
 																	"Unknown Rule"}
 															</p>
-															<p className="text-xs text-secondary-400">
+															<p className="text-xs text-secondary-400 dark:text-white">
 																{(result.compliance_rules?.section ||
 																	result.rule?.section ||
 																	result.section) &&
@@ -2831,7 +2851,7 @@ const ComplianceTab = ({
 																								result.rule?.severity ||
 																								result.severity) === "medium"
 																						? "text-yellow-400"
-																						: "text-secondary-400"
+																						: "text-secondary-400 dark:text-white"
 																		}`}
 																	>
 																		{result.compliance_rules?.severity ||
@@ -2855,10 +2875,10 @@ const ComplianceTab = ({
 																result.rule?.rule_ref ||
 																result.rule_id) && (
 																<div className="flex items-center gap-2 text-xs">
-																	<span className="text-secondary-500">
+																	<span className="text-secondary-500 dark:text-white">
 																		Rule ID:
 																	</span>
-																	<code className="bg-secondary-700 px-2 py-0.5 rounded text-secondary-300 font-mono">
+																	<code className="bg-secondary-700 px-2 py-0.5 rounded text-secondary-300 dark:text-white font-mono">
 																		{result.compliance_rules?.rule_ref ||
 																			result.rule?.rule_ref ||
 																			result.rule_id}
@@ -2869,11 +2889,11 @@ const ComplianceTab = ({
 																result.rule?.description ||
 																result.description) && (
 																<div>
-																	<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+																	<p className="text-secondary-400 dark:text-white font-medium mb-1 flex items-center gap-1">
 																		<Info className="h-3.5 w-3.5" />
 																		Description
 																	</p>
-																	<p className="text-secondary-300">
+																	<p className="text-secondary-300 dark:text-white">
 																		{result.compliance_rules?.description ||
 																			result.rule?.description ||
 																			result.description}
@@ -2929,7 +2949,7 @@ const ComplianceTab = ({
 																				</div>
 																			</>
 																		) : (
-																			<p className="text-secondary-400 text-xs italic">
+																			<p className="text-secondary-400 dark:text-white text-xs italic">
 																				No failure details in the database
 																				(finding, actual, expected are empty).
 																				The agent may not be sending these
@@ -2948,11 +2968,11 @@ const ComplianceTab = ({
 																result.rule?.rationale ||
 																result.rationale) && (
 																<div>
-																	<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+																	<p className="text-secondary-400 dark:text-white font-medium mb-1 flex items-center gap-1">
 																		<BookOpen className="h-3.5 w-3.5" />
 																		Why This Matters
 																	</p>
-																	<p className="text-secondary-300 text-sm leading-relaxed">
+																	<p className="text-secondary-300 dark:text-white text-sm leading-relaxed">
 																		{result.compliance_rules?.rationale ||
 																			result.rule?.rationale ||
 																			result.rationale}
@@ -2964,7 +2984,7 @@ const ComplianceTab = ({
 																<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
 																	{result.actual && (
 																		<div className="bg-secondary-700/50 rounded p-2">
-																			<p className="text-secondary-400 text-xs font-medium mb-1">
+																			<p className="text-secondary-400 dark:text-white text-xs font-medium mb-1">
 																				Current Value
 																			</p>
 																			<code className="text-red-300 text-xs break-all">
@@ -2974,7 +2994,7 @@ const ComplianceTab = ({
 																	)}
 																	{result.expected && (
 																		<div className="bg-secondary-700/50 rounded p-2">
-																			<p className="text-secondary-400 text-xs font-medium mb-1">
+																			<p className="text-secondary-400 dark:text-white text-xs font-medium mb-1">
 																				Required Value
 																			</p>
 																			<code className="text-green-300 text-xs break-all">
@@ -3072,11 +3092,11 @@ const ComplianceTab = ({
 																result.rule?.remediation ||
 																result.remediation) && (
 																<div>
-																	<p className="text-secondary-400 font-medium mb-1 flex items-center gap-1">
+																	<p className="text-secondary-400 dark:text-white font-medium mb-1 flex items-center gap-1">
 																		<Wrench className="h-3.5 w-3.5" />
 																		Remediation Steps
 																	</p>
-																	<pre className="text-secondary-300 whitespace-pre-wrap bg-secondary-700/30 rounded p-2 text-xs font-mono overflow-x-auto">
+																	<pre className="text-secondary-300 dark:text-white whitespace-pre-wrap bg-secondary-700/30 rounded p-2 text-xs font-mono overflow-x-auto">
 																		{result.compliance_rules?.remediation ||
 																			result.rule?.remediation ||
 																			result.remediation}
@@ -3147,7 +3167,7 @@ const ComplianceTab = ({
 																			</>
 																		)}
 																	</button>
-																	<p className="text-xs text-secondary-500 mt-1">
+																	<p className="text-xs text-secondary-500 dark:text-white mt-1">
 																		Attempts to automatically remediate this
 																		specific rule
 																	</p>
@@ -3164,7 +3184,7 @@ const ComplianceTab = ({
 													<button
 														onClick={() => setCurrentPage(1)}
 														disabled={currentPage === 1}
-														className="px-2 py-1 text-xs rounded bg-secondary-700 text-secondary-300 hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+														className="px-2 py-1 text-xs rounded bg-secondary-700 text-secondary-300 dark:text-white hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
 													>
 														First
 													</button>
@@ -3173,7 +3193,7 @@ const ComplianceTab = ({
 															setCurrentPage((p) => Math.max(1, p - 1))
 														}
 														disabled={currentPage === 1}
-														className="p-1.5 rounded bg-secondary-700 text-secondary-300 hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+														className="p-1.5 rounded bg-secondary-700 text-secondary-300 dark:text-white hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
 													>
 														<ChevronLeft className="h-4 w-4" />
 													</button>
@@ -3195,7 +3215,7 @@ const ComplianceTab = ({
 																	filteredPages[index - 1] !== page - 1 && (
 																		<span
 																			key={`ellipsis-${page}`}
-																			className="px-1 text-secondary-500"
+																			className="px-1 text-secondary-500 dark:text-white"
 																		>
 																			...
 																		</span>
@@ -3206,7 +3226,7 @@ const ComplianceTab = ({
 																	className={`px-3 py-1 text-sm rounded ${
 																		currentPage === page
 																			? "bg-primary-600 text-white"
-																			: "bg-secondary-700 text-secondary-300 hover:bg-secondary-600"
+																			: "bg-secondary-700 text-secondary-300 dark:text-white hover:bg-secondary-600"
 																	}`}
 																>
 																	{page}
@@ -3220,14 +3240,14 @@ const ComplianceTab = ({
 															setCurrentPage((p) => Math.min(totalPages, p + 1))
 														}
 														disabled={currentPage === totalPages}
-														className="p-1.5 rounded bg-secondary-700 text-secondary-300 hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+														className="p-1.5 rounded bg-secondary-700 text-secondary-300 dark:text-white hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
 													>
 														<ChevronRight className="h-4 w-4" />
 													</button>
 													<button
 														onClick={() => setCurrentPage(totalPages)}
 														disabled={currentPage === totalPages}
-														className="px-2 py-1 text-xs rounded bg-secondary-700 text-secondary-300 hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+														className="px-2 py-1 text-xs rounded bg-secondary-700 text-secondary-300 dark:text-white hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
 													>
 														Last
 													</button>
@@ -3239,7 +3259,7 @@ const ComplianceTab = ({
 									!scanResultsFetching &&
 									!scanResultsError ? (
 									<div className="p-8 text-center">
-										<p className="text-secondary-400">
+										<p className="text-secondary-400 dark:text-white">
 											No {statusFilter !== "all" ? statusFilter : ""} results
 											found for this filter. Try another tab (e.g. Passed or
 											Warnings).
@@ -3251,11 +3271,11 @@ const ComplianceTab = ({
 					</>
 				) : (
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-12 text-center">
-						<ListChecks className="h-12 w-12 text-secondary-600 mx-auto mb-4" />
+						<ListChecks className="h-12 w-12 text-secondary-600 dark:text-white mx-auto mb-4" />
 						<h3 className="text-lg font-medium text-white mb-2">
 							No Results Yet
 						</h3>
-						<p className="text-secondary-400 mb-4">
+						<p className="text-secondary-400 dark:text-white mb-4">
 							Run a compliance scan to see detailed results
 						</p>
 						<button
@@ -3314,7 +3334,7 @@ const ComplianceTab = ({
 											<h4 className="text-white font-medium">
 												{typeInfo.name}
 											</h4>
-											<p className="text-xs text-secondary-400">
+											<p className="text-xs text-secondary-400 dark:text-white">
 												{scans.length} scan{scans.length !== 1 ? "s" : ""}
 											</p>
 										</div>
@@ -3337,7 +3357,7 @@ const ComplianceTab = ({
 														</span>
 													)}
 												</div>
-												<p className="text-xs text-secondary-500">
+												<p className="text-xs text-secondary-500 dark:text-white">
 													{new Date(
 														latestScan.completed_at,
 													).toLocaleDateString()}
@@ -3386,7 +3406,7 @@ const ComplianceTab = ({
 														</span>
 													)}
 												</div>
-												<p className="text-sm text-secondary-400">
+												<p className="text-sm text-secondary-400 dark:text-white">
 													{new Date(scan.completed_at).toLocaleString()}
 												</p>
 											</div>
@@ -3406,7 +3426,7 @@ const ComplianceTab = ({
 													</span>
 												)}
 											</div>
-											<p className="text-xs text-secondary-500">
+											<p className="text-xs text-secondary-500 dark:text-white">
 												{scan.total_rules} total rules
 											</p>
 										</div>
@@ -3422,11 +3442,11 @@ const ComplianceTab = ({
 					</div>
 				) : (
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-12 text-center">
-						<History className="h-12 w-12 text-secondary-600 mx-auto mb-4" />
+						<History className="h-12 w-12 text-secondary-600 dark:text-white mx-auto mb-4" />
 						<h3 className="text-lg font-medium text-white mb-2">
 							No Scan History
 						</h3>
-						<p className="text-secondary-400 mb-4">
+						<p className="text-secondary-400 dark:text-white mb-4">
 							Previous scans will appear here
 						</p>
 						<button
@@ -3556,7 +3576,7 @@ const ComplianceTab = ({
 						<label className="flex items-center justify-between gap-3 p-3 rounded-lg bg-secondary-700/40 cursor-pointer">
 							<div>
 								<span className="text-sm font-medium text-white">OpenSCAP</span>
-								<p className="text-xs text-secondary-400 mt-0.5">
+								<p className="text-xs text-secondary-400 dark:text-white mt-0.5">
 									CIS Benchmarks, STIG, and other SCAP-based compliance checks
 								</p>
 							</div>
@@ -3578,7 +3598,7 @@ const ComplianceTab = ({
 								<span className="text-sm font-medium text-white">
 									Docker Bench
 								</span>
-								<p className="text-xs text-secondary-400 mt-0.5">
+								<p className="text-xs text-secondary-400 dark:text-white mt-0.5">
 									CIS Docker Benchmark security checks
 									{!dockerEnabled &&
 										" — requires Docker integration to be enabled"}
@@ -3623,7 +3643,7 @@ const ComplianceTab = ({
 							}
 						>
 							<RefreshCw
-								className={`h-4 w-4 ${isRefreshingStatus || ssgUpgradeMutation.isPending || ssgUpgradeMessage ? "text-primary-400 animate-spin" : "text-secondary-400"}`}
+								className={`h-4 w-4 ${isRefreshingStatus || ssgUpgradeMutation.isPending || ssgUpgradeMessage ? "text-primary-400 animate-spin" : "text-secondary-400 dark:text-white"}`}
 							/>
 						</button>
 					</div>
@@ -3639,14 +3659,14 @@ const ComplianceTab = ({
 								) : status.status === "error" ? (
 									<XCircle className="h-5 w-5 text-red-400" />
 								) : (
-									<MinusCircle className="h-5 w-5 text-secondary-400" />
+									<MinusCircle className="h-5 w-5 text-secondary-400 dark:text-white" />
 								)}
 								<div className="flex-1">
 									<p className="text-white font-medium capitalize">
 										{status.status || "Unknown"}
 									</p>
 									{status.message && (
-										<p className="text-sm text-secondary-400">
+										<p className="text-sm text-secondary-400 dark:text-white">
 											{status.message}
 										</p>
 									)}
@@ -3678,14 +3698,16 @@ const ComplianceTab = ({
 										</div>
 										<div>
 											<p className="text-white font-medium">OpenSCAP Scanner</p>
-											<p className="text-xs text-secondary-400">
+											<p className="text-xs text-secondary-400 dark:text-white">
 												CIS Benchmark Scanning
 											</p>
 										</div>
 									</div>
 									<div className="space-y-2 text-sm">
 										<div className="flex justify-between">
-											<span className="text-secondary-400">Status</span>
+											<span className="text-secondary-400 dark:text-white">
+												Status
+											</span>
 											<span
 												className={`capitalize ${
 													components.openscap === "ready" ||
@@ -3696,7 +3718,7 @@ const ComplianceTab = ({
 															? "text-blue-400"
 															: components.openscap === "error"
 																? "text-red-400"
-																: "text-secondary-400"
+																: "text-secondary-400 dark:text-white"
 												}`}
 											>
 												{components.openscap ||
@@ -3706,23 +3728,27 @@ const ComplianceTab = ({
 											</span>
 										</div>
 										<div className="flex justify-between">
-											<span className="text-secondary-400">Version</span>
-											<span className="text-secondary-300 font-mono text-xs">
+											<span className="text-secondary-400 dark:text-white">
+												Version
+											</span>
+											<span className="text-secondary-300 dark:text-white font-mono text-xs">
 												{info?.openscap_version || "N/A"}
 											</span>
 										</div>
 										<div className="flex justify-between">
-											<span className="text-secondary-400">
+											<span className="text-secondary-400 dark:text-white">
 												Content Package
 											</span>
-											<span className="text-secondary-300 font-mono text-xs">
+											<span className="text-secondary-300 dark:text-white font-mono text-xs">
 												{info?.content_package || "N/A"}
 											</span>
 										</div>
 										<div className="flex justify-between">
-											<span className="text-secondary-400">Content File</span>
+											<span className="text-secondary-400 dark:text-white">
+												Content File
+											</span>
 											<span
-												className="text-secondary-300 font-mono text-xs truncate max-w-[180px]"
+												className="text-secondary-300 dark:text-white font-mono text-xs truncate max-w-[180px]"
 												title={info?.content_file}
 											>
 												{info?.content_file || "N/A"}
@@ -3730,9 +3756,11 @@ const ComplianceTab = ({
 										</div>
 										{info?.ssg_version && (
 											<div className="flex justify-between">
-												<span className="text-secondary-400">SSG Version</span>
+												<span className="text-secondary-400 dark:text-white">
+													SSG Version
+												</span>
 												<span
-													className={`font-mono text-xs ${info?.ssg_needs_upgrade ? "text-yellow-400" : "text-secondary-300"}`}
+													className={`font-mono text-xs ${info?.ssg_needs_upgrade ? "text-yellow-400" : "text-secondary-300 dark:text-white"}`}
 												>
 													{info.ssg_version}
 													{info?.ssg_needs_upgrade &&
@@ -3789,27 +3817,33 @@ const ComplianceTab = ({
 											<p className="text-white font-medium">
 												System Information
 											</p>
-											<p className="text-xs text-secondary-400">
+											<p className="text-xs text-secondary-400 dark:text-white">
 												Detected OS Details
 											</p>
 										</div>
 									</div>
 									<div className="space-y-2 text-sm">
 										<div className="flex justify-between">
-											<span className="text-secondary-400">OS Name</span>
-											<span className="text-secondary-300 capitalize">
+											<span className="text-secondary-400 dark:text-white">
+												OS Name
+											</span>
+											<span className="text-secondary-300 dark:text-white capitalize">
 												{info?.os_name || "N/A"}
 											</span>
 										</div>
 										<div className="flex justify-between">
-											<span className="text-secondary-400">Version</span>
-											<span className="text-secondary-300">
+											<span className="text-secondary-400 dark:text-white">
+												Version
+											</span>
+											<span className="text-secondary-300 dark:text-white">
 												{info?.os_version || "N/A"}
 											</span>
 										</div>
 										<div className="flex justify-between">
-											<span className="text-secondary-400">Family</span>
-											<span className="text-secondary-300 capitalize">
+											<span className="text-secondary-400 dark:text-white">
+												Family
+											</span>
+											<span className="text-secondary-300 dark:text-white capitalize">
 												{info?.os_family || "N/A"}
 											</span>
 										</div>
@@ -3824,14 +3858,16 @@ const ComplianceTab = ({
 										</div>
 										<div>
 											<p className="text-white font-medium">Docker Bench</p>
-											<p className="text-xs text-secondary-400">
+											<p className="text-xs text-secondary-400 dark:text-white">
 												CIS Docker Benchmark
 											</p>
 										</div>
 									</div>
 									<div className="space-y-2 text-sm">
 										<div className="flex justify-between">
-											<span className="text-secondary-400">Status</span>
+											<span className="text-secondary-400 dark:text-white">
+												Status
+											</span>
 											<span
 												className={`capitalize ${
 													components["docker-bench"] === "ready"
@@ -3839,30 +3875,34 @@ const ComplianceTab = ({
 														: components["docker-bench"] === "installing"
 															? "text-blue-400"
 															: components["docker-bench"] === "unavailable"
-																? "text-secondary-500"
+																? "text-secondary-500 dark:text-white"
 																: components["docker-bench"] === "error"
 																	? "text-red-400"
-																	: "text-secondary-400"
+																	: "text-secondary-400 dark:text-white"
 												}`}
 											>
 												{components["docker-bench"] || "Not configured"}
 											</span>
 										</div>
 										<div className="flex justify-between">
-											<span className="text-secondary-400">Available</span>
+											<span className="text-secondary-400 dark:text-white">
+												Available
+											</span>
 											<span
 												className={
 													info?.docker_bench_available
 														? "text-green-400"
-														: "text-secondary-500"
+														: "text-secondary-500 dark:text-white"
 												}
 											>
 												{info?.docker_bench_available ? "Yes" : "No"}
 											</span>
 										</div>
 										<div className="flex justify-between">
-											<span className="text-secondary-400">Requirement</span>
-											<span className="text-secondary-300 text-xs">
+											<span className="text-secondary-400 dark:text-white">
+												Requirement
+											</span>
+											<span className="text-secondary-300 dark:text-white text-xs">
 												Docker Integration enabled
 											</span>
 										</div>
@@ -3878,14 +3918,16 @@ const ComplianceTab = ({
 											</div>
 											<div>
 												<p className="text-white font-medium">oscap-docker</p>
-												<p className="text-xs text-secondary-400">
+												<p className="text-xs text-secondary-400 dark:text-white">
 													Docker Image CVE Scanning
 												</p>
 											</div>
 										</div>
 										<div className="space-y-2 text-sm">
 											<div className="flex justify-between">
-												<span className="text-secondary-400">Status</span>
+												<span className="text-secondary-400 dark:text-white">
+													Status
+												</span>
 												<span
 													className={`capitalize ${
 														components["oscap-docker"] === "ready"
@@ -3894,27 +3936,31 @@ const ComplianceTab = ({
 																? "text-blue-400"
 																: components["oscap-docker"] === "error"
 																	? "text-red-400"
-																	: "text-secondary-400"
+																	: "text-secondary-400 dark:text-white"
 													}`}
 												>
 													{components["oscap-docker"] || "Not configured"}
 												</span>
 											</div>
 											<div className="flex justify-between">
-												<span className="text-secondary-400">Available</span>
+												<span className="text-secondary-400 dark:text-white">
+													Available
+												</span>
 												<span
 													className={
 														info?.oscap_docker_available
 															? "text-green-400"
-															: "text-secondary-500"
+															: "text-secondary-500 dark:text-white"
 													}
 												>
 													{info?.oscap_docker_available ? "Yes" : "No"}
 												</span>
 											</div>
 											<div className="flex justify-between">
-												<span className="text-secondary-400">Requirement</span>
-												<span className="text-secondary-300 text-xs">
+												<span className="text-secondary-400 dark:text-white">
+													Requirement
+												</span>
+												<span className="text-secondary-300 dark:text-white text-xs">
 													Docker + Compliance enabled
 												</span>
 											</div>
@@ -3932,7 +3978,7 @@ const ComplianceTab = ({
 											<p className="text-white font-medium">
 												Available Profiles
 											</p>
-											<p className="text-xs text-secondary-400">
+											<p className="text-xs text-secondary-400 dark:text-white">
 												Scan options from agent
 											</p>
 										</div>
@@ -3944,7 +3990,7 @@ const ComplianceTab = ({
 													key={`profile-${idx}-${profile || ""}`}
 													className="flex items-center justify-between text-sm"
 												>
-													<span className="text-secondary-300">
+													<span className="text-secondary-300 dark:text-white">
 														{profile.name}
 													</span>
 													<span
@@ -3961,7 +4007,7 @@ const ComplianceTab = ({
 												</div>
 											))
 										) : (
-											<p className="text-secondary-500 text-sm">
+											<p className="text-secondary-500 dark:text-white text-sm">
 												No profiles available
 											</p>
 										)}
@@ -3971,16 +4017,18 @@ const ComplianceTab = ({
 
 							{/* Last Updated */}
 							{status.timestamp && (
-								<p className="text-xs text-secondary-500 text-right">
+								<p className="text-xs text-secondary-500 dark:text-white text-right">
 									Last updated: {new Date(status.timestamp).toLocaleString()}
 								</p>
 							)}
 						</div>
 					) : (
 						<div className="text-center py-8">
-							<Info className="h-12 w-12 text-secondary-600 mx-auto mb-3" />
-							<p className="text-secondary-400">No scanner status available</p>
-							<p className="text-sm text-secondary-500 mt-1">
+							<Info className="h-12 w-12 text-secondary-600 dark:text-white mx-auto mb-3" />
+							<p className="text-secondary-400 dark:text-white">
+								No scanner status available
+							</p>
+							<p className="text-sm text-secondary-500 dark:text-white mt-1">
 								Enable compliance integration to see scanner details
 							</p>
 						</div>
@@ -3993,7 +4041,7 @@ const ComplianceTab = ({
 						<Info className="h-5 w-5 text-primary-400" />
 						About Compliance Scanning
 					</h3>
-					<div className="space-y-4 text-sm text-secondary-300">
+					<div className="space-y-4 text-sm text-secondary-300 dark:text-white">
 						<p>
 							PatchMon uses industry-standard compliance scanning tools to
 							evaluate your systems against security benchmarks.
@@ -4001,7 +4049,7 @@ const ComplianceTab = ({
 						<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 							<div className="p-3 bg-secondary-700/30 rounded-lg">
 								<p className="text-white font-medium mb-1">OpenSCAP (oscap)</p>
-								<p className="text-secondary-400 text-xs">
+								<p className="text-secondary-400 dark:text-white text-xs">
 									Scans against CIS Benchmarks for Linux distributions.
 									Evaluates system configuration, file permissions, and security
 									settings.
@@ -4011,7 +4059,7 @@ const ComplianceTab = ({
 								<p className="text-white font-medium mb-1">
 									Docker Bench for Security
 								</p>
-								<p className="text-secondary-400 text-xs">
+								<p className="text-secondary-400 dark:text-white text-xs">
 									Checks Docker host and container configurations against CIS
 									Docker Benchmark recommendations.
 								</p>
@@ -4027,7 +4075,7 @@ const ComplianceTab = ({
 						Security Content Update
 					</h3>
 					<div className="space-y-4">
-						<p className="text-sm text-secondary-300">
+						<p className="text-sm text-secondary-300 dark:text-white">
 							Download the latest SCAP Security Guide (SSG) content from GitHub.
 							This updates compliance rules, benchmarks, and remediation
 							scripts.
@@ -4048,7 +4096,7 @@ const ComplianceTab = ({
 							disabled={!isConnected || ssgUpdateMutation.isPending}
 							className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
 								!isConnected
-									? "bg-secondary-700 text-secondary-500 cursor-not-allowed"
+									? "bg-secondary-700 text-secondary-500 dark:text-white cursor-not-allowed"
 									: ssgUpdateMutation.isPending
 										? "bg-primary-600/50 text-white cursor-wait"
 										: "bg-primary-600 hover:bg-primary-500 text-white"
@@ -4064,7 +4112,7 @@ const ComplianceTab = ({
 								: "Update SSG Content"}
 						</button>
 						{!isConnected && (
-							<p className="text-xs text-secondary-500">
+							<p className="text-xs text-secondary-500 dark:text-white">
 								Agent must be connected to update security content
 							</p>
 						)}
@@ -4238,7 +4286,9 @@ const ComplianceTab = ({
 					<div className="flex flex-wrap items-center gap-4 text-sm">
 						<div className="flex items-center gap-2">
 							<Shield className="h-4 w-4 text-primary-400" />
-							<span className="text-secondary-300">Scanner</span>
+							<span className="text-secondary-300 dark:text-white">
+								Scanner
+							</span>
 							<span
 								className={`capitalize ${
 									status_ready || openscap_ready
@@ -4247,7 +4297,7 @@ const ComplianceTab = ({
 											? "text-blue-400"
 											: status?.status === "error"
 												? "text-red-400"
-												: "text-secondary-400"
+												: "text-secondary-400 dark:text-white"
 								}`}
 							>
 								{show_install_progress
@@ -4258,12 +4308,12 @@ const ComplianceTab = ({
 							</span>
 						</div>
 						{scanner_info?.openscap_version && (
-							<span className="text-secondary-500">
+							<span className="text-secondary-500 dark:text-white">
 								OpenSCAP {scanner_info.openscap_version}
 							</span>
 						)}
 						{scanner_info?.content_package && (
-							<span className="text-secondary-500">
+							<span className="text-secondary-500 dark:text-white">
 								SSG {scanner_info.content_package}
 							</span>
 						)}
@@ -4304,7 +4354,7 @@ const ComplianceTab = ({
 										<XCircle className="h-4 w-4 text-red-400 flex-shrink-0" />
 									)}
 									{step.status === "skipped" && (
-										<SkipForward className="h-4 w-4 text-secondary-400 flex-shrink-0" />
+										<SkipForward className="h-4 w-4 text-secondary-400 dark:text-white flex-shrink-0" />
 									)}
 									{step.status === "pending" && (
 										<div className="h-4 w-4 rounded-full border-2 border-secondary-500 flex-shrink-0" />
@@ -4319,19 +4369,19 @@ const ComplianceTab = ({
 														: step.status === "failed"
 															? "text-red-400"
 															: step.status === "skipped"
-																? "text-secondary-400"
-																: "text-secondary-500"
+																? "text-secondary-400 dark:text-white"
+																: "text-secondary-500 dark:text-white"
 											}
 										>
 											{step.label}
 										</span>
 										{step.message && step.status !== "pending" && (
-											<span className="text-secondary-500 ml-1.5 text-xs">
+											<span className="text-secondary-500 dark:text-white ml-1.5 text-xs">
 												— {step.message}
 											</span>
 										)}
 										{step.status === "pending" && (
-											<span className="text-secondary-500 ml-1.5 text-xs">
+											<span className="text-secondary-500 dark:text-white ml-1.5 text-xs">
 												{step.message}
 											</span>
 										)}
@@ -4362,7 +4412,7 @@ const ComplianceTab = ({
 							className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors flex-1 justify-center ${
 								activeSubtab === tab.id
 									? "bg-primary-600 text-white"
-									: "text-secondary-400 hover:text-white hover:bg-secondary-700"
+									: "text-secondary-400 dark:text-white hover:text-white hover:bg-secondary-700"
 							}`}
 						>
 							<TabIcon className="h-4 w-4" />

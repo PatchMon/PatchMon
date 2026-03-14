@@ -20,6 +20,7 @@ type Manager struct {
 	apkManager     *APKManager
 	pacmanManager  *PacmanManager
 	freebsdManager *FreeBSDManager
+	winManager     *WindowsManager
 }
 
 // New creates a new package manager
@@ -29,6 +30,7 @@ func New(logger *logrus.Logger) *Manager {
 	apkManager := NewAPKManager(logger)
 	pacmanManager := NewPacmanManager(logger)
 	freebsdManager := NewFreeBSDManager(logger)
+	winManager := NewWindowsManager(logger)
 
 	return &Manager{
 		logger:         logger,
@@ -37,16 +39,19 @@ func New(logger *logrus.Logger) *Manager {
 		apkManager:     apkManager,
 		pacmanManager:  pacmanManager,
 		freebsdManager: freebsdManager,
+		winManager:     winManager,
 	}
 }
 
 // GetPackages gets package information based on detected package manager
 func (m *Manager) GetPackages() ([]models.Package, error) {
-	packageManager := m.detectPackageManager()
+	packageManager := m.DetectPackageManager()
 
 	m.logger.WithField("package_manager", packageManager).Debug("Detected package manager")
 
 	switch packageManager {
+	case "windows":
+		return m.winManager.GetPackages(), nil
 	case "apt":
 		return m.aptManager.GetPackages(), nil
 	case "dnf", "yum":
@@ -62,8 +67,13 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 	}
 }
 
-// detectPackageManager detects which package manager is available on the system
-func (m *Manager) detectPackageManager() string {
+// DetectPackageManager detects which package manager is available on the system.
+// Returns one of: apt, dnf, yum, apk, pacman, pkg, windows, or unknown.
+func (m *Manager) DetectPackageManager() string {
+	// Check for Windows first (runtime check, no exec)
+	if runtime.GOOS == "windows" {
+		return "windows"
+	}
 	// Check for FreeBSD pkg first (avoid confusion with other 'pkg' tools).
 	// When the agent runs as an rc.d service, PATH may be minimal, so also check
 	// standard FreeBSD paths explicitly so package reports still work on pfSense/FreeBSD.
@@ -111,23 +121,57 @@ func (m *Manager) detectPackageManager() string {
 	return "unknown"
 }
 
-// CombinePackageData combines and deduplicates installed and upgradable package lists
-func CombinePackageData(installedPackages map[string]string, upgradablePackages []models.Package) []models.Package {
+// GetPkgBinaryPath returns the path to the FreeBSD pkg binary.
+// Used when running patch commands on FreeBSD (PATH may be minimal under rc.d).
+func GetPkgBinaryPath() string {
+	if path, err := exec.LookPath("pkg"); err == nil {
+		return path
+	}
+	for _, p := range []string{"/usr/sbin/pkg", "/usr/local/sbin/pkg"} {
+		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() && (info.Mode()&0111) != 0 {
+			return p
+		}
+	}
+	return "pkg"
+}
+
+// stringMapToPackageMap converts name->version map to name->Package for package managers
+// that don't provide descriptions (pacman, freebsd pkg).
+func stringMapToPackageMap(m map[string]string) map[string]models.Package {
+	out := make(map[string]models.Package, len(m))
+	for name, version := range m {
+		out[name] = models.Package{
+			Name:           name,
+			CurrentVersion: version,
+			NeedsUpdate:    false,
+		}
+	}
+	return out
+}
+
+// CombinePackageData combines and deduplicates installed and upgradable package lists.
+// installedPackages must contain full package info (including Description from dpkg-query).
+// Descriptions are preserved from installed packages for both upgradable and non-upgradable.
+func CombinePackageData(installedPackages map[string]models.Package, upgradablePackages []models.Package) []models.Package {
 	packages := make([]models.Package, 0)
 	upgradableMap := make(map[string]bool)
 
-	// First, add all upgradable packages
+	// First, add upgradable packages, merging in description from installed if available
 	for _, pkg := range upgradablePackages {
+		if installed, ok := installedPackages[pkg.Name]; ok && installed.Description != "" {
+			pkg.Description = installed.Description
+		}
 		packages = append(packages, pkg)
 		upgradableMap[pkg.Name] = true
 	}
 
-	// Then add installed packages that are not upgradable
-	for packageName, version := range installedPackages {
+	// Then add installed packages that are not upgradable (with full info including description)
+	for packageName, installed := range installedPackages {
 		if !upgradableMap[packageName] {
 			packages = append(packages, models.Package{
 				Name:             packageName,
-				CurrentVersion:   version,
+				Description:      installed.Description,
+				CurrentVersion:   installed.CurrentVersion,
 				NeedsUpdate:      false,
 				IsSecurityUpdate: false,
 			})

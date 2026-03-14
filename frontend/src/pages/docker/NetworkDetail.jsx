@@ -96,7 +96,7 @@ const NetworkDetail = () => {
 						<h1 className="text-2xl font-bold text-secondary-900 dark:text-white">
 							{network.name}
 						</h1>
-						<p className="mt-1 text-sm text-secondary-600 dark:text-secondary-400">
+						<p className="mt-1 text-sm text-secondary-600 dark:text-white">
 							Network ID: {network.network_id.substring(0, 12)}
 						</p>
 					</div>
@@ -180,7 +180,7 @@ const NetworkDetail = () => {
 				<div className="px-6 py-5">
 					<dl className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2">
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Network ID
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white font-mono break-all">
@@ -188,7 +188,7 @@ const NetworkDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Name
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -196,7 +196,7 @@ const NetworkDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Driver
 							</dt>
 							<dd className="mt-1">
@@ -206,7 +206,7 @@ const NetworkDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Scope
 							</dt>
 							<dd className="mt-1">
@@ -216,7 +216,7 @@ const NetworkDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Containers Attached
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -224,7 +224,7 @@ const NetworkDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								IPv6 Enabled
 							</dt>
 							<dd className="mt-1">
@@ -232,7 +232,7 @@ const NetworkDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Internal
 							</dt>
 							<dd className="mt-1">
@@ -240,7 +240,7 @@ const NetworkDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Attachable
 							</dt>
 							<dd className="mt-1">
@@ -248,7 +248,7 @@ const NetworkDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Ingress
 							</dt>
 							<dd className="mt-1">
@@ -256,7 +256,7 @@ const NetworkDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Config Only
 							</dt>
 							<dd className="mt-1">
@@ -265,7 +265,7 @@ const NetworkDetail = () => {
 						</div>
 						{network.created_at && (
 							<div>
-								<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+								<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 									Created
 								</dt>
 								<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -274,7 +274,7 @@ const NetworkDetail = () => {
 							</div>
 						)}
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Last Checked
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -292,14 +292,14 @@ const NetworkDetail = () => {
 						<h3 className="text-lg leading-6 font-medium text-secondary-900 dark:text-white">
 							IPAM Configuration
 						</h3>
-						<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
+						<p className="mt-1 text-sm text-secondary-500 dark:text-white">
 							IP Address Management settings
 						</p>
 					</div>
 					<div className="px-6 py-5">
 						{network.ipam.driver && (
 							<div className="mb-4">
-								<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400 mb-1">
+								<dt className="text-sm font-medium text-secondary-500 dark:text-white mb-1">
 									Driver
 								</dt>
 								<dd>
@@ -311,7 +311,7 @@ const NetworkDetail = () => {
 						)}
 						{network.ipam.config && network.ipam.config.length > 0 && (
 							<div>
-								<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400 mb-3">
+								<dt className="text-sm font-medium text-secondary-500 dark:text-white mb-3">
 									Subnet Configuration
 								</dt>
 								<div className="space-y-4">
@@ -323,7 +323,7 @@ const NetworkDetail = () => {
 											<dl className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
 												{config.subnet && (
 													<div>
-														<dt className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
+														<dt className="text-xs font-medium text-secondary-500 dark:text-white">
 															Subnet
 														</dt>
 														<dd className="mt-1 text-sm text-secondary-900 dark:text-white font-mono">
@@ -333,7 +333,7 @@ const NetworkDetail = () => {
 												)}
 												{config.gateway && (
 													<div>
-														<dt className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
+														<dt className="text-xs font-medium text-secondary-500 dark:text-white">
 															Gateway
 														</dt>
 														<dd className="mt-1 text-sm text-secondary-900 dark:text-white font-mono">
@@ -343,7 +343,7 @@ const NetworkDetail = () => {
 												)}
 												{config.ip_range && (
 													<div>
-														<dt className="text-xs font-medium text-secondary-500 dark:text-secondary-400">
+														<dt className="text-xs font-medium text-secondary-500 dark:text-white">
 															IP Range
 														</dt>
 														<dd className="mt-1 text-sm text-secondary-900 dark:text-white font-mono">
@@ -354,7 +354,7 @@ const NetworkDetail = () => {
 												{config.aux_addresses &&
 													Object.keys(config.aux_addresses).length > 0 && (
 														<div className="sm:col-span-2">
-															<dt className="text-xs font-medium text-secondary-500 dark:text-secondary-400 mb-2">
+															<dt className="text-xs font-medium text-secondary-500 dark:text-white mb-2">
 																Auxiliary Addresses
 															</dt>
 															<dd className="space-y-1">
@@ -364,7 +364,7 @@ const NetworkDetail = () => {
 																			key={key}
 																			className="flex items-center text-sm"
 																		>
-																			<span className="text-secondary-500 dark:text-secondary-400 min-w-[120px]">
+																			<span className="text-secondary-500 dark:text-white min-w-[120px]">
 																				{key}:
 																			</span>
 																			<span className="text-secondary-900 dark:text-white font-mono">
@@ -385,7 +385,7 @@ const NetworkDetail = () => {
 						{network.ipam.options &&
 							Object.keys(network.ipam.options).length > 0 && (
 								<div className="mt-4">
-									<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400 mb-2">
+									<dt className="text-sm font-medium text-secondary-500 dark:text-white mb-2">
 										IPAM Options
 									</dt>
 									<dd className="space-y-1">
@@ -395,7 +395,7 @@ const NetworkDetail = () => {
 													key={key}
 													className="flex items-start py-2 border-b border-secondary-100 dark:border-secondary-700 last:border-0"
 												>
-													<span className="text-sm font-medium text-secondary-500 dark:text-secondary-400 min-w-[200px]">
+													<span className="text-sm font-medium text-secondary-500 dark:text-white min-w-[200px]">
 														{key}
 													</span>
 													<span className="text-sm text-secondary-900 dark:text-white break-all">
@@ -423,7 +423,7 @@ const NetworkDetail = () => {
 					<div className="px-6 py-5">
 						<dl className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2">
 							<div>
-								<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+								<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 									Hostname
 								</dt>
 								<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -436,7 +436,7 @@ const NetworkDetail = () => {
 								</dd>
 							</div>
 							<div>
-								<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+								<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 									Operating System
 								</dt>
 								<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -464,7 +464,7 @@ const NetworkDetail = () => {
 									key={key}
 									className="flex items-start py-2 border-b border-secondary-100 dark:border-secondary-700 last:border-0"
 								>
-									<span className="text-sm font-medium text-secondary-500 dark:text-secondary-400 min-w-[200px]">
+									<span className="text-sm font-medium text-secondary-500 dark:text-white min-w-[200px]">
 										{key}
 									</span>
 									<span className="text-sm text-secondary-900 dark:text-white break-all">

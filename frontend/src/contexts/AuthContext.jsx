@@ -29,6 +29,7 @@ export const AuthProvider = ({ children }) => {
 	const [token, setToken] = useState(null);
 	const [permissions, setPermissions] = useState(null);
 	const [needsFirstTimeSetup, setNeedsFirstTimeSetup] = useState(false);
+	const [firstTimeWizardActive, setFirstTimeWizardActive] = useState(false);
 	// When non-null, setup check failed (backend/DB down or rate limited) - do not show first-time setup
 	const [setupCheckError, setSetupCheckError] = useState(null);
 
@@ -76,11 +77,37 @@ export const AuthProvider = ({ children }) => {
 		return updatedPermissions;
 	}, [token, fetchPermissions]);
 
-	// Initialize auth state - validate session via API (cookies) or localStorage
+	// Listen for 401 session-expired from API interceptor - clear auth state so React Router navigates to login
+	// (avoids hard redirect race that could trigger ErrorBoundary "Something went wrong")
+	useEffect(() => {
+		const handleSessionExpired = () => {
+			setToken(null);
+			setUser(null);
+			setPermissions(null);
+			localStorage.removeItem("token");
+			localStorage.removeItem("user");
+		};
+		window.addEventListener("auth:session-expired", handleSessionExpired);
+		return () =>
+			window.removeEventListener("auth:session-expired", handleSessionExpired);
+	}, []);
+
+	// Initialize auth state - validate session via API (cookies) or localStorage.
+	// Only runs once on mount to prevent re-validation (and loading flash) on every navigation.
 	useEffect(() => {
 		const abortController = new AbortController();
 
 		const validateSession = async () => {
+			// Read pathname at call time (not as a dependency) to avoid re-running on navigation
+			const onLoginPage = window.location.pathname === "/login";
+			const hasStoredUser = !!localStorage.getItem("user");
+			if (onLoginPage && !hasStoredUser) {
+				localStorage.removeItem("token");
+				setSetupCheckError(null);
+				setAuthPhase(AUTH_PHASES.CHECKING_SETUP);
+				return;
+			}
+
 			try {
 				// First, try to validate via API using httpOnly cookies
 				const response = await fetch("/api/v1/auth/profile", {
@@ -120,6 +147,23 @@ export const AuthProvider = ({ children }) => {
 		validateSession();
 
 		return () => abortController.abort();
+	}, [fetchPermissions]); // eslint-disable-line react-hooks/exhaustive-deps
+
+	const refetchUser = useCallback(async () => {
+		try {
+			const response = await fetch("/api/v1/auth/profile", {
+				credentials: "include",
+			});
+			if (response.ok) {
+				const data = await response.json();
+				setUser(data.user);
+				await fetchPermissions();
+				return data.user;
+			}
+		} catch (error) {
+			devLog("refetchUser failed:", error);
+		}
+		return null;
 	}, [fetchPermissions]);
 
 	const login = async (username, password) => {
@@ -265,14 +309,18 @@ export const AuthProvider = ({ children }) => {
 
 	const updateProfile = async (profileData) => {
 		try {
-			const response = await fetch("/api/v1/auth/profile", {
+			const fetchOptions = {
 				method: "PUT",
 				headers: {
-					Authorization: `Bearer ${token}`,
 					"Content-Type": "application/json",
 				},
 				body: JSON.stringify(profileData),
-			});
+				credentials: "include",
+			};
+			if (token) {
+				fetchOptions.headers.Authorization = `Bearer ${token}`;
+			}
+			const response = await fetch("/api/v1/auth/profile", fetchOptions);
 
 			const data = await response.json();
 
@@ -349,14 +397,21 @@ export const AuthProvider = ({ children }) => {
 
 	const changePassword = async (currentPassword, newPassword) => {
 		try {
-			const response = await fetch("/api/v1/auth/change-password", {
+			const fetchOptions = {
 				method: "PUT",
 				headers: {
-					Authorization: `Bearer ${token}`,
 					"Content-Type": "application/json",
 				},
 				body: JSON.stringify({ currentPassword, newPassword }),
-			});
+				credentials: "include",
+			};
+			if (token) {
+				fetchOptions.headers.Authorization = `Bearer ${token}`;
+			}
+			const response = await fetch(
+				"/api/v1/auth/change-password",
+				fetchOptions,
+			);
 
 			const data = await response.json();
 
@@ -481,13 +536,22 @@ export const AuthProvider = ({ children }) => {
 	const canExportData = () => hasPermission("can_export_data");
 	const canManageSettings = () => hasPermission("can_manage_settings");
 
+	const SETUP_COMPLETE_CACHE_KEY = "patchmon_setup_complete";
+
 	// Check if any admin users exist (for first-time setup)
-	// Also checks if OIDC is configured to bypass the welcome page
-	// Only set needsFirstTimeSetup when we get a successful 200 with hasAdminUsers; otherwise show backend/rate-limit error
+	// Uses login-settings (includes hasAdminUsers) and caches result to avoid repeated public API calls
 	const checkAdminUsersExist = useCallback(async () => {
 		setSetupCheckError(null);
+
+		// Skip API call if we've already confirmed setup is complete (cached)
+		if (localStorage.getItem(SETUP_COMPLETE_CACHE_KEY) === "1") {
+			setNeedsFirstTimeSetup(false);
+			setAuthPhase(AUTH_PHASES.READY);
+			return;
+		}
+
 		try {
-			const response = await fetch("/api/v1/auth/check-admin-users", {
+			const response = await fetch("/api/v1/settings/login-settings", {
 				method: "GET",
 				headers: {
 					"Content-Type": "application/json",
@@ -506,6 +570,10 @@ export const AuthProvider = ({ children }) => {
 					setNeedsFirstTimeSetup(false);
 				} else {
 					setNeedsFirstTimeSetup(!data.hasAdminUsers);
+					// Cache setup complete to avoid repeated API calls on subsequent visits
+					if (data.hasAdminUsers) {
+						localStorage.setItem(SETUP_COMPLETE_CACHE_KEY, "1");
+					}
 				}
 
 				setSetupCheckError(null);
@@ -515,16 +583,40 @@ export const AuthProvider = ({ children }) => {
 				setSetupCheckError("rate_limited");
 				setNeedsFirstTimeSetup(false);
 				setAuthPhase(AUTH_PHASES.READY);
+			} else if (response.status === 403) {
+				// Check for CORS_ORIGIN mismatch (access from wrong URL)
+				try {
+					const data = await response.json();
+					if (
+						data?.code === "cors_mismatch" ||
+						data?.error?.includes("CORS_ORIGIN")
+					) {
+						setSetupCheckError("cors_mismatch");
+					} else {
+						setSetupCheckError("server_unavailable");
+					}
+				} catch {
+					setSetupCheckError("server_unavailable");
+				}
+				setNeedsFirstTimeSetup(false);
+				setAuthPhase(AUTH_PHASES.READY);
+			} else if (response.status === 502 || response.status === 503) {
+				// 502/503 from nginx: backend unreachable. Could be backend down,
+				// or nginx converting 403 to 502 (proxy_next_upstream). Show message
+				// that mentions CORS so user checks CORS_ORIGIN when using wrong URL.
+				setSetupCheckError("server_or_cors");
+				setNeedsFirstTimeSetup(false);
+				setAuthPhase(AUTH_PHASES.READY);
 			} else {
-				// 5xx, 4xx (e.g. 500 DB error, 503 unavailable) - backend/DB not accessible
-				setSetupCheckError("backend_unavailable");
+				// 5xx, 4xx (e.g. 500 DB error) - backend/DB not accessible
+				setSetupCheckError("server_unavailable");
 				setNeedsFirstTimeSetup(false);
 				setAuthPhase(AUTH_PHASES.READY);
 			}
 		} catch (error) {
 			console.error("Error checking admin users:", error);
-			// Network error or backend unreachable - do not show first-time setup
-			setSetupCheckError("backend_unavailable");
+			// Network error or backend unreachable - could be CORS when behind proxy
+			setSetupCheckError("server_or_cors");
 			setNeedsFirstTimeSetup(false);
 			setAuthPhase(AUTH_PHASES.READY);
 		}
@@ -542,7 +634,9 @@ export const AuthProvider = ({ children }) => {
 		setAuthPhase(AUTH_PHASES.CHECKING_SETUP);
 	}, []);
 
-	const setAuthState = (authToken, authUser) => {
+	const setAuthState = (authToken, authUser, options = {}) => {
+		const { keepWizardVisible = false } = options;
+
 		// Use flushSync to ensure all state updates are applied synchronously
 		flushSync(() => {
 			setToken(authToken);
@@ -551,9 +645,19 @@ export const AuthProvider = ({ children }) => {
 				accepted_release_notes_versions:
 					authUser.accepted_release_notes_versions || [],
 			});
-			setNeedsFirstTimeSetup(false);
+			if (!keepWizardVisible) {
+				setNeedsFirstTimeSetup(false);
+				setFirstTimeWizardActive(false);
+			} else {
+				setFirstTimeWizardActive(true);
+			}
 			setAuthPhase(AUTH_PHASES.READY);
 		});
+
+		if (!keepWizardVisible) {
+			// Cache setup complete (user just created admin account or logged in)
+			localStorage.setItem(SETUP_COMPLETE_CACHE_KEY, "1");
+		}
 
 		// Store user in localStorage (for session recovery)
 		localStorage.setItem(
@@ -574,6 +678,12 @@ export const AuthProvider = ({ children }) => {
 		fetchPermissions(authToken);
 	};
 
+	const completeFirstTimeWizard = () => {
+		setFirstTimeWizardActive(false);
+		setNeedsFirstTimeSetup(false);
+		localStorage.setItem(SETUP_COMPLETE_CACHE_KEY, "1");
+	};
+
 	// Computed loading state based on phase and permissions state
 	const isLoading = !isAuthPhase.ready(authPhase) || permissionsLoading;
 
@@ -590,6 +700,7 @@ export const AuthProvider = ({ children }) => {
 		permissions,
 		isLoading,
 		needsFirstTimeSetup,
+		firstTimeWizardActive,
 		setupCheckError,
 		retrySetupCheck,
 		authPhase,
@@ -598,7 +709,9 @@ export const AuthProvider = ({ children }) => {
 		updateProfile,
 		changePassword,
 		refreshPermissions,
+		refetchUser,
 		setAuthState,
+		completeFirstTimeWizard,
 		isAuthenticated,
 		isAdmin,
 		hasPermission,

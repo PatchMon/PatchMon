@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, ExternalLink, Heart, Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { useAuth } from "../contexts/AuthContext";
 import { versionAPI } from "../utils/api";
@@ -33,20 +33,6 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 		enabled: isOpen && !!versionInfo?.version,
 	});
 
-	// Fetch supporter count from social media stats
-	const { data: socialMediaStats, isLoading: isLoadingSupporters } = useQuery({
-		queryKey: ["socialMediaStats"],
-		queryFn: async () => {
-			const response = await fetch("/api/v1/buy-me-a-coffee/supporter-count", {
-				credentials: "include",
-			});
-			if (!response.ok) return null;
-			return response.json();
-		},
-		enabled: isOpen && currentStep === 2,
-		staleTime: 5 * 60 * 1000, // 5 minutes cache
-	});
-
 	// Check if running on PatchMon Cloud
 	const isCloudVersion = window.location.hostname.endsWith(".patchmon.cloud");
 
@@ -76,12 +62,7 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 		await handleAccept();
 	};
 
-	const handleClose = async () => {
-		// Update database to mark as accepted
-		await handleAccept();
-	};
-
-	const handleAccept = async () => {
+	const handleAccept = useCallback(async () => {
 		const currentVersion = versionInfo?.version;
 		if (!currentVersion) {
 			onAccept();
@@ -108,7 +89,12 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 		} finally {
 			setIsAccepting(false);
 		}
-	};
+	}, [versionInfo?.version, acceptReleaseNotes, onAccept]);
+
+	const handleClose = useCallback(async () => {
+		// Update database to mark as accepted
+		await handleAccept();
+	}, [handleAccept]);
 
 	// Reset to step 1 when modal opens
 	useEffect(() => {
@@ -116,6 +102,18 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 			setCurrentStep(1);
 		}
 	}, [isOpen]);
+
+	// Dismiss with Esc key
+	useEffect(() => {
+		if (!isOpen) return;
+		const handleKeyDown = (e) => {
+			if (e.key === "Escape") {
+				handleClose();
+			}
+		};
+		window.addEventListener("keydown", handleKeyDown);
+		return () => window.removeEventListener("keydown", handleKeyDown);
+	}, [isOpen, handleClose]);
 
 	if (!isOpen) return null;
 
@@ -170,7 +168,7 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 								<button
 									type="button"
 									onClick={handleClose}
-									className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-secondary-700 dark:text-secondary-300 bg-secondary-100 dark:bg-secondary-700 border border-secondary-300 dark:border-secondary-600 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500 transition-colors"
+									className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-secondary-700 dark:text-white bg-secondary-100 dark:bg-secondary-700 border border-secondary-300 dark:border-secondary-600 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500 transition-colors"
 									aria-label="Close"
 								>
 									Close
@@ -209,13 +207,13 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 												),
 												p: ({ node, ...props }) => (
 													<p
-														className="text-sm text-secondary-600 dark:text-secondary-300 mb-2 leading-relaxed"
+														className="text-sm text-secondary-600 dark:text-white mb-2 leading-relaxed"
 														{...props}
 													/>
 												),
 												ul: ({ node, ...props }) => (
 													<ul
-														className="list-disc list-inside text-sm text-secondary-600 dark:text-secondary-300 mb-3 space-y-1.5 ml-2"
+														className="list-disc list-inside text-sm text-secondary-600 dark:text-white mb-3 space-y-1.5 ml-2"
 														{...props}
 													/>
 												),
@@ -247,7 +245,7 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 									</div>
 								) : (
 									<div className="text-center py-12">
-										<p className="text-sm text-secondary-600 dark:text-secondary-400">
+										<p className="text-sm text-secondary-600 dark:text-white">
 											No release notes available for this version.
 										</p>
 									</div>
@@ -264,11 +262,11 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 										<h2 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4">
 											A personal note from the founder Iby
 										</h2>
-										<div className="space-y-4 text-sm text-secondary-600 dark:text-secondary-300 leading-relaxed">
+										<div className="space-y-4 text-sm text-secondary-600 dark:text-white leading-relaxed">
 											<p>
 												PatchMon wouldn't be what it is today without the
 												incredible support the community has shown over the last
-												3 months.
+												6 months.
 											</p>
 											<p>
 												Your feedback and dedication on Discord has been keeping
@@ -285,7 +283,7 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 													? "Upgrade Your PatchMon Cloud Experience"
 													: "Do you find PatchMon useful?"}
 											</h3>
-											<p className="text-sm text-secondary-600 dark:text-secondary-300 leading-relaxed">
+											<p className="text-sm text-secondary-600 dark:text-white leading-relaxed">
 												{isCloudVersion
 													? "Join as a member to unlock premium features like isolated resources, custom domains, priority support, and more. Help support the project while getting enhanced capabilities for your PatchMon Cloud instance."
 													: "Please consider supporting the project to keep the project OpenSource to help me maintain the infrastructure and develop new features."}
@@ -315,26 +313,6 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 					{currentStep === 2 && (
 						<div className="bg-secondary-50 dark:bg-secondary-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse sm:items-center sm:gap-3">
 							<div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full sm:w-auto">
-								{/* Supporter/Member count - only show for self-hosted */}
-								{!isCloudVersion &&
-									!isLoadingSupporters &&
-									socialMediaStats?.buymeacoffee_supporters !== undefined &&
-									socialMediaStats?.buymeacoffee_supporters !== null && (
-										<p className="text-sm text-secondary-600 dark:text-secondary-400 text-center sm:text-left">
-											<span className="font-semibold text-secondary-900 dark:text-secondary-100">
-												{socialMediaStats.buymeacoffee_supporters}
-											</span>{" "}
-											{socialMediaStats.buymeacoffee_supporters === 1
-												? "person has"
-												: "people have"}{" "}
-											bought me a coffee so far!
-										</p>
-									)}
-								{!isCloudVersion && isLoadingSupporters && (
-									<p className="text-xs text-secondary-400 dark:text-secondary-500 italic text-center sm:text-left">
-										Loading supporter count...
-									</p>
-								)}
 								{/* Primary button - Membership for cloud, Donation for self-hosted */}
 								<button
 									type="button"

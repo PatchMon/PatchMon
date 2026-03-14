@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Image, RotateCcw, Upload, X } from "lucide-react";
 import { useState } from "react";
 import { settingsAPI } from "../../utils/api";
+import { isLegacyDefaultPath, resolveLogoPath } from "../../utils/logoPaths";
 
 const BrandingTab = () => {
 	// Logo management state
@@ -38,6 +39,20 @@ const BrandingTab = () => {
 			: encodeURIComponent(filename);
 	};
 
+	// Helper to parse JSON response or throw with a sensible error
+	const parseJsonOrThrow = async (res, fallbackError) => {
+		const text = await res.text();
+		let data;
+		try {
+			data = text ? JSON.parse(text) : {};
+		} catch {
+			throw new Error(
+				res.ok ? fallbackError : `${fallbackError} (${res.status})`,
+			);
+		}
+		return data;
+	};
+
 	// Logo upload mutation
 	const uploadLogoMutation = useMutation({
 		mutationFn: async ({ logoType, fileContent, fileName }) => {
@@ -49,21 +64,31 @@ const BrandingTab = () => {
 				credentials: "include",
 				body: JSON.stringify({ logoType, fileContent, fileName }),
 			});
-			const data = await res.json();
+			const data = await parseJsonOrThrow(res, "Failed to upload logo");
 			if (!res.ok) {
 				throw new Error(data.error || data.details || "Failed to upload logo");
 			}
 			return data;
 		},
-		onSuccess: async (_data, variables) => {
-			// Invalidate and refetch settings to get updated timestamp
+		onSuccess: async (data, variables) => {
+			// Optimistically update settings cache with new logo path so UI updates immediately
+			const logoPath =
+				data.path ||
+				`/assets/${data.fileName || `logo_${variables.logoType}.png`}`;
+			const key =
+				variables.logoType === "favicon"
+					? "favicon"
+					: `logo_${variables.logoType}`;
+			const updatedAt = new Date().toISOString();
+			const updateCache = (old) => {
+				if (!old) return old;
+				return { ...old, [key]: logoPath, updated_at: updatedAt };
+			};
+			queryClient.setQueryData(["settings"], updateCache);
+			// Also update ["settings", "public"] so LogoProvider (favicon) updates immediately
+			queryClient.setQueryData(["settings", "public"], updateCache);
+			// Invalidate to refetch full settings (ensures updated_at from server)
 			queryClient.invalidateQueries(["settings"]);
-			// Wait for refetch to complete before closing modal
-			try {
-				await queryClient.refetchQueries(["settings"]);
-			} catch (_error) {
-				// Continue anyway - settings will update on next render
-			}
 			setLogoUploadState((prev) => ({
 				...prev,
 				[variables.logoType]: { uploading: false, error: null },
@@ -84,16 +109,31 @@ const BrandingTab = () => {
 
 	// Logo reset mutation
 	const resetLogoMutation = useMutation({
-		mutationFn: (logoType) =>
-			fetch("/api/v1/settings/logos/reset", {
+		mutationFn: async (logoType) => {
+			const res = await fetch("/api/v1/settings/logos/reset", {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
 				},
 				credentials: "include",
 				body: JSON.stringify({ logoType }),
-			}).then((res) => res.json()),
-		onSuccess: () => {
+			});
+			const data = await parseJsonOrThrow(res, "Failed to reset logo");
+			if (!res.ok) {
+				throw new Error(data.error || data.details || "Failed to reset logo");
+			}
+			return data;
+		},
+		onSuccess: (_, logoType) => {
+			// Optimistically clear logo from both caches so favicon reverts immediately
+			const key = logoType === "favicon" ? "favicon" : `logo_${logoType}`;
+			const updatedAt = new Date().toISOString();
+			const updateCache = (old) => {
+				if (!old) return old;
+				return { ...old, [key]: null, updated_at: updatedAt };
+			};
+			queryClient.setQueryData(["settings"], updateCache);
+			queryClient.setQueryData(["settings", "public"], updateCache);
 			queryClient.invalidateQueries(["settings"]);
 		},
 		onError: (error) => {
@@ -137,7 +177,7 @@ const BrandingTab = () => {
 						Logo & Branding
 					</h2>
 				</div>
-				<p className="text-sm text-secondary-500 dark:text-secondary-300 mb-6">
+				<p className="text-sm text-secondary-500 dark:text-white mb-6">
 					Customize your PatchMon installation with custom logos and favicon.
 					These will be displayed throughout the application.
 				</p>
@@ -160,7 +200,7 @@ const BrandingTab = () => {
 					<div className="flex items-center justify-center p-4 bg-secondary-50 dark:bg-secondary-700 rounded-lg mb-4">
 						<img
 							key={`dark-${settings?.logo_dark}-${settings?.updated_at}`}
-							src={`${encodeLogoPath(settings?.logo_dark || "/assets/logo_dark.png")}?v=${
+							src={`${encodeLogoPath(resolveLogoPath(settings?.logo_dark, "logo_dark"))}?v=${
 								settings?.updated_at
 									? new Date(settings.updated_at).getTime()
 									: Date.now()
@@ -168,14 +208,14 @@ const BrandingTab = () => {
 							alt="Dark Logo"
 							className="max-h-16 max-w-full object-contain"
 							onError={(e) => {
-								e.target.src = "/assets/logo_dark.png";
+								e.target.src = `/assets/logo_dark_default.png?v=${Date.now()}`;
 							}}
 						/>
 					</div>
-					<p className="text-xs text-secondary-600 dark:text-secondary-400 mb-4 truncate">
-						{settings?.logo_dark
+					<p className="text-xs text-secondary-600 dark:text-white mb-4 truncate">
+						{settings?.logo_dark && !isLegacyDefaultPath(settings.logo_dark)
 							? settings.logo_dark.split("/").pop()
-							: "logo_dark.png (Default)"}
+							: "logo_dark_default.png (Default)"}
 					</p>
 					<div className="space-y-2">
 						<button
@@ -199,17 +239,18 @@ const BrandingTab = () => {
 								</>
 							)}
 						</button>
-						{settings?.logo_dark && (
-							<button
-								type="button"
-								onClick={() => resetLogoMutation.mutate("dark")}
-								disabled={resetLogoMutation.isPending}
-								className="w-full btn-outline flex items-center justify-center gap-2 text-orange-600 hover:text-orange-700 border-orange-300 hover:border-orange-400"
-							>
-								<RotateCcw className="h-4 w-4" />
-								Reset to Default
-							</button>
-						)}
+						{settings?.logo_dark &&
+							!isLegacyDefaultPath(settings.logo_dark) && (
+								<button
+									type="button"
+									onClick={() => resetLogoMutation.mutate("dark")}
+									disabled={resetLogoMutation.isPending}
+									className="w-full btn-outline flex items-center justify-center gap-2 text-orange-600 hover:text-orange-700 border-orange-300 hover:border-orange-400"
+								>
+									<RotateCcw className="h-4 w-4" />
+									Reset to Default
+								</button>
+							)}
 					</div>
 					{logoUploadState.dark.error && (
 						<p className="text-xs text-red-600 dark:text-red-400 mt-2">
@@ -226,7 +267,7 @@ const BrandingTab = () => {
 					<div className="flex items-center justify-center p-4 bg-secondary-50 dark:bg-secondary-700 rounded-lg mb-4">
 						<img
 							key={`light-${settings?.logo_light}-${settings?.updated_at}`}
-							src={`${encodeLogoPath(settings?.logo_light || "/assets/logo_light.png")}?v=${
+							src={`${encodeLogoPath(resolveLogoPath(settings?.logo_light, "logo_light"))}?v=${
 								settings?.updated_at
 									? new Date(settings.updated_at).getTime()
 									: Date.now()
@@ -234,14 +275,14 @@ const BrandingTab = () => {
 							alt="Light Logo"
 							className="max-h-16 max-w-full object-contain"
 							onError={(e) => {
-								e.target.src = "/assets/logo_light.png";
+								e.target.src = `/assets/logo_light_default.png?v=${Date.now()}`;
 							}}
 						/>
 					</div>
-					<p className="text-xs text-secondary-600 dark:text-secondary-400 mb-4 truncate">
-						{settings?.logo_light
+					<p className="text-xs text-secondary-600 dark:text-white mb-4 truncate">
+						{settings?.logo_light && !isLegacyDefaultPath(settings.logo_light)
 							? settings.logo_light.split("/").pop()
-							: "logo_light.png (Default)"}
+							: "logo_light_default.png (Default)"}
 					</p>
 					<div className="space-y-2">
 						<button
@@ -265,17 +306,18 @@ const BrandingTab = () => {
 								</>
 							)}
 						</button>
-						{settings?.logo_light && (
-							<button
-								type="button"
-								onClick={() => resetLogoMutation.mutate("light")}
-								disabled={resetLogoMutation.isPending}
-								className="w-full btn-outline flex items-center justify-center gap-2 text-orange-600 hover:text-orange-700 border-orange-300 hover:border-orange-400"
-							>
-								<RotateCcw className="h-4 w-4" />
-								Reset to Default
-							</button>
-						)}
+						{settings?.logo_light &&
+							!isLegacyDefaultPath(settings.logo_light) && (
+								<button
+									type="button"
+									onClick={() => resetLogoMutation.mutate("light")}
+									disabled={resetLogoMutation.isPending}
+									className="w-full btn-outline flex items-center justify-center gap-2 text-orange-600 hover:text-orange-700 border-orange-300 hover:border-orange-400"
+								>
+									<RotateCcw className="h-4 w-4" />
+									Reset to Default
+								</button>
+							)}
 					</div>
 					{logoUploadState.light.error && (
 						<p className="text-xs text-red-600 dark:text-red-400 mt-2">
@@ -292,7 +334,7 @@ const BrandingTab = () => {
 					<div className="flex items-center justify-center p-4 bg-secondary-50 dark:bg-secondary-700 rounded-lg mb-4">
 						<img
 							key={`favicon-${settings?.favicon}-${settings?.updated_at}`}
-							src={`${encodeLogoPath(settings?.favicon || "/assets/favicon.svg")}?v=${
+							src={`${encodeLogoPath(resolveLogoPath(settings?.favicon, "favicon"))}?v=${
 								settings?.updated_at
 									? new Date(settings.updated_at).getTime()
 									: Date.now()
@@ -300,14 +342,14 @@ const BrandingTab = () => {
 							alt="Favicon"
 							className="h-8 w-8 object-contain"
 							onError={(e) => {
-								e.target.src = "/assets/favicon.svg";
+								e.target.src = `/assets/logo_square_default.svg?v=${Date.now()}`;
 							}}
 						/>
 					</div>
-					<p className="text-xs text-secondary-600 dark:text-secondary-400 mb-4 truncate">
-						{settings?.favicon
+					<p className="text-xs text-secondary-600 dark:text-white mb-4 truncate">
+						{settings?.favicon && !isLegacyDefaultPath(settings.favicon)
 							? settings.favicon.split("/").pop()
-							: "favicon.svg (Default)"}
+							: "logo_square_default.svg (Default)"}
 					</p>
 					<div className="space-y-2">
 						<button
@@ -331,7 +373,7 @@ const BrandingTab = () => {
 								</>
 							)}
 						</button>
-						{settings?.favicon && (
+						{settings?.favicon && !isLegacyDefaultPath(settings.favicon) && (
 							<button
 								type="button"
 								onClick={() => resetLogoMutation.mutate("favicon")}
@@ -491,7 +533,7 @@ const LogoUploadModal = ({
 						<button
 							type="button"
 							onClick={handleClose}
-							className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+							className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
 						>
 							<X className="h-5 w-5" />
 						</button>
@@ -509,10 +551,10 @@ const LogoUploadModal = ({
 									type="file"
 									accept="image/png,image/jpeg,image/jpg,image/svg+xml"
 									onChange={handleFileSelect}
-									className="block w-full text-sm text-secondary-500 dark:text-secondary-400 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100 dark:file:bg-primary-900 dark:file:text-primary-200"
+									className="block w-full text-sm text-secondary-500 dark:text-white file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100 dark:file:bg-primary-900 dark:file:text-primary-200"
 								/>
 							</label>
-							<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+							<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 								Supported formats: PNG, JPG, SVG. Max size: 5MB.
 								{logoType === "favicon"
 									? " Recommended: 32x32px SVG."

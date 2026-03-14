@@ -1,0 +1,46 @@
+name: "How to"
+description: Ask how to do something or get help with a task
+title: "[How to]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reaching out! Please describe what you're trying to accomplish.
+
+  - type: dropdown
+    id: installation_method
+    attributes:
+      label: What is the installation method of your PatchMon server?
+      options:
+        - ""
+        - Docker
+        - Proxmox-community script
+        - setup.sh native install script
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: patchmon_version
+    attributes:
+      label: What is the version of your PatchMon server?
+      placeholder: "e.g. 1.4.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What would you like to know how to do?
+      placeholder: Describe the task or goal you're trying to achieve
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_tried
+    attributes:
+      label: What have you tried so far?
+      placeholder: Any steps you've already attempted (optional)
+    validations:
+      required: false

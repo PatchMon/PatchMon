@@ -77,7 +77,7 @@ const HostDetail = () => {
 							<h1 className="text-2xl font-bold text-secondary-900 dark:text-white">
 								{host.friendly_name || host.hostname}
 							</h1>
-							<p className="mt-1 text-sm text-secondary-600 dark:text-secondary-400">
+							<p className="mt-1 text-sm text-secondary-600 dark:text-white">
 								{host.ip}
 							</p>
 						</div>
@@ -169,7 +169,7 @@ const HostDetail = () => {
 				<div className="px-6 py-5 space-y-6">
 					<div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Friendly Name
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -177,7 +177,7 @@ const HostDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Hostname
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -185,7 +185,7 @@ const HostDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								IP Address
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -193,7 +193,7 @@ const HostDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								OS
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -217,25 +217,25 @@ const HostDetail = () => {
 							<tr>
 								<th
 									scope="col"
-									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 								>
 									Container Name
 								</th>
 								<th
 									scope="col"
-									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 								>
 									Image
 								</th>
 								<th
 									scope="col"
-									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 								>
 									Status
 								</th>
 								<th
 									scope="col"
-									className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+									className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 								>
 									Actions
 								</th>
@@ -289,25 +289,25 @@ const HostDetail = () => {
 							<tr>
 								<th
 									scope="col"
-									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 								>
 									Repository
 								</th>
 								<th
 									scope="col"
-									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 								>
 									Tag
 								</th>
 								<th
 									scope="col"
-									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 								>
 									Source
 								</th>
 								<th
 									scope="col"
-									className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+									className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 								>
 									Actions
 								</th>

@@ -208,7 +208,7 @@ const RolesTab = () => {
 					<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 						<thead className="bg-secondary-50 dark:bg-secondary-700">
 							<tr>
-								<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+								<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 									Permission
 								</th>
 								{roles &&
@@ -216,7 +216,7 @@ const RolesTab = () => {
 									roles.map((r) => (
 										<th
 											key={r.role}
-											className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider"
+											className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 										>
 											<div className="flex items-center gap-2">
 												<span className="capitalize">
@@ -225,7 +225,7 @@ const RolesTab = () => {
 												<button
 													type="button"
 													onClick={() => setEditingRole(r.role)}
-													className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-400 dark:hover:text-secondary-200"
+													className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-200"
 													title="Edit role permissions"
 												>
 													<Edit className="h-4 w-4" />
@@ -610,7 +610,7 @@ const AddRoleModal = ({ isOpen, onClose, onSuccess }) => {
 							className="block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
 							placeholder="e.g., host_manager, readonly"
 						/>
-						<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+						<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 							Use lowercase with underscores (e.g., host_manager)
 						</p>
 					</div>
