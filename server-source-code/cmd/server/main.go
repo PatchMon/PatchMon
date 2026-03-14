@@ -1,0 +1,182 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+	_ "time/tzdata"
+
+	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/logger"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/migrate"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/monitor"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/redis"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/server"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
+	"github.com/hibiken/asynq"
+)
+
+func main() {
+	cfg, err := config.Load()
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Bootstrap logger (env-only) for migrations and pre-DB errors
+	bootstrapLog := logger.New(logger.Config{
+		Enabled:    cfg.EnableLogging,
+		Level:      cfg.LogLevel,
+		JSONFormat: cfg.Env == "production",
+	})
+	bootstrapSlog := bootstrapLog.With("version", cfg.Version, "port", cfg.Port)
+
+	ctx := context.Background()
+
+	if err := migrate.Run(cfg.DatabaseURL, bootstrapSlog); err != nil {
+		bootstrapSlog.Error("migrations failed", "error", err)
+		os.Exit(1)
+	}
+
+	db, err := database.NewDB(ctx, cfg)
+	if err != nil {
+		bootstrapSlog.Error("database", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	// Resolve config (env → DB → default) and create real logger
+	settingsStore := store.NewSettingsStore(db)
+	settings, _ := settingsStore.GetFirst(ctx)
+	resolved := config.ResolveConfig(ctx, cfg, settings)
+
+	log := logger.New(logger.Config{
+		Enabled:    resolved.EnableLogging,
+		Level:      resolved.LogLevel,
+		JSONFormat: cfg.Env == "production",
+	})
+	slog := log.With("version", cfg.Version, "port", cfg.Port)
+
+	slog.Info("database connected")
+
+	rdb := redis.NewClient()
+	if err := redis.Ping(ctx, rdb); err != nil {
+		slog.Error("redis", "error", err)
+		os.Exit(1)
+	}
+	defer func() { _ = redis.Close(rdb) }()
+	slog.Info("redis connected")
+
+	var ctxRegistry *hostctx.Registry
+	var poolCache *hostctx.PoolCache
+	var redisCache *hostctx.RedisCache
+	if cfg.RegistryDatabaseURL != "" {
+		ctxRegistry, err = hostctx.NewRegistry(ctx, cfg.RegistryDatabaseURL, 5*time.Minute, slog)
+		if err != nil {
+			slog.Error("context registry", "error", err)
+			os.Exit(1)
+		}
+		defer ctxRegistry.Close()
+		poolCache = hostctx.NewPoolCache(ctxRegistry, cfg, cfg.HostCacheTTLMin, slog)
+		redisCache = hostctx.NewRedisCache(ctxRegistry, rdb, cfg.HostCacheTTLMin, slog)
+		slog.Info("multi-host mode enabled", "registry_poll_interval", "5m")
+	}
+
+	// Validate encryption (required for bootstrap/install flow)
+	if _, err := util.NewEncryption(); err != nil {
+		slog.Error("encryption init failed (bootstrap tokens will be unavailable)", "error", err)
+		slog.Info("hint: set DATABASE_URL, SESSION_SECRET, or AI_ENCRYPTION_KEY in environment")
+	}
+
+	registry := agentregistry.New()
+	queueOpts := queue.RedisOpts()
+	queueClient := queue.NewClient(queueOpts)
+	defer func() { _ = queueClient.Close() }()
+
+	queueInspector := asynq.NewInspector(queueOpts)
+	defer func() { _ = queueInspector.Close() }()
+
+	queueSrv := queue.NewServer(queueOpts, registry, db, slog)
+	queueMux := queue.Mux(queue.MuxOpts{
+		Registry:      registry,
+		DB:            db,
+		RDB:           rdb,
+		RedisCache:    redisCache,
+		PoolCache:     poolCache,
+		QueueClient:   queueClient,
+		ServerVersion: cfg.Version,
+		Log:           slog,
+	})
+	go func() {
+		if err := queueSrv.Run(queueMux); err != nil {
+			slog.Error("queue server", "error", err)
+		}
+	}()
+	slog.Info("queue server started")
+
+	scheduler, err := queue.NewScheduler(queueOpts, slog)
+	if err != nil {
+		slog.Error("scheduler init", "error", err)
+	} else {
+		go func() {
+			if err := scheduler.Run(); err != nil {
+				slog.Error("scheduler", "error", err)
+			}
+		}()
+		slog.Info("scheduler started")
+	}
+
+	httpHandler, guacdProc := server.NewRouter(ctx, cfg, db, rdb, registry, queueClient, queueInspector, ctxRegistry, poolCache, redisCache, slog, frontendFS)
+
+	var memstatsCancel context.CancelFunc
+	if cfg.EnablePprof {
+		memstatsCtx, cancel := context.WithCancel(context.Background())
+		memstatsCancel = cancel
+		go monitor.StartMemStats(memstatsCtx, slog, cfg.MemstatsIntervalSec)
+		slog.Info("pprof enabled", "memstats_interval_sec", cfg.MemstatsIntervalSec)
+	}
+
+	srv := &http.Server{
+		Addr:         fmt.Sprintf(":%d", cfg.Port),
+		Handler:      httpHandler,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	go func() {
+		slog.Info("server listening", "addr", srv.Addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("server", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	slog.Info("shutting down")
+	if memstatsCancel != nil {
+		memstatsCancel()
+	}
+	if guacdProc != nil {
+		guacdProc.Stop()
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("shutdown", "error", err)
+	}
+	slog.Info("server stopped")
+}
