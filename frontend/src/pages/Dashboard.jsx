@@ -1,0 +1,2587 @@
+import {
+	closestCenter,
+	DndContext,
+	DragOverlay,
+	KeyboardSensor,
+	PointerSensor,
+	useSensor,
+	useSensors,
+} from "@dnd-kit/core";
+import {
+	arrayMove,
+	rectSortingStrategy,
+	SortableContext,
+	sortableKeyboardCoordinates,
+	useSortable,
+} from "@dnd-kit/sortable";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import confetti from "canvas-confetti";
+import {
+	ArcElement,
+	BarElement,
+	CategoryScale,
+	Chart as ChartJS,
+	Legend,
+	LinearScale,
+	LineElement,
+	PointElement,
+	Title,
+	Tooltip,
+} from "chart.js";
+import {
+	AlertTriangle,
+	CheckCircle,
+	Eye,
+	EyeOff,
+	Folder,
+	GitBranch,
+	GripVertical,
+	Package,
+	RefreshCw,
+	RotateCcw,
+	Save,
+	Server,
+	Settings,
+	Shield,
+	Users,
+	WifiOff,
+	X,
+} from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Bar, Doughnut, Line, Pie } from "react-chartjs-2";
+import { useNavigate } from "react-router-dom";
+import {
+	ActiveBenchmarkScans,
+	COMPLIANCE_WIDGET_CARD_IDS,
+	ComplianceProfilesPie,
+	ComplianceTrendLinePlaceholder,
+	FailuresBySeverityDoughnut,
+	HostComplianceStatusBar,
+	LastScanAgeBar,
+	OpenSCAPDistributionDoughnut,
+} from "../components/compliance/widgets";
+import { useAuth } from "../contexts/AuthContext";
+import { useTheme } from "../contexts/ThemeContext";
+import { useToast } from "../contexts/ToastContext";
+import {
+	dashboardAPI,
+	dashboardPreferencesAPI,
+	formatRelativeTime,
+	settingsAPI,
+} from "../utils/api";
+import { complianceAPI } from "../utils/complianceApi";
+
+// Register Chart.js components
+ChartJS.register(
+	ArcElement,
+	Tooltip,
+	Legend,
+	CategoryScale,
+	LinearScale,
+	BarElement,
+	LineElement,
+	PointElement,
+	Title,
+);
+
+// Drag-to-resize handle on the right edge of a card in edit mode
+const CARD_RESIZE_PIXELS_PER_COLUMN = 40;
+
+const CardResizeHandle = ({ card_id, col_span, on_resize }) => {
+	const [dragging, set_dragging] = useState(false);
+	const [start_x, set_start_x] = useState(0);
+	const [start_span, set_start_span] = useState(1);
+
+	const handle_pointer_down = useCallback(
+		(e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			set_dragging(true);
+			set_start_x(e.clientX);
+			set_start_span(Math.min(3, Math.max(1, Number(col_span ?? 1))));
+		},
+		[col_span],
+	);
+
+	useEffect(() => {
+		if (!dragging) return;
+		const handle_pointer_move = (e) => {
+			const delta_x = e.clientX - start_x;
+			const delta_cols = Math.round(delta_x / CARD_RESIZE_PIXELS_PER_COLUMN);
+			const new_span = Math.min(3, Math.max(1, start_span + delta_cols));
+			on_resize(card_id, new_span);
+			set_start_span(new_span);
+			set_start_x(e.clientX);
+		};
+		const handle_pointer_up = () => {
+			set_dragging(false);
+		};
+		window.addEventListener("pointermove", handle_pointer_move);
+		window.addEventListener("pointerup", handle_pointer_up);
+		return () => {
+			window.removeEventListener("pointermove", handle_pointer_move);
+			window.removeEventListener("pointerup", handle_pointer_up);
+		};
+	}, [dragging, start_x, start_span, card_id, on_resize]);
+
+	const span = Math.min(3, Math.max(1, Number(col_span ?? 1)));
+	return (
+		<div
+			role="slider"
+			aria-label="Card width in columns"
+			aria-valuenow={span}
+			aria-valuemin={1}
+			aria-valuemax={3}
+			tabIndex={0}
+			onPointerDown={handle_pointer_down}
+			className={`absolute right-0 top-0 bottom-0 w-2 cursor-col-resize z-20 flex items-center justify-center group ${
+				dragging ? "bg-primary-400" : ""
+			}`}
+		>
+			<div
+				className={`h-12 w-0.5 rounded-full transition-opacity ${
+					dragging
+						? "bg-primary-600"
+						: "bg-secondary-400 group-hover:bg-primary-500"
+				}`}
+			/>
+		</div>
+	);
+};
+
+// Wrapper for a dashboard card in edit mode: draggable with handle
+const SortableDashboardCard = ({ card_id, render_card }) => {
+	const {
+		attributes,
+		listeners,
+		setNodeRef,
+		transform,
+		transition,
+		isDragging,
+	} = useSortable({
+		id: card_id,
+	});
+
+	// Dragged card: hide in place (overlay shows the moving copy). Others: slide with translate-only and rounded pixels to avoid distortion.
+	const x = transform?.x ?? 0;
+	const y = transform?.y ?? 0;
+	const translateOnly = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
+	const style = isDragging
+		? { opacity: 0 }
+		: {
+				transform: translateOnly,
+				transition,
+				opacity: 1,
+				willChange: transform ? "transform" : undefined,
+				backfaceVisibility: "hidden",
+			};
+
+	return (
+		<div
+			ref={setNodeRef}
+			style={style}
+			className="relative flex h-full min-h-0 flex-col overflow-hidden"
+		>
+			<button
+				type="button"
+				{...attributes}
+				{...listeners}
+				className="absolute top-2 right-2 z-10 p-1.5 rounded bg-secondary-100 dark:bg-secondary-700 text-secondary-500 hover:text-secondary-700 dark:hover:text-secondary-300 cursor-grab active:cursor-grabbing"
+				aria-label="Drag to reorder"
+			>
+				<GripVertical className="h-4 w-4" />
+			</button>
+			<div className="min-h-0 flex-1 overflow-auto">{render_card(card_id)}</div>
+		</div>
+	);
+};
+
+const Dashboard = () => {
+	const [dashboard_edit_mode, set_dashboard_edit_mode] = useState(false);
+	const [edit_mode_order, set_edit_mode_order] = useState(null);
+	const [edit_mode_layout, set_edit_mode_layout] = useState(null);
+	const [cardPreferences, setCardPreferences] = useState([]);
+	const [packageTrendsPeriod, setPackageTrendsPeriod] = useState("1"); // days
+	const [packageTrendsHost, setPackageTrendsHost] = useState("all"); // host filter
+	const [systemStatsJobId, setSystemStatsJobId] = useState(null); // Track job ID for system statistics
+	const [isTriggeringJob, setIsTriggeringJob] = useState(false);
+	const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
+	const [active_drag_id, set_active_drag_id] = useState(null);
+	const [over_id, set_over_id] = useState(null);
+	const [active_drag_rect, set_active_drag_rect] = useState(null);
+	const navigate = useNavigate();
+	const query_client = useQueryClient();
+	const toast = useToast();
+	const { isDark } = useTheme();
+	const { user, permissions } = useAuth();
+
+	// First-time setup celebration
+	useEffect(() => {
+		if (localStorage.getItem("patchmon_first_time_complete") === "1") {
+			localStorage.removeItem("patchmon_first_time_complete");
+			confetti({
+				particleCount: 100,
+				spread: 70,
+				origin: { y: 0.6 },
+			});
+			toast.success("Welcome to PatchMon!");
+		}
+	}, [toast]);
+
+	// Navigation handlers
+	const handleTotalHostsClick = () => {
+		navigate("/hosts", { replace: true });
+	};
+
+	const handleHostsNeedingUpdatesClick = () => {
+		navigate("/hosts?filter=needsUpdates");
+	};
+
+	const handleOutdatedPackagesClick = () => {
+		navigate("/packages?filter=outdated");
+	};
+
+	const handleSecurityUpdatesClick = () => {
+		navigate("/packages?filter=security");
+	};
+
+	const handleErroredHostsClick = () => {
+		navigate("/hosts?filter=inactive");
+	};
+
+	const handleOfflineHostsClick = () => {
+		navigate("/hosts?filter=offline");
+	};
+
+	// New navigation handlers for top cards
+	const handleUsersClick = () => {
+		navigate("/users");
+	};
+
+	const handleHostGroupsClick = () => {
+		navigate("/options");
+	};
+
+	const handleRepositoriesClick = () => {
+		navigate("/repositories");
+	};
+
+	const handleComplianceClick = () => {
+		navigate("/compliance");
+	};
+
+	const handleNeedsRebootClick = () => {
+		// Navigate to hosts with reboot filter, clearing any other filters
+		const newSearchParams = new URLSearchParams();
+		newSearchParams.set("reboot", "true");
+		navigate(`/hosts?${newSearchParams.toString()}`);
+	};
+
+	const handleUpToDateClick = () => {
+		// Navigate to hosts with upToDate filter, clearing any other filters
+		const newSearchParams = new URLSearchParams();
+		newSearchParams.set("filter", "upToDate");
+		navigate(`/hosts?${newSearchParams.toString()}`);
+	};
+
+	const handleUpdateStatusClick = () => {
+		navigate("/hosts?filter=needsUpdates", { replace: true });
+	};
+
+	// Chart click handlers - OS distribution (bar/pie/doughnut) click navigates to hosts filtered by os_type + os_version
+	const handleOSChartClick = (_, elements) => {
+		if (elements.length > 0 && stats?.charts?.osDistribution) {
+			const elementIndex = elements[0].index;
+			const osItem = stats.charts.osDistribution[elementIndex];
+			if (osItem?.name) {
+				const params = new URLSearchParams();
+				params.set("osFilter", (osItem.os_type || osItem.name).toLowerCase());
+				if (osItem.os_version) {
+					params.set("osVersionFilter", osItem.os_version);
+				}
+				params.set("showFilters", "true");
+				navigate(`/hosts?${params.toString()}`, { replace: true });
+			}
+		}
+	};
+
+	const handleUpdateStatusChartClick = (_, elements) => {
+		if (elements.length > 0 && stats?.charts?.updateStatusDistribution) {
+			const elementIndex = elements[0].index;
+			const statusItem = stats.charts.updateStatusDistribution[elementIndex];
+			if (!statusItem?.name) return;
+
+			const statusName = statusItem.name;
+			// Map status names to filter parameters
+			let filter = "";
+			if (statusName.toLowerCase().includes("needs updates")) {
+				filter = "needsUpdates";
+			} else if (statusName.toLowerCase().includes("up to date")) {
+				filter = "upToDate";
+			} else if (statusName.toLowerCase().includes("stale")) {
+				filter = "stale";
+			}
+
+			if (filter) {
+				navigate(`/hosts?filter=${filter}`, { replace: true });
+			}
+		}
+	};
+
+	const handlePackagePriorityChartClick = (_, elements) => {
+		if (elements.length > 0 && stats?.charts?.packageUpdateDistribution) {
+			const elementIndex = elements[0].index;
+			const priorityItem = stats.charts.packageUpdateDistribution[elementIndex];
+			if (!priorityItem?.name) return;
+
+			const priorityName = priorityItem.name;
+			// Map priority names to filter parameters
+			if (priorityName.toLowerCase().includes("security")) {
+				navigate("/packages?filter=security", { replace: true });
+			} else if (priorityName.toLowerCase().includes("regular")) {
+				navigate("/packages?filter=regular", { replace: true });
+			}
+		}
+	};
+
+	// Helper function to format the update interval threshold
+	const formatUpdateIntervalThreshold = () => {
+		if (!settings?.updateInterval) return "24 hours";
+
+		const intervalMinutes = settings.updateInterval;
+		const thresholdMinutes = intervalMinutes * 2; // 2x the update interval
+
+		if (thresholdMinutes < 60) {
+			return `${thresholdMinutes} minutes`;
+		} else if (thresholdMinutes < 1440) {
+			const hours = Math.floor(thresholdMinutes / 60);
+			const minutes = thresholdMinutes % 60;
+			if (minutes === 0) {
+				return `${hours} hour${hours > 1 ? "s" : ""}`;
+			}
+			return `${hours}h ${minutes}m`;
+		} else {
+			const days = Math.floor(thresholdMinutes / 1440);
+			const hours = Math.floor((thresholdMinutes % 1440) / 60);
+			if (hours === 0) {
+				return `${days} day${days > 1 ? "s" : ""}`;
+			}
+			return `${days}d ${hours}h`;
+		}
+	};
+
+	const {
+		data: stats,
+		isLoading,
+		error,
+		refetch,
+		isFetching,
+	} = useQuery({
+		queryKey: ["dashboardStats"],
+		queryFn: () => dashboardAPI.getStats().then((res) => res.data),
+		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
+		refetchOnWindowFocus: false, // Don't refetch when window regains focus
+	});
+
+	// Package trends data query
+	const {
+		data: packageTrendsData,
+		isLoading: packageTrendsLoading,
+		error: _packageTrendsError,
+		refetch: refetchPackageTrends,
+		isFetching: packageTrendsFetching,
+	} = useQuery({
+		queryKey: ["packageTrends", packageTrendsPeriod, packageTrendsHost],
+		queryFn: ({ queryKey }) => {
+			const [, period, host] = queryKey;
+			const params = { days: period };
+			if (host && host !== "all") {
+				params.hostId = host;
+			}
+			return dashboardAPI.getPackageTrends(params).then((res) => res.data);
+		},
+		staleTime: 5 * 60 * 1000, // 5 minutes
+		refetchOnWindowFocus: false,
+	});
+
+	// Fetch user's dashboard preferences (must be fetched before recentUsers query)
+	const { data: preferences } = useQuery({
+		queryKey: ["dashboardPreferences"],
+		queryFn: () => dashboardPreferencesAPI.get().then((res) => res.data),
+		staleTime: 5 * 60 * 1000, // Consider data fresh for 5 minutes
+	});
+
+	// Fetch recent users (permission protected server-side)
+	// Only fetch if user has permission AND the card is enabled in user's preferences
+	const hasViewUsersPermission = permissions?.can_view_users === true;
+	const isRecentUsersCardEnabled = cardPreferences.some(
+		(card) => card.cardId === "recentUsers" && card.enabled,
+	);
+	const { data: recentUsers } = useQuery({
+		queryKey: ["dashboardRecentUsers"],
+		queryFn: () => dashboardAPI.getRecentUsers().then((res) => res.data),
+		staleTime: 60 * 1000,
+		enabled:
+			hasViewUsersPermission &&
+			isRecentUsersCardEnabled &&
+			preferences !== undefined, // Only fetch if user has permission, card is enabled, and preferences are loaded
+	});
+
+	// Fetch recent collection (permission protected server-side)
+	const { data: recentCollection } = useQuery({
+		queryKey: ["dashboardRecentCollection"],
+		queryFn: () => dashboardAPI.getRecentCollection().then((res) => res.data),
+		staleTime: 60 * 1000,
+	});
+
+	// Fetch compliance dashboard only when at least one compliance card is enabled and user can view hosts
+	const has_view_hosts = permissions?.can_view_hosts === true;
+	const is_any_compliance_card_enabled =
+		cardPreferences.some(
+			(c) => COMPLIANCE_WIDGET_CARD_IDS.includes(c.cardId) && c.enabled,
+		) ||
+		cardPreferences.some((c) => c.cardId === "complianceStats" && c.enabled);
+	const { data: compliance_dashboard } = useQuery({
+		queryKey: ["compliance-dashboard"],
+		queryFn: () => complianceAPI.getDashboard().then((res) => res.data),
+		staleTime: 60 * 1000,
+		refetchOnWindowFocus: false,
+		enabled: has_view_hosts && is_any_compliance_card_enabled,
+	});
+
+	// Fetch settings to get the agent update interval
+	const { data: settings } = useQuery({
+		queryKey: ["settings"],
+		queryFn: () => settingsAPI.get().then((res) => res.data),
+	});
+
+	// Fetch default card configuration
+	const { data: defaultCards } = useQuery({
+		queryKey: ["dashboardDefaultCards"],
+		queryFn: () =>
+			dashboardPreferencesAPI.getDefaults().then((res) => res.data),
+	});
+
+	// Fetch dashboard row layout (column counts per row type)
+	const { data: dashboard_layout } = useQuery({
+		queryKey: ["dashboardLayout"],
+		queryFn: () => dashboardPreferencesAPI.getLayout().then((res) => res.data),
+		staleTime: 5 * 60 * 1000,
+	});
+
+	// Update dashboard preferences (used by edit-mode save; state reset is in handle_edit_mode_save)
+	const update_preferences_mutation = useMutation({
+		mutationFn: (preferences) => dashboardPreferencesAPI.update(preferences),
+		onSuccess: (response) => {
+			query_client.setQueryData(
+				["dashboardPreferences"],
+				response.data.preferences,
+			);
+		},
+		onError: (err) => {
+			console.error("Failed to update dashboard preferences:", err);
+		},
+	});
+
+	// Update dashboard layout (used by edit-mode save and list modal)
+	const update_layout_mutation = useMutation({
+		mutationFn: (layout) =>
+			dashboardPreferencesAPI.updateLayout({
+				stats_columns: Number(layout.stats_columns),
+				charts_columns: Number(layout.charts_columns),
+			}),
+		onSuccess: (response) => {
+			query_client.setQueryData(["dashboardLayout"], {
+				stats_columns: response.data.stats_columns,
+				charts_columns: response.data.charts_columns,
+			});
+		},
+		onError: (err) => {
+			console.error("Failed to update dashboard layout:", err);
+		},
+	});
+
+	// Merge preferences with default cards (normalize snake_case from API).
+	// The /defaults endpoint now returns col_span per card so the frontend
+	// no longer needs to hardcode fallback spans.
+	useEffect(() => {
+		if (preferences && defaultCards) {
+			const normalizedPreferences = preferences.map((p) => ({
+				cardId: p.cardId ?? p.card_id,
+				enabled: p.enabled,
+				order: p.order,
+				col_span: p.col_span ?? p.colSpan ?? 1,
+			}));
+
+			const mergedCards = defaultCards
+				.map((defaultCard) => {
+					const userPreference = normalizedPreferences.find(
+						(p) => p.cardId === defaultCard.cardId,
+					);
+					return {
+						...defaultCard,
+						enabled: userPreference
+							? userPreference.enabled
+							: defaultCard.enabled,
+						order: userPreference ? userPreference.order : defaultCard.order,
+						col_span:
+							userPreference?.col_span != null
+								? Math.min(3, Math.max(1, Number(userPreference.col_span)))
+								: Math.min(3, Math.max(1, Number(defaultCard.col_span ?? 1))),
+					};
+				})
+				.sort((a, b) => a.order - b.order);
+
+			setCardPreferences(mergedCards);
+		} else if (defaultCards) {
+			const with_default_col_span = defaultCards.map((c) => ({
+				...c,
+				col_span: Math.min(3, Math.max(1, Number(c.col_span ?? 1))),
+			}));
+			setCardPreferences(
+				with_default_col_span.sort((a, b) => a.order - b.order),
+			);
+		}
+	}, [preferences, defaultCards]);
+
+	// Clear edit-mode order when exiting dashboard edit mode (e.g. after cancel)
+	useEffect(() => {
+		if (!dashboard_edit_mode && edit_mode_order) {
+			set_edit_mode_order(null);
+		}
+	}, [dashboard_edit_mode, edit_mode_order]);
+
+	// DnD sensors for edit mode
+	const edit_mode_sensors = useSensors(
+		useSensor(PointerSensor),
+		useSensor(KeyboardSensor, {
+			coordinateGetter: sortableKeyboardCoordinates,
+		}),
+	);
+
+	const handle_edit_mode_drag_end = useCallback((event) => {
+		set_active_drag_id(null);
+		set_over_id(null);
+		set_active_drag_rect(null);
+		const { active, over } = event;
+		if (!over || active.id === over.id) return;
+		set_edit_mode_order((prev) => {
+			if (!prev) return prev;
+			const enabled = prev
+				.filter((c) => c.enabled)
+				.sort((a, b) => a.order - b.order);
+			const old_index = enabled.findIndex((c) => c.cardId === active.id);
+			const new_index = enabled.findIndex((c) => c.cardId === over.id);
+			if (old_index === -1 || new_index === -1) return prev;
+			const new_enabled = arrayMove(enabled, old_index, new_index);
+			const disabled = prev
+				.filter((c) => !c.enabled)
+				.sort((a, b) => a.order - b.order);
+			return [
+				...new_enabled.map((c, i) => ({ ...c, order: i })),
+				...disabled.map((c, i) => ({
+					...c,
+					order: new_enabled.length + i,
+				})),
+			];
+		});
+	}, []);
+
+	const handle_edit_mode_save = useCallback(async () => {
+		if (!edit_mode_order) return;
+		const preferences = edit_mode_order.map((c) => ({
+			cardId: c.cardId,
+			enabled: c.enabled,
+			order: Number(c.order),
+			col_span: Math.min(3, Math.max(1, Number(c.col_span ?? 1))),
+		}));
+		const layout_changed =
+			edit_mode_layout &&
+			(dashboard_layout?.stats_columns !== edit_mode_layout.stats_columns ||
+				dashboard_layout?.charts_columns !== edit_mode_layout.charts_columns);
+		const pending = [];
+		pending.push(update_preferences_mutation.mutateAsync(preferences));
+		if (layout_changed) {
+			pending.push(
+				update_layout_mutation.mutateAsync({
+					stats_columns: edit_mode_layout.stats_columns,
+					charts_columns: edit_mode_layout.charts_columns,
+				}),
+			);
+		}
+		try {
+			await Promise.all(pending);
+			set_dashboard_edit_mode(false);
+			set_edit_mode_order(null);
+			set_edit_mode_layout(null);
+		} catch (_e) {
+			// Errors logged in mutations
+		}
+	}, [
+		edit_mode_order,
+		edit_mode_layout,
+		dashboard_layout,
+		update_preferences_mutation,
+		update_layout_mutation,
+	]);
+
+	const handle_edit_mode_cancel = useCallback(() => {
+		set_dashboard_edit_mode(false);
+		set_edit_mode_order(null);
+		set_edit_mode_layout(null);
+	}, []);
+
+	// Reset edit-mode state to the curated defaults from the server
+	const handle_edit_mode_reset = useCallback(() => {
+		if (!defaultCards) return;
+		set_edit_mode_order(
+			defaultCards
+				.map((c) => ({
+					cardId: c.cardId,
+					enabled: c.enabled,
+					order: c.order,
+					col_span: Math.min(3, Math.max(1, Number(c.col_span ?? 1))),
+				}))
+				.sort((a, b) => a.order - b.order),
+		);
+		set_edit_mode_layout({ stats_columns: 6, charts_columns: 4 });
+	}, [defaultCards]);
+
+	// Enter rearrange-cards (edit) mode: used by settings icon and openDashboardSettings event
+	const handle_enter_edit_mode = useCallback(() => {
+		set_edit_mode_order(
+			cardPreferences.map((c) => ({
+				cardId: c.cardId,
+				enabled: c.enabled,
+				order: c.order,
+				col_span: c.col_span ?? 1,
+			})),
+		);
+		set_edit_mode_layout({
+			stats_columns: dashboard_layout?.stats_columns ?? 6,
+			charts_columns: dashboard_layout?.charts_columns ?? 4,
+		});
+		set_dashboard_edit_mode(true);
+	}, [cardPreferences, dashboard_layout]);
+
+	// Listen for custom event from Layout component (e.g. header settings icon)
+	useEffect(() => {
+		window.addEventListener("openDashboardSettings", handle_enter_edit_mode);
+		return () => {
+			window.removeEventListener(
+				"openDashboardSettings",
+				handle_enter_edit_mode,
+			);
+		};
+	}, [handle_enter_edit_mode]);
+
+	// Track window size for responsive chart options
+	useEffect(() => {
+		const handleResize = () => {
+			setIsMobile(window.innerWidth < 640);
+		};
+		window.addEventListener("resize", handleResize);
+		return () => window.removeEventListener("resize", handleResize);
+	}, []);
+
+	// Helper function to check if a card should be displayed
+	// Also checks permissions to ensure users can't see cards they don't have access to
+	const isCardEnabled = (cardId) => {
+		const card = cardPreferences.find((c) => c.cardId === cardId);
+		if (!card) return true; // Default to enabled if not found
+
+		// Check permissions for cards that require specific permissions
+		if (cardId === "totalUsers" || cardId === "recentUsers") {
+			if (permissions?.can_view_users !== true) {
+				return false; // Hide card if user doesn't have permission
+			}
+		}
+		if (
+			cardId === "complianceStats" ||
+			COMPLIANCE_WIDGET_CARD_IDS.includes(cardId)
+		) {
+			if (permissions?.can_view_hosts !== true) {
+				return false; // Hide compliance cards if user can't view hosts
+			}
+		}
+
+		return card.enabled;
+	};
+
+	// Helper function to get card type for layout grouping
+	const getCardType = (cardId) => {
+		if (
+			[
+				"totalHosts",
+				"hostsNeedingUpdates",
+				"upToDateHosts",
+				"totalOutdatedPackages",
+				"securityUpdates",
+				"hostsNeedingReboot",
+				"totalHostGroups",
+				"totalUsers",
+				"totalRepos",
+				"complianceStats",
+				"quickStats",
+			].includes(cardId)
+		) {
+			return "stats";
+		} else if (
+			[
+				"osDistribution",
+				"osDistributionBar",
+				"osDistributionDoughnut",
+				"updateStatus",
+				"packagePriority",
+				"recentUsers",
+				"recentCollection",
+				...COMPLIANCE_WIDGET_CARD_IDS,
+			].includes(cardId)
+		) {
+			return "charts";
+		} else if (["packageTrends"].includes(cardId)) {
+			return "charts";
+		} else if (["erroredHosts"].includes(cardId)) {
+			return "fullwidth";
+		}
+		return "fullwidth"; // Default to full width
+	};
+
+	// Tailwind grid-cols classes so they are included in the bundle (2–6 columns)
+	const GRID_COLS_CLASS = {
+		2: "lg:grid-cols-2",
+		3: "lg:grid-cols-3",
+		4: "lg:grid-cols-4",
+		5: "lg:grid-cols-5",
+		6: "lg:grid-cols-6",
+	};
+
+	// Fixed row heights so card heights match between edit mode and normal view (no dynamic jump when reordering)
+	const STATS_ROW_HEIGHT = "grid-auto-rows-[8rem]";
+	const CHARTS_ROW_HEIGHT = "grid-auto-rows-[320px]";
+	const FULLWIDTH_ROW_HEIGHT = "grid-auto-rows-[300px]";
+
+	// Helper: get grid class for a group type given a layout object (used for edit mode and normal view)
+	const getGroupClassNameForLayout = (cardType, layout) => {
+		const stats_cols = layout?.stats_columns ?? 6;
+		const charts_cols = layout?.charts_columns ?? 4;
+		const stats_lg = GRID_COLS_CLASS[stats_cols] ?? "lg:grid-cols-6";
+		const charts_lg = GRID_COLS_CLASS[charts_cols] ?? "lg:grid-cols-4";
+		switch (cardType) {
+			case "stats":
+				return `grid grid-cols-2 sm:grid-cols-3 ${stats_lg} gap-3 sm:gap-4 ${STATS_ROW_HEIGHT}`;
+			case "charts":
+				return `grid grid-cols-1 ${charts_lg} gap-4 sm:gap-6 ${CHARTS_ROW_HEIGHT}`;
+			case "widecharts":
+				return `grid grid-cols-1 ${charts_lg} gap-4 sm:gap-6 ${CHARTS_ROW_HEIGHT}`;
+			case "fullwidth":
+				return `grid grid-cols-1 gap-6 ${FULLWIDTH_ROW_HEIGHT}`;
+			default:
+				return `grid grid-cols-1 gap-6 ${FULLWIDTH_ROW_HEIGHT}`;
+		}
+	};
+
+	// Helper function to get CSS class for card group (uses saved layout when present)
+	const getGroupClassName = (cardType) =>
+		getGroupClassNameForLayout(cardType, dashboard_layout);
+
+	// Column span class per card (1–3 columns)
+	const COL_SPAN_CLASS = {
+		1: "",
+		2: "lg:col-span-2",
+		3: "lg:col-span-3",
+	};
+	const get_card_col_span_class = (card) => {
+		const span =
+			card?.col_span != null
+				? Math.min(3, Math.max(1, Number(card.col_span)))
+				: 1;
+		return COL_SPAN_CLASS[span] ?? "";
+	};
+
+	// Helper function to render a card by ID
+	const renderCard = (cardId) => {
+		switch (cardId) {
+			case "hostsNeedingReboot":
+				return (
+					<button
+						type="button"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
+						onClick={handleNeedsRebootClick}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								handleNeedsRebootClick();
+							}
+						}}
+					>
+						<div className="flex items-center">
+							<div className="flex-shrink-0">
+								<RotateCcw className="h-5 w-5 text-orange-600 mr-2" />
+							</div>
+							<div className="w-0 flex-1">
+								<p className="text-sm text-secondary-500 dark:text-white">
+									Needs Reboots
+								</p>
+								<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+									{stats.cards.hostsNeedingReboot}
+								</p>
+							</div>
+						</div>
+					</button>
+				);
+			case "totalHosts":
+				return (
+					<button
+						type="button"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
+						onClick={handleTotalHostsClick}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								handleTotalHostsClick();
+							}
+						}}
+					>
+						<div className="flex items-center">
+							<div className="flex-shrink-0">
+								<Server className="h-5 w-5 text-primary-600 mr-2" />
+							</div>
+							<div className="w-0 flex-1">
+								<p className="text-sm text-secondary-500 dark:text-white">
+									Total Hosts
+								</p>
+								<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+									{stats.cards.totalHosts}
+								</p>
+							</div>
+						</div>
+					</button>
+				);
+
+			case "hostsNeedingUpdates":
+				return (
+					<button
+						type="button"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
+						onClick={handleHostsNeedingUpdatesClick}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								handleHostsNeedingUpdatesClick();
+							}
+						}}
+					>
+						<div className="flex items-center">
+							<div className="flex-shrink-0">
+								<AlertTriangle className="h-5 w-5 text-warning-600 mr-2" />
+							</div>
+							<div className="w-0 flex-1">
+								<p className="text-sm text-secondary-500 dark:text-white">
+									Needs Updating
+								</p>
+								<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+									{stats.cards.hostsNeedingUpdates}
+								</p>
+							</div>
+						</div>
+					</button>
+				);
+
+			case "upToDateHosts":
+				return (
+					<button
+						type="button"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
+						onClick={handleUpToDateClick}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								handleUpToDateClick();
+							}
+						}}
+					>
+						<div className="flex items-center">
+							<div className="flex-shrink-0">
+								<CheckCircle className="h-5 w-5 text-success-600 mr-2" />
+							</div>
+							<div className="w-0 flex-1">
+								<p className="text-sm text-secondary-500 dark:text-white">
+									Up to date
+								</p>
+								<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+									{stats.cards.upToDateHosts}
+								</p>
+							</div>
+						</div>
+					</button>
+				);
+
+			case "totalOutdatedPackages":
+				return (
+					<button
+						type="button"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
+						onClick={handleOutdatedPackagesClick}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								handleOutdatedPackagesClick();
+							}
+						}}
+					>
+						<div className="flex items-center">
+							<div className="flex-shrink-0">
+								<Package className="h-5 w-5 text-secondary-600 mr-2" />
+							</div>
+							<div className="w-0 flex-1">
+								<p className="text-sm text-secondary-500 dark:text-white">
+									Outdated Packages
+								</p>
+								<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+									{stats.cards.totalOutdatedPackages}
+								</p>
+							</div>
+						</div>
+					</button>
+				);
+
+			case "securityUpdates":
+				return (
+					<button
+						type="button"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
+						onClick={handleSecurityUpdatesClick}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								handleSecurityUpdatesClick();
+							}
+						}}
+					>
+						<div className="flex items-center">
+							<div className="flex-shrink-0">
+								<Shield className="h-5 w-5 text-danger-600 mr-2" />
+							</div>
+							<div className="w-0 flex-1">
+								<p className="text-sm text-secondary-500 dark:text-white">
+									Security Updates
+								</p>
+								<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+									{stats.cards.securityUpdates}
+								</p>
+							</div>
+						</div>
+					</button>
+				);
+
+			case "totalHostGroups":
+				return (
+					<button
+						type="button"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
+						onClick={handleHostGroupsClick}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								handleHostGroupsClick();
+							}
+						}}
+					>
+						<div className="flex items-center">
+							<div className="flex-shrink-0">
+								<Folder className="h-5 w-5 text-primary-600 mr-2" />
+							</div>
+							<div className="w-0 flex-1">
+								<p className="text-sm text-secondary-500 dark:text-white">
+									Host Groups
+								</p>
+								<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+									{stats.cards.totalHostGroups}
+								</p>
+							</div>
+						</div>
+					</button>
+				);
+
+			case "totalUsers":
+				return (
+					<button
+						type="button"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
+						onClick={handleUsersClick}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								handleUsersClick();
+							}
+						}}
+					>
+						<div className="flex items-center">
+							<div className="flex-shrink-0">
+								<Users className="h-5 w-5 text-success-600 mr-2" />
+							</div>
+							<div className="w-0 flex-1">
+								<p className="text-sm text-secondary-500 dark:text-white">
+									Users
+								</p>
+								<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+									{stats.cards.totalUsers}
+								</p>
+							</div>
+						</div>
+					</button>
+				);
+
+			case "totalRepos":
+				return (
+					<button
+						type="button"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
+						onClick={handleRepositoriesClick}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								handleRepositoriesClick();
+							}
+						}}
+					>
+						<div className="flex items-center">
+							<div className="flex-shrink-0">
+								<GitBranch className="h-5 w-5 text-warning-600 mr-2" />
+							</div>
+							<div className="w-0 flex-1">
+								<p className="text-sm text-secondary-500 dark:text-white">
+									Repositories
+								</p>
+								<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+									{stats.cards.totalRepos}
+								</p>
+							</div>
+						</div>
+					</button>
+				);
+
+			case "complianceStats": {
+				const compliance_compliant =
+					compliance_dashboard?.summary?.hosts_compliant ?? 0;
+				const compliance_total =
+					compliance_dashboard?.summary?.hosts_with_compliance_enabled ?? 0;
+				return (
+					<button
+						type="button"
+						className="card p-3 sm:p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full min-h-[7rem] flex flex-col justify-center"
+						onClick={handleComplianceClick}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								handleComplianceClick();
+							}
+						}}
+					>
+						<div className="flex items-center">
+							<div className="flex-shrink-0">
+								<Shield className="h-5 w-5 text-primary-600 mr-2" />
+							</div>
+							<div className="w-0 flex-1">
+								<p className="text-sm text-secondary-500 dark:text-white">
+									Compliance
+								</p>
+								<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+									{compliance_compliant}/{compliance_total} hosts
+								</p>
+							</div>
+						</div>
+					</button>
+				);
+			}
+
+			case "erroredHosts":
+				return (
+					<button
+						type="button"
+						className={`border rounded-lg p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left ${
+							stats.cards.erroredHosts > 0
+								? "bg-danger-50 border-danger-200"
+								: "bg-success-50 border-success-200"
+						}`}
+						onClick={handleErroredHostsClick}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								handleErroredHostsClick();
+							}
+						}}
+					>
+						<div className="flex">
+							<AlertTriangle
+								className={`h-5 w-5 ${
+									stats.cards.erroredHosts > 0
+										? "text-danger-400"
+										: "text-success-400"
+								}`}
+							/>
+							<div className="ml-3">
+								{stats.cards.erroredHosts > 0 ? (
+									<>
+										<h3 className="text-sm font-medium text-danger-800">
+											{stats.cards.erroredHosts} host
+											{stats.cards.erroredHosts > 1 ? "s" : ""} haven't reported
+											in {formatUpdateIntervalThreshold()}+
+										</h3>
+										<p className="text-sm text-danger-700 mt-1">
+											These hosts may be offline or experiencing connectivity
+											issues.
+										</p>
+									</>
+								) : (
+									<>
+										<h3 className="text-sm font-medium text-success-800">
+											All hosts are reporting normally
+										</h3>
+										<p className="text-sm text-success-700 mt-1">
+											No hosts have failed to report in the last{" "}
+											{formatUpdateIntervalThreshold()}.
+										</p>
+									</>
+								)}
+							</div>
+						</div>
+					</button>
+				);
+
+			case "offlineHosts":
+				return (
+					<button
+						type="button"
+						className={`border rounded-lg p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left ${
+							stats.cards.offlineHosts > 0
+								? "bg-warning-50 border-warning-200"
+								: "bg-success-50 border-success-200"
+						}`}
+						onClick={handleOfflineHostsClick}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								handleOfflineHostsClick();
+							}
+						}}
+					>
+						<div className="flex">
+							<WifiOff
+								className={`h-5 w-5 ${
+									stats.cards.offlineHosts > 0
+										? "text-warning-400"
+										: "text-success-400"
+								}`}
+							/>
+							<div className="ml-3">
+								{stats.cards.offlineHosts > 0 ? (
+									<>
+										<h3 className="text-sm font-medium text-warning-800">
+											{stats.cards.offlineHosts} host
+											{stats.cards.offlineHosts > 1 ? "s" : ""} offline/stale
+										</h3>
+										<p className="text-sm text-warning-700 mt-1">
+											These hosts haven't reported in{" "}
+											{formatUpdateIntervalThreshold() * 3}+ minutes.
+										</p>
+									</>
+								) : (
+									<>
+										<h3 className="text-sm font-medium text-success-800">
+											All hosts are online
+										</h3>
+										<p className="text-sm text-success-700 mt-1">
+											No hosts are offline or stale.
+										</p>
+									</>
+								)}
+							</div>
+						</div>
+					</button>
+				);
+
+			case "osDistribution":
+				return (
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+							OS Distribution
+						</h3>
+						<div className="h-64 w-full flex items-center justify-center flex-1 min-h-0">
+							<div className="w-full h-full max-w-sm">
+								<Pie data={osChartData} options={chartOptions} />
+							</div>
+						</div>
+					</div>
+				);
+
+			case "osDistributionDoughnut":
+				return (
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+							OS Distribution
+						</h3>
+						<div className="h-64 w-full flex items-center justify-center flex-1 min-h-0">
+							<div className="w-full h-full max-w-sm">
+								<Doughnut data={osChartData} options={doughnutChartOptions} />
+							</div>
+						</div>
+					</div>
+				);
+
+			case "osDistributionBar":
+				return (
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+							OS Distribution
+						</h3>
+						<div className="h-64 flex-1 min-h-0">
+							<Bar data={osBarChartData} options={barChartOptions} />
+						</div>
+					</div>
+				);
+
+			case "updateStatus":
+				return (
+					<button
+						type="button"
+						className="card p-4 sm:p-6 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full flex flex-col"
+						onClick={handleUpdateStatusClick}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								handleUpdateStatusClick();
+							}
+						}}
+					>
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+							Update Status
+						</h3>
+						<div className="h-64 w-full flex items-center justify-center flex-1 min-h-0">
+							<div className="w-full h-full max-w-sm">
+								<Pie
+									data={updateStatusChartData}
+									options={updateStatusChartOptions}
+								/>
+							</div>
+						</div>
+					</button>
+				);
+
+			case "packagePriority":
+				return (
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+							Outdated Packages by Priority
+						</h3>
+						<div className="h-64 w-full flex items-center justify-center flex-1 min-h-0">
+							<div className="w-full h-full max-w-sm">
+								<Pie
+									data={packagePriorityChartData}
+									options={packagePriorityChartOptions}
+								/>
+							</div>
+						</div>
+					</div>
+				);
+
+			case "complianceHostStatus":
+				return compliance_dashboard ? (
+					<HostComplianceStatusBar data={compliance_dashboard} />
+				) : (
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+							Host Compliance Status
+						</h3>
+						<div className="h-64 flex items-center justify-center flex-1 min-h-0">
+							<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
+						</div>
+					</div>
+				);
+
+			case "complianceOpenSCAPDistribution":
+				return compliance_dashboard ? (
+					<OpenSCAPDistributionDoughnut data={compliance_dashboard} />
+				) : (
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+							OpenSCAP Benchmark Distribution
+						</h3>
+						<div className="h-64 flex items-center justify-center flex-1 min-h-0">
+							<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
+						</div>
+					</div>
+				);
+
+			case "complianceFailuresBySeverity":
+				return compliance_dashboard ? (
+					<FailuresBySeverityDoughnut data={compliance_dashboard} />
+				) : (
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+							Failures by Severity
+						</h3>
+						<div className="h-64 flex items-center justify-center flex-1 min-h-0">
+							<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
+						</div>
+					</div>
+				);
+
+			case "complianceProfilesInUse":
+				return compliance_dashboard ? (
+					<ComplianceProfilesPie data={compliance_dashboard} />
+				) : (
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+							Compliance Profiles in Use
+						</h3>
+						<div className="h-64 flex items-center justify-center flex-1 min-h-0">
+							<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
+						</div>
+					</div>
+				);
+
+			case "complianceLastScanAge":
+				return compliance_dashboard ? (
+					<LastScanAgeBar data={compliance_dashboard} />
+				) : (
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+							Last Scan Age
+						</h3>
+						<div className="h-64 flex items-center justify-center flex-1 min-h-0">
+							<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
+						</div>
+					</div>
+				);
+
+			case "complianceTrendLine":
+				return <ComplianceTrendLinePlaceholder />;
+
+			case "complianceActiveBenchmarkScans":
+				return <ActiveBenchmarkScans />;
+
+			case "packageTrends":
+				return (
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+						<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4 flex-shrink-0">
+							<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+								Package Trends Over Time
+							</h3>
+							<div className="flex flex-col gap-2">
+								<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
+									{/* Refresh Button */}
+									<button
+										type="button"
+										onClick={async () => {
+											if (packageTrendsHost === "all") {
+												// For "All Hosts", trigger system statistics collection job
+												setIsTriggeringJob(true);
+												try {
+													const response =
+														await dashboardAPI.triggerSystemStatistics();
+													if (response.data?.data?.jobId) {
+														setSystemStatsJobId(response.data.data.jobId);
+														// Wait a moment for the job to complete, then refetch
+														setTimeout(() => {
+															refetchPackageTrends();
+														}, 2000);
+														// Clear the job ID message after 2 seconds
+														setTimeout(() => {
+															setSystemStatsJobId(null);
+														}, 2000);
+													}
+												} catch (error) {
+													console.error(
+														"Failed to trigger system statistics:",
+														error,
+													);
+													// Still refetch data even if job trigger fails
+													refetchPackageTrends();
+												} finally {
+													setIsTriggeringJob(false);
+												}
+											} else {
+												// For individual host, just refetch the data
+												refetchPackageTrends();
+											}
+										}}
+										disabled={packageTrendsFetching || isTriggeringJob}
+										className="px-3 py-2.5 sm:py-1.5 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white hover:bg-secondary-50 dark:hover:bg-secondary-700 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 min-h-[44px]"
+										title={
+											packageTrendsHost === "all"
+												? "Trigger system statistics collection"
+												: "Refresh data"
+										}
+									>
+										<RefreshCw
+											className={`h-4 w-4 ${
+												packageTrendsFetching || isTriggeringJob
+													? "animate-spin"
+													: ""
+											}`}
+										/>
+										Refresh
+									</button>
+
+									{/* Period Selector */}
+									<select
+										value={packageTrendsPeriod}
+										onChange={(e) => setPackageTrendsPeriod(e.target.value)}
+										className="px-3 py-2.5 sm:py-1.5 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500 min-h-[44px]"
+									>
+										<option value="1">Last 24 hours</option>
+										<option value="7">Last 7 days</option>
+										<option value="30">Last 30 days</option>
+										<option value="90">Last 90 days</option>
+										<option value="180">Last 6 months</option>
+										<option value="365">Last year</option>
+									</select>
+
+									{/* Host Selector */}
+									<select
+										value={packageTrendsHost}
+										onChange={(e) => {
+											setPackageTrendsHost(e.target.value);
+											// Clear job ID message when host selection changes
+											setSystemStatsJobId(null);
+										}}
+										className="px-3 py-2.5 sm:py-1.5 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500 min-h-[44px]"
+									>
+										<option value="all">All Hosts</option>
+										{packageTrendsData?.hosts?.length > 0 ? (
+											packageTrendsData.hosts.map((host) => (
+												<option key={host.id} value={host.id}>
+													{host.friendly_name || host.hostname}
+												</option>
+											))
+										) : (
+											<option disabled>
+												{packageTrendsLoading
+													? "Loading hosts..."
+													: "No hosts available"}
+											</option>
+										)}
+									</select>
+								</div>
+								{/* Job ID Message */}
+								{systemStatsJobId && packageTrendsHost === "all" && (
+									<p className="text-xs text-secondary-600 dark:text-white/70 ml-1">
+										Ran collection job #{systemStatsJobId}
+									</p>
+								)}
+							</div>
+						</div>
+
+						<div className="h-64 w-full">
+							{packageTrendsLoading ? (
+								<div className="flex items-center justify-center h-full">
+									<RefreshCw className="h-8 w-8 animate-spin text-primary-600" />
+								</div>
+							) : packageTrendsData?.chartData ? (
+								<Line
+									key={`${packageTrendsPeriod}-${packageTrendsHost}`}
+									data={packageTrendsData.chartData}
+									options={packageTrendsChartOptions}
+								/>
+							) : (
+								<div className="flex items-center justify-center h-full text-secondary-500 dark:text-white/70">
+									No data available
+								</div>
+							)}
+						</div>
+					</div>
+				);
+
+			case "quickStats": {
+				// Calculate dynamic stats
+				const updatePercentage =
+					stats.cards.totalHosts > 0
+						? (
+								(stats.cards.hostsNeedingUpdates / stats.cards.totalHosts) *
+								100
+							).toFixed(1)
+						: 0;
+				const onlineHosts = stats.cards.totalHosts - stats.cards.erroredHosts;
+				const onlinePercentage =
+					stats.cards.totalHosts > 0
+						? ((onlineHosts / stats.cards.totalHosts) * 100).toFixed(0)
+						: 0;
+				const securityPercentage =
+					stats.cards.totalOutdatedPackages > 0
+						? (
+								(stats.cards.securityUpdates /
+									stats.cards.totalOutdatedPackages) *
+								100
+							).toFixed(0)
+						: 0;
+				const avgPackagesPerHost =
+					stats.cards.totalHosts > 0
+						? Math.round(
+								stats.cards.totalOutdatedPackages / stats.cards.totalHosts,
+							)
+						: 0;
+
+				return (
+					<div className="card p-3 sm:p-4 w-full h-full flex flex-col min-h-0">
+						<div className="grid grid-cols-4 gap-2 sm:gap-3 flex-1 min-h-0 items-center">
+							<div className="text-center min-w-0">
+								<div
+									className="text-lg sm:text-xl font-bold text-primary-600 truncate"
+									title={`${updatePercentage}%`}
+								>
+									{updatePercentage}%
+								</div>
+								<div
+									className="text-xs text-secondary-500 dark:text-white/70 truncate"
+									title="Need Updates"
+								>
+									Need Updates
+								</div>
+								<div className="text-[10px] sm:text-xs text-secondary-400 dark:text-white/60 truncate">
+									{stats.cards.hostsNeedingUpdates}/{stats.cards.totalHosts}
+								</div>
+							</div>
+							<div className="text-center min-w-0">
+								<div className="text-lg sm:text-xl font-bold text-danger-600 truncate">
+									{stats.cards.securityUpdates}
+								</div>
+								<div
+									className="text-xs text-secondary-500 dark:text-white/70 truncate"
+									title="Security Issues"
+								>
+									Security
+								</div>
+								<div className="text-[10px] sm:text-xs text-secondary-400 dark:text-white/60 truncate">
+									{securityPercentage}%
+								</div>
+							</div>
+							<div className="text-center min-w-0">
+								<div className="text-lg sm:text-xl font-bold text-success-600 truncate">
+									{onlinePercentage}%
+								</div>
+								<div
+									className="text-xs text-secondary-500 dark:text-white/70 truncate"
+									title="Online"
+								>
+									Online
+								</div>
+								<div className="text-[10px] sm:text-xs text-secondary-400 dark:text-white/60 truncate">
+									{onlineHosts}/{stats.cards.totalHosts}
+								</div>
+							</div>
+							<div className="text-center min-w-0">
+								<div className="text-lg sm:text-xl font-bold text-secondary-600 truncate">
+									{avgPackagesPerHost}
+								</div>
+								<div
+									className="text-xs text-secondary-500 dark:text-white/70 truncate"
+									title="Avg per Host"
+								>
+									Avg/Host
+								</div>
+								<div className="text-[10px] sm:text-xs text-secondary-400 dark:text-white/60 truncate">
+									outdated
+								</div>
+							</div>
+						</div>
+					</div>
+				);
+			}
+
+			case "recentUsers":
+				return (
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+						<div className="flex items-center justify-between mb-4 flex-shrink-0">
+							<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+								Recent Users Logged in
+							</h3>
+							{recentUsers?.length > 0 && (
+								<span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+									<Users className="h-3 w-3" />
+									{recentUsers.length} users
+								</span>
+							)}
+						</div>
+						{!recentUsers || recentUsers.length === 0 ? (
+							<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-white flex-1">
+								<Users className="h-8 w-8 mb-2" />
+								<p className="text-sm">No users found</p>
+							</div>
+						) : (
+							<div className="overflow-hidden rounded-lg border border-secondary-200 dark:border-secondary-700 flex-1 min-h-0 flex flex-col">
+								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700 text-sm">
+									<thead className="bg-secondary-50 dark:bg-secondary-700/50">
+										<tr>
+											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase">
+												Username
+											</th>
+											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase">
+												Last Login
+											</th>
+										</tr>
+									</thead>
+									<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-700">
+										{recentUsers.slice(0, 5).map((u) => (
+											<tr
+												key={u.id}
+												className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
+											>
+												<td className="px-3 py-1.5 whitespace-nowrap">
+													<span className="font-medium text-secondary-900 dark:text-white">
+														{u.username}
+													</span>
+												</td>
+												<td className="px-3 py-1.5 whitespace-nowrap text-secondary-500 dark:text-white text-xs">
+													{u.last_login
+														? formatRelativeTime(u.last_login)
+														: "Never"}
+												</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</div>
+						)}
+					</div>
+				);
+
+			case "recentCollection":
+				return (
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+						<div className="flex items-center justify-between mb-4 flex-shrink-0">
+							<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+								Recent Collection
+							</h3>
+							{recentCollection?.length > 0 && (
+								<span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+									<Server className="h-3 w-3" />
+									{recentCollection.length} hosts
+								</span>
+							)}
+						</div>
+						{!recentCollection || recentCollection.length === 0 ? (
+							<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-white flex-1">
+								<Server className="h-8 w-8 mb-2" />
+								<p className="text-sm">No hosts found</p>
+							</div>
+						) : (
+							<div className="overflow-hidden rounded-lg border border-secondary-200 dark:border-secondary-700 flex-1 min-h-0 flex flex-col">
+								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700 text-sm">
+									<thead className="bg-secondary-50 dark:bg-secondary-700/50">
+										<tr>
+											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase">
+												Host
+											</th>
+											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase">
+												Last Update
+											</th>
+										</tr>
+									</thead>
+									<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-700">
+										{recentCollection.slice(0, 5).map((host) => (
+											<tr
+												key={host.id}
+												className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
+											>
+												<td className="px-3 py-1.5 whitespace-nowrap">
+													<button
+														type="button"
+														onClick={() => navigate(`/hosts/${host.id}`)}
+														className="font-medium text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300 hover:underline"
+													>
+														{host.friendly_name || host.hostname}
+													</button>
+												</td>
+												<td className="px-3 py-1.5 whitespace-nowrap text-secondary-500 dark:text-white text-xs">
+													{host.last_update
+														? formatRelativeTime(host.last_update)
+														: "Never"}
+												</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</div>
+						)}
+					</div>
+				);
+
+			default:
+				return null;
+		}
+	};
+
+	if (isLoading) {
+		return (
+			<div className="flex items-center justify-center h-64">
+				<RefreshCw className="h-8 w-8 animate-spin text-primary-600" />
+			</div>
+		);
+	}
+
+	if (error) {
+		return (
+			<div className="bg-danger-50 border border-danger-200 rounded-md p-4">
+				<div className="flex">
+					<AlertTriangle className="h-5 w-5 text-danger-400" />
+					<div className="ml-3">
+						<h3 className="text-sm font-medium text-danger-800">
+							Error loading dashboard
+						</h3>
+						<p className="text-sm text-danger-700 mt-1">
+							{error.message || "Failed to load dashboard statistics"}
+						</p>
+						<button
+							type="button"
+							onClick={() => refetch()}
+							className="mt-2 btn-danger text-xs"
+						>
+							Try again
+						</button>
+					</div>
+				</div>
+			</div>
+		);
+	}
+
+	const chartOptions = {
+		responsive: true,
+		maintainAspectRatio: false,
+		plugins: {
+			legend: {
+				position: isMobile ? "bottom" : "right",
+				labels: {
+					color: isDark ? "#ffffff" : "#374151",
+					font: {
+						size: isMobile ? 10 : 12,
+					},
+					padding: isMobile ? 10 : 15,
+					usePointStyle: true,
+					pointStyle: "circle",
+				},
+			},
+		},
+		layout: {
+			padding: {
+				right: isMobile ? 10 : 20,
+			},
+		},
+		onClick: handleOSChartClick,
+	};
+
+	const doughnutChartOptions = {
+		responsive: true,
+		maintainAspectRatio: false,
+		plugins: {
+			legend: {
+				position: isMobile ? "bottom" : "right",
+				labels: {
+					color: isDark ? "#ffffff" : "#374151",
+					font: {
+						size: isMobile ? 10 : 12,
+					},
+					padding: isMobile ? 10 : 15,
+					usePointStyle: true,
+					pointStyle: "circle",
+				},
+			},
+		},
+		layout: {
+			padding: {
+				right: isMobile ? 10 : 20,
+			},
+		},
+		onClick: handleOSChartClick,
+	};
+
+	const updateStatusChartOptions = {
+		responsive: true,
+		maintainAspectRatio: false,
+		plugins: {
+			legend: {
+				position: "right",
+				labels: {
+					color: isDark ? "#ffffff" : "#374151",
+					font: {
+						size: 12,
+					},
+					padding: 15,
+					usePointStyle: true,
+					pointStyle: "circle",
+				},
+			},
+		},
+		layout: {
+			padding: {
+				right: 20,
+			},
+		},
+		onClick: handleUpdateStatusChartClick,
+	};
+
+	const packagePriorityChartOptions = {
+		responsive: true,
+		maintainAspectRatio: false,
+		plugins: {
+			legend: {
+				position: "right",
+				labels: {
+					color: isDark ? "#ffffff" : "#374151",
+					font: {
+						size: 12,
+					},
+					padding: 15,
+					usePointStyle: true,
+					pointStyle: "circle",
+				},
+			},
+		},
+		layout: {
+			padding: {
+				right: 20,
+			},
+		},
+		onClick: handlePackagePriorityChartClick,
+	};
+
+	const packageTrendsChartOptions = {
+		responsive: true,
+		maintainAspectRatio: false,
+		plugins: {
+			legend: {
+				position: "top",
+				labels: {
+					color: isDark ? "#ffffff" : "#374151",
+					font: {
+						size: 12,
+					},
+					padding: 20,
+					usePointStyle: true,
+					pointStyle: "circle",
+				},
+			},
+			tooltip: {
+				mode: "index",
+				intersect: false,
+				backgroundColor: isDark ? "#374151" : "#ffffff",
+				titleColor: isDark ? "#ffffff" : "#374151",
+				bodyColor: isDark ? "#ffffff" : "#374151",
+				borderColor: isDark ? "#4B5563" : "#E5E7EB",
+				borderWidth: 1,
+				callbacks: {
+					title: (context) => {
+						const label = context[0].label;
+
+						// Handle "Now" label
+						if (label === "Now") {
+							return "Now";
+						}
+
+						// Handle empty or invalid labels
+						if (!label || typeof label !== "string") {
+							return "Unknown Date";
+						}
+
+						// Check if it's a full ISO timestamp (for "Last 24 hours")
+						// Format: "2025-01-15T14:30:00.000Z" or "2025-01-15T14:30:00.000"
+						if (label.includes("T") && label.includes(":")) {
+							try {
+								const date = new Date(label);
+								// Check if date is valid
+								if (Number.isNaN(date.getTime())) {
+									return label; // Return original label if date is invalid
+								}
+								// Format full ISO timestamp with date and time
+								return date.toLocaleDateString("en-US", {
+									month: "short",
+									day: "numeric",
+									hour: "numeric",
+									minute: "2-digit",
+									hour12: true,
+								});
+							} catch (_error) {
+								return label; // Return original label if parsing fails
+							}
+						}
+
+						// Format hourly labels (e.g., "2025-10-07T14" -> "Oct 7, 2:00 PM")
+						if (label.includes("T") && !label.includes(":")) {
+							try {
+								const date = new Date(`${label}:00:00`);
+								// Check if date is valid
+								if (Number.isNaN(date.getTime())) {
+									return label; // Return original label if date is invalid
+								}
+								return date.toLocaleDateString("en-US", {
+									month: "short",
+									day: "numeric",
+									hour: "numeric",
+									minute: "2-digit",
+									hour12: true,
+								});
+							} catch (_error) {
+								return label; // Return original label if parsing fails
+							}
+						}
+
+						// Format daily labels (e.g., "2025-10-07" -> "Oct 7")
+						try {
+							const date = new Date(label);
+							// Check if date is valid
+							if (Number.isNaN(date.getTime())) {
+								return label; // Return original label if date is invalid
+							}
+							return date.toLocaleDateString("en-US", {
+								month: "short",
+								day: "numeric",
+							});
+						} catch (_error) {
+							return label; // Return original label if parsing fails
+						}
+					},
+					label: (context) => {
+						const value = context.parsed.y;
+						if (value === null || value === undefined) {
+							return `${context.dataset.label}: No data`;
+						}
+						return `${context.dataset.label}: ${value}`;
+					},
+				},
+			},
+		},
+		scales: {
+			x: {
+				display: true,
+				title: {
+					display: true,
+					text: packageTrendsPeriod === "1" ? "Time (Hours)" : "Date",
+					color: isDark ? "#ffffff" : "#374151",
+				},
+				ticks: {
+					color: isDark ? "#ffffff" : "#374151",
+					font: {
+						size: 11,
+					},
+					callback: function (value, _index, _ticks) {
+						const label = this.getLabelForValue(value);
+
+						// Handle "Now" label
+						if (label === "Now") {
+							return "Now";
+						}
+
+						// Handle empty or invalid labels
+						if (!label || typeof label !== "string") {
+							return "Unknown";
+						}
+
+						// Check if it's a full ISO timestamp (for "Last 24 hours")
+						// Format: "2025-01-15T14:30:00.000Z" or "2025-01-15T14:30:00.000"
+						if (label.includes("T") && label.includes(":")) {
+							try {
+								const date = new Date(label);
+								// Check if date is valid
+								if (Number.isNaN(date.getTime())) {
+									return label; // Return original label if date is invalid
+								}
+								// Extract hour from full ISO timestamp
+								const hourNum = date.getHours();
+								return hourNum === 0
+									? "12 AM"
+									: hourNum < 12
+										? `${hourNum} AM`
+										: hourNum === 12
+											? "12 PM"
+											: `${hourNum - 12} PM`;
+							} catch (_error) {
+								return label; // Return original label if parsing fails
+							}
+						}
+
+						// Format hourly labels (e.g., "2025-10-07T14" -> "2 PM")
+						if (label.includes("T") && !label.includes(":")) {
+							try {
+								const hour = label.split("T")[1];
+								const hourNum = parseInt(hour, 10);
+
+								// Validate hour number
+								if (Number.isNaN(hourNum) || hourNum < 0 || hourNum > 23) {
+									return hour; // Return original hour if invalid
+								}
+
+								return hourNum === 0
+									? "12 AM"
+									: hourNum < 12
+										? `${hourNum} AM`
+										: hourNum === 12
+											? "12 PM"
+											: `${hourNum - 12} PM`;
+							} catch (_error) {
+								return label; // Return original label if parsing fails
+							}
+						}
+
+						// Format daily labels (e.g., "2025-10-07" -> "Oct 7")
+						try {
+							const date = new Date(label);
+							// Check if date is valid
+							if (Number.isNaN(date.getTime())) {
+								return label; // Return original label if date is invalid
+							}
+							return date.toLocaleDateString("en-US", {
+								month: "short",
+								day: "numeric",
+							});
+						} catch (_error) {
+							return label; // Return original label if parsing fails
+						}
+					},
+				},
+				grid: {
+					color: isDark ? "#374151" : "#E5E7EB",
+				},
+			},
+			y: {
+				display: true,
+				title: {
+					display: true,
+					text: "Number of Packages",
+					color: isDark ? "#ffffff" : "#374151",
+				},
+				ticks: {
+					color: isDark ? "#ffffff" : "#374151",
+					font: {
+						size: 11,
+					},
+					beginAtZero: true,
+				},
+				grid: {
+					color: isDark ? "#374151" : "#E5E7EB",
+				},
+			},
+		},
+		interaction: {
+			mode: "nearest",
+			axis: "x",
+			intersect: false,
+		},
+	};
+
+	const barChartOptions = {
+		responsive: true,
+		indexAxis: "y", // Make the chart horizontal
+		plugins: {
+			legend: {
+				display: false,
+			},
+		},
+		scales: {
+			x: {
+				ticks: {
+					color: isDark ? "#ffffff" : "#374151",
+					font: {
+						size: 12,
+					},
+				},
+				grid: {
+					color: isDark ? "#374151" : "#e5e7eb",
+				},
+			},
+			y: {
+				ticks: {
+					color: isDark ? "#ffffff" : "#374151",
+					font: {
+						size: 12,
+					},
+				},
+				grid: {
+					color: isDark ? "#374151" : "#e5e7eb",
+				},
+			},
+		},
+		onClick: handleOSChartClick,
+	};
+
+	const osChartData = {
+		labels: stats.charts.osDistribution.map((item) => item.name),
+		datasets: [
+			{
+				data: stats.charts.osDistribution.map((item) => item.count),
+				backgroundColor: [
+					"#3B82F6", // Blue
+					"#10B981", // Green
+					"#F59E0B", // Yellow
+					"#EF4444", // Red
+					"#8B5CF6", // Purple
+					"#06B6D4", // Cyan
+				],
+				borderWidth: 2,
+				borderColor: "#ffffff",
+			},
+		],
+	};
+
+	const osBarChartData = {
+		labels: stats.charts.osDistribution.map((item) => item.name),
+		datasets: [
+			{
+				label: "Hosts",
+				data: stats.charts.osDistribution.map((item) => item.count),
+				backgroundColor: [
+					"#3B82F6", // Blue
+					"#10B981", // Green
+					"#F59E0B", // Yellow
+					"#EF4444", // Red
+					"#8B5CF6", // Purple
+					"#06B6D4", // Cyan
+				],
+				borderWidth: 1,
+				borderColor: isDark ? "#374151" : "#ffffff",
+				borderRadius: 4,
+				borderSkipped: false,
+			},
+		],
+	};
+
+	const updateStatusChartData = {
+		labels: stats.charts.updateStatusDistribution.map((item) => item.name),
+		datasets: [
+			{
+				data: stats.charts.updateStatusDistribution.map((item) => item.count),
+				backgroundColor: [
+					"#10B981", // Green - Up to date
+					"#F59E0B", // Yellow - Needs updates
+					"#EF4444", // Red - Errored
+				],
+				borderWidth: 2,
+				borderColor: "#ffffff",
+			},
+		],
+	};
+
+	const packagePriorityChartData = {
+		labels: stats.charts.packageUpdateDistribution.map((item) => item.name),
+		datasets: [
+			{
+				data: stats.charts.packageUpdateDistribution.map((item) => item.count),
+				backgroundColor: [
+					"#EF4444", // Red - Security
+					"#3B82F6", // Blue - Regular
+				],
+				borderWidth: 2,
+				borderColor: "#ffffff",
+			},
+		],
+	};
+
+	return (
+		<div className="space-y-6">
+			{/* Page Header */}
+			<div className="flex items-center justify-between">
+				<div>
+					<h1 className="text-xl sm:text-2xl font-semibold text-secondary-900 dark:text-white">
+						Welcome back, {user?.first_name || user?.username || "User"} 👋
+					</h1>
+					<p className="text-sm text-secondary-600 dark:text-white/80 mt-1">
+						Overview of your PatchMon infrastructure
+					</p>
+				</div>
+				<div className="flex items-center gap-3">
+					<button
+						type="button"
+						onClick={handle_enter_edit_mode}
+						className="hidden md:flex btn-outline items-center gap-2 min-h-[44px] px-3 justify-center"
+						title="Customize dashboard layout"
+					>
+						<Settings className="h-4 w-4" />
+						<span>Edit dashboard</span>
+					</button>
+					<button
+						type="button"
+						onClick={() => refetch()}
+						disabled={isFetching}
+						className="btn-outline flex items-center gap-2 min-h-[44px] min-w-[44px] justify-center"
+						title="Refresh dashboard data"
+					>
+						<RefreshCw
+							className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`}
+						/>
+					</button>
+				</div>
+			</div>
+
+			{/* Edit mode bar: row layout, drag to reorder, Save order, Cancel */}
+			{dashboard_edit_mode && (
+				<div className="p-3 rounded-lg bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 space-y-3">
+					<div className="flex flex-wrap items-center justify-between gap-3">
+						<p className="text-sm text-primary-800 dark:text-primary-200">
+							Drag cards to reorder. Drag the right edge of a card to make it
+							wider or narrower. Change row columns below if needed, then Save
+							order to apply.
+						</p>
+						<div className="flex items-center gap-2">
+							<button
+								type="button"
+								onClick={handle_edit_mode_save}
+								disabled={
+									update_preferences_mutation.isPending ||
+									update_layout_mutation.isPending
+								}
+								className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+							>
+								{update_preferences_mutation.isPending ||
+								update_layout_mutation.isPending ? (
+									<>
+										<span className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-white border-t-transparent" />
+										Saving...
+									</>
+								) : (
+									<>
+										<Save className="h-4 w-4" />
+										Save order
+									</>
+								)}
+							</button>
+							<button
+								type="button"
+								onClick={handle_edit_mode_reset}
+								disabled={
+									update_preferences_mutation.isPending ||
+									update_layout_mutation.isPending ||
+									!defaultCards
+								}
+								className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium bg-white dark:bg-secondary-800 border border-amber-400 dark:border-amber-600 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/20 disabled:opacity-50"
+							>
+								<RotateCcw className="h-4 w-4" />
+								Reset to Defaults
+							</button>
+							<button
+								type="button"
+								onClick={handle_edit_mode_cancel}
+								disabled={
+									update_preferences_mutation.isPending ||
+									update_layout_mutation.isPending
+								}
+								className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium bg-white dark:bg-secondary-800 border border-secondary-300 dark:border-secondary-600 text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-700 disabled:opacity-50"
+							>
+								<X className="h-4 w-4" />
+								Cancel
+							</button>
+						</div>
+					</div>
+					{/* Row layout: columns per row (same as list modal) */}
+					{edit_mode_layout && (
+						<div className="flex flex-wrap items-center gap-4 pt-2 border-t border-primary-200 dark:border-primary-800">
+							<span className="text-xs font-medium text-primary-800 dark:text-primary-200">
+								Row layout:
+							</span>
+							<div className="flex flex-wrap items-center gap-3">
+								<div className="flex items-center gap-2">
+									<label
+										htmlFor="edit-stats-columns"
+										className="text-xs text-primary-700 dark:text-primary-300"
+									>
+										Stats row
+									</label>
+									<select
+										id="edit-stats-columns"
+										value={edit_mode_layout.stats_columns}
+										onChange={(e) => {
+											const v = Number(e.target.value);
+											set_edit_mode_layout((prev) =>
+												prev ? { ...prev, stats_columns: v } : null,
+											);
+										}}
+										className="rounded-md border border-primary-300 dark:border-primary-700 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm py-1 px-2"
+									>
+										{[2, 3, 4, 5, 6].map((n) => (
+											<option key={n} value={n}>
+												{n} columns
+											</option>
+										))}
+									</select>
+								</div>
+								<div className="flex items-center gap-2">
+									<label
+										htmlFor="edit-charts-columns"
+										className="text-xs text-primary-700 dark:text-primary-300"
+									>
+										Charts row
+									</label>
+									<select
+										id="edit-charts-columns"
+										value={edit_mode_layout.charts_columns}
+										onChange={(e) => {
+											const v = Number(e.target.value);
+											set_edit_mode_layout((prev) =>
+												prev ? { ...prev, charts_columns: v } : null,
+											);
+										}}
+										className="rounded-md border border-primary-300 dark:border-primary-700 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm py-1 px-2"
+									>
+										{[2, 3, 4].map((n) => (
+											<option key={n} value={n}>
+												{n} columns
+											</option>
+										))}
+									</select>
+								</div>
+							</div>
+						</div>
+					)}
+				</div>
+			)}
+
+			{/* Dynamically Rendered Cards - Edit mode (grouped by type, using edit_mode_layout) or normal (grouped) */}
+			{dashboard_edit_mode && edit_mode_order ? (
+				<DndContext
+					sensors={edit_mode_sensors}
+					collisionDetection={closestCenter}
+					onDragStart={(e) => {
+						set_active_drag_id(e.active.id);
+						const rect = e.active.rect.current;
+						set_active_drag_rect(
+							rect ? { width: rect.width, height: rect.height } : null,
+						);
+					}}
+					onDragOver={(e) => set_over_id(e.over?.id ?? null)}
+					onDragEnd={handle_edit_mode_drag_end}
+				>
+					<SortableContext
+						items={edit_mode_order
+							.filter((c) => c.enabled && isCardEnabled(c.cardId))
+							.sort((a, b) => a.order - b.order)
+							.map((c) => c.cardId)}
+						strategy={rectSortingStrategy}
+					>
+						{(() => {
+							const layout = edit_mode_layout ?? {
+								stats_columns: dashboard_layout?.stats_columns ?? 6,
+								charts_columns: dashboard_layout?.charts_columns ?? 4,
+							};
+							// In edit mode show ALL cards (enabled + hidden) so user can toggle visibility; filter only by permissions
+							const all_cards = edit_mode_order.filter((c) => {
+								if (c.cardId === "totalUsers" || c.cardId === "recentUsers") {
+									if (permissions?.can_view_users !== true) return false;
+								}
+								if (
+									c.cardId === "complianceStats" ||
+									COMPLIANCE_WIDGET_CARD_IDS.includes(c.cardId)
+								) {
+									if (permissions?.can_view_hosts !== true) return false;
+								}
+								return true;
+							});
+							const card_groups = [];
+							let current_group = null;
+							all_cards.forEach((card) => {
+								const card_type = getCardType(card.cardId);
+								if (!current_group || current_group.type !== card_type) {
+									current_group = {
+										type: card_type,
+										cards: [card],
+									};
+									card_groups.push(current_group);
+								} else {
+									current_group.cards.push(card);
+								}
+							});
+							// Within each group: enabled first (by order), then hidden at the end (by order)
+							card_groups.forEach((group) => {
+								group.cards.sort((a, b) => {
+									if (a.enabled && !b.enabled) return -1;
+									if (!a.enabled && b.enabled) return 1;
+									return a.order - b.order;
+								});
+							});
+							const handle_toggle_visibility = (card_id) => {
+								set_edit_mode_order((prev) =>
+									prev
+										? prev.map((c) =>
+												c.cardId === card_id
+													? { ...c, enabled: !c.enabled }
+													: c,
+											)
+										: prev,
+								);
+							};
+							return (
+								<>
+									{card_groups.map((group, group_index) => (
+										<div
+											key={`edit-group-${group.type}-${group_index}`}
+											className={getGroupClassNameForLayout(group.type, layout)}
+										>
+											{group.cards.map((card, card_index) => {
+												const is_drop_target =
+													card.enabled &&
+													over_id === card.cardId &&
+													active_drag_id !== card.cardId;
+												return (
+													<div
+														key={`card-${card.cardId}-${group_index}-${card_index}`}
+														className={
+															"relative h-full min-h-0 " +
+															get_card_col_span_class(card) +
+															(is_drop_target
+																? " ring-2 ring-primary-500 ring-offset-2 ring-offset-white dark:ring-offset-secondary-900 rounded-lg"
+																: "")
+														}
+													>
+														{card.enabled ? (
+															<>
+																<SortableDashboardCard
+																	card_id={card.cardId}
+																	render_card={renderCard}
+																/>
+																<CardResizeHandle
+																	card_id={card.cardId}
+																	col_span={card.col_span ?? 1}
+																	on_resize={(id, new_span) => {
+																		set_edit_mode_order((prev) =>
+																			prev
+																				? prev.map((c) =>
+																						c.cardId === id
+																							? { ...c, col_span: new_span }
+																							: c,
+																					)
+																				: prev,
+																		);
+																	}}
+																/>
+																<button
+																	type="button"
+																	onClick={() =>
+																		handle_toggle_visibility(card.cardId)
+																	}
+																	className="absolute top-2 left-2 z-10 p-1.5 rounded bg-green-100 dark:bg-green-900/80 text-green-800 dark:text-green-200 hover:bg-green-200 dark:hover:bg-green-800 cursor-pointer"
+																	title="Hide card"
+																	aria-label="Hide card"
+																>
+																	<Eye className="h-4 w-4" />
+																</button>
+															</>
+														) : (
+															<>
+																<div className="h-full opacity-50 pointer-events-none">
+																	{renderCard(card.cardId)}
+																</div>
+																<button
+																	type="button"
+																	onClick={() =>
+																		handle_toggle_visibility(card.cardId)
+																	}
+																	className="absolute top-2 left-2 z-10 p-1.5 rounded bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-200 hover:bg-secondary-300 dark:hover:bg-secondary-500 cursor-pointer"
+																	title="Show card"
+																	aria-label="Show card"
+																>
+																	<EyeOff className="h-4 w-4" />
+																</button>
+															</>
+														)}
+													</div>
+												);
+											})}
+										</div>
+									))}
+								</>
+							);
+						})()}
+					</SortableContext>
+					<DragOverlay
+						dropAnimation={{
+							duration: 200,
+							easing: "cubic-bezier(0.18, 0.67, 0.6, 1.22)",
+						}}
+					>
+						{active_drag_id
+							? (() => {
+									const rect = active_drag_rect;
+									const active_card = edit_mode_order.find(
+										(c) => c.cardId === active_drag_id,
+									);
+									const col_span = Math.min(
+										3,
+										Math.max(1, Number(active_card?.col_span ?? 1)),
+									);
+									const fallback_width =
+										col_span === 1 ? 256 : col_span === 2 ? 512 : 768;
+									const style = rect
+										? {
+												width: rect.width,
+												height: rect.height,
+												minWidth: rect.width,
+												minHeight: rect.height,
+											}
+										: {
+												width: fallback_width,
+												minHeight: "8rem",
+												minWidth: fallback_width,
+											};
+									return (
+										<div
+											className="relative flex min-h-[8rem] flex-col overflow-hidden rounded-lg border-2 border-primary-400 bg-white shadow-xl dark:border-primary-500 dark:bg-secondary-800"
+											style={style}
+										>
+											<div className="min-h-0 flex-1 overflow-auto p-2">
+												{renderCard(active_drag_id)}
+											</div>
+										</div>
+									);
+								})()
+							: null}
+					</DragOverlay>
+				</DndContext>
+			) : (
+				(() => {
+					const order_source = edit_mode_order ?? cardPreferences;
+					const enabledCards = order_source
+						.filter((card) => isCardEnabled(card.cardId))
+						.sort((a, b) => a.order - b.order);
+
+					// Group consecutive cards of the same type for proper layout
+					const cardGroups = [];
+					let currentGroup = null;
+
+					enabledCards.forEach((card) => {
+						const cardType = getCardType(card.cardId);
+
+						if (!currentGroup || currentGroup.type !== cardType) {
+							currentGroup = {
+								type: cardType,
+								cards: [card],
+							};
+							cardGroups.push(currentGroup);
+						} else {
+							currentGroup.cards.push(card);
+						}
+					});
+
+					return (
+						<>
+							{cardGroups.map((group, groupIndex) => (
+								<div
+									key={`group-${group.type}-${groupIndex}`}
+									className={getGroupClassName(group.type)}
+								>
+									{group.cards.map((card, cardIndex) => (
+										<div
+											key={`card-${card.cardId}-${groupIndex}-${cardIndex}`}
+											className={`h-full ${get_card_col_span_class(card)}`}
+										>
+											{renderCard(card.cardId)}
+										</div>
+									))}
+								</div>
+							))}
+						</>
+					);
+				})()
+			)}
+		</div>
+	);
+};
+
+export default Dashboard;

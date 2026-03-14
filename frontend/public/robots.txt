@@ -1,0 +1,26 @@
+# Disallow all search engine crawlers
+User-agent: *
+Disallow: /
+
+# Specifically target major search engines
+User-agent: Googlebot
+Disallow: /
+
+User-agent: Bingbot
+Disallow: /
+
+User-agent: Slurp
+Disallow: /
+
+User-agent: DuckDuckBot
+Disallow: /
+
+User-agent: Baiduspider
+Disallow: /
+
+User-agent: YandexBot
+Disallow: /
+
+# Prevent indexing of all content
+Disallow: /*
+

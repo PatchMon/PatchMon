@@ -1,0 +1,27 @@
+# Gitleaks allowlist: exclude known false positives and paths that must not be scanned.
+# See https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml
+
+title = "PatchMon allowlist"
+
+[allowlist]
+description = "Exclude .env, build output, and doc/UI examples that look like secrets"
+
+# Do not scan env files (gitignored; if present on disk, they are local-only)
+paths = [
+  '''\.env$''',
+  '''\.env\.''',
+  '''(?:^|/)\.env(?:\.|$)''',
+  '''(?:^|/)dist/''',
+  '''(?:^|/)node_modules/''',
+  '''(?:^|/)\.codeql-db/''',
+]
+
+# Allow curl -u "${...token_key}:${...token_secret}" in Integrations.jsx (template literal, not a secret)
+regexes = [
+  '''\$\{[^}]*token_key[^}]*\}:\$\{[^}]*token_secret[^}]*\}''',
+]
+
+# Doc/example placeholders that look like long hex strings
+stopwords = [
+  "abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+]

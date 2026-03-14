@@ -1,0 +1,87 @@
+import { Agent as HttpAgent } from "node:http";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+// https://vitejs.dev/config/
+export default defineConfig({
+	plugins: [react()],
+	optimizeDeps: {
+		include: ["xterm", "xterm-addon-fit"],
+		esbuildOptions: {
+			target: "es2020",
+		},
+	},
+	server: {
+		port: 3000,
+		host: "0.0.0.0", // Listen on all interfaces
+		strictPort: true, // Exit if port is already in use
+		allowedHosts: true, // Allow all hosts in development
+		proxy: {
+			"/api": {
+				target: `http://${process.env.SERVER_HOST || "localhost"}:${process.env.SERVER_PORT || "3001"}`,
+				changeOrigin: false,
+				secure: false,
+				ws: true, // Enable WebSocket proxy
+				xfwd: true, // Forward X-Forwarded-* headers so backend can enforce CORS_ORIGIN
+				// Configure HTTP agent to support more concurrent connections
+				// Fixes 1000ms timeout issue when using HTTP (not HTTPS) with multiple hosts
+				agent: new HttpAgent({
+					keepAlive: true,
+					maxSockets: 50, // Increase from default 6 to handle multiple hosts
+					maxFreeSockets: 10,
+					timeout: 60000,
+					keepAliveMsecs: 1000,
+				}),
+				// Handle proxy errors so unauthenticated/invalid WS attempts don't flood the console with stack traces
+				configure: (proxy, _options) => {
+					// Forward the browser's Host so the server can enforce CORS_ORIGIN
+					proxy.on("proxyReq", (proxyReq, req) => {
+						const host = req.headers.host;
+						if (host) proxyReq.setHeader("X-Forwarded-Host", host);
+					});
+					proxy.removeAllListeners("error");
+					proxy.on("error", (err, _req, _res) => {
+						const benign =
+							err.code === "ECONNRESET" ||
+							err.message === "socket hang up" ||
+							err.code === "EPIPE";
+						if (benign) {
+							console.log(
+								"[vite] ws proxy: connection closed (client disconnect or server rejected auth)",
+							);
+						} else {
+							console.error("[vite] ws proxy error:", err.message || err);
+						}
+					});
+					if (process.env.VITE_ENABLE_LOGGING === "true") {
+						proxy.on("proxyReq", (_proxyReq, req, _res) => {
+							console.log(
+								"Sending Request to the Target:",
+								req.method,
+								req.url,
+							);
+						});
+						proxy.on("proxyRes", (proxyRes, req, _res) => {
+							console.log(
+								"Received Response from the Target:",
+								proxyRes.statusCode,
+								req.url,
+							);
+						});
+					}
+				},
+			},
+			"/admin": {
+				target: `http://${process.env.SERVER_HOST || "localhost"}:${process.env.SERVER_PORT || "3001"}`,
+				changeOrigin: true,
+				secure: false,
+			},
+		},
+	},
+	build: {
+		outDir: "dist",
+		sourcemap: process.env.NODE_ENV !== "production",
+		target: "es2018",
+		// No manual chunks - let Vite handle bundling to avoid initialization order issues
+	},
+});

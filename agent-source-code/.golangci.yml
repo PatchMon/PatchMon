@@ -1,0 +1,14 @@
+version: "2"
+
+linters:
+  enable:
+    # Enabled by default linters
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    # Additional useful linters
+    - misspell
+    - revive
+    # - gosec

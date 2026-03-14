@@ -1,0 +1,39 @@
+name: Code quality
+
+on:
+  push:
+    paths-ignore:
+      - 'docker/**'
+  pull_request:
+    paths-ignore:
+      - 'docker/**'
+
+jobs:
+  biome:
+    name: Biome (frontend)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: "package.json"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Biome CI
+        env:
+          BIOME_VCS_ENABLED: "false"
+        run: |
+          npx biome ci \
+            --no-errors-on-unmatched \
+            --files-ignore-unknown=true \
+            .

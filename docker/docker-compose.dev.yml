@@ -1,0 +1,105 @@
+# ============================================================================
+# WARNING: DEVELOPMENT ONLY - DO NOT USE IN PRODUCTION
+# ============================================================================
+# This file contains hardcoded credentials for LOCAL DEVELOPMENT ONLY.
+# These credentials are intentionally insecure and should NEVER be used
+# in any production, staging, or publicly accessible environment.
+#
+# For production deployments, use docker-compose.yml with proper environment
+# variables and secrets management.
+# ============================================================================
+
+name: patchmon-dev
+
+services:
+  database:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: patchmon_db
+      POSTGRES_USER: patchmon_user
+      # WARNING: Insecure development password - DO NOT use in production
+      POSTGRES_PASSWORD: 1NS3CU6E_DEV_D8_PASSW0RD
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./compose_dev_data/db:/var/lib/postgresql/data
+    networks:
+      - patchmon-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U patchmon_user -d patchmon_db"]
+      interval: 3s
+      timeout: 5s
+      retries: 7
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # WARNING: Insecure development password - DO NOT use in production
+    command: redis-server --requirepass 1NS3CU6E_DEV_R3DIS_PASSW0RD --databases 256
+    environment:
+      REDIS_PASSWORD: 1NS3CU6E_DEV_R3DIS_PASSW0RD
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./compose_dev_data/redis:/data
+    networks:
+      - patchmon-internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "1NS3CU6E_DEV_R3DIS_PASSW0RD", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 7
+
+  server:
+    build:
+      context: ..
+      dockerfile: docker/server.Dockerfile
+      target: development
+      tags: [patchmon-server:dev]
+    restart: unless-stopped
+    environment:
+      APP_ENV: development
+      LOG_LEVEL: info
+      DATABASE_URL: postgresql://patchmon_user:1NS3CU6E_DEV_D8_PASSW0RD@database:5432/patchmon_db
+      JWT_SECRET: INS3CURE_DEV_7WT_5ECR3T
+      SERVER_PROTOCOL: http
+      SERVER_HOST: localhost
+      SERVER_PORT: 3000
+      CORS_ORIGIN: http://localhost:3000
+      # Database Connection Pool Configuration (Prisma)
+      DB_CONNECTION_LIMIT: 30
+      DB_POOL_TIMEOUT: 20
+      DB_CONNECT_TIMEOUT: 10
+      DB_IDLE_TIMEOUT: 300
+      DB_MAX_LIFETIME: 1800
+      # Rate Limiting (times in milliseconds)
+      RATE_LIMIT_WINDOW_MS: 900000
+      RATE_LIMIT_MAX: 5000
+      AUTH_RATE_LIMIT_WINDOW_MS: 600000
+      AUTH_RATE_LIMIT_MAX: 500
+      AGENT_RATE_LIMIT_WINDOW_MS: 60000
+      AGENT_RATE_LIMIT_MAX: 1000
+      # Redis Configuration
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: 1NS3CU6E_DEV_R3DIS_PASSW0RD
+      REDIS_DB: 0
+    ports:
+      - "3000:3000"
+    networks:
+      - patchmon-internal
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    develop:
+      watch:
+        # Go server: rebuild and restart when source changes
+        - action: rebuild
+          path: ../server-source-code
+
+networks:
+  patchmon-internal:
+    driver: bridge

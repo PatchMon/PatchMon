@@ -1,0 +1,148 @@
+patchmon-server
+patchmon-server-*
+migrate-linux-*
+server-source-code/migrate
+server
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# pprof profiles (make profile-heap, make profile-allocs)
+*.prof
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Environment
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.production
+
+# CodeQL local scan
+.codeql-db/
+codeql-results.sarif
+*.sarif
+
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build outputs
+dist/
+build/
+out/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+lerna-debug.log*
+
+# Coverage (Node)
+coverage/
+*.lcov
+.nyc_output
+
+# Cache
+.cache
+.parcel-cache
+.next
+.nuxt
+
+# Exception: Allow frontend/public/assets for logo files
+!frontend/public/
+!frontend/public/assets/
+!frontend/public/assets/*.png
+!frontend/public/assets/*.svg
+!frontend/public/assets/*.jpg
+
+# Temporary folders
+tmp/
+temp/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+build.sh
+
+# Server specific
+server-source-code/cmd/server/static/frontend/dist/
+server/logs/
+server/uploads/
+server/temp/
+
+# Frontend specific
+frontend/dist/
+frontend/.vite/
+
+# Agent specific
+agents/*.log
+agents/patchmon-agent-*
+agents-prebuilt/
+agent-source-code/patchmon-agent-*
+__pycache__/
+*.py[cod]
+agent-source-code/build/
+agent-source-code/dist/
+
+# SSL certificates
+*.pem
+*.key
+*.crt
+*.csr
+
+# Deployment scripts
+deploy-patchmon.sh
+manage-instances.sh
+manage-patchmon.sh
+manage-patchmon-dev.sh
+setup-installer-site.sh
+install-server.*
+notify-clients-upgrade.sh
+debug-agent.sh
+docker/compose_dev_*
+forcemigrate1.sh
+
+# Secrets
+docs/conductor-prompts/
+.encryption_key
+
+# Test artifacts
+test-results/
+playwright-report/
+test-results.xml
+test_*.sh
+test-*.sh
+*.code-workspace
+
+# Git backup (moved from old repo)
+.git-moved/

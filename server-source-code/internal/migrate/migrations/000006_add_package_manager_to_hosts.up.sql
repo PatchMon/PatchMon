@@ -1,0 +1,1 @@
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS package_manager TEXT;

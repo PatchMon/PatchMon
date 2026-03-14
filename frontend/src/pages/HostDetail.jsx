@@ -1,0 +1,6146 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	Activity,
+	AlertCircle,
+	AlertTriangle,
+	ArrowDown,
+	ArrowLeft,
+	ArrowUp,
+	ArrowUpDown,
+	Calendar,
+	CheckCircle,
+	CheckCircle2,
+	ChevronLeft,
+	ChevronRight,
+	Clock,
+	Cpu,
+	Database,
+	Download,
+	ExternalLink,
+	HardDrive,
+	Key,
+	Loader2,
+	MemoryStick,
+	MinusCircle,
+	Monitor,
+	Package,
+	Play,
+	RefreshCw,
+	RotateCcw,
+	Send,
+	Server,
+	Shield,
+	SkipForward,
+	Star,
+	Terminal,
+	Trash2,
+	Wifi,
+	Wrench,
+	X,
+} from "lucide-react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import InlineEdit from "../components/InlineEdit";
+import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
+import PatchConfirmModal from "../components/PatchConfirmModal";
+import RdpViewer from "../components/RdpViewer";
+import SshTerminal from "../components/SshTerminal";
+import { useAuth } from "../contexts/AuthContext";
+import { useToast } from "../contexts/ToastContext";
+import {
+	adminHostsAPI,
+	alertsAPI,
+	dashboardAPI,
+	formatDate,
+	formatRelativeTime,
+	hostGroupsAPI,
+	repositoryAPI,
+	settingsAPI,
+} from "../utils/api";
+import { complianceAPI } from "../utils/complianceApi";
+import { OSIcon } from "../utils/osIcons.jsx";
+import { patchingAPI } from "../utils/patchingApi";
+import AgentQueueTab from "./hostdetail/AgentQueueTab";
+import CredentialsModal from "./hostdetail/CredentialsModal";
+import DeleteConfirmationModal from "./hostdetail/DeleteConfirmationModal";
+import PatchingRunOutput from "./hostdetail/PatchingRunOutput";
+
+// Status badge for patch runs (matches Patching.jsx)
+const patchingStatusBadge = (status) => {
+	const map = {
+		queued: {
+			class:
+				"bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200",
+			label: "Queued",
+		},
+		running: {
+			class: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+			label: "Running",
+		},
+		completed: {
+			class:
+				"bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
+			label: "Completed",
+		},
+		failed: {
+			class: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
+			label: "Failed",
+		},
+		cancelled: {
+			class:
+				"bg-secondary-100 text-secondary-600 dark:bg-secondary-600 dark:text-secondary-200",
+			label: "Cancelled",
+		},
+	};
+	const s = map[status] || {
+		class: "bg-secondary-100 text-secondary-800",
+		label: status,
+	};
+	return (
+		<span
+			className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${s.class}`}
+		>
+			{s.label}
+		</span>
+	);
+};
+
+// PackageDisplay shows requested packages and dependencies if available
+const PackageDisplay = ({ run }) => {
+	if (run.patch_type !== "patch_package") {
+		return "Patch all";
+	}
+
+	const requested =
+		Array.isArray(run.package_names) && run.package_names.length > 0
+			? run.package_names
+			: run.package_name
+				? [run.package_name]
+				: [];
+	const requestedSet = new Set(requested.map((n) => n.toLowerCase()));
+
+	// Find extra dependencies (packages in packages_affected that aren't in requested)
+	const extraDeps =
+		run.packages_affected?.filter((p) => !requestedSet.has(p.toLowerCase())) ||
+		[];
+
+	if (requested.length === 0) {
+		return "—";
+	}
+
+	return (
+		<span className="flex items-center gap-1 flex-wrap">
+			<Package className="h-4 w-4 shrink-0" />
+			<span>{requested.join(", ")}</span>
+			{extraDeps.length > 0 && (
+				<span className="text-xs text-amber-600 dark:text-amber-400">
+					(+ {extraDeps.length} dep{extraDeps.length !== 1 ? "s" : ""}:{" "}
+					{extraDeps.join(", ")})
+				</span>
+			)}
+		</span>
+	);
+};
+
+/**
+ * Format a memory size (in GiB from the agent) for display.
+ * Shows 2 decimal places with the GiB unit label.
+ */
+const format_memory_gib = (value) => {
+	if (value == null) return null;
+	const num = Number(value);
+	if (Number.isNaN(num)) return null;
+	return `${num.toFixed(2)} GiB`;
+};
+
+// Ordered steps for compliance scanner installation (match agent step ids)
+const INSTALL_CHECKLIST_STEPS = [
+	{ id: "detect_os", label: "Detect operating system" },
+	{ id: "install_openscap", label: "Install OpenSCAP packages" },
+	{ id: "verify_openscap", label: "Verify installation and SSG content" },
+	{ id: "docker_bench", label: "Docker Bench (optional)" },
+	{ id: "complete", label: "Complete" },
+];
+
+const HostDetail = () => {
+	const { hostId } = useParams();
+	const navigate = useNavigate();
+	const location = useLocation();
+	const queryClient = useQueryClient();
+	const toast = useToast();
+	const { canManageHosts } = useAuth();
+	const [showCredentialsModal, setShowCredentialsModal] = useState(false);
+
+	// Get plaintext API key from navigation state (only available immediately after host creation)
+	const plaintextApiKey = location.state?.apiKey;
+	const [showDeleteModal, setShowDeleteModal] = useState(false);
+	const [activeTab, setActiveTab] = useState("host");
+	const [dockerSubTab, setDockerSubTab] = useState("containers");
+	const [patchingRunsSortField, setPatchingRunsSortField] =
+		useState("created_at");
+	const [patchingRunsSortDir, setPatchingRunsSortDir] = useState("desc");
+	const [patchingRunsPage, setPatchingRunsPage] = useState(1);
+	const [patchingRunsPageSize, setPatchingRunsPageSize] = useState(25);
+	const [patchingRunsStatusFilter, setPatchingRunsStatusFilter] = useState("");
+	const [patchingExpandedRunId, setPatchingExpandedRunId] = useState(null);
+	const [historyPage, setHistoryPage] = useState(0);
+	const [historyLimit] = useState(10);
+	const [notes, setNotes] = useState("");
+	const [notesMessage, setNotesMessage] = useState({ text: "", type: "" });
+	const [updateMessage, setUpdateMessage] = useState({ text: "", jobId: "" });
+	const [reportMessage, setReportMessage] = useState({ text: "", jobId: "" });
+	const [integrationRefreshMessage, setIntegrationRefreshMessage] = useState({
+		text: "",
+		isError: false,
+	});
+	const [dockerRefreshMessage, setDockerRefreshMessage] = useState({
+		text: "",
+		isError: false,
+	});
+	const [showAllReports, setShowAllReports] = useState(false);
+
+	// Compliance install job (Host Detail Compliance tab): progress and cancel
+	const [complianceInstallJob, setComplianceInstallJob] = useState(null);
+	const [complianceScanFeedback, setComplianceScanFeedback] = useState(null);
+	const complianceInstallPollRef = useRef(null);
+
+	// State for auto-update confirmation dialog
+	const [autoUpdateDialog, setAutoUpdateDialog] = useState(false);
+
+	// State for Apply pending config modal
+	const [showApplyConfigModal, setShowApplyConfigModal] = useState(false);
+	const [showPatchConfirmModal, setShowPatchConfirmModal] = useState(false);
+
+	// Ref to track component mount state for setTimeout cleanup
+	const isMountedRef = useRef(true);
+	const timeoutRefs = useRef([]);
+
+	// Cleanup timeouts on unmount
+	useEffect(() => {
+		isMountedRef.current = true;
+		return () => {
+			isMountedRef.current = false;
+			// Clear all pending timeouts
+			timeoutRefs.current.forEach((timeoutId) => {
+				clearTimeout(timeoutId);
+			});
+			timeoutRefs.current = [];
+		};
+	}, []);
+
+	// Helper function to safely set timeout with cleanup tracking
+	const safeSetTimeout = useCallback((callback, delay) => {
+		const timeoutId = setTimeout(() => {
+			if (isMountedRef.current) {
+				callback();
+			}
+			// Remove from tracking array
+			timeoutRefs.current = timeoutRefs.current.filter(
+				(id) => id !== timeoutId,
+			);
+		}, delay);
+		timeoutRefs.current.push(timeoutId);
+		return timeoutId;
+	}, []);
+
+	const {
+		data: host,
+		isLoading,
+		error,
+		refetch,
+		isFetching,
+	} = useQuery({
+		queryKey: ["host", hostId, historyPage, historyLimit],
+		queryFn: () =>
+			dashboardAPI
+				.getHostDetail(hostId, {
+					limit: historyLimit,
+					offset: historyPage * historyLimit,
+				})
+				.then((res) => res.data),
+		staleTime: 5 * 60 * 1000, // 5 minutes - data stays fresh longer
+		refetchOnWindowFocus: false, // Don't refetch when window regains focus
+	});
+
+	// Fetch global settings to check if auto-update master toggle is enabled
+	// Try public endpoint first (works for all users), fallback to full settings if user has permissions
+	const { data: settings } = useQuery({
+		queryKey: ["settings", "public"],
+		queryFn: async () => {
+			try {
+				// Try public endpoint first (available to all authenticated users)
+				return await settingsAPI.getPublic().then((res) => res.data);
+			} catch (error) {
+				// If public endpoint fails, try full settings (requires can_manage_settings)
+				if (error.response?.status === 403 || error.response?.status === 401) {
+					try {
+						return await settingsAPI.get().then((res) => res.data);
+					} catch (_e) {
+						// If both fail, return minimal default
+						return { auto_update: false, alerts_enabled: true };
+					}
+				}
+				// For other errors, return minimal default
+				return { auto_update: false, alerts_enabled: true };
+			}
+		},
+	});
+
+	// WebSocket connection status using polling (secure - uses httpOnly cookies)
+	const [wsStatus, setWsStatus] = useState(null);
+
+	useEffect(() => {
+		if (!host?.api_id) return;
+
+		let isMounted = true;
+
+		// Fetch initial status
+		const fetchStatus = async () => {
+			try {
+				const response = await fetch(`/api/v1/ws/status/${host.api_id}`, {
+					credentials: "include",
+				});
+				if (response.ok && isMounted) {
+					const result = await response.json();
+					setWsStatus(result.data);
+				}
+			} catch (_err) {
+				// Silently handle errors
+			}
+		};
+
+		fetchStatus();
+
+		// Poll every 5 seconds for status updates
+		const pollInterval = setInterval(fetchStatus, 5000);
+
+		// Cleanup on unmount or when api_id changes
+		return () => {
+			isMounted = false;
+			clearInterval(pollInterval);
+		};
+	}, [host?.api_id]);
+
+	// Fetch repository count for this host
+	const { data: repositories, isLoading: isLoadingRepos } = useQuery({
+		queryKey: ["host-repositories", hostId],
+		queryFn: () => repositoryAPI.getByHost(hostId).then((res) => res.data),
+		staleTime: 5 * 60 * 1000, // 5 minutes - data stays fresh longer
+		refetchOnWindowFocus: false, // Don't refetch when window regains focus
+		enabled: !!hostId,
+	});
+
+	// Fetch host groups for multi-select
+	const { data: hostGroups } = useQuery({
+		queryKey: ["host-groups"],
+		queryFn: () => hostGroupsAPI.list().then((res) => res.data),
+		staleTime: 5 * 60 * 1000, // 5 minutes - data stays fresh longer
+		refetchOnWindowFocus: false, // Don't refetch when window regains focus
+	});
+
+	// Tab change handler
+	const handleTabChange = (tabName) => {
+		setActiveTab(tabName);
+	};
+
+	// Open requested tab when navigating with state (e.g. from Compliance page link)
+	useEffect(() => {
+		const requestedTab = location.state?.tab;
+		if (
+			requestedTab &&
+			[
+				"host",
+				"network",
+				"system",
+				"history",
+				"queue",
+				"notes",
+				"integrations",
+				"reporting",
+				"docker",
+				"compliance",
+				"terminal",
+				"rdp",
+			].includes(requestedTab)
+		) {
+			setActiveTab(requestedTab);
+		}
+	}, [location.state?.tab]);
+
+	// Auto-show credentials modal for new/pending hosts (skip if just arrived from Add Host wizard)
+	useEffect(() => {
+		if (host && host.status === "pending" && !location.state?.fromWizard) {
+			setShowCredentialsModal(true);
+		}
+	}, [host, location.state?.fromWizard]);
+
+	// Sync notes state with host data
+	useEffect(() => {
+		if (host) {
+			setNotes(host.notes || "");
+		}
+	}, [host]);
+
+	const isWindowsHost = (host?.os_type || host?.expected_platform || "")
+		.toLowerCase()
+		.includes("windows");
+
+	const deleteHostMutation = useMutation({
+		mutationFn: (hostId) => adminHostsAPI.delete(hostId),
+		onSuccess: () => {
+			queryClient.invalidateQueries(["hosts"]);
+			navigate("/hosts");
+		},
+	});
+
+	// Toggle agent auto-update mutation (updates PatchMon agent script, not system packages)
+	const toggleAutoUpdateMutation = useMutation({
+		mutationFn: (auto_update) =>
+			adminHostsAPI
+				.toggleAutoUpdate(hostId, auto_update)
+				.then((res) => res.data),
+		onSuccess: () => {
+			queryClient.invalidateQueries(["host", hostId]);
+			queryClient.invalidateQueries(["hosts"]);
+		},
+	});
+
+	// Mutation to enable global auto-update setting
+	const enableGlobalAutoUpdateMutation = useMutation({
+		mutationFn: () =>
+			settingsAPI.update({ autoUpdate: true }).then((res) => res.data),
+		onSuccess: () => {
+			queryClient.invalidateQueries(["settings"]);
+			queryClient.invalidateQueries(["serverUrl"]);
+		},
+	});
+
+	// Handle auto-update toggle with global setting check
+	const handleAutoUpdateToggle = () => {
+		// If currently enabled, just disable
+		if (host?.auto_update) {
+			toggleAutoUpdateMutation.mutate(false);
+			return;
+		}
+
+		// If enabling and global is OFF, show confirmation dialog
+		if (!settings?.auto_update) {
+			setAutoUpdateDialog(true);
+			return;
+		}
+
+		// Global is ON, just enable the host
+		toggleAutoUpdateMutation.mutate(true);
+	};
+
+	// Handle dialog actions
+	const handleEnableBoth = () => {
+		// Enable global setting first, then host
+		enableGlobalAutoUpdateMutation.mutate(undefined, {
+			onSuccess: () => {
+				toggleAutoUpdateMutation.mutate(true);
+				setAutoUpdateDialog(false);
+			},
+		});
+	};
+
+	const handleEnableHostOnly = () => {
+		// Just enable the host (user acknowledges it won't work)
+		toggleAutoUpdateMutation.mutate(true);
+		setAutoUpdateDialog(false);
+	};
+
+	// Force agent update mutation
+	const forceAgentUpdateMutation = useMutation({
+		mutationFn: () =>
+			adminHostsAPI.forceAgentUpdate(hostId).then((res) => res.data),
+		onSuccess: (data) => {
+			queryClient.invalidateQueries(["host", hostId]);
+			queryClient.invalidateQueries(["hosts"]);
+			// Show success message with job ID
+			if (data?.jobId) {
+				setUpdateMessage({
+					text: "Update queued successfully",
+					jobId: data.jobId,
+				});
+				// Clear message after 5 seconds
+				safeSetTimeout(() => setUpdateMessage({ text: "", jobId: "" }), 5000);
+			}
+		},
+		onError: (error) => {
+			const errorMsg =
+				error.response?.data?.error || "Failed to send update command";
+			const details = error.response?.data?.details;
+			setUpdateMessage({
+				text: details ? `${errorMsg}: ${details}` : errorMsg,
+				jobId: "",
+				isError: true,
+			});
+			safeSetTimeout(
+				() => setUpdateMessage({ text: "", jobId: "", isError: false }),
+				5000,
+			);
+		},
+	});
+
+	// Patch all mutation
+	const triggerPatchAllMutation = useMutation({
+		mutationFn: () => patchingAPI.trigger(hostId, "patch_all"),
+		onSuccess: (data) => {
+			setShowPatchConfirmModal(false);
+			queryClient.invalidateQueries(["patching-dashboard"]);
+			queryClient.invalidateQueries(["patching-runs"]);
+			toast.success(
+				data?.patch_run_id
+					? "Patch queued. View progress in Patching."
+					: "Patch queued",
+			);
+		},
+		onError: (err) => {
+			toast.error(err.response?.data?.error || err.message);
+		},
+	});
+
+	// Fetch report mutation
+	const fetchReportMutation = useMutation({
+		mutationFn: () => adminHostsAPI.fetchReport(hostId).then((res) => res.data),
+		onSuccess: (data) => {
+			queryClient.invalidateQueries(["host", hostId]);
+			queryClient.invalidateQueries(["hosts"]);
+			// Show success message with job ID
+			if (data?.jobId) {
+				setReportMessage({
+					text: "Report fetch queued successfully",
+					jobId: data.jobId,
+				});
+				// Clear message after 5 seconds
+				safeSetTimeout(() => setReportMessage({ text: "", jobId: "" }), 5000);
+			}
+		},
+		onError: (error) => {
+			setReportMessage({
+				text: error.response?.data?.error || "Failed to fetch report",
+				jobId: "",
+			});
+			safeSetTimeout(() => setReportMessage({ text: "", jobId: "" }), 5000);
+		},
+	});
+
+	// Refresh integration status mutation
+	const refreshIntegrationStatusMutation = useMutation({
+		mutationFn: () =>
+			adminHostsAPI.refreshIntegrationStatus(hostId).then((res) => res.data),
+		onSuccess: () => {
+			setIntegrationRefreshMessage({
+				text: "Integration status refresh requested",
+				isError: false,
+			});
+			// Refetch integrations data after a short delay to allow agent to respond
+			safeSetTimeout(() => {
+				refetchIntegrations();
+				queryClient.invalidateQueries(["compliance-setup-status", hostId]);
+			}, 2000);
+			safeSetTimeout(
+				() => setIntegrationRefreshMessage({ text: "", isError: false }),
+				5000,
+			);
+		},
+		onError: (error) => {
+			setIntegrationRefreshMessage({
+				text:
+					error.response?.data?.error || "Failed to refresh integration status",
+				isError: true,
+			});
+			safeSetTimeout(
+				() => setIntegrationRefreshMessage({ text: "", isError: false }),
+				5000,
+			);
+		},
+	});
+
+	// Refresh Docker inventory mutation
+	const refreshDockerMutation = useMutation({
+		mutationFn: () =>
+			adminHostsAPI.refreshDocker(hostId).then((res) => res.data),
+		onSuccess: () => {
+			setDockerRefreshMessage({
+				text: "Docker refresh requested - data will update shortly",
+				isError: false,
+			});
+			// Refetch Docker data after a short delay to allow agent to respond
+			safeSetTimeout(() => {
+				refetchDocker();
+				queryClient.invalidateQueries(["docker", "host", hostId]);
+			}, 3000);
+			safeSetTimeout(
+				() => setDockerRefreshMessage({ text: "", isError: false }),
+				5000,
+			);
+		},
+		onError: (error) => {
+			setDockerRefreshMessage({
+				text: error.response?.data?.error || "Failed to refresh Docker data",
+				isError: true,
+			});
+			safeSetTimeout(
+				() => setDockerRefreshMessage({ text: "", isError: false }),
+				5000,
+			);
+		},
+	});
+
+	const updateFriendlyNameMutation = useMutation({
+		mutationFn: (friendlyName) =>
+			adminHostsAPI
+				.updateFriendlyName(hostId, friendlyName)
+				.then((res) => res.data),
+		onSuccess: () => {
+			queryClient.invalidateQueries(["host", hostId]);
+		},
+	});
+
+	const updateConnectionMutation = useMutation({
+		mutationFn: (connectionInfo) =>
+			adminHostsAPI
+				.updateConnection(hostId, connectionInfo)
+				.then((res) => res.data),
+		onSuccess: () => {
+			queryClient.invalidateQueries(["host", hostId]);
+			queryClient.invalidateQueries(["hosts"]);
+		},
+	});
+
+	const setPrimaryInterfaceMutation = useMutation({
+		mutationFn: (interfaceName) =>
+			adminHostsAPI
+				.setPrimaryInterface(hostId, interfaceName)
+				.then((res) => res.data),
+		onSuccess: () => {
+			queryClient.invalidateQueries(["host", hostId]);
+			queryClient.invalidateQueries(["hosts"]);
+		},
+	});
+
+	const updateHostGroupsMutation = useMutation({
+		mutationFn: ({ hostId, groupIds }) =>
+			adminHostsAPI.updateGroups(hostId, groupIds).then((res) => res.data),
+		onSuccess: () => {
+			queryClient.invalidateQueries(["host", hostId]);
+			queryClient.invalidateQueries(["hosts"]);
+		},
+	});
+
+	const updateNotesMutation = useMutation({
+		mutationFn: ({ hostId, notes }) =>
+			adminHostsAPI.updateNotes(hostId, notes).then((res) => res.data),
+		onSuccess: () => {
+			queryClient.invalidateQueries(["host", hostId]);
+			queryClient.invalidateQueries(["hosts"]);
+			setNotesMessage({ text: "Notes saved successfully!", type: "success" });
+			// Clear message after 3 seconds
+			safeSetTimeout(() => setNotesMessage({ text: "", type: "" }), 3000);
+		},
+		onError: (error) => {
+			setNotesMessage({
+				text: error.response?.data?.error || "Failed to save notes",
+				type: "error",
+			});
+			// Clear message after 5 seconds for errors
+			safeSetTimeout(() => setNotesMessage({ text: "", type: "" }), 5000);
+		},
+	});
+
+	// Fetch integration status
+	const {
+		data: integrationsData,
+		isLoading: isLoadingIntegrations,
+		refetch: refetchIntegrations,
+	} = useQuery({
+		queryKey: ["host-integrations", hostId],
+		queryFn: () =>
+			adminHostsAPI.getIntegrations(hostId).then((res) => res.data),
+		staleTime: 30 * 1000, // 30 seconds
+		refetchOnWindowFocus: false,
+		enabled: !!hostId, // Always fetch to control tab visibility
+	});
+
+	// Fetch latest compliance scan for quick view (after integrationsData so enabled can use it); reuse same key as ComplianceTab
+	const { data: complianceLatest, isLoading: _isLoadingCompliance } = useQuery({
+		queryKey: ["compliance-latest", hostId, null],
+		queryFn: () =>
+			complianceAPI
+				.getLatestScan(hostId)
+				.then((res) => res.data)
+				.catch(() => null),
+		staleTime: 2 * 60 * 1000, // 2 minutes
+		refetchOnWindowFocus: false,
+		enabled: !!hostId && !!integrationsData?.data?.integrations?.compliance,
+		retry: false, // Don't retry if compliance not enabled
+	});
+
+	// Poll for compliance setup status only when compliance integration is enabled
+	const { data: complianceSetupStatus, refetch: refetchComplianceStatus } =
+		useQuery({
+			queryKey: ["compliance-setup-status", hostId],
+			queryFn: () =>
+				adminHostsAPI
+					.getIntegrationSetupStatus(hostId, "compliance")
+					.then((res) => res.data),
+			staleTime: 60 * 1000, // 1 min when not installing/removing
+			refetchInterval: (query) => {
+				// Poll every 2 seconds while status is "installing" or "removing"
+				const status = query.state?.data?.status?.status;
+				if (status === "installing" || status === "removing") {
+					return 2000; // Poll faster during installation
+				}
+				return false; // Stop polling when done
+			},
+			refetchOnWindowFocus: false,
+			enabled: !!hostId && !!integrationsData?.data?.integrations?.compliance,
+		});
+
+	// On entering Compliance tab: check for install job and request fresh scanner status from agent
+	useEffect(() => {
+		if (
+			activeTab !== "compliance" ||
+			!hostId ||
+			!integrationsData?.data?.integrations?.compliance
+		) {
+			return;
+		}
+		let cancelled = false;
+
+		// Request agent to report current compliance scanner status (WebSocket → agent re-checks and POSTs)
+		adminHostsAPI
+			.requestComplianceStatus(hostId)
+			.then(() => {
+				if (cancelled || !isMountedRef.current) return;
+				// Refetch after a short delay so we pick up live or cached status
+				safeSetTimeout(() => refetchComplianceStatus(), 800);
+				safeSetTimeout(() => refetchComplianceStatus(), 3000);
+			})
+			.catch(() => {});
+
+		complianceAPI
+			.getInstallJobStatus(hostId)
+			.then((data) => {
+				if (cancelled || !isMountedRef.current) return;
+				if (data.status === "active" || data.status === "waiting") {
+					setComplianceInstallJob({
+						status: data.status,
+						progress: data.progress ?? 0,
+						message: data.message ?? "",
+						install_events: data.install_events || [],
+						error: data.error,
+					});
+				}
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, [
+		activeTab,
+		hostId,
+		integrationsData?.data?.integrations?.compliance,
+		refetchComplianceStatus,
+		safeSetTimeout,
+	]);
+
+	// Poll install job status while job is active or waiting
+	useEffect(() => {
+		const status = complianceInstallJob?.status;
+		if (
+			activeTab !== "compliance" ||
+			!hostId ||
+			(status !== "active" && status !== "waiting")
+		) {
+			if (complianceInstallPollRef.current) {
+				clearInterval(complianceInstallPollRef.current);
+				complianceInstallPollRef.current = null;
+			}
+			return;
+		}
+		const fetchStatus = () => {
+			complianceAPI
+				.getInstallJobStatus(hostId)
+				.then((data) => {
+					if (!isMountedRef.current) return;
+					setComplianceInstallJob({
+						status: data.status,
+						progress: data.progress ?? 0,
+						message: data.message ?? "",
+						install_events: data.install_events || [],
+						error: data.error,
+					});
+					if (
+						data.status === "completed" ||
+						data.status === "failed" ||
+						data.status === "none"
+					) {
+						refetchComplianceStatus();
+						safeSetTimeout(() => {
+							if (isMountedRef.current) setComplianceInstallJob(null);
+						}, 3000);
+					}
+				})
+				.catch(() => {});
+		};
+		fetchStatus();
+		complianceInstallPollRef.current = setInterval(fetchStatus, 1500);
+		return () => {
+			if (complianceInstallPollRef.current) {
+				clearInterval(complianceInstallPollRef.current);
+				complianceInstallPollRef.current = null;
+			}
+		};
+	}, [
+		activeTab,
+		hostId,
+		complianceInstallJob?.status,
+		refetchComplianceStatus,
+		safeSetTimeout,
+	]);
+
+	// Fetch Docker data for this host
+	const {
+		data: dockerData,
+		isLoading: isLoadingDocker,
+		refetch: refetchDocker,
+	} = useQuery({
+		queryKey: ["docker", "host", hostId],
+		queryFn: () =>
+			dashboardAPI
+				.getHostDetail(hostId, { include: "docker" })
+				.then((res) => res.data?.docker),
+		staleTime: 30 * 1000,
+		refetchOnWindowFocus: false,
+		enabled:
+			!!hostId &&
+			(activeTab === "docker" || integrationsData?.data?.integrations?.docker),
+	});
+
+	// Fetch patch runs for this host (Patching tab)
+	const { data: patchingRunsData } = useQuery({
+		queryKey: [
+			"patching-runs",
+			hostId,
+			patchingRunsStatusFilter,
+			patchingRunsPage,
+			patchingRunsPageSize,
+			patchingRunsSortField,
+			patchingRunsSortDir,
+		],
+		queryFn: () =>
+			patchingAPI.getRuns({
+				host_id: hostId,
+				...(patchingRunsStatusFilter
+					? { status: patchingRunsStatusFilter }
+					: {}),
+				limit: patchingRunsPageSize,
+				offset: (patchingRunsPage - 1) * patchingRunsPageSize,
+				sort_by: patchingRunsSortField,
+				sort_dir: patchingRunsSortDir,
+			}),
+		staleTime: 15 * 1000,
+		enabled: !!hostId && activeTab === "patching",
+	});
+
+	// Fetch global alert config for host_down
+	const { data: hostDownAlertConfig } = useQuery({
+		queryKey: ["alert-config", "host_down"],
+		queryFn: () =>
+			alertsAPI.getAlertConfigByType("host_down").then((res) => res.data.data),
+		staleTime: 5 * 60 * 1000, // 5 minutes
+		refetchOnWindowFocus: false,
+	});
+
+	// Mutation to update host down alerts setting
+	const toggleHostDownAlertsMutation = useMutation({
+		mutationFn: (enabled) =>
+			adminHostsAPI.toggleHostDownAlerts(hostId, enabled),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["host", hostId] });
+			setUpdateMessage({
+				text: "Host down alerts setting updated successfully",
+				jobId: "",
+			});
+			safeSetTimeout(() => {
+				if (isMountedRef.current) {
+					setUpdateMessage({ text: "", jobId: "" });
+				}
+			}, 3000);
+		},
+		onError: (error) => {
+			setUpdateMessage({
+				text: error.response?.data?.error || "Failed to update setting",
+				jobId: "",
+			});
+			safeSetTimeout(() => {
+				if (isMountedRef.current) {
+					setUpdateMessage({ text: "", jobId: "" });
+				}
+			}, 5000);
+		},
+	});
+
+	// Refetch integrations when WebSocket status changes (e.g., after agent restart)
+	useEffect(() => {
+		if (
+			wsStatus?.connected &&
+			activeTab === "integrations" &&
+			integrationsData?.data?.connected === false
+		) {
+			// Agent just reconnected, refetch integrations to get updated connection status
+			refetchIntegrations();
+		}
+	}, [
+		wsStatus?.connected,
+		activeTab,
+		integrationsData?.data?.connected,
+		refetchIntegrations,
+	]);
+
+	// Toggle integration mutation
+	const toggleIntegrationMutation = useMutation({
+		mutationFn: ({ integrationName, enabled }) =>
+			adminHostsAPI
+				.toggleIntegration(hostId, integrationName, enabled)
+				.then((res) => res.data),
+		onSuccess: (data) => {
+			// Optimistically update the cache with the new state
+			queryClient.setQueryData(["host-integrations", hostId], (oldData) => {
+				if (!oldData) return oldData;
+				const updatedData = {
+					...oldData,
+					data: {
+						...oldData.data,
+						integrations: {
+							...oldData.data.integrations,
+							[data.data.integration]: data.data.enabled,
+						},
+					},
+				};
+				// Update compliance mode if compliance was toggled
+				if (data.data.integration === "compliance") {
+					updatedData.compliance_mode =
+						data.data.mode || (data.data.enabled ? "enabled" : "disabled");
+					updatedData.data.compliance_mode = updatedData.compliance_mode;
+				}
+				return updatedData;
+			});
+			// Also invalidate to ensure we get fresh data
+			queryClient.invalidateQueries(["host-integrations", hostId]);
+			// If compliance was just enabled/disabled, poll for setup status
+			if (data.data.integration === "compliance" && data.data.enabled) {
+				// Poll multiple times to catch status updates (installation takes ~4-10s)
+				const pollTimes = [500, 2000, 4000, 6000, 8000, 10000, 15000];
+				pollTimes.forEach((delay) => {
+					safeSetTimeout(() => refetchComplianceStatus(), delay);
+				});
+			}
+		},
+		onError: (error) => {
+			// On error, refetch to get the actual state
+			refetchIntegrations();
+			// Log error for debugging
+			console.error(
+				"Failed to toggle integration:",
+				error.response?.data?.error || error.message,
+			);
+		},
+	});
+
+	// Apply pending config mutation
+	const applyPendingConfigMutation = useMutation({
+		mutationFn: () =>
+			adminHostsAPI.applyPendingConfig(hostId).then((res) => res.data),
+		onSuccess: () => {
+			queryClient.invalidateQueries(["host-integrations", hostId]);
+			refetchIntegrations();
+			toast.success(
+				"Configuration applied. Agent will update config.yml and restart.",
+			);
+		},
+		onError: (error) => {
+			refetchIntegrations();
+			const msg =
+				error.response?.data?.error ||
+				error.response?.data?.message ||
+				error.message;
+			toast.error(
+				msg.includes("not connected")
+					? "Agent must be connected to apply configuration"
+					: `Failed to apply: ${msg}`,
+			);
+		},
+	});
+
+	// Set compliance mode mutation (three-state: disabled, on-demand, enabled)
+	const setComplianceModeMutation = useMutation({
+		mutationFn: (mode) =>
+			adminHostsAPI.setComplianceMode(hostId, mode).then((res) => res.data),
+		onSuccess: (data) => {
+			// Update the cache with the new state
+			queryClient.setQueryData(["host-integrations", hostId], (oldData) => {
+				if (!oldData) return oldData;
+				return {
+					...oldData,
+					compliance_mode: data.data.mode,
+					data: {
+						...oldData.data,
+						compliance_mode: data.data.mode,
+						integrations: {
+							...oldData.data.integrations,
+							compliance: data.data.mode !== "disabled",
+						},
+					},
+				};
+			});
+			// Also invalidate to ensure we get fresh data
+			queryClient.invalidateQueries(["host-integrations", hostId]);
+			// If compliance was just enabled, poll for setup status
+			if (data.data.mode === "enabled" || data.data.mode === "on-demand") {
+				const pollTimes = [500, 2000, 4000, 6000, 8000, 10000, 15000];
+				pollTimes.forEach((delay) => {
+					safeSetTimeout(() => refetchComplianceStatus(), delay);
+				});
+			}
+		},
+		onError: (error) => {
+			// On error, refetch to get the actual state
+			refetchIntegrations();
+			console.error(
+				"Failed to set compliance mode:",
+				error.response?.data?.error || error.message,
+			);
+		},
+	});
+
+	// Install compliance scanner (BullMQ job); starts progress polling on success
+	const installComplianceScannerMutation = useMutation({
+		mutationFn: () => complianceAPI.installScanner(hostId),
+		onSuccess: () => {
+			setComplianceInstallJob({
+				status: "waiting",
+				progress: 0,
+				message: "Install job queued…",
+				error: null,
+			});
+		},
+		onError: (error) => {
+			setIntegrationRefreshMessage({
+				text: error.response?.data?.error || "Failed to start install",
+				isError: true,
+			});
+			safeSetTimeout(() => {
+				if (isMountedRef.current) {
+					setIntegrationRefreshMessage({ text: "", isError: false });
+				}
+			}, 5000);
+		},
+	});
+
+	// Run compliance scan now (always goes through BullMQ queue; max 1 per host)
+	// Use host?.id when available (from API) to avoid URL/param mismatches
+	const effectiveHostId = host?.id ?? hostId;
+	const triggerComplianceScanMutation = useMutation({
+		mutationFn: () => {
+			if (!effectiveHostId) {
+				return Promise.reject(new Error("Host ID not available"));
+			}
+			return complianceAPI.triggerScan(effectiveHostId, {
+				profile_type: "all",
+			});
+		},
+		onSuccess: (response) => {
+			const body = response?.data;
+			const job_id = body?.job_id || "";
+			const msg = body?.message || "Scan triggered";
+			setComplianceScanFeedback({
+				text: job_id ? `${msg} — Job ID: ${job_id}` : msg,
+				isError: false,
+			});
+			safeSetTimeout(() => {
+				if (isMountedRef.current) setComplianceScanFeedback(null);
+			}, 10000);
+			queryClient.invalidateQueries({
+				queryKey: ["compliance-latest", hostId],
+			});
+		},
+		onError: (error) => {
+			setComplianceScanFeedback({
+				text: error.response?.data?.error || "Failed to start scan",
+				isError: true,
+			});
+			safeSetTimeout(() => {
+				if (isMountedRef.current) setComplianceScanFeedback(null);
+			}, 8000);
+		},
+	});
+
+	// Legacy: Toggle compliance on-demand-only mode mutation (kept for backward compatibility)
+	const _toggleComplianceOnDemandOnlyMutation = useMutation({
+		mutationFn: (onDemandOnly) =>
+			adminHostsAPI
+				.setComplianceOnDemandOnly(hostId, onDemandOnly)
+				.then((res) => res.data),
+		onSuccess: (data) => {
+			// Update the cache with the new state
+			queryClient.setQueryData(["host-integrations", hostId], (oldData) => {
+				if (!oldData) return oldData;
+				return {
+					...oldData,
+					compliance_on_demand_only: data.data.on_demand_only,
+					compliance_mode:
+						data.data.mode ||
+						(data.data.on_demand_only ? "on-demand" : "enabled"),
+				};
+			});
+			// Also invalidate to ensure we get fresh data
+			queryClient.invalidateQueries(["host-integrations", hostId]);
+		},
+		onError: (error) => {
+			// On error, refetch to get the actual state
+			refetchIntegrations();
+			console.error(
+				"Failed to toggle compliance on-demand-only:",
+				error.response?.data?.error || error.message,
+			);
+		},
+	});
+
+	const handleDeleteHost = async () => {
+		if (
+			window.confirm(
+				`Are you sure you want to delete host "${host.friendly_name}"? This action cannot be undone.`,
+			)
+		) {
+			try {
+				await deleteHostMutation.mutateAsync(hostId);
+			} catch (error) {
+				console.error("Failed to delete host:", error);
+				alert("Failed to delete host");
+			}
+		}
+	};
+
+	if (isLoading) {
+		return (
+			<div className="flex items-center justify-center h-64">
+				<RefreshCw className="h-8 w-8 animate-spin text-primary-600" />
+			</div>
+		);
+	}
+
+	if (error) {
+		return (
+			<div className="space-y-6">
+				<div className="flex items-center justify-between">
+					<div className="flex items-center gap-3">
+						<Link
+							to="/hosts"
+							className="text-secondary-500 hover:text-secondary-700"
+						>
+							<ArrowLeft className="h-5 w-5" />
+						</Link>
+					</div>
+				</div>
+
+				<div className="bg-danger-50 border border-danger-200 rounded-md p-4">
+					<div className="flex">
+						<AlertTriangle className="h-5 w-5 text-danger-400" />
+						<div className="ml-3">
+							<h3 className="text-sm font-medium text-danger-800">
+								Error loading host
+							</h3>
+							<p className="text-sm text-danger-700 mt-1">
+								{error.message || "Failed to load host details"}
+							</p>
+							<button
+								type="button"
+								onClick={() => refetch()}
+								className="mt-2 btn-danger text-xs"
+							>
+								Try again
+							</button>
+						</div>
+					</div>
+				</div>
+			</div>
+		);
+	}
+
+	if (!host) {
+		return (
+			<div className="space-y-6">
+				<div className="flex items-center justify-between">
+					<div className="flex items-center gap-3">
+						<Link
+							to="/hosts"
+							className="text-secondary-500 hover:text-secondary-700"
+						>
+							<ArrowLeft className="h-5 w-5" />
+						</Link>
+					</div>
+				</div>
+
+				<div className="card p-8 text-center">
+					<Server className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
+					<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-2">
+						Host Not Found
+					</h3>
+					<p className="text-secondary-600 dark:text-white">
+						The requested host could not be found.
+					</p>
+				</div>
+			</div>
+		);
+	}
+
+	const getStatusColor = (isStale, needsUpdate) => {
+		if (isStale) return "text-danger-600";
+		if (needsUpdate) return "text-warning-600";
+		return "text-success-600";
+	};
+
+	const getStatusIcon = (isStale, needsUpdate) => {
+		if (isStale) return <AlertTriangle className="h-5 w-5" />;
+		if (needsUpdate) return <Clock className="h-5 w-5" />;
+		return <CheckCircle className="h-5 w-5" />;
+	};
+
+	const getStatusText = (isStale, needsUpdate) => {
+		if (isStale) return "Stale";
+		if (needsUpdate) return "Needs Updates";
+		return "Up to Date";
+	};
+
+	const isStale = Date.now() - new Date(host.last_update) > 24 * 60 * 60 * 1000;
+
+	return (
+		<div className="min-h-screen flex flex-col">
+			{/* Header */}
+			<div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-4 pb-4 border-b border-secondary-200 dark:border-secondary-600">
+				<div className="flex items-start gap-3">
+					<Link
+						to="/hosts"
+						className="text-secondary-500 hover:text-secondary-700 dark:text-white dark:hover:text-secondary-200 mt-1"
+					>
+						<ArrowLeft className="h-5 w-5" />
+					</Link>
+					<div className="flex flex-col gap-2">
+						{/* Title row with friendly name, badge, and status */}
+						<div className="flex items-center gap-3 flex-wrap">
+							<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
+								{host.friendly_name}
+							</h1>
+							{wsStatus && (
+								<span
+									className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold uppercase ${
+										wsStatus.connected
+											? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 animate-pulse"
+											: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+									}`}
+									title={
+										wsStatus.connected
+											? `Agent connected via ${wsStatus.secure ? "WSS (secure)" : "WS"}`
+											: "Agent not connected"
+									}
+								>
+									{wsStatus.connected
+										? wsStatus.secure
+											? "WSS"
+											: "WS"
+										: "Offline"}
+								</span>
+							)}
+							<div
+								className={`flex items-center gap-2 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(isStale, host.stats.outdated_packages > 0)}`}
+							>
+								{getStatusIcon(isStale, host.stats.outdated_packages > 0)}
+								{getStatusText(isStale, host.stats.outdated_packages > 0)}
+							</div>
+							{host.needs_reboot && (
+								<span
+									className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
+									title={host.reboot_reason || "Reboot required"}
+								>
+									<RotateCcw className="h-3 w-3" />
+									Reboot Required
+								</span>
+							)}
+						</div>
+						{/* Info row with uptime and last updated */}
+						<div className="flex items-center gap-4 text-sm text-secondary-600 dark:text-white">
+							{host.system_uptime && (
+								<div className="flex items-center gap-1">
+									<Clock className="h-3.5 w-3.5" />
+									<span className="text-xs font-medium">Uptime:</span>
+									<span className="text-xs">{host.system_uptime}</span>
+								</div>
+							)}
+							<div className="flex items-center gap-1">
+								<Clock className="h-3.5 w-3.5" />
+								<span className="text-xs font-medium">Last updated:</span>
+								<span className="text-xs">
+									{formatRelativeTime(host.last_update)}
+								</span>
+							</div>
+						</div>
+					</div>
+				</div>
+				<div className="flex items-center gap-2 flex-wrap w-full md:w-auto">
+					{integrationsData?.pending_config_exists && (
+						<button
+							type="button"
+							onClick={() => setShowApplyConfigModal(true)}
+							disabled={!wsStatus?.connected}
+							className="btn-outline flex items-center gap-2 text-sm whitespace-nowrap border-warning-300 dark:border-warning-600 text-warning-700 dark:text-warning-300 hover:bg-warning-50 dark:hover:bg-warning-900/20"
+							title={
+								!wsStatus?.connected
+									? "Agent must be connected to apply changes"
+									: "Apply pending configuration to agent"
+							}
+						>
+							<Send className="h-4 w-4" />
+							<span className="hidden sm:inline">Apply</span>
+						</button>
+					)}
+					<div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+						<button
+							type="button"
+							onClick={() => fetchReportMutation.mutate()}
+							disabled={fetchReportMutation.isPending || !wsStatus?.connected}
+							className="btn-outline flex items-center gap-2 text-sm whitespace-nowrap"
+							title={
+								!wsStatus?.connected
+									? "Agent is not connected"
+									: "Fetch package data from agent"
+							}
+						>
+							<Download
+								className={`h-4 w-4 ${
+									fetchReportMutation.isPending ? "animate-spin" : ""
+								}`}
+							/>
+							<span className="hidden sm:inline">Fetch Report</span>
+							<span className="sm:hidden">Fetch</span>
+						</button>
+						{canManageHosts() && !isWindowsHost && (
+							<button
+								type="button"
+								onClick={() => setShowPatchConfirmModal(true)}
+								disabled={!wsStatus?.connected}
+								className="btn-outline flex items-center gap-2 text-sm whitespace-nowrap"
+								title={
+									!wsStatus?.connected
+										? "Agent must be connected to patch"
+										: "Run apt update and upgrade on this host"
+								}
+							>
+								<Wrench className="h-4 w-4" />
+								<span className="hidden sm:inline">Patch all</span>
+								<span className="sm:hidden">Patch</span>
+							</button>
+						)}
+						{reportMessage.text && (
+							<p className="text-xs mt-1.5 text-secondary-600 dark:text-white">
+								{reportMessage.text}
+								{reportMessage.jobId && (
+									<span className="ml-1 font-mono text-secondary-500">
+										(Job #{reportMessage.jobId})
+									</span>
+								)}
+							</p>
+						)}
+					</div>
+					<div className="flex items-center gap-2 flex-shrink-0">
+						<button
+							type="button"
+							onClick={() => setShowCredentialsModal(true)}
+							className={`btn-outline flex items-center text-sm whitespace-nowrap ${
+								host?.machine_id ? "justify-center p-2" : "gap-2"
+							}`}
+							title="View credentials"
+						>
+							<Key className="h-4 w-4" />
+							{!host?.machine_id && (
+								<span className="hidden sm:inline">Deploy Agent</span>
+							)}
+						</button>
+						<button
+							type="button"
+							onClick={() => refetch()}
+							disabled={isFetching}
+							className="btn-outline flex items-center justify-center p-2 text-sm"
+							title="Refresh dashboard"
+						>
+							<RefreshCw
+								className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`}
+							/>
+						</button>
+						<button
+							type="button"
+							onClick={() => setShowDeleteModal(true)}
+							className="btn-danger flex items-center justify-center p-2 text-sm"
+							title="Delete host"
+						>
+							<Trash2 className="h-4 w-4" />
+						</button>
+					</div>
+				</div>
+			</div>
+
+			{/* Package Statistics Cards */}
+			<div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+				<button
+					type="button"
+					onClick={() => navigate(`/packages?host=${hostId}`)}
+					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full"
+					title="View all packages for this host"
+				>
+					<div className="flex items-center">
+						<Package className="h-5 w-5 text-primary-600 mr-2" />
+						<div>
+							<p className="text-sm text-secondary-500 dark:text-white">
+								Total Installed
+							</p>
+							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+								{host.stats.total_packages}
+							</p>
+						</div>
+					</div>
+				</button>
+
+				<button
+					type="button"
+					onClick={() => navigate(`/packages?host=${hostId}&filter=outdated`)}
+					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full"
+					title="View outdated packages for this host"
+				>
+					<div className="flex items-center">
+						<Clock className="h-5 w-5 text-warning-600 mr-2" />
+						<div>
+							<p className="text-sm text-secondary-500 dark:text-white">
+								Outdated Packages
+							</p>
+							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+								{host.stats.outdated_packages}
+							</p>
+						</div>
+					</div>
+				</button>
+
+				<button
+					type="button"
+					onClick={() => navigate(`/packages?host=${hostId}&filter=security`)}
+					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full"
+					title="View security packages for this host"
+				>
+					<div className="flex items-center">
+						<Shield className="h-5 w-5 text-danger-600 mr-2" />
+						<div>
+							<p className="text-sm text-secondary-500 dark:text-white">
+								Security Updates
+							</p>
+							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+								{host.stats.security_updates}
+							</p>
+						</div>
+					</div>
+				</button>
+
+				<button
+					type="button"
+					onClick={() => navigate(`/repositories?host=${hostId}`)}
+					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full"
+					title="View repositories for this host"
+				>
+					<div className="flex items-center">
+						<Database className="h-5 w-5 text-blue-600 mr-2" />
+						<div>
+							<p className="text-sm text-secondary-500 dark:text-white">
+								Repos
+							</p>
+							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+								{isLoadingRepos ? "..." : repositories?.length || 0}
+							</p>
+						</div>
+					</div>
+				</button>
+			</div>
+
+			{/* Main Content - Full Width */}
+			<div className="flex-1 md:overflow-hidden">
+				{/* Mobile View - All sections as cards stacked vertically */}
+				<div className="md:hidden space-y-4 pb-4">
+					{/* Host Info Card */}
+					<div className="card p-4">
+						<h3 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4 flex items-center gap-2">
+							<Server className="h-5 w-5 text-primary-600" />
+							Host Information
+						</h3>
+						<div className="space-y-4">
+							<div className="space-y-3">
+								<div>
+									<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+										Friendly Name
+									</p>
+									<InlineEdit
+										value={host.friendly_name}
+										onSave={(newName) =>
+											updateFriendlyNameMutation.mutate(newName)
+										}
+										placeholder="Enter friendly name..."
+										maxLength={100}
+										validate={(value) => {
+											if (!value.trim()) return "Friendly name is required";
+											if (value.trim().length < 1)
+												return "Friendly name must be at least 1 character";
+											if (value.trim().length > 100)
+												return "Friendly name must be less than 100 characters";
+											return null;
+										}}
+										className="w-full text-sm"
+									/>
+								</div>
+
+								{host.hostname && (
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+											System Hostname
+										</p>
+										<p className="font-medium text-secondary-900 dark:text-white font-mono text-sm">
+											{host.hostname}
+										</p>
+									</div>
+								)}
+
+								{host.machine_id && (
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+											Machine ID
+										</p>
+										<p className="font-medium text-secondary-900 dark:text-white font-mono text-sm break-all">
+											{host.machine_id}
+										</p>
+									</div>
+								)}
+
+								<div>
+									<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+										Host Groups
+									</p>
+									{(() => {
+										const groupIds =
+											host.host_group_memberships?.map(
+												(membership) => membership.host_groups.id,
+											) || [];
+										return (
+											<InlineMultiGroupEdit
+												key={`${host.id}-${groupIds.join(",")}`}
+												value={groupIds}
+												onSave={(newGroupIds) =>
+													updateHostGroupsMutation.mutate({
+														hostId: host.id,
+														groupIds: newGroupIds,
+													})
+												}
+												options={hostGroups || []}
+												placeholder="Select groups..."
+												className="w-full"
+											/>
+										);
+									})()}
+								</div>
+
+								<div>
+									<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+										Integrations
+									</p>
+									<button
+										type="button"
+										onClick={() => handleTabChange("integrations")}
+										className="text-sm text-primary-600 dark:text-primary-400 hover:underline"
+									>
+										Manage in Integrations tab →
+									</button>
+								</div>
+
+								<div>
+									<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+										Operating System
+									</p>
+									<div className="flex items-center gap-2">
+										<OSIcon osType={host.os_type} className="h-4 w-4" />
+										<p className="font-medium text-secondary-900 dark:text-white text-sm">
+											{host.os_type} {host.os_version}
+										</p>
+									</div>
+								</div>
+
+								<div>
+									<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+										Agent Version
+									</p>
+									<p className="font-medium text-secondary-900 dark:text-white text-sm">
+										{host.agent_version || "Unknown"}
+									</p>
+								</div>
+
+								<div>
+									<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+										Agent Auto-update
+									</p>
+									<div className="flex items-center gap-2">
+										<button
+											type="button"
+											onClick={handleAutoUpdateToggle}
+											disabled={toggleAutoUpdateMutation.isPending}
+											className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+												host.auto_update
+													? "bg-primary-600 dark:bg-primary-500"
+													: "bg-secondary-200 dark:bg-secondary-600"
+											}`}
+										>
+											<span
+												className={`inline-block h-3 w-3 transform rounded-md bg-white transition-transform ${
+													host.auto_update ? "translate-x-5" : "translate-x-1"
+												}`}
+											/>
+										</button>
+										{/* Warning badge when global auto-update is disabled */}
+										{!settings?.auto_update && host.auto_update && (
+											<span
+												className="text-amber-500 dark:text-amber-400"
+												title="Global auto-updates disabled in Settings → Agent Updates"
+											>
+												<AlertTriangle className="h-4 w-4" />
+											</span>
+										)}
+									</div>
+								</div>
+
+								<div>
+									<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+										Force Agent Version Upgrade
+									</p>
+									<button
+										type="button"
+										onClick={() => forceAgentUpdateMutation.mutate()}
+										disabled={
+											forceAgentUpdateMutation.isPending || !wsStatus?.connected
+										}
+										title={
+											!wsStatus?.connected
+												? "Agent is not connected"
+												: "Force agent to update now"
+										}
+										className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-md hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+									>
+										<RefreshCw
+											className={`h-3 w-3 ${
+												forceAgentUpdateMutation.isPending ? "animate-spin" : ""
+											}`}
+										/>
+										{forceAgentUpdateMutation.isPending
+											? "Updating..."
+											: wsStatus?.connected
+												? "Update Now"
+												: "Offline"}
+									</button>
+									{updateMessage.text && (
+										<p className="text-xs mt-1.5 text-secondary-600 dark:text-white">
+											{updateMessage.text}
+											{updateMessage.jobId && (
+												<span className="ml-1 font-mono text-secondary-500">
+													(Job #{updateMessage.jobId})
+												</span>
+											)}
+										</p>
+									)}
+								</div>
+							</div>
+						</div>
+					</div>
+
+					{/* Network Card */}
+					{(host.dns_servers || host.network_interfaces) && (
+						<div className="card p-4">
+							<h3 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4 flex items-center gap-2">
+								<Wifi className="h-5 w-5 text-primary-600" />
+								Network
+							</h3>
+							<div className="space-y-4">
+								{host.dns_servers &&
+									Array.isArray(host.dns_servers) &&
+									host.dns_servers.length > 0 && (
+										<div>
+											<p className="text-xs text-secondary-500 dark:text-white mb-2">
+												DNS Servers
+											</p>
+											<div className="space-y-1">
+												{host.dns_servers.map((dns) => (
+													<div
+														key={dns}
+														className="bg-secondary-50 dark:bg-secondary-700 p-2 rounded border border-secondary-200 dark:border-secondary-600"
+													>
+														<p className="font-medium text-secondary-900 dark:text-white font-mono text-sm">
+															{dns}
+														</p>
+													</div>
+												))}
+											</div>
+										</div>
+									)}
+
+								{host.network_interfaces &&
+									Array.isArray(host.network_interfaces) &&
+									host.network_interfaces.length > 0 && (
+										<div>
+											<p className="text-xs text-secondary-500 dark:text-white mb-3">
+												Network Interfaces
+											</p>
+											<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+												{host.network_interfaces.map((iface) => (
+													<div
+														key={iface.name}
+														className="border border-secondary-200 dark:border-secondary-700 rounded-lg p-3 bg-secondary-50 dark:bg-secondary-900/50"
+													>
+														{/* Interface Header */}
+														<div className="flex items-center justify-between mb-3">
+															<div className="flex items-center gap-2">
+																<p className="font-semibold text-secondary-900 dark:text-white text-sm">
+																	{iface.name}
+																</p>
+																{iface.type && (
+																	<span className="text-xs text-secondary-500 dark:text-white bg-secondary-200 dark:bg-secondary-700 px-2 py-0.5 rounded">
+																		{iface.type}
+																	</span>
+																)}
+																{iface.status && (
+																	<span
+																		className={`text-xs font-medium px-2 py-0.5 rounded ${
+																			iface.status === "up"
+																				? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+																				: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+																		}`}
+																	>
+																		{iface.status === "up" ? "UP" : "DOWN"}
+																	</span>
+																)}
+															</div>
+															{canManageHosts() && (
+																<button
+																	type="button"
+																	onClick={() =>
+																		setPrimaryInterfaceMutation.mutate(
+																			host?.primary_interface === iface.name
+																				? null
+																				: iface.name,
+																		)
+																	}
+																	disabled={
+																		setPrimaryInterfaceMutation.isPending
+																	}
+																	className="p-1 rounded hover:bg-secondary-200 dark:hover:bg-secondary-700 transition-colors"
+																	title={
+																		host?.primary_interface === iface.name
+																			? "Clear main interface"
+																			: "Set as main interface"
+																	}
+																>
+																	<Star
+																		className={`h-4 w-4 ${
+																			host?.primary_interface === iface.name
+																				? "fill-amber-400 text-amber-500"
+																				: "text-secondary-400 hover:text-amber-500"
+																		}`}
+																	/>
+																</button>
+															)}
+														</div>
+
+														{/* Interface Details */}
+														<div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs mb-3">
+															{iface.macAddress && (
+																<div>
+																	<p className="text-secondary-500 dark:text-white mb-0.5">
+																		MAC Address
+																	</p>
+																	<p className="font-mono text-secondary-900 dark:text-white">
+																		{iface.macAddress}
+																	</p>
+																</div>
+															)}
+															{iface.mtu && (
+																<div>
+																	<p className="text-secondary-500 dark:text-white mb-0.5">
+																		MTU
+																	</p>
+																	<p className="text-secondary-900 dark:text-white">
+																		{iface.mtu}
+																	</p>
+																</div>
+															)}
+															{iface.linkSpeed && iface.linkSpeed > 0 && (
+																<div>
+																	<p className="text-secondary-500 dark:text-white mb-0.5">
+																		Link Speed
+																	</p>
+																	<p className="text-secondary-900 dark:text-white">
+																		{iface.linkSpeed} Mbps
+																		{iface.duplex &&
+																			` (${iface.duplex} duplex)`}
+																	</p>
+																</div>
+															)}
+														</div>
+
+														{/* Addresses */}
+														{iface.addresses &&
+															Array.isArray(iface.addresses) &&
+															iface.addresses.length > 0 && (
+																<div className="space-y-2 pt-2 border-t border-secondary-200 dark:border-secondary-700">
+																	<p className="text-xs font-medium text-secondary-500 dark:text-white mb-2">
+																		IP Addresses
+																	</p>
+																	<div className="space-y-2">
+																		{iface.addresses.map((addr, idx) => (
+																			<div
+																				key={`${addr.address}-${addr.family}-${idx}`}
+																				className="bg-white dark:bg-secondary-800 rounded p-2 border border-secondary-200 dark:border-secondary-700"
+																			>
+																				<div className="flex items-center gap-2 mb-1">
+																					<span
+																						className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
+																							addr.family === "inet6"
+																								? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+																								: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+																						}`}
+																					>
+																						{addr.family === "inet6"
+																							? "inet6"
+																							: "inet"}
+																					</span>
+																					<span className="font-mono text-sm font-semibold text-secondary-900 dark:text-white">
+																						{addr.address}
+																						{addr.netmask && (
+																							<span className="text-secondary-500 dark:text-white ml-1">
+																								{addr.netmask}
+																							</span>
+																						)}
+																					</span>
+																				</div>
+																				{addr.gateway && (
+																					<div className="text-xs text-secondary-600 dark:text-white ml-1">
+																						Gateway:{" "}
+																						<span className="font-mono">
+																							{addr.gateway}
+																						</span>
+																					</div>
+																				)}
+																			</div>
+																		))}
+																	</div>
+																</div>
+															)}
+													</div>
+												))}
+											</div>
+										</div>
+									)}
+							</div>
+						</div>
+					)}
+
+					{/* System Card */}
+					<div className="card p-4">
+						<h3 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4 flex items-center gap-2">
+							<Terminal className="h-5 w-5 text-primary-600" />
+							System
+						</h3>
+						<div className="space-y-4">
+							{/* System Information */}
+							{(host.kernel_version ||
+								host.selinux_status ||
+								host.architecture) && (
+								<div>
+									<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-3 flex items-center gap-2">
+										<Terminal className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+										System Information
+									</h4>
+									<div className="space-y-3">
+										{host.architecture && (
+											<div>
+												<p className="text-xs text-secondary-500 dark:text-white">
+													Architecture
+												</p>
+												<p className="font-medium text-secondary-900 dark:text-white text-sm">
+													{host.architecture}
+												</p>
+											</div>
+										)}
+
+										{host.kernel_version && (
+											<div>
+												<p className="text-xs text-secondary-500 dark:text-white">
+													Running Kernel
+												</p>
+												<p className="font-medium text-secondary-900 dark:text-white font-mono text-sm break-all">
+													{host.kernel_version}
+												</p>
+											</div>
+										)}
+
+										{host.installed_kernel_version && (
+											<div>
+												<p className="text-xs text-secondary-500 dark:text-white">
+													Installed Kernel
+												</p>
+												<p className="font-medium text-secondary-900 dark:text-white font-mono text-sm break-all">
+													{host.installed_kernel_version}
+												</p>
+											</div>
+										)}
+
+										{host.selinux_status && (
+											<div>
+												<p className="text-xs text-secondary-500 dark:text-white">
+													SELinux Status
+												</p>
+												<span
+													className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+														host.selinux_status === "enabled"
+															? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+															: host.selinux_status === "permissive"
+																? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+																: "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200"
+													}`}
+												>
+													{host.selinux_status}
+												</span>
+											</div>
+										)}
+									</div>
+								</div>
+							)}
+
+							{/* Resource Information */}
+							{(host.system_uptime ||
+								host.cpu_model ||
+								host.cpu_cores ||
+								host.ram_installed ||
+								host.swap_size !== undefined ||
+								(host.load_average &&
+									Array.isArray(host.load_average) &&
+									host.load_average.length > 0 &&
+									host.load_average.some((load) => load != null)) ||
+								(host.disk_details &&
+									Array.isArray(host.disk_details) &&
+									host.disk_details.length > 0)) && (
+								<div className="pt-4 border-t border-secondary-200 dark:border-secondary-600">
+									<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-3 flex items-center gap-2">
+										<Monitor className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+										Resource Information
+									</h4>
+									<div className="space-y-3">
+										{host.system_uptime && (
+											<div>
+												<p className="text-xs text-secondary-500 dark:text-white">
+													System Uptime
+												</p>
+												<p className="font-medium text-secondary-900 dark:text-white text-sm">
+													{host.system_uptime}
+												</p>
+											</div>
+										)}
+
+										{host.cpu_model && (
+											<div>
+												<p className="text-xs text-secondary-500 dark:text-white">
+													CPU Model
+												</p>
+												<p className="font-medium text-secondary-900 dark:text-white text-sm">
+													{host.cpu_model}
+												</p>
+											</div>
+										)}
+
+										{host.cpu_cores && (
+											<div>
+												<p className="text-xs text-secondary-500 dark:text-white">
+													CPU Cores
+												</p>
+												<p className="font-medium text-secondary-900 dark:text-white text-sm">
+													{host.cpu_cores}
+												</p>
+											</div>
+										)}
+
+										{host.ram_installed != null && (
+											<div>
+												<p className="text-xs text-secondary-500 dark:text-white">
+													RAM Installed
+												</p>
+												<p className="font-medium text-secondary-900 dark:text-white text-sm">
+													{format_memory_gib(host.ram_installed)}
+												</p>
+											</div>
+										)}
+
+										{host.swap_size !== undefined &&
+											host.swap_size !== null && (
+												<div>
+													<p className="text-xs text-secondary-500 dark:text-white">
+														Swap Size
+													</p>
+													<p className="font-medium text-secondary-900 dark:text-white text-sm">
+														{format_memory_gib(host.swap_size)}
+													</p>
+												</div>
+											)}
+
+										{host.load_average &&
+											Array.isArray(host.load_average) &&
+											host.load_average.length > 0 &&
+											host.load_average.some((load) => load != null) && (
+												<div>
+													<p className="text-xs text-secondary-500 dark:text-white">
+														Load Average
+													</p>
+													<p className="font-medium text-secondary-900 dark:text-white text-sm">
+														{host.load_average
+															.filter((load) => load != null)
+															.map((load, index) => (
+																<span key={`load-${index}-${load}`}>
+																	{typeof load === "number"
+																		? load.toFixed(2)
+																		: String(load)}
+																	{index <
+																		host.load_average.filter(
+																			(load) => load != null,
+																		).length -
+																			1 && ", "}
+																</span>
+															))}
+													</p>
+												</div>
+											)}
+
+										{host.disk_details &&
+											Array.isArray(host.disk_details) &&
+											host.disk_details.length > 0 && (
+												<div className="pt-3 border-t border-secondary-200 dark:border-secondary-600">
+													<h5 className="text-sm font-medium text-secondary-900 dark:text-white mb-3 flex items-center gap-2">
+														<HardDrive className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+														Disk Usage
+													</h5>
+													<div className="space-y-3 max-h-80 overflow-y-auto pr-2">
+														{host.disk_details.map((disk, index) => (
+															<div
+																key={disk.name || `disk-${index}`}
+																className="bg-secondary-50 dark:bg-secondary-700 p-3 rounded-lg"
+															>
+																<div className="flex items-center gap-2 mb-2">
+																	<HardDrive className="h-4 w-4 text-secondary-500" />
+																	<span className="font-medium text-secondary-900 dark:text-white text-sm">
+																		{disk.name || `Disk ${index + 1}`}
+																	</span>
+																</div>
+																{disk.size && (
+																	<p className="text-xs text-secondary-600 dark:text-white mb-1">
+																		Size: {disk.size}
+																	</p>
+																)}
+																{disk.mountpoint && (
+																	<p className="text-xs text-secondary-600 dark:text-white mb-1">
+																		Mount: {disk.mountpoint}
+																	</p>
+																)}
+																{disk.usage &&
+																	typeof disk.usage === "number" && (
+																		<div className="mt-2">
+																			<div className="flex justify-between text-xs text-secondary-600 dark:text-white mb-1">
+																				<span>Usage</span>
+																				<span>{disk.usage}%</span>
+																			</div>
+																			<div className="w-full bg-secondary-200 dark:bg-secondary-600 rounded-full h-2">
+																				<div
+																					className="bg-primary-600 dark:bg-primary-400 h-2 rounded-full transition-all duration-300"
+																					style={{
+																						width: `${Math.min(Math.max(disk.usage, 0), 100)}%`,
+																					}}
+																				></div>
+																			</div>
+																		</div>
+																	)}
+															</div>
+														))}
+													</div>
+												</div>
+											)}
+									</div>
+								</div>
+							)}
+
+							{/* No Data State */}
+							{!host.kernel_version &&
+								!host.selinux_status &&
+								!host.architecture &&
+								!host.system_uptime &&
+								!host.cpu_model &&
+								!host.cpu_cores &&
+								!host.ram_installed &&
+								host.swap_size === undefined &&
+								(!host.load_average ||
+									!Array.isArray(host.load_average) ||
+									host.load_average.length === 0 ||
+									!host.load_average.some((load) => load != null)) &&
+								(!host.disk_details ||
+									!Array.isArray(host.disk_details) ||
+									host.disk_details.length === 0) && (
+									<div className="text-center py-8">
+										<Terminal className="h-8 w-8 text-secondary-400 mx-auto mb-2" />
+										<p className="text-sm text-secondary-500 dark:text-white">
+											No system information available
+										</p>
+									</div>
+								)}
+						</div>
+					</div>
+
+					{/* Package Reports Card */}
+					<div className="card p-4">
+						<h3 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4 flex items-center gap-2">
+							<Calendar className="h-5 w-5 text-primary-600" />
+							Package Reports
+						</h3>
+						<div className="space-y-4">
+							{host.update_history?.length > 0 ? (
+								<>
+									<div className="space-y-3">
+										{(showAllReports
+											? host.update_history
+											: host.update_history.slice(0, 1)
+										).map((update) => (
+											<div
+												key={update.id}
+												className="p-3 bg-secondary-50 dark:bg-secondary-700 rounded-lg space-y-2"
+											>
+												<div className="flex items-start justify-between gap-3">
+													<div className="flex items-center gap-1.5">
+														<div
+															className={`w-1.5 h-1.5 rounded-full ${update.status === "success" ? "bg-success-500" : "bg-danger-500"}`}
+														/>
+														<span
+															className={`text-sm font-medium ${
+																update.status === "success"
+																	? "text-success-700 dark:text-success-300"
+																	: "text-danger-700 dark:text-danger-300"
+															}`}
+														>
+															{update.status === "success"
+																? "Success"
+																: "Failed"}
+														</span>
+													</div>
+													<div className="text-xs text-secondary-500 dark:text-white">
+														{formatDate(update.timestamp)}
+													</div>
+												</div>
+
+												<div className="flex flex-wrap items-center gap-3 text-sm pt-2 border-t border-secondary-200 dark:border-secondary-600">
+													<div className="flex items-center gap-2">
+														<Package className="h-4 w-4 text-secondary-400" />
+														<span className="text-secondary-700 dark:text-white">
+															Total: {update.total_packages || "-"}
+														</span>
+													</div>
+													<div className="flex items-center gap-2">
+														<span className="text-secondary-700 dark:text-white">
+															Outdated: {update.packages_count || "-"}
+														</span>
+													</div>
+													{update.security_count > 0 && (
+														<div className="flex items-center gap-1">
+															<Shield className="h-4 w-4 text-danger-600" />
+															<span className="text-danger-600 font-medium">
+																{update.security_count} Security
+															</span>
+														</div>
+													)}
+												</div>
+
+												<div className="flex flex-wrap items-center gap-4 text-xs text-secondary-500 dark:text-white pt-2 border-t border-secondary-200 dark:border-secondary-600">
+													{update.payload_size_kb && (
+														<div>
+															Payload: {update.payload_size_kb.toFixed(2)} KB
+														</div>
+													)}
+													{update.execution_time && (
+														<div>
+															Exec Time: {update.execution_time.toFixed(2)}s
+														</div>
+													)}
+												</div>
+											</div>
+										))}
+									</div>
+									{host.update_history.length > 1 && (
+										<button
+											type="button"
+											onClick={() => setShowAllReports(!showAllReports)}
+											className="w-full btn-outline flex items-center justify-center gap-2 py-2 text-sm"
+										>
+											{showAllReports ? (
+												<>
+													Show Less
+													<X className="h-4 w-4" />
+												</>
+											) : (
+												<>
+													Show More ({host.update_history.length - 1} more)
+													<Calendar className="h-4 w-4" />
+												</>
+											)}
+										</button>
+									)}
+								</>
+							) : (
+								<div className="text-center py-8">
+									<Calendar className="h-8 w-8 text-secondary-400 mx-auto mb-2" />
+									<p className="text-sm text-secondary-500 dark:text-white">
+										No update history available
+									</p>
+								</div>
+							)}
+						</div>
+					</div>
+
+					{/* Notes Card */}
+					<div className="card p-4">
+						<h3 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4">
+							Notes
+						</h3>
+						<div className="space-y-4">
+							{notesMessage.text && (
+								<div
+									className={`rounded-md p-4 ${
+										notesMessage.type === "success"
+											? "bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700"
+											: "bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700"
+									}`}
+								>
+									<div className="flex">
+										{notesMessage.type === "success" ? (
+											<CheckCircle className="h-5 w-5 text-green-400 dark:text-green-300" />
+										) : (
+											<AlertCircle className="h-5 w-5 text-red-400 dark:text-red-300" />
+										)}
+										<div className="ml-3">
+											<p
+												className={`text-sm font-medium ${
+													notesMessage.type === "success"
+														? "text-green-800 dark:text-green-200"
+														: "text-red-800 dark:text-red-200"
+												}`}
+											>
+												{notesMessage.text}
+											</p>
+										</div>
+									</div>
+								</div>
+							)}
+
+							<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4">
+								<textarea
+									value={notes}
+									onChange={(e) => setNotes(e.target.value)}
+									placeholder="Add notes about this host..."
+									className="w-full h-32 p-3 border border-secondary-200 dark:border-secondary-600 rounded-lg bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white placeholder-secondary-500 dark:placeholder-secondary-400 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 resize-none"
+									maxLength={1000}
+								/>
+								<div className="flex justify-between items-center mt-3">
+									<p className="text-xs text-secondary-500 dark:text-white">
+										{notes.length}/1000
+									</p>
+									<button
+										type="button"
+										onClick={() => {
+											updateNotesMutation.mutate({
+												hostId: host.id,
+												notes: notes,
+											});
+										}}
+										disabled={updateNotesMutation.isPending}
+										className="px-3 py-1.5 text-xs font-medium text-white bg-primary-600 hover:bg-primary-700 disabled:bg-primary-400 rounded-md transition-colors"
+									>
+										{updateNotesMutation.isPending ? "Saving..." : "Save Notes"}
+									</button>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					{/* Agent Queue Card */}
+					<div className="card p-4">
+						<h3 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4 flex items-center gap-2">
+							<Server className="h-5 w-5 text-primary-600" />
+							Agent Queue
+						</h3>
+						<AgentQueueTab hostId={hostId} />
+					</div>
+
+					{/* Integrations Card */}
+					<div className="card p-4">
+						<h3 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4">
+							Integrations
+						</h3>
+						{isLoadingIntegrations ? (
+							<div className="flex items-center justify-center h-32">
+								<RefreshCw className="h-6 w-6 animate-spin text-primary-600" />
+							</div>
+						) : (
+							<div className="space-y-4">
+								<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
+									<div className="flex items-start justify-between gap-4">
+										<div className="flex-1">
+											<div className="flex items-center gap-3 mb-2">
+												<Database className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+												<h4 className="text-sm font-medium text-secondary-900 dark:text-white">
+													Docker
+												</h4>
+												{integrationsData?.data?.integrations?.docker ? (
+													<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+														Enabled
+													</span>
+												) : (
+													<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-400">
+														Disabled
+													</span>
+												)}
+											</div>
+											<p className="text-xs text-secondary-600 dark:text-white">
+												Monitor Docker containers, images, volumes, and
+												networks.
+											</p>
+										</div>
+										<div className="flex-shrink-0">
+											<button
+												type="button"
+												onClick={() =>
+													toggleIntegrationMutation.mutate({
+														integrationName: "docker",
+														enabled:
+															!integrationsData?.data?.integrations?.docker,
+													})
+												}
+												disabled={
+													toggleIntegrationMutation.isPending ||
+													!wsStatus?.connected
+												}
+												className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+													integrationsData?.data?.integrations?.docker
+														? "bg-primary-600 dark:bg-primary-500"
+														: "bg-secondary-200 dark:bg-secondary-600"
+												} ${
+													toggleIntegrationMutation.isPending ||
+													!integrationsData?.data?.connected
+														? "opacity-50 cursor-not-allowed"
+														: ""
+												}`}
+											>
+												<span
+													className={`inline-block h-3 w-3 transform rounded-md bg-white transition-transform ${
+														integrationsData?.data?.integrations?.docker
+															? "translate-x-5"
+															: "translate-x-1"
+													}`}
+												/>
+											</button>
+										</div>
+									</div>
+									{!wsStatus?.connected && (
+										<p className="text-xs text-warning-600 dark:text-warning-400 mt-2">
+											Agent must be connected via WebSocket to toggle
+											integrations
+										</p>
+									)}
+								</div>
+							</div>
+						)}
+					</div>
+
+					{/* Reporting Card */}
+					{settings?.alerts_enabled !== false && (
+						<div className="card p-4">
+							<h3 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4 flex items-center gap-2">
+								<AlertTriangle className="h-5 w-5 text-primary-600" />
+								Reporting
+							</h3>
+							<div className="space-y-4">
+								<p className="text-xs text-secondary-600 dark:text-white">
+									Control whether this host triggers alert entries when it goes
+									offline. When disabled, no alerts will be created for this
+									host even if the global setting is enabled.
+								</p>
+
+								{/* Settings - Side by Side on larger mobile, stacked on small */}
+								<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+									{/* Current Setting */}
+									<div>
+										<label className="text-xs font-medium text-secondary-500 dark:text-white mb-2 block">
+											Current Setting
+										</label>
+										<div className="text-sm text-secondary-900 dark:text-white">
+											{host?.host_down_alerts_enabled === null ? (
+												<span className="inline-flex items-center px-2 py-1 rounded bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+													Inherit from global settings
+												</span>
+											) : host?.host_down_alerts_enabled === true ? (
+												<span className="inline-flex items-center px-2 py-1 rounded bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+													Enabled
+												</span>
+											) : (
+												<span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+													Disabled
+												</span>
+											)}
+										</div>
+									</div>
+
+									{/* Global Setting Reference */}
+									{hostDownAlertConfig && (
+										<div>
+											<label className="text-xs font-medium text-secondary-500 dark:text-white mb-2 block">
+												Global Setting
+											</label>
+											<div className="text-sm text-secondary-600 dark:text-white">
+												{settings?.alerts_enabled === false ? (
+													<span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+														Disabled (Master Switch Off)
+													</span>
+												) : hostDownAlertConfig.is_enabled ? (
+													<span className="inline-flex items-center px-2 py-1 rounded bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+														Enabled
+													</span>
+												) : (
+													<span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+														Disabled
+													</span>
+												)}
+												{host?.host_down_alerts_enabled === null &&
+													settings?.alerts_enabled !== false && (
+														<span className="ml-2 text-xs text-secondary-500 dark:text-white block mt-1">
+															(currently inherited)
+														</span>
+													)}
+											</div>
+										</div>
+									)}
+								</div>
+
+								{/* Action Buttons */}
+								<div className="flex flex-wrap gap-2">
+									<button
+										type="button"
+										onClick={() => toggleHostDownAlertsMutation.mutate(null)}
+										disabled={
+											toggleHostDownAlertsMutation.isPending ||
+											host?.host_down_alerts_enabled === null
+										}
+										className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${
+											host?.host_down_alerts_enabled === null
+												? "bg-primary-600 text-white"
+												: "bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-white hover:bg-secondary-300 dark:hover:bg-secondary-500"
+										} disabled:opacity-50 disabled:cursor-not-allowed`}
+									>
+										Inherit
+									</button>
+									<button
+										type="button"
+										onClick={() => toggleHostDownAlertsMutation.mutate(true)}
+										disabled={
+											toggleHostDownAlertsMutation.isPending ||
+											host?.host_down_alerts_enabled === true
+										}
+										className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${
+											host?.host_down_alerts_enabled === true
+												? "bg-green-600 text-white"
+												: "bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-white hover:bg-secondary-300 dark:hover:bg-secondary-500"
+										} disabled:opacity-50 disabled:cursor-not-allowed`}
+									>
+										Enable
+									</button>
+									<button
+										type="button"
+										onClick={() => toggleHostDownAlertsMutation.mutate(false)}
+										disabled={
+											toggleHostDownAlertsMutation.isPending ||
+											host?.host_down_alerts_enabled === false
+										}
+										className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${
+											host?.host_down_alerts_enabled === false
+												? "bg-red-600 text-white"
+												: "bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-white hover:bg-secondary-300 dark:hover:bg-secondary-500"
+										} disabled:opacity-50 disabled:cursor-not-allowed`}
+									>
+										Disable
+									</button>
+								</div>
+
+								{/* Success/Error Message */}
+								{updateMessage.text && (
+									<div
+										className={`text-sm ${
+											updateMessage.text.includes("successfully")
+												? "text-green-600 dark:text-green-400"
+												: "text-red-600 dark:text-red-400"
+										}`}
+									>
+										{updateMessage.text}
+									</div>
+								)}
+							</div>
+						</div>
+					)}
+				</div>
+
+				{/* Desktop View - Tab Interface */}
+				<div className="hidden md:block card">
+					<div className="flex border-b border-secondary-200 dark:border-secondary-600">
+						<button
+							type="button"
+							onClick={() => handleTabChange("host")}
+							className={`px-4 py-2 text-sm font-medium ${
+								activeTab === "host"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+							}`}
+						>
+							Host Info
+						</button>
+						<button
+							type="button"
+							onClick={() => handleTabChange("network")}
+							className={`px-4 py-2 text-sm font-medium ${
+								activeTab === "network"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+							}`}
+						>
+							Network
+						</button>
+						<button
+							type="button"
+							onClick={() => handleTabChange("system")}
+							className={`px-4 py-2 text-sm font-medium ${
+								activeTab === "system"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+							}`}
+						>
+							System
+						</button>
+						<button
+							type="button"
+							onClick={() => handleTabChange("history")}
+							className={`px-4 py-2 text-sm font-medium ${
+								activeTab === "history"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+							}`}
+						>
+							Package Reports
+						</button>
+						<button
+							type="button"
+							onClick={() => handleTabChange("queue")}
+							className={`px-4 py-2 text-sm font-medium ${
+								activeTab === "queue"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+							}`}
+						>
+							Agent Queue
+						</button>
+						<button
+							type="button"
+							onClick={() => handleTabChange("notes")}
+							className={`px-4 py-2 text-sm font-medium ${
+								activeTab === "notes"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+							}`}
+						>
+							Notes
+						</button>
+						<button
+							type="button"
+							onClick={() => handleTabChange("integrations")}
+							className={`px-4 py-2 text-sm font-medium ${
+								activeTab === "integrations"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+							}`}
+						>
+							Integrations
+						</button>
+						{settings?.alerts_enabled !== false && (
+							<button
+								type="button"
+								onClick={() => handleTabChange("reporting")}
+								className={`px-4 py-2 text-sm font-medium ${
+									activeTab === "reporting"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+								}`}
+							>
+								Reporting
+							</button>
+						)}
+						{integrationsData?.data?.integrations?.docker && (
+							<button
+								type="button"
+								onClick={() => handleTabChange("docker")}
+								className={`px-4 py-2 text-sm font-medium ${
+									activeTab === "docker"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+								}`}
+							>
+								Docker
+							</button>
+						)}
+						<button
+							type="button"
+							onClick={() => handleTabChange("patching")}
+							className={`px-4 py-2 text-sm font-medium ${
+								activeTab === "patching"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+							}`}
+						>
+							Patching
+						</button>
+						{integrationsData?.data?.integrations?.compliance && (
+							<button
+								type="button"
+								onClick={() => handleTabChange("compliance")}
+								className={`px-4 py-2 text-sm font-medium ${
+									activeTab === "compliance"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+								}`}
+							>
+								Compliance
+							</button>
+						)}
+						<button
+							type="button"
+							onClick={() => handleTabChange("terminal")}
+							className={`px-4 py-2 text-sm font-medium ${
+								activeTab === "terminal"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+							}`}
+						>
+							Terminal
+						</button>
+						{isWindowsHost && (
+							<button
+								type="button"
+								onClick={() => handleTabChange("rdp")}
+								className={`px-4 py-2 text-sm font-medium ${
+									activeTab === "rdp"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+								}`}
+							>
+								RDP
+							</button>
+						)}
+					</div>
+
+					<div className="p-4">
+						{/* Host Information */}
+						{activeTab === "host" && (
+							<div className="space-y-4">
+								<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+											Friendly Name
+										</p>
+										<InlineEdit
+											value={host.friendly_name}
+											onSave={(newName) =>
+												updateFriendlyNameMutation.mutate(newName)
+											}
+											placeholder="Enter friendly name..."
+											maxLength={100}
+											validate={(value) => {
+												if (!value.trim()) return "Friendly name is required";
+												if (value.trim().length < 1)
+													return "Friendly name must be at least 1 character";
+												if (value.trim().length > 100)
+													return "Friendly name must be less than 100 characters";
+												return null;
+											}}
+											className="w-full text-sm"
+										/>
+									</div>
+
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-white mb-1.5 flex items-center gap-2">
+											IP Address
+											{host?.primary_interface && (
+												<span className="text-xs text-amber-600 dark:text-amber-400">
+													(from {host.primary_interface})
+												</span>
+											)}
+										</p>
+										<InlineEdit
+											value={host.ip || ""}
+											onSave={(newIp) => {
+												if (!newIp.trim()) {
+													updateConnectionMutation.mutate({ ip: null });
+												} else {
+													updateConnectionMutation.mutate({ ip: newIp.trim() });
+												}
+											}}
+											placeholder="No IP set (click to add)"
+											disabled={!!host?.primary_interface}
+											validate={(value) => {
+												if (
+													value.trim() &&
+													!/^(\d{1,3}\.){3}\d{1,3}$/.test(value.trim())
+												) {
+													return "Invalid IP address format";
+												}
+												return null;
+											}}
+											className="w-full text-sm font-mono"
+										/>
+									</div>
+
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+											Hostname
+										</p>
+										<InlineEdit
+											value={host.hostname || ""}
+											onSave={(newHostname) => {
+												if (!newHostname.trim()) {
+													updateConnectionMutation.mutate({ hostname: null });
+												} else {
+													updateConnectionMutation.mutate({
+														hostname: newHostname.trim(),
+													});
+												}
+											}}
+											placeholder="No hostname set (click to add)"
+											maxLength={255}
+											className="w-full text-sm font-mono"
+										/>
+									</div>
+
+									{host.machine_id && (
+										<div>
+											<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+												Machine ID
+											</p>
+											<p className="font-medium text-secondary-900 dark:text-white font-mono text-sm break-all">
+												{host.machine_id}
+											</p>
+										</div>
+									)}
+
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+											Host Groups
+										</p>
+										{/* Extract group IDs from the new many-to-many structure */}
+										{(() => {
+											const groupIds =
+												host.host_group_memberships?.map(
+													(membership) => membership.host_groups.id,
+												) || [];
+											return (
+												<InlineMultiGroupEdit
+													key={`${host.id}-${groupIds.join(",")}`}
+													value={groupIds}
+													onSave={(newGroupIds) =>
+														updateHostGroupsMutation.mutate({
+															hostId: host.id,
+															groupIds: newGroupIds,
+														})
+													}
+													options={hostGroups || []}
+													placeholder="Select groups..."
+													className="w-full"
+												/>
+											);
+										})()}
+									</div>
+
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+											Integrations
+										</p>
+										<button
+											type="button"
+											onClick={() => handleTabChange("integrations")}
+											className="text-sm text-primary-600 dark:text-primary-400 hover:underline"
+										>
+											Manage in Integrations tab →
+										</button>
+									</div>
+
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+											Operating System
+										</p>
+										<div className="flex items-center gap-2">
+											<OSIcon osType={host.os_type} className="h-4 w-4" />
+											<p className="font-medium text-secondary-900 dark:text-white text-sm">
+												{host.os_type} {host.os_version}
+											</p>
+										</div>
+									</div>
+
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+											Agent Version
+										</p>
+										<p className="font-medium text-secondary-900 dark:text-white text-sm">
+											{host.agent_version || "Unknown"}
+										</p>
+									</div>
+
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+											Agent Auto-update
+										</p>
+										<div className="flex items-center gap-2">
+											<button
+												type="button"
+												onClick={handleAutoUpdateToggle}
+												disabled={toggleAutoUpdateMutation.isPending}
+												className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+													host.auto_update
+														? "bg-primary-600 dark:bg-primary-500"
+														: "bg-secondary-200 dark:bg-secondary-600"
+												}`}
+											>
+												<span
+													className={`inline-block h-3 w-3 transform rounded-md bg-white transition-transform ${
+														host.auto_update ? "translate-x-5" : "translate-x-1"
+													}`}
+												/>
+											</button>
+											{/* Warning badge when global auto-update is disabled */}
+											{!settings?.auto_update && host.auto_update && (
+												<span
+													className="text-amber-500 dark:text-amber-400"
+													title="Global auto-updates disabled in Settings → Agent Updates"
+												>
+													<AlertTriangle className="h-4 w-4" />
+												</span>
+											)}
+										</div>
+									</div>
+
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+											Force Agent Version Upgrade
+										</p>
+										<button
+											type="button"
+											onClick={() => forceAgentUpdateMutation.mutate()}
+											disabled={
+												forceAgentUpdateMutation.isPending ||
+												!wsStatus?.connected
+											}
+											title={
+												!wsStatus?.connected
+													? "Agent is not connected"
+													: "Force agent to update now"
+											}
+											className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-md hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+										>
+											<RefreshCw
+												className={`h-3 w-3 ${
+													forceAgentUpdateMutation.isPending
+														? "animate-spin"
+														: ""
+												}`}
+											/>
+											{forceAgentUpdateMutation.isPending
+												? "Updating..."
+												: wsStatus?.connected
+													? "Update Now"
+													: "Offline"}
+										</button>
+										{updateMessage.text && (
+											<p className="text-xs mt-1.5 text-secondary-600 dark:text-white">
+												{updateMessage.text}
+												{updateMessage.jobId && (
+													<span className="ml-1 font-mono text-secondary-500">
+														(Job #{updateMessage.jobId})
+													</span>
+												)}
+											</p>
+										)}
+									</div>
+								</div>
+							</div>
+						)}
+
+						{/* Network Information */}
+						{activeTab === "network" &&
+							(host.dns_servers || host.network_interfaces) && (
+								<div className="space-y-6">
+									{/* DNS Servers */}
+									{host.dns_servers &&
+										Array.isArray(host.dns_servers) &&
+										host.dns_servers.length > 0 && (
+											<div>
+												<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-3 flex items-center gap-2">
+													<Wifi className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+													DNS Servers
+												</h4>
+												<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+													{host.dns_servers.map((dns) => (
+														<div
+															key={dns}
+															className="bg-secondary-50 dark:bg-secondary-700 p-3 rounded-lg border border-secondary-200 dark:border-secondary-600"
+														>
+															<p className="font-mono text-sm font-medium text-secondary-900 dark:text-white">
+																{dns}
+															</p>
+														</div>
+													))}
+												</div>
+											</div>
+										)}
+
+									{/* Network Interfaces */}
+									{host.network_interfaces &&
+										Array.isArray(host.network_interfaces) &&
+										host.network_interfaces.length > 0 && (
+											<div>
+												<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-4 flex items-center gap-2">
+													<Wifi className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+													Network Interfaces
+												</h4>
+												<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+													{host.network_interfaces.map((iface) => (
+														<div
+															key={iface.name}
+															className="border border-secondary-200 dark:border-secondary-700 rounded-lg p-4 bg-secondary-50 dark:bg-secondary-900/50"
+														>
+															{/* Interface Header */}
+															<div className="flex items-center justify-between mb-3">
+																<div className="flex items-center gap-2">
+																	<p className="font-semibold text-secondary-900 dark:text-white text-sm">
+																		{iface.name}
+																	</p>
+																	{iface.type && (
+																		<span className="text-xs text-secondary-500 dark:text-white bg-secondary-200 dark:bg-secondary-700 px-2 py-0.5 rounded">
+																			{iface.type}
+																		</span>
+																	)}
+																	{iface.status && (
+																		<span
+																			className={`text-xs font-medium px-2 py-0.5 rounded ${
+																				iface.status === "up"
+																					? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+																					: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+																			}`}
+																		>
+																			{iface.status === "up" ? "UP" : "DOWN"}
+																		</span>
+																	)}
+																</div>
+																{canManageHosts() && (
+																	<button
+																		type="button"
+																		onClick={() =>
+																			setPrimaryInterfaceMutation.mutate(
+																				host?.primary_interface === iface.name
+																					? null
+																					: iface.name,
+																			)
+																		}
+																		disabled={
+																			setPrimaryInterfaceMutation.isPending
+																		}
+																		className="p-1 rounded hover:bg-secondary-200 dark:hover:bg-secondary-700 transition-colors"
+																		title={
+																			host?.primary_interface === iface.name
+																				? "Clear main interface"
+																				: "Set as main interface"
+																		}
+																	>
+																		<Star
+																			className={`h-4 w-4 ${
+																				host?.primary_interface === iface.name
+																					? "fill-amber-400 text-amber-500"
+																					: "text-secondary-400 hover:text-amber-500"
+																			}`}
+																		/>
+																	</button>
+																)}
+															</div>
+
+															{/* Interface Details */}
+															<div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs mb-3">
+																{iface.macAddress && (
+																	<div>
+																		<p className="text-secondary-500 dark:text-white mb-0.5">
+																			MAC Address
+																		</p>
+																		<p className="font-mono text-secondary-900 dark:text-white">
+																			{iface.macAddress}
+																		</p>
+																	</div>
+																)}
+																{iface.mtu && (
+																	<div>
+																		<p className="text-secondary-500 dark:text-white mb-0.5">
+																			MTU
+																		</p>
+																		<p className="text-secondary-900 dark:text-white">
+																			{iface.mtu}
+																		</p>
+																	</div>
+																)}
+																{iface.linkSpeed && iface.linkSpeed > 0 && (
+																	<div>
+																		<p className="text-secondary-500 dark:text-white mb-0.5">
+																			Link Speed
+																		</p>
+																		<p className="text-secondary-900 dark:text-white">
+																			{iface.linkSpeed} Mbps
+																			{iface.duplex &&
+																				` (${iface.duplex} duplex)`}
+																		</p>
+																	</div>
+																)}
+															</div>
+
+															{/* Addresses */}
+															{iface.addresses &&
+																Array.isArray(iface.addresses) &&
+																iface.addresses.length > 0 && (
+																	<div className="space-y-2 pt-3 border-t border-secondary-200 dark:border-secondary-700">
+																		<p className="text-xs font-medium text-secondary-500 dark:text-white mb-2">
+																			IP Addresses
+																		</p>
+																		<div className="space-y-2">
+																			{iface.addresses.map((addr, idx) => (
+																				<div
+																					key={`${addr.address}-${addr.family}-${idx}`}
+																					className="bg-white dark:bg-secondary-800 rounded p-2 border border-secondary-200 dark:border-secondary-700"
+																				>
+																					<div className="flex items-center gap-2 mb-1">
+																						<span
+																							className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
+																								addr.family === "inet6"
+																									? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+																									: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+																							}`}
+																						>
+																							{addr.family === "inet6"
+																								? "inet6"
+																								: "inet"}
+																						</span>
+																						<span className="font-mono text-sm font-semibold text-secondary-900 dark:text-white">
+																							{addr.address}
+																							{addr.netmask && (
+																								<span className="text-secondary-500 dark:text-white ml-1">
+																									{addr.netmask}
+																								</span>
+																							)}
+																						</span>
+																					</div>
+																					{addr.gateway && (
+																						<div className="text-xs text-secondary-600 dark:text-white ml-1">
+																							Gateway:{" "}
+																							<span className="font-mono">
+																								{addr.gateway}
+																							</span>
+																						</div>
+																					)}
+																				</div>
+																			))}
+																		</div>
+																	</div>
+																)}
+														</div>
+													))}
+												</div>
+											</div>
+										)}
+								</div>
+							)}
+
+						{/* System Information */}
+						{activeTab === "system" && (
+							<div className="space-y-6">
+								{/* Basic System Information */}
+								{(host.kernel_version ||
+									host.selinux_status ||
+									host.architecture ||
+									host.package_manager) && (
+									<div>
+										<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-3 flex items-center gap-2">
+											<Terminal className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+											System Information
+										</h4>
+										<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+											{host.architecture && (
+												<div>
+													<p className="text-xs text-secondary-500 dark:text-white">
+														Architecture
+													</p>
+													<p className="font-medium text-secondary-900 dark:text-white text-sm">
+														{host.architecture}
+													</p>
+												</div>
+											)}
+
+											{host.kernel_version && (
+												<div>
+													<p className="text-xs text-secondary-500 dark:text-white">
+														Running Kernel
+													</p>
+													<p className="font-medium text-secondary-900 dark:text-white font-mono text-sm break-all">
+														{host.kernel_version}
+													</p>
+												</div>
+											)}
+
+											{host.installed_kernel_version && (
+												<div>
+													<p className="text-xs text-secondary-500 dark:text-white">
+														Installed Kernel
+													</p>
+													<p className="font-medium text-secondary-900 dark:text-white font-mono text-sm break-all">
+														{host.installed_kernel_version}
+													</p>
+												</div>
+											)}
+
+											{host.selinux_status && (
+												<div>
+													<p className="text-xs text-secondary-500 dark:text-white">
+														SELinux Status
+													</p>
+													<span
+														className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+															host.selinux_status === "enabled"
+																? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+																: host.selinux_status === "permissive"
+																	? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+																	: "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200"
+														}`}
+													>
+														{host.selinux_status}
+													</span>
+												</div>
+											)}
+
+											{host.package_manager && (
+												<div>
+													<p className="text-xs text-secondary-500 dark:text-white">
+														Package Manager
+													</p>
+													<p className="font-medium text-secondary-900 dark:text-white text-sm">
+														{host.package_manager}
+													</p>
+												</div>
+											)}
+										</div>
+									</div>
+								)}
+
+								{/* Resource Information */}
+								{(host.system_uptime ||
+									host.cpu_model ||
+									host.cpu_cores ||
+									host.ram_installed ||
+									host.swap_size !== undefined ||
+									(host.load_average &&
+										Array.isArray(host.load_average) &&
+										host.load_average.length > 0 &&
+										host.load_average.some((load) => load != null)) ||
+									(host.disk_details &&
+										Array.isArray(host.disk_details) &&
+										host.disk_details.length > 0)) && (
+									<div className="pt-4 border-t border-secondary-200 dark:border-secondary-600">
+										<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-3 flex items-center gap-2">
+											<Monitor className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+											Resource Information
+										</h4>
+
+										{/* System Overview */}
+										<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+											{/* System Uptime */}
+											{host.system_uptime && (
+												<div className="bg-secondary-50 dark:bg-secondary-700 p-4 rounded-lg">
+													<div className="flex items-center gap-2 mb-2">
+														<Clock className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+														<p className="text-xs text-secondary-500 dark:text-white">
+															System Uptime
+														</p>
+													</div>
+													<p className="font-medium text-secondary-900 dark:text-white text-sm">
+														{host.system_uptime}
+													</p>
+												</div>
+											)}
+
+											{/* CPU Model */}
+											{host.cpu_model && (
+												<div className="bg-secondary-50 dark:bg-secondary-700 p-4 rounded-lg">
+													<div className="flex items-center gap-2 mb-2">
+														<Cpu className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+														<p className="text-xs text-secondary-500 dark:text-white">
+															CPU Model
+														</p>
+													</div>
+													<p className="font-medium text-secondary-900 dark:text-white text-sm">
+														{host.cpu_model}
+													</p>
+												</div>
+											)}
+
+											{/* CPU Cores */}
+											{host.cpu_cores && (
+												<div className="bg-secondary-50 dark:bg-secondary-700 p-4 rounded-lg">
+													<div className="flex items-center gap-2 mb-2">
+														<Cpu className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+														<p className="text-xs text-secondary-500 dark:text-white">
+															CPU Cores
+														</p>
+													</div>
+													<p className="font-medium text-secondary-900 dark:text-white text-sm">
+														{host.cpu_cores}
+													</p>
+												</div>
+											)}
+
+											{/* RAM Installed */}
+											{host.ram_installed != null && (
+												<div className="bg-secondary-50 dark:bg-secondary-700 p-4 rounded-lg">
+													<div className="flex items-center gap-2 mb-2">
+														<MemoryStick className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+														<p className="text-xs text-secondary-500 dark:text-white">
+															RAM Installed
+														</p>
+													</div>
+													<p className="font-medium text-secondary-900 dark:text-white text-sm">
+														{format_memory_gib(host.ram_installed)}
+													</p>
+												</div>
+											)}
+
+											{/* Swap Size */}
+											{host.swap_size !== undefined &&
+												host.swap_size !== null && (
+													<div className="bg-secondary-50 dark:bg-secondary-700 p-4 rounded-lg">
+														<div className="flex items-center gap-2 mb-2">
+															<MemoryStick className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+															<p className="text-xs text-secondary-500 dark:text-white">
+																Swap Size
+															</p>
+														</div>
+														<p className="font-medium text-secondary-900 dark:text-white text-sm">
+															{format_memory_gib(host.swap_size)}
+														</p>
+													</div>
+												)}
+
+											{/* Load Average */}
+											{host.load_average &&
+												Array.isArray(host.load_average) &&
+												host.load_average.length > 0 &&
+												host.load_average.some((load) => load != null) && (
+													<div className="bg-secondary-50 dark:bg-secondary-700 p-4 rounded-lg">
+														<div className="flex items-center gap-2 mb-2">
+															<Activity className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+															<p className="text-xs text-secondary-500 dark:text-white">
+																Load Average
+															</p>
+														</div>
+														<p className="font-medium text-secondary-900 dark:text-white text-sm">
+															{host.load_average
+																.filter((load) => load != null)
+																.map((load, index) => (
+																	<span key={`load-${index}-${load}`}>
+																		{typeof load === "number"
+																			? load.toFixed(2)
+																			: String(load)}
+																		{index <
+																			host.load_average.filter(
+																				(load) => load != null,
+																			).length -
+																				1 && ", "}
+																	</span>
+																))}
+														</p>
+													</div>
+												)}
+										</div>
+
+										{/* Disk Information */}
+										{host.disk_details &&
+											Array.isArray(host.disk_details) &&
+											host.disk_details.length > 0 && (
+												<div className="pt-4 border-t border-secondary-200 dark:border-secondary-600">
+													<h5 className="text-sm font-medium text-secondary-900 dark:text-white mb-3 flex items-center gap-2">
+														<HardDrive className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+														Disk Usage
+													</h5>
+													<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-80 overflow-y-auto pr-2">
+														{host.disk_details.map((disk, index) => (
+															<div
+																key={disk.name || `disk-${index}`}
+																className="bg-secondary-50 dark:bg-secondary-700 p-3 rounded-lg"
+															>
+																<div className="flex items-center gap-2 mb-2">
+																	<HardDrive className="h-4 w-4 text-secondary-500" />
+																	<span className="font-medium text-secondary-900 dark:text-white text-sm">
+																		{disk.name || `Disk ${index + 1}`}
+																	</span>
+																</div>
+																{disk.size && (
+																	<p className="text-xs text-secondary-600 dark:text-white mb-1">
+																		Size: {disk.size}
+																	</p>
+																)}
+																{disk.mountpoint && (
+																	<p className="text-xs text-secondary-600 dark:text-white mb-1">
+																		Mount: {disk.mountpoint}
+																	</p>
+																)}
+																{disk.usage &&
+																	typeof disk.usage === "number" && (
+																		<div className="mt-2">
+																			<div className="flex justify-between text-xs text-secondary-600 dark:text-white mb-1">
+																				<span>Usage</span>
+																				<span>{disk.usage}%</span>
+																			</div>
+																			<div className="w-full bg-secondary-200 dark:bg-secondary-600 rounded-full h-2">
+																				<div
+																					className="bg-primary-600 dark:bg-primary-400 h-2 rounded-full transition-all duration-300"
+																					style={{
+																						width: `${Math.min(Math.max(disk.usage, 0), 100)}%`,
+																					}}
+																				></div>
+																			</div>
+																		</div>
+																	)}
+															</div>
+														))}
+													</div>
+												</div>
+											)}
+									</div>
+								)}
+
+								{/* No Data State */}
+								{!host.kernel_version &&
+									!host.selinux_status &&
+									!host.architecture &&
+									!host.system_uptime &&
+									!host.cpu_model &&
+									!host.cpu_cores &&
+									!host.ram_installed &&
+									host.swap_size === undefined &&
+									(!host.load_average ||
+										!Array.isArray(host.load_average) ||
+										host.load_average.length === 0 ||
+										!host.load_average.some((load) => load != null)) &&
+									(!host.disk_details ||
+										!Array.isArray(host.disk_details) ||
+										host.disk_details.length === 0) && (
+										<div className="text-center py-8">
+											<Terminal className="h-8 w-8 text-secondary-400 mx-auto mb-2" />
+											<p className="text-sm text-secondary-500 dark:text-white">
+												No system information available
+											</p>
+											<p className="text-xs text-secondary-400 dark:text-white mt-1">
+												System information will appear once the agent collects
+												data from this host
+											</p>
+										</div>
+									)}
+							</div>
+						)}
+
+						{activeTab === "network" &&
+							!(
+								host.ip ||
+								host.gateway_ip ||
+								host.dns_servers ||
+								host.network_interfaces
+							) && (
+								<div className="text-center py-8">
+									<Wifi className="h-8 w-8 text-secondary-400 mx-auto mb-2" />
+									<p className="text-sm text-secondary-500 dark:text-white">
+										No network information available
+									</p>
+								</div>
+							)}
+
+						{/* Update History */}
+						{activeTab === "history" && (
+							<div className="space-y-4">
+								{host.update_history?.length > 0 ? (
+									<>
+										{/* Mobile Card Layout */}
+										<div className="md:hidden space-y-3">
+											{host.update_history.map((update) => (
+												<div
+													key={update.id}
+													className="p-3 bg-secondary-50 dark:bg-secondary-700 rounded-lg space-y-2"
+												>
+													<div className="flex items-start justify-between gap-3">
+														<div className="flex items-center gap-1.5">
+															<div
+																className={`w-1.5 h-1.5 rounded-full ${update.status === "success" ? "bg-success-500" : "bg-danger-500"}`}
+															/>
+															<span
+																className={`text-sm font-medium ${
+																	update.status === "success"
+																		? "text-success-700 dark:text-success-300"
+																		: "text-danger-700 dark:text-danger-300"
+																}`}
+															>
+																{update.status === "success"
+																	? "Success"
+																	: "Failed"}
+															</span>
+														</div>
+														<div className="text-xs text-secondary-500 dark:text-white">
+															{formatDate(update.timestamp)}
+														</div>
+													</div>
+
+													<div className="flex flex-wrap items-center gap-3 text-sm pt-2 border-t border-secondary-200 dark:border-secondary-600">
+														<div className="flex items-center gap-2">
+															<Package className="h-4 w-4 text-secondary-400" />
+															<span className="text-secondary-700 dark:text-white">
+																Total: {update.total_packages || "-"}
+															</span>
+														</div>
+														<div className="flex items-center gap-2">
+															<span className="text-secondary-700 dark:text-white">
+																Outdated: {update.packages_count || "-"}
+															</span>
+														</div>
+														{update.security_count > 0 && (
+															<div className="flex items-center gap-1">
+																<Shield className="h-4 w-4 text-danger-600" />
+																<span className="text-danger-600 font-medium">
+																	{update.security_count} Security
+																</span>
+															</div>
+														)}
+													</div>
+
+													<div className="flex flex-wrap items-center gap-4 text-xs text-secondary-500 dark:text-white pt-2 border-t border-secondary-200 dark:border-secondary-600">
+														{update.payload_size_kb && (
+															<div>
+																Payload: {update.payload_size_kb.toFixed(2)} KB
+															</div>
+														)}
+														{update.execution_time && (
+															<div>
+																Exec Time: {update.execution_time.toFixed(2)}s
+															</div>
+														)}
+													</div>
+												</div>
+											))}
+										</div>
+
+										{/* Desktop Table Layout */}
+										<div className="hidden md:block overflow-x-auto">
+											<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+												<thead className="bg-secondary-50 dark:bg-secondary-700">
+													<tr>
+														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+															Status
+														</th>
+														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+															Date
+														</th>
+														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+															Total Packages
+														</th>
+														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+															Outdated Packages
+														</th>
+														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+															Security
+														</th>
+														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+															Payload (KB)
+														</th>
+														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+															Exec Time (s)
+														</th>
+													</tr>
+												</thead>
+												<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+													{host.update_history.map((update) => (
+														<tr
+															key={update.id}
+															className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
+														>
+															<td className="px-4 py-2 whitespace-nowrap">
+																<div className="flex items-center gap-1.5">
+																	<div
+																		className={`w-1.5 h-1.5 rounded-full ${update.status === "success" ? "bg-success-500" : "bg-danger-500"}`}
+																	/>
+																	<span
+																		className={`text-xs font-medium ${
+																			update.status === "success"
+																				? "text-success-700 dark:text-success-300"
+																				: "text-danger-700 dark:text-danger-300"
+																		}`}
+																	>
+																		{update.status === "success"
+																			? "Success"
+																			: "Failed"}
+																	</span>
+																</div>
+															</td>
+															<td className="px-4 py-2 whitespace-nowrap text-xs text-secondary-900 dark:text-white">
+																{formatDate(update.timestamp)}
+															</td>
+															<td className="px-4 py-2 whitespace-nowrap text-xs text-secondary-900 dark:text-white">
+																{update.total_packages || "-"}
+															</td>
+															<td className="px-4 py-2 whitespace-nowrap text-xs text-secondary-900 dark:text-white">
+																{update.packages_count}
+															</td>
+															<td className="px-4 py-2 whitespace-nowrap">
+																{update.security_count > 0 ? (
+																	<div className="flex items-center gap-1">
+																		<Shield className="h-3 w-3 text-danger-600" />
+																		<span className="text-xs text-danger-600 font-medium">
+																			{update.security_count}
+																		</span>
+																	</div>
+																) : (
+																	<span className="text-xs text-secondary-500 dark:text-white">
+																		-
+																	</span>
+																)}
+															</td>
+															<td className="px-4 py-2 whitespace-nowrap text-xs text-secondary-900 dark:text-white">
+																{update.payload_size_kb
+																	? `${update.payload_size_kb.toFixed(2)}`
+																	: "-"}
+															</td>
+															<td className="px-4 py-2 whitespace-nowrap text-xs text-secondary-900 dark:text-white">
+																{update.execution_time
+																	? `${update.execution_time.toFixed(2)}`
+																	: "-"}
+															</td>
+														</tr>
+													))}
+												</tbody>
+											</table>
+										</div>
+
+										{/* Pagination Controls */}
+										{host.pagination &&
+											host.pagination.total > historyLimit && (
+												<div className="flex items-center justify-between px-4 py-3 border-t border-secondary-200 dark:border-secondary-600 bg-secondary-50 dark:bg-secondary-700">
+													<div className="flex items-center gap-2 text-sm text-secondary-600 dark:text-white">
+														<span>
+															Showing {historyPage * historyLimit + 1} to{" "}
+															{Math.min(
+																(historyPage + 1) * historyLimit,
+																host.pagination.total,
+															)}{" "}
+															of {host.pagination.total} entries
+														</span>
+													</div>
+													<div className="flex items-center gap-2">
+														<button
+															type="button"
+															onClick={() => setHistoryPage(0)}
+															disabled={historyPage === 0}
+															className="px-3 py-1 text-xs font-medium text-secondary-600 dark:text-white hover:text-secondary-800 dark:hover:text-secondary-100 disabled:opacity-50 disabled:cursor-not-allowed"
+														>
+															First
+														</button>
+														<button
+															type="button"
+															onClick={() => setHistoryPage(historyPage - 1)}
+															disabled={historyPage === 0}
+															className="px-3 py-1 text-xs font-medium text-secondary-600 dark:text-white hover:text-secondary-800 dark:hover:text-secondary-100 disabled:opacity-50 disabled:cursor-not-allowed"
+														>
+															Previous
+														</button>
+														<span className="px-3 py-1 text-xs font-medium text-secondary-900 dark:text-white">
+															Page {historyPage + 1} of{" "}
+															{Math.ceil(host.pagination.total / historyLimit)}
+														</span>
+														<button
+															type="button"
+															onClick={() => setHistoryPage(historyPage + 1)}
+															disabled={!host.pagination.hasMore}
+															className="px-3 py-1 text-xs font-medium text-secondary-600 dark:text-white hover:text-secondary-800 dark:hover:text-secondary-100 disabled:opacity-50 disabled:cursor-not-allowed"
+														>
+															Next
+														</button>
+														<button
+															type="button"
+															onClick={() =>
+																setHistoryPage(
+																	Math.ceil(
+																		host.pagination.total / historyLimit,
+																	) - 1,
+																)
+															}
+															disabled={!host.pagination.hasMore}
+															className="px-3 py-1 text-xs font-medium text-secondary-600 dark:text-white hover:text-secondary-800 dark:hover:text-secondary-100 disabled:opacity-50 disabled:cursor-not-allowed"
+														>
+															Last
+														</button>
+													</div>
+												</div>
+											)}
+									</>
+								) : (
+									<div className="text-center py-8">
+										<Calendar className="h-8 w-8 text-secondary-400 mx-auto mb-2" />
+										<p className="text-sm text-secondary-500 dark:text-white">
+											No update history available
+										</p>
+									</div>
+								)}
+							</div>
+						)}
+
+						{/* Terminal - Always mounted and open to preserve connection, hidden when not active */}
+						{host && (
+							<div className={activeTab === "terminal" ? "" : "hidden"}>
+								<SshTerminal
+									host={host}
+									isOpen={true}
+									onClose={() => handleTabChange("host")}
+									embedded={true}
+								/>
+							</div>
+						)}
+
+						{/* RDP - Windows hosts only */}
+						{host && isWindowsHost && (
+							<div className={activeTab === "rdp" ? "" : "hidden"}>
+								<RdpViewer host={host} isOpen={activeTab === "rdp"} />
+							</div>
+						)}
+
+						{/* Notes */}
+						{activeTab === "notes" && (
+							<div className="space-y-4">
+								<div className="flex items-center justify-between">
+									<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+										Host Notes
+									</h3>
+								</div>
+
+								{/* Success/Error Message */}
+								{notesMessage.text && (
+									<div
+										className={`rounded-md p-4 ${
+											notesMessage.type === "success"
+												? "bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700"
+												: "bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700"
+										}`}
+									>
+										<div className="flex">
+											{notesMessage.type === "success" ? (
+												<CheckCircle className="h-5 w-5 text-green-400 dark:text-green-300" />
+											) : (
+												<AlertCircle className="h-5 w-5 text-red-400 dark:text-red-300" />
+											)}
+											<div className="ml-3">
+												<p
+													className={`text-sm font-medium ${
+														notesMessage.type === "success"
+															? "text-green-800 dark:text-green-200"
+															: "text-red-800 dark:text-red-200"
+													}`}
+												>
+													{notesMessage.text}
+												</p>
+											</div>
+										</div>
+									</div>
+								)}
+
+								<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4">
+									<textarea
+										value={notes}
+										onChange={(e) => setNotes(e.target.value)}
+										placeholder="Add notes about this host... (e.g., purpose, special configurations, maintenance notes)"
+										className="w-full h-32 p-3 border border-secondary-200 dark:border-secondary-600 rounded-lg bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white placeholder-secondary-500 dark:placeholder-secondary-400 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 resize-none"
+										maxLength={1000}
+									/>
+									<div className="flex justify-between items-center mt-3">
+										<p className="text-xs text-secondary-500 dark:text-white">
+											Use this space to add important information about this
+											host for your team
+										</p>
+										<div className="flex items-center gap-2">
+											<span className="text-xs text-secondary-400 dark:text-white">
+												{notes.length}/1000
+											</span>
+											<button
+												type="button"
+												onClick={() => {
+													updateNotesMutation.mutate({
+														hostId: host.id,
+														notes: notes,
+													});
+												}}
+												disabled={updateNotesMutation.isPending}
+												className="px-3 py-1.5 text-xs font-medium text-white bg-primary-600 hover:bg-primary-700 disabled:bg-primary-400 rounded-md transition-colors"
+											>
+												{updateNotesMutation.isPending
+													? "Saving..."
+													: "Save Notes"}
+											</button>
+										</div>
+									</div>
+								</div>
+							</div>
+						)}
+
+						{/* Agent Queue */}
+						{activeTab === "queue" && <AgentQueueTab hostId={hostId} />}
+
+						{/* Integrations */}
+						{activeTab === "integrations" && (
+							<div className="space-y-4">
+								{/* Header with refresh button */}
+								<div className="flex items-center justify-between">
+									<div className="flex items-center gap-2">
+										{integrationRefreshMessage.text && (
+											<span
+												className={`text-sm ${integrationRefreshMessage.isError ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}
+											>
+												{integrationRefreshMessage.text}
+											</span>
+										)}
+									</div>
+									<button
+										type="button"
+										onClick={() => refreshIntegrationStatusMutation.mutate()}
+										disabled={
+											refreshIntegrationStatusMutation.isPending ||
+											!wsStatus?.connected
+										}
+										title={
+											wsStatus?.connected
+												? "Refresh integration status from agent"
+												: "Agent is not connected"
+										}
+										className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-secondary-100 dark:bg-secondary-700 hover:bg-secondary-200 dark:hover:bg-secondary-600 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+									>
+										<RefreshCw
+											className={`h-4 w-4 ${refreshIntegrationStatusMutation.isPending ? "animate-spin" : ""}`}
+										/>
+										{refreshIntegrationStatusMutation.isPending
+											? "Refreshing..."
+											: "Refresh Status"}
+									</button>
+								</div>
+								{isLoadingIntegrations ? (
+									<div className="flex items-center justify-center h-32">
+										<RefreshCw className="h-6 w-6 animate-spin text-primary-600" />
+									</div>
+								) : (
+									<div className="space-y-4">
+										{/* Pending configuration changes banner */}
+										{integrationsData?.pending_config_exists && (
+											<div className="rounded-lg border border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 p-4">
+												<p className="text-sm font-medium text-warning-800 dark:text-warning-200">
+													Pending configuration changes — use the Apply button
+													at the top to send to agent
+												</p>
+												{!wsStatus?.connected && (
+													<p className="text-xs text-warning-600 dark:text-warning-400 mt-2">
+														Agent must be connected to apply pending
+														configuration changes
+													</p>
+												)}
+											</div>
+										)}
+										<div className="grid grid-cols-1 gap-4">
+											{/* Docker Integration */}
+											<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
+												<div className="flex items-start justify-between gap-4">
+													<div className="flex-1">
+														<div className="flex items-center gap-3 mb-2">
+															<Database className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+															<h4 className="text-sm font-medium text-secondary-900 dark:text-white">
+																Docker
+															</h4>
+															{integrationsData?.data?.integrations?.docker ? (
+																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+																	Enabled
+																</span>
+															) : (
+																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-400">
+																	Disabled
+																</span>
+															)}
+														</div>
+														<p className="text-xs text-secondary-600 dark:text-white">
+															Monitor Docker containers, images, volumes, and
+															networks. Collects real-time container status
+															events.
+														</p>
+													</div>
+													<div className="flex-shrink-0">
+														<button
+															type="button"
+															onClick={() =>
+																toggleIntegrationMutation.mutate({
+																	integrationName: "docker",
+																	enabled:
+																		!integrationsData?.data?.integrations
+																			?.docker,
+																})
+															}
+															disabled={toggleIntegrationMutation.isPending}
+															title={
+																integrationsData?.data?.integrations?.docker
+																	? "Disable Docker integration"
+																	: "Enable Docker integration"
+															}
+															className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+																integrationsData?.data?.integrations?.docker
+																	? "bg-primary-600 dark:bg-primary-500"
+																	: "bg-secondary-200 dark:bg-secondary-600"
+															} ${
+																toggleIntegrationMutation.isPending
+																	? "opacity-50 cursor-not-allowed"
+																	: ""
+															}`}
+														>
+															<span
+																className={`inline-block h-3 w-3 transform rounded-md bg-white transition-transform ${
+																	integrationsData?.data?.integrations?.docker
+																		? "translate-x-5"
+																		: "translate-x-1"
+																}`}
+															/>
+														</button>
+													</div>
+												</div>
+												{!wsStatus?.connected &&
+													integrationsData?.pending_config_exists && (
+														<p className="text-xs text-warning-600 dark:text-warning-400 mt-2">
+															Agent must be connected to apply pending
+															configuration changes
+														</p>
+													)}
+												{toggleIntegrationMutation.isPending && (
+													<p className="text-xs text-secondary-600 dark:text-white mt-2">
+														Updating integration...
+													</p>
+												)}
+											</div>
+
+											{/* Compliance Integration */}
+											<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
+												<div className="flex items-start justify-between gap-4">
+													<div className="flex-1">
+														<div className="flex items-center gap-3 mb-2">
+															<Shield className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+															<h4 className="text-sm font-medium text-secondary-900 dark:text-white">
+																Compliance Scanning
+															</h4>
+															{integrationsData?.data?.integrations
+																?.compliance ? (
+																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+																	Enabled
+																</span>
+															) : (
+																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-400">
+																	Disabled
+																</span>
+															)}
+														</div>
+														<p className="text-xs text-secondary-600 dark:text-white mb-2">
+															Run CIS benchmark compliance scans using OpenSCAP.
+															Provides security posture assessment and
+															remediation recommendations.
+														</p>
+
+														{/* Setup Status Display - hide when status is "disabled" */}
+														{((complianceSetupStatus?.status?.status &&
+															complianceSetupStatus?.status?.status !==
+																"disabled") ||
+															(!complianceSetupStatus?.status?.status &&
+																integrationsData?.data?.integrations
+																	?.compliance)) && (
+															<div className="mt-3 p-3 rounded-lg border bg-secondary-100 dark:bg-secondary-800 border-secondary-300 dark:border-secondary-600">
+																{/* Installing State */}
+																{complianceSetupStatus?.status?.status ===
+																	"installing" && (
+																	<div className="space-y-2">
+																		<div className="flex items-center gap-2">
+																			<Loader2 className="h-4 w-4 animate-spin text-primary-600 dark:text-primary-400" />
+																			<span className="text-sm font-medium text-primary-700 dark:text-primary-300">
+																				Installing Compliance Tools
+																			</span>
+																		</div>
+																		{complianceSetupStatus.status.install_events
+																			?.length > 0 ? (
+																			<ul className="space-y-1 mt-1">
+																				{complianceSetupStatus.status.install_events.map(
+																					(evt) => (
+																						<li
+																							key={`${evt.message ?? ""}-${evt.status}-${evt.component ?? ""}`}
+																							className="flex items-center gap-2 text-xs"
+																						>
+																							{evt.status === "done" && (
+																								<CheckCircle2 className="h-3.5 w-3.5 text-green-500 dark:text-green-400 flex-shrink-0" />
+																							)}
+																							{evt.status === "in_progress" && (
+																								<Loader2 className="h-3.5 w-3.5 text-blue-500 dark:text-blue-400 animate-spin flex-shrink-0" />
+																							)}
+																							{evt.status === "failed" && (
+																								<AlertCircle className="h-3.5 w-3.5 text-red-500 dark:text-red-400 flex-shrink-0" />
+																							)}
+																							{evt.status === "skipped" && (
+																								<SkipForward className="h-3.5 w-3.5 text-secondary-400 flex-shrink-0" />
+																							)}
+																							<span
+																								className={
+																									evt.status === "done"
+																										? "text-green-700 dark:text-green-400"
+																										: evt.status ===
+																												"in_progress"
+																											? "text-blue-700 dark:text-blue-400"
+																											: evt.status === "failed"
+																												? "text-red-700 dark:text-red-400"
+																												: "text-secondary-500 dark:text-white"
+																								}
+																							>
+																								{evt.message}
+																							</span>
+																						</li>
+																					),
+																				)}
+																			</ul>
+																		) : (
+																			<>
+																				<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-1.5">
+																					<div
+																						className="bg-primary-600 h-1.5 rounded-full animate-pulse"
+																						style={{ width: "60%" }}
+																					/>
+																				</div>
+																				<p className="text-xs text-secondary-600 dark:text-white">
+																					{complianceSetupStatus.status
+																						.message ||
+																						"Installing OpenSCAP packages and security content..."}
+																				</p>
+																			</>
+																		)}
+																	</div>
+																)}
+
+																{/* Removing State */}
+																{complianceSetupStatus?.status?.status ===
+																	"removing" && (
+																	<div className="space-y-2">
+																		<div className="flex items-center gap-2">
+																			<RefreshCw className="h-4 w-4 animate-spin text-warning-600 dark:text-warning-400" />
+																			<span className="text-sm font-medium text-warning-700 dark:text-warning-300">
+																				Removing Compliance Tools
+																			</span>
+																		</div>
+																		<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-1.5">
+																			<div
+																				className="bg-warning-500 h-1.5 rounded-full animate-pulse"
+																				style={{ width: "40%" }}
+																			/>
+																		</div>
+																		<p className="text-xs text-secondary-600 dark:text-white">
+																			{complianceSetupStatus.status.message ||
+																				"Removing OpenSCAP packages..."}
+																		</p>
+																	</div>
+																)}
+
+																{/* Ready State */}
+																{complianceSetupStatus?.status?.status ===
+																	"ready" && (
+																	<div className="flex items-center gap-2">
+																		<CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+																		<span className="text-sm font-medium text-green-700 dark:text-green-300">
+																			Compliance Tools Ready
+																		</span>
+																		{complianceSetupStatus.status
+																			.components && (
+																			<div className="flex gap-1 ml-2">
+																				{Object.entries(
+																					complianceSetupStatus.status
+																						.components,
+																				)
+																					.filter(
+																						([, status]) =>
+																							status !== "unavailable",
+																					)
+																					.map(([name, _status]) => (
+																						<span
+																							key={name}
+																							className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
+																						>
+																							<CheckCircle2 className="h-3 w-3" />
+																							{name}
+																						</span>
+																					))}
+																			</div>
+																		)}
+																	</div>
+																)}
+
+																{/* Partial State */}
+																{complianceSetupStatus?.status?.status ===
+																	"partial" && (
+																	<div className="space-y-2">
+																		<div className="flex items-center gap-2">
+																			<AlertTriangle className="h-4 w-4 text-warning-600 dark:text-warning-400" />
+																			<span className="text-sm font-medium text-warning-700 dark:text-warning-300">
+																				Partial Installation
+																			</span>
+																		</div>
+																		<p className="text-xs text-secondary-600 dark:text-white">
+																			{complianceSetupStatus.status.message ||
+																				"Some components failed to install. Install OpenSCAP (and optionally Docker) on this host. See the Compliance Installation guide in the documentation."}
+																		</p>
+																		{complianceSetupStatus.status
+																			.components && (
+																			<div className="flex flex-wrap gap-2">
+																				{Object.entries(
+																					complianceSetupStatus.status
+																						.components,
+																				)
+																					.filter(
+																						([, status]) =>
+																							status !== "unavailable",
+																					)
+																					.map(([name, status]) => (
+																						<span
+																							key={name}
+																							className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
+																								status === "ready"
+																									? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
+																									: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
+																							}`}
+																						>
+																							{status === "ready" ? (
+																								<CheckCircle2 className="h-3 w-3" />
+																							) : (
+																								<AlertCircle className="h-3 w-3" />
+																							)}
+																							{name}
+																						</span>
+																					))}
+																			</div>
+																		)}
+																	</div>
+																)}
+
+																{/* Error State */}
+																{complianceSetupStatus?.status?.status ===
+																	"error" && (
+																	<div className="space-y-2">
+																		<div className="flex items-center gap-2">
+																			<AlertCircle className="h-4 w-4 text-danger-600 dark:text-danger-400" />
+																			<span className="text-sm font-medium text-danger-700 dark:text-danger-300">
+																				Installation Failed
+																			</span>
+																		</div>
+																		<p className="text-xs text-danger-600 dark:text-danger-400">
+																			{complianceSetupStatus?.status?.message ||
+																				"Setup failed - check agent logs"}
+																		</p>
+																	</div>
+																)}
+
+																{/* Not ready / missing components: show actionable message */}
+																{complianceSetupStatus?.status?.status &&
+																	![
+																		"ready",
+																		"installing",
+																		"removing",
+																		"partial",
+																		"error",
+																		"disabled",
+																	].includes(
+																		complianceSetupStatus?.status?.status,
+																	) && (
+																		<div className="space-y-2">
+																			<p className="text-sm text-secondary-700 dark:text-white">
+																				Install OpenSCAP (and optionally Docker
+																				for Docker Bench) on this host. Verify
+																				with{" "}
+																				<code className="text-xs bg-secondary-200 dark:bg-secondary-700 px-1 rounded">
+																					oscap --version
+																				</code>{" "}
+																				and that SCAP content is present.
+																			</p>
+																			<p className="text-xs text-secondary-500 dark:text-white">
+																				See the Compliance{" "}
+																				<strong>Getting started</strong> or{" "}
+																				<strong>Installation</strong> guide in
+																				the documentation.
+																			</p>
+																		</div>
+																	)}
+
+																{/* Fallback: Compliance enabled but no status in cache - assume ready */}
+																{!complianceSetupStatus?.status?.status &&
+																	integrationsData?.data?.integrations
+																		?.compliance && (
+																		<div className="flex items-center gap-2">
+																			<CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+																			<span className="text-sm font-medium text-green-700 dark:text-green-300">
+																				Compliance Tools Ready
+																			</span>
+																		</div>
+																	)}
+															</div>
+														)}
+													</div>
+													<div className="flex-shrink-0">
+														{/* Three-state compliance mode selector - small inline */}
+														{(() => {
+															const currentMode =
+																integrationsData?.data?.compliance_mode ||
+																integrationsData?.compliance_mode ||
+																(integrationsData?.data?.integrations
+																	?.compliance
+																	? integrationsData?.data
+																			?.compliance_on_demand_only ||
+																		integrationsData?.compliance_on_demand_only
+																		? "on-demand"
+																		: "enabled"
+																	: "disabled");
+															const isDisabled =
+																setComplianceModeMutation.isPending ||
+																complianceSetupStatus?.status?.status ===
+																	"installing" ||
+																complianceSetupStatus?.status?.status ===
+																	"removing";
+
+															return (
+																<div className="flex flex-col gap-0.5 bg-secondary-100 dark:bg-secondary-800 rounded-md p-0.5">
+																	<button
+																		type="button"
+																		onClick={() =>
+																			setComplianceModeMutation.mutate(
+																				"disabled",
+																			)
+																		}
+																		disabled={isDisabled}
+																		title={
+																			isDisabled
+																				? "Agent is not connected or operation in progress"
+																				: "Disable compliance scanning"
+																		}
+																		className={`w-full px-2 py-1 text-xs font-medium rounded transition-colors ${
+																			currentMode === "disabled"
+																				? "bg-white dark:bg-secondary-700 text-secondary-900 dark:text-secondary-100 shadow-sm"
+																				: "text-secondary-600 dark:text-white hover:text-secondary-900 dark:hover:text-secondary-100"
+																		} ${
+																			isDisabled
+																				? "opacity-50 cursor-not-allowed"
+																				: "cursor-pointer"
+																		}`}
+																	>
+																		Disabled
+																	</button>
+																	<button
+																		type="button"
+																		onClick={() =>
+																			setComplianceModeMutation.mutate(
+																				"on-demand",
+																			)
+																		}
+																		disabled={isDisabled}
+																		title={
+																			isDisabled
+																				? "Agent is not connected or operation in progress"
+																				: "Enable compliance scanning (on-demand only - runs when triggered from UI)"
+																		}
+																		className={`w-full px-2 py-1 text-xs font-medium rounded transition-colors ${
+																			currentMode === "on-demand"
+																				? "bg-white dark:bg-secondary-700 text-secondary-900 dark:text-secondary-100 shadow-sm"
+																				: "text-secondary-600 dark:text-white hover:text-secondary-900 dark:hover:text-secondary-100"
+																		} ${
+																			isDisabled
+																				? "opacity-50 cursor-not-allowed"
+																				: "cursor-pointer"
+																		}`}
+																	>
+																		On-Demand
+																	</button>
+																	<button
+																		type="button"
+																		onClick={() =>
+																			setComplianceModeMutation.mutate(
+																				"enabled",
+																			)
+																		}
+																		disabled={isDisabled}
+																		title={
+																			isDisabled
+																				? "Agent is not connected or operation in progress"
+																				: "Enable compliance scanning with automatic scheduled scans"
+																		}
+																		className={`w-full px-2 py-1 text-xs font-medium rounded transition-colors ${
+																			currentMode === "enabled"
+																				? "bg-white dark:bg-secondary-700 text-secondary-900 dark:text-secondary-100 shadow-sm"
+																				: "text-secondary-600 dark:text-white hover:text-secondary-900 dark:hover:text-secondary-100"
+																		} ${
+																			isDisabled
+																				? "opacity-50 cursor-not-allowed"
+																				: "cursor-pointer"
+																		}`}
+																	>
+																		Enabled
+																	</button>
+																</div>
+															);
+														})()}
+													</div>
+												</div>
+												{!wsStatus?.connected && (
+													<p className="text-xs text-warning-600 dark:text-warning-400 mt-2">
+														Agent must be connected via WebSocket to change
+														compliance settings
+													</p>
+												)}
+												{/* Mode description */}
+												{(() => {
+													const currentMode =
+														integrationsData?.data?.compliance_mode ||
+														integrationsData?.compliance_mode ||
+														(integrationsData?.data?.integrations?.compliance
+															? integrationsData?.data
+																	?.compliance_on_demand_only ||
+																integrationsData?.compliance_on_demand_only
+																? "on-demand"
+																: "enabled"
+															: "disabled");
+													const modeDescriptions = {
+														disabled:
+															"Compliance scanning is disabled. No scans will run.",
+														"on-demand":
+															"Compliance scans only run when manually triggered from the UI, not during scheduled reports.",
+														enabled:
+															"Compliance scanning is enabled with automatic scheduled scans during regular reports.",
+													};
+													return (
+														<p className="text-xs text-secondary-500 dark:text-white mt-2">
+															{modeDescriptions[currentMode] ||
+																modeDescriptions.disabled}
+														</p>
+													);
+												})()}
+
+												{/* Individual scanner toggles */}
+												{integrationsData?.data?.integrations?.compliance && (
+													<div className="mt-3 pt-3 border-t border-secondary-200 dark:border-secondary-700 space-y-2">
+														<p className="text-xs font-medium text-secondary-600 dark:text-white">
+															Scanner Types
+														</p>
+														<label className="flex items-center justify-between gap-2 cursor-pointer">
+															<span className="text-xs text-secondary-700 dark:text-white">
+																OpenSCAP (CIS Benchmarks)
+															</span>
+															<input
+																type="checkbox"
+																checked={
+																	integrationsData?.data
+																		?.compliance_openscap_enabled ??
+																	integrationsData?.compliance_openscap_enabled ??
+																	true
+																}
+																onChange={(e) => {
+																	adminHostsAPI
+																		.setComplianceScanners(hostId, {
+																			openscap_enabled: e.target.checked,
+																		})
+																		.then(() => refetchIntegrations())
+																		.catch(() => {});
+																}}
+																className="h-4 w-4 rounded border-secondary-300 text-primary-600 focus:ring-primary-500"
+															/>
+														</label>
+														<label className="flex items-center justify-between gap-2 cursor-pointer">
+															<div className="flex flex-col">
+																<span className="text-xs text-secondary-700 dark:text-white">
+																	Docker Bench
+																</span>
+																{!integrationsData?.data?.integrations
+																	?.docker && (
+																	<span className="text-[10px] text-secondary-400">
+																		Docker integration not enabled
+																	</span>
+																)}
+															</div>
+															<input
+																type="checkbox"
+																checked={
+																	integrationsData?.data
+																		?.compliance_docker_bench_enabled ??
+																	integrationsData?.compliance_docker_bench_enabled ??
+																	false
+																}
+																disabled={
+																	!integrationsData?.data?.integrations?.docker
+																}
+																onChange={(e) => {
+																	adminHostsAPI
+																		.setComplianceScanners(hostId, {
+																			docker_bench_enabled: e.target.checked,
+																		})
+																		.then(() => refetchIntegrations())
+																		.catch(() => {});
+																}}
+																className="h-4 w-4 rounded border-secondary-300 text-primary-600 focus:ring-primary-500 disabled:opacity-40"
+															/>
+														</label>
+													</div>
+												)}
+											</div>
+										</div>
+									</div>
+								)}
+							</div>
+						)}
+
+						{/* Docker Tab */}
+						{activeTab === "docker" && (
+							<div className="space-y-4">
+								{isLoadingDocker ? (
+									<div className="flex items-center justify-center h-32">
+										<RefreshCw className="h-6 w-6 animate-spin text-primary-600" />
+									</div>
+								) : !dockerData ? (
+									<div className="text-center py-8">
+										<Database className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+										<p className="text-gray-500 dark:text-gray-400">
+											No Docker data available
+										</p>
+									</div>
+								) : (
+									<>
+										{/* Docker Sub-tabs with Refresh Button */}
+										{(() => {
+											// Calculate stacks for tab count
+											const stacksSet = new Set();
+											dockerData.containers?.forEach((c) => {
+												const project =
+													c.labels?.["com.docker.compose.project"];
+												if (project) stacksSet.add(project);
+											});
+											const stackCount = stacksSet.size;
+
+											return (
+												<div className="flex items-center justify-between gap-2 border-b border-secondary-200 dark:border-secondary-600 pb-2 flex-wrap">
+													<div className="flex gap-2 flex-wrap">
+														<button
+															type="button"
+															onClick={() => setDockerSubTab("stacks")}
+															className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+																dockerSubTab === "stacks"
+																	? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+																	: "text-secondary-500 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700"
+															}`}
+														>
+															Stacks
+															<span className="px-1.5 py-0.5 text-xs rounded bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400">
+																{stackCount}
+															</span>
+														</button>
+														<button
+															type="button"
+															onClick={() => setDockerSubTab("containers")}
+															className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+																dockerSubTab === "containers"
+																	? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+																	: "text-secondary-500 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700"
+															}`}
+														>
+															Containers
+															<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
+																{dockerData.containers?.length || 0}
+															</span>
+														</button>
+														<button
+															type="button"
+															onClick={() => setDockerSubTab("images")}
+															className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+																dockerSubTab === "images"
+																	? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+																	: "text-secondary-500 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700"
+															}`}
+														>
+															Images
+															<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
+																{dockerData.images?.length || 0}
+															</span>
+														</button>
+														<button
+															type="button"
+															onClick={() => setDockerSubTab("volumes")}
+															className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+																dockerSubTab === "volumes"
+																	? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+																	: "text-secondary-500 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700"
+															}`}
+														>
+															Volumes
+															<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
+																{dockerData.volumes?.length || 0}
+															</span>
+														</button>
+														<button
+															type="button"
+															onClick={() => setDockerSubTab("networks")}
+															className={`px-3 py-1.5 text-xs font-medium rounded-t flex items-center gap-1.5 ${
+																dockerSubTab === "networks"
+																	? "bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300"
+																	: "text-secondary-500 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700"
+															}`}
+														>
+															Networks
+															<span className="px-1.5 py-0.5 text-xs rounded bg-secondary-200 dark:bg-secondary-600">
+																{dockerData.networks?.length || 0}
+															</span>
+														</button>
+													</div>
+													<div className="flex items-center gap-2">
+														{dockerRefreshMessage.text && (
+															<span
+																className={`text-xs ${dockerRefreshMessage.isError ? "text-red-600" : "text-green-600"}`}
+															>
+																{dockerRefreshMessage.text}
+															</span>
+														)}
+														<button
+															onClick={() => refreshDockerMutation.mutate()}
+															disabled={refreshDockerMutation.isPending}
+															className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-medium text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-900/20 hover:bg-primary-100 dark:hover:bg-primary-900/30 rounded border border-primary-200 dark:border-primary-800 transition-colors disabled:opacity-50"
+															title="Re-sync Docker data from agent"
+														>
+															<RefreshCw
+																className={`h-3.5 w-3.5 ${refreshDockerMutation.isPending ? "animate-spin" : ""}`}
+															/>
+															Re-sync
+														</button>
+													</div>
+												</div>
+											);
+										})()}
+
+										{/* Stacks Sub-tab */}
+										{dockerSubTab === "stacks" && (
+											<div className="space-y-4">
+												{(() => {
+													// Group containers by compose project
+													const stacksMap = new Map();
+													const standaloneContainers = [];
+
+													dockerData.containers?.forEach((container) => {
+														const project =
+															container.labels?.["com.docker.compose.project"];
+														if (project) {
+															if (!stacksMap.has(project)) {
+																stacksMap.set(project, []);
+															}
+															stacksMap.get(project).push(container);
+														} else {
+															standaloneContainers.push(container);
+														}
+													});
+
+													const stacks = Array.from(stacksMap.entries()).sort(
+														(a, b) => a[0].localeCompare(b[0]),
+													);
+
+													if (stacks.length === 0) {
+														return (
+															<div className="text-center py-8">
+																<Server className="h-12 w-12 text-secondary-400 mx-auto mb-3" />
+																<p className="text-secondary-500 dark:text-white">
+																	No Docker Compose stacks found
+																</p>
+																<p className="text-xs text-secondary-400 mt-1">
+																	Containers started with docker-compose will
+																	appear here
+																</p>
+															</div>
+														);
+													}
+
+													return (
+														<div className="space-y-4">
+															{stacks.map(([stackName, containers]) => {
+																const runningCount = containers.filter(
+																	(c) => c.state === "running",
+																).length;
+																const totalCount = containers.length;
+																const allRunning = runningCount === totalCount;
+
+																return (
+																	<div
+																		key={stackName}
+																		className="bg-secondary-50 dark:bg-secondary-700/30 rounded-lg border border-secondary-200 dark:border-secondary-600 overflow-hidden"
+																	>
+																		{/* Stack Header */}
+																		<div className="px-4 py-3 bg-secondary-100 dark:bg-secondary-700/50 border-b border-secondary-200 dark:border-secondary-600">
+																			<div className="flex items-center justify-between">
+																				<div className="flex items-center gap-3">
+																					<div
+																						className={`w-3 h-3 rounded-full ${allRunning ? "bg-green-500" : "bg-yellow-500"}`}
+																					/>
+																					<h4 className="font-medium text-secondary-900 dark:text-white">
+																						{stackName}
+																					</h4>
+																				</div>
+																				<span
+																					className={`text-xs px-2 py-1 rounded-full ${
+																						allRunning
+																							? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+																							: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400"
+																					}`}
+																				>
+																					{runningCount}/{totalCount} running
+																				</span>
+																			</div>
+																		</div>
+																		{/* Stack Containers */}
+																		<div className="divide-y divide-secondary-200 dark:divide-secondary-600">
+																			{containers.map((container) => (
+																				<div
+																					key={container.id}
+																					className="px-4 py-2 flex items-center justify-between hover:bg-secondary-100 dark:hover:bg-secondary-700/50"
+																				>
+																					<div className="flex items-center gap-3">
+																						<span
+																							className={`w-2 h-2 rounded-full ${
+																								container.state === "running"
+																									? "bg-green-500"
+																									: container.state === "exited"
+																										? "bg-red-500"
+																										: "bg-yellow-500"
+																							}`}
+																						/>
+																						<div>
+																							<p className="text-sm font-medium">
+																								<Link
+																									to={`/docker/containers/${container.id}`}
+																									className="text-primary-600 dark:text-primary-400 hover:text-primary-900 dark:hover:text-primary-300"
+																								>
+																									{container.labels?.[
+																										"com.docker.compose.service"
+																									] || container.name}
+																								</Link>
+																							</p>
+																							<p className="text-xs text-secondary-500 dark:text-white font-mono">
+																								{container.image}
+																							</p>
+																						</div>
+																					</div>
+																					<span
+																						className={`text-xs px-2 py-0.5 rounded ${
+																							container.state === "running"
+																								? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+																								: "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+																						}`}
+																					>
+																						{container.state}
+																					</span>
+																				</div>
+																			))}
+																		</div>
+																	</div>
+																);
+															})}
+
+															{/* Standalone containers section */}
+															{standaloneContainers.length > 0 && (
+																<div className="mt-4 pt-4 border-t border-secondary-200 dark:border-secondary-600">
+																	<h4 className="text-sm font-medium text-secondary-600 dark:text-white mb-3">
+																		Standalone Containers (
+																		{standaloneContainers.length})
+																	</h4>
+																	<div className="space-y-2">
+																		{standaloneContainers.map((container) => (
+																			<div
+																				key={container.id}
+																				className="flex items-center justify-between px-3 py-2 bg-secondary-100 dark:bg-secondary-700/30 rounded-lg"
+																			>
+																				<div className="flex items-center gap-2">
+																					<span
+																						className={`w-2 h-2 rounded-full ${
+																							container.state === "running"
+																								? "bg-green-500"
+																								: container.state === "exited"
+																									? "bg-red-500"
+																									: "bg-yellow-500"
+																						}`}
+																					/>
+																					<Link
+																						to={`/docker/containers/${container.id}`}
+																						className="text-sm text-primary-600 dark:text-primary-400 hover:text-primary-900 dark:hover:text-primary-300"
+																					>
+																						{container.name}
+																					</Link>
+																				</div>
+																				<span className="text-xs text-secondary-500 dark:text-white font-mono">
+																					{container.image}
+																				</span>
+																			</div>
+																		))}
+																	</div>
+																</div>
+															)}
+														</div>
+													);
+												})()}
+											</div>
+										)}
+
+										{/* Containers Sub-tab */}
+										{dockerSubTab === "containers" && (
+											<div className="space-y-2">
+												{dockerData.containers?.length === 0 ? (
+													<p className="text-secondary-500 dark:text-white text-center py-4">
+														No containers found
+													</p>
+												) : (
+													<div className="overflow-x-auto">
+														<table className="w-full text-sm">
+															<thead>
+																<tr className="text-left text-xs text-secondary-500 dark:text-white border-b border-secondary-200 dark:border-secondary-600">
+																	<th className="pb-2 font-medium">Status</th>
+																	<th className="pb-2 font-medium">Name</th>
+																	<th className="pb-2 font-medium">Image</th>
+																	<th className="pb-2 font-medium">Ports</th>
+																	<th className="pb-2 font-medium text-right">
+																		Uptime
+																	</th>
+																</tr>
+															</thead>
+															<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
+																{dockerData.containers?.map((container) => (
+																	<tr
+																		key={container.id}
+																		className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+																	>
+																		<td className="py-2">
+																			<span
+																				className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+																					container.state === "running"
+																						? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+																						: container.state === "exited"
+																							? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+																							: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400"
+																				}`}
+																			>
+																				<span
+																					className={`w-1.5 h-1.5 rounded-full ${
+																						container.state === "running"
+																							? "bg-green-500"
+																							: container.state === "exited"
+																								? "bg-red-500"
+																								: "bg-yellow-500"
+																					}`}
+																				/>
+																				{container.state}
+																			</span>
+																		</td>
+																		<td className="py-2 font-medium">
+																			<Link
+																				to={`/docker/containers/${container.id}`}
+																				className="text-primary-600 dark:text-primary-400 hover:text-primary-900 dark:hover:text-primary-300"
+																			>
+																				{container.name}
+																			</Link>
+																		</td>
+																		<td
+																			className="py-2 font-mono text-xs text-secondary-600 dark:text-white max-w-[200px] truncate"
+																			title={container.image}
+																		>
+																			{container.image}
+																		</td>
+																		<td className="py-2 text-xs text-secondary-500 dark:text-white">
+																			{container.ports &&
+																			Object.keys(container.ports).length >
+																				0 ? (
+																				<div className="flex flex-wrap gap-1">
+																					{Object.entries(container.ports)
+																						.slice(0, 3)
+																						.map(([portKey, portValue]) => {
+																							// portKey is like "80/tcp" (private port), portValue is like "0.0.0.0:8080" (public binding)
+																							// Format: "0.0.0.0:8080->80/tcp" or just "80/tcp" if no public port
+																							const portStr = portValue
+																								? `${portValue}->${portKey}`
+																								: portKey;
+																							return (
+																								<span
+																									key={portKey}
+																									className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs font-mono"
+																									title={portStr}
+																								>
+																									{portStr}
+																								</span>
+																							);
+																						})}
+																					{Object.keys(container.ports).length >
+																						3 && (
+																						<span className="text-secondary-400">
+																							+
+																							{Object.keys(container.ports)
+																								.length - 3}
+																						</span>
+																					)}
+																				</div>
+																			) : (
+																				<span className="text-secondary-400">
+																					-
+																				</span>
+																			)}
+																		</td>
+																		<td className="py-2 text-xs text-secondary-500 dark:text-white text-right">
+																			{container.status || "-"}
+																		</td>
+																	</tr>
+																))}
+															</tbody>
+														</table>
+													</div>
+												)}
+											</div>
+										)}
+
+										{/* Images Sub-tab */}
+										{dockerSubTab === "images" && (
+											<div className="space-y-2">
+												{dockerData.images?.length === 0 ? (
+													<p className="text-secondary-500 dark:text-white text-center py-4">
+														No images found
+													</p>
+												) : (
+													<div className="overflow-x-auto">
+														<table className="w-full text-sm">
+															<thead>
+																<tr className="text-left text-xs text-secondary-500 dark:text-white border-b border-secondary-200 dark:border-secondary-600">
+																	<th className="pb-2 font-medium">
+																		Repository
+																	</th>
+																	<th className="pb-2 font-medium">Tag</th>
+																	<th className="pb-2 font-medium">ID</th>
+																	<th className="pb-2 font-medium text-right">
+																		Size
+																	</th>
+																</tr>
+															</thead>
+															<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
+																{dockerData.images?.map((image) => (
+																	<tr
+																		key={image.id}
+																		className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+																	>
+																		<td
+																			className="py-2 font-mono max-w-[200px] truncate"
+																			title={image.repository}
+																		>
+																			<Link
+																				to={`/docker/images/${image.id}`}
+																				className="text-primary-600 dark:text-primary-400 hover:text-primary-900 dark:hover:text-primary-300"
+																			>
+																				{image.repository || "<none>"}
+																			</Link>
+																		</td>
+																		<td className="py-2">
+																			<span className="px-2 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 rounded text-xs font-mono">
+																				{image.tag || "latest"}
+																			</span>
+																		</td>
+																		<td className="py-2 text-xs font-mono text-secondary-500 dark:text-white">
+																			{image.id?.slice(7, 19) || "-"}
+																		</td>
+																		<td className="py-2 text-xs text-secondary-500 dark:text-white text-right">
+																			{image.size || "-"}
+																		</td>
+																	</tr>
+																))}
+															</tbody>
+														</table>
+													</div>
+												)}
+											</div>
+										)}
+
+										{/* Volumes Sub-tab */}
+										{dockerSubTab === "volumes" && (
+											<div className="space-y-2">
+												{dockerData.volumes?.length === 0 ? (
+													<p className="text-secondary-500 dark:text-white text-center py-4">
+														No volumes found
+													</p>
+												) : (
+													<div className="overflow-x-auto">
+														<table className="w-full text-sm">
+															<thead>
+																<tr className="text-left text-xs text-secondary-500 dark:text-white border-b border-secondary-200 dark:border-secondary-600">
+																	<th className="pb-2 font-medium">Name</th>
+																	<th className="pb-2 font-medium">Driver</th>
+																	<th className="pb-2 font-medium">
+																		Mount Point
+																	</th>
+																</tr>
+															</thead>
+															<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
+																{dockerData.volumes?.map((volume) => (
+																	<tr
+																		key={volume.name}
+																		className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+																	>
+																		<td
+																			className="py-2 font-mono max-w-[200px] truncate"
+																			title={volume.name}
+																		>
+																			<Link
+																				to={`/docker/volumes/${volume.id}`}
+																				className="text-primary-600 dark:text-primary-400 hover:text-primary-900 dark:hover:text-primary-300"
+																			>
+																				{volume.name}
+																			</Link>
+																		</td>
+																		<td className="py-2">
+																			<span className="px-2 py-0.5 bg-secondary-100 dark:bg-secondary-600 text-secondary-700 dark:text-white rounded text-xs">
+																				{volume.driver || "local"}
+																			</span>
+																		</td>
+																		<td
+																			className="py-2 text-xs font-mono text-secondary-500 dark:text-white max-w-[300px] truncate"
+																			title={volume.mountpoint}
+																		>
+																			{volume.mountpoint || "-"}
+																		</td>
+																	</tr>
+																))}
+															</tbody>
+														</table>
+													</div>
+												)}
+											</div>
+										)}
+
+										{/* Networks Sub-tab */}
+										{dockerSubTab === "networks" && (
+											<div className="space-y-2">
+												{dockerData.networks?.length === 0 ? (
+													<p className="text-secondary-500 dark:text-white text-center py-4">
+														No networks found
+													</p>
+												) : (
+													<div className="overflow-x-auto">
+														<table className="w-full text-sm">
+															<thead>
+																<tr className="text-left text-xs text-secondary-500 dark:text-white border-b border-secondary-200 dark:border-secondary-600">
+																	<th className="pb-2 font-medium">Name</th>
+																	<th className="pb-2 font-medium">Driver</th>
+																	<th className="pb-2 font-medium">Scope</th>
+																	<th className="pb-2 font-medium">Subnet</th>
+																</tr>
+															</thead>
+															<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
+																{dockerData.networks?.map((network) => (
+																	<tr
+																		key={network.id || network.name}
+																		className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+																	>
+																		<td
+																			className="py-2 font-mono max-w-[200px] truncate"
+																			title={network.name}
+																		>
+																			<Link
+																				to={`/docker/networks/${network.id || network.name}`}
+																				className="text-primary-600 dark:text-primary-400 hover:text-primary-900 dark:hover:text-primary-300"
+																			>
+																				{network.name}
+																			</Link>
+																		</td>
+																		<td className="py-2">
+																			<span className="px-2 py-0.5 bg-secondary-100 dark:bg-secondary-600 text-secondary-700 dark:text-white rounded text-xs">
+																				{network.driver || "bridge"}
+																			</span>
+																		</td>
+																		<td className="py-2 text-xs text-secondary-500 dark:text-white">
+																			{network.scope || "-"}
+																		</td>
+																		<td className="py-2 text-xs font-mono text-secondary-500 dark:text-white">
+																			{network.ipam?.config?.[0]?.subnet || "-"}
+																		</td>
+																	</tr>
+																))}
+															</tbody>
+														</table>
+													</div>
+												)}
+											</div>
+										)}
+
+										{/* Ports Sub-tab */}
+										{dockerSubTab === "ports" && (
+											<div className="space-y-2">
+												{(() => {
+													// Collect all ports from all containers
+													const allPorts = [];
+													dockerData.containers?.forEach((container) => {
+														if (container.ports && container.ports.length > 0) {
+															container.ports.forEach((port) => {
+																allPorts.push({
+																	containerName: container.name,
+																	containerId: container.id,
+																	containerState: container.state,
+																	publicPort: port.PublicPort,
+																	privatePort: port.PrivatePort,
+																	type: port.Type || "tcp",
+																	ip: port.IP || "0.0.0.0",
+																});
+															});
+														}
+													});
+
+													if (allPorts.length === 0) {
+														return (
+															<p className="text-secondary-500 dark:text-white text-center py-4">
+																No ports found
+															</p>
+														);
+													}
+
+													return (
+														<div className="overflow-x-auto">
+															<table className="w-full text-sm">
+																<thead>
+																	<tr className="text-left text-xs text-secondary-500 dark:text-white border-b border-secondary-200 dark:border-secondary-600">
+																		<th className="pb-2 font-medium">
+																			Container
+																		</th>
+																		<th className="pb-2 font-medium">
+																			Public Port
+																		</th>
+																		<th className="pb-2 font-medium">
+																			Private Port
+																		</th>
+																		<th className="pb-2 font-medium">Type</th>
+																		<th className="pb-2 font-medium">IP</th>
+																		<th className="pb-2 font-medium">Status</th>
+																	</tr>
+																</thead>
+																<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
+																	{allPorts.map((port, idx) => (
+																		<tr
+																			key={`${port.containerId}-${idx}`}
+																			className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
+																		>
+																			<td className="py-2 font-medium text-secondary-900 dark:text-white">
+																				{port.containerName}
+																			</td>
+																			<td className="py-2">
+																				{port.publicPort ? (
+																					<span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs font-mono">
+																						{port.publicPort}
+																					</span>
+																				) : (
+																					<span className="text-secondary-400">
+																						-
+																					</span>
+																				)}
+																			</td>
+																			<td className="py-2">
+																				<span className="px-2 py-0.5 bg-secondary-100 dark:bg-secondary-600 text-secondary-700 dark:text-white rounded text-xs font-mono">
+																					{port.privatePort}
+																				</span>
+																			</td>
+																			<td className="py-2 text-xs text-secondary-500 dark:text-white uppercase">
+																				{port.type}
+																			</td>
+																			<td className="py-2 text-xs font-mono text-secondary-500 dark:text-white">
+																				{port.ip}
+																			</td>
+																			<td className="py-2">
+																				<span
+																					className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+																						port.containerState === "running"
+																							? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+																							: port.containerState === "exited"
+																								? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+																								: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400"
+																					}`}
+																				>
+																					<span
+																						className={`w-1.5 h-1.5 rounded-full ${
+																							port.containerState === "running"
+																								? "bg-green-500"
+																								: port.containerState ===
+																										"exited"
+																									? "bg-red-500"
+																									: "bg-yellow-500"
+																						}`}
+																					/>
+																					{port.containerState}
+																				</span>
+																			</td>
+																		</tr>
+																	))}
+																</tbody>
+															</table>
+														</div>
+													);
+												})()}
+											</div>
+										)}
+									</>
+								)}
+							</div>
+						)}
+
+						{/* Patching Tab */}
+						{activeTab === "patching" && (
+							<div className="space-y-4">
+								<div className="flex flex-wrap items-center gap-3 mb-4">
+									<span className="text-sm text-secondary-600 dark:text-secondary-400">
+										Status:
+									</span>
+									<select
+										value={patchingRunsStatusFilter}
+										onChange={(e) => {
+											setPatchingRunsStatusFilter(e.target.value);
+											setPatchingRunsPage(1);
+										}}
+										className="rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm px-3 py-2"
+									>
+										<option value="">All</option>
+										<option value="queued">Queued</option>
+										<option value="running">Running</option>
+										<option value="completed">Completed</option>
+										<option value="failed">Failed</option>
+										<option value="cancelled">Cancelled</option>
+									</select>
+								</div>
+								{(patchingRunsData?.runs?.length === 0 ||
+									!patchingRunsData?.runs) && (
+									<div className="text-center py-8">
+										<Package className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
+										<p className="text-secondary-500 dark:text-white">
+											No patch runs for this host yet
+										</p>
+									</div>
+								)}
+								{(patchingRunsData?.runs?.length ?? 0) > 0 && (
+									<div className="card overflow-hidden">
+										<div className="overflow-x-auto">
+											<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+												<thead className="bg-secondary-50 dark:bg-secondary-700">
+													<tr>
+														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+															<button
+																type="button"
+																onClick={() => {
+																	setPatchingRunsSortField("created_at");
+																	setPatchingRunsSortDir((d) =>
+																		d === "asc" ? "desc" : "asc",
+																	);
+																}}
+																className="flex items-center gap-1 hover:text-secondary-700 dark:hover:text-secondary-200"
+															>
+																Type
+																{patchingRunsSortField === "created_at" ? (
+																	patchingRunsSortDir === "asc" ? (
+																		<ArrowUp className="h-4 w-4" />
+																	) : (
+																		<ArrowDown className="h-4 w-4" />
+																	)
+																) : (
+																	<ArrowUpDown className="h-4 w-4" />
+																)}
+															</button>
+														</th>
+														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+															<button
+																type="button"
+																onClick={() => {
+																	setPatchingRunsSortField("status");
+																	setPatchingRunsSortDir((d) =>
+																		d === "asc" ? "desc" : "asc",
+																	);
+																}}
+																className="flex items-center gap-1 hover:text-secondary-700 dark:hover:text-secondary-200"
+															>
+																Status
+																{patchingRunsSortField === "status" ? (
+																	patchingRunsSortDir === "asc" ? (
+																		<ArrowUp className="h-4 w-4" />
+																	) : (
+																		<ArrowDown className="h-4 w-4" />
+																	)
+																) : (
+																	<ArrowUpDown className="h-4 w-4" />
+																)}
+															</button>
+														</th>
+														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+															<button
+																type="button"
+																onClick={() => {
+																	setPatchingRunsSortField("started_at");
+																	setPatchingRunsSortDir((d) =>
+																		d === "asc" ? "desc" : "asc",
+																	);
+																}}
+																className="flex items-center gap-1 hover:text-secondary-700 dark:hover:text-secondary-200"
+															>
+																Started
+																{patchingRunsSortField === "started_at" ? (
+																	patchingRunsSortDir === "asc" ? (
+																		<ArrowUp className="h-4 w-4" />
+																	) : (
+																		<ArrowDown className="h-4 w-4" />
+																	)
+																) : (
+																	<ArrowUpDown className="h-4 w-4" />
+																)}
+															</button>
+														</th>
+														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+															<button
+																type="button"
+																onClick={() => {
+																	setPatchingRunsSortField("completed_at");
+																	setPatchingRunsSortDir((d) =>
+																		d === "asc" ? "desc" : "asc",
+																	);
+																}}
+																className="flex items-center gap-1 hover:text-secondary-700 dark:hover:text-secondary-200"
+															>
+																Completed
+																{patchingRunsSortField === "completed_at" ? (
+																	patchingRunsSortDir === "asc" ? (
+																		<ArrowUp className="h-4 w-4" />
+																	) : (
+																		<ArrowDown className="h-4 w-4" />
+																	)
+																) : (
+																	<ArrowUpDown className="h-4 w-4" />
+																)}
+															</button>
+														</th>
+														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+															Actions
+														</th>
+													</tr>
+												</thead>
+												<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+													{(patchingRunsData?.runs || []).map((run) => (
+														<React.Fragment key={run.id}>
+															<tr className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors">
+																<td className="px-4 py-2 text-sm text-secondary-900 dark:text-white">
+																	<PackageDisplay run={run} />
+																</td>
+																<td className="px-4 py-2">
+																	{patchingStatusBadge(run.status)}
+																</td>
+																<td className="px-4 py-2 text-sm text-secondary-600 dark:text-secondary-400">
+																	{run.started_at
+																		? new Date(run.started_at).toLocaleString()
+																		: run.created_at
+																			? new Date(
+																					run.created_at,
+																				).toLocaleString()
+																			: "—"}
+																</td>
+																<td className="px-4 py-2 text-sm text-secondary-600 dark:text-secondary-400">
+																	{run.completed_at
+																		? new Date(
+																				run.completed_at,
+																			).toLocaleString()
+																		: "—"}
+																</td>
+																<td className="px-4 py-2">
+																	<button
+																		type="button"
+																		onClick={() =>
+																			setPatchingExpandedRunId((prev) =>
+																				prev === run.id ? null : run.id,
+																			)
+																		}
+																		className="text-primary-600 dark:text-primary-400 hover:underline text-sm"
+																	>
+																		{patchingExpandedRunId === run.id
+																			? "Hide output"
+																			: "View output"}
+																	</button>
+																</td>
+															</tr>
+															{patchingExpandedRunId === run.id && (
+																<tr>
+																	<td
+																		colSpan={5}
+																		className="px-4 py-0 bg-secondary-50 dark:bg-secondary-900"
+																	>
+																		<PatchingRunOutput runId={run.id} />
+																	</td>
+																</tr>
+															)}
+														</React.Fragment>
+													))}
+												</tbody>
+											</table>
+										</div>
+										{(patchingRunsData?.pagination?.total ?? 0) > 0 && (
+											<div className="flex items-center justify-between px-6 py-3 bg-white dark:bg-secondary-800 border-t border-secondary-200 dark:border-secondary-600">
+												<div className="flex items-center gap-4">
+													<div className="flex items-center gap-2">
+														<span className="text-sm text-secondary-700 dark:text-white">
+															Rows per page:
+														</span>
+														<select
+															value={patchingRunsPageSize}
+															onChange={(e) => {
+																setPatchingRunsPageSize(Number(e.target.value));
+																setPatchingRunsPage(1);
+															}}
+															className="text-sm border border-secondary-300 dark:border-secondary-600 rounded px-2 py-1 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+														>
+															<option value={25}>25</option>
+															<option value={50}>50</option>
+															<option value={100}>100</option>
+														</select>
+													</div>
+													<span className="text-sm text-secondary-700 dark:text-white">
+														{Math.min(
+															(patchingRunsPage - 1) * patchingRunsPageSize + 1,
+															patchingRunsData?.pagination?.total ?? 0,
+														)}
+														–
+														{Math.min(
+															patchingRunsPage * patchingRunsPageSize,
+															patchingRunsData?.pagination?.total ?? 0,
+														)}{" "}
+														of {patchingRunsData?.pagination?.total ?? 0}
+													</span>
+												</div>
+												<div className="flex items-center gap-2">
+													<button
+														type="button"
+														onClick={() =>
+															setPatchingRunsPage((p) => Math.max(1, p - 1))
+														}
+														disabled={patchingRunsPage <= 1}
+														className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+													>
+														<ChevronLeft className="h-4 w-4" />
+													</button>
+													<span className="text-sm text-secondary-700 dark:text-white">
+														Page {patchingRunsPage} of{" "}
+														{patchingRunsData?.pagination?.pages || 1}
+													</span>
+													<button
+														type="button"
+														onClick={() =>
+															setPatchingRunsPage((p) =>
+																Math.min(
+																	patchingRunsData?.pagination?.pages || 1,
+																	p + 1,
+																),
+															)
+														}
+														disabled={
+															patchingRunsPage >=
+															(patchingRunsData?.pagination?.pages || 1)
+														}
+														className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+													>
+														<ChevronRight className="h-4 w-4" />
+													</button>
+												</div>
+											</div>
+										)}
+									</div>
+								)}
+							</div>
+						)}
+
+						{/* Compliance — same card styling as Agent queue tab */}
+						{activeTab === "compliance" && (
+							<div className="space-y-6">
+								<div className="flex items-center justify-between">
+									<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+										Security Compliance
+									</h3>
+								</div>
+
+								{/* Summary stats — clickable to scan results filtered by status + host */}
+								{complianceLatest && (
+									<div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+										<Link
+											to="/compliance"
+											state={{
+												complianceTab: "scan-results",
+												scanResultsFilters: { status: "pass", host_id: hostId },
+											}}
+											className="card p-4 hover:ring-2 hover:ring-green-500/40 transition-shadow"
+											title="View passing rules for this host"
+										>
+											<div className="flex items-center">
+												<CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 mr-2" />
+												<div>
+													<p className="text-sm text-secondary-500 dark:text-white">
+														Passed
+													</p>
+													<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+														{complianceLatest.passed ?? "—"}
+													</p>
+												</div>
+											</div>
+										</Link>
+										<Link
+											to="/compliance"
+											state={{
+												complianceTab: "scan-results",
+												scanResultsFilters: { status: "fail", host_id: hostId },
+											}}
+											className="card p-4 hover:ring-2 hover:ring-red-500/40 transition-shadow"
+											title="View failing rules for this host"
+										>
+											<div className="flex items-center">
+												<AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 mr-2" />
+												<div>
+													<p className="text-sm text-secondary-500 dark:text-white">
+														Failed
+													</p>
+													<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+														{complianceLatest.failed ?? "—"}
+													</p>
+												</div>
+											</div>
+										</Link>
+										<Link
+											to="/compliance"
+											state={{
+												complianceTab: "scan-results",
+												scanResultsFilters: {
+													status: "skipped",
+													host_id: hostId,
+												},
+											}}
+											className="card p-4 hover:ring-2 hover:ring-secondary-500/40 transition-shadow"
+											title="View skipped/N/A rules for this host"
+										>
+											<div className="flex items-center">
+												<MinusCircle className="h-5 w-5 text-secondary-600 dark:text-white mr-2" />
+												<div>
+													<p className="text-sm text-secondary-500 dark:text-white">
+														Skipped
+													</p>
+													<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+														{(complianceLatest.skipped ?? 0) +
+															(complianceLatest.not_applicable ?? 0) || "—"}
+													</p>
+												</div>
+											</div>
+										</Link>
+										<div className="card p-4">
+											<div className="flex items-center">
+												<Calendar className="h-5 w-5 text-primary-600 dark:text-primary-400 mr-2" />
+												<div>
+													<p className="text-sm text-secondary-500 dark:text-white">
+														Last Scan
+													</p>
+													<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+														{complianceLatest.completed_at
+															? new Date(
+																	complianceLatest.completed_at,
+																).toLocaleString()
+															: "—"}
+													</p>
+												</div>
+											</div>
+										</div>
+									</div>
+								)}
+
+								{/* Compliance scanner card — consistent layout: details left, actions right */}
+								{integrationsData?.data?.integrations?.compliance && (
+									<div className="card p-4">
+										<div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+											{/* Left: scanner status and details */}
+											<div className="min-w-0 flex-1">
+												<div className="flex items-center gap-2 mb-3">
+													<Shield className="h-5 w-5 text-primary-600 dark:text-primary-400 flex-shrink-0" />
+													<span className="text-sm font-medium text-secondary-900 dark:text-white">
+														Compliance scanner
+													</span>
+													{(() => {
+														const isJobActive =
+															complianceInstallJob?.status === "active" ||
+															complianceInstallJob?.status === "waiting";
+														const scannerStatus =
+															complianceSetupStatus?.status?.status;
+														let label, colorClass;
+														if (
+															scannerStatus === "ready" ||
+															scannerStatus === "partial"
+														) {
+															label = "Ready";
+															colorClass =
+																"bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300";
+														} else if (
+															scannerStatus === "installing" ||
+															isJobActive
+														) {
+															label = "Installing…";
+															colorClass =
+																"bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300";
+														} else if (scannerStatus === "error") {
+															label = "Error";
+															colorClass =
+																"bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300";
+														} else {
+															label = "Not installed";
+															colorClass =
+																"bg-secondary-100 text-secondary-700 dark:bg-secondary-600 dark:text-secondary-200";
+														}
+														return (
+															<span
+																className={`px-2 py-0.5 rounded text-xs font-medium ${colorClass}`}
+															>
+																{label}
+															</span>
+														);
+													})()}
+													{complianceSetupStatus?.source === "cached" && (
+														<span className="text-xs text-secondary-500 dark:text-white italic">
+															(cached)
+														</span>
+													)}
+												</div>
+												<div className="space-y-1.5 text-sm">
+													{complianceSetupStatus?.status?.scanner_info
+														?.openscap_version && (
+														<div className="flex gap-2">
+															<span className="text-secondary-500 dark:text-white font-medium shrink-0">
+																OpenSCAP
+															</span>
+															<span className="text-secondary-900 dark:text-white font-mono">
+																{
+																	complianceSetupStatus.status.scanner_info
+																		.openscap_version
+																}
+															</span>
+														</div>
+													)}
+													{(complianceSetupStatus?.status?.scanner_info
+														?.content_package ||
+														complianceSetupStatus?.status?.scanner_info
+															?.ssg_version) && (
+														<div className="flex gap-2">
+															<span className="text-secondary-500 dark:text-white font-medium shrink-0">
+																SSG content
+															</span>
+															<span className="text-secondary-900 dark:text-white font-mono">
+																{complianceSetupStatus.status.scanner_info
+																	.content_package ||
+																	complianceSetupStatus.status.scanner_info
+																		.ssg_version ||
+																	"—"}
+															</span>
+														</div>
+													)}
+													{complianceSetupStatus?.status?.scanner_info
+														?.content_file && (
+														<div className="flex gap-2">
+															<span className="text-secondary-500 dark:text-white font-medium shrink-0">
+																Content file on server
+															</span>
+															<span className="text-secondary-900 dark:text-white font-mono text-xs break-all min-w-0">
+																{
+																	complianceSetupStatus.status.scanner_info
+																		.content_file
+																}
+															</span>
+														</div>
+													)}
+												</div>
+												{!complianceSetupStatus?.status?.scanner_info
+													?.openscap_version &&
+													!complianceSetupStatus?.status?.scanner_info
+														?.content_file && (
+														<p className="text-xs text-secondary-500 dark:text-white mt-1">
+															No version or path data yet. Use Refresh status or
+															Install scanner.
+														</p>
+													)}
+												{(complianceSetupStatus?.status?.scanner_info
+													?.ssg_needs_upgrade ||
+													complianceSetupStatus?.status?.scanner_info
+														?.content_mismatch) && (
+													<div className="mt-2 space-y-1">
+														{complianceSetupStatus.status.scanner_info
+															.ssg_needs_upgrade && (
+															<p className="text-xs text-amber-600 dark:text-amber-400">
+																{complianceSetupStatus.status.scanner_info
+																	.ssg_upgrade_message ||
+																	"SSG upgrade recommended"}
+															</p>
+														)}
+														{(complianceSetupStatus.status.scanner_info
+															.content_mismatch ||
+															complianceSetupStatus.status.scanner_info
+																.mismatch_warning) && (
+															<p className="text-xs text-amber-600 dark:text-amber-400">
+																{complianceSetupStatus.status.scanner_info
+																	.mismatch_warning ||
+																	"Content mismatch with OS"}
+															</p>
+														)}
+													</div>
+												)}
+												{(complianceSetupStatus?.status?.scanner_info
+													?.docker_bench_available ||
+													complianceSetupStatus?.status?.scanner_info
+														?.oscap_docker_available) && (
+													<p className="text-xs text-secondary-500 dark:text-white mt-2">
+														{[
+															complianceSetupStatus.status.scanner_info
+																.docker_bench_available && "Docker Bench",
+															complianceSetupStatus.status.scanner_info
+																.oscap_docker_available && "oscap-docker",
+														]
+															.filter(Boolean)
+															.join(", ")}{" "}
+														available
+													</p>
+												)}
+											</div>
+											{/* Right: actions */}
+											<div className="flex flex-wrap items-center gap-2 sm:flex-shrink-0">
+												<button
+													type="button"
+													onClick={() => {
+														adminHostsAPI
+															.requestComplianceStatus(hostId)
+															.then(() => {
+																refetchComplianceStatus();
+																safeSetTimeout(
+																	() => refetchComplianceStatus(),
+																	2000,
+																);
+																safeSetTimeout(
+																	() => refetchComplianceStatus(),
+																	5000,
+																);
+															})
+															.catch(() => {});
+													}}
+													className="btn-outline inline-flex items-center gap-2 text-sm"
+													title="Ask agent to report current scanner status"
+												>
+													<RefreshCw className="h-4 w-4" />
+													Refresh status
+												</button>
+												{complianceSetupStatus?.status?.status !== "ready" &&
+													complianceSetupStatus?.status?.status !== "partial" &&
+													wsStatus?.connected &&
+													(complianceInstallJob?.status !== "active" &&
+													complianceInstallJob?.status !== "waiting" ? (
+														<button
+															type="button"
+															onClick={() =>
+																installComplianceScannerMutation.mutate()
+															}
+															disabled={
+																installComplianceScannerMutation.isPending
+															}
+															className="btn-primary inline-flex items-center gap-2 text-sm"
+														>
+															{installComplianceScannerMutation.isPending
+																? "Starting…"
+																: "Install scanner"}
+														</button>
+													) : (
+														<button
+															type="button"
+															onClick={() => {
+																complianceAPI
+																	.cancelInstallScanner(hostId)
+																	.then(() => {
+																		setComplianceInstallJob(null);
+																		refetchComplianceStatus();
+																	})
+																	.catch(() => {});
+															}}
+															className="btn-outline inline-flex items-center gap-2 text-sm"
+														>
+															Cancel
+														</button>
+													))}
+												<Link
+													to={`/compliance/hosts/${hostId}`}
+													className="btn-outline inline-flex items-center gap-2 text-sm"
+												>
+													<ExternalLink className="h-4 w-4" />
+													View Full Details
+												</Link>
+												<button
+													type="button"
+													onClick={() => triggerComplianceScanMutation.mutate()}
+													disabled={
+														!effectiveHostId ||
+														triggerComplianceScanMutation.isPending ||
+														(complianceSetupStatus?.status?.status !==
+															"ready" &&
+															complianceSetupStatus?.status?.status !==
+																"partial")
+													}
+													className="btn-primary inline-flex items-center gap-2 text-sm"
+													title={
+														complianceSetupStatus?.status?.status !== "ready" &&
+														complianceSetupStatus?.status?.status !== "partial"
+															? "Install scanner first"
+															: wsStatus?.connected
+																? "Start compliance scan on this host"
+																: "Queue scan to run when agent is back online (max 1 per host)"
+													}
+												>
+													<Play className="h-4 w-4" />
+													{triggerComplianceScanMutation.isPending
+														? "Starting…"
+														: wsStatus?.connected
+															? "Run scan now"
+															: "Queue scan for when agent is online"}
+												</button>
+											</div>
+										</div>
+										{complianceScanFeedback && (
+											<div
+												className={`mt-3 px-3 py-2 rounded-lg text-sm ${
+													complianceScanFeedback.isError
+														? "bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-700"
+														: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-700"
+												}`}
+											>
+												{complianceScanFeedback.text}
+											</div>
+										)}
+										{(complianceInstallJob?.status === "active" ||
+											complianceInstallJob?.status === "waiting") && (
+											<div className="mt-3 pt-3 border-t border-secondary-200 dark:border-secondary-600">
+												<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-2">
+													<div
+														className="bg-primary-600 dark:bg-primary-500 h-2 rounded-full transition-all duration-300"
+														style={{
+															width: `${complianceInstallJob.progress ?? 0}%`,
+														}}
+													/>
+												</div>
+												<p className="text-xs font-medium text-secondary-600 dark:text-white mt-2 mb-1.5">
+													Installation progress
+												</p>
+												{(() => {
+													const events =
+														complianceInstallJob.install_events || [];
+													const steps = INSTALL_CHECKLIST_STEPS.map(
+														({ id, label }) => {
+															const evt = events
+																.filter((e) => e.step === id)
+																.pop();
+															const stepStatus = evt?.status || "pending";
+															return {
+																id,
+																label,
+																status: stepStatus,
+																message:
+																	evt?.message ??
+																	(stepStatus === "pending"
+																		? "Waiting…"
+																		: null),
+															};
+														},
+													);
+													return (
+														<ul className="space-y-1.5">
+															{steps.map((step) => (
+																<li
+																	key={step.id}
+																	className="flex items-center gap-2 text-xs"
+																>
+																	{step.status === "done" && (
+																		<CheckCircle2 className="h-3.5 w-3.5 text-green-400 flex-shrink-0" />
+																	)}
+																	{step.status === "in_progress" && (
+																		<Loader2 className="h-3.5 w-3.5 text-blue-400 animate-spin flex-shrink-0" />
+																	)}
+																	{step.status === "failed" && (
+																		<X className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />
+																	)}
+																	{step.status === "skipped" && (
+																		<SkipForward className="h-3.5 w-3.5 text-secondary-400 flex-shrink-0" />
+																	)}
+																	{step.status === "pending" && (
+																		<div className="h-3.5 w-3.5 rounded-full border-2 border-secondary-400 dark:border-secondary-500 flex-shrink-0" />
+																	)}
+																	<span
+																		className={
+																			step.status === "done"
+																				? "text-green-600 dark:text-green-400"
+																				: step.status === "in_progress"
+																					? "text-blue-600 dark:text-blue-400"
+																					: step.status === "failed"
+																						? "text-red-600 dark:text-red-400"
+																						: step.status === "skipped"
+																							? "text-secondary-500"
+																							: "text-secondary-500"
+																		}
+																	>
+																		{step.label}
+																		{step.message &&
+																			step.status !== "pending" &&
+																			` — ${step.message}`}
+																		{step.status === "pending" &&
+																			` — ${step.message}`}
+																	</span>
+																</li>
+															))}
+														</ul>
+													);
+												})()}
+											</div>
+										)}
+										{complianceInstallJob?.status === "completed" && (
+											<p className="text-xs text-green-600 dark:text-green-400 mt-2">
+												Install completed. Refreshing status…
+											</p>
+										)}
+										{complianceInstallJob?.status === "failed" && (
+											<p className="text-xs text-red-600 dark:text-red-400 mt-2">
+												{complianceInstallJob.error || "Install failed."}
+											</p>
+										)}
+									</div>
+								)}
+
+								{/* Empty state when compliance not enabled or no scans yet */}
+								{!integrationsData?.data?.integrations?.compliance && (
+									<div className="card p-4">
+										<p className="text-sm text-secondary-500 dark:text-white mb-2">
+											Compliance is not enabled for this host. Enable it in the
+											Integrations tab.
+										</p>
+										<Link
+											to={`/compliance/hosts/${hostId}`}
+											className="btn-primary inline-flex items-center gap-2"
+										>
+											<Shield className="h-4 w-4" />
+											View Full Compliance Details
+											<ExternalLink className="h-3.5 w-3.5" />
+										</Link>
+									</div>
+								)}
+							</div>
+						)}
+
+						{/* Reporting */}
+						{activeTab === "reporting" && (
+							<div className="space-y-4">
+								<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
+									<div className="flex items-center gap-3 mb-3">
+										<AlertTriangle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+										<h4 className="text-sm font-medium text-secondary-900 dark:text-white">
+											Host Down Alerts
+										</h4>
+									</div>
+									<p className="text-xs text-secondary-600 dark:text-white mb-4">
+										Control whether this host triggers alert entries when it
+										goes offline. When disabled, no alerts will be created for
+										this host even if the global setting is enabled.
+									</p>
+
+									{/* Settings and Buttons - Side by Side */}
+									<div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+										{/* Current Setting */}
+										<div>
+											<label className="text-xs font-medium text-secondary-500 dark:text-white mb-2 block">
+												Current Setting
+											</label>
+											<div className="text-sm text-secondary-900 dark:text-white">
+												{host?.host_down_alerts_enabled === null ? (
+													<span className="inline-flex items-center px-2 py-1 rounded bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+														Inherit from global settings
+													</span>
+												) : host?.host_down_alerts_enabled === true ? (
+													<span className="inline-flex items-center px-2 py-1 rounded bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+														Enabled
+													</span>
+												) : (
+													<span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+														Disabled
+													</span>
+												)}
+											</div>
+										</div>
+
+										{/* Global Setting Reference */}
+										{hostDownAlertConfig && (
+											<div>
+												<label className="text-xs font-medium text-secondary-500 dark:text-white mb-2 block">
+													Global Setting
+												</label>
+												<div className="text-sm text-secondary-600 dark:text-white">
+													{settings?.alerts_enabled === false ? (
+														<span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+															Disabled (Master Switch Off)
+														</span>
+													) : hostDownAlertConfig.is_enabled ? (
+														<span className="inline-flex items-center px-2 py-1 rounded bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+															Enabled
+														</span>
+													) : (
+														<span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+															Disabled
+														</span>
+													)}
+													{host?.host_down_alerts_enabled === null &&
+														settings?.alerts_enabled !== false && (
+															<span className="ml-2 text-xs text-secondary-500 dark:text-white">
+																(currently inherited)
+															</span>
+														)}
+												</div>
+											</div>
+										)}
+									</div>
+
+									{/* Action Buttons */}
+									<div className="flex flex-wrap gap-2">
+										<button
+											type="button"
+											onClick={() => toggleHostDownAlertsMutation.mutate(null)}
+											disabled={
+												toggleHostDownAlertsMutation.isPending ||
+												host?.host_down_alerts_enabled === null
+											}
+											className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${
+												host?.host_down_alerts_enabled === null
+													? "bg-primary-600 text-white"
+													: "bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-white hover:bg-secondary-300 dark:hover:bg-secondary-500"
+											} disabled:opacity-50 disabled:cursor-not-allowed`}
+										>
+											Inherit
+										</button>
+										<button
+											type="button"
+											onClick={() => toggleHostDownAlertsMutation.mutate(true)}
+											disabled={
+												toggleHostDownAlertsMutation.isPending ||
+												host?.host_down_alerts_enabled === true
+											}
+											className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${
+												host?.host_down_alerts_enabled === true
+													? "bg-green-600 text-white"
+													: "bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-white hover:bg-secondary-300 dark:hover:bg-secondary-500"
+											} disabled:opacity-50 disabled:cursor-not-allowed`}
+										>
+											Enable
+										</button>
+										<button
+											type="button"
+											onClick={() => toggleHostDownAlertsMutation.mutate(false)}
+											disabled={
+												toggleHostDownAlertsMutation.isPending ||
+												host?.host_down_alerts_enabled === false
+											}
+											className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${
+												host?.host_down_alerts_enabled === false
+													? "bg-red-600 text-white"
+													: "bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-white hover:bg-secondary-300 dark:hover:bg-secondary-500"
+											} disabled:opacity-50 disabled:cursor-not-allowed`}
+										>
+											Disable
+										</button>
+									</div>
+
+									{/* Success/Error Message */}
+									{updateMessage.text && (
+										<div
+											className={`mt-3 text-sm ${
+												updateMessage.text.includes("successfully")
+													? "text-green-600 dark:text-green-400"
+													: "text-red-600 dark:text-red-400"
+											}`}
+										>
+											{updateMessage.text}
+										</div>
+									)}
+								</div>
+							</div>
+						)}
+					</div>
+				</div>
+			</div>
+
+			{/* Credentials Modal */}
+			{showCredentialsModal && (
+				<CredentialsModal
+					host={host}
+					isOpen={showCredentialsModal}
+					onClose={() => setShowCredentialsModal(false)}
+					plaintextApiKey={plaintextApiKey}
+				/>
+			)}
+
+			{/* Delete Confirmation Modal */}
+			{showDeleteModal && (
+				<DeleteConfirmationModal
+					host={host}
+					isOpen={showDeleteModal}
+					onClose={() => setShowDeleteModal(false)}
+					onConfirm={handleDeleteHost}
+					isLoading={deleteHostMutation.isPending}
+				/>
+			)}
+
+			{/* Patch Confirmation Modal */}
+			<PatchConfirmModal
+				isOpen={showPatchConfirmModal}
+				onClose={() => setShowPatchConfirmModal(false)}
+				onConfirm={() => triggerPatchAllMutation.mutate()}
+				isPending={triggerPatchAllMutation.isPending}
+				hostId={hostId}
+				patchType="patch_all"
+				hostDisplayName={host?.friendly_name || host?.hostname}
+			/>
+
+			{/* Apply Pending Config Modal */}
+			{showApplyConfigModal && integrationsData?.pending_config_exists && (
+				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
+						<div className="p-6">
+							<div className="flex items-start gap-4">
+								<div className="flex-shrink-0 w-10 h-10 rounded-full bg-warning-100 dark:bg-warning-900/30 flex items-center justify-center">
+									<Send className="h-5 w-5 text-warning-600 dark:text-warning-400" />
+								</div>
+								<div className="flex-1 min-w-0">
+									<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+										Apply Pending Configuration
+									</h3>
+									<p className="mt-2 text-sm text-secondary-600 dark:text-white">
+										The following changes will be applied to the agent on{" "}
+										<strong>{host?.friendly_name || host?.hostname}</strong>:
+									</p>
+									<ul className="mt-3 space-y-1.5 text-sm text-secondary-700 dark:text-secondary-300">
+										{(() => {
+											const pending = integrationsData?.pending_config || {};
+											const hasComplianceMode = "compliance_mode" in pending;
+											// Order: Docker, Compliance, Compliance mode, OpenSCAP, Docker Bench
+											const order = [
+												"docker_enabled",
+												"compliance_enabled",
+												"compliance_mode",
+												"compliance_on_demand_only",
+												"compliance_openscap_enabled",
+												"compliance_docker_bench_enabled",
+											];
+											const entries = order
+												.filter((key) => {
+													if (!(key in pending)) return false;
+													// Skip redundant: compliance_enabled/compliance_on_demand_only when compliance_mode present
+													if (
+														hasComplianceMode &&
+														(key === "compliance_enabled" ||
+															key === "compliance_on_demand_only")
+													)
+														return false;
+													return true;
+												})
+												.map((key) => {
+													const val = pending[key];
+													const label =
+														key === "docker_enabled"
+															? "Docker monitoring"
+															: key === "compliance_enabled"
+																? "Compliance scanning"
+																: key === "compliance_mode"
+																	? "Compliance mode"
+																	: key === "compliance_on_demand_only"
+																		? "Compliance schedule"
+																		: key === "compliance_openscap_enabled"
+																			? "OpenSCAP"
+																			: key ===
+																					"compliance_docker_bench_enabled"
+																				? "Docker Bench"
+																				: key;
+													let displayVal;
+													if (key === "compliance_mode") {
+														displayVal =
+															val === "disabled"
+																? "Disabled"
+																: val === "on-demand"
+																	? "On-demand"
+																	: val === "enabled"
+																		? "Scheduled"
+																		: String(val);
+													} else if (key === "compliance_on_demand_only") {
+														displayVal = val ? "On-demand only" : "Scheduled";
+													} else if (typeof val === "boolean") {
+														displayVal = val ? "Enabled" : "Disabled";
+													} else {
+														displayVal = String(val);
+													}
+													return { key, label, displayVal };
+												});
+											return entries.map(({ key, label, displayVal }) => (
+												<li key={key} className="flex items-center gap-2">
+													<CheckCircle className="h-4 w-4 text-warning-500 flex-shrink-0" />
+													<span>
+														{label}: <strong>{displayVal}</strong>
+													</span>
+												</li>
+											));
+										})()}
+									</ul>
+									<p className="mt-4 text-sm text-secondary-600 dark:text-white border-t border-secondary-200 dark:border-secondary-600 pt-4">
+										When applied, the agent&apos;s <strong>config.yml</strong>{" "}
+										will be updated and the{" "}
+										<strong>service will restart</strong> on the host.
+									</p>
+								</div>
+							</div>
+						</div>
+						<div className="bg-secondary-50 dark:bg-secondary-700/50 px-6 py-4 flex flex-col sm:flex-row gap-3 sm:justify-end">
+							<button
+								type="button"
+								onClick={() => setShowApplyConfigModal(false)}
+								className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={() => {
+									applyPendingConfigMutation.mutate(undefined, {
+										onSuccess: () => setShowApplyConfigModal(false),
+									});
+								}}
+								disabled={
+									applyPendingConfigMutation.isPending || !wsStatus?.connected
+								}
+								className="px-4 py-2 text-sm font-medium text-white bg-warning-600 hover:bg-warning-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+							>
+								{applyPendingConfigMutation.isPending ? (
+									<>
+										<Loader2 className="h-4 w-4 animate-spin" />
+										Applying...
+									</>
+								) : (
+									<>
+										<Send className="h-4 w-4" />
+										Apply
+									</>
+								)}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+
+			{/* Auto-Update Confirmation Dialog */}
+			{autoUpdateDialog && (
+				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
+						<div className="p-6">
+							<div className="flex items-start gap-4">
+								<div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+									<AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+								</div>
+								<div className="flex-1">
+									<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+										Global Auto-Updates Disabled
+									</h3>
+									<p className="mt-2 text-sm text-secondary-600 dark:text-white">
+										The master auto-update setting is currently{" "}
+										<strong>disabled</strong> in Settings → Agent Updates.
+									</p>
+									<p className="mt-2 text-sm text-secondary-600 dark:text-white">
+										Enabling auto-update for{" "}
+										<strong>{host?.friendly_name || host?.hostname}</strong>{" "}
+										won't take effect until global auto-updates are enabled.
+									</p>
+								</div>
+							</div>
+						</div>
+						<div className="bg-secondary-50 dark:bg-secondary-700/50 px-6 py-4 flex flex-col sm:flex-row gap-3 sm:justify-end">
+							<button
+								type="button"
+								onClick={() => setAutoUpdateDialog(false)}
+								className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={handleEnableHostOnly}
+								className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
+							>
+								Enable Host Only
+							</button>
+							<button
+								type="button"
+								onClick={handleEnableBoth}
+								disabled={enableGlobalAutoUpdateMutation.isPending}
+								className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+							>
+								{enableGlobalAutoUpdateMutation.isPending
+									? "Enabling..."
+									: "Enable Both"}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+		</div>
+	);
+};
+
+// Components moved to separate files in ./hostdetail/
+
+export default HostDetail;

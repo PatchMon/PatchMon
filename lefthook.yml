@@ -1,0 +1,74 @@
+# Pre-commit: run all lint, tests, and security/dependency checks.
+# - Go: server-source-code and agent-source-code use full "make check" (fmt-check, vet, lint, test).
+# - Security: Gitleaks (secrets); vuln-check (npm audit + govulncheck for Go). CodeQL SAST runs in CI.
+# Install: npm install (runs "prepare" -> lefthook install)
+# Govulncheck: go install golang.org/x/vuln/cmd/govulncheck@latest
+pre-commit:
+  parallel: true
+  commands:
+    biome:
+      run: |
+        echo "Running Biome check (reporting errors, no auto-fix)..."
+        npx @biomejs/biome check \
+          --no-errors-on-unmatched \
+          --files-ignore-unknown=true \
+          --colors=off \
+          .
+      stage_fixed: false
+      fail_text: "Biome found errors in the codebase. Please fix them manually before committing."
+      skip: merge
+
+    server-check:
+      run: |
+        echo "Running server checks (fmt, vet, lint, test)..."
+        (cd server-source-code && make check) || exit 1
+      stage_fixed: false
+      fail_text: "Server checks failed (fmt-check, vet, lint, or test). Fix in server-source-code/ and try again."
+      skip: merge
+
+    agent-check:
+      run: |
+        echo "Running agent checks (fmt, vet, lint, test)..."
+        (cd agent-source-code && make check) || exit 1
+      stage_fixed: false
+      fail_text: "Agent checks failed (fmt-check, vet, lint, or test). Fix in agent-source-code/ and try again."
+      skip: merge
+
+    security-secrets:
+      run: |
+        echo "Running Gitleaks (secrets scan)..."
+        if command -v docker >/dev/null 2>&1; then
+          docker run --rm -v "${PWD}:/repo" zricethezav/gitleaks:latest detect --source /repo --no-git \
+            $([ -f .gitleaks.toml ] && echo "--config /repo/.gitleaks.toml" || true) || exit 1
+        else
+          echo "Docker not found. Install Docker to run secrets scan on commit, or run: npm run security:secrets"
+          exit 1
+        fi
+      stage_fixed: false
+      fail_text: "Gitleaks found potential secrets or Docker is missing. Fix or install Docker."
+      skip: merge
+
+    vuln-check:
+      run: |
+        echo "Running dependency vulnerability checks..."
+        echo "  npm audit (high/critical)..."
+        npm audit --audit-level=high || exit 1
+        if ! command -v govulncheck >/dev/null 2>&1; then
+          echo "govulncheck not found. Install: go install golang.org/x/vuln/cmd/govulncheck@latest"
+          exit 1
+        fi
+        echo "  govulncheck server-source-code..."
+        (cd server-source-code && govulncheck ./...) || exit 1
+        echo "  govulncheck agent-source-code..."
+        (cd agent-source-code && govulncheck ./...) || exit 1
+      stage_fixed: false
+      fail_text: "Vulnerable dependencies found (npm audit or govulncheck). Fix or update dependencies."
+      skip: merge
+
+    frontend-check:
+      run: |
+        echo "Running frontend tests..."
+        (cd frontend && npm run test:run) || exit 1
+      stage_fixed: false
+      fail_text: "Frontend tests failed. Fix in frontend/ and try again."
+      skip: merge

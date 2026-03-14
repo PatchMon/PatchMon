@@ -1,0 +1,190 @@
+/** biome-ignore-all lint/suspicious/noUnknownAtRules: Bogus */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+	html {
+		font-family: Inter, ui-sans-serif, system-ui;
+	}
+
+	body {
+		@apply bg-secondary-50 dark:bg-transparent text-secondary-900 dark:text-secondary-100 antialiased;
+	}
+}
+
+@layer components {
+	.btn {
+		@apply inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors duration-150;
+	}
+
+	.btn-primary {
+		@apply btn bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500;
+	}
+
+	.btn-secondary {
+		@apply btn bg-secondary-600 text-white hover:bg-secondary-700 focus:ring-secondary-500;
+	}
+
+	.btn-success {
+		@apply btn bg-success-600 text-white hover:bg-success-700 focus:ring-success-500;
+	}
+
+	.btn-warning {
+		@apply btn bg-warning-600 text-white hover:bg-warning-700 focus:ring-warning-500;
+	}
+
+	.btn-danger {
+		@apply btn bg-danger-600 text-white hover:bg-danger-700 focus:ring-danger-500;
+	}
+
+	.btn-outline {
+		@apply btn border-secondary-300 text-secondary-700 bg-white hover:bg-secondary-50 focus:ring-secondary-500;
+	}
+
+	.dark .btn-outline {
+		background-color: var(--theme-button-bg, #1e293b);
+		border-color: var(--card-border, #334155);
+		color: white;
+	}
+
+	.dark .btn-outline:hover {
+		background-color: var(--theme-button-hover, #334155);
+	}
+
+	.card {
+		@apply bg-white rounded-lg shadow-card border border-secondary-200;
+	}
+
+	.dark .card {
+		background-color: var(--card-bg, #1e293b);
+		border-color: var(--card-border, #334155);
+		box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+	}
+
+	.card-hover {
+		@apply card transition-all duration-150;
+	}
+
+	.dark .card-hover:hover {
+		background-color: var(--card-bg-hover, #334155);
+		box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+	}
+
+	.input {
+		@apply block w-full px-3 py-2 border border-secondary-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm bg-white text-secondary-900;
+	}
+
+	.dark .input {
+		background-color: var(--card-bg, #1e293b);
+		border-color: var(--card-border, #334155);
+		color: white;
+	}
+
+	.label {
+		@apply block text-sm font-medium text-secondary-700 dark:text-secondary-200;
+	}
+
+	.badge {
+		@apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+	}
+
+	.badge-primary {
+		@apply badge bg-primary-100 text-primary-800;
+	}
+
+	.badge-secondary {
+		@apply badge bg-secondary-100 text-secondary-800;
+	}
+
+	.badge-success {
+		@apply badge bg-success-100 text-success-800;
+	}
+
+	.badge-warning {
+		@apply badge bg-warning-100 text-warning-800;
+	}
+
+	.badge-danger {
+		@apply badge bg-danger-100 text-danger-800;
+	}
+}
+
+@layer utilities {
+	/* Page transition animation for seamless navigation */
+	@keyframes page-fade-in {
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
+	}
+
+	.page-transition-enter {
+		animation: page-fade-in 120ms ease-out;
+	}
+
+	/* Theme-aware backgrounds for general elements */
+	.dark .bg-secondary-800 {
+		background-color: var(--card-bg, #1e293b) !important;
+	}
+
+	.dark .bg-secondary-700 {
+		background-color: var(--card-bg-hover, #334155) !important;
+	}
+
+	.dark .bg-secondary-900 {
+		background-color: var(--theme-button-bg, #1e293b) !important;
+	}
+
+	.dark .border-secondary-600 {
+		border-color: var(--card-border, #334155) !important;
+	}
+
+	.dark .border-secondary-700 {
+		border-color: var(--theme-button-hover, #475569) !important;
+	}
+
+	.text-shadow {
+		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+	}
+
+	.scrollbar-thin {
+		scrollbar-width: thin;
+		scrollbar-color: #cbd5e1 #f1f5f9;
+	}
+
+	.dark .scrollbar-thin {
+		scrollbar-color: #64748b #475569;
+	}
+
+	.scrollbar-thin::-webkit-scrollbar {
+		width: 6px;
+	}
+
+	.scrollbar-thin::-webkit-scrollbar-track {
+		background: #f1f5f9;
+	}
+
+	.dark .scrollbar-thin::-webkit-scrollbar-track {
+		background: #475569;
+	}
+
+	.scrollbar-thin::-webkit-scrollbar-thumb {
+		background-color: #cbd5e1;
+		border-radius: 3px;
+	}
+
+	.dark .scrollbar-thin::-webkit-scrollbar-thumb {
+		background-color: #64748b;
+	}
+
+	.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+		background-color: #94a3b8;
+	}
+
+	.dark .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+		background-color: #94a3b8;
+	}
+}

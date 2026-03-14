@@ -1,0 +1,38 @@
+name: "Other"
+description: For anything that doesn't fit the other categories
+title: "[Other]: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please describe your issue or inquiry below.
+
+  - type: dropdown
+    id: installation_method
+    attributes:
+      label: What is the installation method of your PatchMon server?
+      options:
+        - ""
+        - Docker
+        - Proxmox-community script
+        - setup.sh native install script
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: patchmon_version
+    attributes:
+      label: What is the version of your PatchMon server?
+      placeholder: "e.g. 1.4.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      placeholder: Please describe your issue or inquiry in detail
+    validations:
+      required: true
