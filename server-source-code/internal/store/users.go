@@ -7,6 +7,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -173,7 +174,7 @@ func (s *UsersStore) UpdateOidcProfile(ctx context.Context, userID string, lastL
 // List returns all users (for admin).
 func (s *UsersStore) List(ctx context.Context, limit, offset int) ([]models.User, error) {
 	d := s.db.DB(ctx)
-	rows, err := d.Queries.ListUsers(ctx, db.ListUsersParams{Limit: int32(limit), Offset: int32(offset)})
+	rows, err := d.Queries.ListUsers(ctx, db.ListUsersParams{Limit: safeconv.ClampToInt32(limit), Offset: safeconv.ClampToInt32(offset)})
 	if err != nil {
 		return nil, err
 	}

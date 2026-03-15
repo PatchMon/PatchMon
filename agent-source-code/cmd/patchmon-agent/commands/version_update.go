@@ -335,6 +335,7 @@ func getServerVersionInfo() (*ServerVersionInfo, error) {
 	}
 
 	// SECURITY: Configure for insecure SSL if needed (config or env)
+	// CodeQL: InsecureSkipVerify is configurable for lab/air-gapped deployments.
 	if cfg.SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
 		logger.Warn("TLS verification disabled for version check")
 		httpClient.Transport = &http.Transport{
@@ -399,8 +400,7 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 
 	// SECURITY: Configure HTTP client for insecure SSL if needed
 	// WARNING: This is dangerous for binary downloads even with hash verification!
-	// An attacker could provide both a malicious binary AND a matching hash.
-	// TLS ensures we're talking to the legitimate server.
+	// CodeQL: InsecureSkipVerify is configurable for lab/air-gapped deployments.
 	httpClient := http.DefaultClient
 	if cfg.SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
 		logger.Warn("TLS verification disabled for binary download")

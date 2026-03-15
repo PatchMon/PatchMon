@@ -411,7 +411,8 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 			const data = await response.json();
 			sshTicket = data.ticket;
 		} catch (err) {
-			console.error("[SSH Terminal] Failed to get SSH ticket:", err);
+			const safeErr = String(err).replace(/[\n\r]/g, " ");
+			console.error("[SSH Terminal] Failed to get SSH ticket:", safeErr);
 			setError("Authentication required. Please log in again.");
 			if (terminalInstanceRef.current) {
 				terminalInstanceRef.current.writeln(
@@ -478,7 +479,11 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 						ws.send(JSON.stringify(connectData));
 						console.log("[SSH Terminal] Connect message sent");
 					} catch (err) {
-						console.error("[SSH Terminal] Error sending connect message:", err);
+						const safeErr = String(err).replace(/[\n\r]/g, " ");
+						console.error(
+							"[SSH Terminal] Error sending connect message:",
+							safeErr,
+						);
 						setError(`Failed to send connection request: ${err.message}`);
 					}
 				} else {
@@ -557,12 +562,14 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 							);
 					}
 				} catch (err) {
-					console.error("[SSH Terminal] Error parsing message:", err);
+					const safeErr = String(err).replace(/[\n\r]/g, " ");
+					console.error("[SSH Terminal] Error parsing message:", safeErr);
 				}
 			};
 
 			ws.onerror = (err) => {
-				console.error("[SSH Terminal] WebSocket error:", err);
+				const safeErr = String(err).replace(/[\n\r]/g, " ");
+				console.error("[SSH Terminal] WebSocket error:", safeErr);
 				const errorMsg =
 					"Failed to connect to terminal server. Check browser console and ensure backend is running.";
 				setError(errorMsg);
@@ -628,7 +635,8 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 
 			wsRef.current = ws;
 		} catch (err) {
-			console.error("[SSH Terminal] Connection error:", err);
+			const safeErr = String(err).replace(/[\n\r]/g, " ");
+			console.error("[SSH Terminal] Connection error:", safeErr);
 			const errorMsg = err.message || "Failed to establish connection";
 			setError(errorMsg);
 			if (terminalInstanceRef.current) {

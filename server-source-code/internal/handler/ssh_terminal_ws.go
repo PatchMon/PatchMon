@@ -8,6 +8,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"sync"
@@ -18,7 +20,28 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
+
+// hostKeyCallback returns a HostKeyCallback that validates against ~/.ssh/known_hosts when
+// available, otherwise falls back to InsecureIgnoreHostKey with a logged warning.
+// Interactive SSH terminal sessions let users choose arbitrary hosts; strict host key
+// verification would block first-time connections. Using known_hosts when present
+// improves security for repeat connections.
+func hostKeyCallback(log *slog.Logger) ssh.HostKeyCallback {
+	home, _ := os.UserHomeDir()
+	knownHostsPath := filepath.Join(home, ".ssh", "known_hosts")
+	if _, err := os.Stat(knownHostsPath); err == nil {
+		cb, err := knownhosts.New(knownHostsPath)
+		if err == nil {
+			return cb
+		}
+	}
+	if log != nil {
+		log.Warn("SSH: using InsecureIgnoreHostKey (no known_hosts or load failed)", "path", knownHostsPath)
+	}
+	return ssh.InsecureIgnoreHostKey()
+}
 
 // SshTerminalWSHandler handles SSH terminal WebSocket connections.
 type SshTerminalWSHandler struct {
@@ -276,9 +299,10 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 
 			// Direct mode
 			sshAddr := hostIPOrHostname(host) + ":" + strconv.Itoa(orInt(msg.Port, 22))
+			hostKeyCB := hostKeyCallback(h.log)
 			config := &ssh.ClientConfig{
 				User:            orDefault(msg.Username, "root"),
-				HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+				HostKeyCallback: hostKeyCB,
 				Timeout:         0,
 			}
 			if msg.PrivateKey != "" {

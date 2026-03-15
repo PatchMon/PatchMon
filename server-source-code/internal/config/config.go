@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -260,6 +261,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Port < 1 || c.Port > 65535 {
 		return fmt.Errorf("PORT must be between 1 and 65535, got %d", c.Port)
+	}
+	if c.DBConnectionLimit < 0 || c.DBConnectionLimit > math.MaxInt32 {
+		return fmt.Errorf("DB_CONNECTION_LIMIT must be 0..%d, got %d", math.MaxInt32, c.DBConnectionLimit)
 	}
 	level := strings.ToLower(c.LogLevel)
 	switch level {

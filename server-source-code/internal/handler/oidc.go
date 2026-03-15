@@ -187,7 +187,7 @@ func (h *OidcHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=Session+expired", http.StatusFound)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "oidc_state", Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	http.SetCookie(w, &http.Cookie{Name: "oidc_state", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(r)})
 	userInfo, err := client.Exchange(r.Context(), code, sessionData.CodeVerifier, state, sessionData.Nonce, q)
 	if err != nil {
 		if h.log != nil {
@@ -591,8 +591,8 @@ func (h *OidcHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	if userID, _ := r.Context().Value(middleware.UserIDKey).(string); userID != "" {
 		idTokenHint, _ = h.oidcStore.GetAndDeleteIDToken(r.Context(), userID)
 	}
-	clearAuthCookies(w)
-	http.SetCookie(w, &http.Cookie{Name: "oidc_state", Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	clearAuthCookies(w, r)
+	http.SetCookie(w, &http.Cookie{Name: "oidc_state", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(r)})
 	logoutURL := client.LogoutURL(h.cfg.OidcPostLogoutURI, idTokenHint, h.oidcClientID())
 	if logoutURL != "" {
 		http.Redirect(w, r, logoutURL, http.StatusFound)

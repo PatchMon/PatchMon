@@ -2002,7 +2002,7 @@ const LogoUploadModal = ({
 							</p>
 						</div>
 
-						{previewUrl && (
+						{previewUrl?.startsWith("blob:") && (
 							<div>
 								<div className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2">
 									Preview

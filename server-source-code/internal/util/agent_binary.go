@@ -78,6 +78,7 @@ func GetCurrentAgentVersionFromBinary(ctx context.Context, agentsDir string) str
 
 // GetVersionFromBinaryPath gets version from a binary at the given path.
 // Tries executing the binary if it matches server platform (linux/linux, freebsd/freebsd), else uses "strings".
+// Callers must pass binaryPath validated with SafePathUnderBase(baseDir, binaryName) to prevent command injection.
 func GetVersionFromBinaryPath(ctx context.Context, binaryPath string) string {
 	versionRe := regexp.MustCompile(agentVersionRe)
 	serverOS := runtime.GOOS

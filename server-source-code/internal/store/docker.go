@@ -6,6 +6,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 )
 
 // DockerStore provides Docker inventory access.
@@ -121,7 +122,7 @@ func (s *DockerStore) ListContainers(ctx context.Context, params ContainerListPa
 	d := s.db.DB(ctx)
 	skip, take := validatePagination(params.Page, params.Limit, 10000)
 
-	arg := db.ListContainersParams{Limit: int32(take), Offset: int32(skip)}
+	arg := db.ListContainersParams{Limit: safeconv.ClampToInt32(take), Offset: safeconv.ClampToInt32(skip)}
 	if params.Status != "" {
 		arg.Status = &params.Status
 	}
@@ -273,7 +274,7 @@ func (s *DockerStore) ListImages(ctx context.Context, params ImageListParams) ([
 	d := s.db.DB(ctx)
 	skip, take := validatePagination(params.Page, params.Limit, 10000)
 
-	arg := db.ListImagesParams{Limit: int32(take), Offset: int32(skip)}
+	arg := db.ListImagesParams{Limit: safeconv.ClampToInt32(take), Offset: safeconv.ClampToInt32(skip)}
 	if params.Source != "" {
 		arg.Source = &params.Source
 	}
@@ -433,8 +434,8 @@ func (s *DockerStore) ListHosts(ctx context.Context, page, limit int) ([]HostWit
 	}
 
 	hostRows, err := d.Queries.ListDockerHostsPaginated(ctx, db.ListDockerHostsPaginatedParams{
-		Limit:  int32(take),
-		Offset: int32(skip),
+		Limit:  safeconv.ClampToInt32(take),
+		Offset: safeconv.ClampToInt32(skip),
 	})
 	if err != nil {
 		return nil, 0, err
@@ -563,7 +564,7 @@ func (s *DockerStore) ListVolumes(ctx context.Context, params VolumeListParams) 
 	d := s.db.DB(ctx)
 	skip, take := validatePagination(params.Page, params.Limit, 10000)
 
-	arg := db.ListVolumesParams{Limit: int32(take), Offset: int32(skip)}
+	arg := db.ListVolumesParams{Limit: safeconv.ClampToInt32(take), Offset: safeconv.ClampToInt32(skip)}
 	if params.Driver != "" {
 		arg.Driver = &params.Driver
 	}
@@ -669,7 +670,7 @@ func (s *DockerStore) ListNetworks(ctx context.Context, params NetworkListParams
 	d := s.db.DB(ctx)
 	skip, take := validatePagination(params.Page, params.Limit, 10000)
 
-	arg := db.ListNetworksParams{Limit: int32(take), Offset: int32(skip)}
+	arg := db.ListNetworksParams{Limit: safeconv.ClampToInt32(take), Offset: safeconv.ClampToInt32(skip)}
 	if params.Driver != "" {
 		arg.Driver = &params.Driver
 	}

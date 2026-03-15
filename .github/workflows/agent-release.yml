@@ -39,10 +39,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
           go-version-file: 'agent-source-code/go.mod'
 
@@ -152,7 +152,7 @@ jobs:
           fi
 
       - name: Upload agent binary to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@b25b93d384199fc0fc8c2e126b2d937a0cbeb2ae
         with:
           tag_name: ${{ github.event.release.tag_name }}
           files: agent-source-code/patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
@@ -183,10 +183,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: "package.json"
           cache: "npm"
@@ -199,7 +199,7 @@ jobs:
           cp -r frontend/dist server-source-code/cmd/server/static/frontend/
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
           go-version-file: 'server-source-code/go.mod'
 
@@ -220,7 +220,7 @@ jobs:
           mv "${OUTPUT_NAME}" ../
 
       - name: Upload patchmon-server to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@b25b93d384199fc0fc8c2e126b2d937a0cbeb2ae
         with:
           tag_name: ${{ github.event.release.tag_name }}
           files: patchmon-server-${{ matrix.goos }}-${{ matrix.goarch }}

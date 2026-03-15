@@ -200,7 +200,7 @@ func (h *DiscordHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		redirectTo("/login?error=Session+expired")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "discord_state", Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	http.SetCookie(w, &http.Cookie{Name: "discord_state", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(r)})
 	cfg, err := h.loadDiscordConfig(r.Context())
 	if err != nil || cfg == nil {
 		redirectTo("/login?error=Discord+not+configured")

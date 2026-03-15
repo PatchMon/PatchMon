@@ -232,7 +232,14 @@ func (h *AgentVersionHandler) ServeAgentDownload(w http.ResponseWriter, r *http.
 	if osParam == "windows" {
 		binaryName = binaryName + ".exe"
 	}
-	binaryPath := filepath.Join(h.agentsDir, binaryName)
+	binaryPath, err := util.SafePathUnderBase(h.agentsDir, binaryName)
+	if err != nil {
+		h.log.Warn("agent binary path validation failed", "name", binaryName, "error", err)
+		JSON(w, http.StatusNotFound, map[string]string{
+			"error": fmt.Sprintf("Agent binary not found for %s/%s.", osParam, architecture),
+		})
+		return
+	}
 	info, err := os.Stat(binaryPath)
 	if err != nil || info.IsDir() {
 		h.log.Warn("agent binary not found for user download", "path", binaryPath, "error", err)

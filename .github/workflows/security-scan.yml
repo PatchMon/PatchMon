@@ -43,7 +43,7 @@ jobs:
             build-mode: none
             working-dir: ''
     permissions:
-      actions: read
+      actions: write
       contents: read
       security-events: write
     steps:
@@ -52,7 +52,7 @@ jobs:
 
       - name: Set up Node
         if: matrix.working-dir == 'server-source-code'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
         with:
           node-version-file: "package.json"
           cache: "npm"

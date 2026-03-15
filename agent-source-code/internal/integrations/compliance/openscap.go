@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"patchmon-agent/internal/logutil"
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
@@ -24,13 +25,6 @@ const (
 	scapContentDir = "/usr/share/xml/scap/ssg/content"
 	osReleasePath  = "/etc/os-release"
 )
-
-// sanitizeForLog replaces newlines and carriage returns so logged values cannot inject extra log lines.
-func sanitizeForLog(s string) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "\r", " ")
-	return s
-}
 
 // Profile mappings for different OS families
 var profileMappings = map[string]map[string]string{
@@ -438,7 +432,7 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 				s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
 				return fmt.Errorf("installation timed out after 5 minutes")
 			}
-			s.logger.WithError(err).WithField("output", string(output)).Warn("Failed to install OpenSCAP core packages")
+			s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP core packages")
 			// Truncate output for error message
 			outputStr := string(output)
 			if len(outputStr) > 500 {
@@ -456,7 +450,7 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 		ssgCmd.Env = nonInteractiveEnv
 		ssgOutput, ssgErr := ssgCmd.CombinedOutput()
 		if ssgErr != nil {
-			s.logger.WithField("output", string(ssgOutput)).Warn("SSG content packages not available or failed to install. CIS scanning may have limited functionality.")
+			s.logger.WithField("output", logutil.Sanitize(string(ssgOutput))).Warn("SSG content packages not available or failed to install. CIS scanning may have limited functionality.")
 			if isUbuntu2404Plus {
 				s.logger.Info("For Ubuntu 24.04+, consider using Canonical's Ubuntu Security Guide (USG) with Ubuntu Pro for official CIS benchmarks.")
 			}
@@ -474,7 +468,7 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 			upgradeCmd.Env = nonInteractiveEnv
 			upgradeOutput, upgradeErr := upgradeCmd.CombinedOutput()
 			if upgradeErr != nil {
-				s.logger.WithField("output", string(upgradeOutput)).Debug("Package upgrade returned non-zero (may already be latest)")
+				s.logger.WithField("output", logutil.Sanitize(string(upgradeOutput))).Debug("Package upgrade returned non-zero (may already be latest)")
 			} else {
 				s.logger.Info("SCAP content packages upgraded to latest version")
 			}
@@ -495,7 +489,7 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 				s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
 				return fmt.Errorf("installation timed out after 5 minutes")
 			}
-			s.logger.WithError(err).WithField("output", string(output)).Warn("Failed to install OpenSCAP")
+			s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP")
 			outputStr := string(output)
 			if len(outputStr) > 500 {
 				outputStr = outputStr[:500] + "... (truncated)"
@@ -513,7 +507,7 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 				s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
 				return fmt.Errorf("installation timed out after 5 minutes")
 			}
-			s.logger.WithError(err).WithField("output", string(output)).Warn("Failed to install OpenSCAP")
+			s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP")
 			outputStr := string(output)
 			if len(outputStr) > 500 {
 				outputStr = outputStr[:500] + "... (truncated)"
@@ -1260,8 +1254,8 @@ func (s *OpenSCAPScanner) getProfileIDFromContent(contentFile string, preferredI
 	for _, p := range list {
 		if strings.Contains(p.id, "profile_standard") {
 			s.logger.WithFields(logrus.Fields{
-				"requested": sanitizeForLog(preferredID),
-				"using":     sanitizeForLog(p.id),
+				"requested": logutil.Sanitize(preferredID),
+				"using":     logutil.Sanitize(p.id),
 			}).Info("Requested profile not in content; using Standard System Security profile")
 			return p.id
 		}
@@ -1269,8 +1263,8 @@ func (s *OpenSCAPScanner) getProfileIDFromContent(contentFile string, preferredI
 	// Last resort: first profile in the list
 	fallback := list[0].id
 	s.logger.WithFields(logrus.Fields{
-		"requested": sanitizeForLog(preferredID),
-		"using":     sanitizeForLog(fallback),
+		"requested": logutil.Sanitize(preferredID),
+		"using":     logutil.Sanitize(fallback),
 	}).Info("Requested profile not in content; using first available profile")
 	return fallback
 }
@@ -1445,7 +1439,7 @@ func (s *OpenSCAPScanner) RunScanWithOptions(ctx context.Context, options *model
 				if len(preview) > 1500 {
 					preview = preview[:1500] + "... (truncated)"
 				}
-				s.logger.WithField("oscap_output", preview).Warn("OpenSCAP stdout/stderr")
+				s.logger.WithField("oscap_output", logutil.Sanitize(preview)).Warn("OpenSCAP stdout/stderr")
 			}
 		} else {
 			s.logger.WithField("results_file_size_bytes", fileInfo.Size()).Debug("Results file has content")
@@ -2134,7 +2128,7 @@ func (s *OpenSCAPScanner) Cleanup() error {
 			s.logger.Warn("OpenSCAP removal timed out after 3 minutes")
 			return fmt.Errorf("removal timed out after 3 minutes")
 		}
-		s.logger.WithError(err).WithField("output", string(output)).Warn("Failed to remove OpenSCAP packages")
+		s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to remove OpenSCAP packages")
 		// Don't return error - cleanup is best-effort
 		return nil
 	}

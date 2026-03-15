@@ -8,6 +8,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -437,8 +438,8 @@ func (s *DashboardStore) getUpdateHistory(ctx context.Context, hostID string, li
 	total, _ := d.Queries.CountUpdateHistory(ctx, hostID)
 	rows, err := d.Queries.GetUpdateHistory(ctx, db.GetUpdateHistoryParams{
 		HostID: hostID,
-		Limit:  int32(limit),
-		Offset: int32(offset),
+		Limit:  safeconv.ClampToInt32(limit),
+		Offset: safeconv.ClampToInt32(offset),
 	})
 	if err != nil {
 		return []map[string]interface{}{}, int(total)
@@ -468,7 +469,7 @@ func (s *DashboardStore) GetPackagesWithHosts(ctx context.Context) ([]map[string
 // GetRecentUsers returns recent users by last_login.
 func (s *DashboardStore) GetRecentUsers(ctx context.Context, limit int) ([]map[string]interface{}, error) {
 	d := s.db.DB(ctx)
-	rows, err := d.Queries.GetRecentUsers(ctx, int32(limit))
+	rows, err := d.Queries.GetRecentUsers(ctx, safeconv.ClampToInt32(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -495,14 +496,14 @@ func (s *DashboardStore) GetJobHistoryByApiID(ctx context.Context, apiID string,
 	d := s.db.DB(ctx)
 	return d.Queries.ListJobHistoryByApiID(ctx, db.ListJobHistoryByApiIDParams{
 		ApiID: &apiID,
-		Limit: int32(limit),
+		Limit: safeconv.ClampToInt32(limit),
 	})
 }
 
 // GetRecentCollection returns recent hosts by last_update.
 func (s *DashboardStore) GetRecentCollection(ctx context.Context, limit int) ([]map[string]interface{}, error) {
 	d := s.db.DB(ctx)
-	rows, err := d.Queries.GetRecentHosts(ctx, int32(limit))
+	rows, err := d.Queries.GetRecentHosts(ctx, safeconv.ClampToInt32(limit))
 	if err != nil {
 		return nil, err
 	}

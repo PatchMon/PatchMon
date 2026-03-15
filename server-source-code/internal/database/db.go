@@ -9,6 +9,7 @@ import (
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -31,7 +32,7 @@ func NewDB(ctx context.Context, cfg *config.Config) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse pool config: %w", err)
 	}
-	poolCfg.MaxConns = int32(cfg.DBConnectionLimit)
+	poolCfg.MaxConns = safeconv.ClampToInt32(cfg.DBConnectionLimit)
 	poolCfg.ConnConfig.ConnectTimeout = time.Duration(cfg.DBConnectTimeout) * time.Second
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
@@ -68,8 +69,8 @@ func NewFromURL(ctx context.Context, databaseURL string, maxConns, minConns int,
 	if minConns < 0 {
 		minConns = 1
 	}
-	poolCfg.MaxConns = int32(maxConns)
-	poolCfg.MinConns = int32(minConns)
+	poolCfg.MaxConns = safeconv.ClampToInt32(maxConns)
+	poolCfg.MinConns = safeconv.ClampToInt32(minConns)
 	poolCfg.ConnConfig.ConnectTimeout = time.Duration(cfg.DBConnectTimeout) * time.Second
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {

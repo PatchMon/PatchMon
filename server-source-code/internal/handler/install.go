@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -574,7 +573,24 @@ func (h *InstallHandler) ServeAgentVersion(w http.ResponseWriter, r *http.Reques
 		binaryName = binaryName + ".exe"
 	}
 	binDir := util.GetAgentsDir()
-	binaryPath := filepath.Join(binDir, binaryName)
+	binaryPath, err := util.SafePathUnderBase(binDir, binaryName)
+	if err != nil {
+		agentVersion := r.URL.Query().Get("currentVersion")
+		if agentVersion == "" {
+			agentVersion = "unknown"
+		}
+		JSON(w, http.StatusNotFound, map[string]interface{}{
+			"error":                    fmt.Sprintf("Agent binary not found for %s/%s. Ensure %s exists in the agent binaries directory.", osParam, architecture, binaryName),
+			"currentVersion":           agentVersion,
+			"latestVersion":            nil,
+			"hasUpdate":                false,
+			"autoUpdateDisabled":       autoUpdateDisabled,
+			"autoUpdateDisabledReason": autoUpdateDisabledReason,
+			"architecture":             architecture,
+			"agentType":                "go",
+		})
+		return
+	}
 
 	info, err := os.Stat(binaryPath)
 	if err != nil || info.IsDir() {
@@ -749,7 +765,14 @@ func (h *InstallHandler) ServeAgentDownload(w http.ResponseWriter, r *http.Reque
 	if binDir == "" {
 		binDir = "agents"
 	}
-	binaryPath := filepath.Join(binDir, binaryName)
+	binaryPath, err := util.SafePathUnderBase(binDir, binaryName)
+	if err != nil {
+		slog.Warn("agent binary path validation failed", "name", binaryName, "error", err)
+		JSON(w, http.StatusNotFound, map[string]string{
+			"error": fmt.Sprintf("Agent binary not found for %s/%s. Ensure %s exists in the agent binaries directory.", osParam, architecture, binaryName),
+		})
+		return
+	}
 
 	info, err := os.Stat(binaryPath)
 	if err != nil || info.IsDir() {

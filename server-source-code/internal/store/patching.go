@@ -10,6 +10,7 @@ import (
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -154,12 +155,12 @@ func (s *PatchRunsStore) List(ctx context.Context, hostID, status, patchType, so
 		HostID:    hostID,
 		Status:    status,
 		PatchType: patchType,
-		LimitArg:  int32(limit),
-		OffsetArg: int32(offset),
+		LimitArg:  safeconv.ClampToInt32(limit),
+		OffsetArg: safeconv.ClampToInt32(offset),
 	}
 	orderParams := db.ListPatchRunsOrderByStartedAtParams{
 		HostID: hostID, Status: status, PatchType: patchType,
-		OffsetArg: int32(offset), LimitArg: int32(limit),
+		OffsetArg: safeconv.ClampToInt32(offset), LimitArg: safeconv.ClampToInt32(limit),
 	}
 	countParams := db.CountPatchRunsParams{HostID: hostID, Status: status, PatchType: patchType}
 

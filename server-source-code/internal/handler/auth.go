@@ -505,10 +505,17 @@ func (h *AuthHandler) CompleteDiscordLogin(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, "/login?discord=success", http.StatusFound)
 }
 
+// isSecureRequest returns true if the request is over HTTPS (TLS or X-Forwarded-Proto).
+func isSecureRequest(r *http.Request) bool {
+	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+}
+
 // clearAuthCookies removes auth cookies (matches Node backend).
-func clearAuthCookies(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{Name: "token", Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
-	http.SetCookie(w, &http.Cookie{Name: "refresh_token", Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+// Secure must match the original cookie for the browser to clear it.
+func clearAuthCookies(w http.ResponseWriter, r *http.Request) {
+	secure := isSecureRequest(r)
+	http.SetCookie(w, &http.Cookie{Name: "token", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: secure})
+	http.SetCookie(w, &http.Cookie{Name: "refresh_token", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: secure})
 }
 
 func (h *AuthHandler) createToken(userID, role string, expSec int64, sessionID string) (string, error) {
@@ -709,7 +716,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
 		h.log.Debug("auth request", "method", r.Method, "path", r.URL.Path, "user_id", userID)
 	}
-	clearAuthCookies(w)
+	clearAuthCookies(w, r)
 	JSON(w, http.StatusOK, map[string]string{"message": "Logged out"})
 }
 

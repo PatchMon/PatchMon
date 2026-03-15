@@ -7,6 +7,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -39,8 +40,8 @@ func (s *HostsStore) List(ctx context.Context) ([]models.Host, error) {
 func (s *HostsStore) ListPaginated(ctx context.Context, limit, offset int) ([]models.Host, error) {
 	d := s.db.DB(ctx)
 	rows, err := d.Queries.ListHostsPaginated(ctx, db.ListHostsPaginatedParams{
-		Limit:  int32(limit),
-		Offset: int32(offset),
+		Limit:  safeconv.ClampToInt32(limit),
+		Offset: safeconv.ClampToInt32(offset),
 	})
 	if err != nil {
 		return nil, err

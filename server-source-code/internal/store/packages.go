@@ -8,6 +8,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -78,8 +79,8 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 	offset := (p.Page - 1) * p.Limit
 
 	listArg := db.ListPackagesParams{
-		Limit:  int32(p.Limit),
-		Offset: int32(offset),
+		Limit:  safeconv.ClampToInt32(p.Limit),
+		Offset: safeconv.ClampToInt32(offset),
 	}
 	if p.Search != "" {
 		listArg.Search = &p.Search
@@ -406,8 +407,8 @@ func (s *PackagesStore) GetHosts(ctx context.Context, packageIDOrName string, p 
 
 	listArg := db.ListHostsForPackageParams{
 		PackageID: resolvedID,
-		Limit:     int32(p.Limit),
-		Offset:    int32(offset),
+		Limit:     safeconv.ClampToInt32(p.Limit),
+		Offset:    safeconv.ClampToInt32(offset),
 	}
 	if p.Search != "" {
 		listArg.Search = &p.Search
