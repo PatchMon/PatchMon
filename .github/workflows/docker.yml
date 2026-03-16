@@ -188,5 +188,5 @@ jobs:
             ```yaml
             services:
               patchmon-server:
-                image: ${{ env.HARBOR_REGISTRY }}/pr/patchmon-server@${{ steps.build.outputs.digest }}
+                image: ${{ env.HARBOR_REGISTRY }}/pr/patchmon-server@${{ steps.build-harbor.outputs.digest }}
             ```
