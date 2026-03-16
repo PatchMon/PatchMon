@@ -13,37 +13,42 @@ PatchMon's monitoring agent collects and reports package, system, hardware, and 
 **FreeBSD** (amd64, 386, arm64, arm):
 - FreeBSD
 
+**Windows** (amd64, 386):
+- Windows 10 / 11 / Server 2016+ (WinGet, Windows Update API, registry)
+
 ## Installation
 
 ### Binary Installation
 
-1. **Download** the appropriate binary for your OS and architecture from the releases.
-2. **Make executable** and move to system path:
+1. **Download** the appropriate binary for your OS and architecture from the releases page, or via the install script served by your PatchMon server.
+2. **Make executable** and move to system path (Linux/FreeBSD):
 
 ```bash
 chmod +x patchmon-agent-linux-amd64
 sudo mv patchmon-agent-linux-amd64 /usr/local/bin/patchmon-agent
 ```
 
+On **Windows**, download the `.exe` binary and place it in a suitable location (e.g. `C:\Program Files\PatchMon\`).
+
 ### From Source
 
-1. **Prerequisites**:
-   - Go 1.26 or later
-   - Root access on the target system
+**Prerequisites:**
+- Go 1.26 or later
+- Root / Administrator access on the target system
 
-2. **Build and Install**:
+**Build and Install:**
 
 ```bash
-make deps          # Install dependencies
-make build         # Build for current platform
-sudo make install  # Install to /usr/local/bin
+make deps          # Download Go dependencies
+make build         # Build for current platform (output: build/patchmon-agent)
+sudo make install  # Install to /usr/local/bin (Linux/FreeBSD)
 ```
 
 ## Configuration
 
 ### Initial Setup
 
-1. **Configure Credentials**:
+1. **Configure Credentials:**
 
 ```bash
 sudo patchmon-agent config set-api <API_ID> <API_KEY> <SERVER_URL>
@@ -55,21 +60,21 @@ Example:
 sudo patchmon-agent config set-api patchmon_1a2b3c4d abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890 https://patchmon.example.com
 ```
 
-This saves the server URL to the config file and API credentials to the credentials file, then automatically runs a connectivity test to verify everything is working.
+This saves the server URL to the config file and the API credentials to the credentials file, then automatically runs a connectivity test to verify everything is working.
 
-2. **Test Connectivity** (optional, already tested during setup):
+2. **Test Connectivity** (optional — already tested during setup):
 
 ```bash
 sudo patchmon-agent ping
 ```
 
-3. **Send Initial Report**:
+3. **Send Initial Report:**
 
 ```bash
 sudo patchmon-agent report
 ```
 
-4. **Start the Service**:
+4. **Start the Service:**
 
 ```bash
 sudo patchmon-agent serve
@@ -79,9 +84,21 @@ The `serve` command is the primary runtime mode. It maintains a WebSocket connec
 
 ### Configuration Files
 
-- **Main Config**: `/etc/patchmon/config.yml`
-- **Credentials**: `/etc/patchmon/credentials.yml` (600 permissions)
-- **Logs**: `/etc/patchmon/logs/patchmon-agent.log`
+**Linux / FreeBSD:**
+
+| File | Path |
+|---|---|
+| Main config | `/etc/patchmon/config.yml` |
+| Credentials | `/etc/patchmon/credentials.yml` (0600 permissions) |
+| Logs | `/etc/patchmon/logs/patchmon-agent.log` |
+
+**Windows:**
+
+| File | Path |
+|---|---|
+| Main config | `C:\ProgramData\PatchMon\config.yml` |
+| Credentials | `C:\ProgramData\PatchMon\credentials.yml` |
+| Logs | `C:\ProgramData\PatchMon\patchmon-agent.log` |
 
 ### Example Configuration File
 
@@ -103,6 +120,7 @@ integrations:
     openscap_enabled: true
     docker_bench_enabled: false
   ssh-proxy-enabled: false
+  rdp-proxy-enabled: false
 ```
 
 | Field | Description |
@@ -150,7 +168,7 @@ patchmon-agent [command] [flags]
 
 | Flag | Description |
 |---|---|
-| `--config <path>` | Config file path (default `/etc/patchmon/config.yml`) |
+| `--config <path>` | Config file path (default: `/etc/patchmon/config.yml` on Linux/FreeBSD, `C:\ProgramData\PatchMon\config.yml` on Windows) |
 | `--log-level <level>` | Override log level (`debug`, `info`, `warn`, `error`) |
 
 ## Service Mode (`serve`)
@@ -164,15 +182,16 @@ The `serve` command is how the agent is intended to run in production. It:
 - **Syncs configuration** (report interval, integration status) from the server on startup
 - Streams **Docker container events** in real-time when Docker integration is enabled
 - Handles **auto-updates** with SHA256 binary integrity verification
-- Supports **SSH proxy** sessions when explicitly enabled in config
+- Supports **SSH proxy** and **RDP proxy** sessions when enabled in config
 
 ### Service Management
 
-The agent supports three init systems for service restarts during updates:
+The agent supports the following init systems for service restarts during updates:
 
 - **systemd** (most Linux distributions)
 - **OpenRC** (Alpine Linux)
-- **FreeBSD rc.d** (FreeBSD / pfSense)
+- **FreeBSD rc.d** (FreeBSD)
+- **Windows Service** (Windows Service Control Manager via `golang.org/x/sys/windows/svc`)
 
 If no init system is detected, it falls back to a helper script for safe restarts.
 
@@ -209,29 +228,38 @@ integrations:
 
 When enabled, the agent installs OpenSCAP and SCAP Security Guide content. Available scan tools:
 
-- **OpenSCAP** - CIS benchmark scanning and remediation
-- **Docker Bench** - CIS Docker Benchmark (requires Docker integration)
-- **oscap-docker** - Docker image CVE scanning (requires Docker integration)
+- **OpenSCAP** — CIS benchmark scanning and remediation
+- **Docker Bench** — CIS Docker Benchmark (requires Docker integration)
+- **oscap-docker** — Docker image CVE scanning (requires Docker integration)
 
 ### SSH Proxy
 
-Enables browser-based SSH sessions through the agent. Must be enabled manually in `config.yml` for security reasons -- it cannot be pushed from the server.
+Enables browser-based SSH sessions through the agent. Must be enabled manually in `config.yml` for security reasons — it cannot be pushed from the server.
 
 ```yaml
 integrations:
   ssh-proxy-enabled: true
 ```
 
+### RDP Proxy
+
+Enables browser-based RDP sessions through the agent (relaying traffic via the `guacd` sidecar on the server). Must be enabled manually in `config.yml`.
+
+```yaml
+integrations:
+  rdp-proxy-enabled: true
+```
+
 ## Agent Updates
 
 The agent supports automatic updates with security protections:
 
-- **SHA256 hash verification** - downloaded binary integrity is verified against a server-provided hash before installation
-- **Version validation** - the downloaded binary is executed in test mode before replacing the current binary
-- **Atomic replacement** - the binary is replaced using `os.Rename` for atomicity
-- **Backup retention** - the last 3 binary backups are kept
-- **Loop prevention** - a timestamp marker prevents repeated update attempts within 5 minutes
-- **TLS** - `skip_ssl_verify` allows self-signed or internal CA certificates
+- **SHA256 hash verification** — downloaded binary integrity is verified against a server-provided hash before installation
+- **Version validation** — the downloaded binary is executed in test mode before replacing the current binary
+- **Atomic replacement** — the binary is replaced using `os.Rename` for atomicity
+- **Backup retention** — the last 3 binary backups are kept
+- **Loop prevention** — a timestamp marker prevents repeated update attempts within 5 minutes
+- **TLS** — `skip_ssl_verify` allows self-signed or internal CA certificates
 
 To manually check for updates:
 
@@ -247,7 +275,7 @@ sudo patchmon-agent update-agent
 
 ## Logging
 
-Logs are written to `/etc/patchmon/logs/patchmon-agent.log` with rotation (max 10 MB per file, 5 backups, 14 day retention, compressed).
+Logs are written to the platform-appropriate path (see [Configuration Files](#configuration-files)) with rotation (max 10 MB per file, 5 backups, 14-day retention, compressed).
 
 ```
 2026-02-18T10:30:00 level=info msg="Collecting package information..."
@@ -263,46 +291,46 @@ Log levels: `debug`, `info`, `warn`, `error`
 Run comprehensive diagnostics to check agent health:
 
 ```bash
-sudo patchmon-agent diagnostics
+patchmon-agent diagnostics
 ```
 
 This displays:
 
-- **System information** - OS, architecture, kernel, hostname, machine ID
-- **Agent information** - version, config file paths, log level
-- **Configuration status** - whether config and credentials files exist
-- **Network connectivity** - TCP reachability test and API credential validation
-- **Recent logs** - last 10 log entries
+- **System information** — OS, architecture, kernel, hostname, machine ID
+- **Agent information** — version, config file paths, log level
+- **Configuration status** — whether config and credentials files exist
+- **Network connectivity** — TCP reachability test and API credential validation
+- **Recent logs** — last 10 log entries
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Permission Denied**:
+1. **Permission Denied:**
 
 ```bash
-# Most commands require root
+# Most commands require root (Linux/FreeBSD) or Administrator (Windows)
 sudo patchmon-agent <command>
 ```
 
-2. **Credentials Not Found**:
+2. **Credentials Not Found:**
 
 ```bash
 # Configure credentials first
 sudo patchmon-agent config set-api <API_ID> <API_KEY> <SERVER_URL>
 ```
 
-3. **Network Connectivity**:
+3. **Network Connectivity:**
 
 ```bash
 # Test server reachability and credentials
 sudo patchmon-agent ping
 
 # Detailed diagnostics including network info
-sudo patchmon-agent diagnostics
+patchmon-agent diagnostics
 ```
 
-4. **Package Manager Issues**:
+4. **Package Manager Issues:**
 
 ```bash
 # Update package lists manually
@@ -321,17 +349,22 @@ Uninstall functionality is handled by the `patchmon_remove.sh` script rather tha
 ### Building
 
 ```bash
-make deps            # Install Go dependencies
-make build           # Build for current platform
-make build-linux     # Build Linux binaries (amd64, 386, arm64, arm)
-make build-freebsd   # Build FreeBSD binaries (amd64, 386, arm64, arm)
-make build-all       # Build all platforms
-make test            # Run tests
-make test-coverage   # Run tests with coverage report
-make fmt             # Format code
-make lint            # Lint code (requires golangci-lint)
-make clean           # Remove build artifacts
-make install         # Build and install to /usr/local/bin
+make deps                  # Download Go dependencies
+make build                 # Build for current platform (output: build/patchmon-agent)
+make build-linux           # Build Linux binaries (amd64, 386, arm64, arm)
+make build-freebsd         # Build FreeBSD binaries (amd64, 386, arm64, arm)
+make build-windows         # Build Windows binaries (amd64, 386 — outputs .exe)
+make build-all             # Build Linux + FreeBSD + Windows, copy to agents/
+make build-all-for-docker  # Build all platforms into agents-prebuilt/ for local Docker build
+make test                  # Run tests
+make test-coverage         # Run tests with coverage report
+make fmt                   # Format code
+make fmt-check             # Verify code is formatted (used in CI)
+make vet                   # Run go vet
+make lint                  # Lint code (requires golangci-lint)
+make check                 # Run fmt-check, vet, lint, test (pre-commit)
+make clean                 # Remove build artifacts
+make install               # Build and install to /usr/local/bin (Linux/FreeBSD)
 ```
 
 ### Project Structure
@@ -347,15 +380,22 @@ cmd/patchmon-agent/
     diagnostics.go              diagnostics command
     version_update.go           check-version / update-agent
     serve.go                    serve command (service mode, WebSocket, integrations)
+    service_unix.go             Unix service/restart helpers
+    service_windows.go          Windows Service Control Manager integration
+    sysproc_linux.go            Linux process attributes
+    sysproc_freebsd.go          FreeBSD process attributes
+    sysproc_darwin.go           macOS process attributes
+    sysproc_windows.go          Windows process attributes
 internal/
-  config/                       Configuration and credentials management
+  config/                       Configuration and credentials management (OS-aware paths)
   client/                       HTTP client for PatchMon API
-  packages/                     Package managers (apt, dnf, pacman, apk, freebsd)
-  repositories/                 Repository detection (apt, dnf, pacman, apk, freebsd)
+  packages/                     Package managers (apt, dnf, pacman, apk, freebsd, windows)
+  repositories/                 Repository detection (apt, dnf, pacman, apk, freebsd, windows)
   system/                       OS detection, system info, reboot status
   hardware/                     CPU, RAM, disk info
   network/                      Network interfaces, DNS, gateway
   crontab/                      Crontab management
+  logutil/                      Log sanitisation utilities
   integrations/
     docker/                     Docker container/image/volume/network monitoring
     compliance/                 OpenSCAP, Docker Bench, oscap-docker
