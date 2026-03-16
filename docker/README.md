@@ -25,6 +25,25 @@ PatchMon is a containerised application that monitors system patches and updates
 
 ### Production Deployment
 
+#### Automated (recommended)
+
+Run the setup script from an empty directory. It will download `docker-compose.yml` and `env.example`, generate all required secrets, and walk you through configuring your URL and timezone interactively:
+
+```bash
+mkdir patchmon && cd patchmon
+curl -fsSL https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/setup-env.sh | bash
+```
+
+Once the script finishes, start PatchMon:
+
+```bash
+docker compose up -d
+```
+
+Access the application at the URL you configured (default: `http://localhost:3000`).
+
+#### Manual
+
 1. Download the Docker Compose file and environment example:
    ```bash
    mkdir patchmon && cd patchmon
@@ -37,14 +56,16 @@ PatchMon is a containerised application that monitors system patches and updates
    cp env.example .env
    ```
 
-3. Generate and insert the three required secrets:
+3. Generate and insert the required secrets:
    ```bash
-   sed -i "s/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=$(openssl rand -hex 32)/" .env
-   sed -i "s/^REDIS_PASSWORD=$/REDIS_PASSWORD=$(openssl rand -hex 32)/" .env
-   sed -i "s/^JWT_SECRET=$/JWT_SECRET=$(openssl rand -hex 64)/" .env
+   sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 32)/" .env
+   sed -i "s/^REDIS_PASSWORD=.*/REDIS_PASSWORD=$(openssl rand -hex 32)/" .env
+   sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$(openssl rand -hex 64)/" .env
+   sed -i "s/^SESSION_SECRET=.*/SESSION_SECRET=$(openssl rand -hex 64)/" .env
+   sed -i "s/^AI_ENCRYPTION_KEY=.*/AI_ENCRYPTION_KEY=$(openssl rand -hex 64)/" .env
    ```
 
-4. Edit `.env` and configure your server access settings (`SERVER_PROTOCOL`, `SERVER_HOST`, `SERVER_PORT`, `CORS_ORIGIN`). The defaults are set for `http://localhost:3000`.
+4. Edit `.env` and set `CORS_ORIGIN` to the full URL you will use to access PatchMon (default: `http://localhost:3000`).
 
 5. Start the application:
    ```bash
@@ -104,11 +125,10 @@ All configuration is managed through the `.env` file. See `env.example` for a fu
 | -------- | ----------- |
 | `POSTGRES_PASSWORD` | Database password |
 | `REDIS_PASSWORD` | Redis password |
-| `JWT_SECRET` | JWT signing secret - Generate with `openssl rand -hex 64` |
-| `SERVER_PROTOCOL` | Protocol for agent connections (`http` or `https`) |
-| `SERVER_HOST` | Hostname for agent connections |
-| `SERVER_PORT` | Port for agent connections |
-| `CORS_ORIGIN` | Full URL used to access PatchMon in the browser |
+| `JWT_SECRET` | JWT signing secret — generate with `openssl rand -hex 64` |
+| `SESSION_SECRET` | Session encryption secret — generate with `openssl rand -hex 64` |
+| `AI_ENCRYPTION_KEY` | AI data encryption key — generate with `openssl rand -hex 64` |
+| `CORS_ORIGIN` | Full URL(s) used to access PatchMon in the browser (comma-separated for multiple) |
 
 ### Optional Variables
 
@@ -119,7 +139,7 @@ The `.env` file also supports optional variables for fine-tuning. These have sen
 - **Password policy**: `PASSWORD_MIN_LENGTH`, `PASSWORD_REQUIRE_UPPERCASE`, `PASSWORD_REQUIRE_LOWERCASE`, `PASSWORD_REQUIRE_NUMBER`, `PASSWORD_REQUIRE_SPECIAL`
 - **Two-Factor Authentication**: `MAX_TFA_ATTEMPTS`, `TFA_LOCKOUT_DURATION_MINUTES`, `TFA_REMEMBER_ME_EXPIRES_IN`, `TFA_MAX_REMEMBER_SESSIONS`
 - **OIDC / SSO**: `OIDC_ENABLED`, `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI`, `OIDC_SCOPES`, and more
-- **Encryption**: `AI_ENCRYPTION_KEY`, `SESSION_SECRET`
+- **Encryption**: `SESSION_SECRET` is required (see above). `AI_ENCRYPTION_KEY` is required when AI features are enabled.
 - **Database pool (Prisma)**: `DB_CONNECTION_LIMIT`, `DB_POOL_TIMEOUT`, `DB_CONNECT_TIMEOUT`, `DB_IDLE_TIMEOUT`, `DB_MAX_LIFETIME`
 - **Database transaction timeouts**: `DB_TRANSACTION_MAX_WAIT`, `DB_TRANSACTION_TIMEOUT`, `DB_TRANSACTION_LONG_TIMEOUT`
 - **Database connection retry**: `PM_DB_CONN_MAX_ATTEMPTS`, `PM_DB_CONN_WAIT_INTERVAL`

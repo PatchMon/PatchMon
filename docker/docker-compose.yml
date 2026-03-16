@@ -1,10 +1,12 @@
 # =============================================================================
 # PatchMon Docker Compose - Production
 # =============================================================================
-# Before starting, copy env.example to .env and fill in your values:
+# To set up your environment, run the setup script:
 #
-#   cp ../server/.env.example .env
-#   alternatively 
+#   curl -fsSL https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/setup-env.sh | bash
+#
+# This will download env.example, generate secrets, and create your .env file.
+# Alternatively, copy env.example to .env and fill in the values manually.
 #
 # Then start PatchMon:
 #

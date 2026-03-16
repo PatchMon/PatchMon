@@ -2,11 +2,17 @@
 # =============================================================================
 # PatchMon Docker - Environment Setup Script
 # =============================================================================
-# 1. Copies ../server/.env.example (or ./env.example) to .env
-# 2. Generates and injects JWT_SECRET, SESSION_SECRET, AI_ENCRYPTION_KEY (64 hex)
-# 3. Generates and injects POSTGRES_PASSWORD, REDIS_PASSWORD (32 hex)
+# Downloads docker-compose.yml and env.example if not already present,
+# then:
+# 1. Copies env.example to .env
+# 2. Generates and injects POSTGRES_PASSWORD, REDIS_PASSWORD (32 hex)
+# 3. Generates and injects JWT_SECRET, SESSION_SECRET, AI_ENCRYPTION_KEY (64 hex)
+# 4. Interactively configures CORS_ORIGIN, TRUST_PROXY, and TZ
 #
-# Run from the docker directory: ./setup-env.sh
+# Run from any directory:
+#   curl -fsSL https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/setup-env.sh | bash
+# Or if already downloaded:
+#   ./setup-env.sh
 # =============================================================================
 
 set -e
@@ -14,27 +20,34 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Resolve source: ../server/.env.example, then ../server-source-code/.env.example, then ./env.example, else curl from upstream
-SOURCE=""
-if [ -f "../server/.env.example" ]; then
-  SOURCE="../server/.env.example"
-elif [ -f "../server-source-code/.env.example" ]; then
-  SOURCE="../server-source-code/.env.example"
-elif [ -f "./env.example" ]; then
-  SOURCE="./env.example"
-else
-  echo "No local env example found. Downloading from upstream..."
-  SOURCE=$(mktemp)
-  if ! curl -fsSL -o "$SOURCE" "https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/env.example"; then
-    echo "Error: Failed to download env example." >&2
-    rm -f "$SOURCE"
+UPSTREAM="https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker"
+
+# -----------------------------------------------------------------------------
+# Download docker-compose.yml if not present
+# -----------------------------------------------------------------------------
+if [ ! -f "./docker-compose.yml" ]; then
+  echo "docker-compose.yml not found. Downloading from upstream..."
+  if ! curl -fsSL -o docker-compose.yml "$UPSTREAM/docker-compose.yml"; then
+    echo "Error: Failed to download docker-compose.yml." >&2
     exit 1
   fi
-  trap "rm -f $SOURCE" EXIT
+  echo "docker-compose.yml downloaded."
 fi
 
-echo "Copying $SOURCE to .env"
-cp "$SOURCE" .env
+# -----------------------------------------------------------------------------
+# Ensure env.example exists locally, or download if missing
+# -----------------------------------------------------------------------------
+if [ ! -f "./env.example" ]; then
+  echo "env.example not found. Downloading from upstream..."
+  if ! curl -fsSL -o env.example "$UPSTREAM/env.example"; then
+    echo "Error: Failed to download env.example." >&2
+    exit 1
+  fi
+  echo "env.example downloaded."
+fi
+
+echo "Copying env.example to .env"
+cp env.example .env
 
 # Generate secrets: one 64-hex for JWT/SESSION/AI, one 32-hex for both passwords
 HEX64=$(openssl rand -hex 64)
@@ -187,7 +200,35 @@ if [ ${#cors_origins[@]} -gt 0 ]; then
 fi
 
 echo ""
-echo "Setup complete. Edit .env to configure PORT if needed (default: 3000)."
+echo "============================================================"
+echo " Setup complete!"
+echo "============================================================"
+echo ""
+echo "NOTE: Before starting for the first time, ensure that:"
+echo "  - DNS records are configured to point your domain(s) to this host"
+echo "  - If using a reverse proxy (nginx, Caddy, Traefik, etc.), configure"
+echo "    it to forward traffic to this host on port 3000"
+echo ""
+echo "Access your PatchMon server using the following URL(s):"
+if [ -n "${CORS_VALUE:-}" ]; then
+  IFS=',' read -ra _display_origins <<< "$CORS_VALUE"
+  for _url in "${_display_origins[@]}"; do
+    echo "  -> $_url"
+  done
 else
-  echo "Non-interactive mode: skipping CORS_ORIGIN prompt. Edit .env to set CORS_ORIGIN and PORT if needed."
+  echo "  (no CORS_ORIGIN configured — edit .env before starting)"
+fi
+echo ""
+echo "Start PatchMon with:"
+echo ""
+echo "  docker compose up -d"
+echo ""
+echo "Edit .env to configure PORT if needed (default: 3000)."
+else
+  echo "Non-interactive mode: skipping CORS_ORIGIN configuration. Edit .env to set CORS_ORIGIN and PORT if needed."
+  echo ""
+  echo "NOTE: Before starting for the first time, ensure DNS and any reverse proxy"
+  echo "are configured to point to this host before running:"
+  echo ""
+  echo "  docker compose up -d"
 fi
