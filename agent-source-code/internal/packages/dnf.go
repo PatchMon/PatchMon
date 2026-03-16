@@ -49,8 +49,15 @@ func (m *DNFManager) GetPackages() []models.Package {
 	// 4. Fedora's cache issue (if any) is resolved by using proper update checks
 
 	// Get installed packages
+	// Note: yum (CentOS 7 / legacy) uses positional argument syntax: "yum list installed"
+	// while dnf uses flag syntax: "dnf list --installed"
 	m.logger.Debug("Getting installed packages...")
-	listCmd := exec.Command(packageManager, "list", "--installed")
+	var listCmd *exec.Cmd
+	if packageManager == "yum" {
+		listCmd = exec.Command(packageManager, "list", "installed")
+	} else {
+		listCmd = exec.Command(packageManager, "list", "--installed")
+	}
 	// OPTIMIZATION: Set minimal environment to reduce overhead
 	listCmd.Env = append(os.Environ(), "LANG=C")
 	installedOutput, err := listCmd.Output()
@@ -278,7 +285,13 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 
 		// If still not found in installed packages, try to get it with a command as fallback
 		if currentVersion == "" {
-			getCurrentCmd := exec.Command(packageManager, "list", "--installed", packageName)
+			// yum (CentOS 7 / legacy) requires positional argument; dnf accepts --installed flag
+			var getCurrentCmd *exec.Cmd
+			if packageManager == "yum" {
+				getCurrentCmd = exec.Command(packageManager, "list", "installed", packageName)
+			} else {
+				getCurrentCmd = exec.Command(packageManager, "list", "--installed", packageName)
+			}
 			getCurrentOutput, err := getCurrentCmd.Output()
 			if err == nil {
 				for _, currentLine := range strings.Split(string(getCurrentOutput), "\n") {
@@ -319,30 +332,64 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 	return packages
 }
 
-// parseInstalledPackages parses dnf list installed output
+// parseInstalledPackages parses dnf/yum list installed output.
+// On CentOS 7 / legacy yum, long package names are wrapped: the name appears alone
+// on one line and the version + repo follow on the next indented line. We handle
+// both the single-line and wrapped formats.
 func (m *DNFManager) parseInstalledPackages(output string) map[string]models.Package {
 	installedPackages := make(map[string]models.Package)
 
 	scanner := bufio.NewScanner(strings.NewReader(output))
+	var pendingName string // holds a wrapped package name waiting for its version line
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "Installed Packages") {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+
+		if trimmed == "" || strings.HasPrefix(trimmed, "Installed Packages") ||
+			strings.HasPrefix(trimmed, "Available Packages") ||
+			strings.HasPrefix(trimmed, "Loaded plugins") {
 			continue
 		}
 
-		parts := strings.Fields(line)
-		if len(parts) < 3 {
+		parts := strings.Fields(trimmed)
+
+		// Normal single-line format: "name.arch  version  repo"
+		if len(parts) >= 3 {
+			packageName := strings.Split(parts[0], ".")[0] // strip arch suffix
+			version := parts[1]
+			installedPackages[packageName] = models.Package{
+				Name:           packageName,
+				CurrentVersion: version,
+				NeedsUpdate:    false,
+			}
+			pendingName = ""
 			continue
 		}
 
-		packageName := strings.Split(parts[0], ".")[0] // Remove architecture
-		version := parts[1]
-
-		installedPackages[packageName] = models.Package{
-			Name:           packageName,
-			CurrentVersion: version,
-			NeedsUpdate:    false,
+		// Wrapped format, line 1: just the package name (no version/repo yet).
+		// Detect by checking the original line starts without leading whitespace
+		// and the trimmed text has no spaces (single token).
+		if len(parts) == 1 && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			// Looks like a bare package name line — remember it
+			pendingName = strings.Split(parts[0], ".")[0]
+			continue
 		}
+
+		// Wrapped format, line 2: "  version  repo" (starts with whitespace)
+		if pendingName != "" && len(parts) >= 2 &&
+			(strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) {
+			version := parts[0]
+			installedPackages[pendingName] = models.Package{
+				Name:           pendingName,
+				CurrentVersion: version,
+				NeedsUpdate:    false,
+			}
+			pendingName = ""
+			continue
+		}
+
+		// Any other short line resets pending state
+		pendingName = ""
 	}
 
 	return installedPackages

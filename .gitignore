@@ -94,6 +94,9 @@ temp/
 Thumbs.db
 build.sh
 
+# Legacy Node.js backend (replaced by server-source-code/)
+backend/
+
 # Server specific
 server-source-code/cmd/server/static/frontend/dist/
 server/logs/
