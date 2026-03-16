@@ -19,6 +19,7 @@ import (
 
 	"patchmon-agent/internal/client"
 	"patchmon-agent/internal/config"
+	"patchmon-agent/internal/logutil"
 	"patchmon-agent/internal/pkgversion"
 
 	"github.com/spf13/cobra"
@@ -96,11 +97,11 @@ func checkVersion() error {
 		fmt.Printf("  Latest version: %s\n", latestVersion)
 		fmt.Printf("\nTo update, run: patchmon-agent update-agent\n")
 	} else if versionInfo.AutoUpdateDisabled && latestVersion != currentVersion {
-		logger.WithFields(map[string]interface{}{
+		logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 			"current": currentVersion,
 			"latest":  latestVersion,
 			"reason":  versionInfo.AutoUpdateDisabledReason,
-		}).Info("New update available but auto-update is disabled")
+		})).Info("New update available but auto-update is disabled")
 		fmt.Printf("Current version: %s\n", currentVersion)
 		fmt.Printf("Latest version: %s\n", latestVersion)
 		fmt.Printf("Status: %s\n", versionInfo.AutoUpdateDisabledReason)
@@ -180,10 +181,10 @@ func updateAgent() error {
 
 	actualHash := fmt.Sprintf("%x", sha256.Sum256(newAgentData))
 	if actualHash != versionInfo.Hash {
-		logger.WithFields(map[string]interface{}{
+		logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 			"expected": versionInfo.Hash,
 			"actual":   actualHash,
-		}).Error("Binary hash verification failed - possible tampering detected")
+		})).Error("Binary hash verification failed - possible tampering detected")
 		return fmt.Errorf("binary hash mismatch: expected %s, got %s", versionInfo.Hash, actualHash)
 	}
 	logger.WithField("hash", actualHash).Info("Binary integrity verified successfully")
@@ -240,10 +241,10 @@ func updateAgent() error {
 		versionStr = strings.TrimSpace(versionStr)
 
 		if versionStr != "" && versionStr != newVersion {
-			logger.WithFields(map[string]interface{}{
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 				"expected": newVersion,
 				"actual":   versionStr,
-			}).Warn("Downloaded binary version mismatch - this may indicate server issue, but proceeding")
+			})).Warn("Downloaded binary version mismatch - this may indicate server issue, but proceeding")
 		} else if versionStr == newVersion {
 			logger.WithField("version", versionStr).Debug("Downloaded binary version verified")
 		}

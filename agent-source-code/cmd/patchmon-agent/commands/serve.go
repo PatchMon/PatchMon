@@ -117,10 +117,10 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 	// Fetch interval from server and update config if different
 	if resp, err := httpClient.GetUpdateInterval(ctx); err == nil && resp.UpdateInterval > 0 {
 		if resp.UpdateInterval != intervalMinutes {
-			logger.WithFields(map[string]interface{}{
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 				"config_interval": intervalMinutes,
 				"server_interval": resp.UpdateInterval,
-			}).Info("Server interval differs from config, updating config.yml")
+			})).Info("Server interval differs from config, updating config.yml")
 
 			if err := cfgManager.SetUpdateInterval(resp.UpdateInterval); err != nil {
 				logger.WithError(err).Warn("Failed to save interval to config.yml")
@@ -140,20 +140,20 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 		for integrationName, serverEnabled := range integrationResp.Integrations {
 			configEnabled := cfgManager.IsIntegrationEnabled(integrationName)
 			if serverEnabled != configEnabled {
-				logger.WithFields(map[string]interface{}{
+				logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 					"integration":  integrationName,
 					"config_value": configEnabled,
 					"server_value": serverEnabled,
-				}).Info("Integration status differs, updating config.yml")
+				})).Info("Integration status differs, updating config.yml")
 
 				if err := cfgManager.SetIntegrationEnabled(integrationName, serverEnabled); err != nil {
 					logger.WithError(err).Warn("Failed to save integration status to config.yml")
 				} else {
 					configUpdated = true
-					logger.WithFields(map[string]interface{}{
+					logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 						"integration": integrationName,
 						"enabled":     serverEnabled,
-					}).Info("Updated integration status in config.yml")
+					})).Info("Updated integration status in config.yml")
 				}
 			}
 		}
@@ -171,10 +171,10 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 				serverDockerBench = *integrationResp.ComplianceDockerBenchEnabled
 			}
 			if serverOpenscap != configOpenscap || serverDockerBench != configDockerBench {
-				logger.WithFields(map[string]interface{}{
+				logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 					"config_openscap": configOpenscap, "server_openscap": serverOpenscap,
 					"config_docker_bench": configDockerBench, "server_docker_bench": serverDockerBench,
-				}).Info("Compliance scanner toggles differ, updating config.yml")
+				})).Info("Compliance scanner toggles differ, updating config.yml")
 				if err := cfgManager.SetComplianceScanners(serverOpenscap, serverDockerBench); err != nil {
 					logger.WithError(err).Warn("Failed to save compliance scanner toggles to config.yml")
 				} else {
@@ -209,22 +209,22 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 	// Use config offset if it exists and matches calculated value, otherwise recalculate and save
 	if configOffsetSeconds > 0 && configOffsetSeconds == calculatedOffsetSeconds {
 		offset = time.Duration(configOffsetSeconds) * time.Second
-		logger.WithFields(map[string]interface{}{
+		logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 			"api_id":           apiID,
 			"interval_minutes": intervalMinutes,
 			"offset_seconds":   offset.Seconds(),
-		}).Info("Loaded report offset from config.yml")
+		})).Info("Loaded report offset from config.yml")
 	} else {
 		// Offset not in config or doesn't match, calculate and save it
 		offset = calculatedOffset
 		if err := cfgManager.SetReportOffset(calculatedOffsetSeconds); err != nil {
 			logger.WithError(err).Warn("Failed to save offset to config.yml")
 		} else {
-			logger.WithFields(map[string]interface{}{
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 				"api_id":           apiID,
 				"interval_minutes": intervalMinutes,
 				"offset_seconds":   offset.Seconds(),
-			}).Info("Calculated and saved report offset to config.yml")
+			})).Info("Calculated and saved report offset to config.yml")
 		}
 	}
 
@@ -318,11 +318,11 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 						logger.WithError(err).Warn("Failed to save offset to config.yml")
 					}
 
-					logger.WithFields(map[string]interface{}{
+					logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 						"old_interval":       currentInterval,
 						"new_interval":       m.interval,
 						"new_offset_seconds": newOffset.Seconds(),
-					}).Info("Recalculated and saved offset for new interval")
+					})).Info("Recalculated and saved offset for new interval")
 
 					// Stop old ticker
 					ticker.Stop()
@@ -960,12 +960,12 @@ func refreshDockerInventory(ctx context.Context) {
 		AgentVersion: pkgversion.Version,
 	}
 
-	logger.WithFields(map[string]interface{}{
+	logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 		"containers": len(data.Containers),
 		"images":     len(data.Images),
 		"volumes":    len(data.Volumes),
 		"networks":   len(data.Networks),
-	}).Info("Sending Docker inventory to server...")
+	})).Info("Sending Docker inventory to server...")
 
 	// Create HTTP client and send data
 	httpClient := client.New(cfgManager, logger)
@@ -978,12 +978,12 @@ func refreshDockerInventory(ctx context.Context) {
 		return
 	}
 
-	logger.WithFields(map[string]interface{}{
+	logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 		"containers": response.ContainersReceived,
 		"images":     response.ImagesReceived,
 		"volumes":    response.VolumesReceived,
 		"networks":   response.NetworksReceived,
-	}).Info("Docker inventory refresh completed successfully")
+	})).Info("Docker inventory refresh completed successfully")
 }
 
 // startIntegrationMonitoring starts real-time monitoring for integrations that support it
@@ -2193,7 +2193,7 @@ func applyConfig(cfg map[string]interface{}) error {
 	if err := cfgManager.SetComplianceScanners(openscap, dockerBench); err != nil {
 		return fmt.Errorf("set compliance scanners: %w", err)
 	}
-	logger.WithFields(map[string]interface{}{"openscap": openscap, "docker_bench": dockerBench}).Info("Compliance scanner toggles updated")
+	logger.WithFields(logutil.SanitizeMap(map[string]interface{}{"openscap": openscap, "docker_bench": dockerBench})).Info("Compliance scanner toggles updated")
 
 	logger.Info("Config updated, restarting patchmon-agent service...")
 	return restartService("", "")
@@ -3053,11 +3053,11 @@ func runDockerImageScan(imageName, containerName string, scanAllImages bool) err
 	completedMsg := fmt.Sprintf("Scan completed! Found %d CVEs across %d images", totalCVEs, len(scans))
 	sendComplianceProgress("completed", "Docker Image CVE Scan", completedMsg, 100, "")
 
-	logger.WithFields(map[string]interface{}{
+	logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 		"scans_received": response.ScansReceived,
 		"images_scanned": len(scans),
 		"cves_found":     totalCVEs,
-	}).Info("Docker image CVE scan results sent to server")
+	})).Info("Docker image CVE scan results sent to server")
 
 	return nil
 }

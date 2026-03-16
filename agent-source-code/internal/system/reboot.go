@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"patchmon-agent/internal/logutil"
 )
 
 // CheckRebootRequired checks if the system requires a reboot
@@ -43,10 +45,10 @@ func (d *Detector) CheckRebootRequired() (bool, string) {
 
 	// Universal kernel check - compare running vs latest installed
 	if runningKernel != latestKernel && latestKernel != "" {
-		d.logger.WithFields(map[string]interface{}{
+		d.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 			"running": runningKernel,
 			"latest":  latestKernel,
-		}).Debug("Reboot required: kernel version mismatch")
+		})).Debug("Reboot required: kernel version mismatch")
 		reason := fmt.Sprintf("Kernel version mismatch | Running kernel: %s, Installed kernel: %s", runningKernel, latestKernel)
 		return true, reason
 	}

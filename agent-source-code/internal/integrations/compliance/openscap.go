@@ -612,10 +612,10 @@ func (s *OpenSCAPScanner) installSSGFromGitHub() error {
 	const ssgVersion = "0.1.79"
 	const ssgURL = "https://github.com/ComplianceAsCode/content/releases/download/v" + ssgVersion + "/scap-security-guide-" + ssgVersion + ".zip"
 
-	s.logger.WithFields(map[string]interface{}{
+	s.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 		"version": ssgVersion,
 		"url":     ssgURL,
-	}).Info("Downloading SSG from GitHub...")
+	})).Info("Downloading SSG from GitHub...")
 
 	// Create temp directory
 	tmpDir, err := os.MkdirTemp("", "ssg-upgrade-")
@@ -1584,10 +1584,10 @@ func (s *OpenSCAPScanner) parseResults(resultsPath string, contentFile string, p
 	}
 
 	// Try results file first (might have embedded benchmark), then fall back to benchmark file
-	s.logger.WithFields(map[string]interface{}{
+	s.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 		"results_content_len":   len(resultsContent),
 		"benchmark_content_len": len(benchmarkContent),
-	}).Info("Starting metadata extraction")
+	})).Info("Starting metadata extraction")
 
 	ruleMetadataMap := s.extractRuleMetadata(resultsContent)
 	s.logger.WithField("rules_from_results", len(ruleMetadataMap)).Info("Extracted metadata from results file")
@@ -1680,7 +1680,7 @@ func (s *OpenSCAPScanner) parseResults(resultsPath string, contentFile string, p
 
 			// Debug logging for result assembly (only for failed rules to reduce noise)
 			if status == "fail" {
-				s.logger.WithFields(map[string]interface{}{
+				s.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 					"rule_id":         ruleID,
 					"title":           title,
 					"status":          status,
@@ -1688,7 +1688,7 @@ func (s *OpenSCAPScanner) parseResults(resultsPath string, contentFile string, p
 					"desc_len":        len(metadata.Description),
 					"has_remediation": len(metadata.Remediation) > 0,
 					"severity":        metadata.Severity,
-				}).Debug("Assembled failed rule result")
+				})).Debug("Assembled failed rule result")
 			}
 		}
 	}
@@ -1967,7 +1967,7 @@ func (s *OpenSCAPScanner) extractRuleMetadata(content string) map[string]ruleMet
 		metadata[ruleID] = meta
 
 		// Debug logging for metadata extraction verification
-		s.logger.WithFields(map[string]interface{}{
+		s.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 			"rule_id":         ruleID,
 			"title":           meta.Title,
 			"title_len":       len(meta.Title),
@@ -1976,7 +1976,7 @@ func (s *OpenSCAPScanner) extractRuleMetadata(content string) map[string]ruleMet
 			"remediation_len": len(meta.Remediation),
 			"severity":        meta.Severity,
 			"section":         meta.Section,
-		}).Debug("Extracted rule metadata")
+		})).Debug("Extracted rule metadata")
 	}
 
 	// Count rules with actual content for debugging
@@ -1995,12 +1995,12 @@ func (s *OpenSCAPScanner) extractRuleMetadata(content string) map[string]ruleMet
 		}
 	}
 
-	s.logger.WithFields(map[string]interface{}{
+	s.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 		"total_rules":      len(metadata),
 		"with_title":       withTitle,
 		"with_description": withDesc,
 		"with_remediation": withRemediation,
-	}).Info("Extracted rule metadata summary")
+	})).Info("Extracted rule metadata summary")
 
 	return metadata
 }

@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 
+	"patchmon-agent/internal/logutil"
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
@@ -400,10 +401,10 @@ $result | ConvertTo-Json -Compress -Depth 3
 		}
 		msg := outputStr[idx:end]
 		hint := wuaErrorHint(msg)
-		m.logger.WithFields(map[string]interface{}{
+		m.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 			"detail": msg,
 			"hint":   hint,
-		}).Warn("Windows Update COM API failed")
+		})).Warn("Windows Update COM API failed")
 		// Extract JSON array (Get-HotFix results) - it starts with [
 		if jsonStart := strings.Index(outputStr, "["); jsonStart >= 0 {
 			outputStr = outputStr[jsonStart:]
