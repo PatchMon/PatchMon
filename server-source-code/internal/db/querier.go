@@ -11,7 +11,7 @@ import (
 )
 
 type Querier interface {
-	ApprovePatchRun(ctx context.Context, id string) error
+	ApprovePatchRun(ctx context.Context, arg ApprovePatchRunParams) error
 	CountActiveAdmins(ctx context.Context) (int64, error)
 	CountActiveRepositories(ctx context.Context) (int32, error)
 	CountAdmins(ctx context.Context) (int64, error)

@@ -12,12 +12,14 @@ import {
 	Clock,
 	Eye,
 	RefreshCw,
+	Send,
 	Server,
 	Shield,
 	Square,
 	Terminal,
 	Wrench,
 	X,
+	Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { packagesAPI } from "../utils/api";
@@ -128,6 +130,21 @@ export default function PatchPackageMultiHostModal({
 	const [policyOverrides, setPolicyOverrides] = useState({});
 	// Per-host: which hosts have dependencies expanded in Confirm step
 	const [expandedDepsByHost, setExpandedDepsByHost] = useState({});
+	// Split button dropdown for the validate step action
+	const [splitOpen, setSplitOpen] = useState(false);
+	const splitRef = useRef(null);
+
+	// Close split dropdown on outside click
+	useEffect(() => {
+		if (!splitOpen) return;
+		const handler = (e) => {
+			if (splitRef.current && !splitRef.current.contains(e.target)) {
+				setSplitOpen(false);
+			}
+		};
+		document.addEventListener("mousedown", handler);
+		return () => document.removeEventListener("mousedown", handler);
+	}, [splitOpen]);
 
 	// Fetch all policies for the override selector (only when on confirm step)
 	const { data: allPolicies } = useQuery({
@@ -223,7 +240,7 @@ export default function PatchPackageMultiHostModal({
 					override ? { schedule_override: override } : {},
 				);
 			}
-			onSuccess?.();
+			onSuccess?.("patch");
 			onClose();
 		} catch (err) {
 			setError(err.response?.data?.error || err.message);
@@ -866,14 +883,51 @@ export default function PatchPackageMultiHostModal({
 									</button>
 								)}
 								{validationDone && !isValidating && (
-									<button
-										type="button"
-										onClick={() => setStep(2)}
-										className="btn-primary inline-flex items-center gap-1.5"
-									>
-										Continue
-										<ArrowRight className="h-4 w-4" />
-									</button>
+									<div ref={splitRef} className="relative flex">
+										{/* Primary action: Queue & patch now (go to confirm step) */}
+										<button
+											type="button"
+											onClick={() => setStep(2)}
+											className="btn-primary inline-flex items-center gap-1.5 rounded-r-none border-r border-primary-700"
+										>
+											<Zap className="h-4 w-4" />
+											Queue &amp; patch now
+										</button>
+										{/* Dropdown toggle */}
+										<button
+											type="button"
+											onClick={() => setSplitOpen((o) => !o)}
+											className="btn-primary px-2 rounded-l-none"
+											aria-label="More options"
+										>
+											<ChevronDown className="h-4 w-4" />
+										</button>
+										{/* Dropdown menu */}
+										{splitOpen && (
+											<div className="absolute right-0 bottom-full mb-1 w-56 rounded-lg border border-secondary-200 dark:border-secondary-600 bg-white dark:bg-secondary-800 shadow-lg z-20 py-1">
+												<button
+													type="button"
+													className="w-full flex items-center gap-2 px-3 py-2 text-sm text-secondary-700 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700"
+													onClick={() => {
+														setSplitOpen(false);
+														onSuccess?.("approval");
+														onClose();
+													}}
+												>
+													<Send className="h-4 w-4 shrink-0 text-amber-500" />
+													<span>
+														<span className="font-medium block">
+															Submit for approval
+														</span>
+														<span className="text-xs text-secondary-500 dark:text-secondary-400">
+															Leave pending — approve later from Runs &amp;
+															History
+														</span>
+													</span>
+												</button>
+											</div>
+										)}
+									</div>
 								)}
 								{!canValidate && !validationDone && (
 									<button
@@ -898,12 +952,12 @@ export default function PatchPackageMultiHostModal({
 								{isPatching ? (
 									<>
 										<RefreshCw className="h-4 w-4 animate-spin" />
-										Patching…
+										Queuing…
 									</>
 								) : (
 									<>
-										<Check className="h-4 w-4" />
-										Patch {selectedHostIds.size} host
+										<Zap className="h-4 w-4" />
+										Queue &amp; patch {selectedHostIds.size} host
 										{selectedHostIds.size !== 1 ? "s" : ""}
 									</>
 								)}

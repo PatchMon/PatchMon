@@ -286,7 +286,11 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Only validated runs can be approved"})
 		return
 	}
-	if err := h.patchRuns.ApproveRun(r.Context(), id); err != nil {
+	var approvedBy *string
+	if userID, _ := r.Context().Value(middleware.UserIDKey).(string); userID != "" {
+		approvedBy = &userID
+	}
+	if err := h.patchRuns.ApproveRun(r.Context(), id, approvedBy); err != nil {
 		h.log.Error("patching: approve run error", "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to approve run"})
 		return
@@ -827,6 +831,7 @@ func patchRunToResponse(r *db.GetPatchRunByIDRow) map[string]interface{} {
 		"created_at":            pgTimeToISO(r.CreatedAt),
 		"updated_at":            pgTimeToISO(r.UpdatedAt),
 		"triggered_by_username": r.TriggeredByUsername,
+		"approved_by_username":  r.ApprovedByUsername,
 		"dry_run":               r.DryRun,
 	}
 	if len(r.PackageNames) > 0 {

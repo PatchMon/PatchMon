@@ -412,6 +412,7 @@ type PatchRun struct {
 	CompletedAt       pgtype.Timestamp `json:"completed_at"`
 	ScheduledAt       pgtype.Timestamp `json:"scheduled_at"`
 	TriggeredByUserID *string          `json:"triggered_by_user_id"`
+	ApprovedByUserID  *string          `json:"approved_by_user_id"`
 	DryRun            bool             `json:"dry_run"`
 	PackagesAffected  []byte           `json:"packages_affected"`
 	CreatedAt         pgtype.Timestamp `json:"created_at"`

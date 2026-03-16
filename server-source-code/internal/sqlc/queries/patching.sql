@@ -7,16 +7,17 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW());
 UPDATE patch_runs SET status = 'validated', shell_output = shell_output || $2, packages_affected = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1;
 
 -- name: ApprovePatchRun :exec
-UPDATE patch_runs SET status = 'queued', updated_at = NOW() WHERE id = $1 AND status = 'validated';
+UPDATE patch_runs SET status = 'queued', approved_by_user_id = $2, updated_at = NOW() WHERE id = $1 AND status = 'validated';
 
 -- name: UpdatePatchRunPackagesAffected :exec
 UPDATE patch_runs SET packages_affected = $2, updated_at = NOW() WHERE id = $1;
 
 -- name: GetPatchRunByID :one
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username, au.username AS approved_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
+LEFT JOIN users au ON pr.approved_by_user_id = au.id
 WHERE pr.id = $1;
 
 -- name: GetPatchRunByIDSimple :one

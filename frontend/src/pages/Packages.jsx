@@ -1243,11 +1243,16 @@ const Packages = () => {
 					isOpen={showPatchPackageMultiHostModal}
 					onClose={() => setShowPatchPackageMultiHostModal(false)}
 					packageNames={selectedPackages}
-					onSuccess={() => {
+					onSuccess={(mode) => {
 						setSelectedPackages([]);
+						setShowPatchPackageMultiHostModal(false);
 						queryClient.invalidateQueries(["patching-dashboard"]);
 						queryClient.invalidateQueries(["patching-runs"]);
-						toast.success("Patch queued. View progress in Patching.");
+						if (mode === "approval") {
+							navigate("/patching?tab=runs&status=validated");
+						} else {
+							navigate("/patching?tab=runs");
+						}
 					}}
 				/>
 			)}

@@ -48,6 +48,7 @@ const Login = () => {
 	const [showGithubVersionOnLogin, setShowGithubVersionOnLogin] =
 		useState(null);
 	const [latestRelease, setLatestRelease] = useState(null);
+	const [currentVersion, setCurrentVersion] = useState(null);
 	const [_githubStars, setGithubStars] = useState(null);
 	const [oidcConfig, setOidcConfig] = useState({
 		enabled: false,
@@ -173,6 +174,9 @@ const Login = () => {
 					setShowGithubVersionOnLogin(
 						data.show_github_version_on_login !== false,
 					);
+					if (data.current_version) {
+						setCurrentVersion(data.current_version);
+					}
 					if (data.discord) {
 						setDiscordConfig(data.discord);
 					}
@@ -613,10 +617,44 @@ const Login = () => {
 									<div className="space-y-4 bg-black/20 backdrop-blur-sm rounded-lg p-6 border border-white/10">
 										<div className="flex items-center gap-3">
 											<div className="flex items-center gap-2">
-												<div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-												<span className="text-green-300 text-sm font-semibold">
-													Latest Release
-												</span>
+												{(() => {
+													// Normalise versions for comparison (strip leading "v")
+													const strip = (v) =>
+														v ? v.replace(/^v/i, "").trim() : "";
+													const installed = strip(currentVersion);
+													const latest = strip(latestRelease.version);
+													const isUpdateAvailable =
+														installed && latest && installed !== latest;
+													if (isUpdateAvailable) {
+														return (
+															<>
+																<div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
+																<span className="text-amber-300 text-sm font-semibold">
+																	Update Available
+																</span>
+															</>
+														);
+													}
+													if (installed && latest && installed === latest) {
+														return (
+															<>
+																<div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+																<span className="text-green-300 text-sm font-semibold">
+																	You&apos;re on Latest
+																</span>
+															</>
+														);
+													}
+													// installed version unknown — fall back to neutral label
+													return (
+														<>
+															<div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+															<span className="text-green-300 text-sm font-semibold">
+																Latest Release
+															</span>
+														</>
+													);
+												})()}
 											</div>
 											<span className="text-2xl font-bold text-white">
 												{latestRelease.version}

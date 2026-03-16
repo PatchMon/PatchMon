@@ -245,9 +245,14 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 				hasAdminUsers = count > 0
 			}
 		}
+		currentVersion := ""
+		if h.cfg != nil {
+			currentVersion = h.cfg.Version
+		}
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"signup_enabled":               false,
 			"show_github_version_on_login": true,
+			"current_version":              currentVersion,
 			"discord": map[string]interface{}{
 				"enabled":    false,
 				"buttonText": "Login with Discord",
@@ -276,9 +281,15 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	currentVersion := ""
+	if h.cfg != nil {
+		currentVersion = h.cfg.Version
+	}
+
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"signup_enabled":               s.SignupEnabled,
 		"show_github_version_on_login": s.ShowGithubVersionOnLogin,
+		"current_version":              currentVersion,
 		"discord": map[string]interface{}{
 			"enabled":    h.isDiscordProperlyConfigured(s),
 			"buttonText": discordButtonText,

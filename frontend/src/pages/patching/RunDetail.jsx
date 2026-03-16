@@ -148,6 +148,17 @@ const RunDetail = () => {
 							{run.triggered_by_username || "—"}
 						</span>
 					</div>
+					{run.approved_by_username && (
+						<div className="flex items-center gap-2">
+							<User className="h-4 w-4 text-secondary-500" />
+							<span className="text-secondary-500 dark:text-secondary-400">
+								Approved by{" "}
+							</span>
+							<span className="text-secondary-900 dark:text-white">
+								{run.approved_by_username}
+							</span>
+						</div>
+					)}
 					<div>
 						<span className="text-secondary-500 dark:text-secondary-400">
 							Started{" "}

@@ -13,7 +13,7 @@ import {
 	XCircle,
 } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { PackageListDisplay } from "../components/PackageListDisplay";
 import { PatchRunStatusBadge } from "../components/PatchRunStatusBadge";
 import { patchingAPI } from "../utils/patchingApi";
@@ -31,8 +31,11 @@ const ValidatedBadge = () => (
 );
 
 const Patching = () => {
-	const [activeTab, setActiveTab] = useState("overview");
-	const [runsFilterStatus, setRunsFilterStatus] = useState("");
+	const [searchParams] = useSearchParams();
+	const initialTab = searchParams.get("tab") === "runs" ? "runs" : "overview";
+	const initialStatus = searchParams.get("status") || "";
+	const [activeTab, setActiveTab] = useState(initialTab);
+	const [runsFilterStatus, setRunsFilterStatus] = useState(initialStatus);
 	const [runsPage, setRunsPage] = useState(1);
 	const runsLimit = 25;
 	const queryClient = useQueryClient();

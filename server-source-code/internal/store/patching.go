@@ -150,9 +150,12 @@ func (s *PatchRunsStore) UpdateStatus(ctx context.Context, id, status string) er
 }
 
 // ApproveRun transitions a validated dry-run to queued so it can be executed.
-func (s *PatchRunsStore) ApproveRun(ctx context.Context, id string) error {
+func (s *PatchRunsStore) ApproveRun(ctx context.Context, id string, approvedByUserID *string) error {
 	d := s.db.DB(ctx)
-	return d.Queries.ApprovePatchRun(ctx, id)
+	return d.Queries.ApprovePatchRun(ctx, db.ApprovePatchRunParams{
+		ID:               id,
+		ApprovedByUserID: approvedByUserID,
+	})
 }
 
 // List returns paginated patch runs with optional filters and sort.
