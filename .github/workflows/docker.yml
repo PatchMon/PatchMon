@@ -33,19 +33,19 @@ jobs:
     runs-on: ubuntu-latest
     # Same-repo PRs: always run. Fork PRs: run only when maintainer adds "approved-for-build" label.
     if: |
-      github.event_name != 'pull_request' ||
+      github.event_name != 'pull_request_target' ||
       github.event.pull_request.head.repo.full_name == github.repository ||
       contains(join(github.event.pull_request.labels.*.name, ', '), 'approved-for-build')
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref }}
 
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
-          go-version-file: 'agent-source-code/go.mod'
+          go-version: '1.26.1'
 
       - name: Build all agent binaries
         working-directory: agent-source-code
@@ -81,7 +81,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref }}
 
       - name: Download agent binaries
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -89,7 +89,8 @@ jobs:
           name: agent-binaries
           path: agents-prebuilt/
 
-      - name: Log in to container registry
+      - name: Log in to container registry (GHCR)
+        if: github.event_name != 'pull_request_target'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ${{ env.REGISTRY }}
@@ -97,7 +98,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Harbor
-        if: github.event_name == 'pull_request'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ${{ env.HARBOR_REGISTRY }}
@@ -112,20 +112,20 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
-      - name: Extract metadata (tags, labels)
+      - name: Extract metadata (tags, labels) for GHCR
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}-server
           tags: |
-            type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=edge,branch=main
 
-      - name: Build and push server image
+      - name: Build and push server image to GHCR (main/tags only)
         id: build
+        if: github.event_name != 'pull_request_target'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
@@ -133,18 +133,35 @@ jobs:
           platforms: linux/amd64,linux/arm64
           build-args: |
             VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
-          # Push if: (not workflow_dispatch or push input) AND (not PR or same-repo PR [GHCR] or any PR [Harbor])
-          push: ${{ (github.event_name != 'workflow_dispatch' || inputs.push == 'true') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository || true) }}
+          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,mode=max,scope=server
+          provenance: false
+
+      - name: Build and push server image to Harbor (PRs and main)
+        id: build-harbor
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: docker/server.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
           tags: |
-            ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && steps.meta.outputs.tags || '' }}
-            ${{ github.event_name == 'pull_request' && format('{0}/pr/patchmon-server:pr-{1}', env.HARBOR_REGISTRY, github.event.pull_request.number) || '' }}
+            ${{ github.event_name == 'pull_request_target' && format('{0}/pr/patchmon-server:pr-{1}', env.HARBOR_REGISTRY, github.event.pull_request.number) || '' }}
+            ${{ github.event_name != 'pull_request_target' && format('{0}/patchmon-server:edge', env.HARBOR_REGISTRY) || '' }}
+            ${{ github.ref_type == 'tag' && format('{0}/patchmon-server:{1}', env.HARBOR_REGISTRY, github.ref_name) || '' }}
+            ${{ github.ref_type == 'tag' && format('{0}/patchmon-server:latest', env.HARBOR_REGISTRY) || '' }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=server
           cache-to: type=gha,mode=max,scope=server
           provenance: false
 
       - name: Comment on PR with image URL
-        if: github.event_name == 'pull_request' && steps.build.outputs.digest != ''
+        if: github.event_name == 'pull_request_target' && steps.build-harbor.outputs.digest != ''
         uses: peter-evans/create-or-update-comment@71345be0265236311c031f5c7866368bd1eff043
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -156,7 +173,7 @@ jobs:
             Image built and pushed to Harbor:
 
             - **Image:** `${{ env.HARBOR_REGISTRY }}/pr/patchmon-server:pr-${{ github.event.pull_request.number }}`
-            - **Digest:** `${{ env.HARBOR_REGISTRY }}/pr/patchmon-server@${{ steps.build.outputs.digest }}`
+            - **Digest:** `${{ env.HARBOR_REGISTRY }}/pr/patchmon-server@${{ steps.build-harbor.outputs.digest }}`
 
             Use in your `docker-compose.yml`:
 
@@ -172,4 +189,4 @@ jobs:
             services:
               patchmon-server:
                 image: ${{ env.HARBOR_REGISTRY }}/pr/patchmon-server@${{ steps.build.outputs.digest }}
-            ```
+            ``
