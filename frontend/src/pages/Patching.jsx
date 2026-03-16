@@ -6,7 +6,6 @@ import {
 	History,
 	LayoutDashboard,
 	ListChecks,
-	Package,
 	PlayCircle,
 	RefreshCw,
 	Server,
@@ -15,6 +14,8 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { PackageListDisplay } from "../components/PackageListDisplay";
+import { PatchRunStatusBadge } from "../components/PatchRunStatusBadge";
 import { patchingAPI } from "../utils/patchingApi";
 
 const PATCHING_TABS = [
@@ -22,103 +23,12 @@ const PATCHING_TABS = [
 	{ id: "runs", label: "Runs & History", icon: History },
 ];
 
-const statusBadge = (status) => {
-	const map = {
-		queued: {
-			class:
-				"bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200",
-			label: "Queued",
-		},
-		pending_validation: {
-			class:
-				"bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
-			label: "Pending validation",
-		},
-		validated: {
-			class:
-				"bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200",
-			label: "Validated",
-		},
-		scheduled: {
-			class:
-				"bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200",
-			label: "Scheduled",
-		},
-		running: {
-			class: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-			label: "Running",
-		},
-		completed: {
-			class:
-				"bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-			label: "Completed",
-		},
-		failed: {
-			class: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
-			label: "Failed",
-		},
-		cancelled: {
-			class:
-				"bg-secondary-100 text-secondary-600 dark:bg-secondary-600 dark:text-secondary-200",
-			label: "Cancelled",
-		},
-	};
-	const s = map[status] || {
-		class: "bg-secondary-100 text-secondary-800",
-		label: status,
-	};
-	return (
-		<span
-			className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${s.class}`}
-		>
-			{s.label}
-		</span>
-	);
-};
-
 const ValidatedBadge = () => (
 	<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
 		<AlertTriangle className="h-3 w-3" />
 		Extra deps
 	</span>
 );
-
-// PackageDisplay shows requested packages and dependencies if available
-const PackageDisplay = ({ run }) => {
-	if (run.patch_type !== "patch_package") {
-		return "Patch all";
-	}
-
-	const requested =
-		Array.isArray(run.package_names) && run.package_names.length > 0
-			? run.package_names
-			: run.package_name
-				? [run.package_name]
-				: [];
-	const requestedSet = new Set(requested.map((n) => n.toLowerCase()));
-
-	// Find extra dependencies (packages in packages_affected that aren't in requested)
-	const extraDeps =
-		run.packages_affected?.filter((p) => !requestedSet.has(p.toLowerCase())) ||
-		[];
-
-	if (requested.length === 0) {
-		return "—";
-	}
-
-	return (
-		<span className="flex items-center gap-1 flex-wrap">
-			<Package className="h-4 w-4 shrink-0" />
-			<span>{requested.join(", ")}</span>
-			{extraDeps.length > 0 && (
-				<span className="text-xs text-amber-600 dark:text-amber-400">
-					(+ {extraDeps.length} dep{extraDeps.length !== 1 ? "s" : ""}:{" "}
-					{extraDeps.join(", ")})
-				</span>
-			)}
-		</span>
-	);
-};
 
 const Patching = () => {
 	const [activeTab, setActiveTab] = useState("overview");
@@ -362,22 +272,12 @@ const Patching = () => {
 																run.hosts?.hostname ||
 																run.host_id}
 														</td>
-														<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
-															{run.patch_type === "patch_package" ? (
-																<span className="flex items-center gap-1">
-																	<Package className="h-4 w-4" />{" "}
-																	{Array.isArray(run.package_names) &&
-																	run.package_names.length > 0
-																		? run.package_names.join(", ")
-																		: run.package_name || "—"}
-																</span>
-															) : (
-																"Patch all"
-															)}
+														<td className="px-4 py-2 text-sm text-secondary-900 dark:text-white">
+															<PackageListDisplay run={run} />
 														</td>
 														<td className="px-4 py-2 whitespace-nowrap">
 															<div className="flex items-center gap-1 flex-wrap">
-																{statusBadge(run.status)}
+																<PatchRunStatusBadge run={run} />
 																{run.status === "validated" &&
 																	run.packages_affected?.length >
 																		(run.package_names?.length || 1) && (
@@ -479,22 +379,12 @@ const Patching = () => {
 																run.hosts?.hostname ||
 																run.host_id}
 														</td>
-														<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
-															{run.patch_type === "patch_package" ? (
-																<span className="flex items-center gap-1">
-																	<Package className="h-4 w-4" />{" "}
-																	{Array.isArray(run.package_names) &&
-																	run.package_names.length > 0
-																		? run.package_names.join(", ")
-																		: run.package_name || "—"}
-																</span>
-															) : (
-																"Patch all"
-															)}
+														<td className="px-4 py-2 text-sm text-secondary-900 dark:text-white">
+															<PackageListDisplay run={run} />
 														</td>
 														<td className="px-4 py-2 whitespace-nowrap">
 															<div className="flex items-center gap-1 flex-wrap">
-																{statusBadge(run.status)}
+																<PatchRunStatusBadge run={run} />
 																{run.status === "validated" &&
 																	run.packages_affected?.length >
 																		(run.package_names?.length || 1) && (
@@ -620,12 +510,12 @@ const Patching = () => {
 															run.hosts?.hostname ||
 															run.host_id}
 													</td>
-													<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
-														<PackageDisplay run={run} />
+													<td className="px-4 py-2 text-sm text-secondary-900 dark:text-white">
+														<PackageListDisplay run={run} />
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap">
 														<div className="flex items-center gap-1 flex-wrap">
-															{statusBadge(run.status)}
+															<PatchRunStatusBadge run={run} />
 															{run.status === "validated" &&
 																run.packages_affected?.length >
 																	(run.package_names?.length || 1) && (

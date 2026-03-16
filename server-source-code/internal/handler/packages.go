@@ -140,6 +140,32 @@ func (h *PackagesHandler) GetHosts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetActivity handles GET /packages/:packageId/activity.
+func (h *PackagesHandler) GetActivity(w http.ResponseWriter, r *http.Request) {
+	packageID := chi.URLParam(r, "packageId")
+	if packageID == "" {
+		Error(w, http.StatusBadRequest, "packageId is required")
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	activities, err := h.packages.GetActivity(r.Context(), packageID, limit, offset)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to fetch package activity")
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{"activities": activities})
+}
+
 // GetCategories handles GET /packages/categories/list.
 func (h *PackagesHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
 	cats, err := h.packages.GetCategories(r.Context())

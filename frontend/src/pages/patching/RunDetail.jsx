@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	ArrowLeft,
-	Package,
 	PlayCircle,
 	RefreshCw,
 	Server,
@@ -10,61 +9,12 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import {
+	PackageListDisplay,
+	PackageNameList,
+} from "../../components/PackageListDisplay";
+import { PatchRunStatusBadge } from "../../components/PatchRunStatusBadge";
 import { patchingAPI } from "../../utils/patchingApi";
-
-const statusBadge = (status) => {
-	const map = {
-		queued: {
-			class:
-				"bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200",
-			label: "Queued",
-		},
-		pending_validation: {
-			class:
-				"bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
-			label: "Pending validation",
-		},
-		validated: {
-			class:
-				"bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200",
-			label: "Validated",
-		},
-		scheduled: {
-			class:
-				"bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200",
-			label: "Scheduled",
-		},
-		running: {
-			class: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-			label: "Running",
-		},
-		completed: {
-			class:
-				"bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-			label: "Completed",
-		},
-		failed: {
-			class: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
-			label: "Failed",
-		},
-		cancelled: {
-			class:
-				"bg-secondary-100 text-secondary-600 dark:bg-secondary-600 dark:text-secondary-200",
-			label: "Cancelled",
-		},
-	};
-	const s = map[status] || {
-		class: "bg-secondary-100 text-secondary-800",
-		label: status,
-	};
-	return (
-		<span
-			className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${s.class}`}
-		>
-			{s.label}
-		</span>
-	);
-};
 
 const RunDetail = () => {
 	const { id } = useParams();
@@ -171,25 +121,15 @@ const RunDetail = () => {
 						<span className="text-secondary-500 dark:text-secondary-400">
 							Type
 						</span>
-						{run.patch_type === "patch_package" ? (
-							<span className="flex items-center gap-1 text-secondary-900 dark:text-white flex-wrap">
-								<Package className="h-4 w-4 shrink-0" />
-								{Array.isArray(run.package_names) &&
-								run.package_names.length > 0
-									? `${run.package_names.length} package(s): ${run.package_names.join(", ")}`
-									: run.package_name || "—"}
-							</span>
-						) : (
-							<span className="text-secondary-900 dark:text-white">
-								Patch all
-							</span>
-						)}
+						<span className="text-secondary-900 dark:text-white">
+							<PackageListDisplay run={run} />
+						</span>
 					</div>
 					<div className="flex items-center gap-2 flex-wrap">
 						<span className="text-secondary-500 dark:text-secondary-400">
 							Status{" "}
 						</span>
-						{statusBadge(run.status)}
+						<PatchRunStatusBadge run={run} />
 						{run.status === "validated" &&
 							run.packages_affected?.length >
 								(run.package_names?.length || 1) && (
@@ -220,6 +160,16 @@ const RunDetail = () => {
 									: "—"}
 						</span>
 					</div>
+					{run.status === "queued" && run.scheduled_at && (
+						<div>
+							<span className="text-secondary-500 dark:text-secondary-400">
+								Scheduled for{" "}
+							</span>
+							<span className="text-secondary-900 dark:text-white">
+								{new Date(run.scheduled_at).toLocaleString()}
+							</span>
+						</div>
+					)}
 					<div>
 						<span className="text-secondary-500 dark:text-secondary-400">
 							Completed{" "}
@@ -279,32 +229,12 @@ const RunDetail = () => {
 							<span className="text-secondary-500 dark:text-secondary-400">
 								Packages affected{" "}
 							</span>
-							<ul className="mt-1 text-sm text-secondary-700 dark:text-secondary-300 list-disc list-inside max-h-32 overflow-y-auto">
-								{run.packages_affected.map((p) => {
-									const requested = new Set(
-										(
-											run.package_names ||
-											(run.package_name ? [run.package_name] : [])
-										).map((n) => n.toLowerCase()),
-									);
-									const isExtra = !requested.has(p.toLowerCase());
-									return (
-										<li
-											key={p}
-											className={
-												isExtra ? "text-amber-600 dark:text-amber-400" : ""
-											}
-										>
-											{p}
-											{isExtra && (
-												<span className="ml-1 text-xs text-amber-500 dark:text-amber-400">
-													(dependency)
-												</span>
-											)}
-										</li>
-									);
-								})}
-							</ul>
+							<div className="mt-1 text-sm text-secondary-700 dark:text-secondary-300">
+								<PackageNameList
+									packages={run.packages_affected}
+									showIcon={false}
+								/>
+							</div>
 						</div>
 					)}
 				</dl>

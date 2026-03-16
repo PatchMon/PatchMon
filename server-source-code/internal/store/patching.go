@@ -13,6 +13,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // parsePackagesAffectedFromAptOutput extracts package names from apt/apt-get -s output.
@@ -52,7 +53,8 @@ func NewPatchRunsStore(db database.DBProvider) *PatchRunsStore {
 // CreateRun creates a new patch run. If id is empty, a new UUID is generated.
 // triggeredByUserID is the user who initiated the run (optional; nil for agent/system).
 // dryRun when true creates a validation-only run with status "pending_validation".
-func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patchType string, packageName *string, packageNames []string, triggeredByUserID *string, dryRun bool) (string, error) {
+// scheduledAt is when the patch will run (optional; nil for immediate runs).
+func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patchType string, packageName *string, packageNames []string, triggeredByUserID *string, dryRun bool, scheduledAt *time.Time) (string, error) {
 	if id == "" {
 		id = uuid.New().String()
 	}
@@ -68,6 +70,10 @@ func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patch
 	if dryRun {
 		status = "pending_validation"
 	}
+	var sched pgtype.Timestamp
+	if scheduledAt != nil {
+		sched = pgtype.Timestamp{Time: *scheduledAt, Valid: true}
+	}
 	d := s.db.DB(ctx)
 	err := d.Queries.CreatePatchRun(ctx, db.CreatePatchRunParams{
 		ID:                id,
@@ -80,6 +86,7 @@ func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patch
 		ShellOutput:       "",
 		TriggeredByUserID: triggeredByUserID,
 		DryRun:            dryRun,
+		ScheduledAt:       sched,
 	})
 	return id, err
 }
@@ -236,6 +243,7 @@ func convertStartedAtRows(r []db.ListPatchRunsOrderByStartedAtRow) []db.ListPatc
 			ErrorMessage:        r[i].ErrorMessage,
 			StartedAt:           r[i].StartedAt,
 			CompletedAt:         r[i].CompletedAt,
+			ScheduledAt:         r[i].ScheduledAt,
 			TriggeredByUserID:   r[i].TriggeredByUserID,
 			CreatedAt:           r[i].CreatedAt,
 			UpdatedAt:           r[i].UpdatedAt,
@@ -262,6 +270,7 @@ func convertStartedAtAscRows(r []db.ListPatchRunsOrderByStartedAtAscRow) []db.Li
 			ErrorMessage:        r[i].ErrorMessage,
 			StartedAt:           r[i].StartedAt,
 			CompletedAt:         r[i].CompletedAt,
+			ScheduledAt:         r[i].ScheduledAt,
 			TriggeredByUserID:   r[i].TriggeredByUserID,
 			CreatedAt:           r[i].CreatedAt,
 			UpdatedAt:           r[i].UpdatedAt,
@@ -288,6 +297,7 @@ func convertCompletedAtRows(r []db.ListPatchRunsOrderByCompletedAtRow) []db.List
 			ErrorMessage:        r[i].ErrorMessage,
 			StartedAt:           r[i].StartedAt,
 			CompletedAt:         r[i].CompletedAt,
+			ScheduledAt:         r[i].ScheduledAt,
 			TriggeredByUserID:   r[i].TriggeredByUserID,
 			CreatedAt:           r[i].CreatedAt,
 			UpdatedAt:           r[i].UpdatedAt,
@@ -314,6 +324,7 @@ func convertCompletedAtAscRows(r []db.ListPatchRunsOrderByCompletedAtAscRow) []d
 			ErrorMessage:        r[i].ErrorMessage,
 			StartedAt:           r[i].StartedAt,
 			CompletedAt:         r[i].CompletedAt,
+			ScheduledAt:         r[i].ScheduledAt,
 			TriggeredByUserID:   r[i].TriggeredByUserID,
 			CreatedAt:           r[i].CreatedAt,
 			UpdatedAt:           r[i].UpdatedAt,
@@ -340,6 +351,7 @@ func convertStatusRows(r []db.ListPatchRunsOrderByStatusRow) []db.ListPatchRunsR
 			ErrorMessage:        r[i].ErrorMessage,
 			StartedAt:           r[i].StartedAt,
 			CompletedAt:         r[i].CompletedAt,
+			ScheduledAt:         r[i].ScheduledAt,
 			TriggeredByUserID:   r[i].TriggeredByUserID,
 			CreatedAt:           r[i].CreatedAt,
 			UpdatedAt:           r[i].UpdatedAt,
@@ -366,6 +378,7 @@ func convertStatusDescRows(r []db.ListPatchRunsOrderByStatusDescRow) []db.ListPa
 			ErrorMessage:        r[i].ErrorMessage,
 			StartedAt:           r[i].StartedAt,
 			CompletedAt:         r[i].CompletedAt,
+			ScheduledAt:         r[i].ScheduledAt,
 			TriggeredByUserID:   r[i].TriggeredByUserID,
 			CreatedAt:           r[i].CreatedAt,
 			UpdatedAt:           r[i].UpdatedAt,
@@ -392,6 +405,7 @@ func convertCreatedAtAscRows(r []db.ListPatchRunsOrderByCreatedAtAscRow) []db.Li
 			ErrorMessage:        r[i].ErrorMessage,
 			StartedAt:           r[i].StartedAt,
 			CompletedAt:         r[i].CompletedAt,
+			ScheduledAt:         r[i].ScheduledAt,
 			TriggeredByUserID:   r[i].TriggeredByUserID,
 			CreatedAt:           r[i].CreatedAt,
 			UpdatedAt:           r[i].UpdatedAt,

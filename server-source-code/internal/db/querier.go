@@ -260,6 +260,7 @@ type Querier interface {
 	// patch_policy_exclusions
 	ListPatchPolicyExclusions(ctx context.Context, patchPolicyID string) ([]ListPatchPolicyExclusionsRow, error)
 	ListPatchRuns(ctx context.Context, arg ListPatchRunsParams) ([]ListPatchRunsRow, error)
+	ListPatchRunsByPackage(ctx context.Context, arg ListPatchRunsByPackageParams) ([]ListPatchRunsByPackageRow, error)
 	ListPatchRunsByStatus(ctx context.Context) ([]ListPatchRunsByStatusRow, error)
 	ListPatchRunsOrderByCompletedAt(ctx context.Context, arg ListPatchRunsOrderByCompletedAtParams) ([]ListPatchRunsOrderByCompletedAtRow, error)
 	ListPatchRunsOrderByCompletedAtAsc(ctx context.Context, arg ListPatchRunsOrderByCompletedAtAscParams) ([]ListPatchRunsOrderByCompletedAtAscRow, error)

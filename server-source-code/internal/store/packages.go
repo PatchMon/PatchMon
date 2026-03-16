@@ -211,14 +211,24 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 }
 
 // GetByID returns a package by ID with host_packages, stats, and distributions.
+// Supports lookup by package ID (UUID) or by package name for links from patch runs.
 func (s *PackagesStore) GetByID(ctx context.Context, id string) (*PackageDetail, error) {
 	d := s.db.DB(ctx)
 	pkg, err := d.Queries.GetPackageByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
+			// Fallback: try lookup by name (e.g. /packages/bindutils from patch run links)
+			pkgByName, errByName := d.Queries.GetPackageByName(ctx, id)
+			if errByName != nil {
+				return nil, nil
+			}
+			pkg = pkgByName
+			id = pkg.ID
+		} else {
+			return nil, err
 		}
-		return nil, err
+	} else {
+		id = pkg.ID
 	}
 
 	rows, err := d.Queries.GetHostPackagesWithHostsByPackageID(ctx, id)
@@ -437,6 +447,56 @@ func (s *PackagesStore) GetHosts(ctx context.Context, packageIDOrName string, p 
 		}
 	}
 	return out, int(total), nil
+}
+
+// PackageActivityEntry is a completed patch run where the package was upgraded.
+type PackageActivityEntry struct {
+	RunID            string    `json:"run_id"`
+	HostID           string    `json:"host_id"`
+	HostFriendlyName string    `json:"host_friendly_name"`
+	CompletedAt      time.Time `json:"completed_at"`
+}
+
+// GetActivity returns completed patch runs where the package was upgraded.
+// packageIDOrName can be package ID (UUID) or package name.
+func (s *PackagesStore) GetActivity(ctx context.Context, packageIDOrName string, limit, offset int) ([]PackageActivityEntry, error) {
+	d := s.db.DB(ctx)
+	// Resolve package name
+	var pkgName string
+	if pkg, err := d.Queries.GetPackageByID(ctx, packageIDOrName); err == nil {
+		pkgName = pkg.Name
+	} else if pkg, err := d.Queries.GetPackageByName(ctx, packageIDOrName); err == nil {
+		pkgName = pkg.Name
+	} else {
+		return nil, nil
+	}
+
+	rows, err := d.Queries.ListPatchRunsByPackage(ctx, db.ListPatchRunsByPackageParams{
+		PackageName: &pkgName,
+		LimitArg:    safeconv.ClampToInt32(limit),
+		OffsetArg:   safeconv.ClampToInt32(offset),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]PackageActivityEntry, len(rows))
+	for i, r := range rows {
+		hostName := ""
+		if r.HostFriendlyName != nil {
+			hostName = *r.HostFriendlyName
+		}
+		if hostName == "" && r.HostHostname != nil {
+			hostName = *r.HostHostname
+		}
+		out[i] = PackageActivityEntry{
+			RunID:            r.ID,
+			HostID:           r.HostID,
+			HostFriendlyName: hostName,
+			CompletedAt:      pgTime(r.CompletedAt),
+		}
+	}
+	return out, nil
 }
 
 // GetCategories returns distinct package categories.

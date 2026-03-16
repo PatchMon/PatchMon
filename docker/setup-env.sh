@@ -141,6 +141,10 @@ if [ ${#cors_origins[@]} -eq 0 ]; then
 fi
 
 # Main URL prompt
+echo "PatchMon runs on port 3000 by default. Include the port in your URL unless you are"
+echo "terminating it at a reverse proxy on a standard port (e.g. https://patchmon.example.com)."
+echo "Examples:  http://192.168.1.10:3000   https://patchmon.local:3000   https://patchmon.example.com"
+echo ""
 read -r -p "What URL will you use to access PatchMon? [http://localhost:3000]: " input_url
 if [ -n "$input_url" ]; then
   cors_origins=("$input_url")

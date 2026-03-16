@@ -5,6 +5,7 @@ import {
 	Calendar,
 	ChevronRight,
 	Download,
+	History,
 	Info,
 	Package,
 	RefreshCw,
@@ -15,7 +16,7 @@ import {
 	Wrench,
 } from "lucide-react";
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import PatchConfirmModal from "../components/PatchConfirmModal";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
@@ -29,6 +30,7 @@ const PackageDetail = () => {
 	const queryClient = useQueryClient();
 	const toast = useToast();
 	const { canManageHosts } = useAuth();
+	const [activeTab, setActiveTab] = useState("hosts");
 	const [searchTerm, setSearchTerm] = useState("");
 	const [currentPage, setCurrentPage] = useState(1);
 	const [pageSize, setPageSize] = useState(25);
@@ -92,7 +94,16 @@ const PackageDetail = () => {
 		enabled: !!decodedPackageId,
 	});
 
+	// Fetch package activity (completed patch runs where this package was upgraded)
+	const { data: activityData } = useQuery({
+		queryKey: ["package-activity", decodedPackageId],
+		queryFn: () => packagesAPI.getActivity(decodedPackageId, { limit: 50 }),
+		staleTime: 60 * 1000,
+		enabled: !!decodedPackageId && activeTab === "activity",
+	});
+
 	const hosts = hostsData?.hosts || [];
+	const activities = activityData?.activities || [];
 	const pagination = hostsData?.pagination || {};
 	const _totalFromBackend = pagination.total ?? 0;
 	const totalPages = pagination.pages ?? 1;
@@ -285,331 +296,418 @@ const PackageDetail = () => {
 				</p>
 			</div>
 
-			{/* Hosts List */}
+			{/* Hosts / Activity Tabs */}
 			<div className="card">
-				<div className="px-4 sm:px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
-					{/* Search */}
-					<div className="relative w-full">
-						<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400" />
-						<input
-							type="text"
-							placeholder="Search hosts..."
-							value={searchTerm}
-							onChange={(e) => {
-								setSearchTerm(e.target.value);
-								setCurrentPage(1);
-							}}
-							className="w-full pl-10 pr-4 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white placeholder-secondary-500 dark:placeholder-secondary-400 text-sm sm:text-base"
-						/>
-					</div>
+				<div className="border-b border-secondary-200 dark:border-secondary-600">
+					<nav className="-mb-px flex" aria-label="Tabs">
+						<button
+							type="button"
+							onClick={() => setActiveTab("hosts")}
+							className={`flex items-center gap-2 py-4 px-6 border-b-2 font-medium text-sm transition-colors ${
+								activeTab === "hosts"
+									? "border-primary-500 text-primary-600 dark:text-primary-400"
+									: "border-transparent text-secondary-500 hover:text-secondary-700 dark:text-secondary-400 dark:hover:text-secondary-300"
+							}`}
+						>
+							<Server className="h-4 w-4" />
+							Hosts
+						</button>
+						<button
+							type="button"
+							onClick={() => setActiveTab("activity")}
+							className={`flex items-center gap-2 py-4 px-6 border-b-2 font-medium text-sm transition-colors ${
+								activeTab === "activity"
+									? "border-primary-500 text-primary-600 dark:text-primary-400"
+									: "border-transparent text-secondary-500 hover:text-secondary-700 dark:text-secondary-400 dark:hover:text-secondary-300"
+							}`}
+						>
+							<History className="h-4 w-4" />
+							Activity
+						</button>
+					</nav>
 				</div>
 
-				<div className="overflow-x-auto">
-					{isLoadingHosts ? (
-						<div className="flex items-center justify-center h-32">
-							<RefreshCw className="h-6 w-6 animate-spin text-primary-600" />
+				{activeTab === "hosts" && (
+					<>
+						<div className="px-4 sm:px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
+							{/* Search */}
+							<div className="relative w-full">
+								<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400" />
+								<input
+									type="text"
+									placeholder="Search hosts..."
+									value={searchTerm}
+									onChange={(e) => {
+										setSearchTerm(e.target.value);
+										setCurrentPage(1);
+									}}
+									className="w-full pl-10 pr-4 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white placeholder-secondary-500 dark:placeholder-secondary-400 text-sm sm:text-base"
+								/>
+							</div>
 						</div>
-					) : hostsError ? (
-						<div className="p-6">
-							<div className="bg-danger-50 border border-danger-200 rounded-md p-4">
-								<div className="flex">
-									<AlertTriangle className="h-5 w-5 text-danger-400" />
-									<div className="ml-3">
-										<h3 className="text-sm font-medium text-danger-800">
-											Error loading hosts
-										</h3>
-										<p className="text-sm text-danger-700 mt-1">
-											{hostsError.message || "Failed to load hosts"}
-										</p>
+
+						<div className="overflow-x-auto">
+							{isLoadingHosts ? (
+								<div className="flex items-center justify-center h-32">
+									<RefreshCw className="h-6 w-6 animate-spin text-primary-600" />
+								</div>
+							) : hostsError ? (
+								<div className="p-6">
+									<div className="bg-danger-50 border border-danger-200 rounded-md p-4">
+										<div className="flex">
+											<AlertTriangle className="h-5 w-5 text-danger-400" />
+											<div className="ml-3">
+												<h3 className="text-sm font-medium text-danger-800">
+													Error loading hosts
+												</h3>
+												<p className="text-sm text-danger-700 mt-1">
+													{hostsError.message || "Failed to load hosts"}
+												</p>
+											</div>
+										</div>
 									</div>
 								</div>
-							</div>
-						</div>
-					) : filteredAndPaginatedHosts.length === 0 ? (
-						<div className="text-center py-8">
-							<Server className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
-							<p className="text-secondary-500 dark:text-white">
-								{searchTerm
-									? "No hosts match your search"
-									: "No hosts have this package installed"}
-							</p>
-						</div>
-					) : (
-						<>
-							{/* Mobile Card Layout */}
-							<div className="md:hidden space-y-3 p-4">
-								{filteredAndPaginatedHosts.map((host) => (
-									// biome-ignore lint/a11y/useSemanticElements: Complex card layout requires div
-									<div
-										key={host.hostId}
-										role="button"
-										tabIndex={0}
-										onClick={() => handleHostClick(host.hostId)}
-										onKeyDown={(e) => {
-											if (e.key === "Enter" || e.key === " ") {
-												e.preventDefault();
-												handleHostClick(host.hostId);
-											}
-										}}
-										className="card p-4 space-y-3 cursor-pointer"
-									>
-										{/* Host Name */}
-										<div className="flex items-center gap-3">
-											<Server className="h-5 w-5 text-secondary-400 flex-shrink-0" />
-											<div className="flex-1 min-w-0">
-												<div className="text-base font-semibold text-secondary-900 dark:text-white truncate">
-													{host.friendlyName || host.hostname}
-												</div>
-											</div>
-										</div>
-
-										{/* Status and Version */}
-										<div className="flex items-center justify-between gap-3 pt-3 border-t border-secondary-200 dark:border-secondary-600">
-											<div className="flex flex-col gap-2 flex-1">
-												<div className="flex items-center gap-2">
-													<span className="text-xs text-secondary-500 dark:text-white">
-														Version:
-													</span>
-													<span className="text-sm text-secondary-900 dark:text-white font-mono">
-														{host.currentVersion || "Unknown"}
-													</span>
-												</div>
-												<div className="flex items-center gap-2">
-													<span className="text-xs text-secondary-500 dark:text-white">
-														Status:
-													</span>
-													{host.needsUpdate ? (
-														host.isSecurityUpdate ? (
-															<span className="badge-danger flex items-center gap-1 text-xs">
-																<Shield className="h-3 w-3" />
-																Security Update
-															</span>
-														) : (
-															<span className="badge-warning text-xs">
-																Update Available
-															</span>
-														)
-													) : (
-														<span className="badge-success text-xs">
-															Up to Date
-														</span>
-													)}
-												</div>
-											</div>
-											<div className="flex flex-col gap-2 items-end">
-												{host.needsUpdate &&
-													canManageHosts() &&
-													!(host.osType || host.os_type || "")
-														.toLowerCase()
-														.includes("windows") && (
-														<button
-															type="button"
-															onClick={(e) => {
-																e.stopPropagation();
-																setPatchConfirmTarget({
-																	hostId: host.hostId,
-																	hostName: host.friendlyName || host.hostname,
-																	packageName: pkg.name,
-																});
-															}}
-															disabled={patchPackageMutation.isPending}
-															className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded bg-primary-100 text-primary-800 hover:bg-primary-200 dark:bg-primary-900 dark:text-primary-200 dark:hover:bg-primary-800 disabled:opacity-50"
-														>
-															<Wrench className="h-3 w-3" />
-															{patchPackageMutation.isPending
-																? "Queuing…"
-																: "Patch"}
-														</button>
-													)}
-												{host.needsReboot && (
-													<span
-														className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
-														title={host.rebootReason || "Reboot required"}
-													>
-														<RotateCcw className="h-3 w-3" />
-														Reboot Required
-													</span>
-												)}
-												{host.lastUpdate && (
-													<span className="text-xs text-secondary-500 dark:text-white">
-														{formatRelativeTime(host.lastUpdate)}
-													</span>
-												)}
-											</div>
-										</div>
-									</div>
-								))}
-							</div>
-
-							{/* Desktop Table Layout */}
-							<div className="hidden md:block">
-								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
-									<thead className="bg-secondary-50 dark:bg-secondary-700">
-										<tr>
-											<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-												Host
-											</th>
-											<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-												Current Version
-											</th>
-											<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-												Status
-											</th>
-											<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-												Last Updated
-											</th>
-											<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-												Reboot Required
-											</th>
-											{canManageHosts() && (
-												<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-													Actions
-												</th>
-											)}
-										</tr>
-									</thead>
-									<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+							) : filteredAndPaginatedHosts.length === 0 ? (
+								<div className="text-center py-8">
+									<Server className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
+									<p className="text-secondary-500 dark:text-white">
+										{searchTerm
+											? "No hosts match your search"
+											: "No hosts have this package installed"}
+									</p>
+								</div>
+							) : (
+								<>
+									{/* Mobile Card Layout */}
+									<div className="md:hidden space-y-3 p-4">
 										{filteredAndPaginatedHosts.map((host) => (
-											<tr
+											// biome-ignore lint/a11y/useSemanticElements: Complex card layout requires div
+											<div
 												key={host.hostId}
-												className="hover:bg-secondary-50 dark:hover:bg-secondary-700 cursor-pointer transition-colors"
+												role="button"
+												tabIndex={0}
 												onClick={() => handleHostClick(host.hostId)}
+												onKeyDown={(e) => {
+													if (e.key === "Enter" || e.key === " ") {
+														e.preventDefault();
+														handleHostClick(host.hostId);
+													}
+												}}
+												className="card p-4 space-y-3 cursor-pointer"
 											>
-												<td className="px-6 py-4 whitespace-nowrap">
-													<div className="flex items-center">
-														<Server className="h-5 w-5 text-secondary-400 mr-3" />
-														<div className="text-sm font-medium text-secondary-900 dark:text-white">
+												{/* Host Name */}
+												<div className="flex items-center gap-3">
+													<Server className="h-5 w-5 text-secondary-400 flex-shrink-0" />
+													<div className="flex-1 min-w-0">
+														<div className="text-base font-semibold text-secondary-900 dark:text-white truncate">
 															{host.friendlyName || host.hostname}
 														</div>
 													</div>
-												</td>
-												<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
-													{host.currentVersion || "Unknown"}
-												</td>
-												<td className="px-6 py-4 whitespace-nowrap">
-													{host.needsUpdate ? (
-														host.isSecurityUpdate ? (
-															<span className="badge-danger flex items-center gap-1 w-fit">
-																<Shield className="h-3 w-3" />
-																Security Update
+												</div>
+
+												{/* Status and Version */}
+												<div className="flex items-center justify-between gap-3 pt-3 border-t border-secondary-200 dark:border-secondary-600">
+													<div className="flex flex-col gap-2 flex-1">
+														<div className="flex items-center gap-2">
+															<span className="text-xs text-secondary-500 dark:text-white">
+																Version:
 															</span>
-														) : (
-															<span className="badge-warning w-fit">
-																Update Available
+															<span className="text-sm text-secondary-900 dark:text-white font-mono">
+																{host.currentVersion || "Unknown"}
 															</span>
-														)
-													) : (
-														<span className="badge-success w-fit">
-															Up to Date
-														</span>
-													)}
-												</td>
-												<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500 dark:text-white">
-													{host.lastUpdate
-														? formatRelativeTime(host.lastUpdate)
-														: "Never"}
-												</td>
-												<td className="px-6 py-4 whitespace-nowrap">
-													{host.needsReboot ? (
-														<span
-															className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
-															title={host.rebootReason || "Reboot required"}
-														>
-															<RotateCcw className="h-3 w-3" />
-															Required
-														</span>
-													) : (
-														<span className="text-sm text-secondary-500 dark:text-white">
-															No
-														</span>
-													)}
-												</td>
-												{canManageHosts() && (
-													<td
-														className="px-6 py-4 whitespace-nowrap"
-														onClick={(e) => e.stopPropagation()}
-													>
+														</div>
+														<div className="flex items-center gap-2">
+															<span className="text-xs text-secondary-500 dark:text-white">
+																Status:
+															</span>
+															{host.needsUpdate ? (
+																host.isSecurityUpdate ? (
+																	<span className="badge-danger flex items-center gap-1 text-xs">
+																		<Shield className="h-3 w-3" />
+																		Security Update
+																	</span>
+																) : (
+																	<span className="badge-warning text-xs">
+																		Update Available
+																	</span>
+																)
+															) : (
+																<span className="badge-success text-xs">
+																	Up to Date
+																</span>
+															)}
+														</div>
+													</div>
+													<div className="flex flex-col gap-2 items-end">
 														{host.needsUpdate &&
-														!(host.osType || host.os_type || "")
-															.toLowerCase()
-															.includes("windows") ? (
-															<button
-																type="button"
-																onClick={() =>
-																	setPatchConfirmTarget({
-																		hostId: host.hostId,
-																		hostName:
-																			host.friendlyName || host.hostname,
-																		packageName: pkg.name,
-																	})
-																}
-																disabled={patchPackageMutation.isPending}
-																className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded bg-primary-100 text-primary-800 hover:bg-primary-200 dark:bg-primary-900 dark:text-primary-200 dark:hover:bg-primary-800 disabled:opacity-50"
+															canManageHosts() &&
+															!(host.osType || host.os_type || "")
+																.toLowerCase()
+																.includes("windows") && (
+																<button
+																	type="button"
+																	onClick={(e) => {
+																		e.stopPropagation();
+																		setPatchConfirmTarget({
+																			hostId: host.hostId,
+																			hostName:
+																				host.friendlyName || host.hostname,
+																			packageName: pkg.name,
+																		});
+																	}}
+																	disabled={patchPackageMutation.isPending}
+																	className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded bg-primary-100 text-primary-800 hover:bg-primary-200 dark:bg-primary-900 dark:text-primary-200 dark:hover:bg-primary-800 disabled:opacity-50"
+																>
+																	<Wrench className="h-3 w-3" />
+																	{patchPackageMutation.isPending
+																		? "Queuing…"
+																		: "Patch"}
+																</button>
+															)}
+														{host.needsReboot && (
+															<span
+																className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
+																title={host.rebootReason || "Reboot required"}
 															>
-																<Wrench className="h-3 w-3" />
-																{patchPackageMutation.isPending
-																	? "Queuing…"
-																	: "Patch"}
-															</button>
-														) : (
-															<span className="text-sm text-secondary-500 dark:text-white">
-																—
+																<RotateCcw className="h-3 w-3" />
+																Reboot Required
 															</span>
 														)}
-													</td>
-												)}
-											</tr>
+														{host.lastUpdate && (
+															<span className="text-xs text-secondary-500 dark:text-white">
+																{formatRelativeTime(host.lastUpdate)}
+															</span>
+														)}
+													</div>
+												</div>
+											</div>
 										))}
-									</tbody>
-								</table>
-							</div>
+									</div>
 
-							{/* Pagination */}
-							{totalPages > 1 && (
-								<div className="px-4 sm:px-6 py-3 bg-white dark:bg-secondary-800 border-t border-secondary-200 dark:border-secondary-600 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-0">
-									<div className="flex items-center gap-2">
-										<span className="text-xs sm:text-sm text-secondary-700 dark:text-white">
-											Rows per page:
-										</span>
-										<select
-											value={pageSize}
-											onChange={(e) => {
-												setPageSize(Number(e.target.value));
-												setCurrentPage(1);
-											}}
-											className="text-xs sm:text-sm border border-secondary-300 dark:border-secondary-600 rounded px-2 py-1 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
-										>
-											<option value={25}>25</option>
-											<option value={50}>50</option>
-											<option value={100}>100</option>
-										</select>
+									{/* Desktop Table Layout */}
+									<div className="hidden md:block">
+										<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+											<thead className="bg-secondary-50 dark:bg-secondary-700">
+												<tr>
+													<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+														Host
+													</th>
+													<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+														Current Version
+													</th>
+													<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+														Status
+													</th>
+													<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+														Last Updated
+													</th>
+													<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+														Reboot Required
+													</th>
+													{canManageHosts() && (
+														<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+															Actions
+														</th>
+													)}
+												</tr>
+											</thead>
+											<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+												{filteredAndPaginatedHosts.map((host) => (
+													<tr
+														key={host.hostId}
+														className="hover:bg-secondary-50 dark:hover:bg-secondary-700 cursor-pointer transition-colors"
+														onClick={() => handleHostClick(host.hostId)}
+													>
+														<td className="px-6 py-4 whitespace-nowrap">
+															<div className="flex items-center">
+																<Server className="h-5 w-5 text-secondary-400 mr-3" />
+																<div className="text-sm font-medium text-secondary-900 dark:text-white">
+																	{host.friendlyName || host.hostname}
+																</div>
+															</div>
+														</td>
+														<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
+															{host.currentVersion || "Unknown"}
+														</td>
+														<td className="px-6 py-4 whitespace-nowrap">
+															{host.needsUpdate ? (
+																host.isSecurityUpdate ? (
+																	<span className="badge-danger flex items-center gap-1 w-fit">
+																		<Shield className="h-3 w-3" />
+																		Security Update
+																	</span>
+																) : (
+																	<span className="badge-warning w-fit">
+																		Update Available
+																	</span>
+																)
+															) : (
+																<span className="badge-success w-fit">
+																	Up to Date
+																</span>
+															)}
+														</td>
+														<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500 dark:text-white">
+															{host.lastUpdate
+																? formatRelativeTime(host.lastUpdate)
+																: "Never"}
+														</td>
+														<td className="px-6 py-4 whitespace-nowrap">
+															{host.needsReboot ? (
+																<span
+																	className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
+																	title={host.rebootReason || "Reboot required"}
+																>
+																	<RotateCcw className="h-3 w-3" />
+																	Required
+																</span>
+															) : (
+																<span className="text-sm text-secondary-500 dark:text-white">
+																	No
+																</span>
+															)}
+														</td>
+														{canManageHosts() && (
+															<td
+																className="px-6 py-4 whitespace-nowrap"
+																onClick={(e) => e.stopPropagation()}
+															>
+																{host.needsUpdate &&
+																!(host.osType || host.os_type || "")
+																	.toLowerCase()
+																	.includes("windows") ? (
+																	<button
+																		type="button"
+																		onClick={() =>
+																			setPatchConfirmTarget({
+																				hostId: host.hostId,
+																				hostName:
+																					host.friendlyName || host.hostname,
+																				packageName: pkg.name,
+																			})
+																		}
+																		disabled={patchPackageMutation.isPending}
+																		className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded bg-primary-100 text-primary-800 hover:bg-primary-200 dark:bg-primary-900 dark:text-primary-200 dark:hover:bg-primary-800 disabled:opacity-50"
+																	>
+																		<Wrench className="h-3 w-3" />
+																		{patchPackageMutation.isPending
+																			? "Queuing…"
+																			: "Patch"}
+																	</button>
+																) : (
+																	<span className="text-sm text-secondary-500 dark:text-white">
+																		—
+																	</span>
+																)}
+															</td>
+														)}
+													</tr>
+												))}
+											</tbody>
+										</table>
 									</div>
-									<div className="flex items-center justify-between sm:justify-end gap-2">
-										<button
-											type="button"
-											onClick={() => setCurrentPage(currentPage - 1)}
-											disabled={currentPage === 1}
-											className="px-3 py-1 text-xs sm:text-sm border border-secondary-300 dark:border-secondary-600 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-secondary-50 dark:hover:bg-secondary-700"
-										>
-											Previous
-										</button>
-										<span className="text-xs sm:text-sm text-secondary-700 dark:text-white">
-											Page {currentPage} of {totalPages}
-										</span>
-										<button
-											type="button"
-											onClick={() => setCurrentPage(currentPage + 1)}
-											disabled={currentPage === totalPages}
-											className="px-3 py-1 text-xs sm:text-sm border border-secondary-300 dark:border-secondary-600 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-secondary-50 dark:hover:bg-secondary-700"
-										>
-											Next
-										</button>
-									</div>
-								</div>
+
+									{/* Pagination */}
+									{totalPages > 1 && (
+										<div className="px-4 sm:px-6 py-3 bg-white dark:bg-secondary-800 border-t border-secondary-200 dark:border-secondary-600 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-0">
+											<div className="flex items-center gap-2">
+												<span className="text-xs sm:text-sm text-secondary-700 dark:text-white">
+													Rows per page:
+												</span>
+												<select
+													value={pageSize}
+													onChange={(e) => {
+														setPageSize(Number(e.target.value));
+														setCurrentPage(1);
+													}}
+													className="text-xs sm:text-sm border border-secondary-300 dark:border-secondary-600 rounded px-2 py-1 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+												>
+													<option value={25}>25</option>
+													<option value={50}>50</option>
+													<option value={100}>100</option>
+												</select>
+											</div>
+											<div className="flex items-center justify-between sm:justify-end gap-2">
+												<button
+													type="button"
+													onClick={() => setCurrentPage(currentPage - 1)}
+													disabled={currentPage === 1}
+													className="px-3 py-1 text-xs sm:text-sm border border-secondary-300 dark:border-secondary-600 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-secondary-50 dark:hover:bg-secondary-700"
+												>
+													Previous
+												</button>
+												<span className="text-xs sm:text-sm text-secondary-700 dark:text-white">
+													Page {currentPage} of {totalPages}
+												</span>
+												<button
+													type="button"
+													onClick={() => setCurrentPage(currentPage + 1)}
+													disabled={currentPage === totalPages}
+													className="px-3 py-1 text-xs sm:text-sm border border-secondary-300 dark:border-secondary-600 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-secondary-50 dark:hover:bg-secondary-700"
+												>
+													Next
+												</button>
+											</div>
+										</div>
+									)}
+								</>
 							)}
-						</>
-					)}
-				</div>
+						</div>
+					</>
+				)}
+
+				{activeTab === "activity" && (
+					<div className="p-4 sm:p-6">
+						{activityData === undefined ? (
+							<div className="flex justify-center py-12">
+								<RefreshCw className="h-6 w-6 animate-spin text-primary-600" />
+							</div>
+						) : activities.length === 0 ? (
+							<div className="text-center py-12">
+								<History className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
+								<p className="text-secondary-500 dark:text-white">
+									No upgrade activity for this package yet
+								</p>
+								<p className="text-sm text-secondary-400 dark:text-secondary-500 mt-1">
+									Completed patch runs will appear here
+								</p>
+							</div>
+						) : (
+							<div className="space-y-3">
+								{activities.map((a) => (
+									<div
+										key={a.run_id}
+										className="flex flex-wrap items-center gap-2 py-2 border-b border-secondary-200 dark:border-secondary-600 last:border-0"
+									>
+										<span className="text-sm text-secondary-600 dark:text-secondary-400">
+											Upgraded on host:
+										</span>
+										<Link
+											to={`/hosts/${a.host_id}`}
+											className="text-primary-600 dark:text-primary-400 hover:underline font-medium"
+										>
+											{a.host_friendly_name || a.host_id}
+										</Link>
+										<span className="text-secondary-400 dark:text-secondary-500">
+											•
+										</span>
+										<span className="text-sm text-secondary-500 dark:text-secondary-400">
+											{a.completed_at
+												? formatRelativeTime(a.completed_at)
+												: "—"}
+										</span>
+										<Link
+											to={`/patching/runs/${a.run_id}`}
+											className="text-sm text-primary-600 dark:text-primary-400 hover:underline ml-auto"
+										>
+											View run
+										</Link>
+									</div>
+								))}
+							</div>
+						)}
+					</div>
+				)}
 			</div>
 
 			{/* Patch Confirmation Modal */}

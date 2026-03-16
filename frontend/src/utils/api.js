@@ -319,6 +319,8 @@ export const packagesAPI = {
 	getCategories: () => api.get("/packages/categories/list"),
 	getHosts: (packageId, params = {}) =>
 		api.get(`/packages/${packageId}/hosts`, { params }),
+	getActivity: (packageId, params = {}) =>
+		api.get(`/packages/${packageId}/activity`, { params }).then((r) => r.data),
 	update: (packageId, data) => api.put(`/packages/${packageId}`, data),
 	search: (query, params = {}) =>
 		api.get(`/packages/search/${query}`, { params }),

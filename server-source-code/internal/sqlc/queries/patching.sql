@@ -1,7 +1,7 @@
 -- patch_runs
 -- name: CreatePatchRun :exec
-INSERT INTO patch_runs (id, host_id, job_id, patch_type, package_name, package_names, status, shell_output, triggered_by_user_id, dry_run, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW());
+INSERT INTO patch_runs (id, host_id, job_id, patch_type, package_name, package_names, status, shell_output, triggered_by_user_id, dry_run, scheduled_at, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW());
 
 -- name: UpdatePatchRunValidated :exec
 UPDATE patch_runs SET status = 'validated', shell_output = shell_output || $2, packages_affected = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1;
@@ -153,6 +153,20 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE (pr.dry_run = false OR pr.dry_run IS NULL)
 ORDER BY pr.created_at DESC
 LIMIT $1;
+
+-- name: ListPatchRunsByPackage :many
+SELECT pr.id, pr.host_id, pr.completed_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname
+FROM patch_runs pr
+LEFT JOIN hosts h ON pr.host_id = h.id
+WHERE pr.status = 'completed'
+  AND (pr.dry_run = false OR pr.dry_run IS NULL)
+  AND (
+    pr.package_name = sqlc.arg('package_name')
+    OR (pr.package_names IS NOT NULL AND pr.package_names @> jsonb_build_array(sqlc.arg('package_name')::text))
+    OR (pr.packages_affected IS NOT NULL AND pr.packages_affected @> jsonb_build_array(sqlc.arg('package_name')::text))
+  )
+ORDER BY pr.completed_at DESC NULLS LAST, pr.created_at DESC
+LIMIT sqlc.arg('limit_arg') OFFSET sqlc.arg('offset_arg');
 
 -- patch_policies
 -- name: ListPatchPolicies :many

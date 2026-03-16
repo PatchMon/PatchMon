@@ -632,6 +632,7 @@ CREATE TABLE IF NOT EXISTS patch_runs (
     error_message TEXT,
     started_at TIMESTAMP(3),
     completed_at TIMESTAMP(3),
+    scheduled_at TIMESTAMP(3),
     triggered_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
     dry_run BOOLEAN NOT NULL DEFAULT false,
     packages_affected JSONB,

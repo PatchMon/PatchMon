@@ -441,6 +441,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_view_packages", permissionsStore)).Get("/packages/categories/list", packagesHandler.GetCategories)
 			r.With(middleware.RequirePermission("can_view_packages", permissionsStore)).Get("/packages", packagesHandler.List)
 			r.With(middleware.RequirePermission("can_view_packages", permissionsStore)).Get("/packages/{packageId}", packagesHandler.GetByID)
+			r.With(middleware.RequirePermission("can_view_packages", permissionsStore)).Get("/packages/{packageId}/activity", packagesHandler.GetActivity)
 			r.With(middleware.RequirePermission("can_view_packages", permissionsStore)).Get("/packages/{packageId}/hosts", packagesHandler.GetHosts)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/repositories", repositoriesHandler.List)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/repositories/stats/summary", repositoriesHandler.GetStats)
