@@ -1,0 +1,41 @@
+# Ensures the approved-for-build label exists for fork PR Docker builds.
+name: Ensure labels
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/ensure-labels.yml']
+  workflow_dispatch:
+
+jobs:
+  ensure-labels:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Create approved-for-build label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.issues.getLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'approved-for-build'
+              });
+              console.log('Label approved-for-build already exists');
+            } catch (e) {
+              if (e.status === 404) {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: 'approved-for-build',
+                  description: 'Maintainer-approved: run Docker build and push to Harbor for this fork PR',
+                  color: '0E8A16'
+                });
+                console.log('Created label approved-for-build');
+              } else {
+                throw e;
+              }
+            }

@@ -1,0 +1,54 @@
+name: "Feature Request"
+description: Suggest a new feature or enhancement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Please describe your idea in detail.
+
+  - type: dropdown
+    id: installation_method
+    attributes:
+      label: What is the installation method of your PatchMon server?
+      options:
+        - ""
+        - Docker
+        - Proxmox-community script
+        - setup.sh native install script
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: patchmon_version
+    attributes:
+      label: What is the version of your PatchMon server?
+      placeholder: "e.g. 1.4.0"
+    validations:
+      required: true
+
+  - type: input
+    id: feature_summary
+    attributes:
+      label: Briefly describe the feature
+      placeholder: "e.g., Add support for XYZ"
+    validations:
+      required: true
+
+  - type: textarea
+    id: feature_description
+    attributes:
+      label: Detailed description
+      placeholder: Explain the feature in detail
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Why is this useful?
+      placeholder: Describe the benefit of this feature
+    validations:
+      required: true

@@ -1,14 +1,15 @@
 name: Build and Push Docker Images
 
+# pull_request_target: needed for fork PRs to receive secrets when approved via label.
+# Same-repo PRs run automatically; fork PRs run only when labeled "approved-for-build".
 on:
   push:
     branches:
       - main
     tags:
       - 'v*'
-  pull_request:
-    branches:
-      - main
+  pull_request_target:
+    types: [opened, synchronize, labeled]
   workflow_dispatch:
     inputs:
       push:
@@ -19,41 +20,103 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  HARBOR_REGISTRY: cr.dev.patchmon.cloud
 
 permissions:
   contents: read
   packages: write
+  pull-requests: write
 
 jobs:
-  build:
+  build-agents:
+    name: Build agent binaries
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        image: [backend, frontend]
+    # Same-repo PRs: always run. Fork PRs: run only when maintainer adds "approved-for-build" label.
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      contains(join(github.event.pull_request.labels.*.name, ', '), 'approved-for-build')
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: 'agent-source-code/go.mod'
+
+      - name: Build all agent binaries
+        working-directory: agent-source-code
+        env:
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p ../agents-prebuilt
+          VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+          for target in "linux/amd64" "linux/arm64" "linux/386" "linux/arm" \
+                        "freebsd/amd64" "freebsd/arm64" "freebsd/386" "freebsd/arm" \
+                        "windows/amd64" "windows/386"; do
+            GOOS=${target%/*}
+            GOARCH=${target#*/}
+            export GOOS GOARCH
+            case "$GOARCH" in arm) export GOARM=6 ;; *) unset GOARM ;; esac
+            SUFFIX=""; case "$GOOS" in windows) SUFFIX=".exe" ;; esac
+            go build -buildvcs=false \
+              -ldflags="-s -w -X patchmon-agent/internal/pkgversion.Version=$VERSION" \
+              -o "../agents-prebuilt/patchmon-agent-${GOOS}-${GOARCH}${SUFFIX}" ./cmd/patchmon-agent
+          done
+
+      - name: Upload agent binaries
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: agent-binaries
+          path: agents-prebuilt/
+
+  build-server:
+    name: Build server image
+    needs: build-agents
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+
+      - name: Download agent binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: agent-binaries
+          path: agents-prebuilt/
 
       - name: Log in to container registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to Harbor
+        if: github.event_name == 'pull_request'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ${{ env.HARBOR_REGISTRY }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_TOKEN }}
+
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
         with:
           platforms: linux/arm64
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
       - name: Extract metadata (tags, labels)
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.image }}
+          images: ${{ env.REGISTRY }}/${{ github.repository }}-server
           tags: |
             type=ref,event=pr
             type=semver,pattern={{version}}
@@ -61,19 +124,52 @@ jobs:
             type=semver,pattern={{major}}
             type=edge,branch=main
 
-      - name: Build and push ${{ matrix.image }} image
-        uses: docker/build-push-action@v6
+      - name: Build and push server image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
-          file: docker/${{ matrix.image }}.Dockerfile
+          file: docker/server.Dockerfile
           platforms: linux/amd64,linux/arm64
-          # Push if:
-          # - Event is not workflow_dispatch OR input 'push' is true
-          # AND
-          # - Event is not pull_request OR the PR is from the same repository (to avoid pushing from forks)
-          push: ${{ (github.event_name != 'workflow_dispatch' || inputs.push == 'true') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+          # Push if: (not workflow_dispatch or push input) AND (not PR or same-repo PR [GHCR] or any PR [Harbor])
+          push: ${{ (github.event_name != 'workflow_dispatch' || inputs.push == 'true') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository || true) }}
+          tags: |
+            ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && steps.meta.outputs.tags || '' }}
+            ${{ github.event_name == 'pull_request' && format('{0}/pr/patchmon-server:pr-{1}', env.HARBOR_REGISTRY, github.event.pull_request.number) || '' }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,mode=max,scope=server
           provenance: false
+
+      - name: Comment on PR with image URL
+        if: github.event_name == 'pull_request' && steps.build.outputs.digest != ''
+        uses: peter-evans/create-or-update-comment@71345be0265236311c031f5c7866368bd1eff043
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            <!-- patchmon-docker-pr -->
+            ## Docker image for testing
+
+            Image built and pushed to Harbor:
+
+            - **Image:** `${{ env.HARBOR_REGISTRY }}/pr/patchmon-server:pr-${{ github.event.pull_request.number }}`
+            - **Digest:** `${{ env.HARBOR_REGISTRY }}/pr/patchmon-server@${{ steps.build.outputs.digest }}`
+
+            Use in your `docker-compose.yml`:
+
+            ```yaml
+            services:
+              patchmon-server:
+                image: ${{ env.HARBOR_REGISTRY }}/pr/patchmon-server:pr-${{ github.event.pull_request.number }}
+            ```
+
+            Or use the digest for reproducibility:
+
+            ```yaml
+            services:
+              patchmon-server:
+                image: ${{ env.HARBOR_REGISTRY }}/pr/patchmon-server@${{ steps.build.outputs.digest }}
+            ```

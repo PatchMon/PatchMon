@@ -1,5 +1,6 @@
 # Check npm dependencies for vulnerabilities and outdated packages.
 # Runs on schedule, manual trigger, and on push/PR to package files.
+# Backend is Go; only frontend uses npm.
 name: npm audit & outdated
 
 on:
@@ -11,13 +12,11 @@ on:
     paths:
       - "package.json"
       - "package-lock.json"
-      - "backend/package.json"
       - "frontend/package.json"
   pull_request:
     paths:
       - "package.json"
       - "package-lock.json"
-      - "backend/package.json"
       - "frontend/package.json"
 
 jobs:

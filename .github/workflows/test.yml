@@ -1,0 +1,251 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: write
+
+jobs:
+  test:
+    name: Test (server)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Set up Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version-file: "package.json"
+          cache: "npm"
+
+      - name: Build frontend for embed
+        run: |
+          npm ci
+          npm run build --workspace=frontend
+          mkdir -p server-source-code/cmd/server/static/frontend
+          cp -r frontend/dist server-source-code/cmd/server/static/frontend/
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: "server-source-code/go.mod"
+
+      - name: Download dependencies
+        working-directory: server-source-code
+        run: go mod download
+
+      - name: Run tests
+        working-directory: server-source-code
+        run: go test -v -race -coverprofile=coverage.out ./...
+
+      - name: Generate coverage report
+        working-directory: server-source-code
+        run: go tool cover -html=coverage.out -o coverage.html
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: coverage-report
+          path: server-source-code/coverage.html
+
+  lint:
+    name: Lint (server)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Set up Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version-file: "package.json"
+          cache: "npm"
+
+      - name: Build frontend for embed
+        run: |
+          npm ci
+          npm run build --workspace=frontend
+          mkdir -p server-source-code/cmd/server/static/frontend
+          cp -r frontend/dist server-source-code/cmd/server/static/frontend/
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: "server-source-code/go.mod"
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9
+        with:
+          version: latest
+          working-directory: server-source-code
+
+  fmt-check:
+    name: Format Check (server)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Set up Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version-file: "package.json"
+          cache: "npm"
+
+      - name: Build frontend for embed
+        run: |
+          npm ci
+          npm run build --workspace=frontend
+          mkdir -p server-source-code/cmd/server/static/frontend
+          cp -r frontend/dist server-source-code/cmd/server/static/frontend/
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: "server-source-code/go.mod"
+
+      - name: Check formatting
+        working-directory: server-source-code
+        run: |
+          unformatted=$(gofmt -l . 2>/dev/null)
+          if [ -n "$unformatted" ]; then
+            echo "Code is not formatted. Run 'make fmt'"
+            echo "$unformatted"
+            exit 1
+          fi
+
+  build:
+    name: Build (server)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Set up Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version-file: "package.json"
+          cache: "npm"
+
+      - name: Build frontend for embed
+        run: |
+          npm ci
+          npm run build --workspace=frontend
+          mkdir -p server-source-code/cmd/server/static/frontend
+          cp -r frontend/dist server-source-code/cmd/server/static/frontend/
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: "server-source-code/go.mod"
+
+      - name: Verify server source structure
+        run: |
+          echo "=== server-source-code structure ==="
+          ls -la server-source-code/ || true
+          echo "=== cmd/server contents ==="
+          ls -la server-source-code/cmd/server/ 2>/dev/null || echo "cmd/server not found or empty"
+
+      - name: Build
+        working-directory: server-source-code
+        env:
+          CGO_ENABLED: 0
+        run: go build -buildvcs=false -o patchmon-server ./cmd/server
+
+  agent-test:
+    name: Agent Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: "agent-source-code/go.mod"
+
+      - name: Download dependencies
+        working-directory: agent-source-code
+        run: go mod download
+
+      - name: Run tests
+        working-directory: agent-source-code
+        run: go test -v -race -coverprofile=coverage.out ./...
+
+      - name: Generate coverage report
+        working-directory: agent-source-code
+        run: go tool cover -html=coverage.out -o coverage.html
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: agent-coverage-report
+          path: agent-source-code/coverage.html
+
+  agent-fmt-check:
+    name: Agent Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: "agent-source-code/go.mod"
+
+      - name: Check formatting
+        working-directory: agent-source-code
+        run: |
+          unformatted=$(gofmt -l . 2>/dev/null)
+          if [ -n "$unformatted" ]; then
+            echo "Code is not formatted. Run 'make fmt'"
+            echo "$unformatted"
+            exit 1
+          fi
+
+  agent-lint:
+    name: Agent Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: "agent-source-code/go.mod"
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9
+        with:
+          version: latest
+          working-directory: agent-source-code
+
+  agent-build:
+    name: Agent Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: "agent-source-code/go.mod"
+
+      - name: Build
+        working-directory: agent-source-code
+        env:
+          CGO_ENABLED: 0
+        run: go build -buildvcs=false -o patchmon-agent ./cmd/patchmon-agent

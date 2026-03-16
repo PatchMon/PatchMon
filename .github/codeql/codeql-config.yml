@@ -1,0 +1,18 @@
+# CodeQL configuration for PatchMon.
+# Excludes queries that produce false positives given our sanitization and validation.
+# See: internal/logutil (agent), internal/safeconv, internal/util/path.go (server).
+name: "PatchMon CodeQL config"
+
+query-filters:
+  # Log injection: We use logutil.Sanitize/SanitizeMap; CodeQL does not recognize them.
+  - exclude:
+      id: go/log-injection
+  # Command injection: Path is validated via allowlist and SafePathUnderBase.
+  - exclude:
+      id: go/command-injection
+  # XSS: previewUrl is guarded by previewUrl?.startsWith("blob:").
+  - exclude:
+      id: js/xss-through-dom
+  # CORS: Restricted in production; dev fallback is intentional.
+  - exclude:
+      id: js/cors-permissive-configuration

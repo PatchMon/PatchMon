@@ -1,6 +1,8 @@
-# Security-focused checks: catch malicious or risky code and leaked secrets.
-# - CodeQL: SAST for JavaScript/TypeScript, Go (agent), and Actions (injection, XSS, etc.).
+# Security-focused checks: SAST, secrets, and dependency vulnerabilities.
+# - CodeQL: SAST for JavaScript/TypeScript (frontend), Go (backend + agent), and Actions.
 # - Gitleaks: Scans for committed secrets (API keys, tokens, private keys).
+# - Go: govulncheck for backend and agent dependencies.
+# - npm: npm audit runs in npm-audit-outdated.yml (push/PR on package files, weekly).
 #
 # View results: Security → Code scanning. Use the branch dropdown to select the
 # branch that ran (e.g. your PR branch); default view shows the default branch.
@@ -22,41 +24,66 @@ permissions:
 
 jobs:
   codeql:
-    name: CodeQL (${{ matrix.language }})
-    runs-on: ${{ (matrix.language == 'go' && 'ubuntu-latest') || 'ubuntu-latest' }}
+    name: CodeQL (${{ matrix.language }}${{ matrix.working-dir && format('/ {0}', matrix.working-dir) || '' }})
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           - language: javascript-typescript
             build-mode: none
+            working-dir: ''
           - language: go
             build-mode: autobuild
+            working-dir: server-source-code
+          - language: go
+            build-mode: autobuild
+            working-dir: agent-source-code
           - language: actions
             build-mode: none
+            working-dir: ''
     permissions:
-      actions: read
+      actions: write
       contents: read
       security-events: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Node
+        if: matrix.working-dir == 'server-source-code'
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version-file: "package.json"
+          cache: "npm"
+
+      - name: Build frontend for embed
+        if: matrix.working-dir == 'server-source-code'
+        run: |
+          npm ci
+          npm run build --workspace=frontend
+          mkdir -p server-source-code/cmd/server/static/frontend
+          cp -r frontend/dist server-source-code/cmd/server/static/frontend/
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
+          config-file: ./.github/codeql/codeql-config.yml
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
           queries: security-extended
+          working-directory: ${{ matrix.working-dir || '.' }}
 
       - name: Autobuild
         if: matrix.build-mode == 'autobuild'
         uses: github/codeql-action/autobuild@v4
+        with:
+          working-directory: ${{ matrix.working-dir || '.' }}
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
-          category: "/language:${{ matrix.language }}"
+          category: "/language:${{ matrix.language }}${{ matrix.working-dir && format('-{0}', matrix.working-dir) || '' }}"
 
   secrets:
     name: Secrets (Gitleaks)
@@ -73,3 +100,28 @@ jobs:
             --source /repo \
             --no-git \
             $([ -f .gitleaks.toml ] && echo "--config /repo/.gitleaks.toml" || true)
+
+  go-vuln:
+    name: Go vulnerability check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: "server-source-code/go.mod"
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Govulncheck server
+        working-directory: server-source-code
+        run: govulncheck ./...
+
+      - name: Govulncheck agent
+        working-directory: agent-source-code
+        run: govulncheck ./...
