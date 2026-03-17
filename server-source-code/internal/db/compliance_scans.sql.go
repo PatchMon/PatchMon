@@ -419,6 +419,72 @@ func (q *Queries) GetLatestComplianceScanByHost(ctx context.Context, hostID stri
 	return i, err
 }
 
+const getLatestComplianceScanByHostAndType = `-- name: GetLatestComplianceScanByHostAndType :one
+SELECT cs.id, cs.host_id, cs.profile_id, cs.started_at, cs.completed_at, cs.status,
+       cs.total_rules, cs.passed, cs.failed, cs.warnings, cs.skipped, cs.not_applicable,
+       cs.score, cs.error_message, cs.raw_output, cs.created_at, cs.updated_at,
+       cp.name as profile_name, cp.type as profile_type
+FROM compliance_scans cs
+JOIN compliance_profiles cp ON cp.id = cs.profile_id
+WHERE cs.host_id = $1 AND cs.status = 'completed' AND cp.type = $2
+ORDER BY cs.completed_at DESC
+LIMIT 1
+`
+
+type GetLatestComplianceScanByHostAndTypeParams struct {
+	HostID string `json:"host_id"`
+	Type   string `json:"type"`
+}
+
+type GetLatestComplianceScanByHostAndTypeRow struct {
+	ID            string           `json:"id"`
+	HostID        string           `json:"host_id"`
+	ProfileID     string           `json:"profile_id"`
+	StartedAt     pgtype.Timestamp `json:"started_at"`
+	CompletedAt   pgtype.Timestamp `json:"completed_at"`
+	Status        string           `json:"status"`
+	TotalRules    int32            `json:"total_rules"`
+	Passed        int32            `json:"passed"`
+	Failed        int32            `json:"failed"`
+	Warnings      int32            `json:"warnings"`
+	Skipped       int32            `json:"skipped"`
+	NotApplicable int32            `json:"not_applicable"`
+	Score         *float64         `json:"score"`
+	ErrorMessage  *string          `json:"error_message"`
+	RawOutput     *string          `json:"raw_output"`
+	CreatedAt     pgtype.Timestamp `json:"created_at"`
+	UpdatedAt     pgtype.Timestamp `json:"updated_at"`
+	ProfileName   string           `json:"profile_name"`
+	ProfileType   string           `json:"profile_type"`
+}
+
+func (q *Queries) GetLatestComplianceScanByHostAndType(ctx context.Context, arg GetLatestComplianceScanByHostAndTypeParams) (GetLatestComplianceScanByHostAndTypeRow, error) {
+	row := q.db.QueryRow(ctx, getLatestComplianceScanByHostAndType, arg.HostID, arg.Type)
+	var i GetLatestComplianceScanByHostAndTypeRow
+	err := row.Scan(
+		&i.ID,
+		&i.HostID,
+		&i.ProfileID,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Status,
+		&i.TotalRules,
+		&i.Passed,
+		&i.Failed,
+		&i.Warnings,
+		&i.Skipped,
+		&i.NotApplicable,
+		&i.Score,
+		&i.ErrorMessage,
+		&i.RawOutput,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ProfileName,
+		&i.ProfileType,
+	)
+	return i, err
+}
+
 const getRecentComplianceScans = `-- name: GetRecentComplianceScans :many
 SELECT cs.id, cs.host_id, cs.profile_id, cs.started_at, cs.completed_at, cs.status,
        cs.total_rules, cs.passed, cs.failed, cs.warnings, cs.skipped, cs.not_applicable,

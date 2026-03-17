@@ -54,6 +54,7 @@ type RunScanPayload struct {
 	ProfileID            *string `json:"profile_id,omitempty"`
 	EnableRemediation    bool    `json:"enable_remediation"`
 	FetchRemoteResources bool    `json:"fetch_remote_resources"`
+	RequeueCount         int     `json:"requeue_count,omitempty"`
 }
 
 // NewRunScanTask creates a run_scan task. Use TaskID for deduplication: compliance-scan-{hostId}.

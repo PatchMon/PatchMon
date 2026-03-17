@@ -16,7 +16,8 @@ ORDER BY
   CASE COALESCE(crules.severity, 'unknown')
     WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4
     ELSE 5
-  END;
+  END
+LIMIT $2 OFFSET $3;
 
 -- name: CountComplianceResultsByScan :one
 SELECT COUNT(*)
@@ -53,6 +54,46 @@ RETURNING id, scan_id, rule_id, status, finding, actual, expected, remediation, 
 
 -- name: DeleteComplianceResultsByScan :exec
 DELETE FROM compliance_results WHERE scan_id = $1;
+
+-- name: GetTopFailingRulesFromScans :many
+SELECT cr.rule_id, crules.title, crules.severity,
+       cp.type as profile_type,
+       COUNT(*)::int as fail_count
+FROM compliance_results cr
+JOIN compliance_rules crules ON crules.id = cr.rule_id
+JOIN compliance_scans cs ON cs.id = cr.scan_id
+JOIN compliance_profiles cp ON cp.id = cs.profile_id
+WHERE cr.scan_id = ANY($1::text[])
+  AND cr.status IN ('fail', 'failed', 'failure')
+GROUP BY cr.rule_id, crules.title, crules.severity, cp.type
+ORDER BY fail_count DESC
+LIMIT 10;
+
+-- name: GetTopWarningRulesFromScans :many
+SELECT cr.rule_id, crules.title, crules.severity,
+       cp.type as profile_type,
+       COUNT(*)::int as warn_count
+FROM compliance_results cr
+JOIN compliance_rules crules ON crules.id = cr.rule_id
+JOIN compliance_scans cs ON cs.id = cr.scan_id
+JOIN compliance_profiles cp ON cp.id = cs.profile_id
+WHERE cr.scan_id = ANY($1::text[])
+  AND cr.status IN ('warn', 'warning', 'warned')
+GROUP BY cr.rule_id, crules.title, crules.severity, cp.type
+ORDER BY warn_count DESC
+LIMIT 10;
+
+-- name: GetRuleAggregationsFromScans :many
+SELECT cr.rule_id, crules.rule_ref, crules.title, crules.severity, crules.section,
+       cs.profile_id, cp.type as profile_type, cp.name as profile_name,
+       cr.status
+FROM compliance_results cr
+JOIN compliance_rules crules ON crules.id = cr.rule_id
+JOIN compliance_scans cs ON cs.id = cr.scan_id
+JOIN compliance_profiles cp ON cp.id = cs.profile_id
+WHERE cr.scan_id = ANY($1::text[])
+  AND (sqlc.narg('severity_filter')::text IS NULL OR crules.severity = sqlc.narg('severity_filter'))
+ORDER BY cr.rule_id;
 
 -- name: GetComplianceResultsForRuleFromScans :many
 SELECT cr.status, cr.finding, cr.actual, cr.expected, cr.remediation,

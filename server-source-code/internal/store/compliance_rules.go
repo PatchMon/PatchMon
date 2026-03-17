@@ -50,46 +50,41 @@ func (s *ComplianceStore) ListRules(ctx context.Context, severity, statusFilter,
 		return []RuleWithCounts{}, 0, nil
 	}
 
-	// Get all results from latest scans - we need to query per scan or use a different approach
-	// For simplicity: get results for each scan and aggregate
+	// Single bulk query to get all results across latest scans, replacing N+1 per-scan queries
+	allResults, err := d.Queries.GetRuleAggregationsFromScans(ctx, db.GetRuleAggregationsFromScansParams{
+		Column1:        latestScanIDs,
+		SeverityFilter: severity,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+
 	ruleCounts := make(map[string]*RuleWithCounts)
-	for _, sc := range latestScans {
-		if hostID != nil && *hostID != "" && sc.HostID != *hostID {
-			continue
-		}
-		if profileType != nil && *profileType != "" && *profileType != "all" && sc.ProfileType != *profileType {
-			continue
-		}
-		results, err := d.Queries.ListComplianceResultsByScan(ctx, db.ListComplianceResultsByScanParams{
-			ScanID: sc.ID, StatusFilter: nil, SeverityFilter: severity,
-		})
-		if err != nil {
-			continue
-		}
-		for _, r := range results {
-			key := r.RuleID + ":" + sc.ProfileType
-			if ruleCounts[key] == nil {
-				ruleCounts[key] = &RuleWithCounts{
-					ID:          r.RuleID,
-					RuleRef:     r.RuleRef,
-					Title:       r.Title,
-					Severity:    r.Severity,
-					Section:     r.Section,
-					ProfileID:   sc.ProfileID,
-					ProfileType: &sc.ProfileType,
-					ProfileName: &sc.ProfileName,
-				}
+	for _, r := range allResults {
+		key := r.RuleID + ":" + r.ProfileType
+		if ruleCounts[key] == nil {
+			profType := r.ProfileType
+			profName := r.ProfileName
+			ruleCounts[key] = &RuleWithCounts{
+				ID:          r.RuleID,
+				RuleRef:     r.RuleRef,
+				Title:       r.Title,
+				Severity:    r.Severity,
+				Section:     r.Section,
+				ProfileID:   r.ProfileID,
+				ProfileType: &profType,
+				ProfileName: &profName,
 			}
-			rc := ruleCounts[key]
-			rc.TotalHosts++
-			switch r.Status {
-			case "pass", "passed":
-				rc.HostsPassed++
-			case "fail", "failed", "failure":
-				rc.HostsFailed++
-			case "warn", "warning", "warned":
-				rc.HostsWarned++
-			}
+		}
+		rc := ruleCounts[key]
+		rc.TotalHosts++
+		switch r.Status {
+		case "pass", "passed":
+			rc.HostsPassed++
+		case "fail", "failed", "failure":
+			rc.HostsFailed++
+		case "warn", "warning", "warned":
+			rc.HostsWarned++
 		}
 	}
 

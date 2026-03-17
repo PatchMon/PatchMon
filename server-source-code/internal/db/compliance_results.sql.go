@@ -242,14 +242,172 @@ func (q *Queries) GetComplianceResultsForRuleFromScans(ctx context.Context, arg 
 	return items, nil
 }
 
+const getRuleAggregationsFromScans = `-- name: GetRuleAggregationsFromScans :many
+SELECT cr.rule_id, crules.rule_ref, crules.title, crules.severity, crules.section,
+       cs.profile_id, cp.type as profile_type, cp.name as profile_name,
+       cr.status
+FROM compliance_results cr
+JOIN compliance_rules crules ON crules.id = cr.rule_id
+JOIN compliance_scans cs ON cs.id = cr.scan_id
+JOIN compliance_profiles cp ON cp.id = cs.profile_id
+WHERE cr.scan_id = ANY($1::text[])
+  AND ($2::text IS NULL OR crules.severity = $2)
+ORDER BY cr.rule_id
+`
+
+type GetRuleAggregationsFromScansParams struct {
+	Column1        []string `json:"column_1"`
+	SeverityFilter *string  `json:"severity_filter"`
+}
+
+type GetRuleAggregationsFromScansRow struct {
+	RuleID      string  `json:"rule_id"`
+	RuleRef     string  `json:"rule_ref"`
+	Title       string  `json:"title"`
+	Severity    *string `json:"severity"`
+	Section     *string `json:"section"`
+	ProfileID   string  `json:"profile_id"`
+	ProfileType string  `json:"profile_type"`
+	ProfileName string  `json:"profile_name"`
+	Status      string  `json:"status"`
+}
+
+func (q *Queries) GetRuleAggregationsFromScans(ctx context.Context, arg GetRuleAggregationsFromScansParams) ([]GetRuleAggregationsFromScansRow, error) {
+	rows, err := q.db.Query(ctx, getRuleAggregationsFromScans, arg.Column1, arg.SeverityFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetRuleAggregationsFromScansRow
+	for rows.Next() {
+		var i GetRuleAggregationsFromScansRow
+		if err := rows.Scan(
+			&i.RuleID,
+			&i.RuleRef,
+			&i.Title,
+			&i.Severity,
+			&i.Section,
+			&i.ProfileID,
+			&i.ProfileType,
+			&i.ProfileName,
+			&i.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTopFailingRulesFromScans = `-- name: GetTopFailingRulesFromScans :many
+SELECT cr.rule_id, crules.title, crules.severity,
+       cp.type as profile_type,
+       COUNT(*)::int as fail_count
+FROM compliance_results cr
+JOIN compliance_rules crules ON crules.id = cr.rule_id
+JOIN compliance_scans cs ON cs.id = cr.scan_id
+JOIN compliance_profiles cp ON cp.id = cs.profile_id
+WHERE cr.scan_id = ANY($1::text[])
+  AND cr.status IN ('fail', 'failed', 'failure')
+GROUP BY cr.rule_id, crules.title, crules.severity, cp.type
+ORDER BY fail_count DESC
+LIMIT 10
+`
+
+type GetTopFailingRulesFromScansRow struct {
+	RuleID      string  `json:"rule_id"`
+	Title       string  `json:"title"`
+	Severity    *string `json:"severity"`
+	ProfileType string  `json:"profile_type"`
+	FailCount   int32   `json:"fail_count"`
+}
+
+func (q *Queries) GetTopFailingRulesFromScans(ctx context.Context, dollar_1 []string) ([]GetTopFailingRulesFromScansRow, error) {
+	rows, err := q.db.Query(ctx, getTopFailingRulesFromScans, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTopFailingRulesFromScansRow
+	for rows.Next() {
+		var i GetTopFailingRulesFromScansRow
+		if err := rows.Scan(
+			&i.RuleID,
+			&i.Title,
+			&i.Severity,
+			&i.ProfileType,
+			&i.FailCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTopWarningRulesFromScans = `-- name: GetTopWarningRulesFromScans :many
+SELECT cr.rule_id, crules.title, crules.severity,
+       cp.type as profile_type,
+       COUNT(*)::int as warn_count
+FROM compliance_results cr
+JOIN compliance_rules crules ON crules.id = cr.rule_id
+JOIN compliance_scans cs ON cs.id = cr.scan_id
+JOIN compliance_profiles cp ON cp.id = cs.profile_id
+WHERE cr.scan_id = ANY($1::text[])
+  AND cr.status IN ('warn', 'warning', 'warned')
+GROUP BY cr.rule_id, crules.title, crules.severity, cp.type
+ORDER BY warn_count DESC
+LIMIT 10
+`
+
+type GetTopWarningRulesFromScansRow struct {
+	RuleID      string  `json:"rule_id"`
+	Title       string  `json:"title"`
+	Severity    *string `json:"severity"`
+	ProfileType string  `json:"profile_type"`
+	WarnCount   int32   `json:"warn_count"`
+}
+
+func (q *Queries) GetTopWarningRulesFromScans(ctx context.Context, dollar_1 []string) ([]GetTopWarningRulesFromScansRow, error) {
+	rows, err := q.db.Query(ctx, getTopWarningRulesFromScans, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTopWarningRulesFromScansRow
+	for rows.Next() {
+		var i GetTopWarningRulesFromScansRow
+		if err := rows.Scan(
+			&i.RuleID,
+			&i.Title,
+			&i.Severity,
+			&i.ProfileType,
+			&i.WarnCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listComplianceResultsByScan = `-- name: ListComplianceResultsByScan :many
 SELECT cr.id, cr.scan_id, cr.rule_id, cr.status, cr.finding, cr.actual, cr.expected, cr.remediation, cr.created_at,
        crules.rule_ref, crules.title, crules.description, crules.rationale, crules.severity, crules.section, crules.remediation as rule_remediation
 FROM compliance_results cr
 JOIN compliance_rules crules ON crules.id = cr.rule_id
 WHERE cr.scan_id = $1
-  AND ($2::text IS NULL OR cr.status = $2)
-  AND ($3::text IS NULL OR crules.severity = $3)
+  AND ($4::text IS NULL OR cr.status = $4)
+  AND ($5::text IS NULL OR crules.severity = $5)
 ORDER BY
   CASE cr.status
     WHEN 'fail' THEN 1 WHEN 'failed' THEN 1 WHEN 'failure' THEN 1
@@ -261,10 +419,13 @@ ORDER BY
     WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4
     ELSE 5
   END
+LIMIT $2 OFFSET $3
 `
 
 type ListComplianceResultsByScanParams struct {
 	ScanID         string  `json:"scan_id"`
+	Limit          int32   `json:"limit"`
+	Offset         int32   `json:"offset"`
 	StatusFilter   *string `json:"status_filter"`
 	SeverityFilter *string `json:"severity_filter"`
 }
@@ -289,7 +450,13 @@ type ListComplianceResultsByScanRow struct {
 }
 
 func (q *Queries) ListComplianceResultsByScan(ctx context.Context, arg ListComplianceResultsByScanParams) ([]ListComplianceResultsByScanRow, error) {
-	rows, err := q.db.Query(ctx, listComplianceResultsByScan, arg.ScanID, arg.StatusFilter, arg.SeverityFilter)
+	rows, err := q.db.Query(ctx, listComplianceResultsByScan,
+		arg.ScanID,
+		arg.Limit,
+		arg.Offset,
+		arg.StatusFilter,
+		arg.SeverityFilter,
+	)
 	if err != nil {
 		return nil, err
 	}

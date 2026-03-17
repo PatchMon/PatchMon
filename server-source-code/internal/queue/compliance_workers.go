@@ -22,6 +22,10 @@ const (
 	complianceInstallTimeout      = 5 * time.Minute
 	compliancePollInterval        = 2 * time.Second
 	complianceScanRetryDelay      = 1 * time.Minute
+	// maxScanRequeueAttempts limits how many times a run_scan job will be
+	// re-queued when the agent is offline, preventing infinite loops for
+	// decommissioned or permanently unreachable agents.
+	maxScanRequeueAttempts = 30 // ~30 minutes at 1-minute intervals
 )
 
 // RunScanHandler handles run_scan jobs.
@@ -84,10 +88,22 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 			}
 			return nil
 		}
-		h.log.Info("run_scan: agent offline, re-queuing", "api_id", p.ApiID)
+		if p.RequeueCount >= maxScanRequeueAttempts {
+			h.log.Warn("run_scan: agent offline, max re-queue attempts reached — giving up",
+				"api_id", p.ApiID, "host_id", p.HostID, "attempts", p.RequeueCount)
+			if taskID != "" && h.db != nil {
+				msg := "Agent remained offline after maximum retry attempts"
+				_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{
+					JobID: taskID, ErrorMessage: &msg,
+				})
+			}
+			return nil
+		}
+		h.log.Info("run_scan: agent offline, re-queuing", "api_id", p.ApiID, "attempt", p.RequeueCount+1)
 		if taskID != "" && h.db != nil {
 			_ = h.db.Queries.UpdateJobHistoryDelayed(ctx, taskID)
 		}
+		p.RequeueCount++
 		nextTask, err := NewRunScanTask(p)
 		if err != nil {
 			return err
@@ -148,10 +164,22 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 			}
 			return nil
 		}
-		h.log.Warn("run_scan: write failed", "api_id", p.ApiID, "error", err)
+		h.log.Warn("run_scan: write failed", "api_id", p.ApiID, "error", err, "attempt", p.RequeueCount+1)
+		if p.RequeueCount >= maxScanRequeueAttempts {
+			h.log.Warn("run_scan: write failed, max re-queue attempts reached — giving up",
+				"api_id", p.ApiID, "host_id", p.HostID)
+			if taskID != "" && h.db != nil {
+				msg := "Failed to communicate with agent after maximum retry attempts"
+				_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{
+					JobID: taskID, ErrorMessage: &msg,
+				})
+			}
+			return nil
+		}
 		if taskID != "" && h.db != nil {
 			_ = h.db.Queries.UpdateJobHistoryDelayed(ctx, taskID)
 		}
+		p.RequeueCount++
 		nextTask, _ := NewRunScanTask(p)
 		_, _ = h.queueClient.Enqueue(nextTask, asynq.ProcessIn(complianceScanRetryDelay))
 		return nil

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -328,16 +329,16 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 	}
 
 	// Sort by last scan date (most recent first)
-	for i := 0; i < len(hostsWithLatestScan)-1; i++ {
-		for j := i + 1; j < len(hostsWithLatestScan); j++ {
-			a, b := hostsWithLatestScan[i].LastScanDate, hostsWithLatestScan[j].LastScanDate
-			if a == nil && b != nil {
-				hostsWithLatestScan[i], hostsWithLatestScan[j] = hostsWithLatestScan[j], hostsWithLatestScan[i]
-			} else if a != nil && b != nil && b.After(*a) {
-				hostsWithLatestScan[i], hostsWithLatestScan[j] = hostsWithLatestScan[j], hostsWithLatestScan[i]
-			}
+	sort.Slice(hostsWithLatestScan, func(i, j int) bool {
+		a, b := hostsWithLatestScan[i].LastScanDate, hostsWithLatestScan[j].LastScanDate
+		if a == nil {
+			return false // nil dates sort to the end
 		}
-	}
+		if b == nil {
+			return true
+		}
+		return a.After(*b)
+	})
 
 	// Recent scans (transform)
 	recentScansOut := make([]ComplianceDashboardScan, 0, len(recentScans))
@@ -385,20 +386,16 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 		})
 	}
 	// Sort worst hosts by score ascending
-	for i := 0; i < len(worstHosts)-1; i++ {
-		for j := i + 1; j < len(worstHosts); j++ {
-			sa, sb := 0.0, 0.0
-			if worstHosts[i].Score != nil {
-				sa = *worstHosts[i].Score
-			}
-			if worstHosts[j].Score != nil {
-				sb = *worstHosts[j].Score
-			}
-			if sa > sb {
-				worstHosts[i], worstHosts[j] = worstHosts[j], worstHosts[i]
-			}
+	sort.Slice(worstHosts, func(i, j int) bool {
+		sa, sb := 0.0, 0.0
+		if worstHosts[i].Score != nil {
+			sa = *worstHosts[i].Score
 		}
-	}
+		if worstHosts[j].Score != nil {
+			sb = *worstHosts[j].Score
+		}
+		return sa < sb
+	})
 	if len(worstHosts) > 5 {
 		worstHosts = worstHosts[:5]
 	}
@@ -531,6 +528,36 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 		}
 	}
 
+	// Top failing and warning rules from latest scans
+	topFailingRules := []ComplianceDashboardRuleCount{}
+	topWarningRules := []ComplianceDashboardRuleCount{}
+	if len(latestScanIDs) > 0 {
+		failRows, err := d.Queries.GetTopFailingRulesFromScans(ctx, latestScanIDs)
+		if err == nil {
+			for _, r := range failRows {
+				topFailingRules = append(topFailingRules, ComplianceDashboardRuleCount{
+					RuleID:      r.RuleID,
+					Title:       &r.Title,
+					Severity:    r.Severity,
+					ProfileType: &r.ProfileType,
+					FailCount:   int(r.FailCount),
+				})
+			}
+		}
+		warnRows, err := d.Queries.GetTopWarningRulesFromScans(ctx, latestScanIDs)
+		if err == nil {
+			for _, r := range warnRows {
+				topWarningRules = append(topWarningRules, ComplianceDashboardRuleCount{
+					RuleID:      r.RuleID,
+					Title:       &r.Title,
+					Severity:    r.Severity,
+					ProfileType: &r.ProfileType,
+					WarnCount:   int(r.WarnCount),
+				})
+			}
+		}
+	}
+
 	out := &ComplianceDashboard{
 		Summary: ComplianceDashboardSummary{
 			TotalHosts:           totalHosts,
@@ -552,8 +579,8 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 		RecentScans:           recentScansOut,
 		HostsWithLatestScan:   hostsWithLatestScan,
 		WorstHosts:            worstHosts,
-		TopFailingRules:       []ComplianceDashboardRuleCount{},
-		TopWarningRules:       []ComplianceDashboardRuleCount{},
+		TopFailingRules:       topFailingRules,
+		TopWarningRules:       topWarningRules,
 		ProfileDistribution:   profileDistList,
 		SeverityBreakdown:     severityBreakdownList,
 		SeverityByProfileType: []ComplianceDashboardSeverityByType{},

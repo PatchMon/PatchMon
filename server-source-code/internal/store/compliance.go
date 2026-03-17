@@ -2,12 +2,15 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -167,8 +170,20 @@ type ProcessedScan struct {
 }
 
 // SubmitScan processes and stores scan results from an agent.
+// All DB writes are wrapped in a transaction to prevent partial/orphaned data.
 func (s *ComplianceStore) SubmitScan(ctx context.Context, hostID string, openscapEnabled, dockerBenchEnabled bool, scans []SubmittedScan) ([]ProcessedScan, error) {
 	d := s.db.DB(ctx)
+
+	tx, err := d.BeginLong(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() {
+		rollbackCtx := context.WithoutCancel(ctx)
+		_ = tx.Rollback(rollbackCtx)
+	}()
+	q := d.Queries.WithTx(tx)
+
 	var processed []ProcessedScan
 	for _, scanData := range scans {
 		if scanData.ProfileName == "" {
@@ -238,7 +253,7 @@ func (s *ComplianceStore) SubmitScan(ctx context.Context, hostID string, opensca
 			}
 		}
 		// Delete running placeholders
-		if err := d.Queries.DeleteRunningComplianceScansByHost(ctx, hostID); err != nil {
+		if err := q.DeleteRunningComplianceScansByHost(ctx, hostID); err != nil {
 			return nil, err
 		}
 		// Create scan
@@ -254,7 +269,7 @@ func (s *ComplianceStore) SubmitScan(ctx context.Context, hostID string, opensca
 		if scanData.Status == "failed" {
 			status = "failed"
 		}
-		scan, err := d.Queries.CreateComplianceScan(ctx, db.CreateComplianceScanParams{
+		scan, err := q.CreateComplianceScan(ctx, db.CreateComplianceScanParams{
 			ID:            uuid.New().String(),
 			HostID:        hostID,
 			ProfileID:     profile.ID,
@@ -295,20 +310,20 @@ func (s *ComplianceStore) SubmitScan(ctx context.Context, hostID string, opensca
 				}
 			}
 			// Delete existing results for this scan
-			if err := d.Queries.DeleteComplianceResultsByScan(ctx, scan.ID); err != nil {
+			if err := q.DeleteComplianceResultsByScan(ctx, scan.ID); err != nil {
 				return nil, err
 			}
 			for _, r := range deduped {
 				ruleRef := r.RuleRef
 				// Get or create rule
-				rule, err := d.Queries.GetComplianceRuleByProfileAndRef(ctx, db.GetComplianceRuleByProfileAndRefParams{
+				rule, err := q.GetComplianceRuleByProfileAndRef(ctx, db.GetComplianceRuleByProfileAndRefParams{
 					ProfileID: profile.ID,
 					RuleRef:   ruleRef,
 				})
 				var ruleID string
 				if err != nil {
 					ruleID = uuid.New().String()
-					_, err = d.Queries.CreateComplianceRule(ctx, db.CreateComplianceRuleParams{
+					_, err = q.CreateComplianceRule(ctx, db.CreateComplianceRuleParams{
 						ID:          ruleID,
 						ProfileID:   profile.ID,
 						RuleRef:     ruleRef,
@@ -325,7 +340,7 @@ func (s *ComplianceStore) SubmitScan(ctx context.Context, hostID string, opensca
 				} else {
 					ruleID = rule.ID
 					// Update rule if we have better metadata
-					_ = d.Queries.UpdateComplianceRule(ctx, db.UpdateComplianceRuleParams{
+					_ = q.UpdateComplianceRule(ctx, db.UpdateComplianceRuleParams{
 						ID:          ruleID,
 						Title:       complianceStrPtr(r.Title),
 						Description: complianceStrPtr(r.Description),
@@ -338,7 +353,7 @@ func (s *ComplianceStore) SubmitScan(ctx context.Context, hostID string, opensca
 				if statusVal == "" {
 					statusVal = r.Status
 				}
-				_, err = d.Queries.CreateComplianceResult(ctx, db.CreateComplianceResultParams{
+				_, err = q.CreateComplianceResult(ctx, db.CreateComplianceResultParams{
 					ID:          uuid.New().String(),
 					ScanID:      scan.ID,
 					RuleID:      ruleID,
@@ -361,6 +376,10 @@ func (s *ComplianceStore) SubmitScan(ctx context.Context, hostID string, opensca
 			Stats:         stats,
 			ResultsStored: resultsStored,
 		})
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
 	}
 	return processed, nil
 }
@@ -401,40 +420,35 @@ func (s *ComplianceStore) ListScansByHost(ctx context.Context, hostID string, li
 }
 
 // GetLatestScan returns the latest completed scan for a host, optionally filtered by profile type.
+// Returns (nil, nil) when no matching scan exists.
 func (s *ComplianceStore) GetLatestScan(ctx context.Context, hostID string, profileType *string) (*db.GetLatestComplianceScanByHostRow, error) {
 	d := s.db.DB(ctx)
 	if profileType != nil && *profileType != "" {
-		// Get latest by profile type - need to filter
-		scans, err := d.Queries.ListComplianceScansByHost(ctx, db.ListComplianceScansByHostParams{
+		row, err := d.Queries.GetLatestComplianceScanByHostAndType(ctx, db.GetLatestComplianceScanByHostAndTypeParams{
 			HostID: hostID,
-			Limit:  100,
-			Offset: 0,
+			Type:   *profileType,
 		})
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, nil
+			}
 			return nil, err
 		}
-		for _, sc := range scans {
-			if sc.Status == "completed" && sc.ProfileType == *profileType {
-				// Fetch full scan
-				full, err := d.Queries.GetComplianceScanByID(ctx, sc.ID)
-				if err != nil {
-					return nil, err
-				}
-				return &db.GetLatestComplianceScanByHostRow{
-					ID: full.ID, HostID: full.HostID, ProfileID: full.ProfileID,
-					StartedAt: full.StartedAt, CompletedAt: full.CompletedAt, Status: full.Status,
-					TotalRules: full.TotalRules, Passed: full.Passed, Failed: full.Failed,
-					Warnings: full.Warnings, Skipped: full.Skipped, NotApplicable: full.NotApplicable,
-					Score: full.Score, ErrorMessage: full.ErrorMessage, RawOutput: full.RawOutput,
-					CreatedAt: full.CreatedAt, UpdatedAt: full.UpdatedAt,
-					ProfileName: full.ProfileName, ProfileType: full.ProfileType,
-				}, nil
-			}
-		}
-		return nil, nil
+		return &db.GetLatestComplianceScanByHostRow{
+			ID: row.ID, HostID: row.HostID, ProfileID: row.ProfileID,
+			StartedAt: row.StartedAt, CompletedAt: row.CompletedAt, Status: row.Status,
+			TotalRules: row.TotalRules, Passed: row.Passed, Failed: row.Failed,
+			Warnings: row.Warnings, Skipped: row.Skipped, NotApplicable: row.NotApplicable,
+			Score: row.Score, ErrorMessage: row.ErrorMessage, RawOutput: row.RawOutput,
+			CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+			ProfileName: row.ProfileName, ProfileType: row.ProfileType,
+		}, nil
 	}
 	row, err := d.Queries.GetLatestComplianceScanByHost(ctx, hostID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &row, nil
@@ -492,26 +506,28 @@ func (s *ComplianceStore) ListStalledScans(ctx context.Context, threshold time.T
 // ListResultsByScan returns paginated results for a scan with optional filters.
 func (s *ComplianceStore) ListResultsByScan(ctx context.Context, scanID string, statusFilter, severityFilter *string, limit, offset int32) ([]db.ListComplianceResultsByScanRow, int64, map[string]interface{}, error) {
 	d := s.db.DB(ctx)
-	params := db.ListComplianceResultsByScanParams{
+
+	// Get total count via dedicated count query
+	total, err := d.Queries.CountComplianceResultsByScan(ctx, db.CountComplianceResultsByScanParams{
 		ScanID:         scanID,
 		StatusFilter:   statusFilter,
 		SeverityFilter: severityFilter,
-	}
-	allRows, err := d.Queries.ListComplianceResultsByScan(ctx, params)
+	})
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	total := int64(len(allRows))
-	// Paginate in memory (query doesn't support limit/offset)
-	start := int(offset)
-	if start > len(allRows) {
-		start = len(allRows)
+
+	// Fetch only the requested page from the database
+	rows, err := d.Queries.ListComplianceResultsByScan(ctx, db.ListComplianceResultsByScanParams{
+		ScanID:         scanID,
+		Limit:          limit,
+		Offset:         offset,
+		StatusFilter:   statusFilter,
+		SeverityFilter: severityFilter,
+	})
+	if err != nil {
+		return nil, 0, nil, err
 	}
-	end := start + int(limit)
-	if end > len(allRows) {
-		end = len(allRows)
-	}
-	rows := allRows[start:end]
 
 	// Severity breakdown (when offset=0)
 	var severityBreakdown map[string]interface{}
@@ -616,7 +632,7 @@ func (s *ComplianceStore) GetLatestScansByType(ctx context.Context, hostID strin
 			// Get section breakdown for warnings
 			warnFilter := "warn"
 			rows, _ := d.Queries.ListComplianceResultsByScan(ctx, db.ListComplianceResultsByScanParams{
-				ScanID: sc.ID, StatusFilter: &warnFilter, SeverityFilter: nil,
+				ScanID: sc.ID, Limit: 10000, Offset: 0, StatusFilter: &warnFilter, SeverityFilter: nil,
 			})
 			sectionCounts := make(map[string]int)
 			for _, r := range rows {

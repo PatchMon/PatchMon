@@ -512,8 +512,11 @@ func (h *ComplianceHandler) GetLatestScan(w http.ResponseWriter, r *http.Request
 		Error(w, http.StatusNotFound, "No scans found for this host")
 		return
 	}
-	// Return full scan with results - need to fetch results
-	results, _, _, _ := h.complianceStore.ListResultsByScan(r.Context(), scan.ID, nil, nil, 1000, 0)
+	// Return full scan with results
+	results, _, _, err := h.complianceStore.ListResultsByScan(r.Context(), scan.ID, nil, nil, 1000, 0)
+	if err != nil {
+		slog.Error("compliance latest scan results failed", "error", err, "host_id", hostID)
+	}
 	resultsOut := make([]map[string]interface{}, 0, len(results))
 	for _, res := range results {
 		resultsOut = append(resultsOut, map[string]interface{}{
