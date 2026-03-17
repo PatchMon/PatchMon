@@ -60,6 +60,15 @@ import {
 	LastScanAgeBar,
 	OpenSCAPDistributionDoughnut,
 } from "../components/compliance/widgets";
+import {
+	PATCHING_WIDGET_CARD_IDS,
+	PatchingActivePolicies,
+	PatchingPendingApproval,
+	PatchingRecentRuns,
+	PatchRunOutcomesDoughnut,
+	PatchRunStatusBoxes,
+	PatchRunsByType,
+} from "../components/patching/widgets";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { useToast } from "../contexts/ToastContext";
@@ -70,6 +79,7 @@ import {
 	settingsAPI,
 } from "../utils/api";
 import { complianceAPI } from "../utils/complianceApi";
+import { patchingAPI } from "../utils/patchingApi";
 
 // Register Chart.js components
 ChartJS.register(
@@ -449,6 +459,18 @@ const Dashboard = () => {
 		enabled: has_view_hosts && is_any_compliance_card_enabled,
 	});
 
+	// Fetch patching dashboard only when at least one patching card is enabled
+	const is_any_patching_card_enabled = cardPreferences.some(
+		(c) => PATCHING_WIDGET_CARD_IDS.includes(c.cardId) && c.enabled,
+	);
+	const { data: patching_dashboard } = useQuery({
+		queryKey: ["patching-dashboard"],
+		queryFn: () => patchingAPI.getDashboard(),
+		staleTime: 30 * 1000,
+		refetchInterval: 30 * 1000,
+		enabled: has_view_hosts && is_any_patching_card_enabled,
+	});
+
 	// Fetch settings to get the agent update interval
 	const { data: settings } = useQuery({
 		queryKey: ["settings"],
@@ -704,6 +726,11 @@ const Dashboard = () => {
 				return false; // Hide compliance cards if user can't view hosts
 			}
 		}
+		if (PATCHING_WIDGET_CARD_IDS.includes(cardId)) {
+			if (permissions?.can_view_hosts !== true) {
+				return false; // Hide patching cards if user can't view hosts
+			}
+		}
 
 		return card.enabled;
 	};
@@ -736,6 +763,7 @@ const Dashboard = () => {
 				"recentUsers",
 				"recentCollection",
 				...COMPLIANCE_WIDGET_CARD_IDS,
+				...PATCHING_WIDGET_CARD_IDS,
 			].includes(cardId)
 		) {
 			return "charts";
@@ -1361,6 +1389,24 @@ const Dashboard = () => {
 
 			case "complianceActiveBenchmarkScans":
 				return <ActiveBenchmarkScans />;
+
+			case "patchingRunStatus":
+				return <PatchRunStatusBoxes data={patching_dashboard} />;
+
+			case "patchingRunOutcomesDoughnut":
+				return <PatchRunOutcomesDoughnut data={patching_dashboard} />;
+
+			case "patchingPendingApproval":
+				return <PatchingPendingApproval data={patching_dashboard} />;
+
+			case "patchingRunsByType":
+				return <PatchRunsByType data={patching_dashboard} />;
+
+			case "patchingActivePolicies":
+				return <PatchingActivePolicies data={patching_dashboard} />;
+
+			case "patchingRecentRuns":
+				return <PatchingRecentRuns data={patching_dashboard} />;
 
 			case "packageTrends":
 				return (
@@ -2370,6 +2416,9 @@ const Dashboard = () => {
 									c.cardId === "complianceStats" ||
 									COMPLIANCE_WIDGET_CARD_IDS.includes(c.cardId)
 								) {
+									if (permissions?.can_view_hosts !== true) return false;
+								}
+								if (PATCHING_WIDGET_CARD_IDS.includes(c.cardId)) {
 									if (permissions?.can_view_hosts !== true) return false;
 								}
 								return true;

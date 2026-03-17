@@ -16,6 +16,14 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { PackageListDisplay } from "../components/PackageListDisplay";
 import { PatchRunStatusBadge } from "../components/PatchRunStatusBadge";
+import {
+	PatchingActivePolicies,
+	PatchingPendingApproval,
+	PatchingRecentRuns,
+	PatchRunOutcomesDoughnut,
+	PatchRunStatusBoxes,
+	PatchRunsByType,
+} from "../components/patching/widgets";
 import { patchingAPI } from "../utils/patchingApi";
 
 const PATCHING_TABS = [
@@ -118,8 +126,6 @@ const Patching = () => {
 	}
 
 	const summary = dashboard?.summary || {};
-	const recent_runs = dashboard?.recent_runs || [];
-	const active_runs = dashboard?.active_runs || [];
 
 	return (
 		<div className="space-y-6">
@@ -231,218 +237,14 @@ const Patching = () => {
 
 				<div className="flex-1 overflow-auto p-4 md:p-6">
 					{activeTab === "overview" && (
-						<>
-							{/* Active runs */}
-							{active_runs?.length > 0 && (
-								<div className="card p-4 md:p-6">
-									<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex items-center gap-2">
-										<AlertTriangle className="h-5 w-5 text-amber-500" />
-										Active runs
-									</h3>
-									<div className="overflow-x-auto">
-										<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
-											<thead className="bg-secondary-50 dark:bg-secondary-700">
-												<tr>
-													<th
-														scope="col"
-														className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-													>
-														Host
-													</th>
-													<th
-														scope="col"
-														className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-													>
-														Type
-													</th>
-													<th
-														scope="col"
-														className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-													>
-														Status
-													</th>
-													<th
-														scope="col"
-														className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-													>
-														Initiated by
-													</th>
-													<th
-														scope="col"
-														className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-													>
-														Started
-													</th>
-													<th
-														scope="col"
-														className="px-4 py-3 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-													>
-														Actions
-													</th>
-												</tr>
-											</thead>
-											<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
-												{active_runs.map((run) => (
-													<tr
-														key={run.id}
-														className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
-													>
-														<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
-															{run.hosts?.friendly_name ||
-																run.hosts?.hostname ||
-																run.host_id}
-														</td>
-														<td className="px-4 py-2 text-sm text-secondary-900 dark:text-white">
-															<PackageListDisplay run={run} />
-														</td>
-														<td className="px-4 py-2 whitespace-nowrap">
-															<div className="flex items-center gap-1 flex-wrap">
-																<PatchRunStatusBadge run={run} />
-																{run.status === "validated" &&
-																	run.packages_affected?.length >
-																		(run.package_names?.length || 1) && (
-																		<ValidatedBadge />
-																	)}
-															</div>
-														</td>
-														<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-600 dark:text-secondary-400">
-															{run.triggered_by_username ? (
-																<span className="flex items-center gap-1">
-																	<User className="h-4 w-4" />
-																	{run.triggered_by_username}
-																</span>
-															) : (
-																"—"
-															)}
-														</td>
-														<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-600 dark:text-secondary-400">
-															{run.started_at
-																? new Date(run.started_at).toLocaleString()
-																: new Date(run.created_at).toLocaleString()}
-														</td>
-														<td className="px-4 py-2 whitespace-nowrap text-right">
-															<Link
-																to={`/patching/runs/${run.id}`}
-																className="text-primary-600 dark:text-primary-400 hover:underline text-sm"
-															>
-																View
-															</Link>
-														</td>
-													</tr>
-												))}
-											</tbody>
-										</table>
-									</div>
-								</div>
-							)}
-
-							{/* Recent runs */}
-							<div className="card p-4 md:p-6">
-								<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
-									Recent runs
-								</h3>
-								{recent_runs.length === 0 ? (
-									<p className="text-secondary-500 dark:text-secondary-400 text-sm">
-										No patch runs yet. Trigger a patch from Packages or a host.
-									</p>
-								) : (
-									<div className="overflow-x-auto">
-										<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
-											<thead className="bg-secondary-50 dark:bg-secondary-700">
-												<tr>
-													<th
-														scope="col"
-														className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-													>
-														Host
-													</th>
-													<th
-														scope="col"
-														className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-													>
-														Type
-													</th>
-													<th
-														scope="col"
-														className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-													>
-														Status
-													</th>
-													<th
-														scope="col"
-														className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-													>
-														Initiated by
-													</th>
-													<th
-														scope="col"
-														className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-													>
-														Completed
-													</th>
-													<th
-														scope="col"
-														className="px-4 py-3 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-													>
-														Actions
-													</th>
-												</tr>
-											</thead>
-											<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
-												{recent_runs.map((run) => (
-													<tr
-														key={run.id}
-														className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
-													>
-														<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
-															{run.hosts?.friendly_name ||
-																run.hosts?.hostname ||
-																run.host_id}
-														</td>
-														<td className="px-4 py-2 text-sm text-secondary-900 dark:text-white">
-															<PackageListDisplay run={run} />
-														</td>
-														<td className="px-4 py-2 whitespace-nowrap">
-															<div className="flex items-center gap-1 flex-wrap">
-																<PatchRunStatusBadge run={run} />
-																{run.status === "validated" &&
-																	run.packages_affected?.length >
-																		(run.package_names?.length || 1) && (
-																		<ValidatedBadge />
-																	)}
-															</div>
-														</td>
-														<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-600 dark:text-secondary-400">
-															{run.triggered_by_username ? (
-																<span className="flex items-center gap-1">
-																	<User className="h-4 w-4" />
-																	{run.triggered_by_username}
-																</span>
-															) : (
-																"—"
-															)}
-														</td>
-														<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-600 dark:text-secondary-400">
-															{run.completed_at
-																? new Date(run.completed_at).toLocaleString()
-																: "—"}
-														</td>
-														<td className="px-4 py-2 whitespace-nowrap text-right">
-															<Link
-																to={`/patching/runs/${run.id}`}
-																className="text-primary-600 dark:text-primary-400 hover:underline text-sm"
-															>
-																View output
-															</Link>
-														</td>
-													</tr>
-												))}
-											</tbody>
-										</table>
-									</div>
-								)}
-							</div>
-						</>
+						<div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+							<PatchRunStatusBoxes data={dashboard} />
+							<PatchRunOutcomesDoughnut data={dashboard} />
+							<PatchingPendingApproval data={dashboard} />
+							<PatchRunsByType data={dashboard} />
+							<PatchingActivePolicies data={dashboard} />
+							<PatchingRecentRuns data={dashboard} />
+						</div>
 					)}
 
 					{activeTab === "runs" && (

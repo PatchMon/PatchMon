@@ -77,6 +77,12 @@ var defaultCardLayout = []struct {
 	{CardID: "complianceLastScanAge", RequiredPermission: "can_view_hosts", Order: 23, Enabled: true, ColSpan: 1},
 	{CardID: "osDistribution", RequiredPermission: "can_view_reports", Order: 24, Enabled: true, ColSpan: 1},
 	{CardID: "complianceTrendLine", RequiredPermission: "can_view_hosts", Order: 25, Enabled: false, ColSpan: 1},
+	{CardID: "patchingRunStatus", RequiredPermission: "can_view_hosts", Order: 26, Enabled: true, ColSpan: 1},
+	{CardID: "patchingRunOutcomesDoughnut", RequiredPermission: "can_view_hosts", Order: 27, Enabled: true, ColSpan: 1},
+	{CardID: "patchingPendingApproval", RequiredPermission: "can_view_hosts", Order: 28, Enabled: true, ColSpan: 1},
+	{CardID: "patchingRunsByType", RequiredPermission: "can_view_hosts", Order: 29, Enabled: true, ColSpan: 1},
+	{CardID: "patchingActivePolicies", RequiredPermission: "can_view_hosts", Order: 30, Enabled: true, ColSpan: 1},
+	{CardID: "patchingRecentRuns", RequiredPermission: "can_view_hosts", Order: 31, Enabled: true, ColSpan: 1},
 }
 
 // Card metadata (matches Node CARD_METADATA).
@@ -110,6 +116,12 @@ var cardMetadata = map[string]struct {
 	"complianceLastScanAge":          {Title: "Last Scan Age", Icon: "BarChart3"},
 	"complianceTrendLine":            {Title: "Compliance Trend", Icon: "TrendingUp"},
 	"complianceActiveBenchmarkScans": {Title: "Active Benchmark Scans", Icon: "Shield"},
+	"patchingRunStatus":              {Title: "Patch Run Status", Icon: "ListChecks"},
+	"patchingRunOutcomesDoughnut":    {Title: "Run Outcomes", Icon: "PieChart"},
+	"patchingPendingApproval":        {Title: "Pending Approval", Icon: "AlertTriangle"},
+	"patchingRunsByType":             {Title: "Runs by Type", Icon: "PieChart"},
+	"patchingActivePolicies":         {Title: "Active Runs", Icon: "PlayCircle"},
+	"patchingRecentRuns":             {Title: "Recent Runs", Icon: "History"},
 }
 
 // Get returns the user's dashboard preferences (GET /dashboard-preferences).
