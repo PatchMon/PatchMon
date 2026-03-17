@@ -146,10 +146,15 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Port),
-		Handler:      httpHandler,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Handler:           httpHandler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		// WriteTimeout is 0 (unlimited) intentionally: the chi Timeout middleware
+		// (30s) handles request deadlines at the handler level. A non-zero
+		// WriteTimeout would kill WebSocket, SSE, and long-poll connections before
+		// the handler middleware can send a proper timeout response.
+		WriteTimeout: 0,
 		IdleTimeout:  60 * time.Second,
 	}
 
@@ -166,6 +171,16 @@ func main() {
 	<-quit
 
 	slog.Info("shutting down")
+
+	// Stop accepting new jobs and wait for in-flight jobs to finish.
+	// Shutdown before HTTP server so agents can still report results during drain.
+	if scheduler != nil {
+		scheduler.Shutdown()
+		slog.Info("scheduler stopped")
+	}
+	queueSrv.Shutdown()
+	slog.Info("queue server stopped")
+
 	if memstatsCancel != nil {
 		memstatsCancel()
 	}

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,16 +21,44 @@ const (
 	RateLimitPassword
 )
 
+// rateLimitSecurityCritical returns true for rate limit types that protect
+// authentication endpoints. When Redis is unavailable these must fail-closed
+// (deny the request) to prevent brute-force attacks.
+func rateLimitSecurityCritical(typ RateLimitType) bool {
+	return typ == RateLimitAuth || typ == RateLimitPassword
+}
+
+func rateLimitUnavailable(w http.ResponseWriter, r *http.Request, typ RateLimitType) {
+	if rateLimitSecurityCritical(typ) {
+		slog.Warn("rate limiter unavailable, blocking security-critical request", "path", r.URL.Path, "type", typ)
+		w.Header().Set("Retry-After", "30")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"Service temporarily unavailable. Please try again shortly."}`))
+		return
+	}
+	// Non-security rate limits degrade gracefully: allow through but log.
+	slog.Warn("rate limiter unavailable, allowing request (non-critical)", "path", r.URL.Path, "type", typ)
+}
+
 // RateLimit returns middleware that limits requests per client by type.
 func RateLimit(rdb *hostctx.RedisResolver, resolved *config.ResolvedConfig, typ RateLimitType) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if rdb == nil || resolved == nil {
+				rateLimitUnavailable(w, r, typ)
+				if rateLimitSecurityCritical(typ) {
+					return
+				}
 				next.ServeHTTP(w, r)
 				return
 			}
 			client := rdb.RDB(r.Context())
 			if client == nil {
+				rateLimitUnavailable(w, r, typ)
+				if rateLimitSecurityCritical(typ) {
+					return
+				}
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -65,6 +94,10 @@ func RateLimit(rdb *hostctx.RedisResolver, resolved *config.ResolvedConfig, typ 
 			ctx := r.Context()
 			count, err := client.Incr(ctx, key).Result()
 			if err != nil {
+				rateLimitUnavailable(w, r, typ)
+				if rateLimitSecurityCritical(typ) {
+					return
+				}
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -93,11 +126,13 @@ func RateLimitAgentByAPIID(rdb *hostctx.RedisResolver, resolved *config.Resolved
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if rdb == nil || resolved == nil {
+				slog.Warn("agent rate limiter unavailable, allowing request", "path", r.URL.Path)
 				next.ServeHTTP(w, r)
 				return
 			}
 			client := rdb.RDB(r.Context())
 			if client == nil {
+				slog.Warn("agent rate limiter unavailable, allowing request", "path", r.URL.Path)
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -115,6 +150,7 @@ func RateLimitAgentByAPIID(rdb *hostctx.RedisResolver, resolved *config.Resolved
 			ctx := r.Context()
 			count, err := client.Incr(ctx, key).Result()
 			if err != nil {
+				slog.Warn("agent rate limiter redis error, allowing request", "error", err, "path", r.URL.Path)
 				next.ServeHTTP(w, r)
 				return
 			}

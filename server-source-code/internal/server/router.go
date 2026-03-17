@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/http/pprof"
+	"strings"
 	"time"
 
 	"log/slog"
@@ -230,7 +232,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	marketingHandler := handler.NewMarketingHandler()
 	communityHandler := handler.NewCommunityHandler()
 
-	r.Get("/health", healthHandler(db))
+	r.Get("/health", healthHandler(db, rdb))
 	r.Get("/api/v1/version", versionHandler(cfg))
 
 	// Start guacd subprocess if RDP enabled and address is localhost.
@@ -574,17 +576,44 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	return r, guacdProc
 }
 
-func healthHandler(db *database.DB) http.HandlerFunc {
+func healthHandler(db *database.DB, rdb *redisclient.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		if err := db.Health(ctx); err != nil {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte("unhealthy"))
+		dbOK := db.Health(ctx) == nil
+		redisOK := rdb != nil && rdb.Ping(ctx).Err() == nil
+
+		allHealthy := dbOK && redisOK
+
+		status := http.StatusOK
+		if !allHealthy {
+			status = http.StatusServiceUnavailable
+		}
+
+		// Return structured JSON for monitoring tools.
+		// Accept header or ?format=json triggers JSON; plain "healthy"/"unhealthy"
+		// is kept for simple uptime checks (curl, Docker HEALTHCHECK).
+		if r.URL.Query().Get("format") == "json" || strings.Contains(r.Header.Get("Accept"), "application/json") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = fmt.Fprintf(w, `{"status":%q,"database":%q,"redis":%q}`,
+				boolStatus(allHealthy), boolStatus(dbOK), boolStatus(redisOK))
 			return
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("healthy"))
+
+		w.WriteHeader(status)
+		if allHealthy {
+			_, _ = w.Write([]byte("healthy"))
+		} else {
+			_, _ = w.Write([]byte("unhealthy"))
+		}
 	}
+}
+
+func boolStatus(ok bool) string {
+	if ok {
+		return "ok"
+	}
+	return "unhealthy"
 }
 
 func versionHandler(cfg *config.Config) http.HandlerFunc {

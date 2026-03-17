@@ -42,17 +42,19 @@ func NewComplianceHandler(complianceStore *store.ComplianceStore, hostsStore *st
 
 // Scan submission rate limiter: 10/min per agent
 type scanRateLimiter struct {
-	mu     sync.Mutex
-	counts map[string][]time.Time
-	limit  int
-	window time.Duration
+	mu        sync.Mutex
+	counts    map[string][]time.Time
+	limit     int
+	window    time.Duration
+	lastClean time.Time
 }
 
 func newScanRateLimiter(limit int, window time.Duration) *scanRateLimiter {
 	return &scanRateLimiter{
-		counts: make(map[string][]time.Time),
-		limit:  limit,
-		window: window,
+		counts:    make(map[string][]time.Time),
+		limit:     limit,
+		window:    window,
+		lastClean: time.Now(),
 	}
 }
 
@@ -61,14 +63,35 @@ func (rl *scanRateLimiter) allow(key string) bool {
 	defer rl.mu.Unlock()
 	now := time.Now()
 	cutoff := now.Add(-rl.window)
-	// Prune old entries
-	valid := make([]time.Time, 0)
+
+	// Periodic full cleanup: remove stale keys every 5 minutes to prevent
+	// unbounded map growth from many unique agent IDs.
+	if now.Sub(rl.lastClean) > 5*time.Minute {
+		for k, ts := range rl.counts {
+			valid := ts[:0]
+			for _, t := range ts {
+				if t.After(cutoff) {
+					valid = append(valid, t)
+				}
+			}
+			if len(valid) == 0 {
+				delete(rl.counts, k)
+			} else {
+				rl.counts[k] = valid
+			}
+		}
+		rl.lastClean = now
+	}
+
+	// Prune old entries for the current key
+	valid := rl.counts[key][:0]
 	for _, t := range rl.counts[key] {
 		if t.After(cutoff) {
 			valid = append(valid, t)
 		}
 	}
 	if len(valid) >= rl.limit {
+		rl.counts[key] = valid
 		return false
 	}
 	valid = append(valid, now)

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
@@ -185,8 +186,12 @@ func (h *AlertsHandler) PerformAction(w http.ResponseWriter, r *http.Request) {
 	if userID != "" {
 		uid = &userID
 	}
-	_ = h.alerts.RecordHistory(r.Context(), id, uid, req.Action, meta)
-	_ = d.Queries.UpdateAlert(r.Context(), id)
+	if err := h.alerts.RecordHistory(r.Context(), id, uid, req.Action, meta); err != nil {
+		slog.Error("alerts: failed to record action history", "alert_id", id, "action", req.Action, "error", err)
+	}
+	if err := d.Queries.UpdateAlert(r.Context(), id); err != nil {
+		slog.Error("alerts: failed to update alert timestamp", "alert_id", id, "error", err)
+	}
 
 	updated, _ := h.alerts.GetByID(r.Context(), id)
 	successData(w, updated)
@@ -216,8 +221,12 @@ func (h *AlertsHandler) Assign(w http.ResponseWriter, r *http.Request) {
 	if userID != "" {
 		uid = &userID
 	}
-	_ = h.alerts.RecordHistory(r.Context(), id, uid, "assigned", map[string]interface{}{"assigned_to": req.UserID})
-	_ = d.Queries.UpdateAlert(r.Context(), id)
+	if err := h.alerts.RecordHistory(r.Context(), id, uid, "assigned", map[string]interface{}{"assigned_to": req.UserID}); err != nil {
+		slog.Error("alerts: failed to record assign history", "alert_id", id, "error", err)
+	}
+	if err := d.Queries.UpdateAlert(r.Context(), id); err != nil {
+		slog.Error("alerts: failed to update alert timestamp", "alert_id", id, "error", err)
+	}
 
 	updated, _ := h.alerts.GetByID(r.Context(), id)
 	successData(w, updated)
@@ -240,8 +249,12 @@ func (h *AlertsHandler) Unassign(w http.ResponseWriter, r *http.Request) {
 	if userID != "" {
 		uid = &userID
 	}
-	_ = h.alerts.RecordHistory(r.Context(), id, uid, "unassigned", map[string]interface{}{})
-	_ = d.Queries.UpdateAlert(r.Context(), id)
+	if err := h.alerts.RecordHistory(r.Context(), id, uid, "unassigned", map[string]interface{}{}); err != nil {
+		slog.Error("alerts: failed to record unassign history", "alert_id", id, "error", err)
+	}
+	if err := d.Queries.UpdateAlert(r.Context(), id); err != nil {
+		slog.Error("alerts: failed to update alert timestamp", "alert_id", id, "error", err)
+	}
 
 	updated, _ := h.alerts.GetByID(r.Context(), id)
 	successData(w, updated)

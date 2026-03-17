@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
@@ -99,6 +100,7 @@ func (h *AlertConfigHandler) BulkUpdate(w http.ResponseWriter, r *http.Request) 
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	var failed []string
 	for _, c := range req.Configs {
 		alertType, _ := c["alert_type"].(string)
 		if alertType == "" {
@@ -110,14 +112,26 @@ func (h *AlertConfigHandler) BulkUpdate(w http.ResponseWriter, r *http.Request) 
 			cfg = &existing.AlertConfig
 		}
 		applyAlertConfigUpdate(cfg, c)
-		_ = h.alertConfig.Upsert(r.Context(), cfg)
+		if err := h.alertConfig.Upsert(r.Context(), cfg); err != nil {
+			slog.Error("alert config bulk update: upsert failed", "alert_type", alertType, "error", err)
+			failed = append(failed, alertType)
+		}
 	}
-	configs, _ := h.alertConfig.GetAll(r.Context())
+	configs, err := h.alertConfig.GetAll(r.Context())
+	if err != nil {
+		slog.Error("alert config bulk update: failed to reload configs", "error", err)
+		Error(w, http.StatusInternalServerError, "Failed to reload alert configs after update")
+		return
+	}
 	out := make([]map[string]interface{}, len(configs))
 	for i, c := range configs {
 		out[i] = alertConfigToMap(&c.AlertConfig, c.AutoAssignUser)
 	}
-	alertConfigSuccessData(w, out)
+	result := map[string]interface{}{"success": true, "data": out}
+	if len(failed) > 0 {
+		result["partial_failures"] = failed
+	}
+	JSON(w, http.StatusOK, result)
 }
 
 // PreviewCleanup handles GET /alerts/cleanup/preview.

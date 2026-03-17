@@ -73,11 +73,15 @@ func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore
 				}
 				inactive := time.Since(sess.LastActivity) > time.Duration(resolved.SessionInactivityTimeoutMin)*time.Minute
 				if inactive {
-					_ = sessionsStore.RevokeByID(r.Context(), sessionID, userID)
+					if err := sessionsStore.RevokeByID(r.Context(), sessionID, userID); err != nil {
+						slog.Error("auth: failed to revoke inactive session", "session_id", sessionID, "error", err)
+					}
 					http.Error(w, `{"error":"Session expired due to inactivity"}`, http.StatusUnauthorized)
 					return
 				}
-				_ = sessionsStore.UpdateActivity(r.Context(), sessionID)
+				if err := sessionsStore.UpdateActivity(r.Context(), sessionID); err != nil {
+					slog.Error("auth: failed to update session activity", "session_id", sessionID, "error", err)
+				}
 			}
 
 			if log != nil {
