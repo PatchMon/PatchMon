@@ -80,7 +80,10 @@ func main() {
 	var poolCache *hostctx.PoolCache
 	var redisCache *hostctx.RedisCache
 	if cfg.RegistryDatabaseURL != "" {
-		ctxRegistry, err = hostctx.NewRegistry(ctx, cfg.RegistryDatabaseURL, 5*time.Minute, slog)
+		// Poll interval is a failsafe — the primary path for registry updates is the
+		// immediate reload webhook (POST /api/v1/internal/reload-registry-map) triggered
+		// by the provisioner after every tenant create/update/delete.
+		ctxRegistry, err = hostctx.NewRegistry(ctx, cfg.RegistryDatabaseURL, 60*time.Second, slog)
 		if err != nil {
 			slog.Error("context registry", "error", err)
 			os.Exit(1)
@@ -88,7 +91,7 @@ func main() {
 		defer ctxRegistry.Close()
 		poolCache = hostctx.NewPoolCache(ctxRegistry, cfg, cfg.HostCacheTTLMin, slog)
 		redisCache = hostctx.NewRedisCache(ctxRegistry, rdb, cfg.HostCacheTTLMin, slog)
-		slog.Info("multi-host mode enabled", "registry_poll_interval", "5m")
+		slog.Info("multi-host mode enabled", "registry_poll_interval", "60s")
 	}
 
 	// Validate encryption (required for bootstrap/install flow)

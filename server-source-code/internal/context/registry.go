@@ -108,7 +108,11 @@ func (r *Registry) poll() {
 
 func (r *Registry) refresh(ctx stdctx.Context) error {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, slug, host, COALESCE(database_url, ''), redis_host, redis_port, redis_db, redis_username, redis_password, backend_url, status, created_at, updated_at
+		SELECT id, slug, host, COALESCE(database_url, ''),
+		       redis_host, redis_port, redis_db, redis_username, redis_password,
+		       backend_url, status,
+		       max_db_connections, min_db_connections, max_users, max_hosts, modules,
+		       created_at, updated_at
 		FROM tenants WHERE status = $1`,
 		statusActive,
 	)
@@ -124,7 +128,9 @@ func (r *Registry) refresh(ctx stdctx.Context) error {
 		err := rows.Scan(
 			&t.ID, &t.Slug, &t.Host, &dbURL,
 			&t.RedisHost, &t.RedisPort, &t.RedisDB, &t.RedisUsername, &t.RedisPassword,
-			&t.BackendURL, &t.Status, &t.CreatedAt, &t.UpdatedAt,
+			&t.BackendURL, &t.Status,
+			&t.MaxConnections, &t.MinConnections, &t.MaxUsers, &t.MaxHosts, &t.Modules,
+			&t.CreatedAt, &t.UpdatedAt,
 		)
 		if err != nil {
 			return err
@@ -137,28 +143,6 @@ func (r *Registry) refresh(ctx stdctx.Context) error {
 	}
 	if err := rows.Err(); err != nil {
 		return err
-	}
-
-	// Optionally fetch max_connections, min_connections if columns exist (provisioner migration adds them).
-	connRows, err := r.pool.Query(ctx, `SELECT host, max_db_connections, min_db_connections, max_users, max_hosts, modules FROM tenants WHERE status = $1`, statusActive)
-	if err == nil {
-		defer connRows.Close()
-		for connRows.Next() {
-			var host string
-			var maxConn, minConn, maxUsers, maxHosts *int
-			var modules *string
-			if err := connRows.Scan(&host, &maxConn, &minConn, &maxUsers, &maxHosts, &modules); err != nil {
-				break
-			}
-			hostKey := strings.ToLower(strings.TrimSpace(host))
-			if t, ok := newMap[hostKey]; ok {
-				t.MaxConnections = maxConn
-				t.MinConnections = minConn
-				t.MaxUsers = maxUsers
-				t.MaxHosts = maxHosts
-				t.Modules = modules
-			}
-		}
 	}
 
 	r.mu.Lock()

@@ -2,6 +2,9 @@ package context
 
 import (
 	stdctx "context"
+	"encoding/json"
+	"net/http"
+	"strings"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/redis/go-redis/v9"
@@ -90,4 +93,43 @@ func EntryFromContext(ctx stdctx.Context) *Entry {
 	}
 	e, _ := v.(*Entry)
 	return e
+}
+
+// HasModule checks whether the tenant entry in context includes the given module.
+// Returns true if: no entry in context (single-tenant mode), or entry.Modules is nil (all allowed),
+// or the module is present in the comma-separated Modules list.
+func HasModule(ctx stdctx.Context, module string) bool {
+	entry := EntryFromContext(ctx)
+	if entry == nil {
+		return true // single-tenant mode — no restrictions
+	}
+	if entry.Modules == nil {
+		return true // nil = all modules allowed
+	}
+	for _, m := range strings.Split(*entry.Modules, ",") {
+		if strings.TrimSpace(m) == module {
+			return true
+		}
+	}
+	return false
+}
+
+// RequireModule returns middleware that checks if the tenant's package includes
+// the given module. Returns 403 if the module is not enabled.
+// In single-tenant mode (no entry in context), the request is always allowed.
+func RequireModule(module string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !HasModule(r.Context(), module) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"error": "module not available in your plan",
+					"code":  "module_not_available",
+				})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }

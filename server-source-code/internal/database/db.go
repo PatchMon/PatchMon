@@ -72,6 +72,7 @@ func NewFromURL(ctx context.Context, databaseURL string, maxConns, minConns int,
 	poolCfg.MaxConns = safeconv.ClampToInt32(maxConns)
 	poolCfg.MinConns = safeconv.ClampToInt32(minConns)
 	poolCfg.ConnConfig.ConnectTimeout = time.Duration(cfg.DBConnectTimeout) * time.Second
+	poolCfg.HealthCheckPeriod = 30 * time.Second
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return nil, fmt.Errorf("create pgx pool: %w", err)

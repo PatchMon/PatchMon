@@ -32,6 +32,7 @@ const (
 type RunScanHandler struct {
 	registry          *agentregistry.Registry
 	db                *database.DB
+	poolCache         *hostctx.PoolCache
 	compliance        *store.ComplianceStore
 	queueClient       *asynq.Client
 	integrationStatus *store.IntegrationStatusStore
@@ -39,10 +40,11 @@ type RunScanHandler struct {
 }
 
 // NewRunScanHandler creates a run_scan handler.
-func NewRunScanHandler(registry *agentregistry.Registry, db *database.DB, compliance *store.ComplianceStore, queueClient *asynq.Client, integrationStatus *store.IntegrationStatusStore, log *slog.Logger) *RunScanHandler {
+func NewRunScanHandler(registry *agentregistry.Registry, db *database.DB, poolCache *hostctx.PoolCache, compliance *store.ComplianceStore, queueClient *asynq.Client, integrationStatus *store.IntegrationStatusStore, log *slog.Logger) *RunScanHandler {
 	return &RunScanHandler{
 		registry:          registry,
 		db:                db,
+		poolCache:         poolCache,
 		compliance:        compliance,
 		queueClient:       queueClient,
 		integrationStatus: integrationStatus,
@@ -56,18 +58,21 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return err
 	}
+
+	// Resolve per-tenant DB when Host is in payload (multi-host mode).
+	d := resolveDBFromPayload(ctx, t.Payload(), h.db, h.poolCache)
 	taskID, _ := asynq.GetTaskID(ctx)
 	retryCount, _ := asynq.GetRetryCount(ctx)
 	attempt := int32(retryCount + 1)
 
-	if h.db != nil && taskID != "" && retryCount == 0 {
-		host, err := h.db.Queries.GetHostByApiID(ctx, p.ApiID)
+	if d != nil && taskID != "" && retryCount == 0 {
+		host, err := d.Queries.GetHostByApiID(ctx, p.ApiID)
 		var hostID *string
 		if err == nil {
 			hostID = &host.ID
 		}
 		apiIDPtr := &p.ApiID
-		_ = h.db.Queries.InsertJobHistory(ctx, db.InsertJobHistoryParams{
+		_ = d.Queries.InsertJobHistory(ctx, db.InsertJobHistoryParams{
 			ID:            uuid.New().String(),
 			JobID:         taskID,
 			QueueName:     QueueCompliance,
@@ -83,25 +88,25 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if conn == nil {
 		if h.integrationStatus != nil && h.integrationStatus.IsComplianceScanCancelled(ctx, p.HostID) {
 			h.log.Info("run_scan: cancelled, not re-queuing", "api_id", p.ApiID, "host_id", p.HostID)
-			if taskID != "" && h.db != nil {
-				_ = h.db.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+			if taskID != "" && d != nil {
+				_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
 			}
 			return nil
 		}
 		if p.RequeueCount >= maxScanRequeueAttempts {
 			h.log.Warn("run_scan: agent offline, max re-queue attempts reached — giving up",
 				"api_id", p.ApiID, "host_id", p.HostID, "attempts", p.RequeueCount)
-			if taskID != "" && h.db != nil {
+			if taskID != "" && d != nil {
 				msg := "Agent remained offline after maximum retry attempts"
-				_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{
 					JobID: taskID, ErrorMessage: &msg,
 				})
 			}
 			return nil
 		}
 		h.log.Info("run_scan: agent offline, re-queuing", "api_id", p.ApiID, "attempt", p.RequeueCount+1)
-		if taskID != "" && h.db != nil {
-			_ = h.db.Queries.UpdateJobHistoryDelayed(ctx, taskID)
+		if taskID != "" && d != nil {
+			_ = d.Queries.UpdateJobHistoryDelayed(ctx, taskID)
 		}
 		p.RequeueCount++
 		nextTask, err := NewRunScanTask(p)
@@ -117,7 +122,7 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 
 	openscapEnabled := true
 	dockerBenchEnabled := false
-	host, err := h.db.Queries.GetHostByID(ctx, p.HostID)
+	host, err := d.Queries.GetHostByID(ctx, p.HostID)
 	if err == nil {
 		openscapEnabled = host.ComplianceOpenscapEnabled
 		dockerBenchEnabled = host.ComplianceDockerBenchEnabled
@@ -131,8 +136,8 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 			effectiveProfileType = "docker-bench"
 		} else if !openscapEnabled && !dockerBenchEnabled {
 			h.log.Warn("run_scan: both scanners disabled, skipping", "host_id", p.HostID)
-			if taskID != "" && h.db != nil {
-				_ = h.db.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+			if taskID != "" && d != nil {
+				_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
 			}
 			return nil
 		} else {
@@ -159,8 +164,8 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if err := conn.WriteJSON(msg); err != nil {
 		if h.integrationStatus != nil && h.integrationStatus.IsComplianceScanCancelled(ctx, p.HostID) {
 			h.log.Info("run_scan: cancelled after write failed", "api_id", p.ApiID, "host_id", p.HostID)
-			if taskID != "" && h.db != nil {
-				_ = h.db.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+			if taskID != "" && d != nil {
+				_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
 			}
 			return nil
 		}
@@ -168,16 +173,16 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 		if p.RequeueCount >= maxScanRequeueAttempts {
 			h.log.Warn("run_scan: write failed, max re-queue attempts reached — giving up",
 				"api_id", p.ApiID, "host_id", p.HostID)
-			if taskID != "" && h.db != nil {
+			if taskID != "" && d != nil {
 				msg := "Failed to communicate with agent after maximum retry attempts"
-				_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{
 					JobID: taskID, ErrorMessage: &msg,
 				})
 			}
 			return nil
 		}
-		if taskID != "" && h.db != nil {
-			_ = h.db.Queries.UpdateJobHistoryDelayed(ctx, taskID)
+		if taskID != "" && d != nil {
+			_ = d.Queries.UpdateJobHistoryDelayed(ctx, taskID)
 		}
 		p.RequeueCount++
 		nextTask, _ := NewRunScanTask(p)
@@ -202,8 +207,8 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 		_ = h.compliance.CreateRunningScan(ctx, p.HostID, profileID)
 	}
 
-	if taskID != "" && h.db != nil {
-		_ = h.db.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+	if taskID != "" && d != nil {
+		_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
 	}
 	h.log.Info("run_scan: triggered", "host_id", p.HostID, "api_id", p.ApiID)
 	return nil

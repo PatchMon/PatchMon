@@ -1,6 +1,7 @@
 package context
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -11,6 +12,11 @@ import (
 
 const reloadSecretHeader = "X-Registry-Reload-Secret"
 
+// secureCompare performs a constant-time comparison to prevent timing attacks on secrets.
+func secureCompare(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
 // RegistryReloadHandler returns a handler for POST /api/v1/internal/reload-registry-map.
 // Triggers an immediate refresh of the registry cache. Used by the provisioner
 // after creating a host so new hosts are visible without waiting for the 5-min poll.
@@ -20,7 +26,7 @@ func RegistryReloadHandler(registry *Registry, reloadSecret string) http.Handler
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if reloadSecret != "" && r.Header.Get(reloadSecretHeader) != reloadSecret {
+		if reloadSecret != "" && !secureCompare(r.Header.Get(reloadSecretHeader), reloadSecret) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -112,7 +118,7 @@ func ReloadHandler(poolCache *PoolCache, redisCache *RedisCache, reloadSecret st
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if reloadSecret != "" && r.Header.Get(reloadSecretHeader) != reloadSecret {
+		if reloadSecret != "" && !secureCompare(r.Header.Get(reloadSecretHeader), reloadSecret) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

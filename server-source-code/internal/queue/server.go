@@ -101,7 +101,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	if opts.RDB != nil {
 		integrationStatusStore = store.NewIntegrationStatusStore(&hostctx.RedisResolver{Default: opts.RDB})
 	}
-	mux.Handle(TypeRunScan, wrap(TypeRunScan, NewRunScanHandler(registry, db, complianceStore, opts.QueueClient, integrationStatusStore, log)))
+	mux.Handle(TypeRunScan, wrap(TypeRunScan, NewRunScanHandler(registry, db, opts.PoolCache, complianceStore, opts.QueueClient, integrationStatusStore, log)))
 	mux.Handle(TypeInstallComplianceTools, wrap(TypeInstallComplianceTools, NewInstallComplianceToolsHandler(registry, db, opts.RDB, opts.RedisCache, log)))
 	patchRunsStore := store.NewPatchRunsStore(&hostctx.DBResolver{Default: db})
 	mux.Handle(TypeRunPatch, wrap(TypeRunPatch, NewRunPatchHandler(registry, patchRunsStore, opts.PoolCache, opts.QueueClient, log)))
