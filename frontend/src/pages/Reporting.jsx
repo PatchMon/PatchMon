@@ -16,6 +16,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { adminUsersAPI, alertsAPI, formatRelativeTime } from "../utils/api";
 
+// System-only actions that should not appear in user-facing menus
+const SYSTEM_ONLY_ACTIONS = new Set(["created", "updated"]);
+
 const Reporting = () => {
 	const { user: _user } = useAuth();
 	const queryClient = useQueryClient();
@@ -197,43 +200,52 @@ const Reporting = () => {
 		);
 	};
 
+	// Get user-facing actions (excludes system-only), split into workflow vs resolution
+	const workflowActions = useMemo(
+		() =>
+			(availableActions || []).filter(
+				(a) => !a.is_state_action && !SYSTEM_ONLY_ACTIONS.has(a.name),
+			),
+		[availableActions],
+	);
+	const resolutionActions = useMemo(
+		() => (availableActions || []).filter((a) => a.is_state_action),
+		[availableActions],
+	);
+
 	// Get status badge from current state
 	const getStatusBadge = (alert) => {
 		const currentState = alert.current_state;
 		if (!currentState || !currentState.action) {
 			return (
 				<span className="px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
-					Active
+					Open
 				</span>
 			);
 		}
 
 		const action = currentState.action.toLowerCase();
-		if (action === "done") {
-			return (
-				<span className="px-2 py-1 text-xs font-medium rounded bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-					Done
-				</span>
-			);
-		}
-		if (action === "silenced") {
-			return (
-				<span className="px-2 py-1 text-xs font-medium rounded bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
-					Silenced
-				</span>
-			);
-		}
-		if (action === "resolved") {
-			return (
-				<span className="px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
-					Resolved
-				</span>
-			);
-		}
+		const statusStyles = {
+			acknowledged:
+				"bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+			investigating:
+				"bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200",
+			escalated:
+				"bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
+			silenced:
+				"bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+			done: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
+			resolved: "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200",
+		};
+		const style =
+			statusStyles[action] ||
+			"bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200";
+		const label =
+			action.charAt(0).toUpperCase() + action.slice(1).replace("_", " ");
 
 		return (
-			<span className="px-2 py-1 text-xs font-medium rounded bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-				Active
+			<span className={`px-2 py-1 text-xs font-medium rounded ${style}`}>
+				{label}
 			</span>
 		);
 	};
@@ -298,17 +310,17 @@ const Reporting = () => {
 		if (statusFilter !== "all") {
 			filtered = filtered.filter((alert) => {
 				const currentState = alert.current_state;
-				if (!currentState || !currentState.action) {
-					return statusFilter === "active";
-				}
-				const action = currentState.action.toLowerCase();
-				if (statusFilter === "done") return action === "done";
+				const action = currentState?.action?.toLowerCase() || "";
+				const resolvedStates = ["done", "resolved"];
+				if (statusFilter === "open")
+					return !action || !resolvedStates.includes(action);
+				if (statusFilter === "acknowledged") return action === "acknowledged";
+				if (statusFilter === "investigating") return action === "investigating";
+				if (statusFilter === "escalated") return action === "escalated";
 				if (statusFilter === "silenced") return action === "silenced";
+				if (statusFilter === "done") return action === "done";
 				if (statusFilter === "resolved") return action === "resolved";
-				return (
-					statusFilter === "active" &&
-					!["done", "silenced", "resolved"].includes(action)
-				);
+				return true;
 			});
 		}
 
@@ -699,7 +711,10 @@ const Reporting = () => {
 							className="px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
 						>
 							<option value="all">All Status</option>
-							<option value="active">Active</option>
+							<option value="open">Open</option>
+							<option value="acknowledged">Acknowledged</option>
+							<option value="investigating">Investigating</option>
+							<option value="escalated">Escalated</option>
 							<option value="silenced">Silenced</option>
 							<option value="done">Done</option>
 							<option value="resolved">Resolved</option>
@@ -991,23 +1006,53 @@ const Reporting = () => {
 						onClick={(e) => e.stopPropagation()}
 					>
 						<div className="py-1">
-							{availableActions
-								?.filter((action) => action.is_state_action)
-								.map((action) => (
-									<button
-										key={action.name}
-										type="button"
-										onClick={(e) => {
-											e.stopPropagation();
-											handleAction(openActionMenu, action.name, e);
-											setOpenActionMenu(null);
-										}}
-										className="w-full text-left px-4 py-2 text-sm text-secondary-700 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700"
-										disabled={performActionMutation.isPending}
-									>
-										{action.display_name}
-									</button>
-								))}
+							{workflowActions.length > 0 && (
+								<>
+									<div className="px-4 py-1 text-xs font-semibold text-secondary-400 dark:text-secondary-500 uppercase tracking-wider">
+										Workflow
+									</div>
+									{workflowActions.map((action) => (
+										<button
+											key={action.name}
+											type="button"
+											onClick={(e) => {
+												e.stopPropagation();
+												handleAction(openActionMenu, action.name, e);
+												setOpenActionMenu(null);
+											}}
+											className="w-full text-left px-4 py-2 text-sm text-secondary-700 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700"
+											disabled={performActionMutation.isPending}
+										>
+											{action.display_name}
+										</button>
+									))}
+								</>
+							)}
+							{workflowActions.length > 0 && resolutionActions.length > 0 && (
+								<div className="border-t border-secondary-200 dark:border-secondary-600 my-1" />
+							)}
+							{resolutionActions.length > 0 && (
+								<>
+									<div className="px-4 py-1 text-xs font-semibold text-secondary-400 dark:text-secondary-500 uppercase tracking-wider">
+										Resolve
+									</div>
+									{resolutionActions.map((action) => (
+										<button
+											key={action.name}
+											type="button"
+											onClick={(e) => {
+												e.stopPropagation();
+												handleAction(openActionMenu, action.name, e);
+												setOpenActionMenu(null);
+											}}
+											className="w-full text-left px-4 py-2 text-sm text-secondary-700 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700"
+											disabled={performActionMutation.isPending}
+										>
+											{action.display_name}
+										</button>
+									))}
+								</>
+							)}
 						</div>
 					</div>
 				</>
@@ -1141,23 +1186,36 @@ const Reporting = () => {
 									Actions
 								</label>
 								<div className="flex flex-wrap gap-2">
-									{availableActions
-										?.filter((action) => action.is_state_action)
-										.map((action) => (
-											<button
-												key={action.name}
-												type="button"
-												onClick={() => {
-													handleAction(selectedAlert.id, action.name);
-													setShowAlertModal(false);
-													setSelectedAlert(null);
-												}}
-												className="btn-outline text-xs px-3 py-1"
-												disabled={performActionMutation.isPending}
-											>
-												{action.display_name}
-											</button>
-										))}
+									{workflowActions.map((action) => (
+										<button
+											key={action.name}
+											type="button"
+											onClick={() => {
+												handleAction(selectedAlert.id, action.name);
+												setShowAlertModal(false);
+												setSelectedAlert(null);
+											}}
+											className="btn-outline text-xs px-3 py-1"
+											disabled={performActionMutation.isPending}
+										>
+											{action.display_name}
+										</button>
+									))}
+									{resolutionActions.map((action) => (
+										<button
+											key={action.name}
+											type="button"
+											onClick={() => {
+												handleAction(selectedAlert.id, action.name);
+												setShowAlertModal(false);
+												setSelectedAlert(null);
+											}}
+											className="btn-outline text-xs px-3 py-1 border-red-300 text-red-700 hover:bg-red-50 dark:border-red-600 dark:text-red-400 dark:hover:bg-red-900"
+											disabled={performActionMutation.isPending}
+										>
+											{action.display_name}
+										</button>
+									))}
 								</div>
 							</div>
 

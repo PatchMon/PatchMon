@@ -60,7 +60,10 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	if resolved.TrustProxy {
 		r.Use(chimw.RealIP)
 	}
-	r.Use(chimw.Timeout(30 * time.Second))
+	// Note: chimw.Timeout is NOT applied globally because it conflicts with
+	// WebSocket/SSE routes (hijacked connections). It writes a 503 to a
+	// hijacked ResponseWriter causing "WriteHeader on hijacked connection".
+	// Instead, timeout is applied per-group below, skipping WS routes.
 
 	if cfg.EnablePprof {
 		r.Handle("/debug/pprof/*", http.HandlerFunc(pprof.Index))
@@ -247,6 +250,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(middleware.HSTS(resolved.EnableHSTS))
+		r.Use(middleware.Timeout(30 * time.Second))
 		r.Use(middleware.BodyLimit(resolved.JSONBodyLimitBytes))
 		// Internal: registry reload (provisioner calls after creating context)
 		if ctxRegistry != nil && cfg.RegistryReloadSecret != "" {
