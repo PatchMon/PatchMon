@@ -621,10 +621,24 @@ const Login = () => {
 													// Normalise versions for comparison (strip leading "v")
 													const strip = (v) =>
 														v ? v.replace(/^v/i, "").trim() : "";
+													// Compare two semver strings. Returns positive if a > b, negative if a < b, 0 if equal.
+													const semverCmp = (a, b) => {
+														const pa = a.split(".").map(Number);
+														const pb = b.split(".").map(Number);
+														const len = Math.max(pa.length, pb.length);
+														for (let i = 0; i < len; i++) {
+															const diff = (pa[i] || 0) - (pb[i] || 0);
+															if (diff !== 0) return diff;
+														}
+														return 0;
+													};
 													const installed = strip(currentVersion);
 													const latest = strip(latestRelease.version);
+													// Only show "Update Available" when latest is strictly newer than installed
 													const isUpdateAvailable =
-														installed && latest && installed !== latest;
+														installed &&
+														latest &&
+														semverCmp(latest, installed) > 0;
 													if (isUpdateAvailable) {
 														return (
 															<>

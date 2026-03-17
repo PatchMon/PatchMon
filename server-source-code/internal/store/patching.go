@@ -39,6 +39,75 @@ func parsePackagesAffectedFromAptOutput(output string) []string {
 	return pkgs
 }
 
+// parsePackagesAffectedFromRealOutput extracts package names from real (non-dry-run) output.
+// Handles multiple package manager formats:
+//   - apt-get (real): "Unpacking pkgname" / "Setting up pkgname" lines
+//   - apt-get (simulate): "Inst pkgname" lines (fallback, same as dry-run parser)
+//   - dnf/yum: "Upgrading  : pkgname.arch" / "Installing : pkgname.arch" or transaction summary sections
+func parsePackagesAffectedFromRealOutput(output string) []string {
+	seen := make(map[string]bool)
+	var pkgs []string
+	addPkg := func(name string) {
+		// Strip architecture suffix (e.g. "libssl3:amd64" -> "libssl3", "pkg.x86_64" -> "pkg")
+		name = strings.SplitN(name, ":", 2)[0]
+		name = strings.SplitN(name, ".", 2)[0]
+		name = strings.TrimSpace(name)
+		if name != "" && !seen[name] {
+			seen[name] = true
+			pkgs = append(pkgs, name)
+		}
+	}
+
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		// apt-get simulate: "Inst pkgname ..."
+		if strings.HasPrefix(trimmed, "Inst ") {
+			fields := strings.Fields(trimmed)
+			if len(fields) >= 2 {
+				addPkg(fields[1])
+			}
+			continue
+		}
+		// apt-get real: "Unpacking pkgname (version) ..." or "Setting up pkgname (version) ..."
+		if strings.HasPrefix(trimmed, "Unpacking ") || strings.HasPrefix(trimmed, "Setting up ") {
+			fields := strings.Fields(trimmed)
+			if len(fields) >= 2 {
+				addPkg(fields[1])
+			}
+			continue
+		}
+		// dnf/yum real: "  Upgrading   : pkgname-version.arch" / "  Installing  : pkgname-version.arch"
+		// Also handles "  Updating    : ..." (yum synonym for upgrading)
+		lower := strings.ToLower(trimmed)
+		if strings.HasPrefix(lower, "upgrading") || strings.HasPrefix(lower, "installing") || strings.HasPrefix(lower, "updating") {
+			// Format: "Upgrading   : pkgname-ver.arch  N/M"
+			colonIdx := strings.Index(trimmed, ":")
+			if colonIdx >= 0 {
+				rest := strings.TrimSpace(trimmed[colonIdx+1:])
+				// Take only the first token (package name+version+arch)
+				fields := strings.Fields(rest)
+				if len(fields) >= 1 {
+					// Strip version: "pkgname-1.0-1.x86_64" → "pkgname"
+					pkgFull := fields[0]
+					// Remove arch suffix first
+					pkgNoArch := strings.SplitN(pkgFull, ".", 2)[0]
+					// Remove version: last hyphen-separated segment that starts with a digit
+					parts := strings.Split(pkgNoArch, "-")
+					nameParts := parts[:1]
+					for i := 1; i < len(parts); i++ {
+						if len(parts[i]) > 0 && parts[i][0] >= '0' && parts[i][0] <= '9' {
+							break
+						}
+						nameParts = append(nameParts, parts[i])
+					}
+					addPkg(strings.Join(nameParts, "-"))
+				}
+			}
+		}
+	}
+	return pkgs
+}
+
 // PatchRunsStore provides patch run access.
 type PatchRunsStore struct {
 	db database.DBProvider
@@ -54,7 +123,8 @@ func NewPatchRunsStore(db database.DBProvider) *PatchRunsStore {
 // triggeredByUserID is the user who initiated the run (optional; nil for agent/system).
 // dryRun when true creates a validation-only run with status "pending_validation".
 // scheduledAt is when the patch will run (optional; nil for immediate runs).
-func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patchType string, packageName *string, packageNames []string, triggeredByUserID *string, dryRun bool, scheduledAt *time.Time) (string, error) {
+// policyID, policyName, policySnapshot capture the effective policy at trigger time (all optional).
+func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patchType string, packageName *string, packageNames []string, triggeredByUserID *string, dryRun bool, scheduledAt *time.Time, policyID, policyName *string, policySnapshot []byte) (string, error) {
 	if id == "" {
 		id = uuid.New().String()
 	}
@@ -87,6 +157,9 @@ func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patch
 		TriggeredByUserID: triggeredByUserID,
 		DryRun:            dryRun,
 		ScheduledAt:       sched,
+		PolicyID:          policyID,
+		PolicyName:        policyName,
+		PolicySnapshot:    policySnapshot,
 	})
 	return id, err
 }
@@ -119,8 +192,10 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, stage, output, er
 		if err := d.Queries.UpdatePatchRunCompleted(ctx, db.UpdatePatchRunCompletedParams{ID: id, ShellOutput: output}); err != nil {
 			return err
 		}
-		// Parse packages_affected from apt output for visibility (e.g. offline hosts that ran later)
-		if pkgs := parsePackagesAffectedFromAptOutput(output); len(pkgs) > 0 {
+		// Parse packages_affected from real run output for visibility.
+		// Uses a multi-format parser covering apt "Unpacking"/"Setting up" lines
+		// and dnf/yum "Upgrading:"/"Installing:" lines.
+		if pkgs := parsePackagesAffectedFromRealOutput(output); len(pkgs) > 0 {
 			b, _ := json.Marshal(pkgs)
 			_ = d.Queries.UpdatePatchRunPackagesAffected(ctx, db.UpdatePatchRunPackagesAffectedParams{ID: id, PackagesAffected: b})
 		}
@@ -155,6 +230,17 @@ func (s *PatchRunsStore) ApproveRun(ctx context.Context, id string, approvedByUs
 	return d.Queries.ApprovePatchRun(ctx, db.ApprovePatchRunParams{
 		ID:               id,
 		ApprovedByUserID: approvedByUserID,
+	})
+}
+
+// SetPolicySnapshot stores the effective policy snapshot on a run (called at trigger/approve time).
+func (s *PatchRunsStore) SetPolicySnapshot(ctx context.Context, id string, policyID, policyName *string, snapshot []byte) error {
+	d := s.db.DB(ctx)
+	return d.Queries.SetPatchRunPolicySnapshot(ctx, db.SetPatchRunPolicySnapshotParams{
+		ID:             id,
+		PolicyID:       policyID,
+		PolicyName:     policyName,
+		PolicySnapshot: snapshot,
 	})
 }
 

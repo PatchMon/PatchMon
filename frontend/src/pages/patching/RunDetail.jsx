@@ -5,6 +5,7 @@ import {
 	PlayCircle,
 	RefreshCw,
 	Server,
+	Shield,
 	User,
 } from "lucide-react";
 import { useState } from "react";
@@ -85,6 +86,21 @@ const RunDetail = () => {
 	const hostName =
 		run.hosts?.friendly_name || run.hosts?.hostname || run.host_id;
 
+	// Format policy settings into a human-readable description line
+	const policyDetail = (() => {
+		const snap = run.policy_snapshot;
+		if (!snap) return null;
+		const type = snap.patch_delay_type;
+		if (type === "immediate") return "Runs immediately on trigger";
+		if (type === "delayed" && snap.delay_minutes != null)
+			return `Delayed by ${snap.delay_minutes} min after trigger`;
+		if (type === "fixed_time" && snap.fixed_time_utc) {
+			const tz = snap.timezone || "UTC";
+			return `Fixed time: ${snap.fixed_time_utc} (${tz})`;
+		}
+		return type || null;
+	})();
+
 	// Normalize shell output: apt/dpkg use \r to overwrite the same line (progress); show each as its own line
 	const shellDisplay =
 		run.shell_output != null && run.shell_output !== ""
@@ -156,6 +172,35 @@ const RunDetail = () => {
 							</span>
 							<span className="text-secondary-900 dark:text-white">
 								{run.approved_by_username}
+							</span>
+						</div>
+					)}
+					{(run.policy_name || run.policy_snapshot) && (
+						<div className="sm:col-span-2 flex items-start gap-2 p-3 rounded-lg bg-secondary-50 dark:bg-secondary-700/40 border border-secondary-200 dark:border-secondary-600">
+							<Shield className="h-4 w-4 text-primary-500 mt-0.5 shrink-0" />
+							<div className="space-y-1 text-sm">
+								<p className="font-medium text-secondary-800 dark:text-secondary-200">
+									{run.policy_name ?? "Patch policy"}
+								</p>
+								{policyDetail && (
+									<p className="text-secondary-500 dark:text-secondary-400 text-xs">
+										{policyDetail}
+									</p>
+								)}
+								{run.policy_snapshot?.patch_delay_type === "immediate" &&
+									!policyDetail &&
+									null}
+							</div>
+						</div>
+					)}
+					{!run.policy_name && !run.policy_snapshot && !run.dry_run && (
+						<div className="flex items-center gap-2">
+							<Shield className="h-4 w-4 text-secondary-400" />
+							<span className="text-secondary-500 dark:text-secondary-400">
+								Policy
+							</span>
+							<span className="text-secondary-500 dark:text-secondary-400 italic text-xs">
+								Default (immediate)
 							</span>
 						</div>
 					)}

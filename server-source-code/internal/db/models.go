@@ -415,6 +415,9 @@ type PatchRun struct {
 	ApprovedByUserID  *string          `json:"approved_by_user_id"`
 	DryRun            bool             `json:"dry_run"`
 	PackagesAffected  []byte           `json:"packages_affected"`
+	PolicyID          *string          `json:"policy_id"`
+	PolicyName        *string          `json:"policy_name"`
+	PolicySnapshot    []byte           `json:"policy_snapshot"`
 	CreatedAt         pgtype.Timestamp `json:"created_at"`
 	UpdatedAt         pgtype.Timestamp `json:"updated_at"`
 }

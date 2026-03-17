@@ -1,13 +1,16 @@
 -- patch_runs
 -- name: CreatePatchRun :exec
-INSERT INTO patch_runs (id, host_id, job_id, patch_type, package_name, package_names, status, shell_output, triggered_by_user_id, dry_run, scheduled_at, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW());
+INSERT INTO patch_runs (id, host_id, job_id, patch_type, package_name, package_names, status, shell_output, triggered_by_user_id, dry_run, scheduled_at, policy_id, policy_name, policy_snapshot, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW());
 
 -- name: UpdatePatchRunValidated :exec
 UPDATE patch_runs SET status = 'validated', shell_output = shell_output || $2, packages_affected = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1;
 
 -- name: ApprovePatchRun :exec
 UPDATE patch_runs SET status = 'queued', approved_by_user_id = $2, updated_at = NOW() WHERE id = $1 AND status = 'validated';
+
+-- name: SetPatchRunPolicySnapshot :exec
+UPDATE patch_runs SET policy_id = $2, policy_name = $3, policy_snapshot = $4, updated_at = NOW() WHERE id = $1;
 
 -- name: UpdatePatchRunPackagesAffected :exec
 UPDATE patch_runs SET packages_affected = $2, updated_at = NOW() WHERE id = $1;

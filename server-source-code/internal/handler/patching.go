@@ -301,6 +301,18 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Host not found for run"})
 		return
 	}
+	// Snapshot the effective policy at approval time for the real run
+	policy, _ := h.patchPolicies.ResolveEffectivePolicy(r.Context(), run.HostID)
+	if policy != nil {
+		snap, _ := json.Marshal(map[string]interface{}{
+			"name":             policy.Name,
+			"patch_delay_type": policy.PatchDelayType,
+			"delay_minutes":    policy.DelayMinutes,
+			"fixed_time_utc":   policy.FixedTimeUtc,
+			"timezone":         policy.Timezone,
+		})
+		_ = h.patchRuns.SetPolicySnapshot(r.Context(), id, &policy.ID, &policy.Name, snap)
+	}
 	var pkgName *string
 	if run.PackageName != nil {
 		pkgName = run.PackageName
@@ -412,7 +424,22 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	if delayMs > 0 {
 		scheduledAt = &runAt
 	}
-	_, err = h.patchRuns.CreateRun(r.Context(), patchRunID, body.HostID, jobID, body.PatchType, pkgName, pkgNames, triggeredBy, body.DryRun, scheduledAt)
+	// Snapshot the effective policy at trigger time so it can be shown in run details.
+	var policyID, policyNamePtr *string
+	var policySnapshot []byte
+	if policy != nil && !body.DryRun {
+		policyID = &policy.ID
+		policySnapshot, _ = json.Marshal(map[string]interface{}{
+			"name":             policy.Name,
+			"patch_delay_type": policy.PatchDelayType,
+			"delay_minutes":    policy.DelayMinutes,
+			"fixed_time_utc":   policy.FixedTimeUtc,
+			"timezone":         policy.Timezone,
+		})
+		n := policy.Name
+		policyNamePtr = &n
+	}
+	_, err = h.patchRuns.CreateRun(r.Context(), patchRunID, body.HostID, jobID, body.PatchType, pkgName, pkgNames, triggeredBy, body.DryRun, scheduledAt, policyID, policyNamePtr, policySnapshot)
 	if err != nil {
 		h.log.Error("patching: create run error", "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create patch run"})
@@ -833,6 +860,14 @@ func patchRunToResponse(r *db.GetPatchRunByIDRow) map[string]interface{} {
 		"triggered_by_username": r.TriggeredByUsername,
 		"approved_by_username":  r.ApprovedByUsername,
 		"dry_run":               r.DryRun,
+		"policy_id":             r.PolicyID,
+		"policy_name":           r.PolicyName,
+	}
+	if len(r.PolicySnapshot) > 0 {
+		var snap map[string]interface{}
+		if json.Unmarshal(r.PolicySnapshot, &snap) == nil {
+			m["policy_snapshot"] = snap
+		}
 	}
 	if len(r.PackageNames) > 0 {
 		var names []string

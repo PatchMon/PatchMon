@@ -458,17 +458,21 @@ type PackageActivityEntry struct {
 }
 
 // GetActivity returns completed patch runs where the package was upgraded.
-// packageIDOrName can be package ID (UUID) or package name.
+// packageIDOrName can be a package ID (UUID) or package name.
+// If the package is not in the packages table (e.g. it is only ever a dependency),
+// the string is used directly as the package name so that entries in
+// packages_affected are still found.
 func (s *PackagesStore) GetActivity(ctx context.Context, packageIDOrName string, limit, offset int) ([]PackageActivityEntry, error) {
 	d := s.db.DB(ctx)
-	// Resolve package name
-	var pkgName string
+	// Resolve to a canonical name from the packages table if possible.
+	// Fall back to using the raw string — this covers packages that only ever
+	// appear as dependencies (in packages_affected) and are not tracked as
+	// top-level installed packages.
+	pkgName := packageIDOrName
 	if pkg, err := d.Queries.GetPackageByID(ctx, packageIDOrName); err == nil {
 		pkgName = pkg.Name
 	} else if pkg, err := d.Queries.GetPackageByName(ctx, packageIDOrName); err == nil {
 		pkgName = pkg.Name
-	} else {
-		return nil, nil
 	}
 
 	rows, err := d.Queries.ListPatchRunsByPackage(ctx, db.ListPatchRunsByPackageParams{

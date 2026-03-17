@@ -637,6 +637,9 @@ CREATE TABLE IF NOT EXISTS patch_runs (
     approved_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
     dry_run BOOLEAN NOT NULL DEFAULT false,
     packages_affected JSONB,
+    policy_id TEXT REFERENCES patch_policies(id) ON DELETE SET NULL,
+    policy_name TEXT,
+    policy_snapshot JSONB,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP(3) NOT NULL
 );

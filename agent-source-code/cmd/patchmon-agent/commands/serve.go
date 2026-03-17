@@ -1899,7 +1899,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 					return fmt.Errorf("apt-get -s upgrade failed: %w", upgradeErr)
 				}
 			} else {
-				upgradeCmd := exec.CommandContext(ctx, "apt-get", "upgrade", "-y", "-qq")
+				upgradeCmd := exec.CommandContext(ctx, "apt-get", "upgrade", "-y")
 				upgradeCmd.Env = env
 				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
 				fullOutput.Write(upgradeOut)
@@ -1968,7 +1968,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 					return fmt.Errorf("%s upgrade --assumeno failed: %w", upgradeBin, upgradeErr)
 				}
 			} else {
-				upgradeCmd := exec.CommandContext(ctx, upgradeBin, "upgrade", "-y", "-q")
+				upgradeCmd := exec.CommandContext(ctx, upgradeBin, "upgrade", "-y")
 				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
 				fullOutput.Write(upgradeOut)
 				if upgradeErr != nil {
@@ -1999,7 +1999,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 					return fmt.Errorf("apt-get -s install %v failed: %w", packageNames, installErr)
 				}
 			} else {
-				installArgs := append([]string{"install", "-y", "-qq"}, packageNames...)
+				installArgs := append([]string{"install", "-y"}, packageNames...)
 				installCmd := exec.CommandContext(ctx, "apt-get", installArgs...)
 				installCmd.Env = env
 				installOut, installErr := installCmd.CombinedOutput()
@@ -2074,7 +2074,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 					return fmt.Errorf("%s install --assumeno %v failed: %w", upgradeBin, packageNames, installErr)
 				}
 			} else {
-				installArgs := append([]string{"install", "-y", "-q"}, packageNames...)
+				installArgs := append([]string{"install", "-y"}, packageNames...)
 				installCmd := exec.CommandContext(ctx, upgradeBin, installArgs...)
 				installOut, installErr := installCmd.CombinedOutput()
 				fullOutput.Write(installOut)
