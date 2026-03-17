@@ -65,7 +65,7 @@ Access the application at the URL you configured (default: `http://localhost:300
    sed -i "s/^AI_ENCRYPTION_KEY=.*/AI_ENCRYPTION_KEY=$(openssl rand -hex 64)/" .env
    ```
 
-4. Edit `.env` and set `CORS_ORIGIN` to the full URL you will use to access PatchMon (default: `http://localhost:3000`).
+4. Edit `.env` and configure the required variables. See `env.example` for the full list and [docs.patchmon.net](https://docs.patchmon.net/books/patchmon-application-documentation/page/patchmon-environment-variables-reference) for detailed explanations.
 
 5. Start the application:
    ```bash
@@ -117,47 +117,11 @@ When you do this, updating to a new version requires manually updating the image
 
 ## Configuration
 
-All configuration is managed through the `.env` file. See `env.example` for a full list of available variables.
+All configuration is managed through the `.env` file.
 
-### Required Variables
+**For the full list of available variables**, see `env.example` in this directory.
 
-| Variable | Description |
-| -------- | ----------- |
-| `POSTGRES_PASSWORD` | Database password |
-| `REDIS_PASSWORD` | Redis password |
-| `JWT_SECRET` | JWT signing secret — generate with `openssl rand -hex 64` |
-| `SESSION_SECRET` | Session encryption secret — generate with `openssl rand -hex 64` |
-| `AI_ENCRYPTION_KEY` | AI data encryption key — generate with `openssl rand -hex 64` |
-| `CORS_ORIGIN` | Full URL(s) used to access PatchMon in the browser (comma-separated for multiple) |
-
-### Optional Variables
-
-The `.env` file also supports optional variables for fine-tuning. These have sensible defaults and do not need to be changed for most deployments:
-
-- **Authentication**: `JWT_EXPIRES_IN`, `JWT_REFRESH_EXPIRES_IN`, `SESSION_INACTIVITY_TIMEOUT_MINUTES`, `DEFAULT_USER_ROLE`
-- **Account lockout**: `MAX_LOGIN_ATTEMPTS`, `LOCKOUT_DURATION_MINUTES`
-- **Password policy**: `PASSWORD_MIN_LENGTH`, `PASSWORD_REQUIRE_UPPERCASE`, `PASSWORD_REQUIRE_LOWERCASE`, `PASSWORD_REQUIRE_NUMBER`, `PASSWORD_REQUIRE_SPECIAL`
-- **Two-Factor Authentication**: `MAX_TFA_ATTEMPTS`, `TFA_LOCKOUT_DURATION_MINUTES`, `TFA_REMEMBER_ME_EXPIRES_IN`, `TFA_MAX_REMEMBER_SESSIONS`
-- **OIDC / SSO**: `OIDC_ENABLED`, `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI`, `OIDC_SCOPES`, and more
-- **Encryption**: `SESSION_SECRET` is required (see above). `AI_ENCRYPTION_KEY` is required when AI features are enabled.
-- **Database pool (Prisma)**: `DB_CONNECTION_LIMIT`, `DB_POOL_TIMEOUT`, `DB_CONNECT_TIMEOUT`, `DB_IDLE_TIMEOUT`, `DB_MAX_LIFETIME`
-- **Database transaction timeouts**: `DB_TRANSACTION_MAX_WAIT`, `DB_TRANSACTION_TIMEOUT`, `DB_TRANSACTION_LONG_TIMEOUT`
-- **Database connection retry**: `PM_DB_CONN_MAX_ATTEMPTS`, `PM_DB_CONN_WAIT_INTERVAL`
-- **Rate limiting**: `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX`, `AUTH_RATE_LIMIT_WINDOW_MS`, `AUTH_RATE_LIMIT_MAX`, `AGENT_RATE_LIMIT_WINDOW_MS`, `AGENT_RATE_LIMIT_MAX`
-- **Logging**: `LOG_LEVEL`, `ENABLE_LOGGING`, `PM_LOG_TO_CONSOLE`, `PRISMA_LOG_QUERIES`
-- **Network**: `ENABLE_HSTS`, `TRUST_PROXY`, `CORS_ORIGINS`
-- **Body size limits**: `JSON_BODY_LIMIT`, `AGENT_UPDATE_BODY_LIMIT`
-- **Timezone**: `TZ`
-
-See `env.example` for the full list with defaults and descriptions.
-
-> [!TIP]
-> The connection pool limit should be adjusted based on your deployment size:
-> - **Small deployment (1-10 hosts)**: `DB_CONNECTION_LIMIT=15` is sufficient
-> - **Medium deployment (10-50 hosts)**: `DB_CONNECTION_LIMIT=30` (default)
-> - **Large deployment (50+ hosts)**: `DB_CONNECTION_LIMIT=50` or higher
-> 
-> Each connection pool serves one server instance. If you have concurrent operations (multiple users, background jobs, agent checkins), increase the pool size accordingly.
+**For detailed explanations** of each variable (defaults, usage, and examples), see the [PatchMon Environment Variables Reference](https://docs.patchmon.net/books/patchmon-application-documentation/page/patchmon-environment-variables-reference) at docs.patchmon.net.
 
 ### Volumes
 

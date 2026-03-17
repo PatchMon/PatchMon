@@ -68,11 +68,19 @@ func parsePackagesAffectedFromRealOutput(output string) []string {
 			}
 			continue
 		}
-		// apt-get real: "Unpacking pkgname (version) ..." or "Setting up pkgname (version) ..."
-		if strings.HasPrefix(trimmed, "Unpacking ") || strings.HasPrefix(trimmed, "Setting up ") {
+		// apt-get real: "Unpacking pkgname (version) ..."
+		if strings.HasPrefix(trimmed, "Unpacking ") {
 			fields := strings.Fields(trimmed)
 			if len(fields) >= 2 {
 				addPkg(fields[1])
+			}
+			continue
+		}
+		// apt-get real: "Setting up pkgname (version) ..." — "Setting up" is two words, so pkg is at index 2
+		if strings.HasPrefix(trimmed, "Setting up ") {
+			fields := strings.Fields(trimmed)
+			if len(fields) >= 3 {
+				addPkg(fields[2])
 			}
 			continue
 		}
@@ -242,6 +250,21 @@ func (s *PatchRunsStore) SetPolicySnapshot(ctx context.Context, id string, polic
 		PolicyName:     policyName,
 		PolicySnapshot: snapshot,
 	})
+}
+
+// SetScheduledAt stores when a queued patch run is scheduled to execute.
+func (s *PatchRunsStore) SetScheduledAt(ctx context.Context, id string, scheduledAt time.Time) error {
+	d := s.db.DB(ctx)
+	return d.Queries.UpdatePatchRunScheduledAt(ctx, db.UpdatePatchRunScheduledAtParams{
+		ID:          id,
+		ScheduledAt: pgtype.Timestamp{Time: scheduledAt, Valid: true},
+	})
+}
+
+// ClearScheduledAt removes the scheduled_at field (used when a run executes immediately).
+func (s *PatchRunsStore) ClearScheduledAt(ctx context.Context, id string) error {
+	d := s.db.DB(ctx)
+	return d.Queries.ClearScheduledAt(ctx, id)
 }
 
 // List returns paginated patch runs with optional filters and sort.
@@ -550,22 +573,16 @@ func NewPatchPoliciesStore(db database.DBProvider) *PatchPoliciesStore {
 
 // ResolveEffectivePolicy returns the effective patch policy for a host.
 // Precedence: direct host assignment > first group assignment (by created_at) that contains host.
-// Exclusions: if policy applies via group, host may be excluded.
+// Exclusions only apply to group-based assignments; a direct assignment cannot be excluded.
 func (s *PatchPoliciesStore) ResolveEffectivePolicy(ctx context.Context, hostID string) (*db.PatchPolicy, error) {
 	d := s.db.DB(ctx)
-	// 1. Direct host assignment
+	// 1. Direct host assignment — exclusions do not apply here.
 	policy, err := d.Queries.GetDirectPatchPolicyAssignment(ctx, hostID)
 	if err == nil {
-		excluded, _ := d.Queries.ExistsPatchPolicyExclusion(ctx, db.ExistsPatchPolicyExclusionParams{
-			PatchPolicyID: policy.ID,
-			HostID:        hostID,
-		})
-		if !excluded {
-			return &policy, nil
-		}
+		return &policy, nil
 	}
 
-	// 2. Group assignments
+	// 2. Group assignments — exclusions apply.
 	groupIDs, err := d.Queries.GetHostGroupMemberships(ctx, hostID)
 	if err != nil || len(groupIDs) == 0 {
 		return nil, nil

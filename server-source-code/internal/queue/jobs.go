@@ -112,6 +112,21 @@ func NewRunPatchTask(p RunPatchPayload) (*asynq.Task, error) {
 	return asynq.NewTask(TypeRunPatch, payload, opts...), nil
 }
 
+// NewRunPatchRetryTask creates a run_patch task with a custom task ID so that
+// re-queuing an offline run does not collide with the still-active original task.
+func NewRunPatchRetryTask(p RunPatchPayload, taskID string) (*asynq.Task, error) {
+	payload, err := json.Marshal(p)
+	if err != nil {
+		return nil, err
+	}
+	opts := []asynq.Option{
+		asynq.Queue(QueuePatching),
+		asynq.MaxRetry(10),
+		asynq.TaskID(taskID),
+	}
+	return asynq.NewTask(TypeRunPatch, payload, opts...), nil
+}
+
 // ReportNowPayload is the payload for report_now job.
 type ReportNowPayload struct {
 	ApiID string `json:"api_id"`
@@ -532,9 +547,17 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 	conn := h.registry.GetConnection(p.ApiID)
 	if conn == nil {
 		h.log.Info("run_patch: agent offline, re-queuing", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
-		_ = h.patchRuns.UpdateStatus(ctx, p.PatchRunID, "queued")
-		// Re-enqueue with 1 min delay
-		task, err := NewRunPatchTask(p)
+		// Keep the correct status: pending_validation for dry runs, queued for real runs.
+		status := "queued"
+		if p.DryRun {
+			status = "pending_validation"
+		}
+		_ = h.patchRuns.UpdateStatus(ctx, p.PatchRunID, status)
+		// Re-enqueue with 1-min delay using a unique task ID so Asynq does
+		// not reject it as a duplicate of the still-active original task.
+		retryPayload := p
+		retrySuffix := "-retry-" + uuid.New().String()[:8]
+		task, err := NewRunPatchRetryTask(retryPayload, p.PatchRunID+retrySuffix)
 		if err != nil {
 			return err
 		}

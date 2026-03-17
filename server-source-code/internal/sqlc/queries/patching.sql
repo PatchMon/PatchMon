@@ -7,10 +7,13 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW(
 UPDATE patch_runs SET status = 'validated', shell_output = shell_output || $2, packages_affected = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1;
 
 -- name: ApprovePatchRun :exec
-UPDATE patch_runs SET status = 'queued', approved_by_user_id = $2, updated_at = NOW() WHERE id = $1 AND status = 'validated';
+UPDATE patch_runs SET status = 'queued', approved_by_user_id = $2, dry_run = false, updated_at = NOW() WHERE id = $1 AND status = 'validated';
 
 -- name: SetPatchRunPolicySnapshot :exec
 UPDATE patch_runs SET policy_id = $2, policy_name = $3, policy_snapshot = $4, updated_at = NOW() WHERE id = $1;
+
+-- name: UpdatePatchRunScheduledAt :exec
+UPDATE patch_runs SET scheduled_at = $2, updated_at = NOW() WHERE id = $1;
 
 -- name: UpdatePatchRunPackagesAffected :exec
 UPDATE patch_runs SET packages_affected = $2, updated_at = NOW() WHERE id = $1;
@@ -27,7 +30,12 @@ WHERE pr.id = $1;
 SELECT * FROM patch_runs WHERE id = $1;
 
 -- name: UpdatePatchRunStarted :exec
-UPDATE patch_runs SET status = 'running', started_at = NOW(), updated_at = NOW() WHERE id = $1;
+-- Clear dry-run output fields so real-run output starts fresh.
+UPDATE patch_runs SET status = 'running', started_at = NOW(), completed_at = NULL,
+    shell_output = '', packages_affected = NULL, error_message = NULL, updated_at = NOW() WHERE id = $1;
+
+-- name: ClearScheduledAt :exec
+UPDATE patch_runs SET scheduled_at = NULL, updated_at = NOW() WHERE id = $1;
 
 -- name: UpdatePatchRunProgress :exec
 UPDATE patch_runs SET shell_output = shell_output || $2, updated_at = NOW() WHERE id = $1;
@@ -140,14 +148,14 @@ SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname,
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
-WHERE pr.status IN ('queued', 'running') AND (pr.dry_run = false OR pr.dry_run IS NULL)
+WHERE pr.status IN ('queued', 'running', 'pending_validation', 'validated') AND (pr.dry_run = false OR pr.dry_run IS NULL OR pr.status IN ('pending_validation', 'validated'))
 ORDER BY pr.created_at ASC;
 
 -- name: CountPatchRunsTotal :one
 SELECT COUNT(*) FROM patch_runs WHERE (dry_run = false OR dry_run IS NULL);
 
 -- name: ListPatchRunsByStatus :many
-SELECT status, COUNT(*)::int AS count FROM patch_runs WHERE (dry_run = false OR dry_run IS NULL) GROUP BY status;
+SELECT status, COUNT(*)::int AS count FROM patch_runs WHERE (dry_run = false OR dry_run IS NULL) OR status IN ('pending_validation', 'validated') GROUP BY status;
 
 -- name: ListRecentPatchRuns :many
 SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username

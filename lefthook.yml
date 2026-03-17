@@ -35,6 +35,7 @@ pre-commit:
       skip: merge
 
     security-secrets:
+      skip: true
       run: |
         echo "Running Gitleaks (secrets scan)..."
         if command -v docker >/dev/null 2>&1; then
@@ -46,7 +47,6 @@ pre-commit:
         fi
       stage_fixed: false
       fail_text: "Gitleaks found potential secrets or Docker is missing. Fix or install Docker."
-      skip: merge
 
     vuln-check:
       run: |

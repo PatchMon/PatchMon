@@ -12,6 +12,7 @@ import (
 
 type Querier interface {
 	ApprovePatchRun(ctx context.Context, arg ApprovePatchRunParams) error
+	ClearScheduledAt(ctx context.Context, id string) error
 	CountActiveAdmins(ctx context.Context) (int64, error)
 	CountActiveRepositories(ctx context.Context) (int32, error)
 	CountAdmins(ctx context.Context) (int64, error)
@@ -317,6 +318,8 @@ type Querier interface {
 	UpdatePatchRunFailed(ctx context.Context, arg UpdatePatchRunFailedParams) error
 	UpdatePatchRunPackagesAffected(ctx context.Context, arg UpdatePatchRunPackagesAffectedParams) error
 	UpdatePatchRunProgress(ctx context.Context, arg UpdatePatchRunProgressParams) error
+	UpdatePatchRunScheduledAt(ctx context.Context, arg UpdatePatchRunScheduledAtParams) error
+	// Clear dry-run output fields so real-run output starts fresh.
 	UpdatePatchRunStarted(ctx context.Context, id string) error
 	UpdatePatchRunStatus(ctx context.Context, arg UpdatePatchRunStatusParams) error
 	UpdatePatchRunValidated(ctx context.Context, arg UpdatePatchRunValidatedParams) error

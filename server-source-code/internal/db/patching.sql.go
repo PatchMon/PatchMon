@@ -12,7 +12,7 @@ import (
 )
 
 const approvePatchRun = `-- name: ApprovePatchRun :exec
-UPDATE patch_runs SET status = 'queued', approved_by_user_id = $2, updated_at = NOW() WHERE id = $1 AND status = 'validated'
+UPDATE patch_runs SET status = 'queued', approved_by_user_id = $2, dry_run = false, updated_at = NOW() WHERE id = $1 AND status = 'validated'
 `
 
 type ApprovePatchRunParams struct {
@@ -22,6 +22,15 @@ type ApprovePatchRunParams struct {
 
 func (q *Queries) ApprovePatchRun(ctx context.Context, arg ApprovePatchRunParams) error {
 	_, err := q.db.Exec(ctx, approvePatchRun, arg.ID, arg.ApprovedByUserID)
+	return err
+}
+
+const clearScheduledAt = `-- name: ClearScheduledAt :exec
+UPDATE patch_runs SET scheduled_at = NULL, updated_at = NOW() WHERE id = $1
+`
+
+func (q *Queries) ClearScheduledAt(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, clearScheduledAt, id)
 	return err
 }
 
@@ -435,7 +444,7 @@ SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
-WHERE pr.status IN ('queued', 'running') AND (pr.dry_run = false OR pr.dry_run IS NULL)
+WHERE pr.status IN ('queued', 'running', 'pending_validation', 'validated') AND (pr.dry_run = false OR pr.dry_run IS NULL OR pr.status IN ('pending_validation', 'validated'))
 ORDER BY pr.created_at ASC
 `
 
@@ -814,7 +823,7 @@ func (q *Queries) ListPatchRunsByPackage(ctx context.Context, arg ListPatchRunsB
 }
 
 const listPatchRunsByStatus = `-- name: ListPatchRunsByStatus :many
-SELECT status, COUNT(*)::int AS count FROM patch_runs WHERE (dry_run = false OR dry_run IS NULL) GROUP BY status
+SELECT status, COUNT(*)::int AS count FROM patch_runs WHERE (dry_run = false OR dry_run IS NULL) OR status IN ('pending_validation', 'validated') GROUP BY status
 `
 
 type ListPatchRunsByStatusRow struct {
@@ -1717,10 +1726,26 @@ func (q *Queries) UpdatePatchRunProgress(ctx context.Context, arg UpdatePatchRun
 	return err
 }
 
-const updatePatchRunStarted = `-- name: UpdatePatchRunStarted :exec
-UPDATE patch_runs SET status = 'running', started_at = NOW(), updated_at = NOW() WHERE id = $1
+const updatePatchRunScheduledAt = `-- name: UpdatePatchRunScheduledAt :exec
+UPDATE patch_runs SET scheduled_at = $2, updated_at = NOW() WHERE id = $1
 `
 
+type UpdatePatchRunScheduledAtParams struct {
+	ID          string           `json:"id"`
+	ScheduledAt pgtype.Timestamp `json:"scheduled_at"`
+}
+
+func (q *Queries) UpdatePatchRunScheduledAt(ctx context.Context, arg UpdatePatchRunScheduledAtParams) error {
+	_, err := q.db.Exec(ctx, updatePatchRunScheduledAt, arg.ID, arg.ScheduledAt)
+	return err
+}
+
+const updatePatchRunStarted = `-- name: UpdatePatchRunStarted :exec
+UPDATE patch_runs SET status = 'running', started_at = NOW(), completed_at = NULL,
+    shell_output = '', packages_affected = NULL, error_message = NULL, updated_at = NOW() WHERE id = $1
+`
+
+// Clear dry-run output fields so real-run output starts fresh.
 func (q *Queries) UpdatePatchRunStarted(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, updatePatchRunStarted, id)
 	return err

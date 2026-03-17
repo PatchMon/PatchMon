@@ -129,17 +129,20 @@ func (h *PatchingHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	statusCounts := map[string]int{
 		"queued": 0, "running": 0, "completed": 0, "failed": 0, "cancelled": 0,
+		"pending_validation": 0, "validated": 0,
 	}
 	for k, v := range byStatus {
 		statusCounts[k] = v
 	}
 	summary := map[string]interface{}{
-		"total_runs": total,
-		"queued":     statusCounts["queued"],
-		"running":    statusCounts["running"],
-		"completed":  statusCounts["completed"],
-		"failed":     statusCounts["failed"],
-		"cancelled":  statusCounts["cancelled"],
+		"total_runs":         total,
+		"queued":             statusCounts["queued"],
+		"running":            statusCounts["running"],
+		"completed":          statusCounts["completed"],
+		"failed":             statusCounts["failed"],
+		"cancelled":          statusCounts["cancelled"],
+		"pending_validation": statusCounts["pending_validation"],
+		"validated":          statusCounts["validated"],
 	}
 	recentResp := patchRunsToResponse(recent)
 	activeResp := patchRunsActiveToResponse(active)
@@ -286,41 +289,62 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Only validated runs can be approved"})
 		return
 	}
-	var approvedBy *string
-	if userID, _ := r.Context().Value(middleware.UserIDKey).(string); userID != "" {
-		approvedBy = &userID
-	}
-	if err := h.patchRuns.ApproveRun(r.Context(), id, approvedBy); err != nil {
-		h.log.Error("patching: approve run error", "error", err)
-		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to approve run"})
-		return
-	}
-	// Re-enqueue the actual patch job (non-dry-run)
+
+	// Resolve all data BEFORE mutating the DB so that a lookup failure
+	// does not leave the run in an inconsistent state (stuck in queued with
+	// no job in the queue).
 	host, err := h.hosts.GetByID(r.Context(), run.HostID)
 	if err != nil || host == nil {
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Host not found for run"})
 		return
 	}
-	// Snapshot the effective policy at approval time for the real run
-	policy, _ := h.patchPolicies.ResolveEffectivePolicy(r.Context(), run.HostID)
-	if policy != nil {
-		snap, _ := json.Marshal(map[string]interface{}{
-			"name":             policy.Name,
-			"patch_delay_type": policy.PatchDelayType,
-			"delay_minutes":    policy.DelayMinutes,
-			"fixed_time_utc":   policy.FixedTimeUtc,
-			"timezone":         policy.Timezone,
-		})
-		_ = h.patchRuns.SetPolicySnapshot(r.Context(), id, &policy.ID, &policy.Name, snap)
-	}
+
+	// Unmarshal package list up-front so we can return an error before
+	// committing the DB transition if the stored JSON is malformed.
 	var pkgName *string
 	if run.PackageName != nil {
 		pkgName = run.PackageName
 	}
 	var pkgNames []string
 	if len(run.PackageNames) > 0 {
-		_ = json.Unmarshal(run.PackageNames, &pkgNames)
+		if err := json.Unmarshal(run.PackageNames, &pkgNames); err != nil {
+			h.log.Error("patching: failed to unmarshal package_names for approval", "patch_run_id", id, "error", err)
+			JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to read package list for run"})
+			return
+		}
 	}
+
+	// Compute policy and delay before touching the DB.
+	policy, _ := h.patchPolicies.ResolveEffectivePolicy(r.Context(), run.HostID)
+	runAt := h.patchPolicies.ComputeRunAt(policy)
+	delayMs := time.Until(runAt).Milliseconds()
+	if delayMs < 0 {
+		delayMs = 0
+	}
+
+	// Build the policy snapshot regardless of whether a policy exists so
+	// there is always an audit trail of what governed scheduling.
+	var policyID, policyNamePtr *string
+	var policySnap []byte
+	if policy != nil {
+		policyID = &policy.ID
+		n := policy.Name
+		policyNamePtr = &n
+		policySnap, _ = json.Marshal(map[string]interface{}{
+			"name":             policy.Name,
+			"patch_delay_type": policy.PatchDelayType,
+			"delay_minutes":    policy.DelayMinutes,
+			"fixed_time_utc":   policy.FixedTimeUtc,
+			"timezone":         policy.Timezone,
+		})
+	} else {
+		policySnap, _ = json.Marshal(map[string]interface{}{
+			"patch_delay_type": "immediate",
+		})
+	}
+
+	// Build the task before committing the DB transition so that a
+	// serialisation error is caught before we modify state.
 	task, err := queue.NewRunPatchTask(queue.RunPatchPayload{
 		HostID:       run.HostID,
 		Host:         r.Header.Get("X-Forwarded-Host"),
@@ -336,12 +360,43 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create patch task"})
 		return
 	}
-	if _, err := h.queueClient.Enqueue(task); err != nil {
+
+	// --- DB mutations begin here ---
+	var approvedBy *string
+	if userID, _ := r.Context().Value(middleware.UserIDKey).(string); userID != "" {
+		approvedBy = &userID
+	}
+	if err := h.patchRuns.ApproveRun(r.Context(), id, approvedBy); err != nil {
+		h.log.Error("patching: approve run error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to approve run"})
+		return
+	}
+
+	// Set policy snapshot (always, even when policy is nil — captures "immediate").
+	_ = h.patchRuns.SetPolicySnapshot(r.Context(), id, policyID, policyNamePtr, policySnap)
+
+	// Update scheduled_at: set it when delayed, explicitly clear it when immediate
+	// so any value carried over from the dry-run row is removed.
+	if delayMs > 0 {
+		_ = h.patchRuns.SetScheduledAt(r.Context(), id, runAt)
+	} else {
+		_ = h.patchRuns.ClearScheduledAt(r.Context(), id)
+	}
+
+	opts := []asynq.Option{}
+	if delayMs > 0 {
+		opts = append(opts, asynq.ProcessIn(time.Duration(delayMs)*time.Millisecond))
+	}
+	if _, err := h.queueClient.Enqueue(task, opts...); err != nil {
 		h.log.Error("patching: enqueue approve error", "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to queue approved patch"})
 		return
 	}
-	JSON(w, http.StatusOK, map[string]interface{}{"message": "Run approved and queued", "patch_run_id": id})
+	msg := "Run approved and queued"
+	if delayMs > 0 {
+		msg = "Run approved and scheduled for " + runAt.UTC().Format(time.RFC3339)
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{"message": msg, "patch_run_id": id, "run_at": runAt.UTC().Format(time.RFC3339)})
 }
 
 func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
@@ -425,9 +480,11 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		scheduledAt = &runAt
 	}
 	// Snapshot the effective policy at trigger time so it can be shown in run details.
+	// Always snapshot even for dry runs: this records the policy that was active at
+	// the time the dry run was triggered, which is useful context for the approver.
 	var policyID, policyNamePtr *string
 	var policySnapshot []byte
-	if policy != nil && !body.DryRun {
+	if policy != nil {
 		policyID = &policy.ID
 		policySnapshot, _ = json.Marshal(map[string]interface{}{
 			"name":             policy.Name,
@@ -438,6 +495,10 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		})
 		n := policy.Name
 		policyNamePtr = &n
+	} else {
+		policySnapshot, _ = json.Marshal(map[string]interface{}{
+			"patch_delay_type": "immediate",
+		})
 	}
 	_, err = h.patchRuns.CreateRun(r.Context(), patchRunID, body.HostID, jobID, body.PatchType, pkgName, pkgNames, triggeredBy, body.DryRun, scheduledAt, policyID, policyNamePtr, policySnapshot)
 	if err != nil {
@@ -445,7 +506,6 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create patch run"})
 		return
 	}
-	jobID = patchRunJobIDPrefix + patchRunID
 
 	task, err := queue.NewRunPatchTask(queue.RunPatchPayload{
 		HostID:       body.HostID,
@@ -890,7 +950,14 @@ func patchRunToResponse(r *db.GetPatchRunByIDRow) map[string]interface{} {
 func patchRunsToResponse(rows []db.ListRecentPatchRunsRow) []map[string]interface{} {
 	out := make([]map[string]interface{}, len(rows))
 	for i, r := range rows {
-		out[i] = patchRunRowToMap(r.ID, r.HostID, r.JobID, r.PatchType, r.PackageName, r.PackageNames, r.Status, r.ShellOutput, r.ErrorMessage, r.StartedAt, r.CompletedAt, r.ScheduledAt, r.CreatedAt, r.UpdatedAt, r.HostFriendlyName, r.HostHostname, r.TriggeredByUsername)
+		m := patchRunRowToMap(r.ID, r.HostID, r.JobID, r.PatchType, r.PackageName, r.PackageNames, r.Status, r.ShellOutput, r.ErrorMessage, r.StartedAt, r.CompletedAt, r.ScheduledAt, r.CreatedAt, r.UpdatedAt, r.HostFriendlyName, r.HostHostname, r.TriggeredByUsername)
+		m["dry_run"] = r.DryRun
+		if len(r.PackagesAffected) > 0 {
+			var pkgs []string
+			_ = json.Unmarshal(r.PackagesAffected, &pkgs)
+			m["packages_affected"] = pkgs
+		}
+		out[i] = m
 	}
 	return out
 }
@@ -898,7 +965,14 @@ func patchRunsToResponse(rows []db.ListRecentPatchRunsRow) []map[string]interfac
 func patchRunsActiveToResponse(rows []db.ListActivePatchRunsRow) []map[string]interface{} {
 	out := make([]map[string]interface{}, len(rows))
 	for i, r := range rows {
-		out[i] = patchRunRowToMap(r.ID, r.HostID, r.JobID, r.PatchType, r.PackageName, r.PackageNames, r.Status, r.ShellOutput, r.ErrorMessage, r.StartedAt, r.CompletedAt, r.ScheduledAt, r.CreatedAt, r.UpdatedAt, r.HostFriendlyName, r.HostHostname, r.TriggeredByUsername)
+		m := patchRunRowToMap(r.ID, r.HostID, r.JobID, r.PatchType, r.PackageName, r.PackageNames, r.Status, r.ShellOutput, r.ErrorMessage, r.StartedAt, r.CompletedAt, r.ScheduledAt, r.CreatedAt, r.UpdatedAt, r.HostFriendlyName, r.HostHostname, r.TriggeredByUsername)
+		m["dry_run"] = r.DryRun
+		if len(r.PackagesAffected) > 0 {
+			var pkgs []string
+			_ = json.Unmarshal(r.PackagesAffected, &pkgs)
+			m["packages_affected"] = pkgs
+		}
+		out[i] = m
 	}
 	return out
 }
