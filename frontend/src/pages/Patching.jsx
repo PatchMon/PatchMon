@@ -73,7 +73,15 @@ const Patching = () => {
 			queryClient.invalidateQueries(["patching-dashboard"]);
 		},
 	});
+	const retryValidationMutation = useMutation({
+		mutationFn: (runId) => patchingAPI.retryValidation(runId),
+		onSuccess: () => {
+			queryClient.invalidateQueries(["patching-runs"]);
+			queryClient.invalidateQueries(["patching-dashboard"]);
+		},
+	});
 	const [approvingId, setApprovingId] = useState(null);
+	const [retryingId, setRetryingId] = useState(null);
 
 	const handleApprove = async (runId) => {
 		setApprovingId(runId);
@@ -81,6 +89,15 @@ const Patching = () => {
 			await approveMutation.mutateAsync(runId);
 		} finally {
 			setApprovingId(null);
+		}
+	};
+
+	const handleRetryValidation = async (runId) => {
+		setRetryingId(runId);
+		try {
+			await retryValidationMutation.mutateAsync(runId);
+		} finally {
+			setRetryingId(null);
 		}
 	};
 
@@ -445,7 +462,10 @@ const Patching = () => {
 									<option value="">All</option>
 									<option value="queued">Queued</option>
 									<option value="pending_validation">Pending validation</option>
-									<option value="validated">Validated</option>
+									<option value="validated">
+										Validated (awaiting approval)
+									</option>
+									<option value="approved">Approved</option>
 									<option value="scheduled">Scheduled</option>
 									<option value="running">Running</option>
 									<option value="completed">Completed</option>
@@ -546,6 +566,40 @@ const Patching = () => {
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap text-right">
 														<div className="flex items-center justify-end gap-2">
+															{run.status === "pending_validation" && (
+																<>
+																	<button
+																		type="button"
+																		onClick={() =>
+																			handleRetryValidation(run.id)
+																		}
+																		disabled={retryingId === run.id}
+																		className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-secondary-300 dark:border-secondary-600 text-secondary-700 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 disabled:opacity-50"
+																		title="Re-queue validation (host may have been offline)"
+																	>
+																		{retryingId === run.id ? (
+																			<RefreshCw className="h-3 w-3 animate-spin" />
+																		) : (
+																			<RefreshCw className="h-3 w-3" />
+																		)}
+																		Retry
+																	</button>
+																	<button
+																		type="button"
+																		onClick={() => handleApprove(run.id)}
+																		disabled={approvingId === run.id}
+																		className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+																		title="Skip validation and patch immediately"
+																	>
+																		{approvingId === run.id ? (
+																			<RefreshCw className="h-3 w-3 animate-spin" />
+																		) : (
+																			<PlayCircle className="h-3 w-3" />
+																		)}
+																		Skip & Patch
+																	</button>
+																</>
+															)}
 															{run.status === "validated" && (
 																<button
 																	type="button"
@@ -566,7 +620,7 @@ const Patching = () => {
 																to={`/patching/runs/${run.id}`}
 																className="text-primary-600 dark:text-primary-400 hover:underline text-sm"
 															>
-																View output
+																View
 															</Link>
 														</div>
 													</td>

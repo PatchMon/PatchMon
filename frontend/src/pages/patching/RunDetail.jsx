@@ -30,6 +30,15 @@ const RunDetail = () => {
 			queryClient.invalidateQueries(["patching-dashboard"]);
 		},
 	});
+	const retryValidationMutation = useMutation({
+		mutationFn: (runId) => patchingAPI.retryValidation(runId),
+		onSuccess: () => {
+			queryClient.invalidateQueries(["patching-run", id]);
+			queryClient.invalidateQueries(["patching-runs"]);
+			queryClient.invalidateQueries(["patching-dashboard"]);
+		},
+	});
+	const [retryingId, setRetryingId] = useState(null);
 
 	const handleApprove = async () => {
 		setApprovingId(id);
@@ -37,6 +46,15 @@ const RunDetail = () => {
 			await approveMutation.mutateAsync(id);
 		} finally {
 			setApprovingId(null);
+		}
+	};
+
+	const handleRetryValidation = async () => {
+		setRetryingId(id);
+		try {
+			await retryValidationMutation.mutateAsync(id);
+		} finally {
+			setRetryingId(null);
 		}
 	};
 
@@ -236,6 +254,73 @@ const RunDetail = () => {
 								: "—"}
 						</span>
 					</div>
+					{/* Link to related run (validation ↔ patch) */}
+					{run.validation_run_id && (
+						<div className="flex items-center gap-2">
+							<Shield className="h-4 w-4 text-secondary-500" />
+							<span className="text-secondary-500 dark:text-secondary-400">
+								Validation run
+							</span>
+							<Link
+								to={`/patching/runs/${run.validation_run_id}`}
+								className="text-primary-600 dark:text-primary-400 hover:underline text-sm"
+							>
+								View validation output
+							</Link>
+						</div>
+					)}
+					{run.status === "pending_validation" && (
+						<div className="sm:col-span-2 flex items-start gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-600">
+							<AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+							<div className="flex-1">
+								<p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+									Validation pending — host may be offline
+								</p>
+								<p className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">
+									The dry-run has not completed. You can retry when the host is
+									back online, or skip validation to patch immediately.
+								</p>
+							</div>
+							<div className="flex items-center gap-2 shrink-0">
+								<button
+									type="button"
+									onClick={handleRetryValidation}
+									disabled={retryingId === id}
+									className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-secondary-300 dark:border-secondary-600 text-secondary-700 dark:text-secondary-300 text-sm hover:bg-secondary-100 dark:hover:bg-secondary-700 disabled:opacity-50"
+								>
+									{retryingId === id ? (
+										<>
+											<RefreshCw className="h-4 w-4 animate-spin" />
+											Retrying…
+										</>
+									) : (
+										<>
+											<RefreshCw className="h-4 w-4" />
+											Retry Validation
+										</>
+									)}
+								</button>
+								<button
+									type="button"
+									onClick={handleApprove}
+									disabled={approvingId === id}
+									className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-amber-600 text-white text-sm hover:bg-amber-700 disabled:opacity-50"
+								>
+									{approvingId === id ? (
+										<>
+											<RefreshCw className="h-4 w-4 animate-spin" />
+											Queuing…
+										</>
+									) : (
+										<>
+											<PlayCircle className="h-4 w-4" />
+											Skip & Patch
+										</>
+									)}
+								</button>
+							</div>
+						</div>
+					)}
 					{run.status === "validated" && (
 						<div className="sm:col-span-2 flex items-start gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-600">
 							<AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />

@@ -127,12 +127,18 @@ func NewPatchRunsStore(db database.DBProvider) *PatchRunsStore {
 	return &PatchRunsStore{db: db}
 }
 
+// CreateRunOpts holds optional fields for CreateRun.
+type CreateRunOpts struct {
+	ValidationRunID  *string
+	ApprovedByUserID *string
+}
+
 // CreateRun creates a new patch run. If id is empty, a new UUID is generated.
 // triggeredByUserID is the user who initiated the run (optional; nil for agent/system).
 // dryRun when true creates a validation-only run with status "pending_validation".
 // scheduledAt is when the patch will run (optional; nil for immediate runs).
 // policyID, policyName, policySnapshot capture the effective policy at trigger time (all optional).
-func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patchType string, packageName *string, packageNames []string, triggeredByUserID *string, dryRun bool, scheduledAt *time.Time, policyID, policyName *string, policySnapshot []byte) (string, error) {
+func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patchType string, packageName *string, packageNames []string, triggeredByUserID *string, dryRun bool, scheduledAt *time.Time, policyID, policyName *string, policySnapshot []byte, opts *CreateRunOpts) (string, error) {
 	if id == "" {
 		id = uuid.New().String()
 	}
@@ -152,6 +158,12 @@ func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patch
 	if scheduledAt != nil {
 		sched = pgtype.Timestamp{Time: *scheduledAt, Valid: true}
 	}
+	var validationRunID *string
+	var approvedByUserID *string
+	if opts != nil {
+		validationRunID = opts.ValidationRunID
+		approvedByUserID = opts.ApprovedByUserID
+	}
 	d := s.db.DB(ctx)
 	err := d.Queries.CreatePatchRun(ctx, db.CreatePatchRunParams{
 		ID:                id,
@@ -168,6 +180,8 @@ func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patch
 		PolicyID:          policyID,
 		PolicyName:        policyName,
 		PolicySnapshot:    policySnapshot,
+		ValidationRunID:   validationRunID,
+		ApprovedByUserID:  approvedByUserID,
 	})
 	return id, err
 }
@@ -232,10 +246,11 @@ func (s *PatchRunsStore) UpdateStatus(ctx context.Context, id, status string) er
 	return d.Queries.UpdatePatchRunStatus(ctx, db.UpdatePatchRunStatusParams{ID: id, Status: status})
 }
 
-// ApproveRun transitions a validated dry-run to queued so it can be executed.
-func (s *PatchRunsStore) ApproveRun(ctx context.Context, id string, approvedByUserID *string) error {
+// MarkValidationApproved marks a validation run as approved (terminal state).
+// The actual patch run is created separately via CreateRun with ValidationRunID set.
+func (s *PatchRunsStore) MarkValidationApproved(ctx context.Context, id string, approvedByUserID *string) error {
 	d := s.db.DB(ctx)
-	return d.Queries.ApprovePatchRun(ctx, db.ApprovePatchRunParams{
+	return d.Queries.MarkValidationApproved(ctx, db.MarkValidationApprovedParams{
 		ID:               id,
 		ApprovedByUserID: approvedByUserID,
 	})
@@ -362,6 +377,7 @@ func convertStartedAtRows(r []db.ListPatchRunsOrderByStartedAtRow) []db.ListPatc
 			HostFriendlyName:    r[i].HostFriendlyName,
 			HostHostname:        r[i].HostHostname,
 			TriggeredByUsername: r[i].TriggeredByUsername,
+			ValidationRunID:     r[i].ValidationRunID,
 		}
 	}
 	return out
@@ -389,6 +405,7 @@ func convertStartedAtAscRows(r []db.ListPatchRunsOrderByStartedAtAscRow) []db.Li
 			HostFriendlyName:    r[i].HostFriendlyName,
 			HostHostname:        r[i].HostHostname,
 			TriggeredByUsername: r[i].TriggeredByUsername,
+			ValidationRunID:     r[i].ValidationRunID,
 		}
 	}
 	return out
@@ -416,6 +433,7 @@ func convertCompletedAtRows(r []db.ListPatchRunsOrderByCompletedAtRow) []db.List
 			HostFriendlyName:    r[i].HostFriendlyName,
 			HostHostname:        r[i].HostHostname,
 			TriggeredByUsername: r[i].TriggeredByUsername,
+			ValidationRunID:     r[i].ValidationRunID,
 		}
 	}
 	return out
@@ -443,6 +461,7 @@ func convertCompletedAtAscRows(r []db.ListPatchRunsOrderByCompletedAtAscRow) []d
 			HostFriendlyName:    r[i].HostFriendlyName,
 			HostHostname:        r[i].HostHostname,
 			TriggeredByUsername: r[i].TriggeredByUsername,
+			ValidationRunID:     r[i].ValidationRunID,
 		}
 	}
 	return out
@@ -470,6 +489,7 @@ func convertStatusRows(r []db.ListPatchRunsOrderByStatusRow) []db.ListPatchRunsR
 			HostFriendlyName:    r[i].HostFriendlyName,
 			HostHostname:        r[i].HostHostname,
 			TriggeredByUsername: r[i].TriggeredByUsername,
+			ValidationRunID:     r[i].ValidationRunID,
 		}
 	}
 	return out
@@ -497,6 +517,7 @@ func convertStatusDescRows(r []db.ListPatchRunsOrderByStatusDescRow) []db.ListPa
 			HostFriendlyName:    r[i].HostFriendlyName,
 			HostHostname:        r[i].HostHostname,
 			TriggeredByUsername: r[i].TriggeredByUsername,
+			ValidationRunID:     r[i].ValidationRunID,
 		}
 	}
 	return out
@@ -524,6 +545,7 @@ func convertCreatedAtAscRows(r []db.ListPatchRunsOrderByCreatedAtAscRow) []db.Li
 			HostFriendlyName:    r[i].HostFriendlyName,
 			HostHostname:        r[i].HostHostname,
 			TriggeredByUsername: r[i].TriggeredByUsername,
+			ValidationRunID:     r[i].ValidationRunID,
 		}
 	}
 	return out

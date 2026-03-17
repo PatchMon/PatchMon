@@ -640,6 +640,7 @@ CREATE TABLE IF NOT EXISTS patch_runs (
     policy_id TEXT REFERENCES patch_policies(id) ON DELETE SET NULL,
     policy_name TEXT,
     policy_snapshot JSONB,
+    validation_run_id TEXT REFERENCES patch_runs(id) ON DELETE SET NULL,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP(3) NOT NULL
 );

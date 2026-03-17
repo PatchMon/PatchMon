@@ -418,6 +418,7 @@ type PatchRun struct {
 	PolicyID          *string          `json:"policy_id"`
 	PolicyName        *string          `json:"policy_name"`
 	PolicySnapshot    []byte           `json:"policy_snapshot"`
+	ValidationRunID   *string          `json:"validation_run_id"`
 	CreatedAt         pgtype.Timestamp `json:"created_at"`
 	UpdatedAt         pgtype.Timestamp `json:"updated_at"`
 }

@@ -11,7 +11,6 @@ import (
 )
 
 type Querier interface {
-	ApprovePatchRun(ctx context.Context, arg ApprovePatchRunParams) error
 	ClearScheduledAt(ctx context.Context, id string) error
 	CountActiveAdmins(ctx context.Context) (int64, error)
 	CountActiveRepositories(ctx context.Context) (int32, error)
@@ -280,6 +279,7 @@ type Querier interface {
 	ListUpdateHistoryByDateRange(ctx context.Context, arg ListUpdateHistoryByDateRangeParams) ([]UpdateHistory, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error)
 	ListVolumes(ctx context.Context, arg ListVolumesParams) ([]DockerVolume, error)
+	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) error
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error
 	RevokeAllSessionsForUserExcept(ctx context.Context, arg RevokeAllSessionsForUserExceptParams) error
 	RevokeSessionByID(ctx context.Context, arg RevokeSessionByIDParams) error

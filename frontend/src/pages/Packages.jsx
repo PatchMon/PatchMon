@@ -1249,7 +1249,7 @@ const Packages = () => {
 						queryClient.invalidateQueries(["patching-dashboard"]);
 						queryClient.invalidateQueries(["patching-runs"]);
 						if (mode === "approval") {
-							navigate("/patching?tab=runs&status=validated");
+							navigate("/patching?tab=runs");
 						} else {
 							navigate("/patching?tab=runs");
 						}

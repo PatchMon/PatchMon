@@ -11,20 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const approvePatchRun = `-- name: ApprovePatchRun :exec
-UPDATE patch_runs SET status = 'queued', approved_by_user_id = $2, dry_run = false, updated_at = NOW() WHERE id = $1 AND status = 'validated'
-`
-
-type ApprovePatchRunParams struct {
-	ID               string  `json:"id"`
-	ApprovedByUserID *string `json:"approved_by_user_id"`
-}
-
-func (q *Queries) ApprovePatchRun(ctx context.Context, arg ApprovePatchRunParams) error {
-	_, err := q.db.Exec(ctx, approvePatchRun, arg.ID, arg.ApprovedByUserID)
-	return err
-}
-
 const clearScheduledAt = `-- name: ClearScheduledAt :exec
 UPDATE patch_runs SET scheduled_at = NULL, updated_at = NOW() WHERE id = $1
 `
@@ -132,8 +118,8 @@ func (q *Queries) CreatePatchPolicyExclusion(ctx context.Context, arg CreatePatc
 }
 
 const createPatchRun = `-- name: CreatePatchRun :exec
-INSERT INTO patch_runs (id, host_id, job_id, patch_type, package_name, package_names, status, shell_output, triggered_by_user_id, dry_run, scheduled_at, policy_id, policy_name, policy_snapshot, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
+INSERT INTO patch_runs (id, host_id, job_id, patch_type, package_name, package_names, status, shell_output, triggered_by_user_id, dry_run, scheduled_at, policy_id, policy_name, policy_snapshot, validation_run_id, approved_by_user_id, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
 `
 
 type CreatePatchRunParams struct {
@@ -151,6 +137,8 @@ type CreatePatchRunParams struct {
 	PolicyID          *string          `json:"policy_id"`
 	PolicyName        *string          `json:"policy_name"`
 	PolicySnapshot    []byte           `json:"policy_snapshot"`
+	ValidationRunID   *string          `json:"validation_run_id"`
+	ApprovedByUserID  *string          `json:"approved_by_user_id"`
 }
 
 // patch_runs
@@ -170,6 +158,8 @@ func (q *Queries) CreatePatchRun(ctx context.Context, arg CreatePatchRunParams) 
 		arg.PolicyID,
 		arg.PolicyName,
 		arg.PolicySnapshot,
+		arg.ValidationRunID,
+		arg.ApprovedByUserID,
 	)
 	return err
 }
@@ -337,7 +327,7 @@ func (q *Queries) GetPatchPolicyByID(ctx context.Context, id string) (PatchPolic
 }
 
 const getPatchRunByID = `-- name: GetPatchRunByID :one
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username, au.username AS approved_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username, au.username AS approved_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -365,6 +355,7 @@ type GetPatchRunByIDRow struct {
 	PolicyID            *string          `json:"policy_id"`
 	PolicyName          *string          `json:"policy_name"`
 	PolicySnapshot      []byte           `json:"policy_snapshot"`
+	ValidationRunID     *string          `json:"validation_run_id"`
 	CreatedAt           pgtype.Timestamp `json:"created_at"`
 	UpdatedAt           pgtype.Timestamp `json:"updated_at"`
 	HostFriendlyName    *string          `json:"host_friendly_name"`
@@ -396,6 +387,7 @@ func (q *Queries) GetPatchRunByID(ctx context.Context, id string) (GetPatchRunBy
 		&i.PolicyID,
 		&i.PolicyName,
 		&i.PolicySnapshot,
+		&i.ValidationRunID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.HostFriendlyName,
@@ -407,7 +399,7 @@ func (q *Queries) GetPatchRunByID(ctx context.Context, id string) (GetPatchRunBy
 }
 
 const getPatchRunByIDSimple = `-- name: GetPatchRunByIDSimple :one
-SELECT id, host_id, job_id, patch_type, package_name, package_names, status, shell_output, error_message, started_at, completed_at, scheduled_at, triggered_by_user_id, approved_by_user_id, dry_run, packages_affected, policy_id, policy_name, policy_snapshot, created_at, updated_at FROM patch_runs WHERE id = $1
+SELECT id, host_id, job_id, patch_type, package_name, package_names, status, shell_output, error_message, started_at, completed_at, scheduled_at, triggered_by_user_id, approved_by_user_id, dry_run, packages_affected, policy_id, policy_name, policy_snapshot, validation_run_id, created_at, updated_at FROM patch_runs WHERE id = $1
 `
 
 func (q *Queries) GetPatchRunByIDSimple(ctx context.Context, id string) (PatchRun, error) {
@@ -433,6 +425,7 @@ func (q *Queries) GetPatchRunByIDSimple(ctx context.Context, id string) (PatchRu
 		&i.PolicyID,
 		&i.PolicyName,
 		&i.PolicySnapshot,
+		&i.ValidationRunID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -440,7 +433,7 @@ func (q *Queries) GetPatchRunByIDSimple(ctx context.Context, id string) (PatchRu
 }
 
 const listActivePatchRuns = `-- name: ListActivePatchRuns :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -468,6 +461,7 @@ type ListActivePatchRunsRow struct {
 	PolicyID            *string          `json:"policy_id"`
 	PolicyName          *string          `json:"policy_name"`
 	PolicySnapshot      []byte           `json:"policy_snapshot"`
+	ValidationRunID     *string          `json:"validation_run_id"`
 	CreatedAt           pgtype.Timestamp `json:"created_at"`
 	UpdatedAt           pgtype.Timestamp `json:"updated_at"`
 	HostFriendlyName    *string          `json:"host_friendly_name"`
@@ -504,6 +498,7 @@ func (q *Queries) ListActivePatchRuns(ctx context.Context) ([]ListActivePatchRun
 			&i.PolicyID,
 			&i.PolicyName,
 			&i.PolicySnapshot,
+			&i.ValidationRunID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.HostFriendlyName,
@@ -670,7 +665,7 @@ func (q *Queries) ListPatchPolicyExclusions(ctx context.Context, patchPolicyID s
 }
 
 const listPatchRuns = `-- name: ListPatchRuns :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -709,6 +704,7 @@ type ListPatchRunsRow struct {
 	PolicyID            *string          `json:"policy_id"`
 	PolicyName          *string          `json:"policy_name"`
 	PolicySnapshot      []byte           `json:"policy_snapshot"`
+	ValidationRunID     *string          `json:"validation_run_id"`
 	CreatedAt           pgtype.Timestamp `json:"created_at"`
 	UpdatedAt           pgtype.Timestamp `json:"updated_at"`
 	HostFriendlyName    *string          `json:"host_friendly_name"`
@@ -751,6 +747,7 @@ func (q *Queries) ListPatchRuns(ctx context.Context, arg ListPatchRunsParams) ([
 			&i.PolicyID,
 			&i.PolicyName,
 			&i.PolicySnapshot,
+			&i.ValidationRunID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.HostFriendlyName,
@@ -852,7 +849,7 @@ func (q *Queries) ListPatchRunsByStatus(ctx context.Context) ([]ListPatchRunsByS
 }
 
 const listPatchRunsOrderByCompletedAt = `-- name: ListPatchRunsOrderByCompletedAt :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -891,6 +888,7 @@ type ListPatchRunsOrderByCompletedAtRow struct {
 	PolicyID            *string          `json:"policy_id"`
 	PolicyName          *string          `json:"policy_name"`
 	PolicySnapshot      []byte           `json:"policy_snapshot"`
+	ValidationRunID     *string          `json:"validation_run_id"`
 	CreatedAt           pgtype.Timestamp `json:"created_at"`
 	UpdatedAt           pgtype.Timestamp `json:"updated_at"`
 	HostFriendlyName    *string          `json:"host_friendly_name"`
@@ -933,6 +931,7 @@ func (q *Queries) ListPatchRunsOrderByCompletedAt(ctx context.Context, arg ListP
 			&i.PolicyID,
 			&i.PolicyName,
 			&i.PolicySnapshot,
+			&i.ValidationRunID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.HostFriendlyName,
@@ -950,7 +949,7 @@ func (q *Queries) ListPatchRunsOrderByCompletedAt(ctx context.Context, arg ListP
 }
 
 const listPatchRunsOrderByCompletedAtAsc = `-- name: ListPatchRunsOrderByCompletedAtAsc :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -989,6 +988,7 @@ type ListPatchRunsOrderByCompletedAtAscRow struct {
 	PolicyID            *string          `json:"policy_id"`
 	PolicyName          *string          `json:"policy_name"`
 	PolicySnapshot      []byte           `json:"policy_snapshot"`
+	ValidationRunID     *string          `json:"validation_run_id"`
 	CreatedAt           pgtype.Timestamp `json:"created_at"`
 	UpdatedAt           pgtype.Timestamp `json:"updated_at"`
 	HostFriendlyName    *string          `json:"host_friendly_name"`
@@ -1031,6 +1031,7 @@ func (q *Queries) ListPatchRunsOrderByCompletedAtAsc(ctx context.Context, arg Li
 			&i.PolicyID,
 			&i.PolicyName,
 			&i.PolicySnapshot,
+			&i.ValidationRunID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.HostFriendlyName,
@@ -1048,7 +1049,7 @@ func (q *Queries) ListPatchRunsOrderByCompletedAtAsc(ctx context.Context, arg Li
 }
 
 const listPatchRunsOrderByCreatedAtAsc = `-- name: ListPatchRunsOrderByCreatedAtAsc :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -1087,6 +1088,7 @@ type ListPatchRunsOrderByCreatedAtAscRow struct {
 	PolicyID            *string          `json:"policy_id"`
 	PolicyName          *string          `json:"policy_name"`
 	PolicySnapshot      []byte           `json:"policy_snapshot"`
+	ValidationRunID     *string          `json:"validation_run_id"`
 	CreatedAt           pgtype.Timestamp `json:"created_at"`
 	UpdatedAt           pgtype.Timestamp `json:"updated_at"`
 	HostFriendlyName    *string          `json:"host_friendly_name"`
@@ -1129,6 +1131,7 @@ func (q *Queries) ListPatchRunsOrderByCreatedAtAsc(ctx context.Context, arg List
 			&i.PolicyID,
 			&i.PolicyName,
 			&i.PolicySnapshot,
+			&i.ValidationRunID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.HostFriendlyName,
@@ -1146,7 +1149,7 @@ func (q *Queries) ListPatchRunsOrderByCreatedAtAsc(ctx context.Context, arg List
 }
 
 const listPatchRunsOrderByStartedAt = `-- name: ListPatchRunsOrderByStartedAt :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -1185,6 +1188,7 @@ type ListPatchRunsOrderByStartedAtRow struct {
 	PolicyID            *string          `json:"policy_id"`
 	PolicyName          *string          `json:"policy_name"`
 	PolicySnapshot      []byte           `json:"policy_snapshot"`
+	ValidationRunID     *string          `json:"validation_run_id"`
 	CreatedAt           pgtype.Timestamp `json:"created_at"`
 	UpdatedAt           pgtype.Timestamp `json:"updated_at"`
 	HostFriendlyName    *string          `json:"host_friendly_name"`
@@ -1227,6 +1231,7 @@ func (q *Queries) ListPatchRunsOrderByStartedAt(ctx context.Context, arg ListPat
 			&i.PolicyID,
 			&i.PolicyName,
 			&i.PolicySnapshot,
+			&i.ValidationRunID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.HostFriendlyName,
@@ -1244,7 +1249,7 @@ func (q *Queries) ListPatchRunsOrderByStartedAt(ctx context.Context, arg ListPat
 }
 
 const listPatchRunsOrderByStartedAtAsc = `-- name: ListPatchRunsOrderByStartedAtAsc :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -1283,6 +1288,7 @@ type ListPatchRunsOrderByStartedAtAscRow struct {
 	PolicyID            *string          `json:"policy_id"`
 	PolicyName          *string          `json:"policy_name"`
 	PolicySnapshot      []byte           `json:"policy_snapshot"`
+	ValidationRunID     *string          `json:"validation_run_id"`
 	CreatedAt           pgtype.Timestamp `json:"created_at"`
 	UpdatedAt           pgtype.Timestamp `json:"updated_at"`
 	HostFriendlyName    *string          `json:"host_friendly_name"`
@@ -1325,6 +1331,7 @@ func (q *Queries) ListPatchRunsOrderByStartedAtAsc(ctx context.Context, arg List
 			&i.PolicyID,
 			&i.PolicyName,
 			&i.PolicySnapshot,
+			&i.ValidationRunID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.HostFriendlyName,
@@ -1342,7 +1349,7 @@ func (q *Queries) ListPatchRunsOrderByStartedAtAsc(ctx context.Context, arg List
 }
 
 const listPatchRunsOrderByStatus = `-- name: ListPatchRunsOrderByStatus :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -1381,6 +1388,7 @@ type ListPatchRunsOrderByStatusRow struct {
 	PolicyID            *string          `json:"policy_id"`
 	PolicyName          *string          `json:"policy_name"`
 	PolicySnapshot      []byte           `json:"policy_snapshot"`
+	ValidationRunID     *string          `json:"validation_run_id"`
 	CreatedAt           pgtype.Timestamp `json:"created_at"`
 	UpdatedAt           pgtype.Timestamp `json:"updated_at"`
 	HostFriendlyName    *string          `json:"host_friendly_name"`
@@ -1423,6 +1431,7 @@ func (q *Queries) ListPatchRunsOrderByStatus(ctx context.Context, arg ListPatchR
 			&i.PolicyID,
 			&i.PolicyName,
 			&i.PolicySnapshot,
+			&i.ValidationRunID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.HostFriendlyName,
@@ -1440,7 +1449,7 @@ func (q *Queries) ListPatchRunsOrderByStatus(ctx context.Context, arg ListPatchR
 }
 
 const listPatchRunsOrderByStatusDesc = `-- name: ListPatchRunsOrderByStatusDesc :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -1479,6 +1488,7 @@ type ListPatchRunsOrderByStatusDescRow struct {
 	PolicyID            *string          `json:"policy_id"`
 	PolicyName          *string          `json:"policy_name"`
 	PolicySnapshot      []byte           `json:"policy_snapshot"`
+	ValidationRunID     *string          `json:"validation_run_id"`
 	CreatedAt           pgtype.Timestamp `json:"created_at"`
 	UpdatedAt           pgtype.Timestamp `json:"updated_at"`
 	HostFriendlyName    *string          `json:"host_friendly_name"`
@@ -1521,6 +1531,7 @@ func (q *Queries) ListPatchRunsOrderByStatusDesc(ctx context.Context, arg ListPa
 			&i.PolicyID,
 			&i.PolicyName,
 			&i.PolicySnapshot,
+			&i.ValidationRunID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.HostFriendlyName,
@@ -1538,7 +1549,7 @@ func (q *Queries) ListPatchRunsOrderByStatusDesc(ctx context.Context, arg ListPa
 }
 
 const listRecentPatchRuns = `-- name: ListRecentPatchRuns :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -1567,6 +1578,7 @@ type ListRecentPatchRunsRow struct {
 	PolicyID            *string          `json:"policy_id"`
 	PolicyName          *string          `json:"policy_name"`
 	PolicySnapshot      []byte           `json:"policy_snapshot"`
+	ValidationRunID     *string          `json:"validation_run_id"`
 	CreatedAt           pgtype.Timestamp `json:"created_at"`
 	UpdatedAt           pgtype.Timestamp `json:"updated_at"`
 	HostFriendlyName    *string          `json:"host_friendly_name"`
@@ -1603,6 +1615,7 @@ func (q *Queries) ListRecentPatchRuns(ctx context.Context, limit int32) ([]ListR
 			&i.PolicyID,
 			&i.PolicyName,
 			&i.PolicySnapshot,
+			&i.ValidationRunID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.HostFriendlyName,
@@ -1617,6 +1630,20 @@ func (q *Queries) ListRecentPatchRuns(ctx context.Context, limit int32) ([]ListR
 		return nil, err
 	}
 	return items, nil
+}
+
+const markValidationApproved = `-- name: MarkValidationApproved :exec
+UPDATE patch_runs SET status = 'approved', approved_by_user_id = $2, updated_at = NOW() WHERE id = $1 AND status IN ('validated', 'pending_validation')
+`
+
+type MarkValidationApprovedParams struct {
+	ID               string  `json:"id"`
+	ApprovedByUserID *string `json:"approved_by_user_id"`
+}
+
+func (q *Queries) MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) error {
+	_, err := q.db.Exec(ctx, markValidationApproved, arg.ID, arg.ApprovedByUserID)
+	return err
 }
 
 const setPatchRunPolicySnapshot = `-- name: SetPatchRunPolicySnapshot :exec

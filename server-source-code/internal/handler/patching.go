@@ -273,57 +273,51 @@ func (h *PatchingHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 }
 
 // ApproveRun handles POST /patching/runs/:id/approve.
-// Transitions a validated dry-run run back to queued so it gets executed.
+// Creates a NEW patch run (dry_run=false) linked to the validation run via validation_run_id.
+// The validation run is marked as "approved" (terminal state) and preserved as-is.
 func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	if !isValidPatchUUID(id) {
+	validationID := chi.URLParam(r, "id")
+	if !isValidPatchUUID(validationID) {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid run ID"})
 		return
 	}
-	run, err := h.patchRuns.GetByID(r.Context(), id)
-	if err != nil || run == nil {
+	valRun, err := h.patchRuns.GetByID(r.Context(), validationID)
+	if err != nil || valRun == nil {
 		JSON(w, http.StatusNotFound, map[string]string{"error": "Patch run not found"})
 		return
 	}
-	if run.Status != "validated" {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Only validated runs can be approved"})
+	if valRun.Status != "validated" && valRun.Status != "pending_validation" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Only validated or pending-validation runs can be approved"})
 		return
 	}
 
-	// Resolve all data BEFORE mutating the DB so that a lookup failure
-	// does not leave the run in an inconsistent state (stuck in queued with
-	// no job in the queue).
-	host, err := h.hosts.GetByID(r.Context(), run.HostID)
+	host, err := h.hosts.GetByID(r.Context(), valRun.HostID)
 	if err != nil || host == nil {
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Host not found for run"})
 		return
 	}
 
-	// Unmarshal package list up-front so we can return an error before
-	// committing the DB transition if the stored JSON is malformed.
 	var pkgName *string
-	if run.PackageName != nil {
-		pkgName = run.PackageName
+	if valRun.PackageName != nil {
+		pkgName = valRun.PackageName
 	}
 	var pkgNames []string
-	if len(run.PackageNames) > 0 {
-		if err := json.Unmarshal(run.PackageNames, &pkgNames); err != nil {
-			h.log.Error("patching: failed to unmarshal package_names for approval", "patch_run_id", id, "error", err)
+	if len(valRun.PackageNames) > 0 {
+		if err := json.Unmarshal(valRun.PackageNames, &pkgNames); err != nil {
+			h.log.Error("patching: failed to unmarshal package_names for approval", "validation_run_id", validationID, "error", err)
 			JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to read package list for run"})
 			return
 		}
 	}
 
-	// Compute policy and delay before touching the DB.
-	policy, _ := h.patchPolicies.ResolveEffectivePolicy(r.Context(), run.HostID)
+	// Compute policy and delay.
+	policy, _ := h.patchPolicies.ResolveEffectivePolicy(r.Context(), valRun.HostID)
 	runAt := h.patchPolicies.ComputeRunAt(policy)
 	delayMs := time.Until(runAt).Milliseconds()
 	if delayMs < 0 {
 		delayMs = 0
 	}
 
-	// Build the policy snapshot regardless of whether a policy exists so
-	// there is always an audit trail of what governed scheduling.
 	var policyID, policyNamePtr *string
 	var policySnap []byte
 	if policy != nil {
@@ -343,14 +337,16 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Build the task before committing the DB transition so that a
-	// serialisation error is caught before we modify state.
+	// Create the new patch run ID and job ID up-front so the task can reference it.
+	newRunID := uuid.New().String()
+	jobID := "patch-run-" + newRunID
+
 	task, err := queue.NewRunPatchTask(queue.RunPatchPayload{
-		HostID:       run.HostID,
+		HostID:       valRun.HostID,
 		Host:         r.Header.Get("X-Forwarded-Host"),
 		ApiID:        host.ApiID,
-		PatchRunID:   id,
-		PatchType:    run.PatchType,
+		PatchRunID:   newRunID,
+		PatchType:    valRun.PatchType,
 		PackageName:  pkgName,
 		PackageNames: pkgNames,
 		DryRun:       false,
@@ -361,42 +357,115 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- DB mutations begin here ---
+	// --- DB mutations ---
 	var approvedBy *string
 	if userID, _ := r.Context().Value(middleware.UserIDKey).(string); userID != "" {
 		approvedBy = &userID
 	}
-	if err := h.patchRuns.ApproveRun(r.Context(), id, approvedBy); err != nil {
-		h.log.Error("patching: approve run error", "error", err)
-		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to approve run"})
+
+	// 1. Mark the validation run as "approved" (terminal — preserved with its output).
+	if err := h.patchRuns.MarkValidationApproved(r.Context(), validationID, approvedBy); err != nil {
+		h.log.Error("patching: mark validation approved error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to approve validation run"})
 		return
 	}
 
-	// Set policy snapshot (always, even when policy is nil — captures "immediate").
-	_ = h.patchRuns.SetPolicySnapshot(r.Context(), id, policyID, policyNamePtr, policySnap)
-
-	// Update scheduled_at: set it when delayed, explicitly clear it when immediate
-	// so any value carried over from the dry-run row is removed.
+	// 2. Create the real patch run linked to the validation.
+	var schedAt *time.Time
 	if delayMs > 0 {
-		_ = h.patchRuns.SetScheduledAt(r.Context(), id, runAt)
-	} else {
-		_ = h.patchRuns.ClearScheduledAt(r.Context(), id)
+		schedAt = &runAt
+	}
+	if _, err := h.patchRuns.CreateRun(r.Context(), newRunID, valRun.HostID, jobID, valRun.PatchType, pkgName, pkgNames, valRun.TriggeredByUserID, false, schedAt, policyID, policyNamePtr, policySnap, &store.CreateRunOpts{
+		ValidationRunID:  &validationID,
+		ApprovedByUserID: approvedBy,
+	}); err != nil {
+		h.log.Error("patching: create approved run error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create patch run"})
+		return
 	}
 
-	opts := []asynq.Option{}
+	// 3. Enqueue the task.
+	enqueueOpts := []asynq.Option{}
 	if delayMs > 0 {
-		opts = append(opts, asynq.ProcessIn(time.Duration(delayMs)*time.Millisecond))
+		enqueueOpts = append(enqueueOpts, asynq.ProcessIn(time.Duration(delayMs)*time.Millisecond))
 	}
-	if _, err := h.queueClient.Enqueue(task, opts...); err != nil {
+	if _, err := h.queueClient.Enqueue(task, enqueueOpts...); err != nil {
 		h.log.Error("patching: enqueue approve error", "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to queue approved patch"})
 		return
 	}
-	msg := "Run approved and queued"
+
+	msg := "Approved — new patch run created"
 	if delayMs > 0 {
-		msg = "Run approved and scheduled for " + runAt.UTC().Format(time.RFC3339)
+		msg = "Approved — patch scheduled for " + runAt.UTC().Format(time.RFC3339)
 	}
-	JSON(w, http.StatusOK, map[string]interface{}{"message": msg, "patch_run_id": id, "run_at": runAt.UTC().Format(time.RFC3339)})
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"message":           msg,
+		"patch_run_id":      newRunID,
+		"validation_run_id": validationID,
+		"run_at":            runAt.UTC().Format(time.RFC3339),
+	})
+}
+
+// RetryValidation handles POST /patching/runs/:id/retry-validation.
+// Re-enqueues the dry-run task for a run stuck in pending_validation (e.g. host was offline).
+func (h *PatchingHandler) RetryValidation(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !isValidPatchUUID(id) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid run ID"})
+		return
+	}
+	run, err := h.patchRuns.GetByID(r.Context(), id)
+	if err != nil || run == nil {
+		JSON(w, http.StatusNotFound, map[string]string{"error": "Patch run not found"})
+		return
+	}
+	if run.Status != "pending_validation" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Only pending-validation runs can be retried"})
+		return
+	}
+
+	host, err := h.hosts.GetByID(r.Context(), run.HostID)
+	if err != nil || host == nil {
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Host not found for run"})
+		return
+	}
+
+	var pkgName *string
+	if run.PackageName != nil {
+		pkgName = run.PackageName
+	}
+	var pkgNames []string
+	if len(run.PackageNames) > 0 {
+		if err := json.Unmarshal(run.PackageNames, &pkgNames); err != nil {
+			JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to read package list for run"})
+			return
+		}
+	}
+
+	task, err := queue.NewRunPatchTask(queue.RunPatchPayload{
+		HostID:       run.HostID,
+		Host:         r.Header.Get("X-Forwarded-Host"),
+		ApiID:        host.ApiID,
+		PatchRunID:   id,
+		PatchType:    run.PatchType,
+		PackageName:  pkgName,
+		PackageNames: pkgNames,
+		DryRun:       true,
+	})
+	if err != nil {
+		h.log.Error("patching: create retry-validation task error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create validation task"})
+		return
+	}
+
+	if _, err := h.queueClient.Enqueue(task); err != nil {
+		h.log.Error("patching: enqueue retry-validation error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to queue validation retry"})
+		return
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{"message": "Validation re-queued", "patch_run_id": id})
 }
 
 func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
@@ -500,7 +569,7 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 			"patch_delay_type": "immediate",
 		})
 	}
-	_, err = h.patchRuns.CreateRun(r.Context(), patchRunID, body.HostID, jobID, body.PatchType, pkgName, pkgNames, triggeredBy, body.DryRun, scheduledAt, policyID, policyNamePtr, policySnapshot)
+	_, err = h.patchRuns.CreateRun(r.Context(), patchRunID, body.HostID, jobID, body.PatchType, pkgName, pkgNames, triggeredBy, body.DryRun, scheduledAt, policyID, policyNamePtr, policySnapshot, nil)
 	if err != nil {
 		h.log.Error("patching: create run error", "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create patch run"})
@@ -920,6 +989,7 @@ func patchRunToResponse(r *db.GetPatchRunByIDRow) map[string]interface{} {
 		"triggered_by_username": r.TriggeredByUsername,
 		"approved_by_username":  r.ApprovedByUsername,
 		"dry_run":               r.DryRun,
+		"validation_run_id":     r.ValidationRunID,
 		"policy_id":             r.PolicyID,
 		"policy_name":           r.PolicyName,
 	}
@@ -982,6 +1052,7 @@ func patchRunsListToResponse(rows []db.ListPatchRunsRow) []map[string]interface{
 	for i, r := range rows {
 		m := patchRunRowToMap(r.ID, r.HostID, r.JobID, r.PatchType, r.PackageName, r.PackageNames, r.Status, r.ShellOutput, r.ErrorMessage, r.StartedAt, r.CompletedAt, r.ScheduledAt, r.CreatedAt, r.UpdatedAt, r.HostFriendlyName, r.HostHostname, r.TriggeredByUsername)
 		m["dry_run"] = r.DryRun
+		m["validation_run_id"] = r.ValidationRunID
 		if len(r.PackagesAffected) > 0 {
 			var pkgs []string
 			_ = json.Unmarshal(r.PackagesAffected, &pkgs)

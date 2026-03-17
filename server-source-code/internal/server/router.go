@@ -499,6 +499,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/patching/runs", patchingHandler.ListRuns)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/patching/runs/{id}", patchingHandler.GetRun)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/patching/runs/{id}/approve", patchingHandler.ApproveRun)
+			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/patching/runs/{id}/retry-validation", patchingHandler.RetryValidation)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/patching/trigger", patchingHandler.Trigger)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/patching/policies", patchingHandler.ListPolicies)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/patching/policies", patchingHandler.CreatePolicy)
