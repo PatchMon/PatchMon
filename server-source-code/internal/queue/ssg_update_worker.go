@@ -51,7 +51,7 @@ func (h *SSGUpdateCheckHandler) ProcessTask(ctx context.Context, t *asynq.Task) 
 	d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
 
 	// Use array comparison for proper semantic version ordering.
-	// string_to_array('0.1.79','.')::int[] correctly compares [0,1,79] < [0,1,80].
+	// regexp_replace strips non-numeric suffixes (e.g. "79-1" → "79") before casting to int[].
 	const query = `
 		SELECT h.id, h.api_id
 		FROM hosts h
@@ -61,8 +61,8 @@ func (h *SSGUpdateCheckHandler) ProcessTask(ctx context.Context, t *asynq.Task) 
 		    h.compliance_scanner_status IS NULL
 		    OR h.compliance_scanner_status->'scanner_info'->>'ssg_version' IS NULL
 		    OR h.compliance_scanner_status->'scanner_info'->>'ssg_version' = ''
-		    OR string_to_array(h.compliance_scanner_status->'scanner_info'->>'ssg_version', '.')::int[]
-		       < string_to_array($1, '.')::int[]
+		    OR (SELECT array_agg(regexp_replace(elem, '[^0-9].*', '')::int) FROM unnest(string_to_array(h.compliance_scanner_status->'scanner_info'->>'ssg_version', '.')) AS elem)
+		       < (SELECT array_agg(regexp_replace(elem, '[^0-9].*', '')::int) FROM unnest(string_to_array($1, '.')) AS elem)
 		  )`
 
 	rows, err := d.Raw(ctx, query, serverVersion)

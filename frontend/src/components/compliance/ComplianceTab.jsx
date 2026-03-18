@@ -878,19 +878,43 @@ const ComplianceTab = ({
 					<div className="flex items-start gap-3">
 						<AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" />
 						<div className="flex-1">
-							<p className="font-medium">SSG Content Update Available</p>
+							<p className="font-medium">
+								New version {serverSSGVersion} available
+							</p>
 							<p className="text-sm text-yellow-300/80 mt-1">
 								Agent has SSG v{agentSSGVersion} but server has v
-								{serverSSGVersion}. Update recommended for accurate compliance
-								results.
+								{serverSSGVersion}. Press to update scanning files from
+								PatchMon.
 							</p>
+							{ssgUpgradeMessage && (
+								<p
+									className={`text-sm mt-1 ${ssgUpgradeMessage.type === "success" ? "text-green-400" : "text-red-400"}`}
+								>
+									{ssgUpgradeMessage.text}
+								</p>
+							)}
 						</div>
 						<button
-							onClick={() => setActiveSubtab("settings")}
-							className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-600/30 hover:bg-yellow-600/50 text-yellow-200 text-sm rounded-lg transition-colors"
+							onClick={() => ssgUpgradeMutation.mutate()}
+							disabled={
+								ssgUpgradeMutation.isPending ||
+								ssgUpgradeJob?.status === "active" ||
+								ssgUpgradeJob?.status === "waiting"
+							}
+							className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-600/30 hover:bg-yellow-600/50 text-yellow-200 text-sm rounded-lg transition-colors disabled:opacity-50"
 						>
-							<Download className="h-4 w-4" />
-							Update
+							{ssgUpgradeMutation.isPending ||
+							ssgUpgradeJob?.status === "active" ? (
+								<>
+									<RefreshCw className="h-4 w-4 animate-spin" />
+									Updating...
+								</>
+							) : (
+								<>
+									<Download className="h-4 w-4" />
+									Update
+								</>
+							)}
 						</button>
 					</div>
 				</div>

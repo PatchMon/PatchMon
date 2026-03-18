@@ -75,21 +75,25 @@ RUN go mod download && \
 # the latest GitHub release is resolved automatically.
 FROM alpine:3.23 AS ssg-content
 ARG SSG_VERSION=""
+# Use shell variable VER to avoid Docker ARG substitution in the wget URL.
+# Docker substitutes ${SSG_VERSION} at parse time; when empty, the URL would be
+# .../v/scap-security-guide-.zip. VER is set once from ARG, then expanded by the shell.
 RUN apk add --no-cache wget unzip jq \
-    && if [ -z "${SSG_VERSION}" ]; then \
-         SSG_VERSION=$(wget -qO- https://api.github.com/repos/ComplianceAsCode/content/releases/latest | jq -r '.tag_name' | sed 's/^v//'); \
-         echo "Resolved latest SSG version from GitHub API: ${SSG_VERSION}"; \
+    && VER="${SSG_VERSION}" \
+    && if [ -z "${VER}" ]; then \
+         VER=$(wget -qO- https://api.github.com/repos/ComplianceAsCode/content/releases/latest | jq -r '.tag_name' | sed 's/^v//'); \
+         echo "Resolved latest SSG version from GitHub API: ${VER}"; \
        else \
-         echo "Using pinned SSG version: ${SSG_VERSION}"; \
+         echo "Using pinned SSG version: ${VER}"; \
        fi \
-    && if [ -z "${SSG_VERSION}" ] || [ "${SSG_VERSION}" = "null" ]; then \
+    && if [ -z "${VER}" ] || [ "${VER}" = "null" ]; then \
          echo "ERROR: Could not resolve SSG version (GitHub API may be rate-limited). Pass --build-arg SSG_VERSION=x.y.z to pin." >&2; exit 1; \
        fi \
-    && wget -q "https://github.com/ComplianceAsCode/content/releases/download/v${SSG_VERSION}/scap-security-guide-${SSG_VERSION}.zip" -O /tmp/ssg.zip \
+    && wget -q "https://github.com/ComplianceAsCode/content/releases/download/v${VER}/scap-security-guide-${VER}.zip" -O /tmp/ssg.zip \
     && mkdir -p /tmp/ssg-extract /ssg-content \
     && unzip -q /tmp/ssg.zip -d /tmp/ssg-extract \
     && find /tmp/ssg-extract -name 'ssg-*-ds.xml' -exec cp {} /ssg-content/ \; \
-    && echo "${SSG_VERSION}" > /ssg-content/.ssg-version \
+    && echo "${VER}" > /ssg-content/.ssg-version \
     && rm -rf /tmp/ssg.zip /tmp/ssg-extract
 
 # Production stage — hardened Alpine runtime (no -dev; no shell/apk). Use 3.23 for production.

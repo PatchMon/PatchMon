@@ -268,6 +268,15 @@ func NewComplianceScanCleanupTask(host string) (*asynq.Task, error) {
 	return asynq.NewTask(TypeComplianceScanCleanup, payload, asynq.Queue(QueueComplianceScanCleanup), asynq.MaxRetry(2), asynq.Retention(AutomationRetention)), nil
 }
 
+// NewSSGUpdateCheckTask creates an ssg-update-check task (manual trigger from automation page).
+func NewSSGUpdateCheckTask(host string) (*asynq.Task, error) {
+	payload, err := json.Marshal(AutomationPayload{Host: host})
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TypeSSGUpdateCheck, payload, asynq.Queue(QueueSSGUpdateCheck), asynq.MaxRetry(2), asynq.Retention(AutomationRetention)), nil
+}
+
 // NewSessionCleanupTask creates a session-cleanup task.
 func NewSessionCleanupTask(host string) (*asynq.Task, error) {
 	payload, err := json.Marshal(AutomationPayload{Host: host})

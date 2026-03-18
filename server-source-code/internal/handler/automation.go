@@ -135,6 +135,7 @@ func (h *AutomationHandler) Overview(w http.ResponseWriter, r *http.Request) {
 		queue.QueueAlertCleanup,
 		queue.QueueHostStatus,
 		queue.QueueComplianceScanCleanup,
+		queue.QueueSSGUpdateCheck,
 	}
 
 	stats := make(map[string]QueueStats)
@@ -174,6 +175,7 @@ func (h *AutomationHandler) Overview(w http.ResponseWriter, r *http.Request) {
 		{"Alert Cleanup", queue.QueueAlertCleanup, "Cleans up old alerts based on retention policies and auto-resolves expired alerts", "Daily at 3 AM"},
 		{"Host Status Monitor", queue.QueueHostStatus, "Monitors host status and creates alerts when hosts go offline", "Every 5 minutes"},
 		{"Compliance Scan Cleanup", queue.QueueComplianceScanCleanup, "Automatically terminates compliance scans running over 3 hours", "Daily at 1 AM"},
+		{"SSG Content Update Check", queue.QueueSSGUpdateCheck, "Checks for outdated SSG compliance content on hosts and queues upgrades", "Daily at 5 AM"},
 	}
 
 	automations := make([]map[string]interface{}, 0, len(automationDefs))
@@ -221,6 +223,7 @@ func (h *AutomationHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		queue.QueueAlertCleanup,
 		queue.QueueHostStatus,
 		queue.QueueComplianceScanCleanup,
+		queue.QueueSSGUpdateCheck,
 	}
 
 	stats := make(map[string]QueueStats)
@@ -253,6 +256,7 @@ func (h *AutomationHandler) Jobs(w http.ResponseWriter, r *http.Request) {
 		queue.QueueAlertCleanup:          true,
 		queue.QueueHostStatus:            true,
 		queue.QueueComplianceScanCleanup: true,
+		queue.QueueSSGUpdateCheck:        true,
 	}
 	if !validQueues[queueName] {
 		Error(w, http.StatusBadRequest, "Invalid queue name")
@@ -383,6 +387,12 @@ func (h *AutomationHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	case "compliance-scan-cleanup":
 		var t *asynq.Task
 		t, err = queue.NewComplianceScanCleanupTask(host)
+		if err == nil {
+			info, err = h.queueClient.Enqueue(t)
+		}
+	case "ssg-update-check":
+		var t *asynq.Task
+		t, err = queue.NewSSGUpdateCheckTask(host)
 		if err == nil {
 			info, err = h.queueClient.Enqueue(t)
 		}
