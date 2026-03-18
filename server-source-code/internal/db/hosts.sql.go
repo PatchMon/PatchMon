@@ -651,3 +651,18 @@ func (q *Queries) UpdateHostPrimaryInterface(ctx context.Context, arg UpdateHost
 	_, err := q.db.Exec(ctx, updateHostPrimaryInterface, arg.PrimaryInterface, arg.ID)
 	return err
 }
+
+const updateHostRebootStatus = `-- name: UpdateHostRebootStatus :exec
+UPDATE hosts SET needs_reboot = $2, reboot_reason = $3, updated_at = NOW() WHERE id = $1
+`
+
+type UpdateHostRebootStatusParams struct {
+	ID           string  `json:"id"`
+	NeedsReboot  *bool   `json:"needs_reboot"`
+	RebootReason *string `json:"reboot_reason"`
+}
+
+func (q *Queries) UpdateHostRebootStatus(ctx context.Context, arg UpdateHostRebootStatusParams) error {
+	_, err := q.db.Exec(ctx, updateHostRebootStatus, arg.ID, arg.NeedsReboot, arg.RebootReason)
+	return err
+}

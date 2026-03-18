@@ -9,6 +9,13 @@ type Package struct {
 	AvailableVersion string `json:"availableVersion,omitempty"`
 	NeedsUpdate      bool   `json:"needsUpdate"`
 	IsSecurityUpdate bool   `json:"isSecurityUpdate"`
+	// WUA fields — only populated for Category="Windows Update" entries
+	WUAGuid           string   `json:"wuaGuid,omitempty"`
+	WUAKb             string   `json:"wuaKb,omitempty"`
+	WUASeverity       string   `json:"wuaSeverity,omitempty"`
+	WUACategories     []string `json:"wuaCategories,omitempty"`
+	WUASupportURL     string   `json:"wuaSupportUrl,omitempty"`
+	WUARevisionNumber int32    `json:"wuaRevisionNumber,omitempty"`
 }
 
 // Repository represents a software repository

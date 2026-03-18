@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -35,11 +36,16 @@ type UserInfo struct {
 }
 
 // Client wraps the OIDC provider and OAuth2 config.
+// Provider discovery is lazy: the first login attempt triggers the HTTP call to
+// the issuer's discovery endpoint, so startup succeeds even when the provider is
+// temporarily unreachable.
 type Client struct {
+	cfg      Config
+	scopes   []string
+	mu       sync.Mutex
 	provider *oidc.Provider
 	verifier *oidc.IDTokenVerifier
-	config   *oauth2.Config
-	scopes   []string
+	oauth2   *oauth2.Config
 }
 
 // Config holds OIDC client configuration.
@@ -51,31 +57,37 @@ type Config struct {
 	Scopes       string
 }
 
-// NewClient discovers the OIDC provider and creates a new client.
-func NewClient(ctx context.Context, cfg Config) (*Client, error) {
-	provider, err := oidc.NewProvider(ctx, cfg.IssuerURL)
-	if err != nil {
-		return nil, fmt.Errorf("oidc: discover provider: %w", err)
-	}
-
-	scopes := parseScopes(cfg.Scopes)
-
-	oauth2Config := &oauth2.Config{
-		ClientID:     cfg.ClientID,
-		ClientSecret: cfg.ClientSecret,
-		RedirectURL:  cfg.RedirectURI,
-		Endpoint:     provider.Endpoint(),
-		Scopes:       scopes,
-	}
-
-	verifier := provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
-
+// NewClient creates a new OIDC client. Provider discovery is deferred until the
+// first login attempt, so this never fails due to network issues at startup.
+func NewClient(_ context.Context, cfg Config) (*Client, error) {
 	return &Client{
-		provider: provider,
-		verifier: verifier,
-		config:   oauth2Config,
-		scopes:   scopes,
+		cfg:    cfg,
+		scopes: parseScopes(cfg.Scopes),
 	}, nil
+}
+
+// connect performs provider discovery and populates the oauth2 config and token
+// verifier. It is idempotent and safe for concurrent callers.
+func (c *Client) connect(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.provider != nil {
+		return nil
+	}
+	provider, err := oidc.NewProvider(ctx, c.cfg.IssuerURL)
+	if err != nil {
+		return fmt.Errorf("oidc: discover provider: %w", err)
+	}
+	c.provider = provider
+	c.verifier = provider.Verifier(&oidc.Config{ClientID: c.cfg.ClientID})
+	c.oauth2 = &oauth2.Config{
+		ClientID:     c.cfg.ClientID,
+		ClientSecret: c.cfg.ClientSecret,
+		RedirectURL:  c.cfg.RedirectURI,
+		Endpoint:     provider.Endpoint(),
+		Scopes:       c.scopes,
+	}
+	return nil
 }
 
 func parseScopes(s string) []string {
@@ -100,7 +112,10 @@ func parseScopes(s string) []string {
 }
 
 // AuthCodeURL generates the authorization URL with PKCE and returns session data.
-func (c *Client) AuthCodeURL(state string) (authURL string, session *SessionData, err error) {
+func (c *Client) AuthCodeURL(ctx context.Context, state string) (authURL string, session *SessionData, err error) {
+	if err := c.connect(ctx); err != nil {
+		return "", nil, err
+	}
 	verifier := oauth2.GenerateVerifier()
 	nonce, err := generateNonce()
 	if err != nil {
@@ -112,7 +127,7 @@ func (c *Client) AuthCodeURL(state string) (authURL string, session *SessionData
 		oauth2.SetAuthURLParam("nonce", nonce),
 	}
 
-	authURL = c.config.AuthCodeURL(state, opts...)
+	authURL = c.oauth2.AuthCodeURL(state, opts...)
 
 	session = &SessionData{
 		State:        state,
@@ -132,6 +147,9 @@ func generateNonce() (string, error) {
 
 // Exchange exchanges the authorization code for tokens and fetches UserInfo.
 func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState, expectedNonce string, callbackParams url.Values) (*UserInfo, error) {
+	if err := c.connect(ctx); err != nil {
+		return nil, err
+	}
 	if code == "" {
 		return nil, errors.New("oidc: missing code parameter")
 	}
@@ -148,7 +166,7 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 		oauth2.VerifierOption(codeVerifier),
 	}
 
-	token, err := c.config.Exchange(ctx, code, opts...)
+	token, err := c.oauth2.Exchange(ctx, code, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("oidc: token exchange: %w", err)
 	}
@@ -281,11 +299,19 @@ func extractGroups(primary, fallback map[string]interface{}) []string {
 }
 
 // LogoutURL builds the RP-initiated logout URL if the provider supports it.
+// Returns empty string if the provider has not yet been discovered or does not
+// advertise an end_session_endpoint.
 func (c *Client) LogoutURL(postLogoutRedirectURI, idTokenHint, clientID string) string {
+	c.mu.Lock()
+	provider := c.provider
+	c.mu.Unlock()
+	if provider == nil {
+		return ""
+	}
 	var meta struct {
 		EndSessionEndpoint string `json:"end_session_endpoint"`
 	}
-	if err := c.provider.Claims(&meta); err != nil || meta.EndSessionEndpoint == "" {
+	if err := provider.Claims(&meta); err != nil || meta.EndSessionEndpoint == "" {
 		return ""
 	}
 

@@ -335,6 +335,12 @@ foreach ($hf in $hotfixes) {
     AvailableVersion = ""
     NeedsUpdate      = $false
     IsSecurityUpdate = ($hf.Description -match "Security")
+    WUAGuid          = ""
+    WUAKb            = $id
+    WUASeverity      = ""
+    WUACategories    = @()
+    WUASupportURL    = ""
+    WUARevisionNumber = 0
   }
 }
 
@@ -346,14 +352,28 @@ try {
   $results   = $searcher.Search("IsInstalled=0 AND IsHidden=0")
   foreach ($u in $results.Updates) {
     $secFlag = ($u.MsrcSeverity -eq "Critical" -or $u.MsrcSeverity -eq "Important")
-    $kbs = @($u.KBArticleIDs | ForEach-Object { "KB$_" }) -join ", "
-    $displayName = if ($kbs) { "$($u.Title) ($kbs)" } else { $u.Title }
+    $kbs = @($u.KBArticleIDs | ForEach-Object { "KB$_" })
+    $kbStr = ($kbs -join ", ")
+    $displayName = if ($kbStr) { "$($u.Title) ($kbStr)" } else { $u.Title }
+    $guid = ""
+    try { $guid = $u.Identity.UpdateID } catch {}
+    $cats = @($u.Categories | ForEach-Object { $_.Name })
+    $supportUrl = ""
+    try { $supportUrl = $u.SupportURL } catch {}
+    $revNum = 0
+    try { $revNum = [int]$u.Identity.RevisionNumber } catch {}
     $result += @{
       Name             = $displayName
       CurrentVersion   = "pending"
-      AvailableVersion = $u.Identity.UpdateID
+      AvailableVersion = $guid
       NeedsUpdate      = $true
       IsSecurityUpdate = $secFlag
+      WUAGuid          = $guid
+      WUAKb            = ($kbs -join ", ")
+      WUASeverity      = if ($u.MsrcSeverity) { $u.MsrcSeverity } else { "" }
+      WUACategories    = $cats
+      WUASupportURL    = $supportUrl
+      WUARevisionNumber = $revNum
     }
   }
 } catch {
@@ -376,13 +396,19 @@ if ($comFailed) {
           AvailableVersion = $u.UpdateID
           NeedsUpdate      = $true
           IsSecurityUpdate = ($u.MsrcSeverity -match "Critical|Important")
+          WUAGuid          = $u.UpdateID
+          WUAKb            = $u.KB
+          WUASeverity      = if ($u.MsrcSeverity) { $u.MsrcSeverity } else { "" }
+          WUACategories    = @()
+          WUASupportURL    = ""
+          WUARevisionNumber = 0
         }
       }
     }
   } catch {}
 }
 
-$result | ConvertTo-Json -Compress -Depth 3
+$result | ConvertTo-Json -Compress -Depth 4
 `
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
 	output, err := cmd.Output()
@@ -423,11 +449,17 @@ $result | ConvertTo-Json -Compress -Depth 3
 	}
 
 	var raw []struct {
-		Name             string `json:"Name"`
-		CurrentVersion   string `json:"CurrentVersion"`
-		AvailableVersion string `json:"AvailableVersion"`
-		NeedsUpdate      bool   `json:"NeedsUpdate"`
-		IsSecurityUpdate bool   `json:"IsSecurityUpdate"`
+		Name              string   `json:"Name"`
+		CurrentVersion    string   `json:"CurrentVersion"`
+		AvailableVersion  string   `json:"AvailableVersion"`
+		NeedsUpdate       bool     `json:"NeedsUpdate"`
+		IsSecurityUpdate  bool     `json:"IsSecurityUpdate"`
+		WUAGuid           string   `json:"WUAGuid"`
+		WUAKb             string   `json:"WUAKb"`
+		WUASeverity       string   `json:"WUASeverity"`
+		WUACategories     []string `json:"WUACategories"`
+		WUASupportURL     string   `json:"WUASupportURL"`
+		WUARevisionNumber int32    `json:"WUARevisionNumber"`
 	}
 	if err := json.Unmarshal([]byte(outputStr), &raw); err != nil {
 		m.logger.WithError(err).Warn("Failed to parse Windows updates JSON")
@@ -444,12 +476,18 @@ $result | ConvertTo-Json -Compress -Depth 3
 			cv = "pending"
 		}
 		packages = append(packages, models.Package{
-			Name:             u.Name,
-			Category:         "Windows Update",
-			CurrentVersion:   cv,
-			AvailableVersion: u.AvailableVersion,
-			NeedsUpdate:      u.NeedsUpdate,
-			IsSecurityUpdate: u.IsSecurityUpdate,
+			Name:              u.Name,
+			Category:          "Windows Update",
+			CurrentVersion:    cv,
+			AvailableVersion:  u.AvailableVersion,
+			NeedsUpdate:       u.NeedsUpdate,
+			IsSecurityUpdate:  u.IsSecurityUpdate,
+			WUAGuid:           u.WUAGuid,
+			WUAKb:             u.WUAKb,
+			WUASeverity:       u.WUASeverity,
+			WUACategories:     u.WUACategories,
+			WUASupportURL:     u.WUASupportURL,
+			WUARevisionNumber: u.WUARevisionNumber,
 		})
 	}
 	return packages

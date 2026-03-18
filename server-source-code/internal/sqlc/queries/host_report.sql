@@ -57,6 +57,24 @@ ON CONFLICT (host_id, package_id) DO UPDATE SET
     is_security_update = EXCLUDED.is_security_update,
     last_checked = NOW();
 
+-- name: InsertHostPackageWithWUA :exec
+INSERT INTO host_packages (id, host_id, package_id, current_version, available_version, needs_update, is_security_update,
+    wua_guid, wua_kb, wua_severity, wua_categories, wua_description, wua_support_url, wua_revision_number, last_checked)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+ON CONFLICT (host_id, package_id) DO UPDATE SET
+    current_version = EXCLUDED.current_version,
+    available_version = EXCLUDED.available_version,
+    needs_update = EXCLUDED.needs_update,
+    is_security_update = EXCLUDED.is_security_update,
+    wua_guid = EXCLUDED.wua_guid,
+    wua_kb = EXCLUDED.wua_kb,
+    wua_severity = EXCLUDED.wua_severity,
+    wua_categories = EXCLUDED.wua_categories,
+    wua_description = EXCLUDED.wua_description,
+    wua_support_url = EXCLUDED.wua_support_url,
+    wua_revision_number = EXCLUDED.wua_revision_number,
+    last_checked = NOW();
+
 -- name: InsertUpdateHistory :exec
 INSERT INTO update_history (id, host_id, packages_count, security_count, total_packages, payload_size_kb, execution_time, timestamp, status, error_message)
 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9);

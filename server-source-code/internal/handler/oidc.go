@@ -37,35 +37,37 @@ type OidcHandler struct {
 	log         *slog.Logger
 
 	// clientMu protects client and resolved; allows re-init on settings update
-	clientMu sync.RWMutex
-	client   *oidc.Client
-	resolved *config.ResolvedOidcConfig
+	clientMu        sync.RWMutex
+	client          *oidc.Client
+	resolved        *config.ResolvedOidcConfig
+	configuredValid bool // true when all required fields are present and enabled, even if provider connection failed
 }
 
 // NewOidcHandler creates a new OIDC handler.
-func NewOidcHandler(cfg *config.Config, resolved *config.ResolvedOidcConfig, resolvedCfg *config.ResolvedConfig, client *oidc.Client, oidcStore *store.OidcSessionStore, users *store.UsersStore, auth *AuthHandler, settings *store.SettingsStore, enc *util.Encryption, log *slog.Logger) *OidcHandler {
+func NewOidcHandler(cfg *config.Config, resolved *config.ResolvedOidcConfig, resolvedCfg *config.ResolvedConfig, client *oidc.Client, configuredValid bool, oidcStore *store.OidcSessionStore, users *store.UsersStore, auth *AuthHandler, settings *store.SettingsStore, enc *util.Encryption, log *slog.Logger) *OidcHandler {
 	return &OidcHandler{
-		cfg:         cfg,
-		resolvedCfg: resolvedCfg,
-		oidcStore:   oidcStore,
-		users:       users,
-		auth:        auth,
-		settings:    settings,
-		enc:         enc,
-		log:         log,
-		client:      client,
-		resolved:    resolved,
+		cfg:             cfg,
+		resolvedCfg:     resolvedCfg,
+		oidcStore:       oidcStore,
+		users:           users,
+		auth:            auth,
+		settings:        settings,
+		enc:             enc,
+		log:             log,
+		client:          client,
+		resolved:        resolved,
+		configuredValid: configuredValid,
 	}
 }
 
 // Config handles GET /api/v1/auth/oidc/config.
 func (h *OidcHandler) Config(w http.ResponseWriter, r *http.Request) {
 	h.clientMu.RLock()
-	client := h.client
 	resolved := h.resolved
+	configuredValid := h.configuredValid
 	h.clientMu.RUnlock()
 
-	enabled := client != nil
+	enabled := configuredValid
 	var disableLocalAuth bool
 	var buttonText string
 	if resolved != nil {
@@ -92,19 +94,19 @@ func (h *OidcHandler) Login(w http.ResponseWriter, r *http.Request) {
 	h.clientMu.RUnlock()
 
 	if client == nil {
-		Error(w, http.StatusBadRequest, "OIDC authentication is not enabled")
+		Error(w, http.StatusBadRequest, "OIDC authentication is not configured")
 		return
 	}
 	if h.requireHTTPS(w, r) {
 		return
 	}
 	state := generateState()
-	authURL, session, err := client.AuthCodeURL(state)
+	authURL, session, err := client.AuthCodeURL(r.Context(), state)
 	if err != nil {
 		if h.log != nil {
 			h.log.Error("oidc auth url failed", "error", err)
 		}
-		Error(w, http.StatusInternalServerError, "Failed to initiate OIDC login")
+		Error(w, http.StatusServiceUnavailable, "Failed to reach the OIDC provider; please try again shortly")
 		return
 	}
 	ttl := time.Duration(h.cfg.OidcSessionTTL) * time.Second
@@ -404,25 +406,20 @@ func (h *OidcHandler) reinitOidcClient(ctx context.Context) {
 	var newClient *oidc.Client
 	var resolvedPtr *config.ResolvedOidcConfig
 	if valid {
-		c, err := oidc.NewClient(ctx, oidc.Config{
+		resolvedPtr = &oidcResolved
+		c, _ := oidc.NewClient(ctx, oidc.Config{
 			IssuerURL:    oidcResolved.IssuerURL,
 			ClientID:     oidcResolved.ClientID,
 			ClientSecret: clientSecret,
 			RedirectURI:  oidcResolved.RedirectURI,
 			Scopes:       oidcResolved.Scopes,
 		})
-		if err != nil {
-			if h.log != nil {
-				h.log.Warn("OIDC reinit client failed", "error", err)
-			}
-		} else {
-			newClient = c
-			resolvedPtr = &oidcResolved
-		}
+		newClient = c
 	}
 	h.clientMu.Lock()
 	h.client = newClient
 	h.resolved = resolvedPtr
+	h.configuredValid = valid
 	h.clientMu.Unlock()
 }
 

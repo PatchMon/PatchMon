@@ -65,7 +65,7 @@ func (r *Resolver) Resolve() ResolvedOidcConfig {
 		}
 		out.RedirectURI = redirectURI
 		out.Scopes = r.pickString(r.cfg.OidcScopes, "openid email profile groups")
-		out.Enabled = r.cfg.OidcEnabled
+		out.Enabled = resolveEnabled(r.cfg.OidcEnabled, out.IssuerURL, out.ClientID, out.ClientSecret, out.RedirectURI, r.settings)
 		out.ButtonText = r.pickString(r.cfg.OidcButtonText, "Login with SSO")
 		out.AutoCreateUsers = r.cfg.OidcAutoCreateUsers
 		out.DefaultRole = r.pickString(r.cfg.OidcDefaultRole, "user")
@@ -109,6 +109,24 @@ func (r *Resolver) Resolve() ResolvedOidcConfig {
 
 func (r *Resolver) configuredViaEnv() bool {
 	return configuredViaEnvStrict()
+}
+
+// resolveEnabled determines whether OIDC is enabled when the env path is active.
+// Priority:
+//  1. OIDC_ENABLED env var is explicitly set → respect it (true or false).
+//  2. All four required fields present via env, no OIDC_ENABLED → implicitly enabled.
+//  3. Partial env config → fall back to the DB's oidc_enabled flag.
+func resolveEnabled(cfgEnabled bool, issuerURL, clientID, clientSecret, redirectURI string, settings *models.Settings) bool {
+	if os.Getenv("OIDC_ENABLED") != "" {
+		return cfgEnabled
+	}
+	if issuerURL != "" && clientID != "" && clientSecret != "" && redirectURI != "" {
+		return true
+	}
+	if settings != nil {
+		return settings.OidcEnabled
+	}
+	return false
 }
 
 func (r *Resolver) ptrStr(p *string) string {

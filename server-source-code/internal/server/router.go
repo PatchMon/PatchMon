@@ -103,26 +103,25 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			}
 		}
 		valid := oidcResolved.Enabled && oidcResolved.IssuerURL != "" && oidcResolved.ClientID != "" && clientSecret != "" && oidcResolved.RedirectURI != ""
+		if oidcResolved.ConfiguredViaEnv && !valid && (oidcResolved.IssuerURL != "" || oidcResolved.ClientID != "" || clientSecret != "" || oidcResolved.RedirectURI != "") {
+			if log != nil {
+				log.Warn("OIDC is partially configured via env vars but SSO is disabled; set all of OIDC_ISSUER_URL, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_REDIRECT_URI (or OIDC_ENABLED=true) to enable SSO")
+			}
+		}
 		var oidcClient *oidc.Client
 		var resolvedPtr *config.ResolvedOidcConfig
 		if valid {
-			c, err := oidc.NewClient(ctx, oidc.Config{
+			resolvedPtr = &oidcResolved
+			c, _ := oidc.NewClient(ctx, oidc.Config{
 				IssuerURL:    oidcResolved.IssuerURL,
 				ClientID:     oidcResolved.ClientID,
 				ClientSecret: clientSecret,
 				RedirectURI:  oidcResolved.RedirectURI,
 				Scopes:       oidcResolved.Scopes,
 			})
-			if err != nil {
-				if log != nil {
-					log.Warn("OIDC init failed, SSO disabled", "error", err)
-				}
-			} else {
-				oidcClient = c
-				resolvedPtr = &oidcResolved
-			}
+			oidcClient = c
 		}
-		oidcHandler = handler.NewOidcHandler(cfg, resolvedPtr, resolved, oidcClient, store.NewOidcSessionStore(redisResolver), usersStore, authHandler, settingsStore, enc, log)
+		oidcHandler = handler.NewOidcHandler(cfg, resolvedPtr, resolved, oidcClient, valid, store.NewOidcSessionStore(redisResolver), usersStore, authHandler, settingsStore, enc, log)
 	}
 	var discordHandler *handler.DiscordHandler
 	if rdb != nil {
@@ -227,6 +226,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	patchAssignmentsStore := store.NewPatchPolicyAssignmentsStore(db)
 	patchExclusionsStore := store.NewPatchPolicyExclusionsStore(db)
 	patchingHandler := handler.NewPatchingHandler(patchRunsStore, patchPoliciesStore, patchAssignmentsStore, patchExclusionsStore, hostsStore, queueClient, log)
+	windowsUpdatesHandler := handler.NewWindowsUpdatesHandler(hostsStore, dbProvider)
 
 	aiSvc := ai.NewService(enc)
 	aiHandler := handler.NewAIHandler(settingsStore, aiSvc, enc, redisResolver)
@@ -275,6 +275,11 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		r.Get("/compliance/ssg-content/{filename}", complianceHandler.SSGContent)
 		// Patching agent output (API key auth)
 		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent)).Post("/patching/runs/{id}/output", patchingHandler.ServePatchOutput)
+		// Windows Update agent callbacks (API key auth)
+		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent)).Post("/patching/windows-updates/result", windowsUpdatesHandler.RecordInstallResult)
+		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent)).Post("/patching/windows-updates/reboot", windowsUpdatesHandler.RecordRebootStatus)
+		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent)).Post("/patching/windows-updates/superseded", windowsUpdatesHandler.RemoveSuperseded)
+		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent)).Get("/patching/windows-updates/approved", windowsUpdatesHandler.GetApprovedGUIDs)
 		// Auto-enrollment (public, token in headers for enroll, query params for script)
 		r.Post("/auto-enrollment/enroll", autoEnrollmentHandler.Enroll)
 		r.Get("/auto-enrollment/script", autoEnrollmentHandler.ServeScript)
@@ -299,6 +304,22 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.Get("/auth/oidc/login", oidcHandler.Login)
 			r.Get("/auth/oidc/callback", oidcHandler.Callback)
 			r.With(middleware.OptionalAuth(cfg)).Get("/auth/oidc/logout", oidcHandler.Logout)
+		} else {
+			// Redis unavailable: still serve the config endpoint so the frontend
+			// can show the SSO button based on env/DB configuration.
+			r.Get("/auth/oidc/config", func(w http.ResponseWriter, r *http.Request) {
+				oidcResolved, _ := config.ResolveOidcConfig(r.Context(), cfg, settingsStore.GetFirst)
+				valid := oidcResolved.Enabled && oidcResolved.IssuerURL != "" && oidcResolved.ClientID != "" && oidcResolved.ClientSecret != "" && oidcResolved.RedirectURI != ""
+				buttonText := oidcResolved.ButtonText
+				if buttonText == "" {
+					buttonText = "Login with SSO"
+				}
+				handler.JSON(w, http.StatusOK, map[string]interface{}{
+					"enabled":          valid,
+					"buttonText":       buttonText,
+					"disableLocalAuth": valid && oidcResolved.DisableLocalAuth,
+				})
+			})
 		}
 		if discordHandler != nil {
 			r.Get("/auth/discord/config", discordHandler.Config)
@@ -515,6 +536,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Delete("/patching/policies/{id}/assignments/{assignmentId}", patchingHandler.RemovePolicyAssignment)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/patching/policies/{id}/exclusions", patchingHandler.AddPolicyExclusion)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Delete("/patching/policies/{id}/exclusions/{hostId}", patchingHandler.RemovePolicyExclusion)
+			// Windows Update metadata for a host (UI-facing)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/patching/windows-updates/{hostId}", windowsUpdatesHandler.ListForHost)
 
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/host-groups", hostGroupsHandler.List)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/host-groups/{id}", hostGroupsHandler.GetByID)

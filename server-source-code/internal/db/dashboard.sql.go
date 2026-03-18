@@ -365,7 +365,7 @@ type GetHostsWithCountsRow struct {
 	ComplianceEnabled      bool             `json:"compliance_enabled"`
 	ComplianceOnDemandOnly bool             `json:"compliance_on_demand_only"`
 	LastUpdate             pgtype.Timestamp `json:"last_update"`
-	SsgVersion             *string          `json:"ssg_version"`
+	SsgVersion             interface{}      `json:"ssg_version"`
 	UpdatesCount           int32            `json:"updates_count"`
 	SecurityUpdatesCount   int32            `json:"security_updates_count"`
 	TotalPackagesCount     int32            `json:"total_packages_count"`

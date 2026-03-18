@@ -69,6 +69,13 @@ type ReportPackage struct {
 	AvailableVersion *string `json:"availableVersion"`
 	NeedsUpdate      bool    `json:"needsUpdate"`
 	IsSecurityUpdate bool    `json:"isSecurityUpdate"`
+	// WUA fields — only set for Category="Windows Update" entries
+	WUAGuid           string   `json:"wuaGuid,omitempty"`
+	WUAKb             string   `json:"wuaKb,omitempty"`
+	WUASeverity       string   `json:"wuaSeverity,omitempty"`
+	WUACategories     []string `json:"wuaCategories,omitempty"`
+	WUASupportURL     string   `json:"wuaSupportUrl,omitempty"`
+	WUARevisionNumber int32    `json:"wuaRevisionNumber,omitempty"`
 }
 
 // ReportRepository is a single repository from the agent report.
@@ -289,7 +296,42 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 			return nil, fmt.Errorf("InsertPackage %q: %w", pkg.Name, err)
 		}
 
-		if err := q.InsertHostPackage(ctx, db.InsertHostPackageParams{
+		if pkg.WUAGuid != "" {
+			// Windows Update entry — persist WUA-specific metadata
+			var wuaCats []byte
+			if len(pkg.WUACategories) > 0 {
+				wuaCats, _ = json.Marshal(pkg.WUACategories)
+			}
+			optStr := func(s string) *string {
+				if s == "" {
+					return nil
+				}
+				return &s
+			}
+			var revNum *int32
+			if pkg.WUARevisionNumber != 0 {
+				n := pkg.WUARevisionNumber
+				revNum = &n
+			}
+			if err := q.InsertHostPackageWithWUA(ctx, db.InsertHostPackageWithWUAParams{
+				ID:                uuid.New().String(),
+				HostID:            hostID,
+				PackageID:         pkgID,
+				CurrentVersion:    pkg.CurrentVersion,
+				AvailableVersion:  pkg.AvailableVersion,
+				NeedsUpdate:       pkg.NeedsUpdate,
+				IsSecurityUpdate:  pkg.IsSecurityUpdate,
+				WuaGuid:           optStr(pkg.WUAGuid),
+				WuaKb:             optStr(pkg.WUAKb),
+				WuaSeverity:       optStr(pkg.WUASeverity),
+				WuaCategories:     wuaCats,
+				WuaDescription:    optStr(pkg.Description),
+				WuaSupportUrl:     optStr(pkg.WUASupportURL),
+				WuaRevisionNumber: revNum,
+			}); err != nil {
+				return nil, fmt.Errorf("InsertHostPackageWithWUA %q: %w", pkg.Name, err)
+			}
+		} else if err := q.InsertHostPackage(ctx, db.InsertHostPackageParams{
 			ID:               uuid.New().String(),
 			HostID:           hostID,
 			PackageID:        pkgID,

@@ -277,6 +277,16 @@ CREATE TABLE IF NOT EXISTS host_packages (
     needs_update BOOLEAN NOT NULL DEFAULT false,
     is_security_update BOOLEAN NOT NULL DEFAULT false,
     last_checked TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- WUA (Windows Update Agent) metadata — populated for Category='Windows Update' entries only
+    wua_guid            TEXT,
+    wua_kb              TEXT,
+    wua_severity        TEXT,
+    wua_categories      JSONB,
+    wua_description     TEXT,
+    wua_support_url     TEXT,
+    wua_revision_number INTEGER,
+    wua_date_installed  TIMESTAMP(3),
+    wua_install_result  TEXT,
     UNIQUE(host_id, package_id)
 );
 

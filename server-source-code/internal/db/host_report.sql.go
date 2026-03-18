@@ -72,6 +72,62 @@ func (q *Queries) InsertHostPackage(ctx context.Context, arg InsertHostPackagePa
 	return err
 }
 
+const insertHostPackageWithWUA = `-- name: InsertHostPackageWithWUA :exec
+INSERT INTO host_packages (id, host_id, package_id, current_version, available_version, needs_update, is_security_update,
+    wua_guid, wua_kb, wua_severity, wua_categories, wua_description, wua_support_url, wua_revision_number, last_checked)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+ON CONFLICT (host_id, package_id) DO UPDATE SET
+    current_version = EXCLUDED.current_version,
+    available_version = EXCLUDED.available_version,
+    needs_update = EXCLUDED.needs_update,
+    is_security_update = EXCLUDED.is_security_update,
+    wua_guid = EXCLUDED.wua_guid,
+    wua_kb = EXCLUDED.wua_kb,
+    wua_severity = EXCLUDED.wua_severity,
+    wua_categories = EXCLUDED.wua_categories,
+    wua_description = EXCLUDED.wua_description,
+    wua_support_url = EXCLUDED.wua_support_url,
+    wua_revision_number = EXCLUDED.wua_revision_number,
+    last_checked = NOW()
+`
+
+type InsertHostPackageWithWUAParams struct {
+	ID                string  `json:"id"`
+	HostID            string  `json:"host_id"`
+	PackageID         string  `json:"package_id"`
+	CurrentVersion    string  `json:"current_version"`
+	AvailableVersion  *string `json:"available_version"`
+	NeedsUpdate       bool    `json:"needs_update"`
+	IsSecurityUpdate  bool    `json:"is_security_update"`
+	WuaGuid           *string `json:"wua_guid"`
+	WuaKb             *string `json:"wua_kb"`
+	WuaSeverity       *string `json:"wua_severity"`
+	WuaCategories     []byte  `json:"wua_categories"`
+	WuaDescription    *string `json:"wua_description"`
+	WuaSupportUrl     *string `json:"wua_support_url"`
+	WuaRevisionNumber *int32  `json:"wua_revision_number"`
+}
+
+func (q *Queries) InsertHostPackageWithWUA(ctx context.Context, arg InsertHostPackageWithWUAParams) error {
+	_, err := q.db.Exec(ctx, insertHostPackageWithWUA,
+		arg.ID,
+		arg.HostID,
+		arg.PackageID,
+		arg.CurrentVersion,
+		arg.AvailableVersion,
+		arg.NeedsUpdate,
+		arg.IsSecurityUpdate,
+		arg.WuaGuid,
+		arg.WuaKb,
+		arg.WuaSeverity,
+		arg.WuaCategories,
+		arg.WuaDescription,
+		arg.WuaSupportUrl,
+		arg.WuaRevisionNumber,
+	)
+	return err
+}
+
 const insertPackage = `-- name: InsertPackage :one
 INSERT INTO packages (id, name, description, category, latest_version, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, NOW(), NOW())

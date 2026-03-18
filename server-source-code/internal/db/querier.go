@@ -41,6 +41,8 @@ type Querier interface {
 	CountUsersByRole(ctx context.Context, role string) (int64, error)
 	CountVolumes(ctx context.Context, arg CountVolumesParams) (int32, error)
 	CountVolumesByHostID(ctx context.Context, hostID string) (int32, error)
+	// Counts pending Windows Updates for a host (for dashboard/stats).
+	CountWindowsUpdatesByHostID(ctx context.Context, hostID string) (CountWindowsUpdatesByHostIDRow, error)
 	CreateAlert(ctx context.Context, arg CreateAlertParams) (Alert, error)
 	CreateAutoEnrollmentToken(ctx context.Context, arg CreateAutoEnrollmentTokenParams) error
 	CreateComplianceProfile(ctx context.Context, arg CreateComplianceProfileParams) (ComplianceProfile, error)
@@ -69,7 +71,11 @@ type Querier interface {
 	DeleteHost(ctx context.Context, id string) error
 	DeleteHostGroup(ctx context.Context, id string) error
 	DeleteHostGroupMemberships(ctx context.Context, hostID string) error
+	// Removes a host_package row that was reported as superseded by the agent.
+	DeleteHostPackageByWUAGUID(ctx context.Context, arg DeleteHostPackageByWUAGUIDParams) error
 	DeleteHostPackagesByHostID(ctx context.Context, hostID string) error
+	// Bulk-removes superseded Windows Update entries for a host.
+	DeleteHostPackagesByWUAGUIDs(ctx context.Context, arg DeleteHostPackagesByWUAGUIDsParams) error
 	DeleteHostRepositoriesByHostID(ctx context.Context, hostID string) error
 	DeleteHostsByIDs(ctx context.Context, dollar_1 []string) error
 	DeleteImageByID(ctx context.Context, id string) error
@@ -153,6 +159,10 @@ type Querier interface {
 	GetHostRepositoriesByHostID(ctx context.Context, hostID string) ([]GetHostRepositoriesByHostIDRow, error)
 	GetHostRepositoriesForRepo(ctx context.Context, repositoryID string) ([]GetHostRepositoriesForRepoRow, error)
 	GetHostRepositoryCountByHostIDs(ctx context.Context, dollar_1 []string) ([]GetHostRepositoryCountByHostIDsRow, error)
+	// Windows Update (WUA) specific queries
+	// These operate on host_packages rows where category='Windows Update' and wua_guid IS NOT NULL
+	// Returns all Windows Update entries for a host, most recently checked first.
+	GetHostWindowsUpdates(ctx context.Context, hostID string) ([]GetHostWindowsUpdatesRow, error)
 	GetHostsByIDs(ctx context.Context, dollar_1 []string) ([]Host, error)
 	GetHostsForPackageTrends(ctx context.Context) ([]GetHostsForPackageTrendsRow, error)
 	GetHostsWithCounts(ctx context.Context, arg GetHostsWithCountsParams) ([]GetHostsWithCountsRow, error)
@@ -181,6 +191,9 @@ type Querier interface {
 	GetPatchRunByID(ctx context.Context, id string) (GetPatchRunByIDRow, error)
 	GetPatchRunByIDSimple(ctx context.Context, id string) (PatchRun, error)
 	GetPendingConfig(ctx context.Context, hostID string) (HostPendingConfig, error)
+	// Returns WUA GUIDs that are still pending (needs_update=true, not yet installed) for a host.
+	// Used by the server to tell the agent which updates to install.
+	GetPendingWindowsUpdateGUIDs(ctx context.Context, hostID string) ([]*string, error)
 	GetRecentComplianceScans(ctx context.Context) ([]GetRecentComplianceScansRow, error)
 	GetRecentHosts(ctx context.Context, limit int32) ([]GetRecentHostsRow, error)
 	GetRecentUsers(ctx context.Context, limit int32) ([]GetRecentUsersRow, error)
@@ -217,6 +230,7 @@ type Querier interface {
 	InsertDashboardPreference(ctx context.Context, arg InsertDashboardPreferenceParams) error
 	InsertHostGroupMembership(ctx context.Context, arg InsertHostGroupMembershipParams) error
 	InsertHostPackage(ctx context.Context, arg InsertHostPackageParams) error
+	InsertHostPackageWithWUA(ctx context.Context, arg InsertHostPackageWithWUAParams) error
 	InsertHostRepository(ctx context.Context, arg InsertHostRepositoryParams) error
 	InsertJobHistory(ctx context.Context, arg InsertJobHistoryParams) error
 	InsertPackage(ctx context.Context, arg InsertPackageParams) (string, error)
@@ -311,8 +325,11 @@ type Querier interface {
 	UpdateHostFromReport(ctx context.Context, arg UpdateHostFromReportParams) error
 	UpdateHostGroup(ctx context.Context, arg UpdateHostGroupParams) error
 	UpdateHostNotes(ctx context.Context, arg UpdateHostNotesParams) error
+	// Records the outcome of a Windows Update installation for a specific host+GUID combination.
+	UpdateHostPackageWUAInstallResult(ctx context.Context, arg UpdateHostPackageWUAInstallResultParams) error
 	UpdateHostPing(ctx context.Context, id string) error
 	UpdateHostPrimaryInterface(ctx context.Context, arg UpdateHostPrimaryInterfaceParams) error
+	UpdateHostRebootStatus(ctx context.Context, arg UpdateHostRebootStatusParams) error
 	UpdateJobHistoryCompleted(ctx context.Context, jobID string) error
 	UpdateJobHistoryDelayed(ctx context.Context, jobID string) error
 	UpdateJobHistoryFailed(ctx context.Context, arg UpdateJobHistoryFailedParams) error

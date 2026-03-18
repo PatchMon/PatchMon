@@ -314,14 +314,23 @@ type HostGroupMembership struct {
 }
 
 type HostPackage struct {
-	ID               string           `json:"id"`
-	HostID           string           `json:"host_id"`
-	PackageID        string           `json:"package_id"`
-	CurrentVersion   string           `json:"current_version"`
-	AvailableVersion *string          `json:"available_version"`
-	NeedsUpdate      bool             `json:"needs_update"`
-	IsSecurityUpdate bool             `json:"is_security_update"`
-	LastChecked      pgtype.Timestamp `json:"last_checked"`
+	ID                string           `json:"id"`
+	HostID            string           `json:"host_id"`
+	PackageID         string           `json:"package_id"`
+	CurrentVersion    string           `json:"current_version"`
+	AvailableVersion  *string          `json:"available_version"`
+	NeedsUpdate       bool             `json:"needs_update"`
+	IsSecurityUpdate  bool             `json:"is_security_update"`
+	LastChecked       pgtype.Timestamp `json:"last_checked"`
+	WuaGuid           *string          `json:"wua_guid"`
+	WuaKb             *string          `json:"wua_kb"`
+	WuaSeverity       *string          `json:"wua_severity"`
+	WuaCategories     []byte           `json:"wua_categories"`
+	WuaDescription    *string          `json:"wua_description"`
+	WuaSupportUrl     *string          `json:"wua_support_url"`
+	WuaRevisionNumber *int32           `json:"wua_revision_number"`
+	WuaDateInstalled  pgtype.Timestamp `json:"wua_date_installed"`
+	WuaInstallResult  *string          `json:"wua_install_result"`
 }
 
 type HostPendingConfig struct {

@@ -396,3 +396,86 @@ func (c *Client) SendPatchOutput(ctx context.Context, patchRunID, stage, output,
 
 	return nil
 }
+
+// WindowsUpdateResult reports the outcome of a single Windows Update installation.
+type WindowsUpdateResult struct {
+	GUID    string `json:"guid"`
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
+}
+
+// SendWindowsUpdateResult reports a single per-update install result to the server.
+func (c *Client) SendWindowsUpdateResult(ctx context.Context, patchRunID string, result WindowsUpdateResult) error {
+	url := fmt.Sprintf("%s/api/%s/patching/windows-updates/result", c.config.PatchmonServer, c.config.APIVersion)
+	body := map[string]interface{}{
+		"patch_run_id": patchRunID,
+		"guid":         result.GUID,
+		"success":      result.Success,
+	}
+	if result.Error != "" {
+		body["error"] = result.Error
+	}
+	resp, err := c.client.R().
+		SetContext(ctx).
+		SetHeader("Content-Type", "application/json").
+		SetHeader("X-API-ID", c.credentials.APIID).
+		SetHeader("X-API-KEY", c.credentials.APIKey).
+		SetBody(body).
+		Post(url)
+	if err != nil {
+		return fmt.Errorf("windows update result request failed: %w", err)
+	}
+	if resp.StatusCode() != 200 {
+		return fmt.Errorf("windows update result request failed with status %d", resp.StatusCode())
+	}
+	return nil
+}
+
+// SendWindowsRebootStatus reports whether a reboot is needed after Windows Update installation.
+func (c *Client) SendWindowsRebootStatus(ctx context.Context, patchRunID string, needsReboot bool) error {
+	url := fmt.Sprintf("%s/api/%s/patching/windows-updates/reboot", c.config.PatchmonServer, c.config.APIVersion)
+	resp, err := c.client.R().
+		SetContext(ctx).
+		SetHeader("Content-Type", "application/json").
+		SetHeader("X-API-ID", c.credentials.APIID).
+		SetHeader("X-API-KEY", c.credentials.APIKey).
+		SetBody(map[string]interface{}{
+			"patch_run_id": patchRunID,
+			"needs_reboot": needsReboot,
+		}).
+		Post(url)
+	if err != nil {
+		return fmt.Errorf("windows reboot status request failed: %w", err)
+	}
+	if resp.StatusCode() != 200 {
+		return fmt.Errorf("windows reboot status request failed with status %d", resp.StatusCode())
+	}
+	return nil
+}
+
+// GetApprovedWindowsUpdateGUIDs fetches the list of WUA GUIDs approved for installation on this host.
+func (c *Client) GetApprovedWindowsUpdateGUIDs(ctx context.Context) ([]string, error) {
+	url := fmt.Sprintf("%s/api/%s/patching/windows-updates/approved", c.config.PatchmonServer, c.config.APIVersion)
+	var result struct {
+		GUIDs []string `json:"guids"`
+	}
+	resp, err := c.client.R().
+		SetContext(ctx).
+		SetHeader("X-API-ID", c.credentials.APIID).
+		SetHeader("X-API-KEY", c.credentials.APIKey).
+		SetResult(&result).
+		Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("get approved GUIDs request failed: %w", err)
+	}
+	if resp.StatusCode() != 200 {
+		return nil, fmt.Errorf("get approved GUIDs request failed with status %d", resp.StatusCode())
+	}
+	r, ok := resp.Result().(*struct {
+		GUIDs []string `json:"guids"`
+	})
+	if !ok || r == nil {
+		return nil, nil
+	}
+	return r.GUIDs, nil
+}
