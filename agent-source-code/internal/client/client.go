@@ -314,6 +314,56 @@ func (c *Client) SendComplianceData(ctx context.Context, payload *models.Complia
 	return result, nil
 }
 
+// SSGVersionResponse represents the server's response to GET /compliance/ssg-version.
+type SSGVersionResponse struct {
+	Version string   `json:"version"`
+	Files   []string `json:"files"`
+}
+
+// GetSSGVersion fetches the server's embedded SSG version and available content files.
+func (c *Client) GetSSGVersion(ctx context.Context) (*SSGVersionResponse, error) {
+	url := fmt.Sprintf("%s/api/%s/compliance/ssg-version", c.config.PatchmonServer, c.config.APIVersion)
+
+	resp, err := c.client.R().
+		SetContext(ctx).
+		SetHeader("X-API-ID", c.credentials.APIID).
+		SetHeader("X-API-KEY", c.credentials.APIKey).
+		SetResult(&SSGVersionResponse{}).
+		Get(url)
+
+	if err != nil {
+		return nil, fmt.Errorf("ssg-version request failed: %w", err)
+	}
+	if resp.StatusCode() != 200 {
+		return nil, fmt.Errorf("ssg-version request failed with status %d", resp.StatusCode())
+	}
+	result, ok := resp.Result().(*SSGVersionResponse)
+	if !ok {
+		return nil, fmt.Errorf("invalid ssg-version response format")
+	}
+	return result, nil
+}
+
+// DownloadSSGContent downloads a specific SSG datastream file from the server.
+func (c *Client) DownloadSSGContent(ctx context.Context, filename, destPath string) error {
+	url := fmt.Sprintf("%s/api/%s/compliance/ssg-content/%s", c.config.PatchmonServer, c.config.APIVersion, filename)
+
+	resp, err := c.client.R().
+		SetContext(ctx).
+		SetHeader("X-API-ID", c.credentials.APIID).
+		SetHeader("X-API-KEY", c.credentials.APIKey).
+		SetOutput(destPath).
+		Get(url)
+
+	if err != nil {
+		return fmt.Errorf("ssg-content download failed: %w", err)
+	}
+	if resp.StatusCode() != 200 {
+		return fmt.Errorf("ssg-content download failed with status %d", resp.StatusCode())
+	}
+	return nil
+}
+
 // SendPatchOutput sends patch run output/status to the server (agent-facing patching endpoint)
 func (c *Client) SendPatchOutput(ctx context.Context, patchRunID, stage, output, errorMessage string) error {
 	url := fmt.Sprintf("%s/api/%s/patching/runs/%s/output", c.config.PatchmonServer, c.config.APIVersion, patchRunID)

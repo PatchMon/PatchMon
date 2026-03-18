@@ -80,6 +80,7 @@ const INSTALL_CHECKLIST_STEPS = [
 	{ id: "detect_os", label: "Detect operating system" },
 	{ id: "install_openscap", label: "Install OpenSCAP packages" },
 	{ id: "verify_openscap", label: "Verify installation and SSG content" },
+	{ id: "sync_ssg", label: "Sync SSG content from server" },
 	{ id: "docker_bench", label: "Docker Bench (optional)" },
 	{ id: "complete", label: "Complete" },
 ];
@@ -302,6 +303,22 @@ const ComplianceTab = ({
 		refetchOnWindowFocus: false,
 	});
 
+	// Fetch server's embedded SSG version (single source of truth for compliance content).
+	const { data: serverSSGInfo } = useQuery({
+		queryKey: ["server-ssg-info"],
+		queryFn: () => complianceAPI.getSSGInfo(),
+		staleTime: 30 * 60 * 1000, // 30 min — server version only changes on deployment
+	});
+	const serverSSGVersion = serverSSGInfo?.version || "";
+
+	// Derive whether agent needs SSG upgrade by comparing with server version.
+	const agentSSGVersion =
+		integrationStatus?.status?.scanner_info?.ssg_version || "";
+	const ssgNeedsUpgrade =
+		serverSSGVersion !== "" &&
+		agentSSGVersion !== "" &&
+		agentSSGVersion !== serverSSGVersion;
+
 	// Update selected profile when agent profiles are loaded
 	useEffect(() => {
 		const agentProfiles =
@@ -366,12 +383,13 @@ const ComplianceTab = ({
 		onSuccess: () => {
 			setUpdateMessage({
 				type: "success",
-				text: "SSG update command sent! Security content will be updated shortly.",
+				text: "SSG upgrade queued. The agent will download content from the server.",
 			});
+			refetchSSGUpgradeJob();
 			setTimeout(() => {
 				setUpdateMessage(null);
 				refetchStatus();
-			}, 5000);
+			}, 8000);
 		},
 		onError: (error) => {
 			console.error("SSG update error:", error);
@@ -394,25 +412,36 @@ const ComplianceTab = ({
 		onSuccess: () => {
 			setSSGUpgradeMessage({
 				type: "success",
-				text: "Upgrading SSG content from GitHub... This may take 10-15 seconds.",
+				text: "SSG content upgrade queued. The agent will download content from the PatchMon server.",
 			});
-			// First refresh after 8 seconds (download + extract takes ~6-7s)
+			refetchSSGUpgradeJob();
 			setTimeout(() => {
 				refetchStatus();
 			}, 8000);
-			// Second refresh after 12 seconds to catch any stragglers
 			setTimeout(() => {
 				setSSGUpgradeMessage(null);
 				refetchStatus();
-			}, 12000);
+			}, 15000);
 		},
 		onError: (error) => {
 			setSSGUpgradeMessage({
 				type: "error",
-				text:
-					error.response?.data?.error || "Failed to send SSG upgrade command",
+				text: error.response?.data?.error || "Failed to queue SSG upgrade",
 			});
 			setTimeout(() => setSSGUpgradeMessage(null), 5000);
+		},
+	});
+
+	// Poll SSG upgrade job status while active
+	const { data: ssgUpgradeJob, refetch: refetchSSGUpgradeJob } = useQuery({
+		queryKey: ["ssg-upgrade-job", hostId],
+		queryFn: () => complianceAPI.getSSGUpgradeJobStatus(hostId),
+		enabled: !!hostId,
+		staleTime: 0,
+		refetchInterval: (query) => {
+			const st = query.state?.data?.status;
+			if (st === "active" || st === "waiting") return 2000;
+			return false;
 		},
 	});
 
@@ -844,15 +873,16 @@ const ComplianceTab = ({
 				</div>
 			)}
 
-			{scannerInfo?.ssg_needs_upgrade && !scannerInfo?.content_mismatch && (
+			{ssgNeedsUpgrade && !scannerInfo?.content_mismatch && (
 				<div className="p-4 rounded-lg bg-yellow-900/30 border border-yellow-700 text-yellow-200">
 					<div className="flex items-start gap-3">
 						<AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" />
 						<div className="flex-1">
 							<p className="font-medium">SSG Content Update Available</p>
 							<p className="text-sm text-yellow-300/80 mt-1">
-								{scannerInfo.ssg_upgrade_message ||
-									`Current version ${scannerInfo.ssg_version} is below minimum ${scannerInfo.ssg_min_version}. Update recommended for accurate compliance results.`}
+								Agent has SSG v{agentSSGVersion} but server has v
+								{serverSSGVersion}. Update recommended for accurate compliance
+								results.
 							</p>
 						</div>
 						<button
@@ -3790,26 +3820,41 @@ const ComplianceTab = ({
 													SSG Version
 												</span>
 												<span
-													className={`font-mono text-xs ${info?.ssg_needs_upgrade ? "text-yellow-400" : "text-secondary-300 dark:text-white"}`}
+													className={`font-mono text-xs ${ssgNeedsUpgrade ? "text-yellow-400" : "text-secondary-300 dark:text-white"}`}
 												>
 													{info.ssg_version}
-													{info?.ssg_needs_upgrade &&
-														` (min: ${info.ssg_min_version})`}
+													{ssgNeedsUpgrade && ` → ${serverSSGVersion}`}
 												</span>
 											</div>
 										)}
-										{info?.ssg_needs_upgrade && (
+										{serverSSGVersion && (
+											<div className="flex justify-between">
+												<span className="text-secondary-400 dark:text-white">
+													Server SSG Version
+												</span>
+												<span className="font-mono text-xs text-secondary-300 dark:text-white">
+													{serverSSGVersion}
+												</span>
+											</div>
+										)}
+										{ssgNeedsUpgrade && (
 											<div className="mt-3 p-2 bg-yellow-600/20 border border-yellow-600/40 rounded-lg">
 												<p className="text-yellow-400 text-xs mb-2">
-													{info.ssg_upgrade_message ||
-														"SSG content upgrade recommended"}
+													Agent SSG v{agentSSGVersion} is behind server v
+													{serverSSGVersion}. Upgrade to ensure accurate
+													compliance results.
 												</p>
 												<button
 													onClick={() => ssgUpgradeMutation.mutate()}
-													disabled={ssgUpgradeMutation.isPending}
+													disabled={
+														ssgUpgradeMutation.isPending ||
+														ssgUpgradeJob?.status === "active" ||
+														ssgUpgradeJob?.status === "waiting"
+													}
 													className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-yellow-600/30 hover:bg-yellow-600/50 text-yellow-300 text-xs rounded transition-colors disabled:opacity-50"
 												>
-													{ssgUpgradeMutation.isPending ? (
+													{ssgUpgradeMutation.isPending ||
+													ssgUpgradeJob?.status === "active" ? (
 														<>
 															<RefreshCw className="h-3 w-3 animate-spin" />
 															Upgrading...
@@ -3821,6 +3866,11 @@ const ComplianceTab = ({
 														</>
 													)}
 												</button>
+												{ssgUpgradeJob?.status === "active" && (
+													<p className="mt-1 text-xs text-yellow-300/60">
+														{ssgUpgradeJob.message || "Upgrade in progress..."}
+													</p>
+												)}
 											</div>
 										)}
 										{ssgUpgradeMessage && (

@@ -188,9 +188,10 @@ const Hosts = () => {
 				visible: true,
 				order: 15,
 			},
-			{ id: "notes", label: "Notes", visible: false, order: 16 },
-			{ id: "last_update", label: "Last Update", visible: true, order: 17 },
-			{ id: "actions", label: "Actions", visible: true, order: 18 },
+			{ id: "ssg_version", label: "SSG Version", visible: false, order: 16 },
+			{ id: "notes", label: "Notes", visible: false, order: 17 },
+			{ id: "last_update", label: "Last Update", visible: true, order: 18 },
+			{ id: "actions", label: "Actions", visible: true, order: 19 },
 		],
 		[],
 	);
@@ -769,6 +770,10 @@ const Hosts = () => {
 					aValue = new Date(a.last_update);
 					bValue = new Date(b.last_update);
 					break;
+				case "ssg_version":
+					aValue = a.ssg_version || "";
+					bValue = b.ssg_version || "";
+					break;
 				case "notes":
 					aValue = (a.notes || "").toLowerCase();
 					bValue = (b.notes || "").toLowerCase();
@@ -1185,6 +1190,12 @@ const Hosts = () => {
 				return (
 					<div className="text-sm text-secondary-500 dark:text-white">
 						{formatRelativeTime(host.last_update)}
+					</div>
+				);
+			case "ssg_version":
+				return (
+					<div className="text-sm text-secondary-500 dark:text-white">
+						{host.ssg_version || "—"}
 					</div>
 				);
 			case "notes":

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -234,37 +235,15 @@ func (s *OpenSCAPScanner) getDefaultProfiles() []models.ScanProfileInfo {
 	}
 }
 
-// GetScannerDetails returns comprehensive scanner information
+// GetScannerDetails returns comprehensive scanner information.
+// The server's embedded SSG version is the single source of truth for whether
+// an upgrade is needed -- the 24h scheduled task handles that comparison.
+// This method only reports content mismatch (does the content file match the OS?).
 func (s *OpenSCAPScanner) GetScannerDetails() *models.ComplianceScannerDetails {
 	contentFile := s.getContentFile()
 	contentVersion := s.GetContentPackageVersion()
 
-	// Determine minimum required SSG version for this OS
-	// Use base distribution name (from ID_LIKE) for version checks
-	baseOSName := s.getContentOSName()
-	minVersion := ""
-	if baseOSName == "ubuntu" && s.osInfo.Version >= "24.04" {
-		minVersion = "0.1.76"
-	} else if baseOSName == "ubuntu" && s.osInfo.Version >= "22.04" {
-		minVersion = "0.1.60"
-	}
-
-	// Check if SSG needs upgrade
-	ssgNeedsUpgrade := false
-	ssgUpgradeMessage := ""
-	if minVersion != "" && contentVersion != "" {
-		if compareVersions(contentVersion, minVersion) < 0 {
-			ssgNeedsUpgrade = true
-			ssgUpgradeMessage = fmt.Sprintf("ssg-base %s is installed, but %s %s requires v%s+ for proper CIS/STIG content.",
-				contentVersion, s.osInfo.Name, s.osInfo.Version, minVersion)
-		}
-	} else if minVersion != "" && contentVersion == "" {
-		ssgNeedsUpgrade = true
-		ssgUpgradeMessage = fmt.Sprintf("ssg-base is not installed. %s %s requires ssg-base v%s+ for CIS/STIG scanning.",
-			s.osInfo.Name, s.osInfo.Version, minVersion)
-	}
-
-	// Check for content mismatch
+	// Check for content mismatch (content file vs OS version)
 	contentMismatch := false
 	mismatchWarning := ""
 	if contentFile != "" && s.osInfo.Version != "" {
@@ -272,28 +251,19 @@ func (s *OpenSCAPScanner) GetScannerDetails() *models.ComplianceScannerDetails {
 		baseName := filepath.Base(contentFile)
 		if !strings.Contains(baseName, osVersion) {
 			contentMismatch = true
-			if ssgNeedsUpgrade {
-				mismatchWarning = ssgUpgradeMessage
-			} else {
-				mismatchWarning = fmt.Sprintf("Content file %s may not match OS version %s.", baseName, s.osInfo.Version)
-			}
+			mismatchWarning = fmt.Sprintf("Content file %s may not match OS version %s.", baseName, s.osInfo.Version)
 		}
-	} else if contentFile == "" && baseOSName == "ubuntu" && s.osInfo.Version >= "24.04" {
+	} else if contentFile == "" && s.osInfo.Version != "" {
 		contentMismatch = true
-		mismatchWarning = ssgUpgradeMessage
-		if mismatchWarning == "" {
-			mismatchWarning = "No SCAP content found for Ubuntu 24.04."
-		}
+		mismatchWarning = fmt.Sprintf("No SCAP content found for %s %s.", s.osInfo.Name, s.osInfo.Version)
 	}
 
-	// Discover available profiles dynamically
 	profiles := s.DiscoverProfiles()
 
-	// Determine content package source
 	contentPackage := fmt.Sprintf("ssg-base %s", contentVersion)
 	githubVersion := s.getInstalledSSGVersion()
 	if githubVersion != "" {
-		contentPackage = fmt.Sprintf("SSG %s (GitHub)", githubVersion)
+		contentPackage = fmt.Sprintf("SSG %s (server)", githubVersion)
 	}
 
 	return &models.ComplianceScannerDetails{
@@ -302,9 +272,6 @@ func (s *OpenSCAPScanner) GetScannerDetails() *models.ComplianceScannerDetails {
 		ContentFile:       filepath.Base(contentFile),
 		ContentPackage:    contentPackage,
 		SSGVersion:        contentVersion,
-		SSGMinVersion:     minVersion,
-		SSGNeedsUpgrade:   ssgNeedsUpgrade,
-		SSGUpgradeMessage: ssgUpgradeMessage,
 		AvailableProfiles: profiles,
 		OSName:            s.osInfo.Name,
 		OSVersion:         s.osInfo.Version,
@@ -312,41 +279,6 @@ func (s *OpenSCAPScanner) GetScannerDetails() *models.ComplianceScannerDetails {
 		ContentMismatch:   contentMismatch,
 		MismatchWarning:   mismatchWarning,
 	}
-}
-
-// compareVersions compares two semantic version strings
-// Returns -1 if v1 < v2, 0 if equal, 1 if v1 > v2
-func compareVersions(v1, v2 string) int {
-	parts1 := strings.Split(v1, ".")
-	parts2 := strings.Split(v2, ".")
-
-	maxLen := len(parts1)
-	if len(parts2) > maxLen {
-		maxLen = len(parts2)
-	}
-
-	for i := 0; i < maxLen; i++ {
-		var n1, n2 int
-		if i < len(parts1) {
-			if _, err := fmt.Sscanf(parts1[i], "%d", &n1); err != nil {
-				// If parsing fails, treat as 0
-				n1 = 0
-			}
-		}
-		if i < len(parts2) {
-			if _, err := fmt.Sscanf(parts2[i], "%d", &n2); err != nil {
-				// If parsing fails, treat as 0
-				n2 = 0
-			}
-		}
-		if n1 < n2 {
-			return -1
-		}
-		if n1 > n2 {
-			return 1
-		}
-	}
-	return 0
 }
 
 // EnsureInstalled installs OpenSCAP and SCAP content if not present
@@ -369,39 +301,6 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 	case "debian":
 		// Ubuntu/Debian - always update and upgrade to get latest content
 		s.logger.Info("Installing/upgrading OpenSCAP on Debian-based system...")
-
-		// Check if Ubuntu 24.04+ (Noble Numbat) - also check Ubuntu-based distros like Pop!_OS
-		baseOSName := s.getContentOSName()
-		isUbuntu2404Plus := (s.osInfo.Name == "ubuntu" || baseOSName == "ubuntu") && s.osInfo.Version >= "24.04"
-		if isUbuntu2404Plus {
-			s.logger.Info("Ubuntu 24.04+ detected: CIS/STIG content requires ssg-base >= 0.1.76 or Canonical's Ubuntu Security Guide (USG)")
-
-			// Check current version and auto-upgrade if needed
-			currentVersion := s.GetContentPackageVersion()
-			if currentVersion != "" {
-				if compareVersions(currentVersion, "0.1.76") < 0 {
-					s.logger.Info("ssg-base version is below 0.1.76, attempting to upgrade from GitHub...")
-					if upgradeErr := s.UpgradeSSGContent(); upgradeErr != nil {
-						s.logger.WithError(upgradeErr).Warn("Failed to auto-upgrade SSG content from GitHub. Manual upgrade recommended.")
-					} else {
-						s.logger.Info("SSG content successfully upgraded from GitHub")
-						// Re-check version after upgrade
-						newVersion := s.GetContentPackageVersion()
-						if newVersion != "" && compareVersions(newVersion, "0.1.76") >= 0 {
-							s.logger.WithField("new_version", newVersion).Info("SSG content upgraded successfully")
-						}
-					}
-				} else {
-					s.logger.WithField("version", currentVersion).Debug("SSG content version is sufficient")
-				}
-			} else {
-				// No version detected - try GitHub upgrade
-				s.logger.Info("No SSG version detected, attempting to install from GitHub...")
-				if upgradeErr := s.UpgradeSSGContent(); upgradeErr != nil {
-					s.logger.WithError(upgradeErr).Warn("Failed to install SSG content from GitHub")
-				}
-			}
-		}
 
 		// Update package cache first (with timeout)
 		updateCmd := exec.CommandContext(ctx, "apt-get", "update", "-qq")
@@ -451,9 +350,6 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 		ssgOutput, ssgErr := ssgCmd.CombinedOutput()
 		if ssgErr != nil {
 			s.logger.WithField("output", logutil.Sanitize(string(ssgOutput))).Warn("SSG content packages not available or failed to install. CIS scanning may have limited functionality.")
-			if isUbuntu2404Plus {
-				s.logger.Info("For Ubuntu 24.04+, consider using Canonical's Ubuntu Security Guide (USG) with Ubuntu Pro for official CIS benchmarks.")
-			}
 		} else {
 			s.logger.Info("SSG content packages installed successfully")
 
@@ -525,7 +421,8 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 	if s.osInfo.Family == "debian" && s.osInfo.Name == "debian" {
 		ver := s.osInfo.Version
 		major := strings.Split(ver, ".")[0]
-		if ver >= "12" || strings.HasPrefix(ver, "13") {
+		majorInt, _ := strconv.Atoi(major)
+		if majorInt >= 12 {
 			contentFile := s.getContentFile()
 			needGitHub := contentFile == ""
 			if contentFile != "" && major != "" {
@@ -585,21 +482,119 @@ func (s *OpenSCAPScanner) checkContentCompatibility() {
 	}
 }
 
-// UpgradeSSGContent upgrades the SCAP Security Guide content from GitHub releases
-func (s *OpenSCAPScanner) UpgradeSSGContent() error {
-	s.logger.Info("Upgrading SCAP Security Guide content from GitHub...")
+// SSGContentDownloader abstracts the ability to download SSG content from the PatchMon server.
+type SSGContentDownloader interface {
+	GetSSGVersion(ctx context.Context) (version string, files []string, err error)
+	DownloadSSGContent(ctx context.Context, filename, destPath string) error
+}
 
-	// Download and install from GitHub
+// UpgradeSSGContentFromServer downloads the specific datastream file this OS needs
+// from the PatchMon server, replacing the old GitHub-based approach.
+// If targetVersion is empty, the server's current version is used (sync mode).
+func (s *OpenSCAPScanner) UpgradeSSGContentFromServer(downloader SSGContentDownloader, targetVersion string) error {
+	s.logger.WithField("target_version", targetVersion).Info("Upgrading SSG content from PatchMon server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	serverVersion, availableFiles, err := downloader.GetSSGVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to query server SSG version: %w", err)
+	}
+	if serverVersion == "" {
+		return fmt.Errorf("server has no SSG content available")
+	}
+
+	// If no target version specified, use whatever the server has.
+	if targetVersion == "" {
+		targetVersion = serverVersion
+	}
+
+	currentVersion := s.getInstalledSSGVersion()
+	if currentVersion == targetVersion {
+		s.logger.Info("SSG content already at target version, skipping")
+		return nil
+	}
+
+	filename := s.pickSSGFile(availableFiles)
+	if filename == "" {
+		return fmt.Errorf("no matching SSG datastream file available on server for %s %s", s.osInfo.Name, s.osInfo.Version)
+	}
+
+	targetDir := scapContentDir
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return fmt.Errorf("failed to create content directory: %w", err)
+	}
+
+	destPath := filepath.Join(targetDir, filename)
+	s.logger.WithFields(logrus.Fields{"file": filename, "version": serverVersion}).Info("Downloading SSG content from server...")
+
+	if err := downloader.DownloadSSGContent(ctx, filename, destPath); err != nil {
+		return fmt.Errorf("failed to download SSG content: %w", err)
+	}
+
+	versionFile := filepath.Join(targetDir, ".ssg-version")
+	if err := os.WriteFile(versionFile, []byte(serverVersion+"\n"), 0644); err != nil {
+		return fmt.Errorf("failed to write version marker: %w", err)
+	}
+
+	s.checkAvailability()
+	s.checkContentCompatibility()
+
+	s.logger.WithField("version", serverVersion).Info("SSG content upgraded from server")
+	return nil
+}
+
+// pickSSGFile selects the best datastream file for this OS from the available server files.
+func (s *OpenSCAPScanner) pickSSGFile(available []string) string {
+	contentOSName := s.getContentOSName()
+	major := strings.Split(s.osInfo.Version, ".")[0]
+
+	candidates := []string{
+		fmt.Sprintf("ssg-%s%s-ds.xml", contentOSName, strings.ReplaceAll(s.osInfo.Version, ".", "")),
+		fmt.Sprintf("ssg-%s%s-ds.xml", contentOSName, major),
+		fmt.Sprintf("ssg-%s-ds.xml", contentOSName),
+	}
+
+	avail := make(map[string]bool, len(available))
+	for _, f := range available {
+		avail[f] = true
+	}
+
+	for _, c := range candidates {
+		if avail[c] {
+			return c
+		}
+	}
+
+	if contentOSName != s.osInfo.Name {
+		fallbacks := []string{
+			fmt.Sprintf("ssg-%s%s-ds.xml", s.osInfo.Name, strings.ReplaceAll(s.osInfo.Version, ".", "")),
+			fmt.Sprintf("ssg-%s%s-ds.xml", s.osInfo.Name, major),
+			fmt.Sprintf("ssg-%s-ds.xml", s.osInfo.Name),
+		}
+		for _, c := range fallbacks {
+			if avail[c] {
+				return c
+			}
+		}
+	}
+
+	return ""
+}
+
+// UpgradeSSGContent upgrades the SCAP Security Guide content from GitHub releases (legacy fallback).
+func (s *OpenSCAPScanner) UpgradeSSGContent() error {
+	s.logger.Info("Upgrading SCAP Security Guide content from GitHub (fallback)...")
+
 	if err := s.installSSGFromGitHub(); err != nil {
 		s.logger.WithError(err).Warn("Failed to install SSG from GitHub")
 		return err
 	}
 
-	// Re-check availability after upgrade
 	s.checkAvailability()
 	s.checkContentCompatibility()
 
-	// Verify the new version
 	newVersion := s.getInstalledSSGVersion()
 	s.logger.WithField("version", newVersion).Info("SSG content upgrade completed")
 

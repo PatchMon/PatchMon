@@ -70,6 +70,28 @@ ARG TARGETARCH
 RUN go mod download && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -buildvcs=false -ldflags="-s -w" -o /app/patchmon-server ./cmd/server
 
+# SSG content stage — download ComplianceAsCode datastream files at build time.
+# Pass --build-arg SSG_VERSION=0.1.80 to pin a specific version; otherwise
+# the latest GitHub release is resolved automatically.
+FROM alpine:3.23 AS ssg-content
+ARG SSG_VERSION=""
+RUN apk add --no-cache wget unzip jq \
+    && if [ -z "${SSG_VERSION}" ]; then \
+         SSG_VERSION=$(wget -qO- https://api.github.com/repos/ComplianceAsCode/content/releases/latest | jq -r '.tag_name' | sed 's/^v//'); \
+         echo "Resolved latest SSG version from GitHub API: ${SSG_VERSION}"; \
+       else \
+         echo "Using pinned SSG version: ${SSG_VERSION}"; \
+       fi \
+    && if [ -z "${SSG_VERSION}" ] || [ "${SSG_VERSION}" = "null" ]; then \
+         echo "ERROR: Could not resolve SSG version (GitHub API may be rate-limited). Pass --build-arg SSG_VERSION=x.y.z to pin." >&2; exit 1; \
+       fi \
+    && wget -q "https://github.com/ComplianceAsCode/content/releases/download/v${SSG_VERSION}/scap-security-guide-${SSG_VERSION}.zip" -O /tmp/ssg.zip \
+    && mkdir -p /tmp/ssg-extract /ssg-content \
+    && unzip -q /tmp/ssg.zip -d /tmp/ssg-extract \
+    && find /tmp/ssg-extract -name 'ssg-*-ds.xml' -exec cp {} /ssg-content/ \; \
+    && echo "${SSG_VERSION}" > /ssg-content/.ssg-version \
+    && rm -rf /tmp/ssg.zip /tmp/ssg-extract
+
 # Production stage — hardened Alpine runtime (no -dev; no shell/apk). Use 3.23 for production.
 FROM dhi.io/alpine-base:3.23
 
@@ -80,6 +102,9 @@ WORKDIR /app
 # Copy binary (migrations and frontend are embedded in the binary)
 COPY --from=builder /app/patchmon-server ./
 
+# Copy SSG content (SCAP datastream files for compliance scanning)
+COPY --from=ssg-content /ssg-content ./ssg-content/
+
 # Copy agent scripts and binaries to /app/agents (in-image, read-only; no volume)
 COPY agents ./agents/
 COPY --chmod=755 agents-prebuilt/patchmon-agent-* ./agents/
@@ -89,6 +114,7 @@ COPY --chmod=755 docker/backend.docker-entrypoint.sh ./entrypoint.sh
 
 ENV PORT=3000
 ENV AGENTS_DIR=/app/agents
+ENV SSG_CONTENT_DIR=/app/ssg-content
 # Cap Go heap to reduce RAM (override at runtime if needed, e.g. GOMEMLIMIT=128MiB)
 ENV GOMEMLIMIT=256MiB
 

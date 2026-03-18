@@ -88,6 +88,8 @@ const AgentQueueTab = ({ hostId }) => {
 				return "Compliance Scan";
 			case "install_compliance_tools":
 				return "Install Compliance Scanner";
+			case "ssg_upgrade":
+				return "SSG Content Upgrade";
 			default:
 				return type;
 		}

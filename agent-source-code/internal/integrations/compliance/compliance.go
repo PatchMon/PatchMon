@@ -214,10 +214,18 @@ func (c *Integration) CollectWithOptions(ctx context.Context, options *models.Co
 	}, nil
 }
 
-// UpgradeSSGContent upgrades the SCAP Security Guide content packages
+// UpgradeSSGContent upgrades the SCAP Security Guide content packages (legacy GitHub fallback).
 func (c *Integration) UpgradeSSGContent() error {
 	if c.openscap == nil {
 		return fmt.Errorf("OpenSCAP scanner not initialized")
 	}
 	return c.openscap.UpgradeSSGContent()
+}
+
+// UpgradeSSGContentFromServer downloads SSG content from the PatchMon server.
+func (c *Integration) UpgradeSSGContentFromServer(downloader SSGContentDownloader, targetVersion string) error {
+	if c.openscap == nil {
+		return fmt.Errorf("OpenSCAP scanner not initialized")
+	}
+	return c.openscap.UpgradeSSGContentFromServer(downloader, targetVersion)
 }

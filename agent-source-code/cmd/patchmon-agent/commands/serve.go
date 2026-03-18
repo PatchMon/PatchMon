@@ -428,9 +428,10 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					logger.Debug("Compliance scan cancel requested but no scan is running")
 				}
 			case "upgrade_ssg":
-				logger.Info("Upgrading SSG content packages...")
+				targetVersion := m.version
+				logger.WithField("target_version", targetVersion).Info("Upgrading SSG content packages...")
 				go func() {
-					if err := upgradeSSGContent(); err != nil {
+					if err := upgradeSSGContent(targetVersion); err != nil {
 						logger.WithError(err).Warn("upgrade_ssg failed")
 					} else {
 						logger.Info("SSG content packages upgraded successfully")
@@ -563,17 +564,38 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 	}
 }
 
-// upgradeSSGContent upgrades the SCAP Security Guide content packages
-func upgradeSSGContent() error {
-	// Create compliance integration to access the OpenSCAP scanner
+// ssgClientAdapter adapts the agent HTTP client to the SSGContentDownloader interface.
+type ssgClientAdapter struct {
+	c *client.Client
+}
+
+func (a *ssgClientAdapter) GetSSGVersion(ctx context.Context) (string, []string, error) {
+	resp, err := a.c.GetSSGVersion(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	return resp.Version, resp.Files, nil
+}
+
+func (a *ssgClientAdapter) DownloadSSGContent(ctx context.Context, filename, destPath string) error {
+	return a.c.DownloadSSGContent(ctx, filename, destPath)
+}
+
+// upgradeSSGContent upgrades the SCAP Security Guide content packages.
+// Prefers downloading from PatchMon server; falls back to GitHub if server has no content.
+func upgradeSSGContent(targetVersion string) error {
+	httpClient := client.New(cfgManager, logger)
 	complianceInteg := compliance.New(logger)
-	if err := complianceInteg.UpgradeSSGContent(); err != nil {
-		return err
+
+	downloader := &ssgClientAdapter{c: httpClient}
+	if err := complianceInteg.UpgradeSSGContentFromServer(downloader, targetVersion); err != nil {
+		logger.WithError(err).Warn("Server-based SSG upgrade failed, falling back to GitHub...")
+		if fallbackErr := complianceInteg.UpgradeSSGContent(); fallbackErr != nil {
+			return fmt.Errorf("server upgrade: %w; github fallback: %v", err, fallbackErr)
+		}
 	}
 
-	// Send updated status to backend after successful upgrade
 	logger.Info("Sending updated compliance status to backend...")
-	httpClient := client.New(cfgManager, logger)
 	ctx := context.Background()
 
 	// Get new scanner details
@@ -696,6 +718,36 @@ func runInstallScanner() error {
 		Status:    "done",
 		Message:   verifyMsg,
 		Timestamp: events[len(events)-1].Timestamp,
+	}
+
+	// Step 3b: Sync SSG content from PatchMon server (server is single source of truth).
+	// This ensures the agent has the same SSG version the server was built with,
+	// regardless of what the OS package manager provided.
+	addEvent("sync_ssg", "in_progress", "Syncing SSG content from PatchMon server...")
+	sendStatus("installing", "Syncing SSG content from server...", nil)
+
+	downloader := &ssgClientAdapter{c: httpClient}
+	if err := openscapScanner.UpgradeSSGContentFromServer(downloader, ""); err != nil {
+		logger.WithError(err).Warn("Server-based SSG sync failed (package manager version will be used)")
+		events[len(events)-1] = models.InstallEvent{
+			Step:      "sync_ssg",
+			Status:    "skipped",
+			Message:   fmt.Sprintf("Server SSG sync skipped: %s", err.Error()),
+			Timestamp: events[len(events)-1].Timestamp,
+		}
+	} else {
+		// Re-read scanner details after server sync
+		scannerDetails = openscapScanner.GetScannerDetails()
+		syncMsg := "SSG content synced from server"
+		if scannerDetails.SSGVersion != "" {
+			syncMsg = fmt.Sprintf("SSG content synced from server (v%s)", scannerDetails.SSGVersion)
+		}
+		events[len(events)-1] = models.InstallEvent{
+			Step:      "sync_ssg",
+			Status:    "done",
+			Message:   syncMsg,
+			Timestamp: events[len(events)-1].Timestamp,
+		}
 	}
 
 	// Step 4: Docker Bench (if docker enabled)
@@ -1515,8 +1567,8 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 			logger.Info("compliance_scan_cancel received")
 			out <- wsMsg{kind: "compliance_scan_cancel"}
 		case "upgrade_ssg":
-			logger.Info("upgrade_ssg received from WebSocket")
-			out <- wsMsg{kind: "upgrade_ssg"}
+			logger.WithField("version", payload.Version).Info("upgrade_ssg received from WebSocket")
+			out <- wsMsg{kind: "upgrade_ssg", version: payload.Version}
 			logger.Info("upgrade_ssg sent to message channel")
 		case "install_scanner":
 			logger.Info("install_scanner received from WebSocket")

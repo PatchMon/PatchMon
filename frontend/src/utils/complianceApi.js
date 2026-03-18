@@ -53,6 +53,13 @@ export const complianceAPI = {
 	// Upgrade SSG content packages on the agent
 	upgradeSSG: (hostId) => api.post(`/compliance/upgrade-ssg/${hostId}`),
 
+	// Get SSG upgrade job status for progress polling
+	getSSGUpgradeJobStatus: (hostId) =>
+		api.get(`/compliance/ssg-upgrade-job/${hostId}`).then((res) => res.data),
+
+	// Get server SSG version info (version + available files)
+	getSSGInfo: () => api.get("/compliance/ssg-info").then((res) => res.data),
+
 	// Install scanner (OpenSCAP + SSG) on the agent via BullMQ job
 	installScanner: (hostId) => api.post(`/compliance/install-scanner/${hostId}`),
 
