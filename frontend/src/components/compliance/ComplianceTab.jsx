@@ -681,7 +681,7 @@ const ComplianceTab = ({
 		mutationFn: (options) => complianceAPI.triggerScan(hostId, options),
 		onSuccess: (response, variables) => {
 			const body = response?.data;
-			const job_id = body?.job_id || "";
+			const job_id = body?.jobId || body?.job_id || "";
 			const job_label = job_id ? ` — Job ID: ${job_id}` : "";
 
 			if (!isConnected) {
@@ -1393,8 +1393,9 @@ const ComplianceTab = ({
 								</h3>
 								<p className="text-sm text-secondary-400 dark:text-white">
 									Running{" "}
-									{availableProfiles.find((p) => p.id === selectedProfile)
-										?.name || selectedProfile}
+									{availableProfiles.find(
+										(p) => (p.xccdf_id || p.id) === selectedProfile,
+									)?.name || selectedProfile}
 								</p>
 							</div>
 						</div>

@@ -1001,7 +1001,7 @@ const HostDetail = () => {
 		},
 		onSuccess: (response) => {
 			const body = response?.data;
-			const job_id = body?.job_id || "";
+			const job_id = body?.jobId || body?.job_id || "";
 			const msg = body?.message || "Scan triggered";
 			setComplianceScanFeedback({
 				text: job_id ? `${msg} — Job ID: ${job_id}` : msg,
