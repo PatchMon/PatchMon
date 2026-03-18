@@ -127,6 +127,8 @@ const HostDetail = () => {
 	// Compliance install job (Host Detail Compliance tab): progress and cancel
 	const [complianceInstallJob, setComplianceInstallJob] = useState(null);
 	const [complianceScanFeedback, setComplianceScanFeedback] = useState(null);
+	const [complianceProfileId, setComplianceProfileId] =
+		useState("level1_server");
 	const complianceInstallPollRef = useRef(null);
 
 	// State for auto-update confirmation dialog
@@ -727,6 +729,24 @@ const HostDetail = () => {
 		safeSetTimeout,
 	]);
 
+	// Sync compliance profile selection when agent profiles load
+	useEffect(() => {
+		const agentProfiles =
+			complianceSetupStatus?.status?.scanner_info?.available_profiles;
+		if (agentProfiles?.length > 0) {
+			const currentInList = agentProfiles.some(
+				(p) => (p.xccdf_id || p.id) === complianceProfileId,
+			);
+			if (!currentInList && complianceProfileId !== "all") {
+				const firstProfile = agentProfiles[0];
+				setComplianceProfileId(firstProfile.xccdf_id || firstProfile.id);
+			}
+		}
+	}, [
+		complianceSetupStatus?.status?.scanner_info?.available_profiles,
+		complianceProfileId,
+	]);
+
 	// Fetch Docker data for this host
 	const {
 		data: dockerData,
@@ -970,12 +990,13 @@ const HostDetail = () => {
 	// Use host?.id when available (from API) to avoid URL/param mismatches
 	const effectiveHostId = host?.id ?? hostId;
 	const triggerComplianceScanMutation = useMutation({
-		mutationFn: () => {
+		mutationFn: (options = {}) => {
 			if (!effectiveHostId) {
 				return Promise.reject(new Error("Host ID not available"));
 			}
 			return complianceAPI.triggerScan(effectiveHostId, {
-				profile_type: "all",
+				profile_type: options.profileType ?? "all",
+				profile_id: options.profileId ?? null,
 			});
 		},
 		onSuccess: (response) => {
@@ -5539,6 +5560,65 @@ const HostDetail = () => {
 															Cancel
 														</button>
 													))}
+												{/* Profile selection for scan */}
+												{(() => {
+													const profiles =
+														complianceSetupStatus?.status?.scanner_info
+															?.available_profiles?.length > 0
+															? complianceSetupStatus.status.scanner_info
+																	.available_profiles
+															: [
+																	{
+																		id: "level1_server",
+																		name: "CIS Level 1 Server",
+																		type: "openscap",
+																		xccdf_id: "level1_server",
+																	},
+																	{
+																		id: "level2_server",
+																		name: "CIS Level 2 Server",
+																		type: "openscap",
+																		xccdf_id: "level2_server",
+																	},
+																	{
+																		id: "docker-bench",
+																		name: "Docker Bench",
+																		type: "docker-bench",
+																		xccdf_id: "docker-bench",
+																	},
+																];
+													return (
+														<div className="flex items-center gap-2">
+															<label
+																htmlFor="compliance-profile-select"
+																className="text-sm text-secondary-500 dark:text-white whitespace-nowrap"
+															>
+																Profile:
+															</label>
+															<select
+																id="compliance-profile-select"
+																value={complianceProfileId}
+																onChange={(e) =>
+																	setComplianceProfileId(e.target.value)
+																}
+																className="px-3 py-2 bg-secondary-700 dark:bg-secondary-800 border border-secondary-600 rounded-lg text-white text-sm"
+															>
+																<option value="all">All Profiles</option>
+																{profiles.map((p) => (
+																	<option
+																		key={p.xccdf_id || p.id}
+																		value={p.xccdf_id || p.id}
+																	>
+																		{p.name}
+																		{p.type === "docker-bench"
+																			? " (Docker Bench)"
+																			: ""}
+																	</option>
+																))}
+															</select>
+														</div>
+													);
+												})()}
 												<Link
 													to={`/compliance/hosts/${hostId}`}
 													className="btn-outline inline-flex items-center gap-2 text-sm"
@@ -5548,7 +5628,48 @@ const HostDetail = () => {
 												</Link>
 												<button
 													type="button"
-													onClick={() => triggerComplianceScanMutation.mutate()}
+													onClick={() => {
+														const profiles =
+															complianceSetupStatus?.status?.scanner_info
+																?.available_profiles?.length > 0
+																? complianceSetupStatus.status.scanner_info
+																		.available_profiles
+																: [
+																		{
+																			id: "level1_server",
+																			xccdf_id: "level1_server",
+																			type: "openscap",
+																		},
+																		{
+																			id: "level2_server",
+																			xccdf_id: "level2_server",
+																			type: "openscap",
+																		},
+																		{
+																			id: "docker-bench",
+																			xccdf_id: "docker-bench",
+																			type: "docker-bench",
+																		},
+																	];
+														const profile =
+															profiles.find(
+																(p) =>
+																	(p.xccdf_id || p.id) === complianceProfileId,
+															) ||
+															(complianceProfileId === "all"
+																? null
+																: profiles[0]);
+														triggerComplianceScanMutation.mutate({
+															profileType:
+																complianceProfileId === "all"
+																	? "all"
+																	: (profile?.type ?? "openscap"),
+															profileId:
+																complianceProfileId === "all"
+																	? null
+																	: complianceProfileId,
+														});
+													}}
 													disabled={
 														!effectiveHostId ||
 														triggerComplianceScanMutation.isPending ||
