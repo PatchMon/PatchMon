@@ -17,6 +17,7 @@ const PatchingPendingApproval = ({ data }) => {
 			Icon: Clock,
 			icon_class: "text-amber-500",
 			highlight: pending_validation > 0,
+			to: "/patching?tab=runs&status=pending_validation",
 		},
 		{
 			label: "Awaiting Approval",
@@ -24,6 +25,7 @@ const PatchingPendingApproval = ({ data }) => {
 			Icon: AlertTriangle,
 			icon_class: "text-amber-600",
 			highlight: validated > 0,
+			to: "/patching?tab=runs&status=validated",
 		},
 		{
 			label: "Queued",
@@ -31,6 +33,7 @@ const PatchingPendingApproval = ({ data }) => {
 			Icon: CheckSquare,
 			icon_class: "text-blue-500",
 			highlight: false,
+			to: "/patching?tab=runs&status=queued",
 		},
 		{
 			label: "Running",
@@ -38,6 +41,7 @@ const PatchingPendingApproval = ({ data }) => {
 			Icon: Play,
 			icon_class: "text-green-500",
 			highlight: false,
+			to: "/patching?tab=runs&status=running",
 		},
 	];
 
@@ -58,9 +62,10 @@ const PatchingPendingApproval = ({ data }) => {
 				{boxes.map((box) => {
 					const Icon = box.Icon;
 					return (
-						<div
+						<Link
 							key={box.label}
-							className={`card p-4 cursor-default text-left w-full ${
+							to={box.to}
+							className={`card p-4 text-left w-full hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 ${
 								box.highlight
 									? "border border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/10"
 									: ""
@@ -79,7 +84,7 @@ const PatchingPendingApproval = ({ data }) => {
 									</p>
 								</div>
 							</div>
-						</div>
+						</Link>
 					);
 				})}
 			</div>

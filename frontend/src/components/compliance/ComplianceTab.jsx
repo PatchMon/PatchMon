@@ -106,6 +106,8 @@ const ComplianceTab = ({
 	const [groupBySection, setGroupBySection] = useState(false); // Group results by CIS section
 	const [expandedSections, setExpandedSections] = useState({}); // Track which sections are expanded
 	const [profileTypeFilter, setProfileTypeFilter] = useState(null); // Filter by profile type (null = show latest overall)
+	const [installCompleteUntil, setInstallCompleteUntil] = useState(0); // Timestamp until which to keep showing completed install checklist
+	const [installErrorMessage, setInstallErrorMessage] = useState(null); // Dedicated install error message
 	const resultsPerPage = 25;
 	const _queryClient = useQueryClient();
 
@@ -418,6 +420,7 @@ const ComplianceTab = ({
 	const installScannerMutation = useMutation({
 		mutationFn: () => complianceAPI.installScanner(hostId),
 		onSuccess: () => {
+			setInstallErrorMessage(null);
 			refetchStatus();
 			refetchInstallJob();
 			// Poll status while agent is installing (agent sends "installing" then "ready")
@@ -430,8 +433,8 @@ const ComplianceTab = ({
 		onError: (error) => {
 			const msg =
 				error.response?.data?.error || "Failed to send install command";
-			setSSGUpgradeMessage({ type: "error", text: msg });
-			setTimeout(() => setSSGUpgradeMessage(null), 6000);
+			setInstallErrorMessage(msg);
+			setTimeout(() => setInstallErrorMessage(null), 8000);
 		},
 	});
 
@@ -450,6 +453,33 @@ const ComplianceTab = ({
 			return false;
 		},
 	});
+
+	// Detect install completion: when job transitions to "completed", keep the checklist visible for 8 seconds
+	const prevInstallJobStatusRef = useRef(null);
+	useEffect(() => {
+		const currentStatus = installJobData?.status;
+		const prevStatus = prevInstallJobStatusRef.current;
+		if (
+			prevStatus &&
+			(prevStatus === "active" || prevStatus === "waiting") &&
+			currentStatus === "completed"
+		) {
+			setInstallCompleteUntil(Date.now() + 8000);
+			// Final refetch to get the completed integration status
+			refetchStatus();
+		}
+		// Also detect install failure
+		if (
+			prevStatus &&
+			(prevStatus === "active" || prevStatus === "waiting") &&
+			(currentStatus === "failed" || currentStatus === "archived")
+		) {
+			// Keep the checklist visible so user sees which step failed
+			setInstallCompleteUntil(Date.now() + 15000);
+			refetchStatus();
+		}
+		prevInstallJobStatusRef.current = currentStatus;
+	}, [installJobData?.status, refetchStatus]);
 
 	// Single rule remediation mutation with enhanced feedback
 	const [remediationStatus, setRemediationStatus] = useState(null); // { phase: 'sending'|'running'|'complete'|'error', rule: string, message: string }
@@ -4246,15 +4276,21 @@ const ComplianceTab = ({
 		scanner_info?.openscap_version;
 	const status_installing = status?.status === "installing";
 	const status_ready = status?.status === "ready";
+	const status_error = status?.status === "error";
 	const install_job_in_progress =
 		installJobData?.status === "active" || installJobData?.status === "waiting";
-	const show_install_progress = status_installing || install_job_in_progress;
+	const install_recently_finished = Date.now() < installCompleteUntil;
+	const show_install_progress =
+		status_installing || install_job_in_progress || install_recently_finished;
+	const install_is_done =
+		install_recently_finished && !status_installing && !install_job_in_progress;
 	const show_install_button =
 		!openscap_ready &&
 		isConnected &&
 		!installScannerMutation.isPending &&
 		!status_installing &&
-		!install_job_in_progress;
+		!install_job_in_progress &&
+		!install_recently_finished;
 
 	// Prefer install-job events when in progress (worker merges from Redis); fallback to status.install_events
 	const install_events =
@@ -4329,18 +4365,67 @@ const ComplianceTab = ({
 							Install scanner
 						</button>
 					)}
-					{show_install_progress && install_events.length === 0 && (
-						<span className="text-sm text-blue-400">
-							Starting installation…
-						</span>
+					{show_install_progress &&
+						!install_is_done &&
+						install_events.length === 0 && (
+							<span className="text-sm text-blue-400">
+								Starting installation…
+							</span>
+						)}
+					{installErrorMessage && (
+						<span className="text-sm text-red-400">{installErrorMessage}</span>
+					)}
+					{install_is_done && status_ready && (
+						<button
+							type="button"
+							onClick={() => setActiveSubtab("scan")}
+							className="inline-flex items-center gap-2 rounded-lg bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-500"
+						>
+							<Play className="h-4 w-4" />
+							Run your first scan
+						</button>
 					)}
 				</div>
-				{/* Installation progress checklist — visible for full install (status or job in progress) */}
+				{/* Installation progress checklist — visible for full install (status or job in progress) and briefly after completion */}
 				{show_install_progress && (
 					<div className="mt-4 pt-4 border-t border-secondary-700">
-						<p className="text-sm font-medium text-secondary-200 mb-3">
-							Installation progress
-						</p>
+						<div className="flex items-center justify-between mb-3">
+							<p className="text-sm font-medium text-secondary-200">
+								{install_is_done && status_ready
+									? "Installation complete"
+									: install_is_done && status_error
+										? "Installation failed"
+										: "Installation progress"}
+							</p>
+							{!install_is_done && install_job_in_progress && (
+								<button
+									type="button"
+									onClick={() =>
+										complianceAPI.cancelInstallScanner(hostId).then(() => {
+											refetchInstallJob();
+											refetchStatus();
+										})
+									}
+									className="text-xs text-secondary-400 hover:text-red-400 transition-colors"
+								>
+									Cancel
+								</button>
+							)}
+						</div>
+						{install_is_done && status_ready && (
+							<div className="mb-3 p-2.5 rounded-lg bg-green-900/20 border border-green-800/50 text-green-300 text-sm flex items-center gap-2">
+								<CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+								Scanner installed successfully. You can now run your first
+								compliance scan.
+							</div>
+						)}
+						{install_is_done && status_error && (
+							<div className="mb-3 p-2.5 rounded-lg bg-red-900/20 border border-red-800/50 text-red-300 text-sm flex items-center gap-2">
+								<XCircle className="h-4 w-4 flex-shrink-0" />
+								{status?.message ||
+									"Installation encountered an error. You can retry."}
+							</div>
+						)}
 						<ul className="space-y-2">
 							{install_checklist_steps.map((step) => (
 								<li key={step.id} className="flex items-center gap-3 text-sm">

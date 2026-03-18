@@ -420,7 +420,7 @@ install_apk_packages() {
     fi
 }
 
-# Detect package manager and install jq, curl, and bc
+# Detect package manager and install curl (required to download agent binary)
 if command -v apt-get >/dev/null 2>&1; then
     # Debian/Ubuntu
     info "Detected apt-get (Debian/Ubuntu)"
@@ -439,40 +439,40 @@ if command -v apt-get >/dev/null 2>&1; then
     info "Updating package lists..."
     apt-get update || true
     echo ""
-    info "Installing jq, curl, and bc..."
-    install_apt_packages jq curl bc
+    info "Installing curl..."
+    install_apt_packages curl
 elif command -v yum >/dev/null 2>&1; then
     # CentOS/RHEL 7
     info "Detected yum (CentOS/RHEL 7)"
     echo ""
-    info "Installing jq, curl, and bc..."
-    install_yum_dnf_packages yum jq curl bc
+    info "Installing curl..."
+    install_yum_dnf_packages yum curl
 elif command -v dnf >/dev/null 2>&1; then
     # CentOS/RHEL 8+/Fedora
     info "Detected dnf (CentOS/RHEL 8+/Fedora)"
     echo ""
-    info "Installing jq, curl, and bc..."
-    install_yum_dnf_packages dnf jq curl bc
+    info "Installing curl..."
+    install_yum_dnf_packages dnf curl
 elif command -v zypper >/dev/null 2>&1; then
     # openSUSE
     info "Detected zypper (openSUSE)"
     echo ""
-    info "Installing jq, curl, and bc..."
-    install_zypper_packages jq curl bc
+    info "Installing curl..."
+    install_zypper_packages curl
 elif command -v pacman >/dev/null 2>&1; then
     # Arch Linux
     info "Detected pacman (Arch Linux)"
     echo ""
-    info "Installing jq, curl, and bc..."
-    install_pacman_packages jq curl bc
+    info "Installing curl..."
+    install_pacman_packages curl
 elif command -v apk >/dev/null 2>&1; then
     # Alpine Linux
     info "Detected apk (Alpine Linux)"
     echo ""
-    info "Installing jq, curl, and bc..."
-    install_apk_packages jq curl bc
+    info "Installing curl..."
+    install_apk_packages curl
 elif [ "$(uname -s 2>/dev/null)" = "FreeBSD" ] || [ "$PATCHMON_OS" = "freebsd" ]; then
-    # FreeBSD/pfSense: only curl is required; agent does not use jq/bc. Skip pkg if curl already present
+    # FreeBSD/pfSense: only curl is required. Skip pkg if curl already present
     # (on pfSense, pkg repos may be unconfigured and "pkg install curl" can fail with "no match")
     info "Detected FreeBSD (pkg)"
     echo ""
@@ -487,7 +487,7 @@ elif [ "$(uname -s 2>/dev/null)" = "FreeBSD" ] || [ "$PATCHMON_OS" = "freebsd" ]
         fi
     fi
 else
-    warning "Could not detect package manager. Please ensure 'jq', 'curl', and 'bc' are installed manually."
+    warning "Could not detect package manager. Please ensure 'curl' is installed manually."
 fi
 
 echo ""
@@ -895,11 +895,7 @@ printf "%b\n" "${GREEN}Installation Summary:${NC}"
 echo "   • Configuration directory: /etc/patchmon"
 echo "   • Agent binary installed: /usr/local/bin/patchmon-agent"
 echo "   • Architecture: $ARCHITECTURE"
-if [ "$(uname -s 2>/dev/null)" = "FreeBSD" ] || [ "$PATCHMON_OS" = "freebsd" ]; then
-    echo "   • Dependencies installed: curl"
-else
-    echo "   • Dependencies installed: jq, curl, bc"
-fi
+echo "   • Dependencies installed: curl"
 if [ "$SERVICE_TYPE" = "systemd" ]; then
     echo "   • Systemd service configured and running"
 elif [ "$SERVICE_TYPE" = "openrc" ]; then

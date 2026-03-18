@@ -1233,10 +1233,10 @@ const Dashboard = () => {
 			case "osDistribution":
 				return (
 					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
-						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex-shrink-0">
 							OS Distribution
 						</h3>
-						<div className="h-64 w-full flex items-center justify-center flex-1 min-h-0">
+						<div className="h-56 w-full flex items-center justify-center flex-1 min-h-0">
 							<div className="w-full h-full max-w-sm">
 								<Pie data={osChartData} options={chartOptions} />
 							</div>
@@ -1247,10 +1247,10 @@ const Dashboard = () => {
 			case "osDistributionDoughnut":
 				return (
 					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
-						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex-shrink-0">
 							OS Distribution
 						</h3>
-						<div className="h-64 w-full flex items-center justify-center flex-1 min-h-0">
+						<div className="h-56 w-full flex items-center justify-center flex-1 min-h-0">
 							<div className="w-full h-full max-w-sm">
 								<Doughnut data={osChartData} options={doughnutChartOptions} />
 							</div>
@@ -1283,10 +1283,10 @@ const Dashboard = () => {
 							}
 						}}
 					>
-						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex-shrink-0">
 							Update Status
 						</h3>
-						<div className="h-64 w-full flex items-center justify-center flex-1 min-h-0">
+						<div className="h-56 w-full flex items-center justify-center flex-1 min-h-0">
 							<div className="w-full h-full max-w-sm">
 								<Pie
 									data={updateStatusChartData}
@@ -1300,10 +1300,10 @@ const Dashboard = () => {
 			case "packagePriority":
 				return (
 					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
-						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex-shrink-0">
 							Outdated Packages by Priority
 						</h3>
-						<div className="h-64 w-full flex items-center justify-center flex-1 min-h-0">
+						<div className="h-56 w-full flex items-center justify-center flex-1 min-h-0">
 							<div className="w-full h-full max-w-sm">
 								<Pie
 									data={packagePriorityChartData}

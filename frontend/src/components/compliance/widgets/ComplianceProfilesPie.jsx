@@ -1,4 +1,6 @@
+import { ChevronRight } from "lucide-react";
 import { Bar } from "react-chartjs-2";
+import { Link } from "react-router-dom";
 import { useTheme } from "../../../contexts/ThemeContext";
 import { getBarOptions } from "./chartOptions";
 
@@ -40,11 +42,11 @@ const ComplianceProfilesPie = ({ data }) => {
 	const options = getBarOptions(isDark, "y");
 
 	return (
-		<div className="card p-4 sm:p-6 w-full">
-			<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+		<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+			<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex-shrink-0">
 				Compliance Profiles in Use
 			</h3>
-			<div className="h-64">
+			<div className="h-56 flex-1 min-h-0">
 				{has_data ? (
 					<Bar data={chart_data} options={options} />
 				) : (
@@ -53,6 +55,14 @@ const ComplianceProfilesPie = ({ data }) => {
 					</div>
 				)}
 			</div>
+			<Link
+				to="/compliance"
+				state={{ complianceTab: "scan-results" }}
+				className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline flex-shrink-0"
+			>
+				View scan results
+				<ChevronRight className="h-4 w-4" />
+			</Link>
 		</div>
 	);
 };

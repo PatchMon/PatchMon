@@ -1,4 +1,5 @@
 import { CheckCircle, Clock, ListChecks, XCircle } from "lucide-react";
+import { Link } from "react-router-dom";
 
 const PatchRunStatusBoxes = ({ data }) => {
 	const summary = data?.summary || {};
@@ -13,24 +14,28 @@ const PatchRunStatusBoxes = ({ data }) => {
 			value: total,
 			Icon: ListChecks,
 			icon_class: "text-primary-600",
+			to: "/patching?tab=runs",
 		},
 		{
 			label: "Active",
 			value: active,
 			Icon: Clock,
 			icon_class: "text-blue-600",
+			to: "/patching?tab=runs&status=running",
 		},
 		{
 			label: "Completed",
 			value: completed,
 			Icon: CheckCircle,
 			icon_class: "text-green-600",
+			to: "/patching?tab=runs&status=completed",
 		},
 		{
 			label: "Failed",
 			value: failed,
 			Icon: XCircle,
 			icon_class: "text-red-600",
+			to: "/patching?tab=runs&status=failed",
 		},
 	];
 
@@ -43,9 +48,10 @@ const PatchRunStatusBoxes = ({ data }) => {
 				{boxes.map((box) => {
 					const Icon = box.Icon;
 					return (
-						<div
+						<Link
 							key={box.label}
-							className="card p-4 cursor-default text-left w-full"
+							to={box.to}
+							className="card p-4 text-left w-full hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200"
 						>
 							<div className="flex items-center">
 								<Icon
@@ -60,7 +66,7 @@ const PatchRunStatusBoxes = ({ data }) => {
 									</p>
 								</div>
 							</div>
-						</div>
+						</Link>
 					);
 				})}
 			</div>

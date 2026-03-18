@@ -1,4 +1,6 @@
+import { ChevronRight } from "lucide-react";
 import { Doughnut } from "react-chartjs-2";
+import { Link } from "react-router-dom";
 import { useTheme } from "../../../contexts/ThemeContext";
 import { getDoughnutOptions } from "./chartOptions";
 
@@ -26,7 +28,7 @@ const LastScanAgeBar = ({ data }) => {
 				data: has_data ? values : [1],
 				backgroundColor: has_data ? COLORS : ["#374151"],
 				borderWidth: 2,
-				borderColor: "#ffffff",
+				borderColor: isDark ? "#1f2937" : "#ffffff",
 			},
 		],
 	};
@@ -34,11 +36,11 @@ const LastScanAgeBar = ({ data }) => {
 	const options = getDoughnutOptions(isDark, false);
 
 	return (
-		<div className="card p-4 sm:p-6 w-full">
-			<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+		<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+			<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex-shrink-0">
 				Last Scan Age
 			</h3>
-			<div className="h-64 w-full flex items-center justify-center">
+			<div className="h-56 w-full flex items-center justify-center flex-1 min-h-0">
 				<div className="w-full h-full max-w-sm">
 					{has_data ? (
 						<Doughnut data={chart_data} options={options} />
@@ -49,6 +51,14 @@ const LastScanAgeBar = ({ data }) => {
 					)}
 				</div>
 			</div>
+			<Link
+				to="/compliance"
+				state={{ complianceTab: "hosts" }}
+				className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline flex-shrink-0"
+			>
+				View compliance hosts
+				<ChevronRight className="h-4 w-4" />
+			</Link>
 		</div>
 	);
 };

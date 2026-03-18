@@ -1,9 +1,16 @@
+import { ChevronRight } from "lucide-react";
+import { useRef } from "react";
 import { Doughnut } from "react-chartjs-2";
+import { Link, useNavigate } from "react-router-dom";
 import { useTheme } from "../../../contexts/ThemeContext";
 import { getDoughnutOptions } from "../../compliance/widgets/chartOptions";
 
+const TYPE_FILTERS = ["patch_all", "patch_package"];
+
 const PatchRunsByType = ({ data }) => {
 	const { isDark } = useTheme();
+	const navigate = useNavigate();
+	const chart_ref = useRef(null);
 
 	const recent_runs = data?.recent_runs || [];
 
@@ -31,17 +38,32 @@ const PatchRunsByType = ({ data }) => {
 		],
 	};
 
-	const options = getDoughnutOptions(isDark, false);
+	const base_options = getDoughnutOptions(isDark, false);
+	const options = {
+		...base_options,
+		onClick: (_event, elements) => {
+			if (elements.length > 0) {
+				const type = TYPE_FILTERS[elements[0].index];
+				if (type) {
+					navigate(`/patching?tab=runs`);
+				}
+			}
+		},
+		onHover: (event, elements) => {
+			event.native.target.style.cursor =
+				elements.length > 0 ? "pointer" : "default";
+		},
+	};
 
 	return (
 		<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
 			<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex-shrink-0">
 				Runs by Type
 			</h3>
-			<div className="h-64 w-full flex items-center justify-center flex-1 min-h-0">
+			<div className="h-56 w-full flex items-center justify-center flex-1 min-h-0">
 				<div className="w-full h-full max-w-sm">
 					{has_data ? (
-						<Doughnut data={chart_data} options={options} />
+						<Doughnut ref={chart_ref} data={chart_data} options={options} />
 					) : (
 						<div className="flex items-center justify-center h-full text-secondary-500 dark:text-white text-sm">
 							No run data yet
@@ -49,6 +71,13 @@ const PatchRunsByType = ({ data }) => {
 					)}
 				</div>
 			</div>
+			<Link
+				to="/patching?tab=runs"
+				className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline flex-shrink-0"
+			>
+				View all runs
+				<ChevronRight className="h-4 w-4" />
+			</Link>
 		</div>
 	);
 };

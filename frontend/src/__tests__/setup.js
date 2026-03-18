@@ -7,6 +7,47 @@ afterEach(() => {
 	cleanup();
 });
 
+// Mock HTMLCanvasElement.getContext — jsdom doesn't implement canvas; required by Chart.js and xterm.js
+HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
+	canvas: { width: 0, height: 0 },
+	clearRect: vi.fn(),
+	fillRect: vi.fn(),
+	strokeRect: vi.fn(),
+	beginPath: vi.fn(),
+	closePath: vi.fn(),
+	moveTo: vi.fn(),
+	lineTo: vi.fn(),
+	arc: vi.fn(),
+	fill: vi.fn(),
+	stroke: vi.fn(),
+	save: vi.fn(),
+	restore: vi.fn(),
+	scale: vi.fn(),
+	translate: vi.fn(),
+	rotate: vi.fn(),
+	drawImage: vi.fn(),
+	createLinearGradient: vi.fn(() => ({
+		addColorStop: vi.fn(),
+	})),
+	createRadialGradient: vi.fn(() => ({
+		addColorStop: vi.fn(),
+	})),
+	measureText: vi.fn(() => ({ width: 0 })),
+	setTransform: vi.fn(),
+	getImageData: vi.fn(() => ({ data: [] })),
+	putImageData: vi.fn(),
+	fillText: vi.fn(),
+	strokeText: vi.fn(),
+	clip: vi.fn(),
+	setLineDash: vi.fn(),
+	getLineDash: vi.fn(() => []),
+	resetTransform: vi.fn(),
+	bezierCurveTo: vi.fn(),
+	quadraticCurveTo: vi.fn(),
+	rect: vi.fn(),
+	isPointInPath: vi.fn(() => false),
+}));
+
 // Mock WebSocket - use vi.fn() so tests can assert WebSocket.mock.calls / .mock.results
 const WebSocketImpl = class WebSocket {
 	constructor(url) {

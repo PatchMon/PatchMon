@@ -4,6 +4,7 @@ import {
 	ShieldCheck,
 	ShieldOff,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 
 const HostComplianceStatusBar = ({ data }) => {
 	const summary = data?.summary || {};
@@ -18,24 +19,28 @@ const HostComplianceStatusBar = ({ data }) => {
 			value: compliant,
 			Icon: ShieldCheck,
 			icon_class: "text-green-600",
+			to: "/compliance",
 		},
 		{
 			label: "Warning",
 			value: warning,
 			Icon: AlertTriangle,
 			icon_class: "text-yellow-600",
+			to: "/compliance",
 		},
 		{
 			label: "Critical",
 			value: critical,
 			Icon: ShieldAlert,
 			icon_class: "text-red-600",
+			to: "/compliance",
 		},
 		{
 			label: "Never scanned",
 			value: unscanned,
 			Icon: ShieldOff,
 			icon_class: "text-secondary-600 dark:text-white",
+			to: "/compliance",
 		},
 	];
 
@@ -48,12 +53,16 @@ const HostComplianceStatusBar = ({ data }) => {
 				{boxes.map((box) => {
 					const Icon = box.Icon;
 					return (
-						<div
+						<Link
 							key={box.label}
-							className="card p-4 cursor-default text-left w-full"
+							to={box.to}
+							state={{ complianceTab: "hosts" }}
+							className="card p-4 text-left w-full hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200"
 						>
 							<div className="flex items-center">
-								<Icon className={`h-5 w-5 ${box.icon_class} mr-2`} />
+								<Icon
+									className={`h-5 w-5 ${box.icon_class} mr-2 flex-shrink-0`}
+								/>
 								<div>
 									<p className="text-sm text-secondary-500 dark:text-white">
 										{box.label}
@@ -63,7 +72,7 @@ const HostComplianceStatusBar = ({ data }) => {
 									</p>
 								</div>
 							</div>
-						</div>
+						</Link>
 					);
 				})}
 			</div>
