@@ -8,6 +8,7 @@
 	"files": {
 		"includes": [
 			"**",
+			"!**/.claude",
 			"!**/dist",
 			"!**/node_modules",
 			"!**/*.min.js",
