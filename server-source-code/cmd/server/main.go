@@ -117,6 +117,7 @@ func main() {
 		PoolCache:     poolCache,
 		QueueClient:   queueClient,
 		ServerVersion: cfg.Version,
+		SSGContentDir: cfg.SSGContentDir,
 		Log:           slog,
 	})
 	go func() {
@@ -137,6 +138,19 @@ func main() {
 		}()
 		slog.Info("scheduler started")
 	}
+
+	// Fire an SSG update check shortly after startup so agents are notified
+	// of new SSG content immediately after a server deployment, rather than
+	// waiting for the next daily 5 AM scheduled run.
+	go func() {
+		time.Sleep(30 * time.Second)
+		ssgTask := asynq.NewTask(queue.TypeSSGUpdateCheck, []byte("{}"))
+		if _, err := queueClient.Enqueue(ssgTask, asynq.Queue(queue.QueueSSGUpdateCheck)); err != nil {
+			slog.Debug("startup ssg-update-check enqueue skipped", "error", err)
+		} else {
+			slog.Info("startup ssg-update-check enqueued")
+		}
+	}()
 
 	httpHandler, guacdProc := server.NewRouter(ctx, cfg, db, rdb, registry, queueClient, queueInspector, ctxRegistry, poolCache, redisCache, slog, frontendFS)
 

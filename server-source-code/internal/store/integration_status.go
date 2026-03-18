@@ -61,8 +61,10 @@ const (
 	complianceInstallJobPrefix    = "compliance_install_job:"
 	complianceInstallCancelPrefix = "compliance_install_cancel:"
 	complianceScanCancelPrefix    = "compliance_scan_cancel:"
+	ssgUpgradeJobPrefix           = "ssg_upgrade_job:"
 	complianceInstallJobTTL       = 3600 // 1 hour
 	complianceScanCancelTTL       = 3600 // 1 hour - cancel flag expires so new scans aren't blocked
+	ssgUpgradeJobTTL              = 3600 // 1 hour
 )
 
 // SetComplianceInstallJob stores the install job ID for a host.
@@ -126,4 +128,28 @@ func (s *IntegrationStatusStore) IsComplianceScanCancelled(ctx context.Context, 
 	}
 	_, err := rdb.Get(ctx, complianceScanCancelPrefix+hostID).Result()
 	return err != redis.Nil
+}
+
+// SetSSGUpgradeJob stores the SSG upgrade job ID for a host.
+func (s *IntegrationStatusStore) SetSSGUpgradeJob(ctx context.Context, hostID, jobID string) error {
+	rdb := s.rdb.RDB(ctx)
+	if rdb == nil {
+		return nil
+	}
+	key := ssgUpgradeJobPrefix + hostID
+	return rdb.Set(ctx, key, jobID, time.Duration(ssgUpgradeJobTTL)*time.Second).Err()
+}
+
+// GetSSGUpgradeJob returns the SSG upgrade job ID for a host.
+func (s *IntegrationStatusStore) GetSSGUpgradeJob(ctx context.Context, hostID string) (string, error) {
+	rdb := s.rdb.RDB(ctx)
+	if rdb == nil {
+		return "", nil
+	}
+	key := ssgUpgradeJobPrefix + hostID
+	val, err := rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return "", nil
+	}
+	return val, err
 }

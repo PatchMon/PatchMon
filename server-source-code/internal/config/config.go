@@ -136,6 +136,9 @@ type Config struct {
 	OidcReadonlyGroup    string
 	OidcUserGroup        string
 	OidcEnforceHTTPS     bool
+
+	// SSG (SCAP Security Guide) content directory for compliance scanning
+	SSGContentDir string
 }
 
 // Load reads configuration from environment.
@@ -207,6 +210,8 @@ func Load() (*Config, error) {
 		OidcReadonlyGroup:    getEnv("OIDC_READONLY_GROUP", ""),
 		OidcUserGroup:        getEnv("OIDC_USER_GROUP", ""),
 		OidcEnforceHTTPS:     getEnv("OIDC_ENFORCE_HTTPS", "true") != "false",
+
+		SSGContentDir: getEnv("SSG_CONTENT_DIR", "./ssg-content"),
 
 		MaxLoginAttempts:            getEnvInt("MAX_LOGIN_ATTEMPTS", 5),
 		LockoutDurationMin:          getEnvInt("LOCKOUT_DURATION_MINUTES", 15),

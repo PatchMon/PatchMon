@@ -325,6 +325,7 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 			"compliance_on_demand_only": h.ComplianceOnDemandOnly,
 			"last_update":               lastUpdateStr, "isStale": isStale, "effectiveStatus": effectiveStatus,
 			"host_group_memberships": hostGroups,
+			"ssg_version":            h.SsgVersion,
 			"updatesCount":           h.UpdatesCount, "securityUpdatesCount": h.SecurityUpdatesCount,
 			"totalPackagesCount": h.TotalPackagesCount,
 		}

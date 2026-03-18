@@ -28,8 +28,10 @@ const (
 	TypeSystemStatistics         = "system-statistics"
 	TypeVersionUpdateCheck       = "version-update-check"
 	TypeComplianceScanCleanup    = "compliance-scan-cleanup"
+	TypeSSGUpdateCheck           = "ssg-update-check"
 	TypeRunScan                  = "run_scan"
 	TypeInstallComplianceTools   = "install_compliance_tools"
+	TypeSSGUpgrade               = "ssg_upgrade"
 	TypeRunPatch                 = "run_patch"
 	QueueAgentCommands           = "agent-commands"
 	QueuePatching                = "patching"
@@ -43,6 +45,7 @@ const (
 	QueueSystemStatistics        = "system-statistics"
 	QueueVersionUpdateCheck      = "version-update-check"
 	QueueComplianceScanCleanup   = "compliance-scan-cleanup"
+	QueueSSGUpdateCheck          = "ssg-update-check"
 )
 
 // RunScanPayload is the payload for run_scan job.
@@ -85,6 +88,27 @@ func NewInstallComplianceToolsTask(hostID, apiID, host string) (*asynq.Task, err
 		return nil, err
 	}
 	return asynq.NewTask(TypeInstallComplianceTools, payload, asynq.Queue(QueueCompliance), asynq.MaxRetry(2)), nil
+}
+
+// SSGUpgradePayload is the payload for per-host ssg_upgrade jobs.
+type SSGUpgradePayload struct {
+	HostID     string `json:"hostId"`
+	ApiID      string `json:"api_id"`
+	Host       string `json:"host,omitempty"`
+	SSGVersion string `json:"ssg_version"`
+}
+
+// NewSSGUpgradeTask creates an ssg_upgrade task for a single host.
+func NewSSGUpgradeTask(p SSGUpgradePayload) (*asynq.Task, error) {
+	payload, err := json.Marshal(p)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TypeSSGUpgrade, payload,
+		asynq.Queue(QueueCompliance),
+		asynq.MaxRetry(3),
+		asynq.TaskID("ssg-upgrade-"+p.HostID),
+	), nil
 }
 
 // RunPatchPayload is the payload for run_patch job.

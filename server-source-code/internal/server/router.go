@@ -159,7 +159,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	dockerHandler := handler.NewDockerHandler(dockerStore)
 	integrationsHandler := handler.NewIntegrationsHandler(hostsStore, store.NewDockerStore(dbProvider), integrationStatusStore)
 	complianceStore := store.NewComplianceStore(dbProvider)
-	complianceHandler := handler.NewComplianceHandler(complianceStore, hostsStore, registry, queueClient, queueInspector, integrationStatusStore)
+	complianceHandler := handler.NewComplianceHandler(complianceStore, hostsStore, registry, queueClient, queueInspector, integrationStatusStore, cfg.SSGContentDir)
 	autoEnrollmentStore := store.NewAutoEnrollmentStore(dbProvider)
 	autoEnrollmentHandler := handler.NewAutoEnrollmentHandler(autoEnrollmentStore, hostGroupsStore, hostsStore, settingsStore, log, cfg)
 
@@ -271,6 +271,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		r.Post("/integrations/docker", integrationsHandler.ReceiveDockerData)
 		r.Post("/hosts/integration-status", integrationsHandler.ReceiveIntegrationStatus)
 		r.Post("/compliance/scans", complianceHandler.ReceiveScans)
+		r.Get("/compliance/ssg-version", complianceHandler.SSGVersion)
+		r.Get("/compliance/ssg-content/{filename}", complianceHandler.SSGContent)
 		// Patching agent output (API key auth)
 		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent)).Post("/patching/runs/{id}/output", patchingHandler.ServePatchOutput)
 		// Auto-enrollment (public, token in headers for enroll, query params for script)
@@ -489,6 +491,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Post("/compliance/install-scanner/{hostId}/cancel", complianceHandler.CancelInstall)
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/install-job/{hostId}", complianceHandler.GetInstallJobStatus)
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Post("/compliance/upgrade-ssg/{hostId}", complianceHandler.UpgradeSSG)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/ssg-upgrade-job/{hostId}", complianceHandler.GetSSGUpgradeJobStatus)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/ssg-info", complianceHandler.SSGVersion)
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Post("/compliance/remediate/{hostId}", complianceHandler.RemediateRule)
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Post("/compliance/scans/cleanup", automationHandler.ComplianceScanCleanup)
 

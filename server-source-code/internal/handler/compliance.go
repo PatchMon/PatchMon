@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +21,9 @@ import (
 	"github.com/hibiken/asynq"
 )
 
+// ssgFilenameRe validates SSG datastream filenames to prevent path traversal.
+var ssgFilenameRe = regexp.MustCompile(`^ssg-[a-z0-9]+-ds\.xml$`)
+
 // ComplianceHandler handles compliance endpoints.
 type ComplianceHandler struct {
 	complianceStore   *store.ComplianceStore
@@ -26,10 +32,11 @@ type ComplianceHandler struct {
 	queueClient       *asynq.Client
 	queueInspector    *asynq.Inspector
 	integrationStatus *store.IntegrationStatusStore
+	ssgContentDir     string
 }
 
 // NewComplianceHandler creates a new compliance handler.
-func NewComplianceHandler(complianceStore *store.ComplianceStore, hostsStore *store.HostsStore, registry *agentregistry.Registry, queueClient *asynq.Client, queueInspector *asynq.Inspector, integrationStatus *store.IntegrationStatusStore) *ComplianceHandler {
+func NewComplianceHandler(complianceStore *store.ComplianceStore, hostsStore *store.HostsStore, registry *agentregistry.Registry, queueClient *asynq.Client, queueInspector *asynq.Inspector, integrationStatus *store.IntegrationStatusStore, ssgContentDir string) *ComplianceHandler {
 	return &ComplianceHandler{
 		complianceStore:   complianceStore,
 		hostsStore:        hostsStore,
@@ -37,6 +44,7 @@ func NewComplianceHandler(complianceStore *store.ComplianceStore, hostsStore *st
 		queueClient:       queueClient,
 		queueInspector:    queueInspector,
 		integrationStatus: integrationStatus,
+		ssgContentDir:     ssgContentDir,
 	}
 }
 
@@ -956,7 +964,12 @@ func (h *ComplianceHandler) GetInstallJobStatus(w http.ResponseWriter, r *http.R
 }
 
 // UpgradeSSG handles POST /compliance/upgrade-ssg/:hostId.
+// Enqueues a per-host ssg_upgrade job so progress is tracked in job_history.
 func (h *ComplianceHandler) UpgradeSSG(w http.ResponseWriter, r *http.Request) {
+	if h.queueClient == nil {
+		Error(w, http.StatusServiceUnavailable, "Queue service unavailable")
+		return
+	}
 	hostID := chi.URLParam(r, "hostId")
 	if hostID == "" || !isValidUUID(hostID) {
 		Error(w, http.StatusBadRequest, "Invalid host ID")
@@ -967,19 +980,141 @@ func (h *ComplianceHandler) UpgradeSSG(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusNotFound, "Host not found")
 		return
 	}
-	conn := h.registry.GetConnection(host.ApiID)
-	if conn == nil {
-		Error(w, http.StatusServiceUnavailable, "Agent is not connected")
+	ssgVersion := h.readSSGVersion()
+	if ssgVersion == "" {
+		Error(w, http.StatusServiceUnavailable, "No SSG content available on server")
 		return
 	}
-	if err := conn.WriteJSON(map[string]interface{}{"type": "upgrade_ssg"}); err != nil {
-		Error(w, http.StatusServiceUnavailable, "Failed to send upgrade command")
+	task, err := queue.NewSSGUpgradeTask(queue.SSGUpgradePayload{
+		HostID:     hostID,
+		ApiID:      host.ApiID,
+		Host:       hostFromRequest(r),
+		SSGVersion: ssgVersion,
+	})
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to create upgrade task")
 		return
+	}
+	info, err := h.queueClient.Enqueue(task)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to enqueue SSG upgrade")
+		return
+	}
+	if h.integrationStatus != nil {
+		_ = h.integrationStatus.SetSSGUpgradeJob(r.Context(), hostID, info.ID)
 	}
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
-		"message": "SSG upgrade triggered",
+		"message": "SSG upgrade queued",
+		"version": ssgVersion,
+		"jobId":   info.ID,
 	})
+}
+
+// GetSSGUpgradeJobStatus handles GET /compliance/ssg-upgrade-job/:hostId.
+// Returns the SSG upgrade job status from the queue for progress tracking.
+func (h *ComplianceHandler) GetSSGUpgradeJobStatus(w http.ResponseWriter, r *http.Request) {
+	hostID := chi.URLParam(r, "hostId")
+	if hostID == "" || !isValidUUID(hostID) {
+		Error(w, http.StatusBadRequest, "Invalid host ID")
+		return
+	}
+	jobID := ""
+	if h.integrationStatus != nil {
+		jobID, _ = h.integrationStatus.GetSSGUpgradeJob(r.Context(), hostID)
+	}
+	if jobID == "" {
+		JSON(w, http.StatusOK, map[string]interface{}{"status": "none", "message": "No SSG upgrade job found"})
+		return
+	}
+
+	resp := map[string]interface{}{
+		"jobId":  jobID,
+		"status": "unknown",
+	}
+
+	if h.queueInspector != nil {
+		if info, err := h.queueInspector.GetTaskInfo(queue.QueueCompliance, jobID); err == nil {
+			switch info.State {
+			case asynq.TaskStatePending:
+				resp["status"] = "waiting"
+				resp["message"] = "SSG upgrade queued"
+			case asynq.TaskStateActive:
+				resp["status"] = "active"
+				resp["message"] = "SSG upgrade in progress"
+			case asynq.TaskStateCompleted:
+				resp["status"] = "completed"
+				resp["message"] = "SSG upgrade completed"
+			case asynq.TaskStateRetry:
+				resp["status"] = "delayed"
+				resp["message"] = "SSG upgrade will retry"
+			default:
+				resp["status"] = "completed"
+				resp["message"] = "SSG upgrade sent to agent"
+			}
+		} else {
+			// Task no longer in queue — assume completed.
+			resp["status"] = "completed"
+			resp["message"] = "SSG upgrade completed"
+		}
+	}
+
+	JSON(w, http.StatusOK, resp)
+}
+
+// readSSGVersion reads the embedded SSG version from the .ssg-version marker file.
+func (h *ComplianceHandler) readSSGVersion() string {
+	if h.ssgContentDir == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(h.ssgContentDir, ".ssg-version"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// listSSGFiles returns the names of all ssg-*-ds.xml files in the content dir.
+func (h *ComplianceHandler) listSSGFiles() []string {
+	if h.ssgContentDir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(h.ssgContentDir)
+	if err != nil {
+		return nil
+	}
+	var files []string
+	for _, e := range entries {
+		if !e.IsDir() && ssgFilenameRe.MatchString(e.Name()) {
+			files = append(files, e.Name())
+		}
+	}
+	return files
+}
+
+// SSGVersion handles GET /compliance/ssg-version (agent + session auth).
+func (h *ComplianceHandler) SSGVersion(w http.ResponseWriter, r *http.Request) {
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"version": h.readSSGVersion(),
+		"files":   h.listSSGFiles(),
+	})
+}
+
+// SSGContent handles GET /compliance/ssg-content/{filename} (agent auth).
+// Serves a specific datastream file from the SSG content directory.
+func (h *ComplianceHandler) SSGContent(w http.ResponseWriter, r *http.Request) {
+	filename := chi.URLParam(r, "filename")
+	if !ssgFilenameRe.MatchString(filename) {
+		Error(w, http.StatusBadRequest, "Invalid filename")
+		return
+	}
+	filePath := filepath.Join(h.ssgContentDir, filename)
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		Error(w, http.StatusNotFound, "Content file not found")
+		return
+	}
+	w.Header().Set("Content-Type", "application/xml")
+	http.ServeFile(w, r, filePath)
 }
 
 // RemediateRule handles POST /compliance/remediate/:hostId.
