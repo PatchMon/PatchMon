@@ -52,6 +52,7 @@ func (h *SSGUpdateCheckHandler) ProcessTask(ctx context.Context, t *asynq.Task) 
 
 	// Use array comparison for proper semantic version ordering.
 	// regexp_replace strips non-numeric suffixes (e.g. "79-1" → "79") before casting to int[].
+	// COALESCE(NULLIF(...), '0') handles empty segments (e.g. "0.1." or malformed data) to avoid "invalid input syntax for type integer" errors.
 	const query = `
 		SELECT h.id, h.api_id
 		FROM hosts h
@@ -61,8 +62,8 @@ func (h *SSGUpdateCheckHandler) ProcessTask(ctx context.Context, t *asynq.Task) 
 		    h.compliance_scanner_status IS NULL
 		    OR h.compliance_scanner_status->'scanner_info'->>'ssg_version' IS NULL
 		    OR h.compliance_scanner_status->'scanner_info'->>'ssg_version' = ''
-		    OR (SELECT array_agg(regexp_replace(elem, '[^0-9].*', '')::int) FROM unnest(string_to_array(h.compliance_scanner_status->'scanner_info'->>'ssg_version', '.')) AS elem)
-		       < (SELECT array_agg(regexp_replace(elem, '[^0-9].*', '')::int) FROM unnest(string_to_array($1, '.')) AS elem)
+		    OR (SELECT array_agg(COALESCE(NULLIF(regexp_replace(elem, '[^0-9].*', ''), ''), '0')::int) FROM unnest(string_to_array(h.compliance_scanner_status->'scanner_info'->>'ssg_version', '.')) AS elem)
+		       < (SELECT array_agg(COALESCE(NULLIF(regexp_replace(elem, '[^0-9].*', ''), ''), '0')::int) FROM unnest(string_to_array($1, '.')) AS elem)
 		  )`
 
 	rows, err := d.Raw(ctx, query, serverVersion)
