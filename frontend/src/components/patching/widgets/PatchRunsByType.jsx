@@ -32,8 +32,7 @@ const PatchRunsByType = ({ data }) => {
 			{
 				data: has_data ? [patch_all, patch_package] : [1],
 				backgroundColor: has_data ? ["#3B82F6", "#8B5CF6"] : ["#374151"],
-				borderWidth: 2,
-				borderColor: isDark ? "#1f2937" : "#ffffff",
+				borderWidth: 0,
 			},
 		],
 	};

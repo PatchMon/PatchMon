@@ -40,7 +40,7 @@ cp .env .env-1-4-2
 echo ""
 echo "Downloading new docker-compose.yml (1.5.0)..."
 curl -s -o docker-compose.yml \
-    https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/1-5-0-post-jobs/docker/docker-compose.yml
+    https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/docker-compose.yml
 
 # Strip the setup-instructions block from the top of the new compose file.
 # Removes everything from "# To set up your environment..." through the closing
@@ -49,7 +49,7 @@ sed -i '/^# To set up your/,/^# =\{10,\}/d' docker-compose.yml
 
 echo "Downloading new .env template (1.5.0)..."
 curl -s -o .env \
-    https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/1-5-0-post-jobs/docker/env.example
+    https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/env.example
 
 # ── 3. Extract inline values from the old docker-compose.yml ──────────────────
 #
@@ -189,7 +189,83 @@ done < "$NEW_ENV"
 mv "$TMP_ENV" "$NEW_ENV"
 rm -f "$OLD_ENV_WORK"
 
-# ── 5. Done ───────────────────────────────────────────────────────────────────
+# ── 5. Carry forward the frontend host port into the new docker-compose.yml ───
+#
+# In 1.4.2 the exposed port was defined on the "frontend" service:
+#
+#   frontend:
+#     ports:
+#       - "3000:3000"   ← host:container
+#
+# In 1.5.0 it is defined on the "server" service.  If the user had changed the
+# host-side port (e.g. "8080:3000") we must reflect that in the new compose file
+# and also set PORT= in the new .env so the container internal port matches.
+
+echo ""
+echo "Checking for custom frontend port in docker-compose-1-4-2.yml..."
+
+# Extract the host port from the first "- \"<host>:3000\"" line under the
+# frontend service.  We look for a ports entry of the form "HOST:CONTAINER" or
+# just "PORT" (bare).  The container-side port in 1.4.2 was always 3000.
+OLD_FRONTEND_HOST_PORT=$(
+    awk '
+        /^[[:space:]]+frontend:/ { in_frontend=1 }
+        in_frontend && /^[[:space:]]+ports:/ { in_ports=1; next }
+        in_frontend && in_ports && /^[[:space:]]+-[[:space:]]+["'"'"']?[0-9]+:[0-9]+["'"'"']?/ {
+            # Extract host port from "HOST:CONTAINER"
+            match($0, /[0-9]+:[0-9]+/)
+            pair=substr($0, RSTART, RLENGTH)
+            split(pair, a, ":")
+            print a[1]
+            exit
+        }
+        in_frontend && in_ports && /^[[:space:]]+-[[:space:]]+["'"'"']?[0-9]+["'"'"']?[[:space:]]*$/ {
+            # Bare port — host and container are the same
+            match($0, /[0-9]+/)
+            print substr($0, RSTART, RLENGTH)
+            exit
+        }
+        # A new top-level service key ends the frontend block
+        in_frontend && /^[a-zA-Z]/ { in_frontend=0; in_ports=0 }
+    ' "$OLD_COMPOSE"
+)
+
+if [[ -z "$OLD_FRONTEND_HOST_PORT" ]]; then
+    echo "  No frontend ports entry found — no port migration needed."
+elif [[ "$OLD_FRONTEND_HOST_PORT" == "3000" ]]; then
+    echo "  Frontend host port was 3000 (default) — no change needed."
+else
+    echo "  Custom frontend host port detected: ${OLD_FRONTEND_HOST_PORT}"
+
+    # Patch the server.ports line in the new compose file:
+    #   "3000:3000"  →  "<custom>:3000"
+    # Uses awk to scope the replacement strictly within the "server:" service
+    # block, so no other service's ports line is ever touched.
+    awk -v port="${OLD_FRONTEND_HOST_PORT}" '
+        /^  server:$/         { in_server=1 }
+        in_server && /^  [a-z]/ && !/^  server:$/ { in_server=0 }
+        in_server             { sub(/"3000:3000"/, "\"" port ":3000\"") }
+        { print }
+    ' docker-compose.yml > docker-compose.yml.tmp && mv docker-compose.yml.tmp docker-compose.yml
+    echo "  Updated docker-compose.yml server ports: \"${OLD_FRONTEND_HOST_PORT}:3000\""
+
+    # Also write PORT= into the new .env so the Go server binds to the right port
+    # inside the container (the container-side port stays 3000 in this model, but
+    # set it explicitly so it is visible to the user).
+    if grep -q "^#\?[[:space:]]*PORT=" "$NEW_ENV"; then
+        sed -i "s|^#\?[[:space:]]*PORT=.*|PORT=3000|" "$NEW_ENV"
+    else
+        echo "PORT=3000" >> "$NEW_ENV"
+    fi
+    echo "  Ensured PORT=3000 is set in .env (container-internal port)."
+    echo ""
+    echo "  NOTE: The server container now listens internally on port 3000 and is"
+    echo "  exposed to your host on port ${OLD_FRONTEND_HOST_PORT}."
+    echo "  Update CORS_ORIGIN in .env to use port ${OLD_FRONTEND_HOST_PORT} if it"
+    echo "  references the old port."
+fi
+
+# ── 6. Done ───────────────────────────────────────────────────────────────────
 
 echo ""
 echo "Migration complete."

@@ -2163,8 +2163,7 @@ const Dashboard = () => {
 					"#8B5CF6", // Purple
 					"#06B6D4", // Cyan
 				],
-				borderWidth: 2,
-				borderColor: "#ffffff",
+				borderWidth: 0,
 			},
 		],
 	};
@@ -2183,8 +2182,7 @@ const Dashboard = () => {
 					"#8B5CF6", // Purple
 					"#06B6D4", // Cyan
 				],
-				borderWidth: 1,
-				borderColor: isDark ? "#374151" : "#ffffff",
+				borderWidth: 0,
 				borderRadius: 4,
 				borderSkipped: false,
 			},
@@ -2201,8 +2199,7 @@ const Dashboard = () => {
 					"#F59E0B", // Yellow - Needs updates
 					"#EF4444", // Red - Errored
 				],
-				borderWidth: 2,
-				borderColor: "#ffffff",
+				borderWidth: 0,
 			},
 		],
 	};
@@ -2216,8 +2213,7 @@ const Dashboard = () => {
 					"#EF4444", // Red - Security
 					"#3B82F6", // Blue - Regular
 				],
-				borderWidth: 2,
-				borderColor: "#ffffff",
+				borderWidth: 0,
 			},
 		],
 	};

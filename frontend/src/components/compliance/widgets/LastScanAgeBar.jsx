@@ -7,7 +7,7 @@ import { getDoughnutOptions } from "./chartOptions";
 const LABELS = ["Today", "This week", "This month", "Older"];
 const COLORS = ["#10B981", "#3B82F6", "#F59E0B", "#6B7280"];
 
-const LastScanAgeBar = ({ data }) => {
+const LastScanAgeBar = ({ data, onTabChange }) => {
 	const { isDark } = useTheme();
 
 	const scan_age = data?.scan_age_distribution || {};
@@ -27,8 +27,7 @@ const LastScanAgeBar = ({ data }) => {
 			{
 				data: has_data ? values : [1],
 				backgroundColor: has_data ? COLORS : ["#374151"],
-				borderWidth: 2,
-				borderColor: isDark ? "#1f2937" : "#ffffff",
+				borderWidth: 0,
 			},
 		],
 	};
@@ -51,14 +50,25 @@ const LastScanAgeBar = ({ data }) => {
 					)}
 				</div>
 			</div>
-			<Link
-				to="/compliance"
-				state={{ complianceTab: "hosts" }}
-				className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline flex-shrink-0"
-			>
-				View compliance hosts
-				<ChevronRight className="h-4 w-4" />
-			</Link>
+			{onTabChange ? (
+				<button
+					type="button"
+					onClick={() => onTabChange("hosts")}
+					className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline flex-shrink-0"
+				>
+					View compliance hosts
+					<ChevronRight className="h-4 w-4" />
+				</button>
+			) : (
+				<Link
+					to="/compliance"
+					state={{ complianceTab: "hosts" }}
+					className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline flex-shrink-0"
+				>
+					View compliance hosts
+					<ChevronRight className="h-4 w-4" />
+				</Link>
+			)}
 		</div>
 	);
 };

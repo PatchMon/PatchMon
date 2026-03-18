@@ -1077,12 +1077,30 @@ const Compliance = () => {
 				<>
 					{/* Compliance dashboard widgets - same 6 cards as main Dashboard */}
 					<div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 mb-6">
-						<FailuresBySeverityDoughnut data={dashboard} />
+						<FailuresBySeverityDoughnut
+							data={dashboard}
+							onTabChange={(tab, filters) => {
+								setActiveTab(tab);
+								setScanResultsFilters(filters ?? null);
+							}}
+						/>
 						<OpenSCAPDistributionDoughnut data={dashboard} />
-						<ComplianceProfilesPie data={dashboard} />
-						<LastScanAgeBar data={dashboard} />
+						<ComplianceProfilesPie
+							data={dashboard}
+							onTabChange={(tab) => {
+								setActiveTab(tab);
+								setScanResultsFilters(null);
+							}}
+						/>
+						<LastScanAgeBar
+							data={dashboard}
+							onTabChange={(tab) => setActiveTab(tab)}
+						/>
 						<ComplianceTrendLinePlaceholder />
-						<HostComplianceStatusBar data={dashboard} />
+						<HostComplianceStatusBar
+							data={dashboard}
+							onTabChange={(tab) => setActiveTab(tab)}
+						/>
 					</div>
 
 					{/* Active Scans Section - Only show if there are running scans */}

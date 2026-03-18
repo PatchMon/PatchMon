@@ -13,7 +13,7 @@ const PROFILE_COLORS = [
 	"#EF4444",
 ];
 
-const ComplianceProfilesPie = ({ data }) => {
+const ComplianceProfilesPie = ({ data, onTabChange }) => {
 	const { isDark } = useTheme();
 
 	const profile_distribution = data?.profile_distribution || [];
@@ -31,8 +31,7 @@ const ComplianceProfilesPie = ({ data }) => {
 				label: "Hosts",
 				data: has_data ? values : [0],
 				backgroundColor: has_data ? colors : ["#374151"],
-				borderWidth: 1,
-				borderColor: isDark ? "#374151" : "#ffffff",
+				borderWidth: 0,
 				borderRadius: 4,
 				borderSkipped: false,
 			},
@@ -55,14 +54,25 @@ const ComplianceProfilesPie = ({ data }) => {
 					</div>
 				)}
 			</div>
-			<Link
-				to="/compliance"
-				state={{ complianceTab: "scan-results" }}
-				className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline flex-shrink-0"
-			>
-				View scan results
-				<ChevronRight className="h-4 w-4" />
-			</Link>
+			{onTabChange ? (
+				<button
+					type="button"
+					onClick={() => onTabChange("scan-results")}
+					className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline flex-shrink-0"
+				>
+					View scan results
+					<ChevronRight className="h-4 w-4" />
+				</button>
+			) : (
+				<Link
+					to="/compliance"
+					state={{ complianceTab: "scan-results" }}
+					className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline flex-shrink-0"
+				>
+					View scan results
+					<ChevronRight className="h-4 w-4" />
+				</Link>
+			)}
 		</div>
 	);
 };

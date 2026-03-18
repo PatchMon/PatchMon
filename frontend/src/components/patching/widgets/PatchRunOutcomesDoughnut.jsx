@@ -27,8 +27,7 @@ const PatchRunOutcomesDoughnut = ({ data }) => {
 				backgroundColor: has_data
 					? ["#10B981", "#EF4444", "#6B7280"]
 					: ["#374151"],
-				borderWidth: 2,
-				borderColor: isDark ? "#1f2937" : "#ffffff",
+				borderWidth: 0,
 			},
 		],
 	};

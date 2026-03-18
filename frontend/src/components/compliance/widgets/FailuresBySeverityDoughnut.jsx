@@ -13,10 +13,23 @@ const SEVERITY_COLORS = {
 	unknown: "#6B7280",
 };
 
-const FailuresBySeverityDoughnut = ({ data }) => {
+const FailuresBySeverityDoughnut = ({ data, onTabChange }) => {
 	const { isDark } = useTheme();
 	const navigate = useNavigate();
 	const chart_ref = useRef(null);
+
+	const goToScanResults = (severity) => {
+		if (onTabChange) {
+			onTabChange("scan-results", severity ? { severity } : undefined);
+		} else {
+			navigate("/compliance", {
+				state: {
+					complianceTab: "scan-results",
+					scanResultsFilters: severity ? { severity } : undefined,
+				},
+			});
+		}
+	};
 
 	const severity_breakdown = data?.severity_breakdown || [];
 	const labels = severity_breakdown.map((s) =>
@@ -36,8 +49,7 @@ const FailuresBySeverityDoughnut = ({ data }) => {
 			{
 				data: has_data ? values : [1],
 				backgroundColor: has_data ? colors : ["#374151"],
-				borderWidth: 2,
-				borderColor: isDark ? "#1f2937" : "#ffffff",
+				borderWidth: 0,
 			},
 		],
 	};
@@ -49,12 +61,7 @@ const FailuresBySeverityDoughnut = ({ data }) => {
 			if (elements.length > 0 && has_data) {
 				const severity = severity_breakdown[elements[0].index]?.severity;
 				if (severity) {
-					navigate("/compliance", {
-						state: {
-							complianceTab: "scan-results",
-							scanResultsFilters: { severity },
-						},
-					});
+					goToScanResults(severity);
 				}
 			}
 		},
@@ -80,14 +87,25 @@ const FailuresBySeverityDoughnut = ({ data }) => {
 					)}
 				</div>
 			</div>
-			<Link
-				to="/compliance"
-				state={{ complianceTab: "scan-results" }}
-				className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline flex-shrink-0"
-			>
-				View scan results
-				<ChevronRight className="h-4 w-4" />
-			</Link>
+			{onTabChange ? (
+				<button
+					type="button"
+					onClick={() => goToScanResults()}
+					className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline flex-shrink-0"
+				>
+					View scan results
+					<ChevronRight className="h-4 w-4" />
+				</button>
+			) : (
+				<Link
+					to="/compliance"
+					state={{ complianceTab: "scan-results" }}
+					className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline flex-shrink-0"
+				>
+					View scan results
+					<ChevronRight className="h-4 w-4" />
+				</Link>
+			)}
 		</div>
 	);
 };

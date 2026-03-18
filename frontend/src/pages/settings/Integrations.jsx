@@ -18,6 +18,7 @@ import {
 import { useEffect, useId, useState } from "react";
 import { Link } from "react-router-dom";
 import api, { dashboardAPI, settingsAPI } from "../../utils/api";
+import { complianceAPI } from "../../utils/complianceApi";
 
 // Checkmk CSV export: format per https://docs.checkmk.com/latest/en/hosts_setup.html#import
 const CHECKMK_CSV_DELIMITER = ";";
@@ -228,6 +229,12 @@ const Integrations = () => {
 	const { data: serverUrlData } = useQuery({
 		queryKey: ["serverUrl"],
 		queryFn: () => settingsAPI.getServerUrl().then((res) => res.data),
+	});
+
+	const { data: serverSSGInfo } = useQuery({
+		queryKey: ["server-ssg-info"],
+		queryFn: () => complianceAPI.getSSGInfo(),
+		staleTime: 30 * 60 * 1000,
 	});
 	const server_url = serverUrlData?.server_url || window.location.origin;
 	const curl_flags = settings?.ignore_ssl_self_signed ? "-sk" : "-s";
@@ -1929,6 +1936,41 @@ const Integrations = () => {
 								</div>
 							</div>
 
+							{/* Server OpenSCAP Content (SSG) */}
+							<div className="p-4 bg-secondary-50 dark:bg-secondary-800/50 rounded-lg border border-secondary-200 dark:border-secondary-700">
+								<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-3">
+									OpenSCAP Content on PatchMon Server
+								</h4>
+								{serverSSGInfo === undefined ? (
+									<p className="text-sm text-secondary-500 dark:text-white">
+										Loading...
+									</p>
+								) : serverSSGInfo?.version ? (
+									<div className="space-y-2 text-sm text-secondary-700 dark:text-white">
+										<p>
+											<strong>SCAP Security Guide version:</strong>{" "}
+											{serverSSGInfo.version}
+										</p>
+										{serverSSGInfo.files?.length > 0 && (
+											<div>
+												<p className="font-medium mb-1">
+													Available content files:
+												</p>
+												<ul className="list-disc list-inside text-secondary-600 dark:text-secondary-300">
+													{serverSSGInfo.files.map((f) => (
+														<li key={f}>{f}</li>
+													))}
+												</ul>
+											</div>
+										)}
+									</div>
+								) : (
+									<p className="text-sm text-secondary-500 dark:text-white">
+										No SSG content configured on server
+									</p>
+								)}
+							</div>
+
 							{/* Info Message */}
 							<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
 								<div className="flex items-start gap-3">
@@ -1938,39 +1980,26 @@ const Integrations = () => {
 											Automatic Security Compliance Scanning
 										</h4>
 										<p className="text-xs md:text-sm text-primary-800 dark:text-primary-300 mb-3">
-											The PatchMon Go agent includes built-in compliance
-											scanning capabilities that automatically assess your hosts
-											against industry security benchmarks:
+											The PatchMon Go agent includes built-in OpenSCAP
+											compliance scanning that assesses Linux hosts against CIS
+											benchmarks:
 										</p>
 										<ul className="list-disc list-inside space-y-2 text-xs md:text-sm text-primary-800 dark:text-primary-300 ml-2">
 											<li>
-												<strong>OpenSCAP</strong> - CIS benchmark scanning for
-												Linux hosts with automatic tool installation
+												<strong>OpenSCAP</strong> - CIS benchmarks with
+												automatic tool installation
 											</li>
 											<li>
-												<strong>Docker Bench</strong> - CIS Docker Benchmark
-												security assessment for container hosts
+												<strong>Scoring & Trending</strong> - Compliance scores
+												and historical tracking
 											</li>
 											<li>
-												<strong>Docker Image CVE Scanning</strong> -
-												Vulnerability scanning for Docker images using
-												oscap-docker
+												<strong>On-Demand Scans</strong> - Trigger scans from
+												the dashboard at any time
 											</li>
 											<li>
-												<strong>Scoring</strong> - Compliance scores calculated
-												based on passed vs failed rules
-											</li>
-											<li>
-												<strong>Trending</strong> - Track compliance
-												improvements over time with historical data
-											</li>
-											<li>
-												<strong>On-Demand Scans</strong> - Trigger compliance
-												scans from the dashboard at any time
-											</li>
-											<li>
-												<strong>Auto-Remediation</strong> - Automatically fix
-												failing rules when enabled
+												<strong>Auto-Remediation</strong> - Fix failing rules
+												when enabled
 											</li>
 										</ul>
 									</div>
@@ -1989,20 +2018,11 @@ const Integrations = () => {
 									</li>
 									<li>Enable the Compliance integration from the dashboard</li>
 									<li>
-										The agent automatically installs required scanning tools
-										(OpenSCAP, SCAP Security Guide)
+										The agent automatically installs OpenSCAP and SCAP Security
+										Guide
 									</li>
 									<li>
-										If Docker integration is also enabled, Docker Bench and
-										oscap-docker are set up automatically
-									</li>
-									<li>
-										Compliance scans run periodically and results are sent to
-										the PatchMon server
-									</li>
-									<li>
-										View compliance scores, failing rules, and remediation
-										guidance in the{" "}
+										View scores, failing rules, and remediation in the{" "}
 										<Link
 											to="/compliance"
 											className="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 underline"
@@ -2011,8 +2031,8 @@ const Integrations = () => {
 										</Link>
 									</li>
 									<li>
-										Trigger on-demand scans or enable auto-remediation from the
-										host details page
+										Trigger on-demand scans or auto-remediation from the host
+										details page
 									</li>
 								</ol>
 							</div>
@@ -2020,67 +2040,15 @@ const Integrations = () => {
 							{/* Supported Profiles */}
 							<div className="bg-white dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4 md:p-6">
 								<h4 className="text-sm md:text-base font-semibold text-secondary-900 dark:text-white mb-4">
-									Supported Compliance Profiles
+									OpenSCAP
 								</h4>
-								<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-									<div className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4">
-										<div className="flex items-center gap-2 mb-2">
-											<Shield className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-											<h5 className="font-semibold text-secondary-900 dark:text-white">
-												OpenSCAP
-											</h5>
-										</div>
-										<p className="text-xs md:text-sm text-secondary-600 dark:text-white">
-											CIS benchmarks for Ubuntu, Debian, RHEL, CentOS, Rocky,
-											AlmaLinux, Fedora, SLES, and OpenSUSE. Supports Level 1
-											and Level 2 server profiles.
-										</p>
-									</div>
-									<div className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4">
-										<div className="flex items-center gap-2 mb-2">
-											<Container className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-											<h5 className="font-semibold text-secondary-900 dark:text-white">
-												Docker Bench
-											</h5>
-										</div>
-										<p className="text-xs md:text-sm text-secondary-600 dark:text-white">
-											CIS Docker Benchmark security checks. Assesses Docker
-											daemon configuration, container images, and runtime
-											security. Requires Docker integration enabled.
-										</p>
-									</div>
-									<div className="border border-secondary-200 dark:border-secondary-600 rounded-lg p-4">
-										<div className="flex items-center gap-2 mb-2">
-											<AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-											<h5 className="font-semibold text-secondary-900 dark:text-white">
-												Docker Image CVE
-											</h5>
-										</div>
-										<p className="text-xs md:text-sm text-secondary-600 dark:text-white">
-											Vulnerability scanning for Docker container images using
-											oscap-docker. Identifies known CVEs in your images.
-											Requires both Docker and Compliance enabled.
-										</p>
-									</div>
-								</div>
-							</div>
-
-							{/* Automatic Tool Installation */}
-							<div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 md:p-4">
 								<div className="flex items-start gap-2">
-									<CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
-									<div className="text-xs md:text-sm text-green-800 dark:text-green-200">
-										<p className="font-semibold mb-1">
-											Automatic Tool Installation
-										</p>
-										<p>
-											When you enable the Compliance integration, the agent
-											automatically installs openscap-scanner and
-											scap-security-guide packages. If Docker integration is
-											also enabled, oscap-docker is set up automatically for
-											container image scanning.
-										</p>
-									</div>
+									<Shield className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+									<p className="text-xs md:text-sm text-secondary-600 dark:text-white">
+										CIS benchmarks for Ubuntu, Debian, RHEL, CentOS, Rocky,
+										AlmaLinux, Fedora, SLES, and OpenSUSE. Supports Level 1 and
+										Level 2 server profiles.
+									</p>
 								</div>
 							</div>
 
@@ -2089,16 +2057,15 @@ const Integrations = () => {
 								<div className="flex items-start gap-2">
 									<AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
 									<div className="text-xs md:text-sm text-blue-800 dark:text-blue-200">
-										<p className="font-semibold mb-2">Requirements:</p>
+										<p className="font-semibold mb-2">Requirements</p>
+										<p className="mb-2">
+											The agent automatically installs openscap-scanner and
+											scap-security-guide when you enable Compliance.
+										</p>
 										<ul className="list-disc list-inside space-y-1 ml-2">
 											<li>PatchMon Go agent must be installed and running</li>
 											<li>
 												Agent must run as root for full compliance scanning
-												capabilities
-											</li>
-											<li>
-												For Docker scanning: Docker must be installed and Docker
-												integration must be enabled
 											</li>
 										</ul>
 									</div>
