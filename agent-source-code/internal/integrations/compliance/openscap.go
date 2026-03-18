@@ -30,23 +30,27 @@ const (
 // Profile mappings for different OS families
 var profileMappings = map[string]map[string]string{
 	"level1_server": {
-		"ubuntu":   "xccdf_org.ssgproject.content_profile_cis_level1_server",
-		"debian":   "xccdf_org.ssgproject.content_profile_cis_level1_server",
-		"rhel":     "xccdf_org.ssgproject.content_profile_cis",
-		"centos":   "xccdf_org.ssgproject.content_profile_cis",
-		"rocky":    "xccdf_org.ssgproject.content_profile_cis",
-		"alma":     "xccdf_org.ssgproject.content_profile_cis",
-		"fedora":   "xccdf_org.ssgproject.content_profile_cis",
-		"sles":     "xccdf_org.ssgproject.content_profile_cis",
-		"opensuse": "xccdf_org.ssgproject.content_profile_cis",
+		"ubuntu":    "xccdf_org.ssgproject.content_profile_cis_level1_server",
+		"debian":    "xccdf_org.ssgproject.content_profile_cis_level1_server",
+		"rhel":      "xccdf_org.ssgproject.content_profile_cis",
+		"centos":    "xccdf_org.ssgproject.content_profile_cis",
+		"rocky":     "xccdf_org.ssgproject.content_profile_cis",
+		"alma":      "xccdf_org.ssgproject.content_profile_cis",
+		"almalinux": "xccdf_org.ssgproject.content_profile_cis",
+		"ol":        "xccdf_org.ssgproject.content_profile_cis",
+		"fedora":    "xccdf_org.ssgproject.content_profile_cis",
+		"sles":      "xccdf_org.ssgproject.content_profile_cis",
+		"opensuse":  "xccdf_org.ssgproject.content_profile_cis",
 	},
 	"level2_server": {
-		"ubuntu": "xccdf_org.ssgproject.content_profile_cis_level2_server",
-		"debian": "xccdf_org.ssgproject.content_profile_cis_level2_server",
-		"rhel":   "xccdf_org.ssgproject.content_profile_cis_server_l1",
-		"centos": "xccdf_org.ssgproject.content_profile_cis_server_l1",
-		"rocky":  "xccdf_org.ssgproject.content_profile_cis_server_l1",
-		"alma":   "xccdf_org.ssgproject.content_profile_cis_server_l1",
+		"ubuntu":    "xccdf_org.ssgproject.content_profile_cis_level2_server",
+		"debian":    "xccdf_org.ssgproject.content_profile_cis_level2_server",
+		"rhel":      "xccdf_org.ssgproject.content_profile_cis_server_l1",
+		"centos":    "xccdf_org.ssgproject.content_profile_cis_server_l1",
+		"rocky":     "xccdf_org.ssgproject.content_profile_cis_server_l1",
+		"alma":      "xccdf_org.ssgproject.content_profile_cis_server_l1",
+		"almalinux": "xccdf_org.ssgproject.content_profile_cis_server_l1",
+		"ol":        "xccdf_org.ssgproject.content_profile_cis_server_l1",
 	},
 }
 
@@ -244,12 +248,18 @@ func (s *OpenSCAPScanner) GetScannerDetails() *models.ComplianceScannerDetails {
 	contentVersion := s.GetContentPackageVersion()
 
 	// Check for content mismatch (content file vs OS version)
+	// SSG files use major version (e.g. ssg-rhel9-ds.xml for RHEL 9.x), not full version (9.7)
 	contentMismatch := false
 	mismatchWarning := ""
 	if contentFile != "" && s.osInfo.Version != "" {
-		osVersion := strings.ReplaceAll(s.osInfo.Version, ".", "")
 		baseName := filepath.Base(contentFile)
-		if !strings.Contains(baseName, osVersion) {
+		osVersion := strings.ReplaceAll(s.osInfo.Version, ".", "")
+		majorVersion := strings.Split(s.osInfo.Version, ".")[0]
+		contentOSName := s.getContentOSName()
+		// Match if file contains full version (e.g. 2204) or distro+major (e.g. rhel9, almalinux9)
+		versionMatch := strings.Contains(baseName, osVersion) ||
+			strings.Contains(baseName, contentOSName+majorVersion)
+		if !versionMatch {
 			contentMismatch = true
 			mismatchWarning = fmt.Sprintf("Content file %s may not match OS version %s.", baseName, s.osInfo.Version)
 		}
@@ -470,11 +480,13 @@ func (s *OpenSCAPScanner) checkContentCompatibility() {
 		"content_file": baseName,
 	}).Debug("Checking SCAP content compatibility")
 
-	// Check if content file matches OS version
+	// Check if content file matches OS version (SSG uses major version, e.g. ssg-rhel9 for 9.x)
+	contentOSName := s.getContentOSName()
+	majorVersion := strings.Split(s.osInfo.Version, ".")[0]
 	osVersion := strings.ReplaceAll(s.osInfo.Version, ".", "")
-	expectedPattern := fmt.Sprintf("ssg-%s%s", s.osInfo.Name, osVersion)
-
-	if !strings.Contains(baseName, osVersion) && !strings.HasPrefix(baseName, expectedPattern) {
+	versionMatch := strings.Contains(baseName, osVersion) ||
+		strings.Contains(baseName, contentOSName+majorVersion)
+	if !versionMatch {
 		s.logger.WithFields(logrus.Fields{
 			"os_version":   s.osInfo.Version,
 			"content_file": baseName,
@@ -1009,18 +1021,29 @@ func (s *OpenSCAPScanner) detectOS() models.ComplianceOSInfo {
 	return info
 }
 
-// getContentOSName determines the base distribution name for SCAP content file lookup
-// Uses ID_LIKE from /etc/os-release to automatically detect Ubuntu/Debian/RHEL-based distributions
+// getContentOSName determines the base distribution name for SCAP content file lookup.
+// Prefers distribution-specific SSG content (e.g. ssg-almalinux9-ds.xml for AlmaLinux)
+// over generic RHEL content when available. Uses ID_LIKE as fallback for RHEL-based distros.
 func (s *OpenSCAPScanner) getContentOSName() string {
-	// Known base distributions that have SCAP content files
-	baseDistributions := []string{"ubuntu", "debian", "rhel", "centos", "rocky", "alma", "fedora", "sles", "opensuse"}
-
-	// First, check if the OS name itself is a base distribution
-	for _, base := range baseDistributions {
+	// Distribution-specific names that have their own SSG content files (ssg-{name}{version}-ds.xml).
+	// Order matters: check specific names first so AlmaLinux uses ssg-almalinux9, not ssg-rhel9.
+	specificDistros := []string{
+		"almalinux", "ol", "ubuntu", "debian", "centos", "rhel", "rocky", "fedora",
+		"sles", "opensuse", "al2023", "alinux2", "alinux3",
+	}
+	for _, base := range specificDistros {
 		if s.osInfo.Name == base {
 			return s.osInfo.Name
 		}
 	}
+
+	// Legacy "alma" (AlmaLinux 8 and older used this in some configs)
+	if s.osInfo.Name == "alma" {
+		return "alma"
+	}
+
+	// Fallback: use ID_LIKE for base distribution (e.g. rhel from "rhel centos fedora")
+	baseDistributions := []string{"rhel", "centos", "fedora", "debian", "ubuntu", "suse"}
 
 	// If not, check ID_LIKE for base distributions
 	// ID_LIKE typically contains space-separated values like "ubuntu debian" or "rhel fedora"
