@@ -1475,18 +1475,46 @@ const ComplianceTab = ({
 				</div>
 			) : (
 				<>
-					{/* Profile Selection */}
+					{/* Profile Selection - Dropdown for quick override */}
 					<div className="bg-secondary-800 rounded-lg border border-secondary-700 p-6">
-						<div className="flex items-center justify-between mb-4">
+						<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
 							<h3 className="text-lg font-medium text-white">
 								Select Scan Profile
 							</h3>
-							<span className="text-sm text-secondary-400 dark:text-white">
-								{availableProfiles.length} profiles available
-							</span>
+							<div className="flex items-center gap-3">
+								<label
+									htmlFor="profile-override"
+									className="text-sm text-secondary-400 dark:text-white whitespace-nowrap"
+								>
+									Profile:
+								</label>
+								<select
+									id="profile-override"
+									value={selectedProfile}
+									onChange={(e) => setSelectedProfile(e.target.value)}
+									className="flex-1 min-w-[200px] px-3 py-2 bg-secondary-700 border border-secondary-600 rounded-lg text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+								>
+									{availableProfiles.map((profile) => (
+										<option
+											key={profile.xccdf_id || profile.id}
+											value={profile.xccdf_id || profile.id}
+										>
+											{profile.name}
+											{profile.type === "docker-bench"
+												? " (Docker Bench)"
+												: profile.type === "oscap-docker"
+													? " (Docker CVE)"
+													: ""}
+										</option>
+									))}
+								</select>
+								<span className="text-sm text-secondary-500 dark:text-white">
+									{availableProfiles.length} available
+								</span>
+							</div>
 						</div>
 
-						{/* Group profiles by category */}
+						{/* Group profiles by category (card grid - alternative selection) */}
 						{(() => {
 							const grouped = availableProfiles.reduce((acc, profile) => {
 								const cat = profile.category || "other";

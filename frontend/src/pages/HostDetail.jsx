@@ -5243,7 +5243,7 @@ const HostDetail = () => {
 												complianceTab: "scan-results",
 												scanResultsFilters: { status: "pass", host_id: hostId },
 											}}
-											className="card p-4 hover:ring-2 hover:ring-green-500/40 transition-shadow"
+											className="card p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
 											title="View passing rules for this host"
 										>
 											<div className="flex items-center">
@@ -5264,7 +5264,7 @@ const HostDetail = () => {
 												complianceTab: "scan-results",
 												scanResultsFilters: { status: "fail", host_id: hostId },
 											}}
-											className="card p-4 hover:ring-2 hover:ring-red-500/40 transition-shadow"
+											className="card p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
 											title="View failing rules for this host"
 										>
 											<div className="flex items-center">
@@ -5288,7 +5288,7 @@ const HostDetail = () => {
 													host_id: hostId,
 												},
 											}}
-											className="card p-4 hover:ring-2 hover:ring-secondary-500/40 transition-shadow"
+											className="card p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
 											title="View skipped/N/A rules for this host"
 										>
 											<div className="flex items-center">

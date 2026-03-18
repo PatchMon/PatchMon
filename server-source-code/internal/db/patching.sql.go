@@ -196,6 +196,15 @@ func (q *Queries) DeletePatchPolicyExclusion(ctx context.Context, arg DeletePatc
 	return err
 }
 
+const deletePatchRun = `-- name: DeletePatchRun :exec
+DELETE FROM patch_runs WHERE id = $1
+`
+
+func (q *Queries) DeletePatchRun(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, deletePatchRun, id)
+	return err
+}
+
 const existsPatchPolicyExclusion = `-- name: ExistsPatchPolicyExclusion :one
 SELECT EXISTS(SELECT 1 FROM patch_policy_exclusions WHERE patch_policy_id = $1 AND host_id = $2)
 `

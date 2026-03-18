@@ -87,6 +87,7 @@ type Querier interface {
 	DeletePatchPolicy(ctx context.Context, id string) error
 	DeletePatchPolicyAssignment(ctx context.Context, id string) error
 	DeletePatchPolicyExclusion(ctx context.Context, arg DeletePatchPolicyExclusionParams) error
+	DeletePatchRun(ctx context.Context, id string) error
 	DeletePendingConfig(ctx context.Context, hostID string) error
 	DeleteRepositoriesByIDs(ctx context.Context, dollar_1 []string) error
 	DeleteRepository(ctx context.Context, id string) error

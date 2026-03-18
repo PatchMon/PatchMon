@@ -543,10 +543,10 @@ const Compliance = () => {
 						);
 						setActiveTab("hosts");
 					}}
-					className={`card p-4 text-left w-full transition-shadow duration-200 ${
+					className={`card p-4 text-left w-full transition-colors ${
 						tableFilter === "never-scanned"
 							? "ring-2 ring-primary-500 dark:ring-primary-400 bg-primary-50 dark:bg-primary-900/20"
-							: "cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark"
+							: "cursor-pointer hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
 					}`}
 				>
 					<div className="flex items-center">

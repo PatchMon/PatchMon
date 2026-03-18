@@ -18,6 +18,9 @@ UPDATE patch_runs SET scheduled_at = $2, updated_at = NOW() WHERE id = $1;
 -- name: UpdatePatchRunPackagesAffected :exec
 UPDATE patch_runs SET packages_affected = $2, updated_at = NOW() WHERE id = $1;
 
+-- name: DeletePatchRun :exec
+DELETE FROM patch_runs WHERE id = $1;
+
 -- name: GetPatchRunByID :one
 SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username, au.username AS approved_by_username
 FROM patch_runs pr

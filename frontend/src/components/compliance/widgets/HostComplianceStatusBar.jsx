@@ -74,7 +74,7 @@ const HostComplianceStatusBar = ({ data, onTabChange }) => {
 								<button
 									type="button"
 									onClick={() => onTabChange("hosts")}
-									className="card p-4 text-left w-full hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200"
+									className="card p-4 text-left w-full hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
 								>
 									{content}
 								</button>
@@ -82,7 +82,7 @@ const HostComplianceStatusBar = ({ data, onTabChange }) => {
 								<Link
 									to={box.to}
 									state={{ complianceTab: "hosts" }}
-									className="card p-4 text-left w-full hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200"
+									className="card p-4 text-left w-full hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
 								>
 									{content}
 								</Link>

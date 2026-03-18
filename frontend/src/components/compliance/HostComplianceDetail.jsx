@@ -131,7 +131,7 @@ const HostComplianceDetail = ({ hostId }) => {
 						set_status_filter(status_filter === "pass" ? "" : "pass");
 						set_page(0);
 					}}
-					className={`card p-4 text-left transition-shadow ${status_filter === "pass" ? "ring-2 ring-green-500" : "hover:ring-2 hover:ring-green-500/40"}`}
+					className={`card p-4 text-left transition-colors ${status_filter === "pass" ? "ring-2 ring-green-500" : "hover:bg-secondary-50 dark:hover:bg-secondary-700/50"}`}
 					title="Filter to passing rules"
 				>
 					<div className="flex items-center">
@@ -154,7 +154,7 @@ const HostComplianceDetail = ({ hostId }) => {
 						set_status_filter(status_filter === "fail" ? "" : "fail");
 						set_page(0);
 					}}
-					className={`card p-4 text-left transition-shadow ${status_filter === "fail" ? "ring-2 ring-red-500" : "hover:ring-2 hover:ring-red-500/40"}`}
+					className={`card p-4 text-left transition-colors ${status_filter === "fail" ? "ring-2 ring-red-500" : "hover:bg-secondary-50 dark:hover:bg-secondary-700/50"}`}
 					title="Filter to failing rules"
 				>
 					<div className="flex items-center">
@@ -177,7 +177,7 @@ const HostComplianceDetail = ({ hostId }) => {
 						set_status_filter(status_filter === "warn" ? "" : "warn");
 						set_page(0);
 					}}
-					className={`card p-4 text-left transition-shadow ${status_filter === "warn" ? "ring-2 ring-yellow-500" : "hover:ring-2 hover:ring-yellow-500/40"}`}
+					className={`card p-4 text-left transition-colors ${status_filter === "warn" ? "ring-2 ring-yellow-500" : "hover:bg-secondary-50 dark:hover:bg-secondary-700/50"}`}
 					title="Filter to warning rules"
 				>
 					<div className="flex items-center">
@@ -200,7 +200,7 @@ const HostComplianceDetail = ({ hostId }) => {
 						set_status_filter(status_filter === "skipped" ? "" : "skipped");
 						set_page(0);
 					}}
-					className={`card p-4 text-left transition-shadow ${status_filter === "skipped" ? "ring-2 ring-secondary-500" : "hover:ring-2 hover:ring-secondary-500/40"}`}
+					className={`card p-4 text-left transition-colors ${status_filter === "skipped" ? "ring-2 ring-secondary-500" : "hover:bg-secondary-50 dark:hover:bg-secondary-700/50"}`}
 					title="Filter to skipped/N/A rules"
 				>
 					<div className="flex items-center">

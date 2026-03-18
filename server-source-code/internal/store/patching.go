@@ -282,6 +282,12 @@ func (s *PatchRunsStore) ClearScheduledAt(ctx context.Context, id string) error 
 	return d.Queries.ClearScheduledAt(ctx, id)
 }
 
+// Delete removes a patch run by ID.
+func (s *PatchRunsStore) Delete(ctx context.Context, id string) error {
+	d := s.db.DB(ctx)
+	return d.Queries.DeletePatchRun(ctx, id)
+}
+
 // List returns paginated patch runs with optional filters and sort.
 func (s *PatchRunsStore) List(ctx context.Context, hostID, status, patchType, sortBy, sortDir string, limit, offset int) ([]db.ListPatchRunsRow, int64, error) {
 	d := s.db.DB(ctx)

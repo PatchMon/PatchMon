@@ -69,6 +69,7 @@ export const patchingAPI = {
 		api.post(`/patching/runs/${id}/approve`).then((res) => res.data),
 	retryValidation: (id) =>
 		api.post(`/patching/runs/${id}/retry-validation`).then((res) => res.data),
+	deleteRun: (id) => api.delete(`/patching/runs/${id}`),
 	getPreviewRun: (host_id) =>
 		api
 			.get("/patching/preview-run", { params: { host_id } })

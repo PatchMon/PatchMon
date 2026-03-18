@@ -22,15 +22,25 @@ const patchRunJobIDPrefix = "patch-run-"
 
 var packageNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+-_]*$`)
 
+// deletablePatchRunStatuses are statuses where the run can be deleted (not yet executed or cancelled).
+var deletablePatchRunStatuses = map[string]bool{
+	"queued":             true,
+	"pending_validation": true,
+	"validated":          true,
+	"approved":           true,
+	"scheduled":          true,
+}
+
 // PatchingHandler handles patching endpoints.
 type PatchingHandler struct {
-	patchRuns     *store.PatchRunsStore
-	patchPolicies *store.PatchPoliciesStore
-	assignments   *store.PatchPolicyAssignmentsStore
-	exclusions    *store.PatchPolicyExclusionsStore
-	hosts         *store.HostsStore
-	queueClient   *asynq.Client
-	log           *slog.Logger
+	patchRuns      *store.PatchRunsStore
+	patchPolicies  *store.PatchPoliciesStore
+	assignments    *store.PatchPolicyAssignmentsStore
+	exclusions     *store.PatchPolicyExclusionsStore
+	hosts          *store.HostsStore
+	queueClient    *asynq.Client
+	queueInspector *asynq.Inspector
+	log            *slog.Logger
 }
 
 // NewPatchingHandler creates a new patching handler.
@@ -41,19 +51,21 @@ func NewPatchingHandler(
 	exclusions *store.PatchPolicyExclusionsStore,
 	hosts *store.HostsStore,
 	queueClient *asynq.Client,
+	queueInspector *asynq.Inspector,
 	log *slog.Logger,
 ) *PatchingHandler {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &PatchingHandler{
-		patchRuns:     patchRuns,
-		patchPolicies: patchPolicies,
-		assignments:   assignments,
-		exclusions:    exclusions,
-		hosts:         hosts,
-		queueClient:   queueClient,
-		log:           log,
+		patchRuns:      patchRuns,
+		patchPolicies:  patchPolicies,
+		assignments:    assignments,
+		exclusions:     exclusions,
+		hosts:          hosts,
+		queueClient:    queueClient,
+		queueInspector: queueInspector,
+		log:            log,
 	}
 }
 
@@ -466,6 +478,42 @@ func (h *PatchingHandler) RetryValidation(w http.ResponseWriter, r *http.Request
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{"message": "Validation re-queued", "patch_run_id": id})
+}
+
+// DeleteRun handles DELETE /patching/runs/:id.
+// Deletes a patch run that is queued, pending_validation, validated, approved, or scheduled.
+// Removes the run_patch task from the queue if present.
+func (h *PatchingHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" || !isValidPatchUUID(id) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid patch run ID"})
+		return
+	}
+	run, err := h.patchRuns.GetByID(r.Context(), id)
+	if err != nil {
+		h.log.Error("patching: get run for delete error", "patch_run_id", id, "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load patch run"})
+		return
+	}
+	if run == nil {
+		JSON(w, http.StatusNotFound, map[string]string{"error": "Patch run not found"})
+		return
+	}
+	if !deletablePatchRunStatuses[run.Status] {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Only queued, pending validation, validated, approved, or scheduled runs can be deleted"})
+		return
+	}
+	// Remove run_patch task from queue if present (task ID: patch-run-{id})
+	if h.queueInspector != nil {
+		taskID := patchRunJobIDPrefix + id
+		_ = h.queueInspector.DeleteTask(queue.QueuePatching, taskID)
+	}
+	if err := h.patchRuns.Delete(r.Context(), id); err != nil {
+		h.log.Error("patching: delete run error", "patch_run_id", id, "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete patch run"})
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{"message": "Patch run deleted"})
 }
 
 func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {

@@ -9,6 +9,7 @@ import {
 	PlayCircle,
 	RefreshCw,
 	Server,
+	Trash2,
 	User,
 	XCircle,
 } from "lucide-react";
@@ -90,6 +91,58 @@ const Patching = () => {
 	});
 	const [approvingId, setApprovingId] = useState(null);
 	const [retryingId, setRetryingId] = useState(null);
+	const [selectedRunIds, setSelectedRunIds] = useState(new Set());
+
+	const deletableStatuses = new Set([
+		"queued",
+		"pending_validation",
+		"validated",
+		"approved",
+		"scheduled",
+	]);
+	const deletableRuns = runs.filter((r) => deletableStatuses.has(r.status));
+	const allDeletableSelected =
+		deletableRuns.length > 0 &&
+		deletableRuns.every((r) => selectedRunIds.has(r.id));
+
+	const deleteRunMutation = useMutation({
+		mutationFn: (runId) => patchingAPI.deleteRun(runId),
+		onSuccess: () => {
+			queryClient.invalidateQueries(["patching-runs"]);
+			queryClient.invalidateQueries(["patching-dashboard"]);
+		},
+	});
+	const [deletingIds, setDeletingIds] = useState(new Set());
+
+	const handleToggleSelect = (runId) => {
+		setSelectedRunIds((prev) => {
+			const next = new Set(prev);
+			if (next.has(runId)) next.delete(runId);
+			else next.add(runId);
+			return next;
+		});
+	};
+
+	const handleToggleSelectAll = () => {
+		if (allDeletableSelected) {
+			setSelectedRunIds(new Set());
+		} else {
+			setSelectedRunIds(new Set(deletableRuns.map((r) => r.id)));
+		}
+	};
+
+	const handleDeleteSelected = async () => {
+		const ids = [...selectedRunIds];
+		setDeletingIds(new Set(ids));
+		try {
+			await Promise.all(ids.map((id) => deleteRunMutation.mutateAsync(id)));
+			setSelectedRunIds(new Set());
+		} catch (_err) {
+			// Mutation error - queries will refetch; user sees updated list
+		} finally {
+			setDeletingIds(new Set());
+		}
+	};
 
 	const handleApprove = async (runId) => {
 		setApprovingId(runId);
@@ -273,12 +326,46 @@ const Patching = () => {
 								<option value="failed">Failed</option>
 								<option value="cancelled">Cancelled</option>
 							</select>
+							{selectedRunIds.size > 0 && (
+								<>
+									<button
+										type="button"
+										onClick={handleDeleteSelected}
+										disabled={deletingIds.size > 0}
+										className="btn-danger flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 min-h-[44px] text-xs sm:text-sm"
+									>
+										<Trash2 className="h-4 w-4 flex-shrink-0" />
+										<span>Delete {selectedRunIds.size} selected</span>
+									</button>
+									<button
+										type="button"
+										onClick={() => setSelectedRunIds(new Set())}
+										className="text-xs sm:text-sm text-secondary-500 dark:text-white/70 hover:text-secondary-700 dark:hover:text-white/90 min-h-[44px] px-2"
+									>
+										<span className="hidden sm:inline">Clear selection</span>
+										<span className="sm:hidden">Clear</span>
+									</button>
+								</>
+							)}
 						</div>
 						<div className="card p-4 md:p-6">
 							<div className="overflow-x-auto">
 								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 									<thead className="bg-secondary-50 dark:bg-secondary-700">
 										<tr>
+											<th
+												scope="col"
+												className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider w-10"
+											>
+												{deletableRuns.length > 0 ? (
+													<input
+														type="checkbox"
+														checked={allDeletableSelected}
+														onChange={handleToggleSelectAll}
+														className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 dark:border-secondary-600 rounded cursor-pointer"
+													/>
+												) : null}
+											</th>
 											<th
 												scope="col"
 												className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
@@ -329,6 +416,16 @@ const Patching = () => {
 												key={run.id}
 												className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
 											>
+												<td className="px-4 py-2 whitespace-nowrap w-10">
+													{deletableStatuses.has(run.status) ? (
+														<input
+															type="checkbox"
+															checked={selectedRunIds.has(run.id)}
+															onChange={() => handleToggleSelect(run.id)}
+															className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 dark:border-secondary-600 rounded cursor-pointer"
+														/>
+													) : null}
+												</td>
 												<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
 													{run.hosts?.friendly_name ||
 														run.hosts?.hostname ||
