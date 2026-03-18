@@ -127,8 +127,9 @@ const HostDetail = () => {
 	// Compliance install job (Host Detail Compliance tab): progress and cancel
 	const [complianceInstallJob, setComplianceInstallJob] = useState(null);
 	const [complianceScanFeedback, setComplianceScanFeedback] = useState(null);
-	const [complianceProfileId, setComplianceProfileId] =
-		useState("level1_server");
+	const [complianceProfileId, setComplianceProfileId] = useState(
+		"xccdf_org.ssgproject.content_profile_cis_level1_server",
+	);
 	const complianceInstallPollRef = useRef(null);
 
 	// State for auto-update confirmation dialog
@@ -5499,71 +5500,96 @@ const HostDetail = () => {
 												)}
 											</div>
 											{/* Right: actions */}
-											<div className="flex flex-wrap items-center gap-2 sm:flex-shrink-0">
-												<button
-													type="button"
-													onClick={() => {
-														adminHostsAPI
-															.requestComplianceStatus(hostId)
-															.then(() => {
-																refetchComplianceStatus();
-																safeSetTimeout(
-																	() => refetchComplianceStatus(),
-																	2000,
-																);
-																safeSetTimeout(
-																	() => refetchComplianceStatus(),
-																	5000,
-																);
-															})
-															.catch(() => {});
-													}}
-													className="btn-outline inline-flex items-center gap-2 text-sm"
-													title="Ask agent to report current scanner status"
-												>
-													<RefreshCw className="h-4 w-4" />
-													Refresh status
-												</button>
-												{complianceSetupStatus?.status?.status !== "ready" &&
-													complianceSetupStatus?.status?.status !== "partial" &&
-													wsStatus?.connected &&
-													(complianceInstallJob?.status !== "active" &&
-													complianceInstallJob?.status !== "waiting" ? (
-														<button
-															type="button"
-															onClick={() =>
-																installComplianceScannerMutation.mutate()
-															}
-															disabled={
-																installComplianceScannerMutation.isPending
-															}
-															className="btn-primary inline-flex items-center gap-2 text-sm"
-														>
-															{installComplianceScannerMutation.isPending
-																? "Starting…"
-																: "Install scanner"}
-														</button>
-													) : (
-														<button
-															type="button"
-															onClick={() => {
-																complianceAPI
-																	.cancelInstallScanner(hostId)
-																	.then(() => {
-																		setComplianceInstallJob(null);
-																		refetchComplianceStatus();
-																	})
-																	.catch(() => {});
-															}}
-															className="btn-outline inline-flex items-center gap-2 text-sm"
-														>
-															Cancel
-														</button>
-													))}
-												{/* Profile selection for scan */}
-												{(() => {
-													const profiles =
-														complianceSetupStatus?.status?.scanner_info
+											<div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2 sm:flex-shrink-0">
+												<div className="flex flex-wrap items-center gap-2">
+													<button
+														type="button"
+														onClick={() => {
+															adminHostsAPI
+																.requestComplianceStatus(hostId)
+																.then(() => {
+																	refetchComplianceStatus();
+																	safeSetTimeout(
+																		() => refetchComplianceStatus(),
+																		2000,
+																	);
+																	safeSetTimeout(
+																		() => refetchComplianceStatus(),
+																		5000,
+																	);
+																})
+																.catch(() => {});
+														}}
+														className="btn-outline inline-flex items-center gap-2 text-sm"
+														title="Ask agent to report current scanner status"
+													>
+														<RefreshCw className="h-4 w-4" />
+														Refresh status
+													</button>
+													{complianceSetupStatus?.status?.status !== "ready" &&
+														complianceSetupStatus?.status?.status !==
+															"partial" &&
+														wsStatus?.connected &&
+														(complianceInstallJob?.status !== "active" &&
+														complianceInstallJob?.status !== "waiting" ? (
+															<button
+																type="button"
+																onClick={() =>
+																	installComplianceScannerMutation.mutate()
+																}
+																disabled={
+																	installComplianceScannerMutation.isPending
+																}
+																className="btn-primary inline-flex items-center gap-2 text-sm"
+															>
+																{installComplianceScannerMutation.isPending
+																	? "Starting…"
+																	: "Install scanner"}
+															</button>
+														) : (
+															<button
+																type="button"
+																onClick={() => {
+																	complianceAPI
+																		.cancelInstallScanner(hostId)
+																		.then(() => {
+																			setComplianceInstallJob(null);
+																			refetchComplianceStatus();
+																		})
+																		.catch(() => {});
+																}}
+																className="btn-outline inline-flex items-center gap-2 text-sm"
+															>
+																Cancel
+															</button>
+														))}
+													<Link
+														to={`/compliance/hosts/${hostId}`}
+														className="btn-outline inline-flex items-center gap-2 text-sm"
+													>
+														<ExternalLink className="h-4 w-4" />
+														View Full Details
+													</Link>
+												</div>
+												{/* Profile + Run scan: compact row, fixed-width dropdown */}
+												<div className="flex items-center gap-2 shrink-0">
+													<label
+														htmlFor="compliance-profile-select"
+														className="text-sm text-secondary-500 dark:text-white whitespace-nowrap shrink-0"
+													>
+														Profile:
+													</label>
+													<select
+														id="compliance-profile-select"
+														value={complianceProfileId}
+														onChange={(e) =>
+															setComplianceProfileId(e.target.value)
+														}
+														className="px-2 py-1.5 bg-secondary-700 dark:bg-secondary-800 border border-secondary-600 rounded-lg text-white text-sm min-w-0 max-w-[180px] shrink"
+														title="Select profile for next scan"
+													>
+														<option value="all">All Profiles</option>
+														{(complianceSetupStatus?.status?.scanner_info
 															?.available_profiles?.length > 0
 															? complianceSetupStatus.status.scanner_info
 																	.available_profiles
@@ -5572,13 +5598,15 @@ const HostDetail = () => {
 																		id: "level1_server",
 																		name: "CIS Level 1 Server",
 																		type: "openscap",
-																		xccdf_id: "level1_server",
+																		xccdf_id:
+																			"xccdf_org.ssgproject.content_profile_cis_level1_server",
 																	},
 																	{
 																		id: "level2_server",
 																		name: "CIS Level 2 Server",
 																		type: "openscap",
-																		xccdf_id: "level2_server",
+																		xccdf_id:
+																			"xccdf_org.ssgproject.content_profile_cis_level2_server",
 																	},
 																	{
 																		id: "docker-bench",
@@ -5586,115 +5614,94 @@ const HostDetail = () => {
 																		type: "docker-bench",
 																		xccdf_id: "docker-bench",
 																	},
-																];
-													return (
-														<div className="flex items-center gap-2">
-															<label
-																htmlFor="compliance-profile-select"
-																className="text-sm text-secondary-500 dark:text-white whitespace-nowrap"
+																]
+														).map((p) => (
+															<option
+																key={p.xccdf_id || p.id}
+																value={p.xccdf_id || p.id}
 															>
-																Profile:
-															</label>
-															<select
-																id="compliance-profile-select"
-																value={complianceProfileId}
-																onChange={(e) =>
-																	setComplianceProfileId(e.target.value)
-																}
-																className="px-3 py-2 bg-secondary-700 dark:bg-secondary-800 border border-secondary-600 rounded-lg text-white text-sm"
-															>
-																<option value="all">All Profiles</option>
-																{profiles.map((p) => (
-																	<option
-																		key={p.xccdf_id || p.id}
-																		value={p.xccdf_id || p.id}
-																	>
-																		{p.name}
-																		{p.type === "docker-bench"
-																			? " (Docker Bench)"
-																			: ""}
-																	</option>
-																))}
-															</select>
-														</div>
-													);
-												})()}
-												<Link
-													to={`/compliance/hosts/${hostId}`}
-													className="btn-outline inline-flex items-center gap-2 text-sm"
-												>
-													<ExternalLink className="h-4 w-4" />
-													View Full Details
-												</Link>
-												<button
-													type="button"
-													onClick={() => {
-														const profiles =
-															complianceSetupStatus?.status?.scanner_info
-																?.available_profiles?.length > 0
-																? complianceSetupStatus.status.scanner_info
-																		.available_profiles
-																: [
-																		{
-																			id: "level1_server",
-																			xccdf_id: "level1_server",
-																			type: "openscap",
-																		},
-																		{
-																			id: "level2_server",
-																			xccdf_id: "level2_server",
-																			type: "openscap",
-																		},
-																		{
-																			id: "docker-bench",
-																			xccdf_id: "docker-bench",
-																			type: "docker-bench",
-																		},
-																	];
-														const profile =
-															profiles.find(
-																(p) =>
-																	(p.xccdf_id || p.id) === complianceProfileId,
-															) ||
-															(complianceProfileId === "all"
-																? null
-																: profiles[0]);
-														triggerComplianceScanMutation.mutate({
-															profileType:
-																complianceProfileId === "all"
-																	? "all"
-																	: (profile?.type ?? "openscap"),
-															profileId:
-																complianceProfileId === "all"
+																{p.name}
+																{p.type === "docker-bench"
+																	? " (Docker Bench)"
+																	: ""}
+															</option>
+														))}
+													</select>
+													<button
+														type="button"
+														onClick={() => {
+															const profiles =
+																complianceSetupStatus?.status?.scanner_info
+																	?.available_profiles?.length > 0
+																	? complianceSetupStatus.status.scanner_info
+																			.available_profiles
+																	: [
+																			{
+																				id: "level1_server",
+																				xccdf_id:
+																					"xccdf_org.ssgproject.content_profile_cis_level1_server",
+																				type: "openscap",
+																			},
+																			{
+																				id: "level2_server",
+																				xccdf_id:
+																					"xccdf_org.ssgproject.content_profile_cis_level2_server",
+																				type: "openscap",
+																			},
+																			{
+																				id: "docker-bench",
+																				xccdf_id: "docker-bench",
+																				type: "docker-bench",
+																			},
+																		];
+															const profile =
+																profiles.find(
+																	(p) =>
+																		(p.xccdf_id || p.id) ===
+																		complianceProfileId,
+																) ||
+																(complianceProfileId === "all"
 																	? null
-																	: complianceProfileId,
-														});
-													}}
-													disabled={
-														!effectiveHostId ||
-														triggerComplianceScanMutation.isPending ||
-														(complianceSetupStatus?.status?.status !==
-															"ready" &&
+																	: profiles[0]);
+															triggerComplianceScanMutation.mutate({
+																profileType:
+																	complianceProfileId === "all"
+																		? "all"
+																		: (profile?.type ?? "openscap"),
+																profileId:
+																	complianceProfileId === "all"
+																		? null
+																		: complianceProfileId,
+															});
+														}}
+														disabled={
+															!effectiveHostId ||
+															triggerComplianceScanMutation.isPending ||
+															(complianceSetupStatus?.status?.status !==
+																"ready" &&
+																complianceSetupStatus?.status?.status !==
+																	"partial")
+														}
+														className="btn-primary inline-flex items-center gap-2 text-sm"
+														title={
 															complianceSetupStatus?.status?.status !==
-																"partial")
-													}
-													className="btn-primary inline-flex items-center gap-2 text-sm"
-													title={
-														complianceSetupStatus?.status?.status !== "ready" &&
-														complianceSetupStatus?.status?.status !== "partial"
-															? "Install scanner first"
+																"ready" &&
+															complianceSetupStatus?.status?.status !==
+																"partial"
+																? "Install scanner first"
+																: wsStatus?.connected
+																	? "Start compliance scan on this host"
+																	: "Queue scan to run when agent is back online (max 1 per host)"
+														}
+													>
+														<Play className="h-4 w-4" />
+														{triggerComplianceScanMutation.isPending
+															? "Starting…"
 															: wsStatus?.connected
-																? "Start compliance scan on this host"
-																: "Queue scan to run when agent is back online (max 1 per host)"
-													}
-												>
-													<Play className="h-4 w-4" />
-													{triggerComplianceScanMutation.isPending
-														? "Starting…"
-														: wsStatus?.connected
-															? "Run scan now"
-															: "Queue scan for when agent is online"}
-												</button>
+																? "Run scan now"
+																: "Queue scan for when agent is online"}
+													</button>
+												</div>
 											</div>
 										</div>
 										{complianceScanFeedback && (

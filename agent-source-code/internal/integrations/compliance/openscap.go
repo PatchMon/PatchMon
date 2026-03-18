@@ -1250,21 +1250,32 @@ func (s *OpenSCAPScanner) getProfileIDFromContent(contentFile string, preferredI
 	if len(list) == 0 {
 		return preferredID
 	}
-	// Prefer exact or CIS match
+	// Prefer exact or CIS match (workstation vs server must match to avoid wrong profile)
 	for _, p := range list {
 		if p.id == preferredID {
 			return p.id
 		}
+		// Workstation profiles
+		if strings.HasSuffix(p.id, "cis_level1_workstation") && strings.HasSuffix(preferredID, "cis_level1_workstation") {
+			return p.id
+		}
+		if strings.HasSuffix(p.id, "cis_level2_workstation") && strings.HasSuffix(preferredID, "cis_level2_workstation") {
+			return p.id
+		}
+		// Server profiles
 		if strings.HasSuffix(p.id, "cis_level1_server") && strings.HasSuffix(preferredID, "cis_level1_server") {
 			return p.id
 		}
 		if strings.HasSuffix(p.id, "cis_level2_server") && strings.HasSuffix(preferredID, "cis_level2_server") {
 			return p.id
 		}
-		if strings.Contains(preferredID, "cis_level1") && strings.Contains(p.id, "cis_level1") {
+		// Generic level match only when workstation/server not distinguished
+		if strings.Contains(preferredID, "cis_level1") && strings.Contains(p.id, "cis_level1") &&
+			strings.Contains(preferredID, "workstation") == strings.Contains(p.id, "workstation") {
 			return p.id
 		}
-		if strings.Contains(preferredID, "cis_level2") && strings.Contains(p.id, "cis_level2") {
+		if strings.Contains(preferredID, "cis_level2") && strings.Contains(p.id, "cis_level2") &&
+			strings.Contains(preferredID, "workstation") == strings.Contains(p.id, "workstation") {
 			return p.id
 		}
 	}
