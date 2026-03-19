@@ -213,7 +213,7 @@ if [ -n "$machine_id" ]; then
 fi
 
 curl_exit=0
-response=$(curl $CURL_FLAGS -X POST \
+response=$(curl $CURL_FLAGS --show-error -X POST \
     -H "X-Auto-Enrollment-Key: $AUTO_ENROLLMENT_KEY" \
     -H "X-Auto-Enrollment-Secret: $AUTO_ENROLLMENT_SECRET" \
     -H "Content-Type: application/json" \
