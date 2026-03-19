@@ -74,7 +74,7 @@ export function PackageListDisplay({ run }) {
 		[];
 
 	if (requested.length === 0) {
-		return "—";
+		return " -";
 	}
 
 	return (

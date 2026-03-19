@@ -33,6 +33,8 @@ const (
 	TypeInstallComplianceTools   = "install_compliance_tools"
 	TypeSSGUpgrade               = "ssg_upgrade"
 	TypeRunPatch                 = "run_patch"
+	TypeScheduledReportsDispatch = "scheduled_reports_dispatch"
+	TypeScheduledReportRun       = "scheduled_report_run"
 	QueueAgentCommands           = "agent-commands"
 	QueuePatching                = "patching"
 	QueueCompliance              = "compliance"
@@ -46,6 +48,7 @@ const (
 	QueueVersionUpdateCheck      = "version-update-check"
 	QueueComplianceScanCleanup   = "compliance-scan-cleanup"
 	QueueSSGUpdateCheck          = "ssg-update-check"
+	QueueScheduledReports        = "scheduled-reports"
 )
 
 // RunScanPayload is the payload for run_scan job.
@@ -580,25 +583,40 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 
 	conn := h.registry.GetConnection(p.ApiID)
 	if conn == nil {
-		h.log.Info("run_patch: agent offline, re-queuing", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
+		// Check if the patch run still exists in the DB (user may have deleted it).
+		run, runErr := h.patchRuns.GetByID(ctx, p.PatchRunID)
+		if runErr != nil || run == nil {
+			h.log.Info("run_patch: patch run deleted or not found, dropping task", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
+			return nil
+		}
+
 		// Keep the correct status: pending_validation for dry runs, queued for real runs.
 		status := "queued"
 		if p.DryRun {
 			status = "pending_validation"
 		}
+
+		// If status has changed (e.g. cancelled, completed), don't re-queue.
+		if run.Status != status && run.Status != "queued" && run.Status != "pending_validation" {
+			h.log.Info("run_patch: run status changed, dropping task", "api_id", p.ApiID, "patch_run_id", p.PatchRunID, "status", run.Status)
+			return nil
+		}
+
 		_ = h.patchRuns.UpdateStatus(ctx, p.PatchRunID, status)
-		// Re-enqueue with 1-min delay using a unique task ID so Asynq does
-		// not reject it as a duplicate of the still-active original task.
-		retryPayload := p
-		retrySuffix := "-retry-" + uuid.New().String()[:8]
-		task, err := NewRunPatchRetryTask(retryPayload, p.PatchRunID+retrySuffix)
+
+		// Use a deterministic retry task ID so only one retry can exist at a time
+		// and the delete handler can cancel it.
+		retryTaskID := "patch-run-" + p.PatchRunID + "-retry"
+		task, err := NewRunPatchRetryTask(p, retryTaskID)
 		if err != nil {
 			return err
 		}
-		_, err = h.queueClient.Enqueue(task, asynq.ProcessIn(1*time.Minute))
+		_, err = h.queueClient.Enqueue(task, asynq.ProcessIn(5*time.Minute))
 		if err != nil {
-			h.log.Warn("run_patch: re-enqueue failed", "api_id", p.ApiID, "error", err)
-			return err
+			// If a task with this ID already exists (pending), that's fine - skip.
+			h.log.Debug("run_patch: re-enqueue skipped or failed", "api_id", p.ApiID, "error", err)
+		} else {
+			h.log.Info("run_patch: agent offline, re-queued in 5m", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
 		}
 		return nil
 	}

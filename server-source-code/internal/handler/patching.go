@@ -2,13 +2,17 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
@@ -40,6 +44,7 @@ type PatchingHandler struct {
 	hosts          *store.HostsStore
 	queueClient    *asynq.Client
 	queueInspector *asynq.Inspector
+	notify         *notifications.Emitter
 	log            *slog.Logger
 }
 
@@ -52,6 +57,7 @@ func NewPatchingHandler(
 	hosts *store.HostsStore,
 	queueClient *asynq.Client,
 	queueInspector *asynq.Inspector,
+	notify *notifications.Emitter,
 	log *slog.Logger,
 ) *PatchingHandler {
 	if log == nil {
@@ -65,6 +71,7 @@ func NewPatchingHandler(
 		hosts:          hosts,
 		queueClient:    queueClient,
 		queueInspector: queueInspector,
+		notify:         notify,
 		log:            log,
 	}
 }
@@ -127,6 +134,99 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 		h.log.Error("patching: failed to update output", "patch_run_id", patchRunID, "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to save patch output"})
 		return
+	}
+	if h.notify != nil && (body.Stage == "completed" || body.Stage == "failed") {
+		if d := hostctx.DBFromContext(r.Context()); d != nil {
+			// Resolve host display name
+			hostName := ""
+			if run.HostFriendlyName != nil && *run.HostFriendlyName != "" {
+				hostName = *run.HostFriendlyName
+			} else if run.HostHostname != nil && *run.HostHostname != "" {
+				hostName = *run.HostHostname
+			}
+
+			// Resolve packages list
+			var packages []string
+			if len(run.PackageNames) > 0 {
+				_ = json.Unmarshal(run.PackageNames, &packages)
+			}
+			if len(packages) == 0 && run.PackageName != nil && *run.PackageName != "" {
+				packages = []string{*run.PackageName}
+			}
+			pkgSummary := "all packages"
+			if len(packages) == 1 {
+				pkgSummary = packages[0]
+			} else if len(packages) > 1 && len(packages) <= 5 {
+				pkgSummary = fmt.Sprintf("%d packages (%s)", len(packages), strings.Join(packages, ", "))
+			} else if len(packages) > 5 {
+				pkgSummary = fmt.Sprintf("%d packages (%s, ...)", len(packages), strings.Join(packages[:5], ", "))
+			}
+
+			policyName := ""
+			if run.PolicyName != nil {
+				policyName = *run.PolicyName
+			}
+
+			evType := "patch_run_completed"
+			sev := "informational"
+			if body.Stage == "failed" {
+				evType = "patch_run_failed"
+				sev = "error"
+			}
+
+			title := fmt.Sprintf("Patch Run %s - %s", strings.ToUpper(body.Stage[:1])+body.Stage[1:], hostName)
+			if run.DryRun {
+				title = fmt.Sprintf("Dry Run %s - %s", strings.ToUpper(body.Stage[:1])+body.Stage[1:], hostName)
+			}
+
+			var msgParts []string
+			if body.Stage == "failed" {
+				msgParts = append(msgParts, fmt.Sprintf("Patch run failed on host %s.", hostName))
+				if body.ErrorMessage != "" {
+					errMsg := body.ErrorMessage
+					if len(errMsg) > 300 {
+						errMsg = errMsg[:300] + "…"
+					}
+					msgParts = append(msgParts, fmt.Sprintf("Error: %s", errMsg))
+				}
+			} else {
+				msgParts = append(msgParts, fmt.Sprintf("Patch run completed successfully on host %s.", hostName))
+			}
+			msgParts = append(msgParts, fmt.Sprintf("Packages: %s", pkgSummary))
+			if policyName != "" {
+				msgParts = append(msgParts, fmt.Sprintf("Policy: %s", policyName))
+			}
+			if run.DryRun {
+				msgParts = append(msgParts, "Mode: Dry Run (no changes applied)")
+			}
+
+			meta := map[string]interface{}{
+				"host_id":    run.HostID,
+				"host_name":  hostName,
+				"patch_type": run.PatchType,
+				"dry_run":    run.DryRun,
+				"stage":      body.Stage,
+			}
+			if len(packages) > 0 {
+				meta["packages"] = packages
+			}
+			if policyName != "" {
+				meta["policy_name"] = policyName
+			}
+			if body.ErrorMessage != "" {
+				meta["error_message"] = body.ErrorMessage
+			}
+
+			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+				Type:          evType,
+				Severity:      sev,
+				Title:         title,
+				Message:       strings.Join(msgParts, "\n"),
+				ReferenceType: "patch_run",
+				ReferenceID:   patchRunID,
+				Metadata:      meta,
+			})
+		}
 	}
 	JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -375,7 +475,7 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 		approvedBy = &userID
 	}
 
-	// 1. Mark the validation run as "approved" (terminal — preserved with its output).
+	// 1. Mark the validation run as "approved" (terminal - preserved with its output).
 	if err := h.patchRuns.MarkValidationApproved(r.Context(), validationID, approvedBy); err != nil {
 		h.log.Error("patching: mark validation approved error", "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to approve validation run"})
@@ -407,9 +507,9 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg := "Approved — new patch run created"
+	msg := "Approved - new patch run created"
 	if delayMs > 0 {
-		msg = "Approved — patch scheduled for " + runAt.UTC().Format(time.RFC3339)
+		msg = "Approved - patch scheduled for " + runAt.UTC().Format(time.RFC3339)
 	}
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"message":           msg,
@@ -503,10 +603,12 @@ func (h *PatchingHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Only queued, pending validation, validated, approved, or scheduled runs can be deleted"})
 		return
 	}
-	// Remove run_patch task from queue if present (task ID: patch-run-{id})
+	// Remove run_patch task(s) from queue if present.
+	// Original task: patch-run-{id}, retry task: patch-run-{id}-retry
 	if h.queueInspector != nil {
 		taskID := patchRunJobIDPrefix + id
 		_ = h.queueInspector.DeleteTask(queue.QueuePatching, taskID)
+		_ = h.queueInspector.DeleteTask(queue.QueuePatching, taskID+"-retry")
 	}
 	if err := h.patchRuns.Delete(r.Context(), id); err != nil {
 		h.log.Error("patching: delete run error", "patch_run_id", id, "error", err)

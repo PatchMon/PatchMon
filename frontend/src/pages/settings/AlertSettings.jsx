@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, RefreshCw, Save, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useToast } from "../../contexts/ToastContext";
 import { adminUsersAPI, alertsAPI, settingsAPI } from "../../utils/api";
 
 // Deep equality for config objects (ignores users_auto_assign which is read-only)
@@ -135,6 +136,16 @@ const AlertSettings = () => {
 		alertConfigs &&
 		(localConfigs.length !== alertConfigs.length ||
 			localConfigs.some((lc, i) => !configsEqual(lc, alertConfigs[i])));
+
+	// Warn on navigation with unsaved changes
+	useEffect(() => {
+		if (!isDirty) return;
+		const handler = (e) => {
+			e.preventDefault();
+		};
+		window.addEventListener("beforeunload", handler);
+		return () => window.removeEventListener("beforeunload", handler);
+	}, [isDirty]);
 
 	// Update local state only (no API call)
 	const handleFieldChange = (alertType, field, value) => {
@@ -563,6 +574,7 @@ const AlertTypeTableRow = ({ config, onChange, disabled, usersData }) => {
 			<td className="px-6 py-4 whitespace-nowrap">
 				<input
 					type="number"
+					min={1}
 					value={localConfig.retention_days || ""}
 					onChange={(e) =>
 						handleFieldChange(
@@ -571,7 +583,7 @@ const AlertTypeTableRow = ({ config, onChange, disabled, usersData }) => {
 						)
 					}
 					disabled={disabled || !localConfig.is_enabled}
-					placeholder="—"
+					placeholder=" -"
 					className="w-20 px-2 py-1 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
 				/>
 			</td>
@@ -580,6 +592,7 @@ const AlertTypeTableRow = ({ config, onChange, disabled, usersData }) => {
 			<td className="px-6 py-4 whitespace-nowrap">
 				<input
 					type="number"
+					min={1}
 					value={localConfig.auto_resolve_after_days || ""}
 					onChange={(e) =>
 						handleFieldChange(
@@ -588,7 +601,7 @@ const AlertTypeTableRow = ({ config, onChange, disabled, usersData }) => {
 						)
 					}
 					disabled={disabled || !localConfig.is_enabled}
-					placeholder="—"
+					placeholder=" -"
 					className="w-20 px-2 py-1 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
 				/>
 			</td>
@@ -625,6 +638,7 @@ const AlertTypeTableRow = ({ config, onChange, disabled, usersData }) => {
 
 // Cleanup Section Component
 const CleanupSection = () => {
+	const toast = useToast();
 	const [previewLoading, setPreviewLoading] = useState(false);
 	const [previewData, setPreviewData] = useState(null);
 
@@ -636,6 +650,7 @@ const CleanupSection = () => {
 			const data = response.data.data;
 			setPreviewData(Array.isArray(data) ? data : (data?.alerts ?? []));
 		} catch (error) {
+			toast.error("Failed to preview cleanup");
 			console.error("Failed to preview cleanup:", error);
 		} finally {
 			setPreviewLoading(false);
@@ -653,12 +668,12 @@ const CleanupSection = () => {
 
 		try {
 			const response = await alertsAPI.triggerCleanup();
-			alert(
-				`Cleanup completed: ${response.data.data.deleted ?? response.data.data.deleted_count ?? 0} alerts deleted`,
-			);
+			const count =
+				response.data.data.deleted ?? response.data.data.deleted_count ?? 0;
+			toast.success(`Cleanup completed: ${count} alert(s) deleted`);
 			setPreviewData(null);
 		} catch (error) {
-			alert(
+			toast.error(
 				"Failed to trigger cleanup: " +
 					(error.response?.data?.error || error.message),
 			);

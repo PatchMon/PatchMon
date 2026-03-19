@@ -94,7 +94,7 @@ func Middleware(registry *Registry, poolCache *PoolCache, redisCache *RedisCache
 			if redisCache != nil {
 				rdb, rdbErr := redisCache.GetOrCreate(r.Context(), host)
 				if rdbErr != nil {
-					// Log but don't block — fall back to default Redis rather than returning 503.
+					// Log but don't block - fall back to default Redis rather than returning 503.
 					rdb = redisCache.Default()
 				}
 				if rdb != nil {

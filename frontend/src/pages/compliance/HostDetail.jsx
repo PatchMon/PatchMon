@@ -24,7 +24,7 @@ const ComplianceHostDetail = () => {
 		onSuccess: (response) => {
 			const msg = response?.data?.message || "Compliance scan triggered";
 			const jobId = response?.data?.job_id || response?.data?.jobId;
-			toast.success(jobId ? `${msg} — Job ID: ${jobId}` : msg);
+			toast.success(jobId ? `${msg} - Job ID: ${jobId}` : msg);
 			queryClient.invalidateQueries({ queryKey: ["compliance-latest", id] });
 			queryClient.invalidateQueries({ queryKey: ["compliance-active-scans"] });
 		},

@@ -1126,7 +1126,7 @@ const Hosts = () => {
 						)}
 						{!host.docker_enabled && !host.compliance_enabled && (
 							<span className="text-xs text-secondary-400 dark:text-white">
-								—
+								-
 							</span>
 						)}
 					</div>
@@ -1195,7 +1195,7 @@ const Hosts = () => {
 			case "ssg_version":
 				return (
 					<div className="text-sm text-secondary-500 dark:text-white">
-						{host.ssg_version || "—"}
+						{host.ssg_version || " -"}
 					</div>
 				);
 			case "notes":

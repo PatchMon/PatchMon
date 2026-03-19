@@ -9,9 +9,10 @@ INSERT INTO role_permissions (
     id, role, can_view_dashboard, can_view_hosts, can_manage_hosts,
     can_view_packages, can_manage_packages, can_view_users, can_manage_users,
     can_manage_superusers, can_view_reports, can_export_data, can_manage_settings,
+    can_manage_notifications, can_view_notification_logs,
     created_at, updated_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 )
 ON CONFLICT (role) DO UPDATE SET
@@ -26,6 +27,8 @@ ON CONFLICT (role) DO UPDATE SET
     can_view_reports = EXCLUDED.can_view_reports,
     can_export_data = EXCLUDED.can_export_data,
     can_manage_settings = EXCLUDED.can_manage_settings,
+    can_manage_notifications = EXCLUDED.can_manage_notifications,
+    can_view_notification_logs = EXCLUDED.can_view_notification_logs,
     updated_at = CURRENT_TIMESTAMP
 RETURNING *;
 

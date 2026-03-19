@@ -20,6 +20,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/guacd"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/handler"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/rdpproxy"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/sshproxy"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
@@ -35,7 +36,7 @@ import (
 // NewRouter creates the HTTP router with all routes and middleware.
 // Returns (handler, guacdProcess) - guacdProcess should be stopped on shutdown.
 // frontendFS is the embedded frontend static files (static/frontend/dist); pass nil to disable SPA serving.
-func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *redisclient.Client, registry *agentregistry.Registry, queueClient *asynq.Client, queueInspector *asynq.Inspector, ctxRegistry *hostctx.Registry, poolCache *hostctx.PoolCache, redisCache *hostctx.RedisCache, log *slog.Logger, frontendFS fs.FS) (http.Handler, *guacd.Process) {
+func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *redisclient.Client, registry *agentregistry.Registry, queueClient *asynq.Client, queueInspector *asynq.Inspector, ctxRegistry *hostctx.Registry, poolCache *hostctx.PoolCache, redisCache *hostctx.RedisCache, notifyEmit *notifications.Emitter, log *slog.Logger, frontendFS fs.FS) (http.Handler, *guacd.Process) {
 	r := chi.NewRouter()
 
 	var dbProvider database.DBProvider
@@ -55,6 +56,14 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	r.Use(middleware.Recovery(log))
 	if poolCache != nil {
 		r.Use(hostctx.Middleware(ctxRegistry, poolCache, redisCache, db, rdb, cfg.RegistryReloadSecret))
+	} else {
+		r.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ctx := hostctx.WithDB(r.Context(), db)
+				ctx = hostctx.WithRedis(ctx, rdb)
+				next.ServeHTTP(w, r.WithContext(ctx))
+			})
+		})
 	}
 	r.Use(middleware.CORS(resolved.CORSOrigin, corsOriginResolver(ctxRegistry)))
 	if resolved.TrustProxy {
@@ -158,7 +167,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	dockerHandler := handler.NewDockerHandler(dockerStore)
 	integrationsHandler := handler.NewIntegrationsHandler(hostsStore, store.NewDockerStore(dbProvider), integrationStatusStore)
 	complianceStore := store.NewComplianceStore(dbProvider)
-	complianceHandler := handler.NewComplianceHandler(complianceStore, hostsStore, registry, queueClient, queueInspector, integrationStatusStore, cfg.SSGContentDir)
+	complianceHandler := handler.NewComplianceHandler(complianceStore, hostsStore, registry, queueClient, queueInspector, integrationStatusStore, cfg.SSGContentDir, notifyEmit)
 	autoEnrollmentStore := store.NewAutoEnrollmentStore(dbProvider)
 	autoEnrollmentHandler := handler.NewAutoEnrollmentHandler(autoEnrollmentStore, hostGroupsStore, hostsStore, settingsStore, log, cfg)
 
@@ -187,8 +196,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	}
 	var agentWsHandler *handler.AgentWSHandler
 	agentOpts := []handler.AgentWSHandlerOption{
-		handler.WithOnAgentDisconnect(handler.NewAgentDisconnectHandler(dbProvider, log)),
-		handler.WithOnAgentConnect(handler.NewAgentConnectHandler(dbProvider, queueClient, queueInspector, log)),
+		handler.WithOnAgentDisconnect(handler.NewAgentDisconnectHandler(dbProvider, notifyEmit, log)),
+		handler.WithOnAgentConnect(handler.NewAgentConnectHandler(dbProvider, queueClient, queueInspector, notifyEmit, log)),
 	}
 	if rdpHandler != nil {
 		agentOpts = append(agentOpts, handler.WithOnRDPProxyMessage(rdpHandler.HandleRDPProxyMessage))
@@ -218,6 +227,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	alertsHandler := handler.NewAlertsHandler(alertsStore, alertConfigStore, dbProvider)
 	agentVersionHandler := handler.NewAgentVersionHandler(log)
 	alertConfigHandler := handler.NewAlertConfigHandler(alertConfigStore)
+	notificationsHandler := handler.NewNotificationsHandler(dbProvider, enc, notifyEmit)
 	automationHandler := handler.NewAutomationHandler(queueInspector, queueClient, registry, settingsStore, alertConfigStore)
 	apiHostsHandler := handler.NewApiHostsHandler(hostsStore, hostGroupsStore, dbProvider, dashboardStore, queueInspector)
 
@@ -225,7 +235,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	patchPoliciesStore := store.NewPatchPoliciesStore(dbProvider)
 	patchAssignmentsStore := store.NewPatchPolicyAssignmentsStore(dbProvider)
 	patchExclusionsStore := store.NewPatchPolicyExclusionsStore(dbProvider)
-	patchingHandler := handler.NewPatchingHandler(patchRunsStore, patchPoliciesStore, patchAssignmentsStore, patchExclusionsStore, hostsStore, queueClient, queueInspector, log)
+	patchingHandler := handler.NewPatchingHandler(patchRunsStore, patchPoliciesStore, patchAssignmentsStore, patchExclusionsStore, hostsStore, queueClient, queueInspector, notifyEmit, log)
 	windowsUpdatesHandler := handler.NewWindowsUpdatesHandler(hostsStore, dbProvider)
 
 	aiSvc := ai.NewService(enc)
@@ -553,6 +563,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/alerts/stats", alertsHandler.GetStats)
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/alerts/actions", alertsHandler.GetAvailableActions)
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Post("/alerts/bulk-delete", alertsHandler.BulkDelete)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Post("/alerts/bulk-action", alertsHandler.BulkAction)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/alerts/config", alertConfigHandler.GetAll)
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/alerts/config/{alertType}", alertConfigHandler.GetByType)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Put("/alerts/config/{alertType}", alertConfigHandler.Update)
@@ -565,6 +576,22 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Post("/alerts/{id}/assign", alertsHandler.Assign)
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Post("/alerts/{id}/unassign", alertsHandler.Unassign)
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Delete("/alerts/{id}", alertsHandler.Delete)
+
+			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Get("/notifications/destinations", notificationsHandler.ListDestinations)
+			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Post("/notifications/destinations", notificationsHandler.CreateDestination)
+			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Put("/notifications/destinations/{id}", notificationsHandler.UpdateDestination)
+			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Delete("/notifications/destinations/{id}", notificationsHandler.DeleteDestination)
+			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Get("/notifications/routes", notificationsHandler.ListRoutes)
+			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Post("/notifications/routes", notificationsHandler.CreateRoute)
+			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Put("/notifications/routes/{id}", notificationsHandler.UpdateRoute)
+			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Delete("/notifications/routes/{id}", notificationsHandler.DeleteRoute)
+			r.With(middleware.RequirePermission("can_view_notification_logs", permissionsStore)).Get("/notifications/delivery-log", notificationsHandler.ListDeliveryLog)
+			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Post("/notifications/test", notificationsHandler.TestDestination)
+			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Get("/notifications/scheduled-reports", notificationsHandler.ListScheduledReports)
+			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Post("/notifications/scheduled-reports", notificationsHandler.CreateScheduledReport)
+			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Post("/notifications/scheduled-reports/{id}/run-now", notificationsHandler.RunScheduledReportNow)
+			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Put("/notifications/scheduled-reports/{id}", notificationsHandler.UpdateScheduledReport)
+			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Delete("/notifications/scheduled-reports/{id}", notificationsHandler.DeleteScheduledReport)
 
 			r.Get("/auth/users/for-assignment", usersHandler.ListForAssignment)
 			r.With(middleware.RequirePermission("can_view_users", permissionsStore)).Get("/auth/admin/users", usersHandler.List)

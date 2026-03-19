@@ -5,7 +5,9 @@ import (
 	"log/slog"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/alerts"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/hibiken/asynq"
 )
@@ -13,7 +15,7 @@ import (
 // NewAgentConnectHandler returns an OnAgentConnect callback that resolves host_down
 // alerts when an agent's WebSocket reconnects, and expedites any queued compliance
 // scan for that host.
-func NewAgentConnectHandler(db database.DBProvider, queueClient *asynq.Client, queueInspector *asynq.Inspector, log *slog.Logger) OnAgentConnect {
+func NewAgentConnectHandler(db database.DBProvider, queueClient *asynq.Client, queueInspector *asynq.Inspector, emit *notifications.Emitter, log *slog.Logger) OnAgentConnect {
 	return func(ctx context.Context, apiID string) {
 		d := db.DB(ctx)
 		// Expedite queued compliance scan when agent connects
@@ -36,6 +38,6 @@ func NewAgentConnectHandler(db database.DBProvider, queueClient *asynq.Client, q
 			}
 		}
 
-		alerts.OnConnect(ctx, d, apiID, log)
+		alerts.OnConnect(ctx, d, apiID, hostctx.TenantHostKey(ctx), emit, log)
 	}
 }

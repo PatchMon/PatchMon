@@ -1005,7 +1005,7 @@ const HostDetail = () => {
 			const job_id = body?.jobId || body?.job_id || "";
 			const msg = body?.message || "Scan triggered";
 			setComplianceScanFeedback({
-				text: job_id ? `${msg} — Job ID: ${job_id}` : msg,
+				text: job_id ? `${msg} - Job ID: ${job_id}` : msg,
 				isError: false,
 			});
 			safeSetTimeout(() => {
@@ -3724,7 +3724,7 @@ const HostDetail = () => {
 										{integrationsData?.pending_config_exists && (
 											<div className="rounded-lg border border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 p-4">
 												<p className="text-sm font-medium text-warning-800 dark:text-warning-200">
-													Pending configuration changes — use the Apply button
+													Pending configuration changes - use the Apply button
 													at the top to send to agent
 												</p>
 												{!wsStatus?.connected && (
@@ -5133,14 +5133,14 @@ const HostDetail = () => {
 																			? new Date(
 																					run.created_at,
 																				).toLocaleString()
-																			: "—"}
+																			: " -"}
 																</td>
 																<td className="px-4 py-2 text-sm text-secondary-600 dark:text-secondary-400">
 																	{run.completed_at
 																		? new Date(
 																				run.completed_at,
 																			).toLocaleString()
-																		: "—"}
+																		: " -"}
 																</td>
 																<td className="px-4 py-2">
 																	<button
@@ -5247,7 +5247,7 @@ const HostDetail = () => {
 							</div>
 						)}
 
-						{/* Compliance — same card styling as Agent queue tab */}
+						{/* Compliance - same card styling as Agent queue tab */}
 						{activeTab === "compliance" && (
 							<div className="space-y-6">
 								<div className="flex items-center justify-between">
@@ -5256,7 +5256,7 @@ const HostDetail = () => {
 									</h3>
 								</div>
 
-								{/* Summary stats — clickable to scan results filtered by status + host */}
+								{/* Summary stats - clickable to scan results filtered by status + host */}
 								{complianceLatest && (
 									<div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
 										<Link
@@ -5275,7 +5275,7 @@ const HostDetail = () => {
 														Passed
 													</p>
 													<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-														{complianceLatest.passed ?? "—"}
+														{complianceLatest.passed ?? " -"}
 													</p>
 												</div>
 											</div>
@@ -5296,7 +5296,7 @@ const HostDetail = () => {
 														Failed
 													</p>
 													<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-														{complianceLatest.failed ?? "—"}
+														{complianceLatest.failed ?? " -"}
 													</p>
 												</div>
 											</div>
@@ -5321,7 +5321,7 @@ const HostDetail = () => {
 													</p>
 													<p className="text-xl font-semibold text-secondary-900 dark:text-white">
 														{(complianceLatest.skipped ?? 0) +
-															(complianceLatest.not_applicable ?? 0) || "—"}
+															(complianceLatest.not_applicable ?? 0) || " -"}
 													</p>
 												</div>
 											</div>
@@ -5338,7 +5338,7 @@ const HostDetail = () => {
 															? new Date(
 																	complianceLatest.completed_at,
 																).toLocaleString()
-															: "—"}
+															: " -"}
 													</p>
 												</div>
 											</div>
@@ -5346,7 +5346,7 @@ const HostDetail = () => {
 									</div>
 								)}
 
-								{/* Compliance scanner card — consistent layout: details left, actions right */}
+								{/* Compliance scanner card - consistent layout: details left, actions right */}
 								{integrationsData?.data?.integrations?.compliance && (
 									<div className="card p-4">
 										<div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
@@ -5429,7 +5429,7 @@ const HostDetail = () => {
 																	.content_package ||
 																	complianceSetupStatus.status.scanner_info
 																		.ssg_version ||
-																	"—"}
+																	" -"}
 															</span>
 														</div>
 													)}
@@ -5788,9 +5788,9 @@ const HostDetail = () => {
 																		{step.label}
 																		{step.message &&
 																			step.status !== "pending" &&
-																			` — ${step.message}`}
+																			` - ${step.message}`}
 																		{step.status === "pending" &&
-																			` — ${step.message}`}
+																			` - ${step.message}`}
 																	</span>
 																</li>
 															))}

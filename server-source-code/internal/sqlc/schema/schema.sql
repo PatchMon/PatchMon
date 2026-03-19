@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS role_permissions (
     can_view_reports BOOLEAN NOT NULL DEFAULT true,
     can_export_data BOOLEAN NOT NULL DEFAULT false,
     can_manage_settings BOOLEAN NOT NULL DEFAULT false,
+    can_manage_notifications BOOLEAN NOT NULL DEFAULT false,
+    can_view_notification_logs BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP(3) NOT NULL
 );
@@ -675,4 +677,70 @@ CREATE TABLE IF NOT EXISTS alert_config (
     metadata JSONB,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP(3) NOT NULL
+);
+
+-- notification_destinations
+CREATE TABLE IF NOT EXISTS notification_destinations (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    channel_type TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    config_encrypted TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- notification_routes
+CREATE TABLE IF NOT EXISTS notification_routes (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    destination_id TEXT NOT NULL REFERENCES notification_destinations(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    min_severity TEXT NOT NULL DEFAULT 'informational',
+    host_group_id TEXT REFERENCES host_groups(id) ON DELETE CASCADE,
+    match_rules JSONB,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- notification_delivery_log
+CREATE TABLE IF NOT EXISTS notification_delivery_log (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    event_fingerprint TEXT NOT NULL,
+    reference_type TEXT NOT NULL DEFAULT '',
+    reference_id TEXT NOT NULL DEFAULT '',
+    destination_id TEXT NOT NULL REFERENCES notification_destinations(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error_message TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 1,
+    provider_message_id TEXT,
+    created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- scheduled_reports
+CREATE TABLE IF NOT EXISTS scheduled_reports (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    name TEXT NOT NULL,
+    cron_expr TEXT NOT NULL DEFAULT '0 8 * * *',
+    timezone TEXT NOT NULL DEFAULT 'UTC',
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    definition JSONB NOT NULL DEFAULT '{}'::jsonb,
+    destination_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    next_run_at TIMESTAMP(3),
+    last_run_at TIMESTAMP(3),
+    created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- scheduled_report_runs
+CREATE TABLE IF NOT EXISTS scheduled_report_runs (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    scheduled_report_id TEXT NOT NULL REFERENCES scheduled_reports(id) ON DELETE CASCADE,
+    run_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status TEXT NOT NULL,
+    error_message TEXT,
+    summary_hash TEXT,
+    created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

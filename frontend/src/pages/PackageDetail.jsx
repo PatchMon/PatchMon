@@ -596,7 +596,7 @@ const PackageDetail = () => {
 																	</button>
 																) : (
 																	<span className="text-sm text-secondary-500 dark:text-white">
-																		—
+																		-
 																	</span>
 																)}
 															</td>
@@ -694,7 +694,7 @@ const PackageDetail = () => {
 										<span className="text-sm text-secondary-500 dark:text-secondary-400">
 											{a.completed_at
 												? formatRelativeTime(a.completed_at)
-												: "—"}
+												: " -"}
 										</span>
 										<Link
 											to={`/patching/runs/${a.run_id}`}

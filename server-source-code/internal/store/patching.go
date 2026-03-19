@@ -76,7 +76,7 @@ func parsePackagesAffectedFromRealOutput(output string) []string {
 			}
 			continue
 		}
-		// apt-get real: "Setting up pkgname (version) ..." — "Setting up" is two words, so pkg is at index 2
+		// apt-get real: "Setting up pkgname (version) ..." - "Setting up" is two words, so pkg is at index 2
 		if strings.HasPrefix(trimmed, "Setting up ") {
 			fields := strings.Fields(trimmed)
 			if len(fields) >= 3 {
@@ -604,13 +604,13 @@ func NewPatchPoliciesStore(db database.DBProvider) *PatchPoliciesStore {
 // Exclusions only apply to group-based assignments; a direct assignment cannot be excluded.
 func (s *PatchPoliciesStore) ResolveEffectivePolicy(ctx context.Context, hostID string) (*db.PatchPolicy, error) {
 	d := s.db.DB(ctx)
-	// 1. Direct host assignment — exclusions do not apply here.
+	// 1. Direct host assignment - exclusions do not apply here.
 	policy, err := d.Queries.GetDirectPatchPolicyAssignment(ctx, hostID)
 	if err == nil {
 		return &policy, nil
 	}
 
-	// 2. Group assignments — exclusions apply.
+	// 2. Group assignments - exclusions apply.
 	groupIDs, err := d.Queries.GetHostGroupMemberships(ctx, hostID)
 	if err != nil || len(groupIDs) == 0 {
 		return nil, nil

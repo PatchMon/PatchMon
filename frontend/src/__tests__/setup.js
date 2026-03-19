@@ -7,7 +7,7 @@ afterEach(() => {
 	cleanup();
 });
 
-// Mock HTMLCanvasElement.getContext — jsdom doesn't implement canvas; required by Chart.js and xterm.js
+// Mock HTMLCanvasElement.getContext - jsdom doesn't implement canvas; required by Chart.js and xterm.js
 HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
 	canvas: { width: 0, height: 0 },
 	clearRect: vi.fn(),

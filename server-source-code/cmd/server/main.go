@@ -17,6 +17,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/logger"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/migrate"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/monitor"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/redis"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/server"
@@ -80,7 +81,7 @@ func main() {
 	var poolCache *hostctx.PoolCache
 	var redisCache *hostctx.RedisCache
 	if cfg.RegistryDatabaseURL != "" {
-		// Poll interval is a failsafe — the primary path for registry updates is the
+		// Poll interval is a failsafe - the primary path for registry updates is the
 		// immediate reload webhook (POST /api/v1/internal/reload-registry-map) triggered
 		// by the provisioner after every tenant create/update/delete.
 		ctxRegistry, err = hostctx.NewRegistry(ctx, cfg.RegistryDatabaseURL, 60*time.Second, slog)
@@ -94,9 +95,10 @@ func main() {
 		slog.Info("multi-host mode enabled", "registry_poll_interval", "60s")
 	}
 
-	// Validate encryption (required for bootstrap/install flow)
-	if _, err := util.NewEncryption(); err != nil {
-		slog.Error("encryption init failed (bootstrap tokens will be unavailable)", "error", err)
+	// Validate encryption (required for bootstrap/install flow and notification destination secrets)
+	enc, encErr := util.NewEncryption()
+	if encErr != nil {
+		slog.Error("encryption init failed (bootstrap tokens will be unavailable)", "error", encErr)
 		slog.Info("hint: set DATABASE_URL, SESSION_SECRET, or AI_ENCRYPTION_KEY in environment")
 	}
 
@@ -109,6 +111,7 @@ func main() {
 	defer func() { _ = queueInspector.Close() }()
 
 	queueSrv := queue.NewServer(queueOpts, registry, db, slog)
+	notifyEmit := notifications.NewEmitter(queueClient, rdb, slog)
 	queueMux := queue.Mux(queue.MuxOpts{
 		Registry:      registry,
 		DB:            db,
@@ -119,6 +122,8 @@ func main() {
 		ServerVersion: cfg.Version,
 		SSGContentDir: cfg.SSGContentDir,
 		Log:           slog,
+		Emit:          notifyEmit,
+		Enc:           enc,
 	})
 	go func() {
 		if err := queueSrv.Run(queueMux); err != nil {
@@ -152,7 +157,7 @@ func main() {
 		}
 	}()
 
-	httpHandler, guacdProc := server.NewRouter(ctx, cfg, db, rdb, registry, queueClient, queueInspector, ctxRegistry, poolCache, redisCache, slog, frontendFS)
+	httpHandler, guacdProc := server.NewRouter(ctx, cfg, db, rdb, registry, queueClient, queueInspector, ctxRegistry, poolCache, redisCache, notifyEmit, slog, frontendFS)
 
 	var memstatsCancel context.CancelFunc
 	if cfg.EnablePprof {

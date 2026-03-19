@@ -10,21 +10,23 @@ import (
 
 func dbRolePermissionToModel(r db.RolePermission) models.RolePermission {
 	return models.RolePermission{
-		ID:                  r.ID,
-		Role:                r.Role,
-		CanViewDashboard:    r.CanViewDashboard,
-		CanViewHosts:        r.CanViewHosts,
-		CanManageHosts:      r.CanManageHosts,
-		CanViewPackages:     r.CanViewPackages,
-		CanManagePackages:   r.CanManagePackages,
-		CanViewUsers:        r.CanViewUsers,
-		CanManageUsers:      r.CanManageUsers,
-		CanManageSuperusers: r.CanManageSuperusers,
-		CanViewReports:      r.CanViewReports,
-		CanExportData:       r.CanExportData,
-		CanManageSettings:   r.CanManageSettings,
-		CreatedAt:           pgTime(r.CreatedAt),
-		UpdatedAt:           pgTime(r.UpdatedAt),
+		ID:                      r.ID,
+		Role:                    r.Role,
+		CanViewDashboard:        r.CanViewDashboard,
+		CanViewHosts:            r.CanViewHosts,
+		CanManageHosts:          r.CanManageHosts,
+		CanViewPackages:         r.CanViewPackages,
+		CanManagePackages:       r.CanManagePackages,
+		CanViewUsers:            r.CanViewUsers,
+		CanManageUsers:          r.CanManageUsers,
+		CanManageSuperusers:     r.CanManageSuperusers,
+		CanViewReports:          r.CanViewReports,
+		CanExportData:           r.CanExportData,
+		CanManageSettings:       r.CanManageSettings,
+		CanManageNotifications:  r.CanManageNotifications,
+		CanViewNotificationLogs: r.CanViewNotificationLogs,
+		CreatedAt:               pgTime(r.CreatedAt),
+		UpdatedAt:               pgTime(r.UpdatedAt),
 	}
 }
 

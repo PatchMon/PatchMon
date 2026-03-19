@@ -27,7 +27,7 @@ const SEVERITY_COLORS = {
 const LIMIT = 25;
 
 const normalize_status_display = (status) => {
-	if (!status) return "—";
+	if (!status) return " -";
 	const s = String(status).toLowerCase();
 	if (["fail", "failed", "failure"].includes(s)) return "Fail";
 	if (["pass", "passed"].includes(s)) return "Pass";
@@ -123,7 +123,7 @@ const HostComplianceDetail = ({ hostId }) => {
 
 	return (
 		<div className="space-y-6">
-			{/* 5 summary cards — click to filter the rule results table below */}
+			{/* 5 summary cards - click to filter the rule results table below */}
 			<div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
 				<button
 					type="button"
@@ -353,7 +353,7 @@ const HostComplianceDetail = ({ hostId }) => {
 												const rule = row.compliance_rules;
 												const rule_id = rule?.id;
 												const title =
-													rule?.title || row.rule?.title || row.title || "—";
+													rule?.title || row.rule?.title || row.title || " -";
 												const severity =
 													rule?.severity || row.severity || "unknown";
 												return (

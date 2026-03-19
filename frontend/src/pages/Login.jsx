@@ -659,7 +659,7 @@ const Login = () => {
 															</>
 														);
 													}
-													// installed version unknown — fall back to neutral label
+													// installed version unknown - fall back to neutral label
 													return (
 														<>
 															<div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />

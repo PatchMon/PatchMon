@@ -939,12 +939,12 @@ const FirstTimeWizard = () => {
 											<span>
 												Using:{" "}
 												{`${wizardData.firstName} ${wizardData.lastName}`.trim() ||
-													"—"}
+													" -"}
 											</span>
 											<span className="text-secondary-400 dark:text-secondary-500">
 												•
 											</span>
-											<span>{wizardData.email || "—"}</span>
+											<span>{wizardData.email || " -"}</span>
 										</div>
 									)}
 								</div>

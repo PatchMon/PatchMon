@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,7 +13,9 @@ import (
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
@@ -33,10 +36,11 @@ type ComplianceHandler struct {
 	queueInspector    *asynq.Inspector
 	integrationStatus *store.IntegrationStatusStore
 	ssgContentDir     string
+	notify            *notifications.Emitter
 }
 
 // NewComplianceHandler creates a new compliance handler.
-func NewComplianceHandler(complianceStore *store.ComplianceStore, hostsStore *store.HostsStore, registry *agentregistry.Registry, queueClient *asynq.Client, queueInspector *asynq.Inspector, integrationStatus *store.IntegrationStatusStore, ssgContentDir string) *ComplianceHandler {
+func NewComplianceHandler(complianceStore *store.ComplianceStore, hostsStore *store.HostsStore, registry *agentregistry.Registry, queueClient *asynq.Client, queueInspector *asynq.Inspector, integrationStatus *store.IntegrationStatusStore, ssgContentDir string, notify *notifications.Emitter) *ComplianceHandler {
 	return &ComplianceHandler{
 		complianceStore:   complianceStore,
 		hostsStore:        hostsStore,
@@ -45,6 +49,7 @@ func NewComplianceHandler(complianceStore *store.ComplianceStore, hostsStore *st
 		queueInspector:    queueInspector,
 		integrationStatus: integrationStatus,
 		ssgContentDir:     ssgContentDir,
+		notify:            notify,
 	}
 }
 
@@ -281,7 +286,11 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 
 	// Build response
 	scanResponses := make([]map[string]interface{}, 0, len(processed))
+	failedTotal := 0
 	for _, p := range processed {
+		if p.Stats != nil {
+			failedTotal += p.Stats["failed"]
+		}
 		scanResponses = append(scanResponses, map[string]interface{}{
 			"scan_id":        p.ScanID,
 			"profile_name":   p.ProfileName,
@@ -289,6 +298,81 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 			"stats":          p.Stats,
 			"results_stored": p.ResultsStored,
 		})
+	}
+	if h.notify != nil {
+		if d := hostctx.DBFromContext(r.Context()); d != nil {
+			sev := "informational"
+			if failedTotal > 0 {
+				sev = "warning"
+			}
+
+			// Resolve host display name
+			hostName := host.FriendlyName
+			if hostName == "" && host.Hostname != nil {
+				hostName = *host.Hostname
+			}
+
+			// Build per-profile summaries for NOC readability
+			passedTotal := 0
+			totalRules := 0
+			profileSummaries := make([]map[string]interface{}, 0, len(processed))
+			for _, p := range processed {
+				ps := map[string]interface{}{
+					"profile": p.ProfileName,
+				}
+				if p.Score != nil {
+					ps["score"] = fmt.Sprintf("%.1f%%", *p.Score)
+				}
+				if p.Stats != nil {
+					ps["passed"] = p.Stats["passed"]
+					ps["failed"] = p.Stats["failed"]
+					ps["warnings"] = p.Stats["warnings"]
+					passedTotal += p.Stats["passed"]
+					totalRules += p.Stats["passed"] + p.Stats["failed"] + p.Stats["warnings"] + p.Stats["skipped"]
+				}
+				profileSummaries = append(profileSummaries, ps)
+			}
+
+			title := fmt.Sprintf("Compliance Scan - %s", hostName)
+			if failedTotal > 0 {
+				title = fmt.Sprintf("Compliance Scan - %d Failed Rules - %s", failedTotal, hostName)
+			}
+
+			var msgParts []string
+			msgParts = append(msgParts, fmt.Sprintf("Compliance scan completed on host %s.", hostName))
+			msgParts = append(msgParts, fmt.Sprintf("Profiles scanned: %d", len(processed)))
+			if totalRules > 0 {
+				msgParts = append(msgParts, fmt.Sprintf("Results: %d passed, %d failed out of %d total rules.", passedTotal, failedTotal, totalRules))
+			}
+			for _, ps := range profileSummaries {
+				line := fmt.Sprintf("  • %s", ps["profile"])
+				if score, ok := ps["score"]; ok {
+					line += fmt.Sprintf(" - Score: %s", score)
+				}
+				if passed, ok := ps["passed"]; ok {
+					line += fmt.Sprintf(" - Passed: %v, Failed: %v", passed, ps["failed"])
+				}
+				msgParts = append(msgParts, line)
+			}
+
+			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+				Type:          "compliance_scan_completed",
+				Severity:      sev,
+				Title:         title,
+				Message:       strings.Join(msgParts, "\n"),
+				ReferenceType: "host",
+				ReferenceID:   host.ID,
+				Metadata: map[string]interface{}{
+					"host_id":           host.ID,
+					"host_name":         hostName,
+					"failed_count":      failedTotal,
+					"passed_count":      passedTotal,
+					"total_rules":       totalRules,
+					"scans_count":       len(processed),
+					"profile_summaries": profileSummaries,
+				},
+			})
+		}
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{
@@ -1053,7 +1137,7 @@ func (h *ComplianceHandler) GetSSGUpgradeJobStatus(w http.ResponseWriter, r *htt
 				resp["message"] = "SSG upgrade sent to agent"
 			}
 		} else {
-			// Task no longer in queue — assume completed.
+			// Task no longer in queue - assume completed.
 			resp["status"] = "completed"
 			resp["message"] = "SSG upgrade completed"
 		}

@@ -796,7 +796,7 @@ const Profile = () => {
 													if (!user?.has_password && !user?.oidc_sub) {
 														setMessage({
 															type: "error",
-															text: "Cannot unlink Discord — you need at least one login method. Set a password first.",
+															text: "Cannot unlink Discord - you need at least one login method. Set a password first.",
 														});
 														return;
 													}
@@ -826,7 +826,7 @@ const Profile = () => {
 												className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-red-300 dark:border-red-700 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
 												title={
 													!user?.has_password && !user?.oidc_sub
-														? "Cannot unlink — no other login method available"
+														? "Cannot unlink - no other login method available"
 														: ""
 												}
 											>

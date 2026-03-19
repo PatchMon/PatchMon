@@ -385,7 +385,7 @@ const ScanResultsTab = ({
 													{rule.hosts_passed}
 												</span>
 											) : (
-												<span className="text-secondary-400">—</span>
+												<span className="text-secondary-400"> -</span>
 											)}
 										</td>
 										<td className="px-4 py-2 text-center whitespace-nowrap">
@@ -394,7 +394,7 @@ const ScanResultsTab = ({
 													{rule.hosts_failed}
 												</span>
 											) : (
-												<span className="text-secondary-400">—</span>
+												<span className="text-secondary-400"> -</span>
 											)}
 										</td>
 										<td className="px-4 py-2 text-center whitespace-nowrap">
@@ -403,7 +403,7 @@ const ScanResultsTab = ({
 													{rule.hosts_warned}
 												</span>
 											) : (
-												<span className="text-secondary-400">—</span>
+												<span className="text-secondary-400"> -</span>
 											)}
 										</td>
 										<td className="px-4 py-2 text-center whitespace-nowrap text-secondary-500 dark:text-white">
@@ -415,7 +415,7 @@ const ScanResultsTab = ({
 						</table>
 					</div>
 
-					{/* Pagination — always visible when results exist */}
+					{/* Pagination - always visible when results exist */}
 					<div className="flex items-center justify-between px-4 py-3 border-t border-secondary-200 dark:border-secondary-700">
 						<p className="text-sm text-secondary-500 dark:text-white">
 							{total > 0

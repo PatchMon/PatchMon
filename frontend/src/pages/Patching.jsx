@@ -78,15 +78,15 @@ const Patching = () => {
 	const approveMutation = useMutation({
 		mutationFn: (runId) => patchingAPI.approveRun(runId),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["patching-runs"]);
-			queryClient.invalidateQueries(["patching-dashboard"]);
+			queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
+			queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
 		},
 	});
 	const retryValidationMutation = useMutation({
 		mutationFn: (runId) => patchingAPI.retryValidation(runId),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["patching-runs"]);
-			queryClient.invalidateQueries(["patching-dashboard"]);
+			queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
+			queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
 		},
 	});
 	const [approvingId, setApprovingId] = useState(null);
@@ -108,8 +108,8 @@ const Patching = () => {
 	const deleteRunMutation = useMutation({
 		mutationFn: (runId) => patchingAPI.deleteRun(runId),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["patching-runs"]);
-			queryClient.invalidateQueries(["patching-dashboard"]);
+			queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
+			queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
 		},
 	});
 	const [deletingIds, setDeletingIds] = useState(new Set());
@@ -451,7 +451,7 @@ const Patching = () => {
 															{run.triggered_by_username}
 														</span>
 													) : (
-														"—"
+														" -"
 													)}
 												</td>
 												<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-600 dark:text-secondary-400">
@@ -460,7 +460,7 @@ const Patching = () => {
 												<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-600 dark:text-secondary-400">
 													{run.completed_at
 														? new Date(run.completed_at).toLocaleString()
-														: "—"}
+														: " -"}
 												</td>
 												<td className="px-4 py-2 whitespace-nowrap text-right">
 													<div className="flex items-center justify-end gap-2">

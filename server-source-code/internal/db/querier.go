@@ -52,12 +52,15 @@ type Querier interface {
 	CreateDiscordUser(ctx context.Context, arg CreateDiscordUserParams) error
 	CreateHost(ctx context.Context, arg CreateHostParams) error
 	CreateHostGroup(ctx context.Context, arg CreateHostGroupParams) error
+	CreateNotificationDestination(ctx context.Context, arg CreateNotificationDestinationParams) (NotificationDestination, error)
+	CreateNotificationRoute(ctx context.Context, arg CreateNotificationRouteParams) (NotificationRoute, error)
 	CreateOidcUser(ctx context.Context, arg CreateOidcUserParams) error
 	CreatePatchPolicy(ctx context.Context, arg CreatePatchPolicyParams) error
 	CreatePatchPolicyAssignment(ctx context.Context, arg CreatePatchPolicyAssignmentParams) error
 	CreatePatchPolicyExclusion(ctx context.Context, arg CreatePatchPolicyExclusionParams) error
 	// patch_runs
 	CreatePatchRun(ctx context.Context, arg CreatePatchRunParams) error
+	CreateScheduledReport(ctx context.Context, arg CreateScheduledReportParams) (ScheduledReport, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) error
 	DeleteAlert(ctx context.Context, id string) error
@@ -82,6 +85,8 @@ type Querier interface {
 	DeleteImageUpdatesByImageID(ctx context.Context, imageID string) error
 	DeleteImagesByIDs(ctx context.Context, dollar_1 []string) error
 	DeleteNetwork(ctx context.Context, id string) error
+	DeleteNotificationDestination(ctx context.Context, id string) error
+	DeleteNotificationRoute(ctx context.Context, id string) error
 	DeleteOldestTfaRememberSession(ctx context.Context, userID string) error
 	DeletePackagesByIDs(ctx context.Context, dollar_1 []string) error
 	DeletePatchPolicy(ctx context.Context, id string) error
@@ -93,6 +98,7 @@ type Querier interface {
 	DeleteRepository(ctx context.Context, id string) error
 	DeleteRolePermissions(ctx context.Context, role string) error
 	DeleteRunningComplianceScansByHost(ctx context.Context, hostID string) error
+	DeleteScheduledReport(ctx context.Context, id string) error
 	DeleteUser(ctx context.Context, id string) error
 	DeleteVolume(ctx context.Context, id string) error
 	DisableTfa(ctx context.Context, id string) error
@@ -182,6 +188,8 @@ type Querier interface {
 	// Networks
 	GetNetworkByID(ctx context.Context, id string) (DockerNetwork, error)
 	GetNetworksByHostID(ctx context.Context, hostID string) ([]DockerNetwork, error)
+	GetNotificationDestinationByID(ctx context.Context, id string) (NotificationDestination, error)
+	GetNotificationRouteByID(ctx context.Context, id string) (NotificationRoute, error)
 	GetOSDistribution(ctx context.Context) ([]GetOSDistributionRow, error)
 	GetOSDistributionByTypeAndVersion(ctx context.Context) ([]GetOSDistributionByTypeAndVersionRow, error)
 	GetPackageByID(ctx context.Context, id string) (Package, error)
@@ -203,6 +211,7 @@ type Querier interface {
 	GetRepositoryForDelete(ctx context.Context, id string) (GetRepositoryForDeleteRow, error)
 	GetRolePermissions(ctx context.Context, role string) (RolePermission, error)
 	GetRuleAggregationsFromScans(ctx context.Context, arg GetRuleAggregationsFromScansParams) ([]GetRuleAggregationsFromScansRow, error)
+	GetScheduledReportByID(ctx context.Context, id string) (ScheduledReport, error)
 	GetSecurityCountByPackageIDs(ctx context.Context, arg GetSecurityCountByPackageIDsParams) ([]GetSecurityCountByPackageIDsRow, error)
 	GetSessionByID(ctx context.Context, arg GetSessionByIDParams) (UserSession, error)
 	GetSessionByRefreshToken(ctx context.Context, refreshToken string) (UserSession, error)
@@ -226,6 +235,7 @@ type Querier interface {
 	// Volumes
 	GetVolumeByID(ctx context.Context, id string) (DockerVolume, error)
 	GetVolumesByHostID(ctx context.Context, hostID string) ([]DockerVolume, error)
+	HostInHostGroup(ctx context.Context, arg HostInHostGroupParams) (bool, error)
 	IncrementAutoEnrollmentHostsCreated(ctx context.Context, id string) error
 	InsertAlertHistory(ctx context.Context, arg InsertAlertHistoryParams) (AlertHistory, error)
 	InsertDashboardPreference(ctx context.Context, arg InsertDashboardPreferenceParams) error
@@ -234,9 +244,11 @@ type Querier interface {
 	InsertHostPackageWithWUA(ctx context.Context, arg InsertHostPackageWithWUAParams) error
 	InsertHostRepository(ctx context.Context, arg InsertHostRepositoryParams) error
 	InsertJobHistory(ctx context.Context, arg InsertJobHistoryParams) error
+	InsertNotificationDeliveryLog(ctx context.Context, arg InsertNotificationDeliveryLogParams) (NotificationDeliveryLog, error)
 	InsertPackage(ctx context.Context, arg InsertPackageParams) (string, error)
 	InsertReleaseNotesAcceptance(ctx context.Context, arg InsertReleaseNotesAcceptanceParams) (string, error)
 	InsertRepository(ctx context.Context, arg InsertRepositoryParams) (Repository, error)
+	InsertScheduledReportRun(ctx context.Context, arg InsertScheduledReportRunParams) (ScheduledReportRun, error)
 	InsertSystemStatistics(ctx context.Context, arg InsertSystemStatisticsParams) error
 	InsertUpdateHistory(ctx context.Context, arg InsertUpdateHistoryParams) error
 	ListActiveAlertsByType(ctx context.Context, type_ string) ([]ListActiveAlertsByTypeRow, error)
@@ -267,6 +279,10 @@ type Querier interface {
 	ListJobHistoryByApiID(ctx context.Context, arg ListJobHistoryByApiIDParams) ([]JobHistory, error)
 	ListNeedingUpdates(ctx context.Context) ([]ListNeedingUpdatesRow, error)
 	ListNetworks(ctx context.Context, arg ListNetworksParams) ([]DockerNetwork, error)
+	ListNotificationDeliveryLog(ctx context.Context, arg ListNotificationDeliveryLogParams) ([]NotificationDeliveryLog, error)
+	ListNotificationDestinations(ctx context.Context) ([]NotificationDestination, error)
+	ListNotificationRoutes(ctx context.Context) ([]ListNotificationRoutesRow, error)
+	ListNotificationRoutesForEvent(ctx context.Context, eventType string) ([]ListNotificationRoutesForEventRow, error)
 	ListOrphanedContainers(ctx context.Context) ([]ListOrphanedContainersRow, error)
 	ListOrphanedImages(ctx context.Context) ([]ListOrphanedImagesRow, error)
 	ListOrphanedPackages(ctx context.Context) ([]ListOrphanedPackagesRow, error)
@@ -291,6 +307,8 @@ type Querier interface {
 	ListRecentPatchRuns(ctx context.Context, limit int32) ([]ListRecentPatchRunsRow, error)
 	ListRepositories(ctx context.Context, arg ListRepositoriesParams) ([]Repository, error)
 	ListRoles(ctx context.Context) ([]RolePermission, error)
+	ListScheduledReports(ctx context.Context) ([]ScheduledReport, error)
+	ListScheduledReportsDue(ctx context.Context, nextRunAt pgtype.Timestamp) ([]ScheduledReport, error)
 	ListSessionsByUserID(ctx context.Context, userID string) ([]UserSession, error)
 	ListStalledComplianceScans(ctx context.Context, startedAt pgtype.Timestamp) ([]ListStalledComplianceScansRow, error)
 	ListStalledComplianceScansWithDetails(ctx context.Context, startedAt pgtype.Timestamp) ([]ListStalledComplianceScansWithDetailsRow, error)
@@ -335,6 +353,8 @@ type Querier interface {
 	UpdateJobHistoryCompleted(ctx context.Context, jobID string) error
 	UpdateJobHistoryDelayed(ctx context.Context, jobID string) error
 	UpdateJobHistoryFailed(ctx context.Context, arg UpdateJobHistoryFailedParams) error
+	UpdateNotificationDestination(ctx context.Context, arg UpdateNotificationDestinationParams) (NotificationDestination, error)
+	UpdateNotificationRoute(ctx context.Context, arg UpdateNotificationRouteParams) (NotificationRoute, error)
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error
 	UpdatePatchPolicy(ctx context.Context, arg UpdatePatchPolicyParams) error
 	UpdatePatchRunCompleted(ctx context.Context, arg UpdatePatchRunCompletedParams) error
@@ -347,6 +367,8 @@ type Querier interface {
 	UpdatePatchRunStatus(ctx context.Context, arg UpdatePatchRunStatusParams) error
 	UpdatePatchRunValidated(ctx context.Context, arg UpdatePatchRunValidatedParams) error
 	UpdateRepository(ctx context.Context, arg UpdateRepositoryParams) error
+	UpdateScheduledReport(ctx context.Context, arg UpdateScheduledReportParams) (ScheduledReport, error)
+	UpdateScheduledReportRunTimes(ctx context.Context, arg UpdateScheduledReportRunTimesParams) error
 	UpdateSessionActivity(ctx context.Context, id string) error
 	UpdateSessionOnLogin(ctx context.Context, arg UpdateSessionOnLoginParams) error
 	UpdateSettings(ctx context.Context, arg UpdateSettingsParams) error

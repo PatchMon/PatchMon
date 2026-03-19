@@ -94,7 +94,7 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 			return nil
 		}
 		if p.RequeueCount >= maxScanRequeueAttempts {
-			h.log.Warn("run_scan: agent offline, max re-queue attempts reached — giving up",
+			h.log.Warn("run_scan: agent offline, max re-queue attempts reached - giving up",
 				"api_id", p.ApiID, "host_id", p.HostID, "attempts", p.RequeueCount)
 			if taskID != "" && d != nil {
 				msg := "Agent remained offline after maximum retry attempts"
@@ -171,7 +171,7 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 		}
 		h.log.Warn("run_scan: write failed", "api_id", p.ApiID, "error", err, "attempt", p.RequeueCount+1)
 		if p.RequeueCount >= maxScanRequeueAttempts {
-			h.log.Warn("run_scan: write failed, max re-queue attempts reached — giving up",
+			h.log.Warn("run_scan: write failed, max re-queue attempts reached - giving up",
 				"api_id", p.ApiID, "host_id", p.HostID)
 			if taskID != "" && d != nil {
 				msg := "Failed to communicate with agent after maximum retry attempts"
@@ -298,8 +298,8 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 		return nil
 	}
 
-	statusKey := "integration_status:" + p.ApiID + ":compliance"
-	cancelKey := complianceInstallCancelPrefix + taskID
+	statusKey := workerTenantKey(p.Host, "integration_status:"+p.ApiID+":compliance")
+	cancelKey := workerTenantKey(p.Host, complianceInstallCancelPrefix+taskID)
 	deadline := time.Now().Add(complianceInstallTimeout)
 	pollTimer := time.NewTimer(compliancePollInterval)
 	defer pollTimer.Stop()

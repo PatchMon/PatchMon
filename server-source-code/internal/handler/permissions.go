@@ -29,21 +29,23 @@ func (h *PermissionsHandler) GetRoles(w http.ResponseWriter, r *http.Request) {
 	data := make([]map[string]interface{}, len(roles))
 	for i, p := range roles {
 		data[i] = map[string]interface{}{
-			"id":                    p.ID,
-			"role":                  p.Role,
-			"can_view_dashboard":    p.CanViewDashboard,
-			"can_view_hosts":        p.CanViewHosts,
-			"can_manage_hosts":      p.CanManageHosts,
-			"can_view_packages":     p.CanViewPackages,
-			"can_manage_packages":   p.CanManagePackages,
-			"can_view_users":        p.CanViewUsers,
-			"can_manage_users":      p.CanManageUsers,
-			"can_manage_superusers": p.CanManageSuperusers,
-			"can_view_reports":      p.CanViewReports,
-			"can_export_data":       p.CanExportData,
-			"can_manage_settings":   p.CanManageSettings,
-			"created_at":            p.CreatedAt,
-			"updated_at":            p.UpdatedAt,
+			"id":                         p.ID,
+			"role":                       p.Role,
+			"can_view_dashboard":         p.CanViewDashboard,
+			"can_view_hosts":             p.CanViewHosts,
+			"can_manage_hosts":           p.CanManageHosts,
+			"can_view_packages":          p.CanViewPackages,
+			"can_manage_packages":        p.CanManagePackages,
+			"can_view_users":             p.CanViewUsers,
+			"can_manage_users":           p.CanManageUsers,
+			"can_manage_superusers":      p.CanManageSuperusers,
+			"can_view_reports":           p.CanViewReports,
+			"can_export_data":            p.CanExportData,
+			"can_manage_settings":        p.CanManageSettings,
+			"can_manage_notifications":   p.CanManageNotifications,
+			"can_view_notification_logs": p.CanViewNotificationLogs,
+			"created_at":                 p.CreatedAt,
+			"updated_at":                 p.UpdatedAt,
 		}
 	}
 	JSON(w, http.StatusOK, data)
@@ -79,17 +81,19 @@ func (h *PermissionsHandler) UpdateRole(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var req struct {
-		CanViewDashboard    *bool `json:"can_view_dashboard"`
-		CanViewHosts        *bool `json:"can_view_hosts"`
-		CanManageHosts      *bool `json:"can_manage_hosts"`
-		CanViewPackages     *bool `json:"can_view_packages"`
-		CanManagePackages   *bool `json:"can_manage_packages"`
-		CanViewUsers        *bool `json:"can_view_users"`
-		CanManageUsers      *bool `json:"can_manage_users"`
-		CanManageSuperusers *bool `json:"can_manage_superusers"`
-		CanViewReports      *bool `json:"can_view_reports"`
-		CanExportData       *bool `json:"can_export_data"`
-		CanManageSettings   *bool `json:"can_manage_settings"`
+		CanViewDashboard        *bool `json:"can_view_dashboard"`
+		CanViewHosts            *bool `json:"can_view_hosts"`
+		CanManageHosts          *bool `json:"can_manage_hosts"`
+		CanViewPackages         *bool `json:"can_view_packages"`
+		CanManagePackages       *bool `json:"can_manage_packages"`
+		CanViewUsers            *bool `json:"can_view_users"`
+		CanManageUsers          *bool `json:"can_manage_users"`
+		CanManageSuperusers     *bool `json:"can_manage_superusers"`
+		CanViewReports          *bool `json:"can_view_reports"`
+		CanExportData           *bool `json:"can_export_data"`
+		CanManageSettings       *bool `json:"can_manage_settings"`
+		CanManageNotifications  *bool `json:"can_manage_notifications"`
+		CanViewNotificationLogs *bool `json:"can_view_notification_logs"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		Error(w, http.StatusBadRequest, "Invalid request body")
@@ -102,18 +106,20 @@ func (h *PermissionsHandler) UpdateRole(w http.ResponseWriter, r *http.Request) 
 		return false
 	}
 	p := &models.RolePermission{
-		Role:                role,
-		CanViewDashboard:    boolVal(req.CanViewDashboard),
-		CanViewHosts:        boolVal(req.CanViewHosts),
-		CanManageHosts:      boolVal(req.CanManageHosts),
-		CanViewPackages:     boolVal(req.CanViewPackages),
-		CanManagePackages:   boolVal(req.CanManagePackages),
-		CanViewUsers:        boolVal(req.CanViewUsers),
-		CanManageUsers:      boolVal(req.CanManageUsers),
-		CanManageSuperusers: boolVal(req.CanManageSuperusers),
-		CanViewReports:      boolVal(req.CanViewReports),
-		CanExportData:       boolVal(req.CanExportData),
-		CanManageSettings:   boolVal(req.CanManageSettings),
+		Role:                    role,
+		CanViewDashboard:        boolVal(req.CanViewDashboard),
+		CanViewHosts:            boolVal(req.CanViewHosts),
+		CanManageHosts:          boolVal(req.CanManageHosts),
+		CanViewPackages:         boolVal(req.CanViewPackages),
+		CanManagePackages:       boolVal(req.CanManagePackages),
+		CanViewUsers:            boolVal(req.CanViewUsers),
+		CanManageUsers:          boolVal(req.CanManageUsers),
+		CanManageSuperusers:     boolVal(req.CanManageSuperusers),
+		CanViewReports:          boolVal(req.CanViewReports),
+		CanExportData:           boolVal(req.CanExportData),
+		CanManageSettings:       boolVal(req.CanManageSettings),
+		CanManageNotifications:  boolVal(req.CanManageNotifications),
+		CanViewNotificationLogs: boolVal(req.CanViewNotificationLogs),
 	}
 	if err := h.permissions.UpsertRole(r.Context(), p); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to update role permissions")
@@ -164,8 +170,10 @@ func roleToResponse(p *models.RolePermission) map[string]interface{} {
 		"can_manage_packages": p.CanManagePackages, "can_view_users": p.CanViewUsers,
 		"can_manage_users": p.CanManageUsers, "can_manage_superusers": p.CanManageSuperusers,
 		"can_view_reports": p.CanViewReports, "can_export_data": p.CanExportData,
-		"can_manage_settings": p.CanManageSettings,
-		"created_at":          p.CreatedAt, "updated_at": p.UpdatedAt,
+		"can_manage_settings":        p.CanManageSettings,
+		"can_manage_notifications":   p.CanManageNotifications,
+		"can_view_notification_logs": p.CanViewNotificationLogs,
+		"created_at":                 p.CreatedAt, "updated_at": p.UpdatedAt,
 	}
 }
 
@@ -187,17 +195,19 @@ func (h *PermissionsHandler) UserPermissions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	JSON(w, http.StatusOK, map[string]bool{
-		"can_view_dashboard":    p.CanViewDashboard,
-		"can_view_hosts":        p.CanViewHosts,
-		"can_manage_hosts":      p.CanManageHosts,
-		"can_view_packages":     p.CanViewPackages,
-		"can_manage_packages":   p.CanManagePackages,
-		"can_view_users":        p.CanViewUsers,
-		"can_manage_users":      p.CanManageUsers,
-		"can_view_reports":      p.CanViewReports,
-		"can_export_data":       p.CanExportData,
-		"can_manage_settings":   p.CanManageSettings,
-		"can_manage_superusers": p.CanManageSuperusers,
+		"can_view_dashboard":         p.CanViewDashboard,
+		"can_view_hosts":             p.CanViewHosts,
+		"can_manage_hosts":           p.CanManageHosts,
+		"can_view_packages":          p.CanViewPackages,
+		"can_manage_packages":        p.CanManagePackages,
+		"can_view_users":             p.CanViewUsers,
+		"can_manage_users":           p.CanManageUsers,
+		"can_view_reports":           p.CanViewReports,
+		"can_export_data":            p.CanExportData,
+		"can_manage_settings":        p.CanManageSettings,
+		"can_manage_superusers":      p.CanManageSuperusers,
+		"can_manage_notifications":   p.CanManageNotifications,
+		"can_view_notification_logs": p.CanViewNotificationLogs,
 	})
 }
 
@@ -207,5 +217,6 @@ func fullPermissions() map[string]bool {
 		"can_view_packages": true, "can_manage_packages": true, "can_view_users": true,
 		"can_manage_users": true, "can_view_reports": true, "can_export_data": true,
 		"can_manage_settings": true, "can_manage_superusers": true,
+		"can_manage_notifications": true, "can_view_notification_logs": true,
 	}
 }

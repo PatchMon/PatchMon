@@ -25,7 +25,13 @@ import DiscordIcon from "./DiscordIcon";
 const SettingsLayout = ({ children }) => {
 	const content = children ?? <Outlet />;
 	const location = useLocation();
-	const { canManageSettings, canViewUsers, canManageUsers } = useAuth();
+	const {
+		canManageSettings,
+		canViewUsers,
+		canManageUsers,
+		canManageNotifications,
+		canViewNotificationLogs,
+	} = useAuth();
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
 	// Build secondary navigation based on permissions
@@ -96,22 +102,25 @@ const SettingsLayout = ({ children }) => {
 		}
 
 		// Alert Management
+		const alertItems = [];
 		if (canManageSettings()) {
+			alertItems.push({
+				name: "Alert Settings",
+				href: "/settings/alert-settings",
+				icon: Bell,
+			});
+		}
+		if (canManageNotifications() || canViewNotificationLogs()) {
+			alertItems.push({
+				name: "Notifications",
+				href: "/settings/alert-channels",
+				icon: Bell,
+			});
+		}
+		if (alertItems.length > 0) {
 			nav.push({
 				section: "Alert Management",
-				items: [
-					{
-						name: "Alert Settings",
-						href: "/settings/alert-settings",
-						icon: Bell,
-					},
-					{
-						name: "Alert Channels",
-						href: "/settings/alert-channels",
-						icon: Bell,
-						comingSoon: true,
-					},
-				],
+				items: alertItems,
 			});
 		}
 

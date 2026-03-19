@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 )
@@ -20,7 +22,7 @@ var agentSemverRe = regexp.MustCompile(`^\d+\.\d+\.\d+`)
 // ProcessAgentUpdate runs the agent version check: binary version + DNS latest, then create/resolve alerts.
 // Called by the version-update-check queue job.
 // The Go server reads the agent binary version by executing patchmon-agent (same as Agent Version tab in Settings).
-func ProcessAgentUpdate(ctx context.Context, d *database.DB, agentsDir string, log *slog.Logger) error {
+func ProcessAgentUpdate(ctx context.Context, d *database.DB, agentsDir string, tenantHost string, emit *notifications.Emitter, log *slog.Logger) error {
 	enabled, err := IsAlertsEnabled(ctx, d)
 	if err != nil || !enabled {
 		log.Debug("agent_update: alerts disabled")
@@ -67,7 +69,11 @@ func ProcessAgentUpdate(ctx context.Context, d *database.DB, agentsDir string, l
 			title := "Agent Files Update Available"
 			msg := fmt.Sprintf("A new agent version (%s) is available. Current version: %s", latest, currentVersion)
 			meta := map[string]interface{}{"current_version": currentVersion, "latest_version": latest}
-			_, _ = alertsStore.Create(ctx, "agent_update", severity, title, msg, meta)
+			alert, _ := alertsStore.Create(ctx, "agent_update", severity, title, msg, meta)
+			if alert != nil && emit != nil {
+				a := &models.Alert{ID: alert.ID, Type: alert.Type, Severity: alert.Severity, Title: alert.Title, Message: alert.Message}
+				emit.EmitForAlert(ctx, d, tenantHost, a, meta, cfg)
+			}
 			log.Info("agent_update: created alert", "current", currentVersion, "latest", latest)
 		}
 	} else if currentVersion != "" && latest != "" && util.CompareVersions(latest, currentVersion) <= 0 {

@@ -465,7 +465,7 @@ type PackageActivityEntry struct {
 func (s *PackagesStore) GetActivity(ctx context.Context, packageIDOrName string, limit, offset int) ([]PackageActivityEntry, error) {
 	d := s.db.DB(ctx)
 	// Resolve to a canonical name from the packages table if possible.
-	// Fall back to using the raw string — this covers packages that only ever
+	// Fall back to using the raw string - this covers packages that only ever
 	// appear as dependencies (in packages_affected) and are not tracked as
 	// top-level installed packages.
 	pkgName := packageIDOrName

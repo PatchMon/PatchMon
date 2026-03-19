@@ -4,6 +4,7 @@ import {
 	ArrowDown,
 	ArrowUp,
 	ArrowUpDown,
+	CheckCircle,
 	Info,
 	MoreVertical,
 	RefreshCw,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
+import { useToast } from "../contexts/ToastContext";
 import { adminUsersAPI, alertsAPI, formatRelativeTime } from "../utils/api";
 
 // System-only actions that should not appear in user-facing menus
@@ -22,6 +24,7 @@ const SYSTEM_ONLY_ACTIONS = new Set(["created", "updated"]);
 const Reporting = () => {
 	const { user: _user } = useAuth();
 	const queryClient = useQueryClient();
+	const toast = useToast();
 	const [searchTerm, setSearchTerm] = useState("");
 	const [severityFilter, setSeverityFilter] = useState("all");
 	const [typeFilter, setTypeFilter] = useState("all");
@@ -174,6 +177,42 @@ const Reporting = () => {
 		},
 	});
 
+	// Bulk action mutation (acknowledge, resolve, etc. for multiple alerts)
+	const bulkActionMutation = useMutation({
+		mutationFn: async ({ alertIds, action }) => {
+			return alertsAPI.bulkAction(alertIds, action);
+		},
+		onSuccess: (_data, variables) => {
+			queryClient.invalidateQueries({ queryKey: ["alerts"] });
+			queryClient.invalidateQueries({ queryKey: ["alert-stats"] });
+			refetchAlerts();
+			setSelectedAlerts(new Set());
+			toast.success(
+				`${variables.alertIds.length} alert(s) updated: ${variables.action}`,
+			);
+		},
+		onError: (err) => {
+			toast.error(err.response?.data?.error || "Failed to perform bulk action");
+		},
+	});
+
+	// Handle bulk action on selected alerts
+	const handleBulkAction = async (actionName) => {
+		if (selectedAlerts.size === 0) return;
+		await bulkActionMutation.mutateAsync({
+			alertIds: Array.from(selectedAlerts),
+			action: actionName,
+		});
+	};
+
+	// Track previous stats for trend indicators
+	const prevStatsRef = useRef(null);
+	useEffect(() => {
+		if (statsData && prevStatsRef.current === null) {
+			prevStatsRef.current = statsData;
+		}
+	}, [statsData]);
+
 	const alerts = alertsData || [];
 	const stats = statsData || {};
 
@@ -255,7 +294,7 @@ const Reporting = () => {
 		if (type == null || typeof type !== "string") {
 			return (
 				<span className="px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
-					—
+					-
 				</span>
 			);
 		}
@@ -591,7 +630,7 @@ const Reporting = () => {
 			</div>
 
 			{/* Stats Cards */}
-			<div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+			<div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
 				{/* Informational Card */}
 				<div className="card p-4">
 					<div className="flex items-center">
@@ -655,6 +694,28 @@ const Reporting = () => {
 							</p>
 							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
 								{statsLoading ? "..." : stats.critical || 0}
+							</p>
+						</div>
+					</div>
+				</div>
+
+				{/* Total Active Card */}
+				<div className="card p-4">
+					<div className="flex items-center">
+						<div className="flex-shrink-0">
+							<CheckCircle className="h-5 w-5 text-secondary-600 mr-2" />
+						</div>
+						<div className="w-0 flex-1">
+							<p className="text-sm text-secondary-500 dark:text-white">
+								Total Active
+							</p>
+							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+								{statsLoading
+									? "..."
+									: (stats.informational || 0) +
+										(stats.warning || 0) +
+										(stats.error || 0) +
+										(stats.critical || 0)}
 							</p>
 						</div>
 					</div>
@@ -738,19 +799,43 @@ const Reporting = () => {
 			<div className="card overflow-hidden">
 				{/* Bulk Actions Bar */}
 				{selectedAlerts.size > 0 && (
-					<div className="px-4 py-2 bg-primary-50 dark:bg-primary-900 border-b border-secondary-200 dark:border-secondary-700 flex items-center justify-between">
+					<div className="px-4 py-2 bg-primary-50 dark:bg-primary-900 border-b border-secondary-200 dark:border-secondary-700 flex items-center justify-between gap-2 flex-wrap">
 						<div className="text-sm text-secondary-700 dark:text-white">
 							{selectedAlerts.size} alert(s) selected
 						</div>
-						<button
-							type="button"
-							onClick={handleDeleteSelected}
-							disabled={deleteAlertsMutation.isPending}
-							className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-danger-600 hover:bg-danger-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
-						>
-							<Trash2 className="h-4 w-4" />
-							Delete Selected
-						</button>
+						<div className="flex items-center gap-2 flex-wrap">
+							{workflowActions.map((action) => (
+								<button
+									key={action.name}
+									type="button"
+									onClick={() => handleBulkAction(action.name)}
+									disabled={bulkActionMutation.isPending}
+									className="px-3 py-1.5 text-sm font-medium text-secondary-700 dark:text-white bg-white dark:bg-secondary-700 border border-secondary-300 dark:border-secondary-600 hover:bg-secondary-50 dark:hover:bg-secondary-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{action.display_name}
+								</button>
+							))}
+							{resolutionActions.map((action) => (
+								<button
+									key={action.name}
+									type="button"
+									onClick={() => handleBulkAction(action.name)}
+									disabled={bulkActionMutation.isPending}
+									className="px-3 py-1.5 text-sm font-medium text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/30 border border-green-300 dark:border-green-700 hover:bg-green-100 dark:hover:bg-green-900/50 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{action.display_name}
+								</button>
+							))}
+							<button
+								type="button"
+								onClick={handleDeleteSelected}
+								disabled={deleteAlertsMutation.isPending}
+								className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-danger-600 hover:bg-danger-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+							>
+								<Trash2 className="h-4 w-4" />
+								Delete
+							</button>
+						</div>
 					</div>
 				)}
 				{alertsLoading ? (
@@ -942,7 +1027,7 @@ const Reporting = () => {
 										>
 											{alert.created_at
 												? formatRelativeTime(alert.created_at)
-												: "—"}
+												: " -"}
 										</td>
 										<td
 											className="px-4 py-2 whitespace-nowrap text-right text-sm font-medium"

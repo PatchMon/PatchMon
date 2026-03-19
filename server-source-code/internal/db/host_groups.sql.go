@@ -166,6 +166,24 @@ func (q *Queries) GetHostIDsByGroupIDs(ctx context.Context, dollar_1 []string) (
 	return items, nil
 }
 
+const hostInHostGroup = `-- name: HostInHostGroup :one
+SELECT EXISTS (
+    SELECT 1 FROM host_group_memberships WHERE host_id = $1 AND host_group_id = $2
+) AS exists
+`
+
+type HostInHostGroupParams struct {
+	HostID      string `json:"host_id"`
+	HostGroupID string `json:"host_group_id"`
+}
+
+func (q *Queries) HostInHostGroup(ctx context.Context, arg HostInHostGroupParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hostInHostGroup, arg.HostID, arg.HostGroupID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const insertHostGroupMembership = `-- name: InsertHostGroupMembership :exec
 INSERT INTO host_group_memberships (id, host_id, host_group_id) VALUES ($1, $2, $3)
 `

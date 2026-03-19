@@ -535,6 +535,10 @@ export const AuthProvider = ({ children }) => {
 	const canViewReports = () => hasPermission("can_view_reports");
 	const canExportData = () => hasPermission("can_export_data");
 	const canManageSettings = () => hasPermission("can_manage_settings");
+	const canManageNotifications = () =>
+		hasPermission("can_manage_notifications");
+	const canViewNotificationLogs = () =>
+		hasPermission("can_view_notification_logs");
 
 	const SETUP_COMPLETE_CACHE_KEY = "patchmon_setup_complete";
 
@@ -725,6 +729,8 @@ export const AuthProvider = ({ children }) => {
 		canViewReports,
 		canExportData,
 		canManageSettings,
+		canManageNotifications,
+		canViewNotificationLogs,
 		acceptReleaseNotes,
 	};
 

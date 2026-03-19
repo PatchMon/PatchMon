@@ -726,7 +726,7 @@ const Compliance = () => {
 															to={`/compliance/hosts/${row.host_id}`}
 															className="text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 hover:underline font-medium"
 														>
-															{row.friendly_name || row.hostname || "—"}
+															{row.friendly_name || row.hostname || " -"}
 														</Link>
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap">
@@ -780,7 +780,7 @@ const Compliance = () => {
 															</span>
 														) : (
 															row.last_activity_title ||
-															(row.last_scan_date ? "Scan" : "—")
+															(row.last_scan_date ? "Scan" : " -")
 														)}
 													</td>
 													<td className="px-4 py-2 text-right whitespace-nowrap">
@@ -800,7 +800,7 @@ const Compliance = () => {
 																{row.passed}
 															</button>
 														) : (
-															"—"
+															" -"
 														)}
 													</td>
 													<td className="px-4 py-2 text-right whitespace-nowrap">
@@ -820,7 +820,7 @@ const Compliance = () => {
 																{row.failed}
 															</button>
 														) : (
-															"—"
+															" -"
 														)}
 													</td>
 													<td className="px-4 py-2 text-right whitespace-nowrap">
@@ -840,7 +840,7 @@ const Compliance = () => {
 																{row.skipped}
 															</button>
 														) : (
-															"—"
+															" -"
 														)}
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap">
@@ -882,7 +882,7 @@ const Compliance = () => {
 																? "OpenSCAP"
 																: row.docker_enabled
 																	? "Docker"
-																	: "—"}
+																	: " -"}
 													</td>
 												</tr>
 											);

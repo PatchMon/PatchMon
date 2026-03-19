@@ -308,7 +308,7 @@ export default function RuleDetail() {
 							</h2>
 						</div>
 						<p className="text-sm text-secondary-600 dark:text-white whitespace-pre-wrap leading-relaxed">
-							{rule.description || "—"}
+							{rule.description || " -"}
 						</p>
 					</div>
 
@@ -456,7 +456,7 @@ export default function RuleDetail() {
 														{why_text}
 													</span>
 												) : (
-													<span className="text-secondary-400">—</span>
+													<span className="text-secondary-400"> -</span>
 												)}
 											</td>
 										</tr>

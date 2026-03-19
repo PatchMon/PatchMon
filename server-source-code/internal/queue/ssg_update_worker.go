@@ -48,11 +48,24 @@ func (h *SSGUpdateCheckHandler) ProcessTask(ctx context.Context, t *asynq.Task) 
 		return nil
 	}
 
-	d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+	if len(t.Payload()) > 0 {
+		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		th := tenantHostFromPayload(t.Payload())
+		n := h.checkDB(ctx, d, th, serverVersion)
+		h.log.Info("ssg-update-check completed", "server_version", serverVersion, "enqueued", n)
+		return nil
+	}
 
+	totalEnqueued := 0
+	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
+		totalEnqueued += h.checkDB(ctx, d, host, serverVersion)
+	})
+	h.log.Info("ssg-update-check completed", "server_version", serverVersion, "enqueued", totalEnqueued)
+	return nil
+}
+
+func (h *SSGUpdateCheckHandler) checkDB(ctx context.Context, d *database.DB, tenantHost, serverVersion string) int {
 	// Use array comparison for proper semantic version ordering.
-	// regexp_replace strips non-numeric suffixes (e.g. "79-1" → "79") before casting to int[].
-	// COALESCE(NULLIF(...), '0') handles empty segments (e.g. "0.1." or malformed data) to avoid "invalid input syntax for type integer" errors.
 	const query = `
 		SELECT h.id, h.api_id
 		FROM hosts h
@@ -68,7 +81,8 @@ func (h *SSGUpdateCheckHandler) ProcessTask(ctx context.Context, t *asynq.Task) 
 
 	rows, err := d.Raw(ctx, query, serverVersion)
 	if err != nil {
-		return err
+		h.log.Warn("ssg-update-check: query failed", "host", tenantHost, "error", err)
+		return 0
 	}
 	defer rows.Close()
 
@@ -80,26 +94,16 @@ func (h *SSGUpdateCheckHandler) ProcessTask(ctx context.Context, t *asynq.Task) 
 	for rows.Next() {
 		var oh outdatedHost
 		if err := rows.Scan(&oh.ID, &oh.ApiID); err != nil {
-			return err
+			h.log.Warn("ssg-update-check: scan failed", "error", err)
+			return 0
 		}
 		hosts = append(hosts, oh)
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return 0
 	}
-
 	if len(hosts) == 0 {
-		h.log.Info("ssg-update-check: all hosts up to date", "server_version", serverVersion)
-		return nil
-	}
-
-	// Resolve host for multi-tenant task routing.
-	var hostField string
-	var payload struct {
-		Host string `json:"host"`
-	}
-	if err := json.Unmarshal(t.Payload(), &payload); err == nil {
-		hostField = payload.Host
+		return 0
 	}
 
 	enqueued := 0
@@ -107,7 +111,7 @@ func (h *SSGUpdateCheckHandler) ProcessTask(ctx context.Context, t *asynq.Task) 
 		task, err := NewSSGUpgradeTask(SSGUpgradePayload{
 			HostID:     host.ID,
 			ApiID:      host.ApiID,
-			Host:       hostField,
+			Host:       tenantHost,
 			SSGVersion: serverVersion,
 		})
 		if err != nil {
@@ -115,7 +119,6 @@ func (h *SSGUpdateCheckHandler) ProcessTask(ctx context.Context, t *asynq.Task) 
 			continue
 		}
 		if _, err := h.queueClient.Enqueue(task); err != nil {
-			// TaskID dedup may cause AlreadyExists — that's fine, an upgrade is already queued.
 			if err != asynq.ErrDuplicateTask && err != asynq.ErrTaskIDConflict {
 				h.log.Warn("ssg-update-check: enqueue failed", "host_id", host.ID, "error", err)
 			}
@@ -123,13 +126,7 @@ func (h *SSGUpdateCheckHandler) ProcessTask(ctx context.Context, t *asynq.Task) 
 		}
 		enqueued++
 	}
-
-	h.log.Info("ssg-update-check completed",
-		"server_version", serverVersion,
-		"outdated_hosts", len(hosts),
-		"enqueued", enqueued,
-	)
-	return nil
+	return enqueued
 }
 
 // SSGUpgradeHandler handles per-host ssg_upgrade jobs.

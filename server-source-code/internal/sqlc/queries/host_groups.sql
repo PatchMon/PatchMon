@@ -39,3 +39,8 @@ DELETE FROM host_group_memberships WHERE host_id = $1;
 
 -- name: InsertHostGroupMembership :exec
 INSERT INTO host_group_memberships (id, host_id, host_group_id) VALUES ($1, $2, $3);
+
+-- name: HostInHostGroup :one
+SELECT EXISTS (
+    SELECT 1 FROM host_group_memberships WHERE host_id = $1 AND host_group_id = $2
+) AS exists;

@@ -119,7 +119,7 @@ func (c *PoolCache) GetOrCreate(ctx stdctx.Context, host string) (*database.DB, 
 	if log == nil {
 		log = slog.Default()
 	}
-	// Migrations run outside the global lock — only the per-host mutex is held.
+	// Migrations run outside the global lock - only the per-host mutex is held.
 	if err := migrate.Run(entry.DatabaseURL, log); err != nil {
 		return nil, err
 	}

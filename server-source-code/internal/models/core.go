@@ -51,21 +51,23 @@ type UserSession struct {
 
 // RolePermission matches role_permissions table.
 type RolePermission struct {
-	ID                  string    `db:"id"`
-	Role                string    `db:"role"`
-	CanViewDashboard    bool      `db:"can_view_dashboard"`
-	CanViewHosts        bool      `db:"can_view_hosts"`
-	CanManageHosts      bool      `db:"can_manage_hosts"`
-	CanViewPackages     bool      `db:"can_view_packages"`
-	CanManagePackages   bool      `db:"can_manage_packages"`
-	CanViewUsers        bool      `db:"can_view_users"`
-	CanManageUsers      bool      `db:"can_manage_users"`
-	CanManageSuperusers bool      `db:"can_manage_superusers"`
-	CanViewReports      bool      `db:"can_view_reports"`
-	CanExportData       bool      `db:"can_export_data"`
-	CanManageSettings   bool      `db:"can_manage_settings"`
-	CreatedAt           time.Time `db:"created_at"`
-	UpdatedAt           time.Time `db:"updated_at"`
+	ID                      string    `db:"id"`
+	Role                    string    `db:"role"`
+	CanViewDashboard        bool      `db:"can_view_dashboard"`
+	CanViewHosts            bool      `db:"can_view_hosts"`
+	CanManageHosts          bool      `db:"can_manage_hosts"`
+	CanViewPackages         bool      `db:"can_view_packages"`
+	CanManagePackages       bool      `db:"can_manage_packages"`
+	CanViewUsers            bool      `db:"can_view_users"`
+	CanManageUsers          bool      `db:"can_manage_users"`
+	CanManageSuperusers     bool      `db:"can_manage_superusers"`
+	CanViewReports          bool      `db:"can_view_reports"`
+	CanExportData           bool      `db:"can_export_data"`
+	CanManageSettings       bool      `db:"can_manage_settings"`
+	CanManageNotifications  bool      `db:"can_manage_notifications"`
+	CanViewNotificationLogs bool      `db:"can_view_notification_logs"`
+	CreatedAt               time.Time `db:"created_at"`
+	UpdatedAt               time.Time `db:"updated_at"`
 }
 
 // Settings matches settings table.

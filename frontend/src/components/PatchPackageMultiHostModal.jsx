@@ -638,7 +638,7 @@ export default function PatchPackageMultiHostModal({
 										? "Now"
 										: preview?.run_at_iso
 											? new Date(preview.run_at_iso).toLocaleString()
-											: "—";
+											: " -";
 
 								const hostLabel =
 									host.friendly_name || host.hostname || host.id;
@@ -920,7 +920,7 @@ export default function PatchPackageMultiHostModal({
 															Submit for approval
 														</span>
 														<span className="text-xs text-secondary-500 dark:text-secondary-400">
-															Leave pending — approve later from Runs &amp;
+															Leave pending - approve later from Runs &amp;
 															History
 														</span>
 													</span>

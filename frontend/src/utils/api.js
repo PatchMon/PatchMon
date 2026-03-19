@@ -423,7 +423,7 @@ export const formatError = (error) => {
  */
 export const formatDate = (date, timezone) => {
 	const d = new Date(date);
-	if (Number.isNaN(d.getTime())) return "—";
+	if (Number.isNaN(d.getTime())) return " -";
 	if (timezone) {
 		try {
 			return new Intl.DateTimeFormat(undefined, {
@@ -486,7 +486,7 @@ export const tfaAPI = {
 };
 
 export const formatRelativeTime = (date) => {
-	if (date == null) return "—";
+	if (date == null) return " -";
 	const now = new Date();
 	const diff = now - new Date(date);
 	const seconds = Math.floor(diff / 1000);
@@ -558,6 +558,33 @@ export const alertsAPI = {
 	triggerCleanup: () => api.post("/alerts/cleanup"),
 	deleteAlert: (id) => api.delete(`/alerts/${id}`),
 	bulkDeleteAlerts: (alertIds) => api.post("/alerts/bulk-delete", { alertIds }),
+	bulkAction: (alertIds, action) =>
+		api.post("/alerts/bulk-action", { alertIds, action }),
+};
+
+// Notifications (webhooks, email, scheduled reports)
+export const notificationsAPI = {
+	listDestinations: () => api.get("/notifications/destinations"),
+	createDestination: (data) => api.post("/notifications/destinations", data),
+	updateDestination: (id, data) =>
+		api.put(`/notifications/destinations/${id}`, data),
+	deleteDestination: (id) => api.delete(`/notifications/destinations/${id}`),
+	listRoutes: () => api.get("/notifications/routes"),
+	createRoute: (data) => api.post("/notifications/routes", data),
+	updateRoute: (id, data) => api.put(`/notifications/routes/${id}`, data),
+	deleteRoute: (id) => api.delete(`/notifications/routes/${id}`),
+	listDeliveryLog: (params = {}) =>
+		api.get("/notifications/delivery-log", { params }),
+	test: (data) => api.post("/notifications/test", data),
+	listScheduledReports: () => api.get("/notifications/scheduled-reports"),
+	createScheduledReport: (data) =>
+		api.post("/notifications/scheduled-reports", data),
+	updateScheduledReport: (id, data) =>
+		api.put(`/notifications/scheduled-reports/${id}`, data),
+	deleteScheduledReport: (id) =>
+		api.delete(`/notifications/scheduled-reports/${id}`),
+	runScheduledReportNow: (id) =>
+		api.post(`/notifications/scheduled-reports/${id}/run-now`),
 };
 
 export default api;

@@ -1567,11 +1567,11 @@ const Integrations = () => {
       headers:
         Authorization: Basic BASE64_ENCODED_CREDENTIALS
       mappings:
-        - field: total_hosts
+       - field: total_hosts
           label: Total Hosts
-        - field: hosts_needing_updates
+       - field: hosts_needing_updates
           label: Needs Updates
-        - field: security_updates
+       - field: security_updates
           label: Security Updates`}
 									</pre>
 								</div>
@@ -2823,11 +2823,11 @@ const Integrations = () => {
       headers:
         Authorization: Basic ${base64Creds}
       mappings:
-        - field: total_hosts
+       - field: total_hosts
           label: Total Hosts
-        - field: hosts_needing_updates
+       - field: hosts_needing_updates
           label: Needs Updates
-        - field: security_updates
+       - field: security_updates
           label: Security Updates`;
 														copy_to_clipboard(config, "gethomepage-config");
 													}}
@@ -2862,11 +2862,11 @@ const Integrations = () => {
       headers:
         Authorization: Basic ${base64Creds}
       mappings:
-        - field: total_hosts
+       - field: total_hosts
           label: Total Hosts
-        - field: hosts_needing_updates
+       - field: hosts_needing_updates
           label: Needs Updates
-        - field: security_updates
+       - field: security_updates
           label: Security Updates`;
 												})()}
 												readOnly

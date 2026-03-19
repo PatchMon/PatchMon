@@ -96,7 +96,7 @@ const ActiveBenchmarkScans = () => {
 												? formatDistanceToNow(new Date(scan.startedAt), {
 														addSuffix: true,
 													})
-												: "—"}
+												: " -"}
 										</td>
 									</tr>
 								))}

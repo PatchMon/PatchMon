@@ -195,9 +195,9 @@ const EnvironmentSettings = () => {
 						Environment Variables
 					</h2>
 					<p className="text-sm text-secondary-500 dark:text-secondary-400 mt-1">
-						<strong>Priority 1</strong> — .env file •{" "}
-						<strong>Priority 2</strong> — Database settings (configurable below){" "}
-						• <strong>Priority 3</strong> — Coded defaults
+						<strong>Priority 1</strong> - .env file •{" "}
+						<strong>Priority 2</strong> - Database settings (configurable below){" "}
+						• <strong>Priority 3</strong> - Coded defaults
 					</p>
 					<p className="text-sm text-secondary-500 dark:text-secondary-400 mt-1">
 						Variables marked &quot;Configure via .env&quot; are
@@ -399,12 +399,12 @@ const EnvironmentSettings = () => {
 													</div>
 												) : (
 													<span className="text-sm text-secondary-700 dark:text-secondary-300 break-all">
-														{v.effectiveValue || "—"}
+														{v.effectiveValue || " -"}
 													</span>
 												)}
 											</td>
 											<td className="px-3 py-2 whitespace-nowrap text-sm text-secondary-500 dark:text-secondary-400">
-												{v.defaultValue || "—"}
+												{v.defaultValue || " -"}
 											</td>
 											<td className="px-3 py-2 whitespace-nowrap">
 												<SourceBadge source={v.effectiveSource} />
@@ -442,7 +442,7 @@ const EnvironmentSettings = () => {
 												) : (
 													<span
 														className="text-xs text-secondary-400"
-														title="Startup/deployment only — configure via .env"
+														title="Startup/deployment only - configure via .env"
 													>
 														Configure via .env
 													</span>

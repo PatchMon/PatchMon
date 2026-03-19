@@ -48,6 +48,9 @@ const DockerHostDetail = lazy(() => import("./pages/docker/HostDetail"));
 const DockerVolumeDetail = lazy(() => import("./pages/docker/VolumeDetail"));
 const DockerNetworkDetail = lazy(() => import("./pages/docker/NetworkDetail"));
 const AlertChannels = lazy(() => import("./pages/settings/AlertChannels"));
+const SettingsHomeRedirect = lazy(
+	() => import("./pages/settings/SettingsHomeRedirect"),
+);
 const AlertSettings = lazy(() => import("./pages/settings/AlertSettings"));
 const Integrations = lazy(() => import("./pages/settings/Integrations"));
 const PatchManagement = lazy(() => import("./pages/settings/PatchManagement"));
@@ -311,7 +314,13 @@ function AppRoutes() {
 					<Route
 						path="/settings"
 						element={
-							<ProtectedRoute requirePermission="can_view_users">
+							<ProtectedRoute
+								requireAnyPermissions={[
+									"can_view_users",
+									"can_manage_notifications",
+									"can_view_notification_logs",
+								]}
+							>
 								<SettingsLayout>
 									<Suspense fallback={<PageLoadingFallback />}>
 										<Outlet />
@@ -323,9 +332,9 @@ function AppRoutes() {
 						<Route
 							index
 							element={
-								<ProtectedRoute requirePermission="can_manage_settings">
-									<SettingsServerConfig />
-								</ProtectedRoute>
+								<Suspense fallback={<PageLoadingFallback />}>
+									<SettingsHomeRedirect />
+								</Suspense>
 							}
 						/>
 						<Route
@@ -403,7 +412,12 @@ function AppRoutes() {
 						<Route
 							path="alert-channels"
 							element={
-								<ProtectedRoute requirePermission="can_manage_settings">
+								<ProtectedRoute
+									requireAnyPermissions={[
+										"can_manage_notifications",
+										"can_view_notification_logs",
+									]}
+								>
 									<AlertChannels />
 								</ProtectedRoute>
 							}

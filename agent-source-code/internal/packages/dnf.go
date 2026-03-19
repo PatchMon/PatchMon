@@ -370,7 +370,7 @@ func (m *DNFManager) parseInstalledPackages(output string) map[string]models.Pac
 		// Detect by checking the original line starts without leading whitespace
 		// and the trimmed text has no spaces (single token).
 		if len(parts) == 1 && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
-			// Looks like a bare package name line — remember it
+			// Looks like a bare package name line - remember it
 			pendingName = strings.Split(parts[0], ".")[0]
 			continue
 		}

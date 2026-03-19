@@ -41,7 +41,7 @@ const PROFILE_TYPE_LABELS = {
 };
 
 const format_duration = (ms) => {
-	if (ms == null) return "—";
+	if (ms == null) return " -";
 	if (ms < 1000) return `${ms}ms`;
 	const seconds = ms / 1000;
 	if (seconds < 60) return `${seconds.toFixed(1)}s`;
@@ -234,7 +234,7 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 										STATUS_CONFIG[scan.status] || STATUS_CONFIG.completed;
 									const StatusIcon = cfg.icon;
 									const score_pct =
-										scan.score != null ? `${Math.round(scan.score)}%` : "—";
+										scan.score != null ? `${Math.round(scan.score)}%` : " -";
 
 									return (
 										<tr
@@ -343,7 +343,7 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 													? formatDistanceToNow(new Date(scan.started_at), {
 															addSuffix: true,
 														})
-													: "—"}
+													: " -"}
 											</td>
 										</tr>
 									);

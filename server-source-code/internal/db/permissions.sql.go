@@ -30,7 +30,7 @@ func (q *Queries) DeleteRolePermissions(ctx context.Context, role string) error 
 }
 
 const getRolePermissions = `-- name: GetRolePermissions :one
-SELECT id, role, can_view_dashboard, can_view_hosts, can_manage_hosts, can_view_packages, can_manage_packages, can_view_users, can_manage_users, can_manage_superusers, can_view_reports, can_export_data, can_manage_settings, created_at, updated_at FROM role_permissions WHERE role = $1
+SELECT id, role, can_view_dashboard, can_view_hosts, can_manage_hosts, can_view_packages, can_manage_packages, can_view_users, can_manage_users, can_manage_superusers, can_view_reports, can_export_data, can_manage_settings, can_manage_notifications, can_view_notification_logs, created_at, updated_at FROM role_permissions WHERE role = $1
 `
 
 func (q *Queries) GetRolePermissions(ctx context.Context, role string) (RolePermission, error) {
@@ -50,6 +50,8 @@ func (q *Queries) GetRolePermissions(ctx context.Context, role string) (RolePerm
 		&i.CanViewReports,
 		&i.CanExportData,
 		&i.CanManageSettings,
+		&i.CanManageNotifications,
+		&i.CanViewNotificationLogs,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -57,7 +59,7 @@ func (q *Queries) GetRolePermissions(ctx context.Context, role string) (RolePerm
 }
 
 const listRoles = `-- name: ListRoles :many
-SELECT id, role, can_view_dashboard, can_view_hosts, can_manage_hosts, can_view_packages, can_manage_packages, can_view_users, can_manage_users, can_manage_superusers, can_view_reports, can_export_data, can_manage_settings, created_at, updated_at FROM role_permissions ORDER BY role
+SELECT id, role, can_view_dashboard, can_view_hosts, can_manage_hosts, can_view_packages, can_manage_packages, can_view_users, can_manage_users, can_manage_superusers, can_view_reports, can_export_data, can_manage_settings, can_manage_notifications, can_view_notification_logs, created_at, updated_at FROM role_permissions ORDER BY role
 `
 
 func (q *Queries) ListRoles(ctx context.Context) ([]RolePermission, error) {
@@ -83,6 +85,8 @@ func (q *Queries) ListRoles(ctx context.Context) ([]RolePermission, error) {
 			&i.CanViewReports,
 			&i.CanExportData,
 			&i.CanManageSettings,
+			&i.CanManageNotifications,
+			&i.CanViewNotificationLogs,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -101,9 +105,10 @@ INSERT INTO role_permissions (
     id, role, can_view_dashboard, can_view_hosts, can_manage_hosts,
     can_view_packages, can_manage_packages, can_view_users, can_manage_users,
     can_manage_superusers, can_view_reports, can_export_data, can_manage_settings,
+    can_manage_notifications, can_view_notification_logs,
     created_at, updated_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 )
 ON CONFLICT (role) DO UPDATE SET
@@ -118,24 +123,28 @@ ON CONFLICT (role) DO UPDATE SET
     can_view_reports = EXCLUDED.can_view_reports,
     can_export_data = EXCLUDED.can_export_data,
     can_manage_settings = EXCLUDED.can_manage_settings,
+    can_manage_notifications = EXCLUDED.can_manage_notifications,
+    can_view_notification_logs = EXCLUDED.can_view_notification_logs,
     updated_at = CURRENT_TIMESTAMP
-RETURNING id, role, can_view_dashboard, can_view_hosts, can_manage_hosts, can_view_packages, can_manage_packages, can_view_users, can_manage_users, can_manage_superusers, can_view_reports, can_export_data, can_manage_settings, created_at, updated_at
+RETURNING id, role, can_view_dashboard, can_view_hosts, can_manage_hosts, can_view_packages, can_manage_packages, can_view_users, can_manage_users, can_manage_superusers, can_view_reports, can_export_data, can_manage_settings, can_manage_notifications, can_view_notification_logs, created_at, updated_at
 `
 
 type UpsertRolePermissionsParams struct {
-	ID                  string `json:"id"`
-	Role                string `json:"role"`
-	CanViewDashboard    bool   `json:"can_view_dashboard"`
-	CanViewHosts        bool   `json:"can_view_hosts"`
-	CanManageHosts      bool   `json:"can_manage_hosts"`
-	CanViewPackages     bool   `json:"can_view_packages"`
-	CanManagePackages   bool   `json:"can_manage_packages"`
-	CanViewUsers        bool   `json:"can_view_users"`
-	CanManageUsers      bool   `json:"can_manage_users"`
-	CanManageSuperusers bool   `json:"can_manage_superusers"`
-	CanViewReports      bool   `json:"can_view_reports"`
-	CanExportData       bool   `json:"can_export_data"`
-	CanManageSettings   bool   `json:"can_manage_settings"`
+	ID                      string `json:"id"`
+	Role                    string `json:"role"`
+	CanViewDashboard        bool   `json:"can_view_dashboard"`
+	CanViewHosts            bool   `json:"can_view_hosts"`
+	CanManageHosts          bool   `json:"can_manage_hosts"`
+	CanViewPackages         bool   `json:"can_view_packages"`
+	CanManagePackages       bool   `json:"can_manage_packages"`
+	CanViewUsers            bool   `json:"can_view_users"`
+	CanManageUsers          bool   `json:"can_manage_users"`
+	CanManageSuperusers     bool   `json:"can_manage_superusers"`
+	CanViewReports          bool   `json:"can_view_reports"`
+	CanExportData           bool   `json:"can_export_data"`
+	CanManageSettings       bool   `json:"can_manage_settings"`
+	CanManageNotifications  bool   `json:"can_manage_notifications"`
+	CanViewNotificationLogs bool   `json:"can_view_notification_logs"`
 }
 
 func (q *Queries) UpsertRolePermissions(ctx context.Context, arg UpsertRolePermissionsParams) (RolePermission, error) {
@@ -153,6 +162,8 @@ func (q *Queries) UpsertRolePermissions(ctx context.Context, arg UpsertRolePermi
 		arg.CanViewReports,
 		arg.CanExportData,
 		arg.CanManageSettings,
+		arg.CanManageNotifications,
+		arg.CanViewNotificationLogs,
 	)
 	var i RolePermission
 	err := row.Scan(
@@ -169,6 +180,8 @@ func (q *Queries) UpsertRolePermissions(ctx context.Context, arg UpsertRolePermi
 		&i.CanViewReports,
 		&i.CanExportData,
 		&i.CanManageSettings,
+		&i.CanManageNotifications,
+		&i.CanViewNotificationLogs,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

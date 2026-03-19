@@ -95,12 +95,22 @@ func EntryFromContext(ctx stdctx.Context) *Entry {
 	return e
 }
 
-// TenantKey prefixes a Redis key with the tenant slug from context for multi-host isolation.
+// TenantHostKey returns the canonical per-tenant identifier (the domain/host) for jobs and Redis.
+// Empty when not in multi-host context.
+func TenantHostKey(ctx stdctx.Context) string {
+	e := EntryFromContext(ctx)
+	if e == nil {
+		return ""
+	}
+	return e.Host
+}
+
+// TenantKey prefixes a Redis key with the tenant domain from context for multi-host isolation.
 // In single-tenant mode (no entry in context), returns the key unchanged.
-// Example: TenantKey(ctx, "ssh:ticket:abc") → "t:mycompany:ssh:ticket:abc"
+// Example: TenantKey(ctx, "ssh:ticket:abc") → "t:tenant1.patchmon.cloud:ssh:ticket:abc"
 func TenantKey(ctx stdctx.Context, key string) string {
-	if e := EntryFromContext(ctx); e != nil && e.Slug != "" {
-		return "t:" + e.Slug + ":" + key
+	if e := EntryFromContext(ctx); e != nil && e.Host != "" {
+		return "t:" + e.Host + ":" + key
 	}
 	return key
 }
@@ -111,7 +121,7 @@ func TenantKey(ctx stdctx.Context, key string) string {
 func HasModule(ctx stdctx.Context, module string) bool {
 	entry := EntryFromContext(ctx)
 	if entry == nil {
-		return true // single-tenant mode — no restrictions
+		return true // single-tenant mode - no restrictions
 	}
 	if entry.Modules == nil {
 		return true // nil = all modules allowed

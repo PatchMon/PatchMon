@@ -385,9 +385,9 @@ const Automation = () => {
 			// (Overview auto-refreshes every 30s via refetchInterval)
 			const msg = dataPayload.message || "Job triggered successfully";
 			if (dataPayload.jobId) {
-				toast.success(`${msg} — Job ID: ${dataPayload.jobId}`);
+				toast.success(`${msg} - Job ID: ${dataPayload.jobId}`);
 			} else if (typeof dataPayload.enqueued === "number") {
-				toast.success(`${msg} — ${dataPayload.enqueued} job(s) queued`);
+				toast.success(`${msg} - ${dataPayload.enqueued} job(s) queued`);
 			} else {
 				toast.success(msg);
 			}

@@ -9,12 +9,14 @@ import (
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 )
 
 // ProcessHostStatusMonitor runs the periodic host-down check: finds stale hosts and creates/resolves alerts.
 // Called by the host-status-monitor queue job.
-func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, log *slog.Logger) (int, error) {
+func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost string, emit *notifications.Emitter, log *slog.Logger) (int, error) {
 	enabled, err := IsAlertsEnabled(ctx, d)
 	if err != nil || !enabled {
 		log.Debug("host_down: alerts disabled")
@@ -101,6 +103,10 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, log *slog.Log
 			}
 			alertsCreated++
 			alertsByHostID[host.ID] = alert.ID
+			if emit != nil {
+				a := &models.Alert{ID: alert.ID, Type: alert.Type, Severity: alert.Severity, Title: alert.Title, Message: alert.Message}
+				emit.EmitForAlert(ctx, d, tenantHost, a, meta, cfg)
+			}
 
 			if cfg.AutoAssignEnabled && cfg.AutoAssignUserID != nil {
 				_ = alertsStore.UpdateAssignment(ctx, alert.ID, *cfg.AutoAssignUserID)
@@ -112,6 +118,18 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, log *slog.Log
 					_ = alertsStore.UpdateResolved(ctx, alertID, nil)
 					_ = alertsStore.RecordHistory(ctx, alertID, nil, "resolved", map[string]interface{}{"resolved_reason": "Host came back online", "system_action": true})
 					delete(alertsByHostID, host.ID)
+					if emit != nil {
+						hn := hostDisplayName(host)
+						emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
+							Type:          "host_recovered",
+							Severity:      "informational",
+							Title:         "Host back online",
+							Message:       fmt.Sprintf("Host %s is reporting again.", hn),
+							ReferenceType: "host",
+							ReferenceID:   host.ID,
+							Metadata:      map[string]interface{}{"host_id": host.ID, "host_name": hn},
+						})
+					}
 				}
 			}
 		}
@@ -122,7 +140,7 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, log *slog.Log
 
 // OnDisconnect creates a host_down alert when an agent's WebSocket disconnects.
 // Called by the agent WebSocket disconnect handler.
-func OnDisconnect(ctx context.Context, d *database.DB, apiID string, log *slog.Logger) {
+func OnDisconnect(ctx context.Context, d *database.DB, apiID string, tenantHost string, emit *notifications.Emitter, log *slog.Logger) {
 	enabled, err := IsAlertsEnabled(ctx, d)
 	if err != nil || !enabled {
 		return
@@ -181,6 +199,10 @@ func OnDisconnect(ctx context.Context, d *database.DB, apiID string, log *slog.L
 		log.Debug("host_down: failed to create alert on disconnect", "api_id", apiID, "error", err)
 		return
 	}
+	if emit != nil {
+		a := &models.Alert{ID: alert.ID, Type: alert.Type, Severity: alert.Severity, Title: alert.Title, Message: alert.Message}
+		emit.EmitForAlert(ctx, d, tenantHost, a, meta, cfg)
+	}
 	if cfg.AutoAssignEnabled && cfg.AutoAssignUserID != nil {
 		_ = store.NewAlertsStore(d).UpdateAssignment(ctx, alert.ID, *cfg.AutoAssignUserID)
 		_ = store.NewAlertsStore(d).RecordHistory(ctx, alert.ID, nil, "assigned", map[string]interface{}{"assigned_to": *cfg.AutoAssignUserID})
@@ -190,7 +212,7 @@ func OnDisconnect(ctx context.Context, d *database.DB, apiID string, log *slog.L
 
 // OnConnect resolves any active host_down alert for the host when an agent reconnects.
 // Called by the agent WebSocket connect handler.
-func OnConnect(ctx context.Context, d *database.DB, apiID string, log *slog.Logger) {
+func OnConnect(ctx context.Context, d *database.DB, apiID string, tenantHost string, emit *notifications.Emitter, log *slog.Logger) {
 	enabled, err := IsAlertsEnabled(ctx, d)
 	if err != nil || !enabled {
 		return
@@ -226,6 +248,18 @@ func OnConnect(ctx context.Context, d *database.DB, apiID string, log *slog.Logg
 					"system_action":   true,
 				})
 				log.Info("host_down: resolved alert on connect", "api_id", apiID, "host_id", host.ID, "alert_id", a.ID)
+				if emit != nil {
+					hn := hostDisplayNameFromRow(host)
+					emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
+						Type:          "host_recovered",
+						Severity:      "informational",
+						Title:         "Host reconnected",
+						Message:       fmt.Sprintf("Host %s WebSocket reconnected.", hn),
+						ReferenceType: "host",
+						ReferenceID:   host.ID,
+						Metadata:      map[string]interface{}{"host_id": host.ID, "host_name": hn},
+					})
+				}
 				return
 			}
 		}

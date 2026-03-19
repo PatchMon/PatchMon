@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 )
@@ -20,7 +22,7 @@ var semverRe = regexp.MustCompile(`^\d+\.\d+\.\d+`)
 
 // ProcessServerUpdate runs the server version check: DNS lookup, settings update, and alert create/resolve.
 // Called by the version-update-check queue job.
-func ProcessServerUpdate(ctx context.Context, db *database.DB, serverVersion string, log *slog.Logger) error {
+func ProcessServerUpdate(ctx context.Context, db *database.DB, serverVersion string, tenantHost string, emit *notifications.Emitter, log *slog.Logger) error {
 	enabled, err := IsAlertsEnabled(ctx, db)
 	if err != nil || !enabled {
 		log.Debug("server_update: alerts disabled")
@@ -77,7 +79,11 @@ func ProcessServerUpdate(ctx context.Context, db *database.DB, serverVersion str
 			title := "Server Update Available"
 			msg := fmt.Sprintf("A new server version (%s) is available. Current version: %s", latest, serverVersion)
 			meta := map[string]interface{}{"current_version": serverVersion, "latest_version": latest}
-			_, _ = alertsStore.Create(ctx, "server_update", severity, title, msg, meta)
+			alert, _ := alertsStore.Create(ctx, "server_update", severity, title, msg, meta)
+			if alert != nil && emit != nil {
+				a := &models.Alert{ID: alert.ID, Type: alert.Type, Severity: alert.Severity, Title: alert.Title, Message: alert.Message}
+				emit.EmitForAlert(ctx, db, tenantHost, a, meta, cfg)
+			}
 			log.Info("server_update: created alert", "current", serverVersion, "latest", latest)
 		}
 	} else {

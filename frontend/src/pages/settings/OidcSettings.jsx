@@ -343,7 +343,7 @@ const OidcSettings = () => {
 				{!form.oidc_enforce_https && (
 					<div className="mt-4 p-3 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
 						<p className="text-sm font-medium text-amber-800 dark:text-amber-200">
-							Development only — Enforce HTTPS is disabled. Only use for local
+							Development only - Enforce HTTPS is disabled. Only use for local
 							testing.
 						</p>
 					</div>
@@ -472,7 +472,7 @@ const OidcSettings = () => {
 						</label>
 						<div className="px-3 py-2 bg-secondary-50 dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-600 rounded-md">
 							<code className="text-sm text-secondary-700 dark:text-white break-all">
-								{settings?.callback_url || "—"}
+								{settings?.callback_url || " -"}
 							</code>
 						</div>
 						<p className="mt-1 text-xs text-secondary-500 dark:text-white">
@@ -650,7 +650,7 @@ const OidcSettings = () => {
 														/>
 													) : (
 														<span className="text-sm text-secondary-400 dark:text-secondary-500 italic">
-															— Not configurable via OIDC
+															- Not configurable via OIDC
 														</span>
 													)}
 												</td>

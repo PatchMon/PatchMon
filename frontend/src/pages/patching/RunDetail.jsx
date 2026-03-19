@@ -179,7 +179,7 @@ const RunDetail = () => {
 							Initiated by{" "}
 						</span>
 						<span className="text-secondary-900 dark:text-white">
-							{run.triggered_by_username || "—"}
+							{run.triggered_by_username || " -"}
 						</span>
 					</div>
 					{run.approved_by_username && (
@@ -231,7 +231,7 @@ const RunDetail = () => {
 								? new Date(run.started_at).toLocaleString()
 								: run.created_at
 									? new Date(run.created_at).toLocaleString()
-									: "—"}
+									: " -"}
 						</span>
 					</div>
 					{run.status === "queued" && run.scheduled_at && (
@@ -251,7 +251,7 @@ const RunDetail = () => {
 						<span className="text-secondary-900 dark:text-white">
 							{run.completed_at
 								? new Date(run.completed_at).toLocaleString()
-								: "—"}
+								: " -"}
 						</span>
 					</div>
 					{/* Link to related run (validation ↔ patch) */}
@@ -274,7 +274,7 @@ const RunDetail = () => {
 							<AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
 							<div className="flex-1">
 								<p className="text-sm font-medium text-amber-800 dark:text-amber-200">
-									Validation pending — host may be offline
+									Validation pending - host may be offline
 								</p>
 								<p className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">
 									The dry-run has not completed. You can retry when the host is
@@ -326,7 +326,7 @@ const RunDetail = () => {
 							<AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
 							<div className="flex-1">
 								<p className="text-sm font-medium text-amber-800 dark:text-amber-200">
-									Validation complete — approval required
+									Validation complete - approval required
 								</p>
 								<p className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">
 									{run.packages_affected?.length >

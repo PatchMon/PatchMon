@@ -63,6 +63,10 @@ func hasPermission(p *models.RolePermission, perm string) bool {
 		return p.CanExportData
 	case "can_manage_settings":
 		return p.CanManageSettings
+	case "can_manage_notifications":
+		return p.CanManageNotifications
+	case "can_view_notification_logs":
+		return p.CanViewNotificationLogs
 	default:
 		return false
 	}

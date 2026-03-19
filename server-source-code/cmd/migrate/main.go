@@ -1,8 +1,8 @@
 // Package main runs database migrations using golang-migrate with embedded SQL files.
 // Usage:
 //
-//	migrate up    - run all pending migrations
-//	migrate down  - rollback last migration
+//	migrate up   - run all pending migrations
+//	migrate down - rollback last migration
 //	migrate force V - set migration version (e.g. for baselining)
 //
 // Requires DATABASE_URL environment variable.

@@ -69,7 +69,7 @@ type ReportPackage struct {
 	AvailableVersion *string `json:"availableVersion"`
 	NeedsUpdate      bool    `json:"needsUpdate"`
 	IsSecurityUpdate bool    `json:"isSecurityUpdate"`
-	// WUA fields — only set for Category="Windows Update" entries
+	// WUA fields - only set for Category="Windows Update" entries
 	WUAGuid           string   `json:"wuaGuid,omitempty"`
 	WUAKb             string   `json:"wuaKb,omitempty"`
 	WUASeverity       string   `json:"wuaSeverity,omitempty"`
@@ -297,7 +297,7 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 		}
 
 		if pkg.WUAGuid != "" {
-			// Windows Update entry — persist WUA-specific metadata
+			// Windows Update entry - persist WUA-specific metadata
 			var wuaCats []byte
 			if len(pkg.WUACategories) > 0 {
 				wuaCats, _ = json.Marshal(pkg.WUACategories)

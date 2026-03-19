@@ -293,3 +293,59 @@ func (h *AlertsHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	successData(w, map[string]interface{}{"deleted": len(req.AlertIDs)})
 }
+
+// BulkAction handles POST /alerts/bulk-action.
+func (h *AlertsHandler) BulkAction(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AlertIDs []string `json:"alertIds"`
+		Action   string   `json:"action"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		Error(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if len(req.AlertIDs) == 0 {
+		Error(w, http.StatusBadRequest, "alertIds required")
+		return
+	}
+	if req.Action == "" {
+		Error(w, http.StatusBadRequest, "action required")
+		return
+	}
+
+	userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+	d := h.db.DB(r.Context())
+
+	action, err := d.Queries.GetAlertActionByName(r.Context(), req.Action)
+	if err != nil {
+		Error(w, http.StatusBadRequest, "Invalid action")
+		return
+	}
+
+	var uid *string
+	if userID != "" {
+		uid = &userID
+	}
+
+	for _, id := range req.AlertIDs {
+		if action.IsStateAction {
+			if err := h.alerts.UpdateResolved(r.Context(), id, uid); err != nil {
+				slog.Error("alerts: bulk-action resolve failed", "alert_id", id, "error", err)
+				continue
+			}
+		} else {
+			if err := h.alerts.UpdateUnresolve(r.Context(), id); err != nil {
+				slog.Error("alerts: bulk-action unresolve failed", "alert_id", id, "error", err)
+				continue
+			}
+		}
+		if err := h.alerts.RecordHistory(r.Context(), id, uid, req.Action, map[string]interface{}{}); err != nil {
+			slog.Error("alerts: bulk-action record history failed", "alert_id", id, "error", err)
+		}
+		if err := d.Queries.UpdateAlert(r.Context(), id); err != nil {
+			slog.Error("alerts: bulk-action update alert timestamp failed", "alert_id", id, "error", err)
+		}
+	}
+
+	successData(w, map[string]interface{}{"processed": len(req.AlertIDs)})
+}

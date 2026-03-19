@@ -83,7 +83,7 @@ func (s *SessionsStore) Create(ctx context.Context, userID, refreshToken, access
 }
 
 // CreateOrReuseSession creates a new session or reuses (updates) an existing one for the same user+device.
-// deviceID (X-Device-ID) is preferred for lookup—stable across IP changes. deviceFingerprint is fallback.
+// deviceID (X-Device-ID) is preferred for lookup -stable across IP changes. deviceFingerprint is fallback.
 // When the same device logs in again, the existing session is updated (refresh token, login_count incremented).
 func (s *SessionsStore) CreateOrReuseSession(ctx context.Context, userID, refreshToken, accessTokenHash, ip, userAgent, deviceFingerprint, deviceID string, expiresAt time.Time, tfaRememberMe bool, tfaBypassUntil *time.Time) (*models.UserSession, error) {
 	d := s.db.DB(ctx)

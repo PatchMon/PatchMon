@@ -7,7 +7,9 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 )
@@ -46,19 +48,21 @@ func NewServer(opts asynq.RedisClientOpt, registry *agentregistry.Registry, db *
 	srv := asynq.NewServer(opts, asynq.Config{
 		Concurrency: 10,
 		Queues: map[string]int{
-			QueueAgentCommands:         3,
-			QueueHostStatus:            3,
-			QueueAlertCleanup:          1,
-			QueueSessionCleanup:        1,
-			QueueOrphanedRepoCleanup:   1,
-			QueueOrphanedPkgCleanup:    1,
-			QueueDockerInvCleanup:      1,
-			QueueSystemStatistics:      1,
-			QueueVersionUpdateCheck:    1,
-			QueueComplianceScanCleanup: 1,
-			QueueSSGUpdateCheck:        1,
-			QueueCompliance:            2,
-			QueuePatching:              2,
+			QueueAgentCommands:               3,
+			QueueHostStatus:                  3,
+			QueueAlertCleanup:                1,
+			QueueSessionCleanup:              1,
+			QueueOrphanedRepoCleanup:         1,
+			QueueOrphanedPkgCleanup:          1,
+			QueueDockerInvCleanup:            1,
+			QueueSystemStatistics:            1,
+			QueueVersionUpdateCheck:          1,
+			QueueComplianceScanCleanup:       1,
+			QueueSSGUpdateCheck:              1,
+			QueueCompliance:                  2,
+			QueuePatching:                    2,
+			notifications.QueueNotifications: 2,
+			QueueScheduledReports:            1,
 		},
 	})
 
@@ -76,6 +80,8 @@ type MuxOpts struct {
 	ServerVersion string
 	SSGContentDir string
 	Log           *slog.Logger
+	Emit          *notifications.Emitter
+	Enc           *util.Encryption
 }
 
 // Mux returns a ServeMux with all handlers registered.
@@ -89,14 +95,17 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeDockerInventoryRefresh, wrap(TypeDockerInventoryRefresh, NewDockerInventoryRefreshHandler(registry, db, log)))
 	mux.Handle(TypeUpdateAgent, wrap(TypeUpdateAgent, NewUpdateAgentHandler(registry, db, log)))
 	dbResolver := &hostctx.DBResolver{Default: db}
-	mux.Handle(TypeHostStatusMonitor, wrap(TypeHostStatusMonitor, NewHostStatusMonitorHandler(db, opts.PoolCache, log)))
+	mux.Handle(TypeHostStatusMonitor, wrap(TypeHostStatusMonitor, NewHostStatusMonitorHandler(db, opts.PoolCache, opts.Emit, log)))
+	mux.Handle(notifications.TypeNotificationDeliver, wrap(notifications.TypeNotificationDeliver, NewNotificationDeliverHandler(db, opts.PoolCache, opts.Enc, log)))
+	mux.Handle(TypeScheduledReportsDispatch, wrap(TypeScheduledReportsDispatch, NewScheduledReportsDispatchHandler(db, opts.PoolCache, opts.QueueClient, log)))
+	mux.Handle(TypeScheduledReportRun, wrap(TypeScheduledReportRun, NewScheduledReportRunHandler(db, opts.PoolCache, opts.Enc, log)))
 	mux.Handle(TypeAlertCleanup, wrap(TypeAlertCleanup, NewAlertCleanupHandler(db, opts.PoolCache, store.NewAlertConfigStore(dbResolver), log)))
 	mux.Handle(TypeSessionCleanup, wrap(TypeSessionCleanup, NewSessionCleanupHandler(db, opts.PoolCache, log)))
 	mux.Handle(TypeOrphanedRepoCleanup, wrap(TypeOrphanedRepoCleanup, NewOrphanedRepoCleanupHandler(db, opts.PoolCache, log)))
 	mux.Handle(TypeOrphanedPkgCleanup, wrap(TypeOrphanedPkgCleanup, NewOrphanedPkgCleanupHandler(db, opts.PoolCache, log)))
 	mux.Handle(TypeDockerInvCleanup, wrap(TypeDockerInvCleanup, NewDockerInvCleanupHandler(db, opts.PoolCache, log)))
 	mux.Handle(TypeSystemStatistics, wrap(TypeSystemStatistics, NewSystemStatisticsHandler(db, opts.PoolCache, log)))
-	mux.Handle(TypeVersionUpdateCheck, wrap(TypeVersionUpdateCheck, NewVersionUpdateCheckHandler(db, opts.PoolCache, opts.ServerVersion, log)))
+	mux.Handle(TypeVersionUpdateCheck, wrap(TypeVersionUpdateCheck, NewVersionUpdateCheckHandler(db, opts.PoolCache, opts.ServerVersion, opts.Emit, log)))
 	mux.Handle(TypeComplianceScanCleanup, wrap(TypeComplianceScanCleanup, NewComplianceScanCleanupHandler(db, opts.PoolCache, log)))
 	mux.Handle(TypeSSGUpdateCheck, wrap(TypeSSGUpdateCheck, NewSSGUpdateCheckHandler(registry, db, opts.PoolCache, opts.QueueClient, opts.SSGContentDir, log)))
 	mux.Handle(TypeSSGUpgrade, wrap(TypeSSGUpgrade, NewSSGUpgradeHandler(registry, db, opts.PoolCache, log)))
@@ -126,43 +135,48 @@ func NewScheduler(opts asynq.RedisClientOpt, log *slog.Logger) (*asynq.Scheduler
 		return nil, err
 	}
 
-	sessionCleanupTask := asynq.NewTask(TypeSessionCleanup, []byte("{}"))
+	sessionCleanupTask := asynq.NewTask(TypeSessionCleanup, nil)
 	if _, err := scheduler.Register("0 * * * *", sessionCleanupTask, asynq.Queue(QueueSessionCleanup), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 
-	orphanedRepoTask := asynq.NewTask(TypeOrphanedRepoCleanup, []byte("{}"))
+	orphanedRepoTask := asynq.NewTask(TypeOrphanedRepoCleanup, nil)
 	if _, err := scheduler.Register("0 2 * * *", orphanedRepoTask, asynq.Queue(QueueOrphanedRepoCleanup), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 
-	orphanedPkgTask := asynq.NewTask(TypeOrphanedPkgCleanup, []byte("{}"))
+	orphanedPkgTask := asynq.NewTask(TypeOrphanedPkgCleanup, nil)
 	if _, err := scheduler.Register("0 3 * * *", orphanedPkgTask, asynq.Queue(QueueOrphanedPkgCleanup), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 
-	dockerInvTask := asynq.NewTask(TypeDockerInvCleanup, []byte("{}"))
+	dockerInvTask := asynq.NewTask(TypeDockerInvCleanup, nil)
 	if _, err := scheduler.Register("0 4 * * *", dockerInvTask, asynq.Queue(QueueDockerInvCleanup), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 
-	systemStatsTask := asynq.NewTask(TypeSystemStatistics, []byte("{}"))
+	systemStatsTask := asynq.NewTask(TypeSystemStatistics, nil)
 	if _, err := scheduler.Register("*/30 * * * *", systemStatsTask, asynq.Queue(QueueSystemStatistics), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 
-	versionUpdateTask := asynq.NewTask(TypeVersionUpdateCheck, []byte("{}"))
+	versionUpdateTask := asynq.NewTask(TypeVersionUpdateCheck, nil)
 	if _, err := scheduler.Register("0 0 * * *", versionUpdateTask, asynq.Queue(QueueVersionUpdateCheck), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 
-	complianceScanTask := asynq.NewTask(TypeComplianceScanCleanup, []byte("{}"))
+	complianceScanTask := asynq.NewTask(TypeComplianceScanCleanup, nil)
 	if _, err := scheduler.Register("0 1 * * *", complianceScanTask, asynq.Queue(QueueComplianceScanCleanup), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 
-	ssgUpdateTask := asynq.NewTask(TypeSSGUpdateCheck, []byte("{}"))
+	ssgUpdateTask := asynq.NewTask(TypeSSGUpdateCheck, nil)
 	if _, err := scheduler.Register("0 5 * * *", ssgUpdateTask, asynq.Queue(QueueSSGUpdateCheck), asynq.Retention(AutomationRetention)); err != nil {
+		return nil, err
+	}
+
+	dispatchReports := asynq.NewTask(TypeScheduledReportsDispatch, nil)
+	if _, err := scheduler.Register("* * * * *", dispatchReports, asynq.Queue(QueueScheduledReports), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 

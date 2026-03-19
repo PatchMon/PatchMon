@@ -369,6 +369,43 @@ type JobHistory struct {
 	CompletedAt   pgtype.Timestamp `json:"completed_at"`
 }
 
+type NotificationDeliveryLog struct {
+	ID                string           `json:"id"`
+	EventFingerprint  string           `json:"event_fingerprint"`
+	ReferenceType     string           `json:"reference_type"`
+	ReferenceID       string           `json:"reference_id"`
+	DestinationID     string           `json:"destination_id"`
+	EventType         string           `json:"event_type"`
+	Status            string           `json:"status"`
+	ErrorMessage      *string          `json:"error_message"`
+	AttemptCount      int32            `json:"attempt_count"`
+	ProviderMessageID *string          `json:"provider_message_id"`
+	CreatedAt         pgtype.Timestamp `json:"created_at"`
+	UpdatedAt         pgtype.Timestamp `json:"updated_at"`
+}
+
+type NotificationDestination struct {
+	ID              string           `json:"id"`
+	ChannelType     string           `json:"channel_type"`
+	DisplayName     string           `json:"display_name"`
+	ConfigEncrypted string           `json:"config_encrypted"`
+	Enabled         bool             `json:"enabled"`
+	CreatedAt       pgtype.Timestamp `json:"created_at"`
+	UpdatedAt       pgtype.Timestamp `json:"updated_at"`
+}
+
+type NotificationRoute struct {
+	ID            string           `json:"id"`
+	DestinationID string           `json:"destination_id"`
+	EventType     string           `json:"event_type"`
+	MinSeverity   string           `json:"min_severity"`
+	HostGroupID   *string          `json:"host_group_id"`
+	MatchRules    []byte           `json:"match_rules"`
+	Enabled       bool             `json:"enabled"`
+	CreatedAt     pgtype.Timestamp `json:"created_at"`
+	UpdatedAt     pgtype.Timestamp `json:"updated_at"`
+}
+
 type Package struct {
 	ID            string           `json:"id"`
 	Name          string           `json:"name"`
@@ -456,21 +493,47 @@ type Repository struct {
 }
 
 type RolePermission struct {
-	ID                  string           `json:"id"`
-	Role                string           `json:"role"`
-	CanViewDashboard    bool             `json:"can_view_dashboard"`
-	CanViewHosts        bool             `json:"can_view_hosts"`
-	CanManageHosts      bool             `json:"can_manage_hosts"`
-	CanViewPackages     bool             `json:"can_view_packages"`
-	CanManagePackages   bool             `json:"can_manage_packages"`
-	CanViewUsers        bool             `json:"can_view_users"`
-	CanManageUsers      bool             `json:"can_manage_users"`
-	CanManageSuperusers bool             `json:"can_manage_superusers"`
-	CanViewReports      bool             `json:"can_view_reports"`
-	CanExportData       bool             `json:"can_export_data"`
-	CanManageSettings   bool             `json:"can_manage_settings"`
-	CreatedAt           pgtype.Timestamp `json:"created_at"`
-	UpdatedAt           pgtype.Timestamp `json:"updated_at"`
+	ID                      string           `json:"id"`
+	Role                    string           `json:"role"`
+	CanViewDashboard        bool             `json:"can_view_dashboard"`
+	CanViewHosts            bool             `json:"can_view_hosts"`
+	CanManageHosts          bool             `json:"can_manage_hosts"`
+	CanViewPackages         bool             `json:"can_view_packages"`
+	CanManagePackages       bool             `json:"can_manage_packages"`
+	CanViewUsers            bool             `json:"can_view_users"`
+	CanManageUsers          bool             `json:"can_manage_users"`
+	CanManageSuperusers     bool             `json:"can_manage_superusers"`
+	CanViewReports          bool             `json:"can_view_reports"`
+	CanExportData           bool             `json:"can_export_data"`
+	CanManageSettings       bool             `json:"can_manage_settings"`
+	CanManageNotifications  bool             `json:"can_manage_notifications"`
+	CanViewNotificationLogs bool             `json:"can_view_notification_logs"`
+	CreatedAt               pgtype.Timestamp `json:"created_at"`
+	UpdatedAt               pgtype.Timestamp `json:"updated_at"`
+}
+
+type ScheduledReport struct {
+	ID             string           `json:"id"`
+	Name           string           `json:"name"`
+	CronExpr       string           `json:"cron_expr"`
+	Timezone       string           `json:"timezone"`
+	Enabled        bool             `json:"enabled"`
+	Definition     []byte           `json:"definition"`
+	DestinationIds []byte           `json:"destination_ids"`
+	NextRunAt      pgtype.Timestamp `json:"next_run_at"`
+	LastRunAt      pgtype.Timestamp `json:"last_run_at"`
+	CreatedAt      pgtype.Timestamp `json:"created_at"`
+	UpdatedAt      pgtype.Timestamp `json:"updated_at"`
+}
+
+type ScheduledReportRun struct {
+	ID                string           `json:"id"`
+	ScheduledReportID string           `json:"scheduled_report_id"`
+	RunAt             pgtype.Timestamp `json:"run_at"`
+	Status            string           `json:"status"`
+	ErrorMessage      *string          `json:"error_message"`
+	SummaryHash       *string          `json:"summary_hash"`
+	CreatedAt         pgtype.Timestamp `json:"created_at"`
 }
 
 type Setting struct {

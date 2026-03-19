@@ -53,19 +53,21 @@ func (s *PermissionsStore) UpsertRole(ctx context.Context, p *models.RolePermiss
 		id = existing.ID
 	}
 	_, err := d.Queries.UpsertRolePermissions(ctx, db.UpsertRolePermissionsParams{
-		ID:                  id,
-		Role:                p.Role,
-		CanViewDashboard:    p.CanViewDashboard,
-		CanViewHosts:        p.CanViewHosts,
-		CanManageHosts:      p.CanManageHosts,
-		CanViewPackages:     p.CanViewPackages,
-		CanManagePackages:   p.CanManagePackages,
-		CanViewUsers:        p.CanViewUsers,
-		CanManageUsers:      p.CanManageUsers,
-		CanManageSuperusers: p.CanManageSuperusers,
-		CanViewReports:      p.CanViewReports,
-		CanExportData:       p.CanExportData,
-		CanManageSettings:   p.CanManageSettings,
+		ID:                      id,
+		Role:                    p.Role,
+		CanViewDashboard:        p.CanViewDashboard,
+		CanViewHosts:            p.CanViewHosts,
+		CanManageHosts:          p.CanManageHosts,
+		CanViewPackages:         p.CanViewPackages,
+		CanManagePackages:       p.CanManagePackages,
+		CanViewUsers:            p.CanViewUsers,
+		CanManageUsers:          p.CanManageUsers,
+		CanManageSuperusers:     p.CanManageSuperusers,
+		CanViewReports:          p.CanViewReports,
+		CanExportData:           p.CanExportData,
+		CanManageSettings:       p.CanManageSettings,
+		CanManageNotifications:  p.CanManageNotifications,
+		CanViewNotificationLogs: p.CanViewNotificationLogs,
 	})
 	return err
 }

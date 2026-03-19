@@ -14,7 +14,7 @@ import (
 )
 
 // WindowsUpdatesHandler handles agent-facing and UI-facing Windows Update endpoints.
-// These work entirely through the existing host_packages + packages tables — WUA-specific
+// These work entirely through the existing host_packages + packages tables - WUA-specific
 // fields (wua_guid, wua_kb, wua_severity, etc.) extend those rows transparently.
 type WindowsUpdatesHandler struct {
 	hosts *store.HostsStore
@@ -119,7 +119,7 @@ func (h *WindowsUpdatesHandler) RecordRebootStatus(w http.ResponseWriter, r *htt
 }
 
 // RemoveSuperseded handles POST /patching/windows-updates/superseded (agent-facing).
-// The agent reports GUIDs that WUA no longer returns — they have been superseded by newer updates.
+// The agent reports GUIDs that WUA no longer returns - they have been superseded by newer updates.
 func (h *WindowsUpdatesHandler) RemoveSuperseded(w http.ResponseWriter, r *http.Request) {
 	host, ok := h.resolveAgentHost(r)
 	if !ok {

@@ -326,7 +326,7 @@ const ComplianceTab = ({
 	const { data: serverSSGInfo } = useQuery({
 		queryKey: ["server-ssg-info"],
 		queryFn: () => complianceAPI.getSSGInfo(),
-		staleTime: 30 * 60 * 1000, // 30 min — server version only changes on deployment
+		staleTime: 30 * 60 * 1000, // 30 min - server version only changes on deployment
 	});
 	const serverSSGVersion = serverSSGInfo?.version || "";
 
@@ -511,7 +511,7 @@ const ComplianceTab = ({
 		},
 	});
 
-	// Install job status (progress + install_events) — keep polling while job is active so checklist stays visible
+	// Install job status (progress + install_events) - keep polling while job is active so checklist stays visible
 	const integration_status = integrationStatus?.status?.status;
 	const { data: installJobData, refetch: refetchInstallJob } = useQuery({
 		queryKey: ["compliance-install-job", hostId],
@@ -726,7 +726,7 @@ const ComplianceTab = ({
 		onSuccess: (response, variables) => {
 			const body = response?.data;
 			const job_id = body?.jobId || body?.job_id || "";
-			const job_label = job_id ? ` — Job ID: ${job_id}` : "";
+			const job_label = job_id ? ` - Job ID: ${job_id}` : "";
 
 			if (!isConnected) {
 				// Agent offline: queued for later
@@ -2813,7 +2813,7 @@ const ComplianceTab = ({
 																								expected are empty). The agent
 																								may not be sending these fields,
 																								or the backend may not be
-																								storing them — check agent
+																								storing them - check agent
 																								payload and backend logs when
 																								the scan was submitted.
 																							</p>
@@ -3133,7 +3133,7 @@ const ComplianceTab = ({
 																				(finding, actual, expected are empty).
 																				The agent may not be sending these
 																				fields, or the backend may not be
-																				storing them — check agent payload and
+																				storing them - check agent payload and
 																				backend logs when the scan was
 																				submitted.
 																			</p>
@@ -3780,7 +3780,7 @@ const ComplianceTab = ({
 								<p className="text-xs text-secondary-400 dark:text-white mt-0.5">
 									CIS Docker Benchmark security checks
 									{!dockerEnabled &&
-										" — requires Docker integration to be enabled"}
+										" - requires Docker integration to be enabled"}
 								</p>
 							</div>
 							<input
@@ -4555,7 +4555,7 @@ const ComplianceTab = ({
 						</button>
 					)}
 				</div>
-				{/* Installation progress checklist — visible for full install (status or job in progress) and briefly after completion */}
+				{/* Installation progress checklist - visible for full install (status or job in progress) and briefly after completion */}
 				{show_install_progress && (
 					<div className="mt-4 pt-4 border-t border-secondary-700">
 						<div className="flex items-center justify-between mb-3">
@@ -4631,7 +4631,7 @@ const ComplianceTab = ({
 										</span>
 										{step.message && step.status !== "pending" && (
 											<span className="text-secondary-500 dark:text-white ml-1.5 text-xs">
-												— {step.message}
+												- {step.message}
 											</span>
 										)}
 										{step.status === "pending" && (

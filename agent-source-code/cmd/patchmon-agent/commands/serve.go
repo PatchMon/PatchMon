@@ -2170,7 +2170,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 
 // runPatchWindows handles patching on Windows hosts.
 // For patch_all: installs all approved WUA updates (by GUID from server) + upgrades all WinGet apps.
-// For patch_package: routes by package name — "KB..." prefix → WUA, otherwise → WinGet upgrade.
+// For patch_package: routes by package name - "KB..." prefix → WUA, otherwise → WinGet upgrade.
 func runPatchWindows(ctx context.Context, httpClient *client.Client, patchRunID, patchType string, packageNames []string, dryRun bool) error {
 	patcher := packages.NewWindowsPatcher()
 	var fullOutput strings.Builder
@@ -2180,7 +2180,7 @@ func runPatchWindows(ctx context.Context, httpClient *client.Client, patchRunID,
 	}
 
 	if patchType == "patch_all" {
-		// Step 1: WUA — install approved OS/KB updates
+		// Step 1: WUA - install approved OS/KB updates
 		guids, err := httpClient.GetApprovedWindowsUpdateGUIDs(ctx)
 		if err != nil {
 			logger.WithError(err).Warn("Could not fetch approved Windows Update GUIDs; skipping WUA step")
@@ -2201,7 +2201,7 @@ func runPatchWindows(ctx context.Context, httpClient *client.Client, patchRunID,
 			}
 		}
 
-		// Step 2: WinGet — upgrade all applications
+		// Step 2: WinGet - upgrade all applications
 		fullOutput.WriteString("\n[WinGet] Upgrading applications...\n")
 		_ = httpClient.SendPatchOutput(ctx, patchRunID, "progress", fullOutput.String(), "")
 		wingetOut, wingetErr := patcher.WinGetUpgradeAll(ctx, dryRun)
