@@ -42,7 +42,7 @@ func (s *DiscordSessionStore) Store(ctx context.Context, state string, data *Dis
 	if ttl <= 0 {
 		ttl = discordSessionTTL
 	}
-	key := discordSessionPrefix + state
+	key := hostctx.TenantKey(ctx, discordSessionPrefix+state)
 	b, err := json.Marshal(data)
 	if err != nil {
 		return err
@@ -56,7 +56,7 @@ func (s *DiscordSessionStore) GetAndDelete(ctx context.Context, state string) (*
 	if rdb == nil {
 		return nil, redis.Nil
 	}
-	key := discordSessionPrefix + state
+	key := hostctx.TenantKey(ctx, discordSessionPrefix+state)
 	b, err := rdb.Get(ctx, key).Bytes()
 	if err != nil {
 		return nil, err

@@ -47,7 +47,7 @@ func (s *RDPTicketStore) CreateTicket(ctx context.Context, userID, hostID, sessi
 		return "", err
 	}
 	ticket = hex.EncodeToString(b)
-	key := rdpTicketPrefix + ticket
+	key := hostctx.TenantKey(ctx, rdpTicketPrefix+ticket)
 
 	data := RDPTicketData{
 		UserID:    userID,
@@ -79,7 +79,7 @@ func (s *RDPTicketStore) ConsumeTicket(ctx context.Context, ticket string) (*RDP
 	if rdb == nil {
 		return nil, ErrInvalidRDPTicket
 	}
-	key := rdpTicketPrefix + ticket
+	key := hostctx.TenantKey(ctx, rdpTicketPrefix+ticket)
 	raw, err := rdb.Get(ctx, key).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {

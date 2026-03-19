@@ -44,7 +44,7 @@ func (s *SshTicketStore) CreateTicket(ctx context.Context, userID, hostID string
 		return "", err
 	}
 	ticket = hex.EncodeToString(b)
-	key := sshTicketPrefix + ticket
+	key := hostctx.TenantKey(ctx, sshTicketPrefix+ticket)
 
 	data := TicketData{
 		UserID:    userID,
@@ -73,7 +73,7 @@ func (s *SshTicketStore) ConsumeTicket(ctx context.Context, ticket, expectedHost
 	if rdb == nil {
 		return "", ErrInvalidTicket
 	}
-	key := sshTicketPrefix + ticket
+	key := hostctx.TenantKey(ctx, sshTicketPrefix+ticket)
 	raw, err := rdb.Get(ctx, key).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {

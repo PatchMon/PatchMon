@@ -49,7 +49,7 @@ func (s *LoginLockoutStore) IsLocked(ctx context.Context, identifier string) (lo
 	if rdb == nil {
 		return false, 0
 	}
-	key := LoginLockoutPrefix + identifier
+	key := hostctx.TenantKey(ctx, LoginLockoutPrefix+identifier)
 	ttl, err := rdb.TTL(ctx, key).Result()
 	if err != nil || ttl <= 0 {
 		return false, 0
@@ -63,7 +63,7 @@ func (s *LoginLockoutStore) RecordFailedAttempt(ctx context.Context, identifier 
 	if rdb == nil {
 		return 0, false
 	}
-	key := LoginFailedPrefix + identifier
+	key := hostctx.TenantKey(ctx, LoginFailedPrefix+identifier)
 	attempts64, err := rdb.Incr(ctx, key).Result()
 	if err != nil {
 		return 0, false
@@ -73,7 +73,7 @@ func (s *LoginLockoutStore) RecordFailedAttempt(ctx context.Context, identifier 
 		_ = rdb.Expire(ctx, key, s.lockoutDuration)
 	}
 	if attempts >= s.maxAttempts {
-		lockKey := LoginLockoutPrefix + identifier
+		lockKey := hostctx.TenantKey(ctx, LoginLockoutPrefix+identifier)
 		_ = rdb.Set(ctx, lockKey, strconv.FormatInt(time.Now().UnixMilli(), 10), s.lockoutDuration).Err()
 		_ = rdb.Del(ctx, key).Err()
 		return attempts, true
@@ -87,6 +87,6 @@ func (s *LoginLockoutStore) ClearFailedAttempts(ctx context.Context, identifier 
 	if rdb == nil {
 		return
 	}
-	key := LoginFailedPrefix + identifier
+	key := hostctx.TenantKey(ctx, LoginFailedPrefix+identifier)
 	_ = rdb.Del(ctx, key).Err()
 }

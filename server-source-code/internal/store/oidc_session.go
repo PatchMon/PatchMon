@@ -39,7 +39,7 @@ func (s *OidcSessionStore) Store(ctx context.Context, state string, data *OidcSe
 	if rdb == nil {
 		return redis.Nil
 	}
-	key := oidcSessionPrefix + state
+	key := hostctx.TenantKey(ctx, oidcSessionPrefix+state)
 	b, err := json.Marshal(data)
 	if err != nil {
 		return err
@@ -53,7 +53,7 @@ func (s *OidcSessionStore) GetAndDelete(ctx context.Context, state string) (*Oid
 	if rdb == nil {
 		return nil, redis.Nil
 	}
-	key := oidcSessionPrefix + state
+	key := hostctx.TenantKey(ctx, oidcSessionPrefix+state)
 	b, err := rdb.Get(ctx, key).Bytes()
 	if err != nil {
 		return nil, err
@@ -72,7 +72,7 @@ func (s *OidcSessionStore) StoreIDToken(ctx context.Context, userID, idToken str
 	if rdb == nil {
 		return redis.Nil
 	}
-	key := oidcIDTokenPrefix + userID
+	key := hostctx.TenantKey(ctx, oidcIDTokenPrefix+userID)
 	return rdb.Set(ctx, key, idToken, oidcIDTokenTTL).Err()
 }
 
@@ -82,7 +82,7 @@ func (s *OidcSessionStore) GetAndDeleteIDToken(ctx context.Context, userID strin
 	if rdb == nil {
 		return "", redis.Nil
 	}
-	key := oidcIDTokenPrefix + userID
+	key := hostctx.TenantKey(ctx, oidcIDTokenPrefix+userID)
 	token, err := rdb.Get(ctx, key).Result()
 	if err != nil {
 		return "", err

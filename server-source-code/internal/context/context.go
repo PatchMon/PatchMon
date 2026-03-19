@@ -95,6 +95,16 @@ func EntryFromContext(ctx stdctx.Context) *Entry {
 	return e
 }
 
+// TenantKey prefixes a Redis key with the tenant slug from context for multi-host isolation.
+// In single-tenant mode (no entry in context), returns the key unchanged.
+// Example: TenantKey(ctx, "ssh:ticket:abc") → "t:mycompany:ssh:ticket:abc"
+func TenantKey(ctx stdctx.Context, key string) string {
+	if e := EntryFromContext(ctx); e != nil && e.Slug != "" {
+		return "t:" + e.Slug + ":" + key
+	}
+	return key
+}
+
 // HasModule checks whether the tenant entry in context includes the given module.
 // Returns true if: no entry in context (single-tenant mode), or entry.Modules is nil (all allowed),
 // or the module is present in the comma-separated Modules list.

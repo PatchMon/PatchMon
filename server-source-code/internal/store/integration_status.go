@@ -28,7 +28,7 @@ func (s *IntegrationStatusStore) Get(ctx context.Context, apiID, integrationName
 	if rdb == nil {
 		return nil, nil
 	}
-	key := integrationStatusKeyPrefix + apiID + ":" + integrationName
+	key := hostctx.TenantKey(ctx, integrationStatusKeyPrefix+apiID+":"+integrationName)
 	val, err := rdb.Get(ctx, key).Result()
 	if err == redis.Nil {
 		return nil, nil
@@ -53,7 +53,7 @@ func (s *IntegrationStatusStore) Set(ctx context.Context, apiID, integrationName
 	if err != nil {
 		return err
 	}
-	key := integrationStatusKeyPrefix + apiID + ":" + integrationName
+	key := hostctx.TenantKey(ctx, integrationStatusKeyPrefix+apiID+":"+integrationName)
 	return rdb.Set(ctx, key, b, 0).Err()
 }
 
@@ -73,7 +73,7 @@ func (s *IntegrationStatusStore) SetComplianceInstallJob(ctx context.Context, ho
 	if rdb == nil {
 		return nil
 	}
-	key := complianceInstallJobPrefix + hostID
+	key := hostctx.TenantKey(ctx, complianceInstallJobPrefix+hostID)
 	return rdb.Set(ctx, key, jobID, time.Duration(complianceInstallJobTTL)*time.Second).Err()
 }
 
@@ -83,7 +83,7 @@ func (s *IntegrationStatusStore) GetComplianceInstallJob(ctx context.Context, ho
 	if rdb == nil {
 		return "", nil
 	}
-	key := complianceInstallJobPrefix + hostID
+	key := hostctx.TenantKey(ctx, complianceInstallJobPrefix+hostID)
 	val, err := rdb.Get(ctx, key).Result()
 	if err == redis.Nil {
 		return "", nil
@@ -97,7 +97,7 @@ func (s *IntegrationStatusStore) SetComplianceInstallCancel(ctx context.Context,
 	if rdb == nil {
 		return nil
 	}
-	key := complianceInstallCancelPrefix + jobID
+	key := hostctx.TenantKey(ctx, complianceInstallCancelPrefix+jobID)
 	return rdb.Set(ctx, key, "1", 5*time.Minute).Err()
 }
 
@@ -107,7 +107,7 @@ func (s *IntegrationStatusStore) SetComplianceScanCancel(ctx context.Context, ho
 	if rdb == nil {
 		return nil
 	}
-	key := complianceScanCancelPrefix + hostID
+	key := hostctx.TenantKey(ctx, complianceScanCancelPrefix+hostID)
 	return rdb.Set(ctx, key, "1", time.Duration(complianceScanCancelTTL)*time.Second).Err()
 }
 
@@ -117,7 +117,7 @@ func (s *IntegrationStatusStore) ClearComplianceScanCancel(ctx context.Context, 
 	if rdb == nil {
 		return nil
 	}
-	return rdb.Del(ctx, complianceScanCancelPrefix+hostID).Err()
+	return rdb.Del(ctx, hostctx.TenantKey(ctx, complianceScanCancelPrefix+hostID)).Err()
 }
 
 // IsComplianceScanCancelled returns true if the user has cancelled the scan for this host.
@@ -126,7 +126,7 @@ func (s *IntegrationStatusStore) IsComplianceScanCancelled(ctx context.Context, 
 	if rdb == nil {
 		return false
 	}
-	_, err := rdb.Get(ctx, complianceScanCancelPrefix+hostID).Result()
+	_, err := rdb.Get(ctx, hostctx.TenantKey(ctx, complianceScanCancelPrefix+hostID)).Result()
 	return err != redis.Nil
 }
 
@@ -136,7 +136,7 @@ func (s *IntegrationStatusStore) SetSSGUpgradeJob(ctx context.Context, hostID, j
 	if rdb == nil {
 		return nil
 	}
-	key := ssgUpgradeJobPrefix + hostID
+	key := hostctx.TenantKey(ctx, ssgUpgradeJobPrefix+hostID)
 	return rdb.Set(ctx, key, jobID, time.Duration(ssgUpgradeJobTTL)*time.Second).Err()
 }
 
@@ -146,7 +146,7 @@ func (s *IntegrationStatusStore) GetSSGUpgradeJob(ctx context.Context, hostID st
 	if rdb == nil {
 		return "", nil
 	}
-	key := ssgUpgradeJobPrefix + hostID
+	key := hostctx.TenantKey(ctx, ssgUpgradeJobPrefix+hostID)
 	val, err := rdb.Get(ctx, key).Result()
 	if err == redis.Nil {
 		return "", nil

@@ -40,7 +40,7 @@ func (s *BootstrapStore) GenerateToken(ctx context.Context, apiID, apiKey string
 		return "", err
 	}
 	token := hex.EncodeToString(tokenBytes)
-	key := bootstrapPrefix + token
+	key := hostctx.TenantKey(ctx, bootstrapPrefix+token)
 
 	payload := map[string]interface{}{
 		"apiId":     apiID,
@@ -75,7 +75,7 @@ func (s *BootstrapStore) ConsumeToken(ctx context.Context, token string) (apiID,
 	if rdb == nil {
 		return "", "", false
 	}
-	key := bootstrapPrefix + token
+	key := hostctx.TenantKey(ctx, bootstrapPrefix+token)
 	encrypted, err := rdb.Get(ctx, key).Result()
 	if err == redis.Nil {
 		return "", "", false

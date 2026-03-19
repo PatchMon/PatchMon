@@ -42,7 +42,7 @@ func (s *TfaLockoutStore) IsTFALocked(ctx context.Context, userID string) (locke
 	if rdb == nil {
 		return false, 0
 	}
-	key := TfaLockoutPrefix + userID
+	key := hostctx.TenantKey(ctx, TfaLockoutPrefix+userID)
 	ttl, err := rdb.TTL(ctx, key).Result()
 	if err != nil || ttl <= 0 {
 		return false, 0
@@ -56,7 +56,7 @@ func (s *TfaLockoutStore) RecordFailedAttempt(ctx context.Context, userID string
 	if rdb == nil {
 		return 0, false
 	}
-	key := TfaFailedPrefix + userID
+	key := hostctx.TenantKey(ctx, TfaFailedPrefix+userID)
 	attempts64, err := rdb.Incr(ctx, key).Result()
 	if err != nil {
 		return 0, false
@@ -66,7 +66,7 @@ func (s *TfaLockoutStore) RecordFailedAttempt(ctx context.Context, userID string
 		_ = rdb.Expire(ctx, key, s.lockoutDuration)
 	}
 	if attempts >= s.maxAttempts {
-		lockKey := TfaLockoutPrefix + userID
+		lockKey := hostctx.TenantKey(ctx, TfaLockoutPrefix+userID)
 		_ = rdb.Set(ctx, lockKey, strconv.FormatInt(time.Now().UnixMilli(), 10), s.lockoutDuration).Err()
 		_ = rdb.Del(ctx, key).Err()
 		return attempts, true
@@ -80,6 +80,6 @@ func (s *TfaLockoutStore) ClearFailedAttempts(ctx context.Context, userID string
 	if rdb == nil {
 		return
 	}
-	key := TfaFailedPrefix + userID
+	key := hostctx.TenantKey(ctx, TfaFailedPrefix+userID)
 	_ = rdb.Del(ctx, key).Err()
 }

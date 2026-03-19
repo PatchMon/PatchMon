@@ -90,7 +90,7 @@ func RateLimit(rdb *hostctx.RedisResolver, resolved *config.ResolvedConfig, typ 
 				return
 			}
 			clientIP := rateLimitClientIP(r)
-			key := keyPrefix + clientIP
+			key := hostctx.TenantKey(r.Context(), keyPrefix+clientIP)
 			ctx := r.Context()
 			count, err := client.Incr(ctx, key).Result()
 			if err != nil {
@@ -140,7 +140,7 @@ func RateLimitAgentByAPIID(rdb *hostctx.RedisResolver, resolved *config.Resolved
 			if apiID == "" {
 				apiID = rateLimitClientIP(r)
 			}
-			key := "ratelimit:agent:" + apiID
+			key := hostctx.TenantKey(r.Context(), "ratelimit:agent:"+apiID)
 			windowMs := resolved.AgentRateLimitWindowMs
 			max := resolved.AgentRateLimitMax
 			if windowMs <= 0 || max <= 0 {
