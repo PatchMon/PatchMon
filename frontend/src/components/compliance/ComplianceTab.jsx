@@ -97,7 +97,8 @@ const ComplianceTab = ({
 	const [statusFilter, setStatusFilter] = useState("fail");
 	const [severityFilter, setSeverityFilter] = useState("all"); // Filter by severity within Failed tab
 	const [ruleSearch, setRuleSearch] = useState(""); // Search rules by title/id
-	const [selectedProfile, setSelectedProfile] = useState("level1_server");
+	const [selectedProfile, setSelectedProfile] = useState(null);
+	const [savedDefaultProfile, setSavedDefaultProfile] = useState(null);
 	const [enableRemediation, setEnableRemediation] = useState(false);
 	const [remediatingRule, setRemediatingRule] = useState(null);
 	const [scanProgress, setScanProgress] = useState(null); // Real-time progress from SSE
@@ -141,12 +142,30 @@ const ComplianceTab = ({
 					integrationsForToggles.compliance_docker_bench_enabled ??
 					false,
 			});
+			// Load the saved default profile for this host
+			const defaultProfileId =
+				integrationsForToggles.data?.compliance_default_profile_id ??
+				integrationsForToggles.compliance_default_profile_id ??
+				null;
+			setSavedDefaultProfile(defaultProfileId);
+			if (defaultProfileId) {
+				setSelectedProfile((prev) => prev || defaultProfileId);
+			}
 		}
 	}, [integrationsForToggles]);
 
 	const scannerToggleMutation = useMutation({
 		mutationFn: (settings) => complianceAPI.setScannerToggles(hostId, settings),
 		onSuccess: () => {
+			refetchIntegrationsForToggles();
+		},
+	});
+
+	const defaultProfileMutation = useMutation({
+		mutationFn: (profileId) =>
+			complianceAPI.setDefaultProfile(hostId, profileId),
+		onSuccess: (_data, profileId) => {
+			setSavedDefaultProfile(profileId);
 			refetchIntegrationsForToggles();
 		},
 	});
@@ -324,18 +343,43 @@ const ComplianceTab = ({
 		const agentProfiles =
 			integrationStatus?.status?.scanner_info?.available_profiles;
 		if (agentProfiles?.length > 0) {
-			// If current selection isn't in the agent's available profiles, select the first one
+			// If no profile selected yet, use saved default or first available
+			if (!selectedProfile) {
+				if (
+					savedDefaultProfile &&
+					agentProfiles.some(
+						(p) => (p.xccdf_id || p.id) === savedDefaultProfile,
+					)
+				) {
+					setSelectedProfile(savedDefaultProfile);
+				} else {
+					const firstProfile = agentProfiles[0];
+					setSelectedProfile(firstProfile.xccdf_id || firstProfile.id);
+				}
+				return;
+			}
+			// If current selection isn't in the agent's available profiles, select saved default or first
 			const currentInList = agentProfiles.some(
 				(p) => (p.xccdf_id || p.id) === selectedProfile,
 			);
 			if (!currentInList) {
-				const firstProfile = agentProfiles[0];
-				setSelectedProfile(firstProfile.xccdf_id || firstProfile.id);
+				if (
+					savedDefaultProfile &&
+					agentProfiles.some(
+						(p) => (p.xccdf_id || p.id) === savedDefaultProfile,
+					)
+				) {
+					setSelectedProfile(savedDefaultProfile);
+				} else {
+					const firstProfile = agentProfiles[0];
+					setSelectedProfile(firstProfile.xccdf_id || firstProfile.id);
+				}
 			}
 		}
 	}, [
 		integrationStatus?.status?.scanner_info?.available_profiles,
 		selectedProfile,
+		savedDefaultProfile,
 	]);
 
 	// Auto-switch status filter based on profile type when viewing results
@@ -1491,7 +1535,7 @@ const ComplianceTab = ({
 								</label>
 								<select
 									id="profile-override"
-									value={selectedProfile}
+									value={selectedProfile || ""}
 									onChange={(e) => setSelectedProfile(e.target.value)}
 									className="flex-1 min-w-[200px] px-3 py-2 bg-secondary-700 border border-secondary-600 rounded-lg text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
 								>
@@ -1509,6 +1553,27 @@ const ComplianceTab = ({
 										</option>
 									))}
 								</select>
+								<button
+									type="button"
+									onClick={() => defaultProfileMutation.mutate(selectedProfile)}
+									disabled={
+										!selectedProfile ||
+										selectedProfile === savedDefaultProfile ||
+										defaultProfileMutation.isPending
+									}
+									className="px-3 py-2 text-xs font-medium rounded-lg border transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-secondary-700 border-secondary-600 text-secondary-300 hover:bg-secondary-600 hover:text-white"
+									title={
+										selectedProfile === savedDefaultProfile
+											? "This profile is already the default"
+											: "Set this profile as the default for this host"
+									}
+								>
+									{defaultProfileMutation.isPending
+										? "Saving..."
+										: selectedProfile === savedDefaultProfile
+											? "Default"
+											: "Set as Default"}
+								</button>
 								<span className="text-sm text-secondary-500 dark:text-white">
 									{availableProfiles.length} available
 								</span>
@@ -1849,6 +1914,7 @@ const ComplianceTab = ({
 								}}
 								disabled={
 									triggerScan.isPending ||
+									!selectedProfile ||
 									// When offline, oscap-docker cannot be queued
 									(!isConnected &&
 										availableProfiles.find(

@@ -219,6 +219,7 @@ CREATE TABLE IF NOT EXISTS hosts (
     compliance_docker_bench_enabled BOOLEAN NOT NULL DEFAULT false,
     compliance_scanner_status JSONB,
     compliance_scanner_updated_at TIMESTAMP(3),
+    compliance_default_profile_id TEXT,
     host_down_alerts_enabled BOOLEAN,
     expected_platform TEXT,
     package_manager TEXT,

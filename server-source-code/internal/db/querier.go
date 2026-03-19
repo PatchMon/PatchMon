@@ -314,6 +314,7 @@ type Querier interface {
 	UpdateComplianceRule(ctx context.Context, arg UpdateComplianceRuleParams) error
 	UpdateHostApiCredentials(ctx context.Context, arg UpdateHostApiCredentialsParams) error
 	UpdateHostAutoUpdate(ctx context.Context, arg UpdateHostAutoUpdateParams) error
+	UpdateHostComplianceDefaultProfile(ctx context.Context, arg UpdateHostComplianceDefaultProfileParams) error
 	UpdateHostComplianceEnabled(ctx context.Context, arg UpdateHostComplianceEnabledParams) error
 	UpdateHostComplianceMode(ctx context.Context, arg UpdateHostComplianceModeParams) error
 	UpdateHostComplianceScannerStatus(ctx context.Context, arg UpdateHostComplianceScannerStatusParams) error

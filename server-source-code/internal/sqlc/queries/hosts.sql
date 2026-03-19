@@ -63,6 +63,9 @@ UPDATE hosts SET compliance_enabled = $1, compliance_on_demand_only = $2, update
 -- name: UpdateHostComplianceScanners :exec
 UPDATE hosts SET compliance_openscap_enabled = $1, compliance_docker_bench_enabled = $2, updated_at = NOW() WHERE id = $3;
 
+-- name: UpdateHostComplianceDefaultProfile :exec
+UPDATE hosts SET compliance_default_profile_id = $1, updated_at = NOW() WHERE id = $2;
+
 -- name: UpdateHostComplianceScannerStatus :exec
 UPDATE hosts SET compliance_scanner_status = $1, compliance_scanner_updated_at = $2, updated_at = NOW() WHERE id = $3;
 

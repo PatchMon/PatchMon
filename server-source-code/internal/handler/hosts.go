@@ -798,6 +798,7 @@ func (h *HostsHandler) GetIntegrations(w http.ResponseWriter, r *http.Request) {
 		"compliance_on_demand_only":       complianceOnDemandOnly,
 		"compliance_openscap_enabled":     openscapEnabled,
 		"compliance_docker_bench_enabled": dockerBenchEnabled,
+		"compliance_default_profile_id":   host.ComplianceDefaultProfileID,
 		"pending_config_exists":           pending != nil,
 		"pending_config":                  pendingConfigMap,
 		"data": map[string]interface{}{
@@ -809,6 +810,7 @@ func (h *HostsHandler) GetIntegrations(w http.ResponseWriter, r *http.Request) {
 			"compliance_mode":                 complianceMode,
 			"compliance_openscap_enabled":     openscapEnabled,
 			"compliance_docker_bench_enabled": dockerBenchEnabled,
+			"compliance_default_profile_id":   host.ComplianceDefaultProfileID,
 			"host": map[string]interface{}{
 				"id":           host.ID,
 				"friendlyName": host.FriendlyName,
@@ -980,6 +982,32 @@ func (h *HostsHandler) SetComplianceScanners(w http.ResponseWriter, r *http.Requ
 		"success": true,
 		"message": "Scanner settings updated (pending apply)",
 		"data":    resp,
+	})
+}
+
+// SetComplianceDefaultProfile handles POST /hosts/:hostId/integrations/compliance/default-profile.
+func (h *HostsHandler) SetComplianceDefaultProfile(w http.ResponseWriter, r *http.Request) {
+	hostID := chi.URLParam(r, "hostId")
+	var req struct {
+		ProfileID *string `json:"profile_id"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		Error(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	_, err := h.hosts.GetByID(r.Context(), hostID)
+	if err != nil {
+		Error(w, http.StatusNotFound, "Host not found")
+		return
+	}
+	if err := h.hosts.UpdateComplianceDefaultProfile(r.Context(), hostID, req.ProfileID); err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to save default profile")
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"success":    true,
+		"message":    "Default compliance profile updated",
+		"profile_id": req.ProfileID,
 	})
 }
 

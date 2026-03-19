@@ -75,6 +75,12 @@ export const complianceAPI = {
 	setScannerToggles: (hostId, settings) =>
 		api.post(`/hosts/${hostId}/integrations/compliance/scanners`, settings),
 
+	// Set the default compliance scan profile for a host
+	setDefaultProfile: (hostId, profileId) =>
+		api.post(`/hosts/${hostId}/integrations/compliance/default-profile`, {
+			profile_id: profileId,
+		}),
+
 	// Get host integrations data (includes scanner toggle states)
 	getHostIntegrations: (hostId) => api.get(`/hosts/${hostId}/integrations`),
 

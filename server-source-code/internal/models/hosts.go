@@ -43,6 +43,7 @@ type Host struct {
 	ComplianceDockerBenchEnabled bool       `db:"compliance_docker_bench_enabled"`
 	ComplianceScannerStatus      JSON       `db:"compliance_scanner_status"`
 	ComplianceScannerUpdatedAt   *time.Time `db:"compliance_scanner_updated_at"`
+	ComplianceDefaultProfileID   *string    `db:"compliance_default_profile_id"`
 	HostDownAlertsEnabled        *bool      `db:"host_down_alerts_enabled"`
 	ExpectedPlatform             *string    `db:"expected_platform"`
 	PackageManager               *string    `db:"package_manager"`

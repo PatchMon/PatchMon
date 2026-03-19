@@ -468,6 +468,7 @@ func dbHostToModel(h db.Host) *models.Host {
 		ComplianceDockerBenchEnabled: h.ComplianceDockerBenchEnabled,
 		ComplianceScannerStatus:      models.JSON(h.ComplianceScannerStatus),
 		ComplianceScannerUpdatedAt:   pgTimePtr(h.ComplianceScannerUpdatedAt),
+		ComplianceDefaultProfileID:   h.ComplianceDefaultProfileID,
 		HostDownAlertsEnabled:        h.HostDownAlertsEnabled,
 		ExpectedPlatform:             h.ExpectedPlatform,
 		PackageManager:               h.PackageManager,

@@ -291,6 +291,7 @@ type Host struct {
 	ComplianceDockerBenchEnabled bool             `json:"compliance_docker_bench_enabled"`
 	ComplianceScannerStatus      []byte           `json:"compliance_scanner_status"`
 	ComplianceScannerUpdatedAt   pgtype.Timestamp `json:"compliance_scanner_updated_at"`
+	ComplianceDefaultProfileID   *string          `json:"compliance_default_profile_id"`
 	HostDownAlertsEnabled        *bool            `json:"host_down_alerts_enabled"`
 	ExpectedPlatform             *string          `json:"expected_platform"`
 	PackageManager               *string          `json:"package_manager"`

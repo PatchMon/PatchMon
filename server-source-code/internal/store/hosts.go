@@ -252,6 +252,15 @@ func (s *HostsStore) UpdateComplianceScanners(ctx context.Context, id string, op
 	})
 }
 
+// UpdateComplianceDefaultProfile saves the default compliance scan profile for a host.
+func (s *HostsStore) UpdateComplianceDefaultProfile(ctx context.Context, id string, profileID *string) error {
+	d := s.db.DB(ctx)
+	return d.Queries.UpdateHostComplianceDefaultProfile(ctx, db.UpdateHostComplianceDefaultProfileParams{
+		ComplianceDefaultProfileID: profileID,
+		ID:                         id,
+	})
+}
+
 // UpdateComplianceScannerStatus updates the persisted compliance scanner status from agent.
 func (s *HostsStore) UpdateComplianceScannerStatus(ctx context.Context, id string, statusJSON []byte, updatedAt time.Time) error {
 	d := s.db.DB(ctx)

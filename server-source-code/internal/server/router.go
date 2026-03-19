@@ -221,10 +221,10 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	automationHandler := handler.NewAutomationHandler(queueInspector, queueClient, registry, settingsStore, alertConfigStore)
 	apiHostsHandler := handler.NewApiHostsHandler(hostsStore, hostGroupsStore, dbProvider, dashboardStore, queueInspector)
 
-	patchRunsStore := store.NewPatchRunsStore(db)
-	patchPoliciesStore := store.NewPatchPoliciesStore(db)
-	patchAssignmentsStore := store.NewPatchPolicyAssignmentsStore(db)
-	patchExclusionsStore := store.NewPatchPolicyExclusionsStore(db)
+	patchRunsStore := store.NewPatchRunsStore(dbProvider)
+	patchPoliciesStore := store.NewPatchPoliciesStore(dbProvider)
+	patchAssignmentsStore := store.NewPatchPolicyAssignmentsStore(dbProvider)
+	patchExclusionsStore := store.NewPatchPolicyExclusionsStore(dbProvider)
 	patchingHandler := handler.NewPatchingHandler(patchRunsStore, patchPoliciesStore, patchAssignmentsStore, patchExclusionsStore, hostsStore, queueClient, queueInspector, log)
 	windowsUpdatesHandler := handler.NewWindowsUpdatesHandler(hostsStore, dbProvider)
 
@@ -447,6 +447,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Post("/hosts/{hostId}/integrations/compliance/request-status", hostsHandler.RequestComplianceStatus)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/integrations/compliance/mode", hostsHandler.SetComplianceMode)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/integrations/compliance/scanners", hostsHandler.SetComplianceScanners)
+			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/integrations/compliance/default-profile", hostsHandler.SetComplianceDefaultProfile)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/integrations/apply-pending-config", hostsHandler.ApplyPendingConfig)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/integrations/{integrationName}/toggle", hostsHandler.ToggleIntegration)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/hosts/{hostId}", hostsHandler.GetByID)
