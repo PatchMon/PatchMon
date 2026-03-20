@@ -146,7 +146,7 @@ const SettingsLayout = ({ children }) => {
 				section: "Integrations",
 				items: [
 					{
-						name: "Integrations",
+						name: "API integrations",
 						href: "/settings/integrations",
 						icon: Wrench,
 					},

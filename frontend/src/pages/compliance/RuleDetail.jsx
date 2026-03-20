@@ -420,7 +420,7 @@ export default function RuleDetail() {
 									const why_text =
 										host.finding ||
 										(host.actual
-											? `Current: ${host.actual}${host.expected ? ` → Required: ${host.expected}` : ""}`
+											? `Current: ${host.actual}${host.expected ? ` -> Required: ${host.expected}` : ""}`
 											: null);
 									return (
 										<tr

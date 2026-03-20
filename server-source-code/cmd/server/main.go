@@ -55,7 +55,7 @@ func main() {
 	}
 	defer db.Close()
 
-	// Resolve config (env → DB → default) and create real logger
+	// Resolve config (env -> DB -> default) and create real logger
 	settingsStore := store.NewSettingsStore(db)
 	settings, _ := settingsStore.GetFirst(ctx)
 	resolved := config.ResolveConfig(ctx, cfg, settings)

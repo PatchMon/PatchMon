@@ -726,8 +726,8 @@ const OidcSettings = () => {
 								</span>
 								<span>
 									<strong>Authentik users:</strong> Create a Scope Mapping to
-									add groups to the token. Go to Customization → Property
-									Mappings → Create → Scope Mapping. Use scope
+									add groups to the token. Go to Customization &gt; Property
+									Mappings &gt; Create &gt; Scope Mapping. Use scope
 									&quot;profile&quot; and expression:{" "}
 									<code className="bg-secondary-100 dark:bg-secondary-700 px-1 rounded block mt-1">
 										{`return {"groups": [str(g.name) for g in request.user.ak_groups.all()]}`}

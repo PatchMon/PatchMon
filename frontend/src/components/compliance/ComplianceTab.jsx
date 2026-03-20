@@ -655,8 +655,8 @@ const ComplianceTab = ({
 
 	// SSE connection for real-time compliance scan progress.
 	// Effect MUST depend only on scanInProgress and apiId. Including setScanInProgress/setScanMessage
-	// (wrapper functions recreated each render) caused the effect to re-run every render → new
-	// EventSource and cleanup of the previous one → connect/disconnect storm on the server.
+	// (wrapper functions recreated each render) caused the effect to re-run every render -> new
+	// EventSource and cleanup of the previous one -> connect/disconnect storm on the server.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: wrapper setters are recreated each render and would cause SSE connect/disconnect storms
 	useEffect(() => {
 		if (!scanInProgress || !apiId) {
@@ -1125,7 +1125,7 @@ const ComplianceTab = ({
 										onClick={() => setActiveSubtab("scan")}
 										className="text-xs text-primary-400 hover:text-primary-300"
 									>
-										Run a scan →
+										Run a scan
 									</button>
 								</div>
 							)}
@@ -1299,7 +1299,7 @@ const ComplianceTab = ({
 										onClick={() => setActiveSubtab("scan")}
 										className="text-xs text-primary-400 hover:text-primary-300"
 									>
-										Run a scan →
+										Run a scan
 									</button>
 								</div>
 							)}
@@ -1970,7 +1970,7 @@ const ComplianceTab = ({
 							onClick={() => setActiveSubtab("results")}
 							className="text-sm text-primary-400 hover:text-primary-300"
 						>
-							View Results →
+							View Results
 						</button>
 					</div>
 				</div>
@@ -3942,7 +3942,7 @@ const ComplianceTab = ({
 													className={`font-mono text-xs ${ssgNeedsUpgrade ? "text-yellow-400" : "text-secondary-300 dark:text-white"}`}
 												>
 													{info.ssg_version}
-													{ssgNeedsUpgrade && ` → ${serverSSGVersion}`}
+													{ssgNeedsUpgrade && ` -> ${serverSSGVersion}`}
 												</span>
 											</div>
 										)}

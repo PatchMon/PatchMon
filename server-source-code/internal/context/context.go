@@ -107,7 +107,7 @@ func TenantHostKey(ctx stdctx.Context) string {
 
 // TenantKey prefixes a Redis key with the tenant domain from context for multi-host isolation.
 // In single-tenant mode (no entry in context), returns the key unchanged.
-// Example: TenantKey(ctx, "ssh:ticket:abc") → "t:tenant1.patchmon.cloud:ssh:ticket:abc"
+// Example: TenantKey(ctx, "ssh:ticket:abc") -> "t:tenant1.patchmon.cloud:ssh:ticket:abc"
 func TenantKey(ctx stdctx.Context, key string) string {
 	if e := EntryFromContext(ctx); e != nil && e.Host != "" {
 		return "t:" + e.Host + ":" + key

@@ -6,6 +6,9 @@ export function getDoughnutOptions(is_dark, is_mobile = false) {
 	return {
 		responsive: true,
 		maintainAspectRatio: false,
+		elements: {
+			arc: { borderRadius: 5 },
+		},
 		plugins: {
 			legend: {
 				position: is_mobile ? "bottom" : "right",
@@ -60,6 +63,9 @@ export function getPieOptions(is_dark) {
 	return {
 		responsive: true,
 		maintainAspectRatio: false,
+		elements: {
+			arc: { borderRadius: 5 },
+		},
 		plugins: {
 			legend: {
 				position: "right",

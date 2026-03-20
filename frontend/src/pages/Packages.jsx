@@ -342,7 +342,7 @@ const Packages = () => {
 
 					if (!aNeedsUpdates) {
 						aPriority = 2; // Up to Date
-					} else if (a.isSecurityUpdate) {
+					} else if ((a.stats?.securityUpdates || 0) > 0) {
 						aPriority = 0; // Security Update
 					} else {
 						aPriority = 1; // Regular Update
@@ -350,7 +350,7 @@ const Packages = () => {
 
 					if (!bNeedsUpdates) {
 						bPriority = 2; // Up to Date
-					} else if (b.isSecurityUpdate) {
+					} else if ((b.stats?.securityUpdates || 0) > 0) {
 						bPriority = 0; // Security Update
 					} else {
 						bPriority = 1; // Regular Update
@@ -538,7 +538,7 @@ const Packages = () => {
 					return <span className="badge-success">Up to Date</span>;
 				}
 
-				return pkg.isSecurityUpdate ? (
+				return (pkg.stats?.securityUpdates || 0) > 0 ? (
 					<span className="badge-danger">
 						<Shield className="h-3 w-3" />
 						Security Update Available
@@ -671,11 +671,22 @@ const Packages = () => {
 								type="button"
 								onClick={() => setShowPatchConfirmModal(true)}
 								className="btn-primary flex items-center gap-2"
-								title="Run apt update and upgrade on this host"
+								title="Run system package updates on this host"
 							>
 								<Wrench className="h-4 w-4" />
 								Patch all
 							</button>
+						)}
+					{hostFilter &&
+						hostFilter !== "all" &&
+						canManageHosts() &&
+						isWindowsHostFilter && (
+							<span
+								className="text-xs text-secondary-400 dark:text-secondary-500 italic"
+								title="Windows patching is managed through Windows Update or WinGet on the host"
+							>
+								Patching managed via Windows Update
+							</span>
 						)}
 					<button
 						type="button"

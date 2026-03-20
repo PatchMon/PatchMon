@@ -162,7 +162,20 @@ func (h *ScheduledReportRunHandler) ProcessTask(ctx context.Context, t *asynq.Ta
 		return nil
 	}
 
-	subject, htmlBody, csvBody, err := notifications.BuildScheduledReport(ctx, d, rep.Name, rep.Definition)
+	// Build branding from settings for email template.
+	branding := notifications.ReportBranding{}
+	if settings, sErr := d.Queries.GetFirstSettings(ctx); sErr == nil {
+		baseURL := strings.TrimRight(settings.ServerUrl, "/")
+		branding.ServerURL = baseURL
+		if settings.LogoLight != nil && *settings.LogoLight != "" {
+			branding.LogoLightURL = baseURL + *settings.LogoLight
+		}
+		if settings.LogoDark != nil && *settings.LogoDark != "" {
+			branding.LogoDarkURL = baseURL + *settings.LogoDark
+		}
+	}
+
+	subject, htmlBody, csvBody, err := notifications.BuildScheduledReport(ctx, d, rep.Name, rep.Definition, branding)
 	if err != nil {
 		h.insertRun(ctx, d, p.ReportID, "failed", err.Error(), "")
 		return err
@@ -331,9 +344,8 @@ func sendScheduledEmail(plain, subject, html, csv string) error {
 	if cfg.SMTPPort == 0 {
 		cfg.SMTPPort = 587
 	}
-	fullHTML := html + "<h2>CSV excerpt</h2><pre>" + notifications.TemplateEscape(csv) + "</pre>"
 	msg := []byte(fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n%s",
-		cfg.From, cfg.To, subject, fullHTML))
+		cfg.From, cfg.To, subject, html))
 	addr := cfg.SMTPHost + ":" + strconv.Itoa(cfg.SMTPPort)
 	var auth smtp.Auth
 	if cfg.Username != "" {

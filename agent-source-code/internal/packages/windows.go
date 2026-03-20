@@ -109,7 +109,8 @@ if ($out) { $out | Out-String }
 		}
 		avail := strings.TrimSpace(stripEllipsis(e.Available))
 		needsUpdate := false
-		if up, ok := upgradeMap[e.ID]; ok {
+		id := strings.TrimSpace(stripEllipsis(e.ID))
+		if up, ok := upgradeMap[id]; ok {
 			needsUpdate = true
 			if avail == "" {
 				avail = up
@@ -329,9 +330,11 @@ foreach ($hf in $hotfixes) {
     }
   } catch {}
   if (-not $installedOn) { $installedOn = "installed" }
+  $desc = if ($installedOn -and $installedOn -ne "installed") { "Installed $installedOn" } else { "Installed" }
   $result += @{
     Name             = $id
-    CurrentVersion   = $installedOn
+    Description      = $desc
+    CurrentVersion   = "installed"
     AvailableVersion = ""
     NeedsUpdate      = $false
     IsSecurityUpdate = ($hf.Description -match "Security")
@@ -341,6 +344,7 @@ foreach ($hf in $hotfixes) {
     WUACategories    = @()
     WUASupportURL    = ""
     WUARevisionNumber = 0
+    WUADateInstalled = $installedOn
   }
 }
 
@@ -365,7 +369,7 @@ try {
     $result += @{
       Name             = $displayName
       CurrentVersion   = "pending"
-      AvailableVersion = $guid
+      AvailableVersion = ""
       NeedsUpdate      = $true
       IsSecurityUpdate = $secFlag
       WUAGuid          = $guid
@@ -393,7 +397,7 @@ if ($comFailed) {
         $result += @{
           Name             = "$($u.Title)$kb"
           CurrentVersion   = "pending"
-          AvailableVersion = $u.UpdateID
+          AvailableVersion = ""
           NeedsUpdate      = $true
           IsSecurityUpdate = ($u.MsrcSeverity -match "Critical|Important")
           WUAGuid          = $u.UpdateID
@@ -508,8 +512,9 @@ foreach ($path in $paths) {
   Get-ItemProperty $path -ErrorAction SilentlyContinue | ForEach-Object {
     $name = $_.DisplayName
     $ver = $_.DisplayVersion
-    if ($name -and $ver -and -not $seen[$name]) {
+    if ($name -and -not $seen[$name]) {
       $seen[$name] = $true
+      if (-not $ver) { $ver = "unknown" }
       $result += @{ Name = $name; Version = $ver }
     }
   }
@@ -527,6 +532,11 @@ $result | ConvertTo-Json -Compress
 	outputStr := strings.TrimSpace(string(output))
 	if outputStr == "" || outputStr == "[]" {
 		return nil
+	}
+
+	// PowerShell outputs a single object (not array) when there is exactly one result
+	if !strings.HasPrefix(outputStr, "[") {
+		outputStr = "[" + outputStr + "]"
 	}
 
 	var raw []struct {

@@ -170,31 +170,31 @@ const RolesTab = () => {
 									<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
 										OIDC_ADMIN_GROUP
 									</code>{" "}
-									→ Super Admin (highest)
+									maps to Super Admin (highest)
 								</li>
 								<li>
 									<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
 										OIDC_ADMIN_GROUP
 									</code>{" "}
-									→ Admin
+									maps to Admin
 								</li>
 								<li>
 									<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
 										OIDC_HOST_MANAGER_GROUP
 									</code>{" "}
-									→ Host Manager
+									maps to Host Manager
 								</li>
 								<li>
 									<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
 										OIDC_USER_GROUP
 									</code>{" "}
-									→ User (can export data)
+									maps to User (can export data)
 								</li>
 								<li>
 									<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
 										OIDC_READONLY_GROUP
 									</code>{" "}
-									→ Readonly (view only, lowest)
+									maps to Readonly (view only, lowest)
 								</li>
 							</ul>
 						</div>

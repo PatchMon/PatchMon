@@ -336,7 +336,7 @@ func discordWebhookBody(p notifications.NotificationDeliverPayload) ([]byte, err
 	// Add clickable link to PatchMon if available
 	if link := nocMetaStr(p.Metadata, "app_link"); link != "" {
 		fields = append(fields, map[string]interface{}{
-			"name": "🔗 View in PatchMon", "value": "[Open →](" + link + ")", "inline": false,
+			"name": "🔗 View in PatchMon", "value": "[Open](" + link + ")", "inline": false,
 		})
 	}
 
@@ -722,7 +722,7 @@ func buildEmailHTML(p notifications.NotificationDeliverPayload) string {
 
 	// Clickable link
 	if link := nocMetaStr(m, "app_link"); link != "" {
-		fmt.Fprintf(&sb, `<p><a href="%s" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:bold;">View in PatchMon →</a></p>`, esc(link))
+		fmt.Fprintf(&sb, `<p><a href="%s" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:bold;">View in PatchMon</a></p>`, esc(link))
 	}
 
 	sb.WriteString(`<hr style="border:none;border-top:1px solid #ddd;margin:20px 0;"/>`)
@@ -754,7 +754,7 @@ func (h *NotificationDeliverHandler) sendEmail(ctx context.Context, plain string
 	tlsCfg := &tls.Config{ServerName: cfg.SMTPHost, MinVersion: tls.VersionTLS12}
 
 	// Connect to the SMTP server. We always try the smart path:
-	// 1. Plain connect → STARTTLS upgrade (port 587 standard)
+	// 1. Plain connect -> STARTTLS upgrade (port 587 standard)
 	// 2. If STARTTLS not available and use_tls=true, retry with implicit TLS (port 465)
 	// 3. If STARTTLS not available and use_tls=false, continue plain
 	c, conn, err := func() (*smtp.Client, net.Conn, error) {

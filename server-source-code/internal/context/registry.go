@@ -34,7 +34,7 @@ type Entry struct {
 	UpdatedAt      time.Time
 }
 
-// Registry maintains an in-memory cache of host → Entry, polling the provisioner DB.
+// Registry maintains an in-memory cache of host -> Entry, polling the provisioner DB.
 type Registry struct {
 	pool    *pgxpool.Pool
 	mu      sync.RWMutex

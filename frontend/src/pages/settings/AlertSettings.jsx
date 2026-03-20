@@ -408,9 +408,6 @@ const AlertSettings = () => {
 									<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 										Auto-Resolve Days
 									</th>
-									<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-										Notifications
-									</th>
 								</tr>
 							</thead>
 							<tbody className="bg-white dark:bg-secondary-900 divide-y divide-secondary-200 dark:divide-secondary-700">
@@ -604,33 +601,6 @@ const AlertTypeTableRow = ({ config, onChange, disabled, usersData }) => {
 					placeholder=" -"
 					className="w-20 px-2 py-1 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
 				/>
-			</td>
-
-			{/* Notifications */}
-			<td className="px-6 py-4 whitespace-nowrap">
-				<button
-					type="button"
-					onClick={() =>
-						handleFieldChange(
-							"notification_enabled",
-							!localConfig.notification_enabled,
-						)
-					}
-					disabled={disabled || !localConfig.is_enabled}
-					className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-md border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
-						localConfig.notification_enabled
-							? "bg-primary-600 dark:bg-primary-500"
-							: "bg-secondary-300 dark:bg-secondary-600"
-					} disabled:opacity-50 disabled:cursor-not-allowed`}
-				>
-					<span
-						className={`pointer-events-none inline-block h-4 w-4 transform rounded-md bg-white shadow ring-0 transition duration-200 ease-in-out ${
-							localConfig.notification_enabled
-								? "translate-x-4"
-								: "translate-x-0"
-						}`}
-					/>
-				</button>
 			</td>
 		</tr>
 	);

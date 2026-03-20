@@ -19,7 +19,7 @@ type OriginResolver func(r *http.Request) (origin string, ok bool)
 // In addition to standard CORS header validation, it checks X-Forwarded-Host
 // (set by the nginx reverse proxy for browser requests) against the allowed
 // origins. This blocks access from disallowed hostnames even when the browser
-// treats the request as same-origin (frontend proxy → backend).
+// treats the request as same-origin (frontend proxy -> backend).
 //
 // Internal requests (health checks, agent connections) that bypass nginx
 // won't have X-Forwarded-Host and are not affected.
@@ -148,7 +148,7 @@ func EffectiveOrigin(r *http.Request, host string) string {
 }
 
 // buildAllowedHosts extracts host[:port] from each origin URL.
-// E.g. "http://patchmon-local:3000" → "patchmon-local:3000".
+// E.g. "http://patchmon-local:3000" -> "patchmon-local:3000".
 // Also adds hostname without port when using default ports (80, 443) so nginx $host works.
 // Nginx $host omits the port for default ports (e.g. "patchmon-local.local" for HTTPS).
 func buildAllowedHosts(origins []string) map[string]bool {

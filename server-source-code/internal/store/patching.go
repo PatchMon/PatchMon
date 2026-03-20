@@ -95,7 +95,7 @@ func parsePackagesAffectedFromRealOutput(output string) []string {
 				// Take only the first token (package name+version+arch)
 				fields := strings.Fields(rest)
 				if len(fields) >= 1 {
-					// Strip version: "pkgname-1.0-1.x86_64" → "pkgname"
+					// Strip version: "pkgname-1.0-1.x86_64" -> "pkgname"
 					pkgFull := fields[0]
 					// Remove arch suffix first
 					pkgNoArch := strings.SplitN(pkgFull, ".", 2)[0]

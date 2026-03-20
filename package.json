@@ -1,6 +1,6 @@
 {
 	"name": "patchmon",
-	"version": "1.4.92",
+	"version": "1.4.93",
 	"description": "Linux Patch Monitoring System",
 	"license": "AGPL-3.0",
 	"private": true,

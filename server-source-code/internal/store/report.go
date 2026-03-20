@@ -273,9 +273,6 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 
 	for _, pkg := range payload.Packages {
 		av := pkg.AvailableVersion
-		if av == nil {
-			av = &pkg.CurrentVersion
-		}
 		desc := &pkg.Description
 		if pkg.Description == "" {
 			desc = nil

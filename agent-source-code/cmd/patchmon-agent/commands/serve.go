@@ -2170,7 +2170,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 
 // runPatchWindows handles patching on Windows hosts.
 // For patch_all: installs all approved WUA updates (by GUID from server) + upgrades all WinGet apps.
-// For patch_package: routes by package name - "KB..." prefix → WUA, otherwise → WinGet upgrade.
+// For patch_package: routes by package name - "KB..." prefix -> WUA, otherwise -> WinGet upgrade.
 func runPatchWindows(ctx context.Context, httpClient *client.Client, patchRunID, patchType string, packageNames []string, dryRun bool) error {
 	patcher := packages.NewWindowsPatcher()
 	var fullOutput strings.Builder

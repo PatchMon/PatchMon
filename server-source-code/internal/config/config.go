@@ -12,7 +12,7 @@ import (
 )
 
 // DefaultVersion is the default server version. Bump this when releasing; config_test.go uses it.
-const DefaultVersion = "1.4.92"
+const DefaultVersion = "1.4.93"
 
 // Config holds application configuration loaded from environment.
 // Uses same variable names as PatchMon/server for compatibility.
@@ -68,13 +68,13 @@ type Config struct {
 	TfaLockoutDurationMin  int
 	TfaRememberMeExpiresIn string // e.g. "30d"
 
-	// Auth/Lockout (env → DB → default)
+	// Auth/Lockout (env -> DB -> default)
 	MaxLoginAttempts   int
 	LockoutDurationMin int
 	// Server
 	EnableHSTS bool
 	TrustProxy bool
-	// Rate limits (env → DB → default)
+	// Rate limits (env -> DB -> default)
 	RateLimitWindowMs         int
 	RateLimitMax              int
 	AuthRateLimitWindowMs     int

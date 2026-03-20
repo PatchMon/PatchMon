@@ -1795,6 +1795,9 @@ const Dashboard = () => {
 	const chartOptions = {
 		responsive: true,
 		maintainAspectRatio: false,
+		elements: {
+			arc: { borderRadius: 5 },
+		},
 		plugins: {
 			legend: {
 				position: isMobile ? "bottom" : "right",
@@ -1820,6 +1823,9 @@ const Dashboard = () => {
 	const doughnutChartOptions = {
 		responsive: true,
 		maintainAspectRatio: false,
+		elements: {
+			arc: { borderRadius: 5 },
+		},
 		plugins: {
 			legend: {
 				position: isMobile ? "bottom" : "right",
@@ -1845,6 +1851,9 @@ const Dashboard = () => {
 	const updateStatusChartOptions = {
 		responsive: true,
 		maintainAspectRatio: false,
+		elements: {
+			arc: { borderRadius: 5 },
+		},
 		plugins: {
 			legend: {
 				position: "right",
@@ -1870,6 +1879,9 @@ const Dashboard = () => {
 	const packagePriorityChartOptions = {
 		responsive: true,
 		maintainAspectRatio: false,
+		elements: {
+			arc: { borderRadius: 5 },
+		},
 		plugins: {
 			legend: {
 				position: "right",

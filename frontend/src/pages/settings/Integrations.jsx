@@ -539,7 +539,7 @@ const Integrations = () => {
 			{/* Header */}
 			<div>
 				<h1 className="text-xl md:text-2xl font-bold text-secondary-900 dark:text-white">
-					Integrations
+					API integrations
 				</h1>
 				<p className="mt-1 text-xs md:text-sm text-secondary-600 dark:text-white">
 					Manage auto-enrollment tokens for Proxmox and other integrations
@@ -2104,8 +2104,8 @@ const Integrations = () => {
 									>
 										Checkmk CSV import format
 									</a>
-									. Use the file in Checkmk under Setup → Hosts → Import hosts
-									via CSV file.
+									. Use the file in Checkmk under Setup &gt; Hosts &gt; Import
+									hosts via CSV file.
 								</p>
 								<p className="text-xs text-secondary-500 dark:text-white mb-4">
 									{checkmk_additional_fields

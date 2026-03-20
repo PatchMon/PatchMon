@@ -1062,7 +1062,7 @@ const Hosts = () => {
 						{!settings?.auto_update && host.auto_update && (
 							<span
 								className="text-amber-500 dark:text-amber-400"
-								title="Global auto-updates disabled in Settings → Agent Updates"
+								title="Global auto-updates disabled in Settings > Agent Updates"
 							>
 								<AlertTriangle className="h-4 w-4" />
 							</span>
@@ -2226,7 +2226,7 @@ const Hosts = () => {
 									</h3>
 									<p className="mt-2 text-sm text-secondary-600 dark:text-white">
 										The master auto-update setting is currently{" "}
-										<strong>disabled</strong> in Settings → Agent Updates.
+										<strong>disabled</strong> in Settings &gt; Agent Updates.
 									</p>
 									<p className="mt-2 text-sm text-secondary-600 dark:text-white">
 										Enabling auto-update for{" "}

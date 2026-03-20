@@ -638,7 +638,7 @@ const HostDetail = () => {
 		}
 		let cancelled = false;
 
-		// Request agent to report current compliance scanner status (WebSocket → agent re-checks and POSTs)
+		// Request agent to report current compliance scanner status (WebSocket -> agent re-checks and POSTs)
 		adminHostsAPI
 			.requestComplianceStatus(hostId)
 			.then(() => {
@@ -1511,7 +1511,7 @@ const HostDetail = () => {
 										onClick={() => handleTabChange("integrations")}
 										className="text-sm text-primary-600 dark:text-primary-400 hover:underline"
 									>
-										Manage in Integrations tab →
+										Manage in Integrations tab
 									</button>
 								</div>
 
@@ -1561,7 +1561,7 @@ const HostDetail = () => {
 										{!settings?.auto_update && host.auto_update && (
 											<span
 												className="text-amber-500 dark:text-amber-400"
-												title="Global auto-updates disabled in Settings → Agent Updates"
+												title="Global auto-updates disabled in Settings > Agent Updates"
 											>
 												<AlertTriangle className="h-4 w-4" />
 											</span>
@@ -2741,7 +2741,7 @@ const HostDetail = () => {
 											onClick={() => handleTabChange("integrations")}
 											className="text-sm text-primary-600 dark:text-primary-400 hover:underline"
 										>
-											Manage in Integrations tab →
+											Manage in Integrations tab
 										</button>
 									</div>
 
@@ -2791,7 +2791,7 @@ const HostDetail = () => {
 											{!settings?.auto_update && host.auto_update && (
 												<span
 													className="text-amber-500 dark:text-amber-400"
-													title="Global auto-updates disabled in Settings → Agent Updates"
+													title="Global auto-updates disabled in Settings > Agent Updates"
 												>
 													<AlertTriangle className="h-4 w-4" />
 												</span>
@@ -6151,7 +6151,7 @@ const HostDetail = () => {
 									</h3>
 									<p className="mt-2 text-sm text-secondary-600 dark:text-white">
 										The master auto-update setting is currently{" "}
-										<strong>disabled</strong> in Settings → Agent Updates.
+										<strong>disabled</strong> in Settings &gt; Agent Updates.
 									</p>
 									<p className="mt-2 text-sm text-secondary-600 dark:text-white">
 										Enabling auto-update for{" "}

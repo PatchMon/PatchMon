@@ -113,9 +113,9 @@ func (r *Resolver) configuredViaEnv() bool {
 
 // resolveEnabled determines whether OIDC is enabled when the env path is active.
 // Priority:
-//  1. OIDC_ENABLED env var is explicitly set → respect it (true or false).
-//  2. All four required fields present via env, no OIDC_ENABLED → implicitly enabled.
-//  3. Partial env config → fall back to the DB's oidc_enabled flag.
+//  1. OIDC_ENABLED env var is explicitly set -> respect it (true or false).
+//  2. All four required fields present via env, no OIDC_ENABLED -> implicitly enabled.
+//  3. Partial env config -> fall back to the DB's oidc_enabled flag.
 func resolveEnabled(cfgEnabled bool, issuerURL, clientID, clientSecret, redirectURI string, settings *models.Settings) bool {
 	if os.Getenv("OIDC_ENABLED") != "" {
 		return cfgEnabled

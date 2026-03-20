@@ -1,4 +1,4 @@
-// Package config provides env → DB → default resolution for application config.
+// Package config provides env -> DB -> default resolution for application config.
 package config
 
 import (

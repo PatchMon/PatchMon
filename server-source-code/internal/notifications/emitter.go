@@ -54,12 +54,9 @@ type Event struct {
 	Metadata      map[string]interface{}
 }
 
-// EmitForAlert respects alert_config.notification_enabled and matching routes.
+// EmitForAlert dispatches alert notifications via matching routes.
 func (e *Emitter) EmitForAlert(ctx context.Context, d *database.DB, tenantHost string, alert *models.Alert, metadata map[string]interface{}, cfg *store.AlertConfigWithUser) {
 	if e == nil || e.qc == nil || d == nil || alert == nil {
-		return
-	}
-	if cfg != nil && !cfg.NotificationEnabled {
 		return
 	}
 	meta := metadata

@@ -17,7 +17,7 @@ type poolEntry struct {
 	expiresAt time.Time
 }
 
-// PoolCache maintains a cache of host → *database.DB with lazy initialization.
+// PoolCache maintains a cache of host -> *database.DB with lazy initialization.
 // On first access: runs migrations, creates pool, caches.
 type PoolCache struct {
 	registry *Registry
