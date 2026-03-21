@@ -129,6 +129,14 @@ For the install script (`/api/v1/hosts/install`) to serve agent binaries, the pr
 AGENT_BINARIES_DIR=/path/to/agents ./patchmon-server
 ```
 
+If running the patchmon-server on its own then download them from the release or build the agent files and place them in the directory. 
+
+So your directory structure shyour agent sould be:
+
+- ./patchmon-server (server binary you can run)
+- ./agents/{your agents}
+- ./.env (configured environment file)
+
 Agent binary naming convention:
 - `patchmon-agent-linux-amd64`, `patchmon-agent-linux-arm64`, `patchmon-agent-linux-386`, `patchmon-agent-linux-arm`
 - `patchmon-agent-freebsd-amd64`, `patchmon-agent-freebsd-386`, `patchmon-agent-freebsd-arm64`, `patchmon-agent-freebsd-arm`

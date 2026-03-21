@@ -47,28 +47,30 @@ func (q *Queries) CreateNotificationDestination(ctx context.Context, arg CreateN
 }
 
 const createNotificationRoute = `-- name: CreateNotificationRoute :one
-INSERT INTO notification_routes (id, destination_id, event_type, min_severity, host_group_id, match_rules, enabled, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-RETURNING id, destination_id, event_type, min_severity, host_group_id, match_rules, enabled, created_at, updated_at
+INSERT INTO notification_routes (id, destination_id, event_types, min_severity, host_group_ids, host_ids, match_rules, enabled, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+RETURNING id, destination_id, event_types, min_severity, host_group_ids, host_ids, match_rules, enabled, created_at, updated_at
 `
 
 type CreateNotificationRouteParams struct {
-	ID            string  `json:"id"`
-	DestinationID string  `json:"destination_id"`
-	EventType     string  `json:"event_type"`
-	MinSeverity   string  `json:"min_severity"`
-	HostGroupID   *string `json:"host_group_id"`
-	MatchRules    []byte  `json:"match_rules"`
-	Enabled       bool    `json:"enabled"`
+	ID            string `json:"id"`
+	DestinationID string `json:"destination_id"`
+	EventTypes    []byte `json:"event_types"`
+	MinSeverity   string `json:"min_severity"`
+	HostGroupIds  []byte `json:"host_group_ids"`
+	HostIds       []byte `json:"host_ids"`
+	MatchRules    []byte `json:"match_rules"`
+	Enabled       bool   `json:"enabled"`
 }
 
 func (q *Queries) CreateNotificationRoute(ctx context.Context, arg CreateNotificationRouteParams) (NotificationRoute, error) {
 	row := q.db.QueryRow(ctx, createNotificationRoute,
 		arg.ID,
 		arg.DestinationID,
-		arg.EventType,
+		arg.EventTypes,
 		arg.MinSeverity,
-		arg.HostGroupID,
+		arg.HostGroupIds,
+		arg.HostIds,
 		arg.MatchRules,
 		arg.Enabled,
 	)
@@ -76,9 +78,10 @@ func (q *Queries) CreateNotificationRoute(ctx context.Context, arg CreateNotific
 	err := row.Scan(
 		&i.ID,
 		&i.DestinationID,
-		&i.EventType,
+		&i.EventTypes,
 		&i.MinSeverity,
-		&i.HostGroupID,
+		&i.HostGroupIds,
+		&i.HostIds,
 		&i.MatchRules,
 		&i.Enabled,
 		&i.CreatedAt,
@@ -178,7 +181,7 @@ func (q *Queries) GetNotificationDestinationByID(ctx context.Context, id string)
 }
 
 const getNotificationRouteByID = `-- name: GetNotificationRouteByID :one
-SELECT id, destination_id, event_type, min_severity, host_group_id, match_rules, enabled, created_at, updated_at FROM notification_routes WHERE id = $1
+SELECT id, destination_id, event_types, min_severity, host_group_ids, host_ids, match_rules, enabled, created_at, updated_at FROM notification_routes WHERE id = $1
 `
 
 func (q *Queries) GetNotificationRouteByID(ctx context.Context, id string) (NotificationRoute, error) {
@@ -187,9 +190,10 @@ func (q *Queries) GetNotificationRouteByID(ctx context.Context, id string) (Noti
 	err := row.Scan(
 		&i.ID,
 		&i.DestinationID,
-		&i.EventType,
+		&i.EventTypes,
 		&i.MinSeverity,
-		&i.HostGroupID,
+		&i.HostGroupIds,
+		&i.HostIds,
 		&i.MatchRules,
 		&i.Enabled,
 		&i.CreatedAt,
@@ -382,20 +386,21 @@ func (q *Queries) ListNotificationDestinations(ctx context.Context) ([]Notificat
 
 const listNotificationRoutes = `-- name: ListNotificationRoutes :many
 SELECT
-    r.id, r.destination_id, r.event_type, r.min_severity, r.host_group_id, r.match_rules, r.enabled AS route_enabled,
+    r.id, r.destination_id, r.event_types, r.min_severity, r.host_group_ids, r.host_ids, r.match_rules, r.enabled AS route_enabled,
     r.created_at, r.updated_at,
     d.channel_type, d.display_name AS destination_display_name
 FROM notification_routes r
 JOIN notification_destinations d ON d.id = r.destination_id
-ORDER BY r.event_type, d.display_name
+ORDER BY d.display_name
 `
 
 type ListNotificationRoutesRow struct {
 	ID                     string           `json:"id"`
 	DestinationID          string           `json:"destination_id"`
-	EventType              string           `json:"event_type"`
+	EventTypes             []byte           `json:"event_types"`
 	MinSeverity            string           `json:"min_severity"`
-	HostGroupID            *string          `json:"host_group_id"`
+	HostGroupIds           []byte           `json:"host_group_ids"`
+	HostIds                []byte           `json:"host_ids"`
 	MatchRules             []byte           `json:"match_rules"`
 	RouteEnabled           bool             `json:"route_enabled"`
 	CreatedAt              pgtype.Timestamp `json:"created_at"`
@@ -416,9 +421,10 @@ func (q *Queries) ListNotificationRoutes(ctx context.Context) ([]ListNotificatio
 		if err := rows.Scan(
 			&i.ID,
 			&i.DestinationID,
-			&i.EventType,
+			&i.EventTypes,
 			&i.MinSeverity,
-			&i.HostGroupID,
+			&i.HostGroupIds,
+			&i.HostIds,
 			&i.MatchRules,
 			&i.RouteEnabled,
 			&i.CreatedAt,
@@ -438,22 +444,23 @@ func (q *Queries) ListNotificationRoutes(ctx context.Context) ([]ListNotificatio
 
 const listNotificationRoutesForEvent = `-- name: ListNotificationRoutesForEvent :many
 SELECT
-    r.id, r.destination_id, r.event_type, r.min_severity, r.host_group_id, r.match_rules, r.enabled AS route_enabled,
+    r.id, r.destination_id, r.event_types, r.min_severity, r.host_group_ids, r.host_ids, r.match_rules, r.enabled AS route_enabled,
     r.created_at, r.updated_at,
     d.channel_type, d.display_name AS destination_display_name, d.config_encrypted, d.enabled AS destination_enabled
 FROM notification_routes r
 JOIN notification_destinations d ON d.id = r.destination_id
 WHERE r.enabled = true AND d.enabled = true
-  AND (r.event_type = $1 OR r.event_type = '*')
-ORDER BY r.event_type DESC
+  AND (r.event_types @> to_jsonb($1::text) OR r.event_types @> '["*"]'::jsonb)
+ORDER BY r.id
 `
 
 type ListNotificationRoutesForEventRow struct {
 	ID                     string           `json:"id"`
 	DestinationID          string           `json:"destination_id"`
-	EventType              string           `json:"event_type"`
+	EventTypes             []byte           `json:"event_types"`
 	MinSeverity            string           `json:"min_severity"`
-	HostGroupID            *string          `json:"host_group_id"`
+	HostGroupIds           []byte           `json:"host_group_ids"`
+	HostIds                []byte           `json:"host_ids"`
 	MatchRules             []byte           `json:"match_rules"`
 	RouteEnabled           bool             `json:"route_enabled"`
 	CreatedAt              pgtype.Timestamp `json:"created_at"`
@@ -464,8 +471,8 @@ type ListNotificationRoutesForEventRow struct {
 	DestinationEnabled     bool             `json:"destination_enabled"`
 }
 
-func (q *Queries) ListNotificationRoutesForEvent(ctx context.Context, eventType string) ([]ListNotificationRoutesForEventRow, error) {
-	rows, err := q.db.Query(ctx, listNotificationRoutesForEvent, eventType)
+func (q *Queries) ListNotificationRoutesForEvent(ctx context.Context, dollar_1 string) ([]ListNotificationRoutesForEventRow, error) {
+	rows, err := q.db.Query(ctx, listNotificationRoutesForEvent, dollar_1)
 	if err != nil {
 		return nil, err
 	}
@@ -476,9 +483,10 @@ func (q *Queries) ListNotificationRoutesForEvent(ctx context.Context, eventType 
 		if err := rows.Scan(
 			&i.ID,
 			&i.DestinationID,
-			&i.EventType,
+			&i.EventTypes,
 			&i.MinSeverity,
-			&i.HostGroupID,
+			&i.HostGroupIds,
+			&i.HostIds,
 			&i.MatchRules,
 			&i.RouteEnabled,
 			&i.CreatedAt,
@@ -606,28 +614,30 @@ func (q *Queries) UpdateNotificationDestination(ctx context.Context, arg UpdateN
 
 const updateNotificationRoute = `-- name: UpdateNotificationRoute :one
 UPDATE notification_routes
-SET destination_id = $2, event_type = $3, min_severity = $4, host_group_id = $5, match_rules = $6, enabled = $7, updated_at = NOW()
+SET destination_id = $2, event_types = $3, min_severity = $4, host_group_ids = $5, host_ids = $6, match_rules = $7, enabled = $8, updated_at = NOW()
 WHERE id = $1
-RETURNING id, destination_id, event_type, min_severity, host_group_id, match_rules, enabled, created_at, updated_at
+RETURNING id, destination_id, event_types, min_severity, host_group_ids, host_ids, match_rules, enabled, created_at, updated_at
 `
 
 type UpdateNotificationRouteParams struct {
-	ID            string  `json:"id"`
-	DestinationID string  `json:"destination_id"`
-	EventType     string  `json:"event_type"`
-	MinSeverity   string  `json:"min_severity"`
-	HostGroupID   *string `json:"host_group_id"`
-	MatchRules    []byte  `json:"match_rules"`
-	Enabled       bool    `json:"enabled"`
+	ID            string `json:"id"`
+	DestinationID string `json:"destination_id"`
+	EventTypes    []byte `json:"event_types"`
+	MinSeverity   string `json:"min_severity"`
+	HostGroupIds  []byte `json:"host_group_ids"`
+	HostIds       []byte `json:"host_ids"`
+	MatchRules    []byte `json:"match_rules"`
+	Enabled       bool   `json:"enabled"`
 }
 
 func (q *Queries) UpdateNotificationRoute(ctx context.Context, arg UpdateNotificationRouteParams) (NotificationRoute, error) {
 	row := q.db.QueryRow(ctx, updateNotificationRoute,
 		arg.ID,
 		arg.DestinationID,
-		arg.EventType,
+		arg.EventTypes,
 		arg.MinSeverity,
-		arg.HostGroupID,
+		arg.HostGroupIds,
+		arg.HostIds,
 		arg.MatchRules,
 		arg.Enabled,
 	)
@@ -635,9 +645,10 @@ func (q *Queries) UpdateNotificationRoute(ctx context.Context, arg UpdateNotific
 	err := row.Scan(
 		&i.ID,
 		&i.DestinationID,
-		&i.EventType,
+		&i.EventTypes,
 		&i.MinSeverity,
-		&i.HostGroupID,
+		&i.HostGroupIds,
+		&i.HostIds,
 		&i.MatchRules,
 		&i.Enabled,
 		&i.CreatedAt,

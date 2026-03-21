@@ -397,9 +397,10 @@ type NotificationDestination struct {
 type NotificationRoute struct {
 	ID            string           `json:"id"`
 	DestinationID string           `json:"destination_id"`
-	EventType     string           `json:"event_type"`
+	EventTypes    []byte           `json:"event_types"`
 	MinSeverity   string           `json:"min_severity"`
-	HostGroupID   *string          `json:"host_group_id"`
+	HostGroupIds  []byte           `json:"host_group_ids"`
+	HostIds       []byte           `json:"host_ids"`
 	MatchRules    []byte           `json:"match_rules"`
 	Enabled       bool             `json:"enabled"`
 	CreatedAt     pgtype.Timestamp `json:"created_at"`

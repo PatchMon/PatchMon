@@ -47,11 +47,9 @@ const DockerImageDetail = lazy(() => import("./pages/docker/ImageDetail"));
 const DockerHostDetail = lazy(() => import("./pages/docker/HostDetail"));
 const DockerVolumeDetail = lazy(() => import("./pages/docker/VolumeDetail"));
 const DockerNetworkDetail = lazy(() => import("./pages/docker/NetworkDetail"));
-const AlertChannels = lazy(() => import("./pages/settings/AlertChannels"));
 const SettingsHomeRedirect = lazy(
 	() => import("./pages/settings/SettingsHomeRedirect"),
 );
-const AlertSettings = lazy(() => import("./pages/settings/AlertSettings"));
 const Integrations = lazy(() => import("./pages/settings/Integrations"));
 const PatchManagement = lazy(() => import("./pages/settings/PatchManagement"));
 const SettingsAgentConfig = lazy(
@@ -398,27 +396,6 @@ function AppRoutes() {
 							element={
 								<ProtectedRoute requirePermission="can_manage_settings">
 									<SettingsServerConfig />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="alert-settings"
-							element={
-								<ProtectedRoute requirePermission="can_manage_settings">
-									<AlertSettings />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="alert-channels"
-							element={
-								<ProtectedRoute
-									requireAnyPermissions={[
-										"can_manage_notifications",
-										"can_view_notification_logs",
-									]}
-								>
-									<AlertChannels />
 								</ProtectedRoute>
 							}
 						/>

@@ -1,10 +1,52 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, RefreshCw, Save, X } from "lucide-react";
+import {
+	AlertTriangle,
+	Check,
+	Loader2,
+	RefreshCw,
+	Save,
+	Trash2,
+	X,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { useToast } from "../../contexts/ToastContext";
 import { adminUsersAPI, alertsAPI, settingsAPI } from "../../utils/api";
 
-// Deep equality for config objects (ignores users_auto_assign which is read-only)
+const TH =
+	"px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider";
+const TD =
+	"px-4 py-2 text-sm text-secondary-900 dark:text-white whitespace-nowrap";
+
+const SEVERITIES = [
+	{
+		value: "informational",
+		label: "Info",
+		color: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+	},
+	{
+		value: "warning",
+		label: "Warning",
+		color:
+			"bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+	},
+	{
+		value: "error",
+		label: "Error",
+		color:
+			"bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
+	},
+	{
+		value: "critical",
+		label: "Critical",
+		color: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
+	},
+];
+
+const SELECT_SM =
+	"px-2 py-1 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-900 text-secondary-900 dark:text-white disabled:opacity-50";
+const INPUT_SM =
+	"w-20 px-2 py-1 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-900 text-secondary-900 dark:text-white disabled:opacity-50";
+
 const configsEqual = (a, b) => {
 	if (!a || !b || a.alert_type !== b.alert_type) return false;
 	const fields = [
@@ -29,21 +71,36 @@ const configsEqual = (a, b) => {
 	});
 };
 
+const formatAlertType = (type) =>
+	type.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+
+const Toggle = ({ checked, onChange, disabled }) => (
+	<button
+		type="button"
+		onClick={() => onChange(!checked)}
+		disabled={disabled}
+		className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+			checked
+				? "bg-primary-600 dark:bg-primary-500"
+				: "bg-secondary-200 dark:bg-secondary-600"
+		} disabled:opacity-50 disabled:cursor-not-allowed`}
+	>
+		<span
+			className={`inline-block h-3 w-3 transform rounded-md bg-white transition-transform ${checked ? "translate-x-5" : "translate-x-1"}`}
+		/>
+	</button>
+);
+
 const AlertSettings = () => {
 	const queryClient = useQueryClient();
-	const [saveMessage, setSaveMessage] = useState(null);
+	const toast = useToast();
 	const [localConfigs, setLocalConfigs] = useState(null);
 
-	// Fetch settings for master switch
 	const { data: settings } = useQuery({
 		queryKey: ["settings"],
-		queryFn: async () => {
-			const response = await settingsAPI.get();
-			return response.data;
-		},
+		queryFn: async () => (await settingsAPI.get()).data,
 	});
 
-	// Fetch alert configuration
 	const {
 		data: alertConfigs,
 		isLoading,
@@ -57,395 +114,430 @@ const AlertSettings = () => {
 		},
 	});
 
-	// Fetch users for auto-assignment dropdown (use public endpoint that works for all authenticated users)
 	const { data: usersData } = useQuery({
 		queryKey: ["users", "for-assignment"],
 		queryFn: async () => {
 			try {
-				// Try public assignment endpoint first (available to all authenticated users)
-				const response = await adminUsersAPI.listForAssignment();
-				return response.data.data || [];
-			} catch (error) {
-				// Fallback to admin endpoint if user has permissions
-				if (error.response?.status === 403 || error.response?.status === 401) {
-					try {
-						const response = await adminUsersAPI.list();
-						return response.data.data || [];
-					} catch (_e) {
-						// If both fail, return empty array
-						return [];
-					}
+				return (await adminUsersAPI.listForAssignment()).data.data || [];
+			} catch {
+				try {
+					return (await adminUsersAPI.list()).data.data || [];
+				} catch {
+					return [];
 				}
-				// For other errors, return empty array
-				return [];
 			}
 		},
 	});
 
-	// Update settings mutation (for master switch)
 	const updateSettingsMutation = useMutation({
-		mutationFn: async (data) => {
-			return settingsAPI.update(data);
-		},
+		mutationFn: (data) => settingsAPI.update(data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["settings"] });
-			setSaveMessage({ type: "success", text: "Settings saved successfully" });
-			setTimeout(() => setSaveMessage(null), 3000);
+			toast.success("Settings saved");
 		},
-		onError: (error) => {
-			setSaveMessage({
-				type: "error",
-				text: error.response?.data?.error || "Failed to save settings",
-			});
-			setTimeout(() => setSaveMessage(null), 5000);
-		},
+		onError: (err) =>
+			toast.error(err.response?.data?.error || "Failed to save"),
 	});
 
-	// Sync local configs when server data loads or changes
+	const bulkUpdateMutation = useMutation({
+		mutationFn: (configs) => alertsAPI.bulkUpdateAlertConfig(configs),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["alert-config"] });
+			toast.success("Settings applied");
+		},
+		onError: (err) =>
+			toast.error(err.response?.data?.error || "Failed to apply"),
+	});
+
 	useEffect(() => {
 		if (alertConfigs && Array.isArray(alertConfigs)) {
 			setLocalConfigs(alertConfigs.map((c) => ({ ...c })));
 		}
 	}, [alertConfigs]);
 
-	// Bulk update mutation (Apply button)
-	const bulkUpdateMutation = useMutation({
-		mutationFn: async (configs) => {
-			return alertsAPI.bulkUpdateAlertConfig(configs);
-		},
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["alert-config"] });
-			setSaveMessage({
-				type: "success",
-				text: "Settings applied successfully",
-			});
-			setTimeout(() => setSaveMessage(null), 3000);
-		},
-		onError: (error) => {
-			setSaveMessage({
-				type: "error",
-				text: error.response?.data?.error || "Failed to apply settings",
-			});
-			setTimeout(() => setSaveMessage(null), 5000);
-		},
-	});
-
-	// Pending changes: compare local vs server
 	const isDirty =
 		localConfigs &&
 		alertConfigs &&
 		(localConfigs.length !== alertConfigs.length ||
 			localConfigs.some((lc, i) => !configsEqual(lc, alertConfigs[i])));
 
-	// Warn on navigation with unsaved changes
 	useEffect(() => {
 		if (!isDirty) return;
-		const handler = (e) => {
-			e.preventDefault();
-		};
+		const handler = (e) => e.preventDefault();
 		window.addEventListener("beforeunload", handler);
 		return () => window.removeEventListener("beforeunload", handler);
 	}, [isDirty]);
 
-	// Update local state only (no API call)
 	const handleFieldChange = (alertType, field, value) => {
-		let cleanedValue = value;
+		let v = value;
 		if (
 			value === "" &&
-			(field === "auto_assign_user_id" ||
-				field === "retention_days" ||
-				field === "auto_resolve_after_days" ||
-				field === "escalation_after_hours")
+			[
+				"auto_assign_user_id",
+				"retention_days",
+				"auto_resolve_after_days",
+				"escalation_after_hours",
+			].includes(field)
 		) {
-			cleanedValue = null;
+			v = null;
 		}
 		setLocalConfigs(
 			(prev) =>
 				prev?.map((c) =>
-					c.alert_type === alertType ? { ...c, [field]: cleanedValue } : c,
+					c.alert_type === alertType ? { ...c, [field]: v } : c,
 				) ?? prev,
 		);
 	};
 
 	const handleApply = async () => {
 		if (!localConfigs?.length || !isDirty) return;
-		const configsForApi = localConfigs.map((c) => ({
-			alert_type: c.alert_type,
-			is_enabled: c.is_enabled,
-			default_severity: c.default_severity,
-			auto_assign_enabled: c.auto_assign_enabled,
-			auto_assign_user_id: c.auto_assign_user_id || null,
-			auto_assign_rule: c.auto_assign_rule || null,
-			auto_assign_conditions: c.auto_assign_conditions || null,
-			retention_days: c.retention_days ?? null,
-			auto_resolve_after_days: c.auto_resolve_after_days ?? null,
-			cleanup_resolved_only: c.cleanup_resolved_only,
-			notification_enabled: c.notification_enabled,
-			escalation_enabled: c.escalation_enabled,
-			escalation_after_hours: c.escalation_after_hours ?? null,
-			metadata: c.metadata || null,
-		}));
-		await bulkUpdateMutation.mutateAsync(configsForApi);
+		await bulkUpdateMutation.mutateAsync(
+			localConfigs.map((c) => ({
+				alert_type: c.alert_type,
+				is_enabled: c.is_enabled,
+				default_severity: c.default_severity,
+				auto_assign_enabled: c.auto_assign_enabled,
+				auto_assign_user_id: c.auto_assign_user_id || null,
+				auto_assign_rule: c.auto_assign_rule || null,
+				auto_assign_conditions: c.auto_assign_conditions || null,
+				retention_days: c.retention_days ?? null,
+				auto_resolve_after_days: c.auto_resolve_after_days ?? null,
+				cleanup_resolved_only: c.cleanup_resolved_only,
+				notification_enabled: c.notification_enabled,
+				escalation_enabled: c.escalation_enabled,
+				escalation_after_hours: c.escalation_after_hours ?? null,
+				metadata: c.metadata || null,
+			})),
+		);
 	};
 
 	const handleDiscard = () => {
 		if (alertConfigs && Array.isArray(alertConfigs)) {
 			setLocalConfigs(alertConfigs.map((c) => ({ ...c })));
 		}
-		setSaveMessage({ type: "success", text: "Changes discarded" });
-		setTimeout(() => setSaveMessage(null), 2000);
+		toast.info("Changes discarded");
 	};
 
 	if (isLoading) {
 		return (
-			<div className="space-y-6">
-				<div className="text-center py-8">
-					<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-					<p className="mt-2 text-sm text-secondary-500">
-						Loading alert settings...
-					</p>
-				</div>
+			<div className="flex justify-center py-12">
+				<Loader2 className="h-6 w-6 animate-spin text-secondary-400" />
 			</div>
 		);
 	}
 
 	if (error) {
 		return (
-			<div className="space-y-6">
-				<div className="bg-danger-50 border border-danger-200 rounded-md p-4">
-					<div className="flex">
-						<AlertTriangle className="h-5 w-5 text-danger-400" />
-						<div className="ml-3">
-							<h3 className="text-sm font-medium text-danger-800">
-								Error loading alert settings
-							</h3>
-							<p className="text-sm text-danger-700 mt-1">
-								{error.message || "Failed to load alert settings"}
-							</p>
-							<button
-								type="button"
-								onClick={() => refetch()}
-								className="mt-2 btn-danger text-xs"
-							>
-								Try again
-							</button>
-						</div>
+			<div className="card p-6">
+				<div className="flex items-start gap-3">
+					<AlertTriangle className="h-5 w-5 text-danger-500 mt-0.5" />
+					<div>
+						<p className="text-sm font-medium text-danger-800 dark:text-danger-200">
+							Failed to load alert settings
+						</p>
+						<button
+							type="button"
+							onClick={() => refetch()}
+							className="mt-2 btn-outline text-xs"
+						>
+							Try again
+						</button>
 					</div>
 				</div>
 			</div>
 		);
 	}
 
+	const alertsEnabled = settings?.alerts_enabled !== false;
+	const configs = localConfigs ?? alertConfigs ?? [];
+
 	return (
 		<div className="space-y-6">
-			{/* Header */}
-			<div className="flex items-center justify-between">
-				<div>
-					<h1 className="text-2xl font-bold text-secondary-900 dark:text-white">
-						Alert Settings
-					</h1>
-					<p className="mt-1 text-sm text-secondary-600 dark:text-white">
-						Configure alert types, severities, auto-assignment, and retention
-						policies
-					</p>
-				</div>
-				<div className="flex items-center gap-3">
-					{isDirty && (
-						<>
-							<button
-								type="button"
-								onClick={handleDiscard}
-								disabled={bulkUpdateMutation.isPending}
-								className="btn-outline flex items-center gap-2"
-							>
-								<X className="h-4 w-4" />
-								Discard
-							</button>
-							<button
-								type="button"
-								onClick={handleApply}
-								disabled={bulkUpdateMutation.isPending}
-								className="btn-primary flex items-center gap-2"
-							>
-								{bulkUpdateMutation.isPending ? (
-									<>
-										<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-										Applying...
-									</>
-								) : (
-									<>
-										<Save className="h-4 w-4" />
-										Apply Changes
-									</>
-								)}
-							</button>
-						</>
-					)}
-					<button
-						type="button"
-						onClick={() => refetch()}
-						className="btn-outline flex items-center gap-2"
-					>
-						<RefreshCw className="h-4 w-4" />
-						Refresh
-					</button>
-				</div>
-			</div>
-
-			{/* Save Message */}
-			{saveMessage && (
-				<div
-					className={`rounded-md p-4 ${
-						saveMessage.type === "success"
-							? "bg-green-50 border border-green-200 text-green-800"
-							: "bg-danger-50 border border-danger-200 text-danger-800"
-					}`}
-				>
-					{saveMessage.text}
-				</div>
-			)}
-
 			{/* Master Switch */}
-			<div className="card p-6">
-				<div className="flex items-center justify-between mb-4">
+			<div className="card p-4 md:p-6">
+				<div className="flex items-center justify-between">
 					<div>
 						<h2 className="text-lg font-semibold text-secondary-900 dark:text-white">
-							Alerts System Master Switch
+							Alerts system
 						</h2>
 						<p className="text-sm text-secondary-600 dark:text-white mt-1">
-							Enable or disable the entire alerts system. When disabled, no
-							alerts will be created, alert queues will be skipped, and the
-							Reporting page will be hidden.
+							Master switch for the entire alerts system
 						</p>
 					</div>
 					<div className="flex items-center gap-3">
-						<button
-							type="button"
-							onClick={() => {
+						<Toggle
+							checked={alertsEnabled}
+							onChange={() =>
 								updateSettingsMutation.mutate({
-									alerts_enabled: !(settings?.alerts_enabled !== false),
-								});
-							}}
+									alerts_enabled: !alertsEnabled,
+								})
+							}
 							disabled={updateSettingsMutation.isPending}
-							className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-md border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
-								settings?.alerts_enabled !== false
-									? "bg-primary-600 dark:bg-primary-500"
-									: "bg-secondary-300 dark:bg-secondary-600"
-							} disabled:opacity-50 disabled:cursor-not-allowed`}
-						>
-							<span
-								className={`pointer-events-none inline-block h-4 w-4 transform rounded-md bg-white shadow ring-0 transition duration-200 ease-in-out ${
-									settings?.alerts_enabled !== false
-										? "translate-x-4"
-										: "translate-x-0"
-								}`}
-							/>
-						</button>
+						/>
 						<span className="text-sm font-medium text-secondary-700 dark:text-white">
-							{settings?.alerts_enabled !== false ? "Enabled" : "Disabled"}
+							{alertsEnabled ? "Enabled" : "Disabled"}
 						</span>
 					</div>
 				</div>
-				{settings?.alerts_enabled === false && (
-					<div className="mt-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
-						<div className="flex">
-							<AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400" />
-							<div className="ml-3">
-								<h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
-									Alerts System Disabled
-								</h3>
-								<p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
-									All alert-related services are currently disabled. No alerts
-									will be created, and alert cleanup jobs will be skipped.
-								</p>
-							</div>
-						</div>
+				{!alertsEnabled && (
+					<div className="mt-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md flex items-start gap-2">
+						<AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-400 mt-0.5 shrink-0" />
+						<p className="text-sm text-yellow-700 dark:text-yellow-300">
+							All alert services are disabled. No alerts will be created.
+						</p>
 					</div>
 				)}
 			</div>
 
-			{/* Pending changes banner */}
-			{isDirty && settings?.alerts_enabled !== false && (
-				<div className="rounded-md p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+			{/* Unsaved changes bar */}
+			{isDirty && alertsEnabled && (
+				<div className="card p-3 flex items-center justify-between bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800">
 					<p className="text-sm text-amber-800 dark:text-amber-200">
-						You have unsaved changes. Use <strong>Apply Changes</strong> to save
-						or <strong>Discard</strong> to revert.
+						You have unsaved changes
 					</p>
+					<div className="flex items-center gap-2">
+						<button
+							type="button"
+							onClick={handleDiscard}
+							disabled={bulkUpdateMutation.isPending}
+							className="btn-outline flex items-center gap-1 text-sm"
+						>
+							<X className="h-3.5 w-3.5" /> Discard
+						</button>
+						<button
+							type="button"
+							onClick={handleApply}
+							disabled={bulkUpdateMutation.isPending}
+							className="btn-primary flex items-center gap-1 text-sm"
+						>
+							{bulkUpdateMutation.isPending ? (
+								<Loader2 className="h-3.5 w-3.5 animate-spin" />
+							) : (
+								<Save className="h-3.5 w-3.5" />
+							)}
+							Apply
+						</button>
+					</div>
 				</div>
 			)}
 
-			{/* Alert Type Configurations Table */}
-			{settings?.alerts_enabled !== false && (
-				<div className="card overflow-hidden">
-					<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
+			{/* Alert Type Table */}
+			{alertsEnabled && configs.length > 0 && (
+				<div className="card p-4 md:p-6 space-y-4">
+					<div className="flex items-center justify-between">
 						<h2 className="text-lg font-semibold text-secondary-900 dark:text-white">
-							Alert Type Configurations
+							Alert type configurations
 						</h2>
-						<p className="text-sm text-secondary-600 dark:text-white mt-1">
-							Configure settings for each alert type. Changes take effect when
-							you click Apply Changes.
-						</p>
+						<button
+							type="button"
+							onClick={() => refetch()}
+							className="btn-outline flex items-center gap-1 text-sm"
+						>
+							<RefreshCw className="h-3.5 w-3.5" /> Refresh
+						</button>
 					</div>
+
 					<div className="overflow-x-auto">
-						<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700">
-							<thead className="bg-secondary-50 dark:bg-secondary-800">
+						<table className="min-w-full table-fixed divide-y divide-secondary-200 dark:divide-secondary-600">
+							<thead className="bg-secondary-50 dark:bg-secondary-700">
 								<tr>
-									<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-										Alert Type
-									</th>
-									<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-										Enabled
-									</th>
-									<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-										Default Severity
-									</th>
-									<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-										Auto-Assign
-									</th>
-									<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-										Retention Days
-									</th>
-									<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-										Auto-Resolve Days
-									</th>
+									<th className={TH}>Alert type</th>
+									<th className={`${TH} w-20`}>Active</th>
+									<th className={`${TH} w-28`}>Severity</th>
+									<th className={`${TH} w-20`}>Notify</th>
+									<th className={TH}>Auto-assign</th>
+									<th className={`${TH} w-24`}>Retention</th>
+									<th className={`${TH} w-28`}>Auto-resolve</th>
 								</tr>
 							</thead>
-							<tbody className="bg-white dark:bg-secondary-900 divide-y divide-secondary-200 dark:divide-secondary-700">
-								{(localConfigs ?? alertConfigs ?? []).map((config) => (
-									<AlertTypeTableRow
-										key={config.alert_type}
-										config={config}
-										onChange={handleFieldChange}
-										disabled={bulkUpdateMutation.isPending}
-										usersData={usersData}
-									/>
-								))}
+							<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+								{configs.map((c) => {
+									const dis = bulkUpdateMutation.isPending;
+									const off = !c.is_enabled;
+									return (
+										<tr
+											key={c.alert_type}
+											className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
+										>
+											<td className={TD}>
+												<span className="font-medium">
+													{formatAlertType(c.alert_type)}
+												</span>
+											</td>
+											<td className={TD}>
+												<Toggle
+													checked={c.is_enabled}
+													onChange={(v) =>
+														handleFieldChange(c.alert_type, "is_enabled", v)
+													}
+													disabled={dis}
+												/>
+											</td>
+											<td className={TD}>
+												{off ? (
+													<span className="text-secondary-400">-</span>
+												) : (
+													<select
+														className={SELECT_SM}
+														value={c.default_severity}
+														onChange={(e) =>
+															handleFieldChange(
+																c.alert_type,
+																"default_severity",
+																e.target.value,
+															)
+														}
+														disabled={dis}
+													>
+														{SEVERITIES.map((s) => (
+															<option key={s.value} value={s.value}>
+																{s.label}
+															</option>
+														))}
+													</select>
+												)}
+											</td>
+											<td className={TD}>
+												{off ? (
+													<span className="text-secondary-400">-</span>
+												) : (
+													<Toggle
+														checked={c.notification_enabled}
+														onChange={(v) =>
+															handleFieldChange(
+																c.alert_type,
+																"notification_enabled",
+																v,
+															)
+														}
+														disabled={dis}
+													/>
+												)}
+											</td>
+											<td className={TD}>
+												{off ? (
+													<span className="text-secondary-400">-</span>
+												) : (
+													<div className="flex items-center gap-2">
+														<Toggle
+															checked={c.auto_assign_enabled}
+															onChange={(v) =>
+																handleFieldChange(
+																	c.alert_type,
+																	"auto_assign_enabled",
+																	v,
+																)
+															}
+															disabled={dis}
+														/>
+														{c.auto_assign_enabled && (
+															<select
+																className={`${SELECT_SM} text-xs min-w-[100px]`}
+																value={c.auto_assign_user_id || ""}
+																onChange={(e) =>
+																	handleFieldChange(
+																		c.alert_type,
+																		"auto_assign_user_id",
+																		e.target.value || null,
+																	)
+																}
+																disabled={dis}
+															>
+																<option value="">Select...</option>
+																{usersData?.map((u) => (
+																	<option key={u.id} value={u.id}>
+																		{u.username || u.email}
+																	</option>
+																))}
+															</select>
+														)}
+													</div>
+												)}
+											</td>
+											<td className={TD}>
+												{off ? (
+													<span className="text-secondary-400">-</span>
+												) : (
+													<div className="flex items-center gap-1">
+														<input
+															type="number"
+															min={1}
+															className={INPUT_SM}
+															value={c.retention_days || ""}
+															placeholder="-"
+															onChange={(e) =>
+																handleFieldChange(
+																	c.alert_type,
+																	"retention_days",
+																	e.target.value
+																		? Number.parseInt(e.target.value, 10)
+																		: null,
+																)
+															}
+															disabled={dis}
+														/>
+														<span className="text-xs text-secondary-400">
+															days
+														</span>
+													</div>
+												)}
+											</td>
+											<td className={TD}>
+												{off ? (
+													<span className="text-secondary-400">-</span>
+												) : (
+													<div className="flex items-center gap-1">
+														<input
+															type="number"
+															min={1}
+															className={INPUT_SM}
+															value={c.auto_resolve_after_days || ""}
+															placeholder="-"
+															onChange={(e) =>
+																handleFieldChange(
+																	c.alert_type,
+																	"auto_resolve_after_days",
+																	e.target.value
+																		? Number.parseInt(e.target.value, 10)
+																		: null,
+																)
+															}
+															disabled={dis}
+														/>
+														<span className="text-xs text-secondary-400">
+															days
+														</span>
+													</div>
+												)}
+											</td>
+										</tr>
+									);
+								})}
 							</tbody>
 						</table>
 					</div>
 				</div>
 			)}
 
-			{settings?.alerts_enabled === false && (
-				<div className="card p-6 text-center">
-					<AlertTriangle className="h-12 w-12 mx-auto text-secondary-400" />
-					<h3 className="mt-2 text-sm font-medium text-secondary-900 dark:text-white">
-						Alert configurations are hidden
-					</h3>
-					<p className="mt-1 text-sm text-secondary-500">
-						Enable the alerts system above to configure individual alert types.
+			{/* Disabled placeholder */}
+			{!alertsEnabled && (
+				<div className="card p-8 text-center">
+					<AlertTriangle className="h-12 w-12 mx-auto text-secondary-300 dark:text-secondary-600 mb-3" />
+					<p className="text-sm text-secondary-500">
+						Enable the alerts system above to configure alert types.
 					</p>
 				</div>
 			)}
 
-			{/* Cleanup Section */}
-			{settings?.alerts_enabled !== false && (
-				<div className="card p-6">
-					<h2 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4">
-						Alert Cleanup
+			{/* Cleanup */}
+			{alertsEnabled && (
+				<div className="card p-4 md:p-6 space-y-4">
+					<h2 className="text-lg font-semibold text-secondary-900 dark:text-white">
+						Alert cleanup
 					</h2>
-					<p className="text-sm text-secondary-600 dark:text-white mb-4">
-						Manage alert retention and cleanup policies
+					<p className="text-sm text-secondary-600 dark:text-white">
+						Preview and delete alerts based on retention policies configured
+						above.
 					</p>
 					<CleanupSection />
 				</div>
@@ -454,159 +546,6 @@ const AlertSettings = () => {
 	);
 };
 
-// Alert Type Table Row Component
-const AlertTypeTableRow = ({ config, onChange, disabled, usersData }) => {
-	const [localConfig, setLocalConfig] = useState(config);
-
-	// Update local state when config prop changes (e.g. from parent localConfigs)
-	useEffect(() => {
-		setLocalConfig(config);
-	}, [config]);
-
-	const handleFieldChange = (field, value) => {
-		const updated = { ...localConfig, [field]: value };
-		setLocalConfig(updated);
-		onChange(config.alert_type, field, value);
-	};
-
-	const formatAlertType = (type) => {
-		return type.replace("_", " ").replace(/\b\w/g, (l) => l.toUpperCase());
-	};
-
-	return (
-		<tr className="hover:bg-secondary-50 dark:hover:bg-secondary-800">
-			{/* Alert Type */}
-			<td className="px-6 py-4 whitespace-nowrap">
-				<div className="text-sm font-medium text-secondary-900 dark:text-white">
-					{formatAlertType(config.alert_type)}
-				</div>
-			</td>
-
-			{/* Enabled */}
-			<td className="px-6 py-4 whitespace-nowrap">
-				<button
-					type="button"
-					onClick={() =>
-						handleFieldChange("is_enabled", !localConfig.is_enabled)
-					}
-					disabled={disabled}
-					className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-md border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
-						localConfig.is_enabled
-							? "bg-primary-600 dark:bg-primary-500"
-							: "bg-secondary-300 dark:bg-secondary-600"
-					} disabled:opacity-50 disabled:cursor-not-allowed`}
-				>
-					<span
-						className={`pointer-events-none inline-block h-4 w-4 transform rounded-md bg-white shadow ring-0 transition duration-200 ease-in-out ${
-							localConfig.is_enabled ? "translate-x-4" : "translate-x-0"
-						}`}
-					/>
-				</button>
-			</td>
-
-			{/* Default Severity */}
-			<td className="px-6 py-4 whitespace-nowrap">
-				<select
-					value={localConfig.default_severity}
-					onChange={(e) =>
-						handleFieldChange("default_severity", e.target.value)
-					}
-					disabled={disabled || !localConfig.is_enabled}
-					className="px-2 py-1 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
-				>
-					<option value="informational">Informational</option>
-					<option value="warning">Warning</option>
-					<option value="error">Error</option>
-					<option value="critical">Critical</option>
-				</select>
-			</td>
-
-			{/* Auto-Assign */}
-			<td className="px-6 py-4 whitespace-nowrap">
-				<div className="flex flex-col gap-2">
-					<button
-						type="button"
-						onClick={() =>
-							handleFieldChange(
-								"auto_assign_enabled",
-								!localConfig.auto_assign_enabled,
-							)
-						}
-						disabled={disabled || !localConfig.is_enabled}
-						className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-md border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
-							localConfig.auto_assign_enabled
-								? "bg-primary-600 dark:bg-primary-500"
-								: "bg-secondary-300 dark:bg-secondary-600"
-						} disabled:opacity-50 disabled:cursor-not-allowed`}
-					>
-						<span
-							className={`pointer-events-none inline-block h-4 w-4 transform rounded-md bg-white shadow ring-0 transition duration-200 ease-in-out ${
-								localConfig.auto_assign_enabled
-									? "translate-x-4"
-									: "translate-x-0"
-							}`}
-						/>
-					</button>
-					{localConfig.auto_assign_enabled && localConfig.is_enabled && (
-						<select
-							value={localConfig.auto_assign_user_id || ""}
-							onChange={(e) =>
-								handleFieldChange("auto_assign_user_id", e.target.value || null)
-							}
-							disabled={disabled}
-							className="px-2 py-1 text-xs border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed min-w-[120px]"
-						>
-							<option value="">Select user...</option>
-							{usersData?.map((u) => (
-								<option key={u.id} value={u.id}>
-									{u.username || u.email}
-								</option>
-							))}
-						</select>
-					)}
-				</div>
-			</td>
-
-			{/* Retention Days */}
-			<td className="px-6 py-4 whitespace-nowrap">
-				<input
-					type="number"
-					min={1}
-					value={localConfig.retention_days || ""}
-					onChange={(e) =>
-						handleFieldChange(
-							"retention_days",
-							e.target.value ? parseInt(e.target.value, 10) : null,
-						)
-					}
-					disabled={disabled || !localConfig.is_enabled}
-					placeholder=" -"
-					className="w-20 px-2 py-1 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
-				/>
-			</td>
-
-			{/* Auto-Resolve After Days */}
-			<td className="px-6 py-4 whitespace-nowrap">
-				<input
-					type="number"
-					min={1}
-					value={localConfig.auto_resolve_after_days || ""}
-					onChange={(e) =>
-						handleFieldChange(
-							"auto_resolve_after_days",
-							e.target.value ? parseInt(e.target.value, 10) : null,
-						)
-					}
-					disabled={disabled || !localConfig.is_enabled}
-					placeholder=" -"
-					className="w-20 px-2 py-1 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
-				/>
-			</td>
-		</tr>
-	);
-};
-
-// Cleanup Section Component
 const CleanupSection = () => {
 	const toast = useToast();
 	const [previewLoading, setPreviewLoading] = useState(false);
@@ -616,96 +555,83 @@ const CleanupSection = () => {
 		setPreviewLoading(true);
 		try {
 			const response = await alertsAPI.previewCleanup();
-			// Server returns { alerts, count, preview }; frontend expects array
 			const data = response.data.data;
 			setPreviewData(Array.isArray(data) ? data : (data?.alerts ?? []));
-		} catch (error) {
+		} catch {
 			toast.error("Failed to preview cleanup");
-			console.error("Failed to preview cleanup:", error);
 		} finally {
 			setPreviewLoading(false);
 		}
 	};
 
 	const handleCleanup = async () => {
-		if (
-			!window.confirm(
-				"Are you sure you want to delete these alerts? This action cannot be undone.",
-			)
-		) {
-			return;
-		}
-
+		if (!window.confirm("Delete these alerts? This cannot be undone.")) return;
 		try {
 			const response = await alertsAPI.triggerCleanup();
 			const count =
 				response.data.data.deleted ?? response.data.data.deleted_count ?? 0;
 			toast.success(`Cleanup completed: ${count} alert(s) deleted`);
 			setPreviewData(null);
-		} catch (error) {
+		} catch (err) {
 			toast.error(
-				"Failed to trigger cleanup: " +
-					(error.response?.data?.error || error.message),
+				`Cleanup failed: ${err.response?.data?.error || err.message}`,
 			);
 		}
 	};
 
 	return (
-		<div className="space-y-4">
+		<div className="space-y-3">
 			<div className="flex items-center gap-3">
 				<button
 					type="button"
 					onClick={handlePreview}
 					disabled={previewLoading}
-					className="btn-outline flex items-center gap-2"
+					className="btn-outline flex items-center gap-2 text-sm"
 				>
-					<RefreshCw
-						className={`h-4 w-4 ${previewLoading ? "animate-spin" : ""}`}
-					/>
-					Preview Cleanup
+					{previewLoading ? (
+						<Loader2 className="h-3.5 w-3.5 animate-spin" />
+					) : (
+						<RefreshCw className="h-3.5 w-3.5" />
+					)}
+					Preview cleanup
 				</button>
 				{previewData && previewData.length > 0 && (
 					<button
 						type="button"
 						onClick={handleCleanup}
-						className="btn-danger flex items-center gap-2"
+						className="btn-danger flex items-center gap-2 text-sm"
 					>
-						Delete {previewData.length} Alerts
+						<Trash2 className="h-3.5 w-3.5" /> Delete {previewData.length}{" "}
+						alerts
 					</button>
 				)}
 			</div>
-
-			{previewData && (
-				<div className="mt-4">
-					{previewData.length === 0 ? (
-						<p className="text-sm text-secondary-600 dark:text-white">
-							No alerts need to be cleaned up based on current retention
-							policies.
-						</p>
-					) : (
-						<div className="bg-secondary-50 dark:bg-secondary-800 rounded-md p-4">
-							<p className="text-sm font-medium text-secondary-900 dark:text-white mb-2">
-								{previewData.length} alert(s) would be deleted:
-							</p>
-							<ul className="list-disc list-inside text-sm text-secondary-600 dark:text-white space-y-1">
-								{previewData.slice(0, 10).map((alert) => (
-									<li key={alert.id ?? alert.ID}>
-										{alert.type ?? alert.Type} - Created{" "}
-										{new Date(
-											alert.created_at ?? alert.CreatedAt,
-										).toLocaleDateString()}
-									</li>
-								))}
-								{previewData.length > 10 && (
-									<li>... and {previewData.length - 10} more</li>
-								)}
-							</ul>
-						</div>
-					)}
+			{previewData && previewData.length === 0 && (
+				<p className="text-sm text-secondary-500 flex items-center gap-1">
+					<Check className="h-4 w-4 text-green-500" /> No alerts need cleanup.
+				</p>
+			)}
+			{previewData && previewData.length > 0 && (
+				<div className="rounded-md p-3 bg-secondary-50 dark:bg-secondary-700/50">
+					<p className="text-sm font-medium text-secondary-900 dark:text-white mb-2">
+						{previewData.length} alert(s) would be deleted:
+					</p>
+					<ul className="list-disc list-inside text-sm text-secondary-600 dark:text-white space-y-0.5">
+						{previewData.slice(0, 10).map((a) => (
+							<li key={a.id ?? a.ID}>
+								{formatAlertType(a.type ?? a.Type)} -{" "}
+								{new Date(a.created_at ?? a.CreatedAt).toLocaleDateString()}
+							</li>
+						))}
+						{previewData.length > 10 && (
+							<li>... and {previewData.length - 10} more</li>
+						)}
+					</ul>
 				</div>
 			)}
 		</div>
 	);
 };
 
+export { AlertSettings };
 export default AlertSettings;

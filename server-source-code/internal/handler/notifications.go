@@ -206,9 +206,10 @@ func (h *NotificationsHandler) ListRoutes(w http.ResponseWriter, r *http.Request
 		out[i] = map[string]interface{}{
 			"id":                       row.ID,
 			"destination_id":           row.DestinationID,
-			"event_type":               row.EventType,
+			"event_types":              jsonOrEmpty(row.EventTypes),
 			"min_severity":             row.MinSeverity,
-			"host_group_id":            row.HostGroupID,
+			"host_group_ids":           jsonOrEmpty(row.HostGroupIds),
+			"host_ids":                 jsonOrEmpty(row.HostIds),
 			"match_rules":              json.RawMessage(row.MatchRules),
 			"enabled":                  row.RouteEnabled,
 			"channel_type":             row.ChannelType,
@@ -220,23 +221,43 @@ func (h *NotificationsHandler) ListRoutes(w http.ResponseWriter, r *http.Request
 	JSON(w, http.StatusOK, out)
 }
 
+func jsonOrEmpty(b []byte) json.RawMessage {
+	if len(b) == 0 || string(b) == "null" {
+		return json.RawMessage("[]")
+	}
+	return json.RawMessage(b)
+}
+
 // CreateRoute POST /notifications/routes
 func (h *NotificationsHandler) CreateRoute(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DestinationID string                 `json:"destination_id"`
-		EventType     string                 `json:"event_type"`
+		EventTypes    []string               `json:"event_types"`
 		MinSeverity   string                 `json:"min_severity"`
-		HostGroupID   *string                `json:"host_group_id"`
+		HostGroupIDs  []string               `json:"host_group_ids"`
+		HostIDs       []string               `json:"host_ids"`
 		MatchRules    map[string]interface{} `json:"match_rules"`
 		Enabled       *bool                  `json:"enabled"`
 	}
-	if err := decodeJSON(r, &req); err != nil || req.DestinationID == "" || req.EventType == "" {
-		Error(w, http.StatusBadRequest, "destination_id and event_type required")
+	if err := decodeJSON(r, &req); err != nil || req.DestinationID == "" {
+		Error(w, http.StatusBadRequest, "destination_id required")
 		return
+	}
+	if len(req.EventTypes) == 0 {
+		req.EventTypes = []string{"*"}
 	}
 	ms := req.MinSeverity
 	if ms == "" {
 		ms = "informational"
+	}
+	eventTypes, _ := json.Marshal(req.EventTypes)
+	hostGroupIDs, _ := json.Marshal(req.HostGroupIDs)
+	if hostGroupIDs == nil {
+		hostGroupIDs = []byte("[]")
+	}
+	hostIDs, _ := json.Marshal(req.HostIDs)
+	if hostIDs == nil {
+		hostIDs = []byte("[]")
 	}
 	var rules []byte
 	if req.MatchRules != nil {
@@ -249,9 +270,10 @@ func (h *NotificationsHandler) CreateRoute(w http.ResponseWriter, r *http.Reques
 	row, err := h.q(r.Context()).CreateNotificationRoute(r.Context(), db.CreateNotificationRouteParams{
 		ID:            uuid.New().String(),
 		DestinationID: req.DestinationID,
-		EventType:     req.EventType,
+		EventTypes:    eventTypes,
 		MinSeverity:   ms,
-		HostGroupID:   req.HostGroupID,
+		HostGroupIds:  hostGroupIDs,
+		HostIds:       hostIDs,
 		MatchRules:    rules,
 		Enabled:       en,
 	})
@@ -267,9 +289,10 @@ func (h *NotificationsHandler) UpdateRoute(w http.ResponseWriter, r *http.Reques
 	id := chi.URLParam(r, "id")
 	var req struct {
 		DestinationID string                 `json:"destination_id"`
-		EventType     string                 `json:"event_type"`
+		EventTypes    []string               `json:"event_types"`
 		MinSeverity   string                 `json:"min_severity"`
-		HostGroupID   *string                `json:"host_group_id"`
+		HostGroupIDs  []string               `json:"host_group_ids"`
+		HostIDs       []string               `json:"host_ids"`
 		MatchRules    map[string]interface{} `json:"match_rules"`
 		Enabled       *bool                  `json:"enabled"`
 	}
@@ -286,17 +309,21 @@ func (h *NotificationsHandler) UpdateRoute(w http.ResponseWriter, r *http.Reques
 	if req.DestinationID != "" {
 		did = req.DestinationID
 	}
-	et := existing.EventType
-	if req.EventType != "" {
-		et = req.EventType
-	}
 	ms := existing.MinSeverity
 	if req.MinSeverity != "" {
 		ms = req.MinSeverity
 	}
-	hg := existing.HostGroupID
-	if req.HostGroupID != nil {
-		hg = req.HostGroupID
+	eventTypes := existing.EventTypes
+	if req.EventTypes != nil {
+		eventTypes, _ = json.Marshal(req.EventTypes)
+	}
+	hostGroupIDs := existing.HostGroupIds
+	if req.HostGroupIDs != nil {
+		hostGroupIDs, _ = json.Marshal(req.HostGroupIDs)
+	}
+	hostIDs := existing.HostIds
+	if req.HostIDs != nil {
+		hostIDs, _ = json.Marshal(req.HostIDs)
 	}
 	rules := existing.MatchRules
 	if req.MatchRules != nil {
@@ -309,9 +336,10 @@ func (h *NotificationsHandler) UpdateRoute(w http.ResponseWriter, r *http.Reques
 	row, err := h.q(r.Context()).UpdateNotificationRoute(r.Context(), db.UpdateNotificationRouteParams{
 		ID:            id,
 		DestinationID: did,
-		EventType:     et,
+		EventTypes:    eventTypes,
 		MinSeverity:   ms,
-		HostGroupID:   hg,
+		HostGroupIds:  hostGroupIDs,
+		HostIds:       hostIDs,
 		MatchRules:    rules,
 		Enabled:       en,
 	})

@@ -20,35 +20,35 @@ DELETE FROM notification_destinations WHERE id = $1;
 
 -- name: ListNotificationRoutes :many
 SELECT
-    r.id, r.destination_id, r.event_type, r.min_severity, r.host_group_id, r.match_rules, r.enabled AS route_enabled,
+    r.id, r.destination_id, r.event_types, r.min_severity, r.host_group_ids, r.host_ids, r.match_rules, r.enabled AS route_enabled,
     r.created_at, r.updated_at,
     d.channel_type, d.display_name AS destination_display_name
 FROM notification_routes r
 JOIN notification_destinations d ON d.id = r.destination_id
-ORDER BY r.event_type, d.display_name;
+ORDER BY d.display_name;
 
 -- name: ListNotificationRoutesForEvent :many
 SELECT
-    r.id, r.destination_id, r.event_type, r.min_severity, r.host_group_id, r.match_rules, r.enabled AS route_enabled,
+    r.id, r.destination_id, r.event_types, r.min_severity, r.host_group_ids, r.host_ids, r.match_rules, r.enabled AS route_enabled,
     r.created_at, r.updated_at,
     d.channel_type, d.display_name AS destination_display_name, d.config_encrypted, d.enabled AS destination_enabled
 FROM notification_routes r
 JOIN notification_destinations d ON d.id = r.destination_id
 WHERE r.enabled = true AND d.enabled = true
-  AND (r.event_type = $1 OR r.event_type = '*')
-ORDER BY r.event_type DESC;
+  AND (r.event_types @> to_jsonb($1::text) OR r.event_types @> '["*"]'::jsonb)
+ORDER BY r.id;
 
 -- name: GetNotificationRouteByID :one
 SELECT * FROM notification_routes WHERE id = $1;
 
 -- name: CreateNotificationRoute :one
-INSERT INTO notification_routes (id, destination_id, event_type, min_severity, host_group_id, match_rules, enabled, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+INSERT INTO notification_routes (id, destination_id, event_types, min_severity, host_group_ids, host_ids, match_rules, enabled, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
 RETURNING *;
 
 -- name: UpdateNotificationRoute :one
 UPDATE notification_routes
-SET destination_id = $2, event_type = $3, min_severity = $4, host_group_id = $5, match_rules = $6, enabled = $7, updated_at = NOW()
+SET destination_id = $2, event_types = $3, min_severity = $4, host_group_ids = $5, host_ids = $6, match_rules = $7, enabled = $8, updated_at = NOW()
 WHERE id = $1
 RETURNING *;
 

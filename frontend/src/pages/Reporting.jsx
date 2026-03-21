@@ -4,11 +4,17 @@ import {
 	ArrowDown,
 	ArrowUp,
 	ArrowUpDown,
+	Bell,
+	BookOpen,
+	Calendar,
 	CheckCircle,
+	GitBranch,
 	Info,
+	LayoutDashboard,
 	MoreVertical,
 	RefreshCw,
 	Search,
+	Settings,
 	Trash2,
 	X,
 	XCircle,
@@ -17,6 +23,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { adminUsersAPI, alertsAPI, formatRelativeTime } from "../utils/api";
+import { NotificationPanel } from "./settings/AlertChannels";
+import { AlertSettings } from "./settings/AlertSettings";
 
 // System-only actions that should not appear in user-facing menus
 const SYSTEM_ONLY_ACTIONS = new Set(["created", "updated"]);
@@ -38,6 +46,17 @@ const Reporting = () => {
 	const [menuPosition, setMenuPosition] = useState({ top: 0, right: 0 }); // Position for fixed dropdown
 	const menuButtonRefs = useRef({}); // Store refs for each menu button
 	const [selectedAlerts, setSelectedAlerts] = useState(new Set()); // Track selected alerts for bulk operations
+	const [activeTab, setActiveTab] = useState("overview");
+
+	const tabs = [
+		{ id: "overview", name: "Overview", icon: LayoutDashboard },
+		{ id: "alerts", name: "Alerts", icon: AlertTriangle },
+		{ id: "alert-settings", name: "Alert Settings", icon: Settings },
+		{ id: "destinations", name: "Destinations", icon: Bell },
+		{ id: "rules", name: "Event Rules", icon: GitBranch },
+		{ id: "reports", name: "Scheduled Reports", icon: Calendar },
+		{ id: "log", name: "Delivery Log", icon: BookOpen },
+	];
 
 	// Fetch alerts - with aggressive polling for real-time updates
 	const {
@@ -722,426 +741,490 @@ const Reporting = () => {
 				</div>
 			</div>
 
-			{/* Filters and Search */}
-			<div className="card p-4">
-				<div className="flex flex-col md:flex-row gap-4">
-					{/* Search */}
-					<div className="flex-1">
-						<div className="relative">
-							<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400" />
-							<input
-								type="text"
-								placeholder="Search alerts..."
-								value={searchTerm}
-								onChange={(e) => setSearchTerm(e.target.value)}
-								className="w-full pl-10 pr-4 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"
-							/>
-						</div>
-					</div>
-
-					{/* Filters */}
-					<div className="flex flex-wrap gap-2">
-						<select
-							value={severityFilter}
-							onChange={(e) => setSeverityFilter(e.target.value)}
-							className="px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
+			{/* Tabs */}
+			<div className="border-b border-gray-200 dark:border-gray-700">
+				<nav className="-mb-px flex space-x-8">
+					{tabs.map((tab) => (
+						<button
+							type="button"
+							key={tab.id}
+							onClick={() => setActiveTab(tab.id)}
+							className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${
+								activeTab === tab.id
+									? "border-blue-500 text-blue-600 dark:text-blue-400"
+									: "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
+							}`}
 						>
-							<option value="all">All Severities</option>
-							<option value="informational">Informational</option>
-							<option value="warning">Warning</option>
-							<option value="error">Error</option>
-							<option value="critical">Critical</option>
-						</select>
-
-						<select
-							value={typeFilter}
-							onChange={(e) => setTypeFilter(e.target.value)}
-							className="px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
-						>
-							<option value="all">All Types</option>
-							{alertTypes.map((type) => (
-								<option key={type} value={type}>
-									{String(type).replace("_", " ")}
-								</option>
-							))}
-						</select>
-
-						<select
-							value={statusFilter}
-							onChange={(e) => setStatusFilter(e.target.value)}
-							className="px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
-						>
-							<option value="all">All Status</option>
-							<option value="open">Open</option>
-							<option value="acknowledged">Acknowledged</option>
-							<option value="investigating">Investigating</option>
-							<option value="escalated">Escalated</option>
-							<option value="silenced">Silenced</option>
-							<option value="done">Done</option>
-							<option value="resolved">Resolved</option>
-						</select>
-
-						<select
-							value={assignmentFilter}
-							onChange={(e) => setAssignmentFilter(e.target.value)}
-							className="px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
-						>
-							<option value="all">All Assignments</option>
-							<option value="assignedToMe">Assigned to me</option>
-							<option value="assigned">Assigned</option>
-							<option value="unassigned">Unassigned</option>
-						</select>
-					</div>
-				</div>
+							<tab.icon className="h-4 w-4" />
+							{tab.name}
+						</button>
+					))}
+				</nav>
 			</div>
 
-			{/* Alerts Table */}
-			<div className="card overflow-hidden">
-				{/* Bulk Actions Bar */}
-				{selectedAlerts.size > 0 && (
-					<div className="px-4 py-2 bg-primary-50 dark:bg-primary-900 border-b border-secondary-200 dark:border-secondary-700 flex items-center justify-between gap-2 flex-wrap">
-						<div className="text-sm text-secondary-700 dark:text-white">
-							{selectedAlerts.size} alert(s) selected
-						</div>
-						<div className="flex items-center gap-2 flex-wrap">
-							{workflowActions.map((action) => (
-								<button
-									key={action.name}
-									type="button"
-									onClick={() => handleBulkAction(action.name)}
-									disabled={bulkActionMutation.isPending}
-									className="px-3 py-1.5 text-sm font-medium text-secondary-700 dark:text-white bg-white dark:bg-secondary-700 border border-secondary-300 dark:border-secondary-600 hover:bg-secondary-50 dark:hover:bg-secondary-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
-								>
-									{action.display_name}
-								</button>
-							))}
-							{resolutionActions.map((action) => (
-								<button
-									key={action.name}
-									type="button"
-									onClick={() => handleBulkAction(action.name)}
-									disabled={bulkActionMutation.isPending}
-									className="px-3 py-1.5 text-sm font-medium text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/30 border border-green-300 dark:border-green-700 hover:bg-green-100 dark:hover:bg-green-900/50 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
-								>
-									{action.display_name}
-								</button>
-							))}
-							<button
-								type="button"
-								onClick={handleDeleteSelected}
-								disabled={deleteAlertsMutation.isPending}
-								className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-danger-600 hover:bg-danger-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								<Trash2 className="h-4 w-4" />
-								Delete
-							</button>
-						</div>
-					</div>
-				)}
-				{alertsLoading ? (
-					<div className="text-center py-8">
-						<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-						<p className="mt-2 text-sm text-secondary-500">Loading alerts...</p>
-					</div>
-				) : filteredAndSortedAlerts.length === 0 ? (
-					<div className="text-center py-8">
-						<AlertTriangle className="h-12 w-12 mx-auto text-secondary-400" />
-						<h3 className="mt-2 text-sm font-medium text-secondary-900 dark:text-white">
-							No alerts found
+			{/* Overview Tab */}
+			{activeTab === "overview" && (
+				<div className="card p-6 md:p-8">
+					<div className="text-center py-12">
+						<LayoutDashboard className="h-12 w-12 text-secondary-300 dark:text-secondary-600 mx-auto mb-4" />
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-2">
+							Overview dashboard
 						</h3>
-						<p className="mt-1 text-sm text-secondary-500">
-							{searchTerm || severityFilter !== "all" || typeFilter !== "all"
-								? "Try adjusting your search filters"
-								: "No active alerts"}
+						<p className="text-sm text-secondary-500 max-w-md mx-auto">
+							Dashboard cards and summary metrics will appear here.
 						</p>
 					</div>
-				) : (
-					<div className="overflow-x-auto">
-						<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700">
-							<thead className="bg-secondary-50 dark:bg-secondary-800">
-								<tr>
-									<th
-										scope="col"
-										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-										onClick={(e) => e.stopPropagation()}
-									>
-										<input
-											type="checkbox"
-											checked={
-												selectedAlerts.size > 0 &&
-												selectedAlerts.size === filteredAndSortedAlerts.length
-											}
-											onChange={(e) => {
-												e.stopPropagation();
-												handleSelectAll(e.target.checked);
-											}}
-											onClick={(e) => e.stopPropagation()}
-											className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 rounded cursor-pointer"
-										/>
-									</th>
-									<th
-										scope="col"
-										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider cursor-pointer"
-										onClick={() => handleSort("severity")}
-									>
-										<div className="flex items-center gap-2">
-											Severity
-											{getSortIcon("severity")}
-										</div>
-									</th>
-									<th
-										scope="col"
-										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider cursor-pointer"
-										onClick={() => handleSort("type")}
-									>
-										<div className="flex items-center gap-2">
-											Type
-											{getSortIcon("type")}
-										</div>
-									</th>
-									<th
-										scope="col"
-										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-									>
-										Title
-									</th>
-									<th
-										scope="col"
-										className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-									>
-										Message
-									</th>
-									<th
-										scope="col"
-										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-									>
-										Assigned To
-									</th>
-									<th
-										scope="col"
-										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-									>
-										Status
-									</th>
-									<th
-										scope="col"
-										className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider cursor-pointer"
-										onClick={() => handleSort("created_at")}
-									>
-										<div className="flex items-center gap-2">
-											Created
-											{getSortIcon("created_at")}
-										</div>
-									</th>
-									<th
-										scope="col"
-										className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-									>
-										Actions
-									</th>
-								</tr>
-							</thead>
-							<tbody className="bg-white dark:bg-secondary-900 divide-y divide-secondary-200 dark:divide-secondary-700">
-								{filteredAndSortedAlerts.map((alert) => (
-									<tr
-										key={alert.id}
-										className="hover:bg-secondary-50 dark:hover:bg-secondary-800"
-									>
-										<td
-											className="px-4 py-2 whitespace-nowrap"
-											onClick={(e) => e.stopPropagation()}
-										>
-											<input
-												type="checkbox"
-												checked={selectedAlerts.has(alert.id)}
-												onChange={(e) => {
-													e.stopPropagation();
-													handleSelectAlert(alert.id, e.target.checked);
-												}}
-												onClick={(e) => e.stopPropagation()}
-												className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 rounded cursor-pointer"
-											/>
-										</td>
-										<td
-											className="px-4 py-2 whitespace-nowrap cursor-pointer"
-											onClick={() => handleRowClick(alert)}
-										>
-											{getSeverityBadge(alert.severity)}
-										</td>
-										<td
-											className="px-4 py-2 whitespace-nowrap cursor-pointer"
-											onClick={() => handleRowClick(alert)}
-										>
-											{getTypeBadge(alert.type)}
-										</td>
-										<td
-											className="px-4 py-2 cursor-pointer"
-											onClick={() => handleRowClick(alert)}
-										>
-											<div className="text-sm font-medium text-secondary-900 dark:text-white">
-												{alert.title}
-											</div>
-										</td>
-										<td
-											className="hidden md:table-cell px-4 py-2 cursor-pointer"
-											onClick={() => handleRowClick(alert)}
-										>
-											<div className="text-sm text-secondary-500 dark:text-white max-w-md truncate">
-												{alert.message}
-											</div>
-										</td>
-										<td
-											className="px-4 py-2 whitespace-nowrap"
-											onClick={(e) => e.stopPropagation()}
-										>
-											<select
-												value={alert.assigned_to_user_id || ""}
-												onChange={(e) => {
-													const newUserId = e.target.value;
-													handleInlineAssign(alert.id, newUserId, e);
-												}}
-												onClick={(e) => e.stopPropagation()}
-												className="px-2 py-1 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white hover:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 min-w-[120px]"
-												disabled={
-													assignAlertMutation.isPending ||
-													unassignAlertMutation.isPending
-												}
-											>
-												<option value="">Unassigned</option>
-												{usersData?.map((u) => (
-													<option key={u.id} value={u.id}>
-														{u.username || u.email}
-													</option>
-												))}
-											</select>
-										</td>
-										<td
-											className="px-4 py-2 whitespace-nowrap cursor-pointer"
-											onClick={() => handleRowClick(alert)}
-										>
-											{getStatusBadge(alert)}
-										</td>
-										<td
-											className="px-4 py-2 whitespace-nowrap text-sm text-secondary-500 dark:text-white cursor-pointer"
-											onClick={() => handleRowClick(alert)}
-										>
-											{alert.created_at
-												? formatRelativeTime(alert.created_at)
-												: " -"}
-										</td>
-										<td
-											className="px-4 py-2 whitespace-nowrap text-right text-sm font-medium"
-											onClick={(e) => e.stopPropagation()}
-										>
-											<div className="relative inline-block">
-												<button
-													ref={(el) => {
-														if (el) {
-															menuButtonRefs.current[alert.id] = el;
-														} else {
-															delete menuButtonRefs.current[alert.id];
-														}
-													}}
-													type="button"
-													onClick={(e) => {
-														e.stopPropagation();
-														const newMenuId =
-															openActionMenu === alert.id ? null : alert.id;
-														setOpenActionMenu(newMenuId);
-														if (newMenuId) {
-															// Calculate position after state update
-															setTimeout(
-																() => calculateMenuPosition(newMenuId),
-																0,
-															);
-														}
-													}}
-													className="p-1 text-secondary-500 hover:text-secondary-700 dark:hover:text-secondary-300 rounded-md hover:bg-secondary-100 dark:hover:bg-secondary-700"
-													disabled={performActionMutation.isPending}
-												>
-													<MoreVertical className="h-5 w-5" />
-												</button>
-											</div>
-										</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</div>
-				)}
-			</div>
+				</div>
+			)}
 
-			{/* Fixed dropdown menu (rendered outside table to avoid clipping) */}
-			{openActionMenu && (
+			{/* Alerts Tab */}
+			{activeTab === "alerts" && (
 				<>
-					<div
-						className="fixed inset-0 z-40"
-						onClick={(e) => {
-							e.stopPropagation();
-							setOpenActionMenu(null);
-						}}
-					/>
-					<div
-						data-menu-id={openActionMenu}
-						className="fixed z-50 w-48 bg-white dark:bg-secondary-800 rounded-md shadow-lg border border-secondary-200 dark:border-secondary-600"
-						style={{
-							top: `${menuPosition.top}px`,
-							right: `${menuPosition.right}px`,
-						}}
-						onClick={(e) => e.stopPropagation()}
-					>
-						<div className="py-1">
-							{workflowActions.length > 0 && (
-								<>
-									<div className="px-4 py-1 text-xs font-semibold text-secondary-400 dark:text-secondary-500 uppercase tracking-wider">
-										Workflow
-									</div>
+					{/* Filters and Search */}
+					<div className="card p-4">
+						<div className="flex flex-col md:flex-row gap-4">
+							{/* Search */}
+							<div className="flex-1">
+								<div className="relative">
+									<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400" />
+									<input
+										type="text"
+										placeholder="Search alerts..."
+										value={searchTerm}
+										onChange={(e) => setSearchTerm(e.target.value)}
+										className="w-full pl-10 pr-4 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"
+									/>
+								</div>
+							</div>
+
+							{/* Filters */}
+							<div className="flex flex-wrap gap-2">
+								<select
+									value={severityFilter}
+									onChange={(e) => setSeverityFilter(e.target.value)}
+									className="px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
+								>
+									<option value="all">All Severities</option>
+									<option value="informational">Informational</option>
+									<option value="warning">Warning</option>
+									<option value="error">Error</option>
+									<option value="critical">Critical</option>
+								</select>
+
+								<select
+									value={typeFilter}
+									onChange={(e) => setTypeFilter(e.target.value)}
+									className="px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
+								>
+									<option value="all">All Types</option>
+									{alertTypes.map((type) => (
+										<option key={type} value={type}>
+											{String(type).replace("_", " ")}
+										</option>
+									))}
+								</select>
+
+								<select
+									value={statusFilter}
+									onChange={(e) => setStatusFilter(e.target.value)}
+									className="px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
+								>
+									<option value="all">All Status</option>
+									<option value="open">Open</option>
+									<option value="acknowledged">Acknowledged</option>
+									<option value="investigating">Investigating</option>
+									<option value="escalated">Escalated</option>
+									<option value="silenced">Silenced</option>
+									<option value="done">Done</option>
+									<option value="resolved">Resolved</option>
+								</select>
+
+								<select
+									value={assignmentFilter}
+									onChange={(e) => setAssignmentFilter(e.target.value)}
+									className="px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
+								>
+									<option value="all">All Assignments</option>
+									<option value="assignedToMe">Assigned to me</option>
+									<option value="assigned">Assigned</option>
+									<option value="unassigned">Unassigned</option>
+								</select>
+							</div>
+						</div>
+					</div>
+
+					{/* Alerts Table */}
+					<div className="card overflow-hidden">
+						{/* Bulk Actions Bar */}
+						{selectedAlerts.size > 0 && (
+							<div className="px-4 py-2 bg-primary-50 dark:bg-primary-900 border-b border-secondary-200 dark:border-secondary-700 flex items-center justify-between gap-2 flex-wrap">
+								<div className="text-sm text-secondary-700 dark:text-white">
+									{selectedAlerts.size} alert(s) selected
+								</div>
+								<div className="flex items-center gap-2 flex-wrap">
 									{workflowActions.map((action) => (
 										<button
 											key={action.name}
 											type="button"
-											onClick={(e) => {
-												e.stopPropagation();
-												handleAction(openActionMenu, action.name, e);
-												setOpenActionMenu(null);
-											}}
-											className="w-full text-left px-4 py-2 text-sm text-secondary-700 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700"
-											disabled={performActionMutation.isPending}
+											onClick={() => handleBulkAction(action.name)}
+											disabled={bulkActionMutation.isPending}
+											className="px-3 py-1.5 text-sm font-medium text-secondary-700 dark:text-white bg-white dark:bg-secondary-700 border border-secondary-300 dark:border-secondary-600 hover:bg-secondary-50 dark:hover:bg-secondary-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
 										>
 											{action.display_name}
 										</button>
 									))}
-								</>
-							)}
-							{workflowActions.length > 0 && resolutionActions.length > 0 && (
-								<div className="border-t border-secondary-200 dark:border-secondary-600 my-1" />
-							)}
-							{resolutionActions.length > 0 && (
-								<>
-									<div className="px-4 py-1 text-xs font-semibold text-secondary-400 dark:text-secondary-500 uppercase tracking-wider">
-										Resolve
-									</div>
 									{resolutionActions.map((action) => (
 										<button
 											key={action.name}
 											type="button"
-											onClick={(e) => {
-												e.stopPropagation();
-												handleAction(openActionMenu, action.name, e);
-												setOpenActionMenu(null);
-											}}
-											className="w-full text-left px-4 py-2 text-sm text-secondary-700 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700"
-											disabled={performActionMutation.isPending}
+											onClick={() => handleBulkAction(action.name)}
+											disabled={bulkActionMutation.isPending}
+											className="px-3 py-1.5 text-sm font-medium text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/30 border border-green-300 dark:border-green-700 hover:bg-green-100 dark:hover:bg-green-900/50 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
 										>
 											{action.display_name}
 										</button>
 									))}
-								</>
-							)}
-						</div>
+									<button
+										type="button"
+										onClick={handleDeleteSelected}
+										disabled={deleteAlertsMutation.isPending}
+										className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-danger-600 hover:bg-danger-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+									>
+										<Trash2 className="h-4 w-4" />
+										Delete
+									</button>
+								</div>
+							</div>
+						)}
+						{alertsLoading ? (
+							<div className="text-center py-8">
+								<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+								<p className="mt-2 text-sm text-secondary-500">
+									Loading alerts...
+								</p>
+							</div>
+						) : filteredAndSortedAlerts.length === 0 ? (
+							<div className="text-center py-8">
+								<AlertTriangle className="h-12 w-12 mx-auto text-secondary-400" />
+								<h3 className="mt-2 text-sm font-medium text-secondary-900 dark:text-white">
+									No alerts found
+								</h3>
+								<p className="mt-1 text-sm text-secondary-500">
+									{searchTerm ||
+									severityFilter !== "all" ||
+									typeFilter !== "all"
+										? "Try adjusting your search filters"
+										: "No active alerts"}
+								</p>
+							</div>
+						) : (
+							<div className="overflow-x-auto">
+								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700">
+									<thead className="bg-secondary-50 dark:bg-secondary-800">
+										<tr>
+											<th
+												scope="col"
+												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+												onClick={(e) => e.stopPropagation()}
+											>
+												<input
+													type="checkbox"
+													checked={
+														selectedAlerts.size > 0 &&
+														selectedAlerts.size ===
+															filteredAndSortedAlerts.length
+													}
+													onChange={(e) => {
+														e.stopPropagation();
+														handleSelectAll(e.target.checked);
+													}}
+													onClick={(e) => e.stopPropagation()}
+													className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 rounded cursor-pointer"
+												/>
+											</th>
+											<th
+												scope="col"
+												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider cursor-pointer"
+												onClick={() => handleSort("severity")}
+											>
+												<div className="flex items-center gap-2">
+													Severity
+													{getSortIcon("severity")}
+												</div>
+											</th>
+											<th
+												scope="col"
+												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider cursor-pointer"
+												onClick={() => handleSort("type")}
+											>
+												<div className="flex items-center gap-2">
+													Type
+													{getSortIcon("type")}
+												</div>
+											</th>
+											<th
+												scope="col"
+												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+											>
+												Title
+											</th>
+											<th
+												scope="col"
+												className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+											>
+												Message
+											</th>
+											<th
+												scope="col"
+												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+											>
+												Assigned To
+											</th>
+											<th
+												scope="col"
+												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+											>
+												Status
+											</th>
+											<th
+												scope="col"
+												className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider cursor-pointer"
+												onClick={() => handleSort("created_at")}
+											>
+												<div className="flex items-center gap-2">
+													Created
+													{getSortIcon("created_at")}
+												</div>
+											</th>
+											<th
+												scope="col"
+												className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+											>
+												Actions
+											</th>
+										</tr>
+									</thead>
+									<tbody className="bg-white dark:bg-secondary-900 divide-y divide-secondary-200 dark:divide-secondary-700">
+										{filteredAndSortedAlerts.map((alert) => (
+											<tr
+												key={alert.id}
+												className="hover:bg-secondary-50 dark:hover:bg-secondary-800"
+											>
+												<td
+													className="px-4 py-2 whitespace-nowrap"
+													onClick={(e) => e.stopPropagation()}
+												>
+													<input
+														type="checkbox"
+														checked={selectedAlerts.has(alert.id)}
+														onChange={(e) => {
+															e.stopPropagation();
+															handleSelectAlert(alert.id, e.target.checked);
+														}}
+														onClick={(e) => e.stopPropagation()}
+														className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 rounded cursor-pointer"
+													/>
+												</td>
+												<td
+													className="px-4 py-2 whitespace-nowrap cursor-pointer"
+													onClick={() => handleRowClick(alert)}
+												>
+													{getSeverityBadge(alert.severity)}
+												</td>
+												<td
+													className="px-4 py-2 whitespace-nowrap cursor-pointer"
+													onClick={() => handleRowClick(alert)}
+												>
+													{getTypeBadge(alert.type)}
+												</td>
+												<td
+													className="px-4 py-2 cursor-pointer"
+													onClick={() => handleRowClick(alert)}
+												>
+													<div className="text-sm font-medium text-secondary-900 dark:text-white">
+														{alert.title}
+													</div>
+												</td>
+												<td
+													className="hidden md:table-cell px-4 py-2 cursor-pointer"
+													onClick={() => handleRowClick(alert)}
+												>
+													<div className="text-sm text-secondary-500 dark:text-white max-w-md truncate">
+														{alert.message}
+													</div>
+												</td>
+												<td
+													className="px-4 py-2 whitespace-nowrap"
+													onClick={(e) => e.stopPropagation()}
+												>
+													<select
+														value={alert.assigned_to_user_id || ""}
+														onChange={(e) => {
+															const newUserId = e.target.value;
+															handleInlineAssign(alert.id, newUserId, e);
+														}}
+														onClick={(e) => e.stopPropagation()}
+														className="px-2 py-1 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white hover:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 min-w-[120px]"
+														disabled={
+															assignAlertMutation.isPending ||
+															unassignAlertMutation.isPending
+														}
+													>
+														<option value="">Unassigned</option>
+														{usersData?.map((u) => (
+															<option key={u.id} value={u.id}>
+																{u.username || u.email}
+															</option>
+														))}
+													</select>
+												</td>
+												<td
+													className="px-4 py-2 whitespace-nowrap cursor-pointer"
+													onClick={() => handleRowClick(alert)}
+												>
+													{getStatusBadge(alert)}
+												</td>
+												<td
+													className="px-4 py-2 whitespace-nowrap text-sm text-secondary-500 dark:text-white cursor-pointer"
+													onClick={() => handleRowClick(alert)}
+												>
+													{alert.created_at
+														? formatRelativeTime(alert.created_at)
+														: " -"}
+												</td>
+												<td
+													className="px-4 py-2 whitespace-nowrap text-right text-sm font-medium"
+													onClick={(e) => e.stopPropagation()}
+												>
+													<div className="relative inline-block">
+														<button
+															ref={(el) => {
+																if (el) {
+																	menuButtonRefs.current[alert.id] = el;
+																} else {
+																	delete menuButtonRefs.current[alert.id];
+																}
+															}}
+															type="button"
+															onClick={(e) => {
+																e.stopPropagation();
+																const newMenuId =
+																	openActionMenu === alert.id ? null : alert.id;
+																setOpenActionMenu(newMenuId);
+																if (newMenuId) {
+																	// Calculate position after state update
+																	setTimeout(
+																		() => calculateMenuPosition(newMenuId),
+																		0,
+																	);
+																}
+															}}
+															className="p-1 text-secondary-500 hover:text-secondary-700 dark:hover:text-secondary-300 rounded-md hover:bg-secondary-100 dark:hover:bg-secondary-700"
+															disabled={performActionMutation.isPending}
+														>
+															<MoreVertical className="h-5 w-5" />
+														</button>
+													</div>
+												</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</div>
+						)}
 					</div>
+
+					{/* Fixed dropdown menu (rendered outside table to avoid clipping) */}
+					{openActionMenu && (
+						<>
+							<div
+								className="fixed inset-0 z-40"
+								onClick={(e) => {
+									e.stopPropagation();
+									setOpenActionMenu(null);
+								}}
+							/>
+							<div
+								data-menu-id={openActionMenu}
+								className="fixed z-50 w-48 bg-white dark:bg-secondary-800 rounded-md shadow-lg border border-secondary-200 dark:border-secondary-600"
+								style={{
+									top: `${menuPosition.top}px`,
+									right: `${menuPosition.right}px`,
+								}}
+								onClick={(e) => e.stopPropagation()}
+							>
+								<div className="py-1">
+									{workflowActions.length > 0 && (
+										<>
+											<div className="px-4 py-1 text-xs font-semibold text-secondary-400 dark:text-secondary-500 uppercase tracking-wider">
+												Workflow
+											</div>
+											{workflowActions.map((action) => (
+												<button
+													key={action.name}
+													type="button"
+													onClick={(e) => {
+														e.stopPropagation();
+														handleAction(openActionMenu, action.name, e);
+														setOpenActionMenu(null);
+													}}
+													className="w-full text-left px-4 py-2 text-sm text-secondary-700 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700"
+													disabled={performActionMutation.isPending}
+												>
+													{action.display_name}
+												</button>
+											))}
+										</>
+									)}
+									{workflowActions.length > 0 &&
+										resolutionActions.length > 0 && (
+											<div className="border-t border-secondary-200 dark:border-secondary-600 my-1" />
+										)}
+									{resolutionActions.length > 0 && (
+										<>
+											<div className="px-4 py-1 text-xs font-semibold text-secondary-400 dark:text-secondary-500 uppercase tracking-wider">
+												Resolve
+											</div>
+											{resolutionActions.map((action) => (
+												<button
+													key={action.name}
+													type="button"
+													onClick={(e) => {
+														e.stopPropagation();
+														handleAction(openActionMenu, action.name, e);
+														setOpenActionMenu(null);
+													}}
+													className="w-full text-left px-4 py-2 text-sm text-secondary-700 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700"
+													disabled={performActionMutation.isPending}
+												>
+													{action.display_name}
+												</button>
+											))}
+										</>
+									)}
+								</div>
+							</div>
+						</>
+					)}
 				</>
 			)}
+
+			{/* Alert Settings Tab */}
+			{activeTab === "alert-settings" && <AlertSettings />}
+
+			{/* Destinations Tab */}
+			{activeTab === "destinations" && (
+				<NotificationPanel panel="destinations" />
+			)}
+
+			{/* Event Rules Tab */}
+			{activeTab === "rules" && <NotificationPanel panel="routes" />}
+
+			{/* Scheduled Reports Tab */}
+			{activeTab === "reports" && <NotificationPanel panel="reports" />}
+
+			{/* Delivery Log Tab */}
+			{activeTab === "log" && <NotificationPanel panel="log" />}
 
 			{/* Alert Details Modal */}
 			{showAlertModal && selectedAlert && (

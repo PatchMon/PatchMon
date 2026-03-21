@@ -1,25 +1,35 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-	Bell,
+	Check,
+	ChevronLeft,
+	ChevronRight,
 	Clock,
+	Edit2,
+	Globe,
 	Loader2,
+	Mail,
 	Play,
 	Plus,
 	RefreshCw,
 	Send,
 	Trash2,
+	X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { SiDiscord, SiNtfy, SiSlack } from "react-icons/si";
 import { useAuth } from "../../contexts/AuthContext";
 import { useToast } from "../../contexts/ToastContext";
 import {
+	adminHostsAPI,
 	formatRelativeTime,
 	hostGroupsAPI,
 	notificationsAPI,
 } from "../../utils/api";
 
+/* ───────────────────── Constants ───────────────────── */
+
 const EVENT_TYPES = [
-	{ value: "*", label: "All events (wildcard)" },
+	{ value: "*", label: "All events" },
 	{ value: "host_down", label: "Host down" },
 	{ value: "host_recovered", label: "Host recovered" },
 	{ value: "server_update", label: "Server update" },
@@ -27,7 +37,6 @@ const EVENT_TYPES = [
 	{ value: "patch_run_completed", label: "Patch run completed" },
 	{ value: "patch_run_failed", label: "Patch run failed" },
 	{ value: "compliance_scan_completed", label: "Compliance scan completed" },
-	{ value: "test", label: "Test (route-based; prefer Test button)" },
 ];
 
 const SEVERITIES = [
@@ -47,66 +56,1130 @@ const REPORT_SECTIONS = [
 	{ id: "top_security_packages", label: "Top outdated security packages" },
 ];
 
-// Human-readable cron description (common patterns)
-const describeCron = (expr) => {
+const CHANNEL_TYPES = [
+	{
+		value: "webhook",
+		label: "Webhook",
+		description: "Generic, Discord, or Slack",
+		icon: Globe,
+		brandIcons: { discord: SiDiscord, slack: SiSlack },
+	},
+	{
+		value: "email",
+		label: "Email",
+		description: "SMTP delivery",
+		icon: Mail,
+	},
+	{
+		value: "ntfy",
+		label: "ntfy",
+		description: "Push notifications via ntfy.sh",
+		icon: SiNtfy,
+	},
+];
+
+const FREQUENCY_OPTIONS = [
+	{ value: "daily", label: "Daily" },
+	{ value: "weekdays", label: "Weekdays (Mon-Fri)" },
+	{ value: "weekly", label: "Weekly" },
+	{ value: "monthly", label: "Monthly" },
+];
+
+const MONTH_DAY_PRESETS = [
+	{ value: "1", label: "1st" },
+	{ value: "15", label: "15th" },
+	{ value: "L", label: "Last day" },
+];
+
+const DAY_LABELS = [
+	{ value: "1", short: "Mon" },
+	{ value: "2", short: "Tue" },
+	{ value: "3", short: "Wed" },
+	{ value: "4", short: "Thu" },
+	{ value: "5", short: "Fri" },
+	{ value: "6", short: "Sat" },
+	{ value: "0", short: "Sun" },
+];
+
+const buildCron = (frequency, time, days, monthDay) => {
+	const [h, m] = (time || "08:00").split(":");
+	const hour = Number.parseInt(h, 10) || 0;
+	const minute = Number.parseInt(m, 10) || 0;
+	switch (frequency) {
+		case "weekdays":
+			return `${minute} ${hour} * * 1-5`;
+		case "weekly":
+			return `${minute} ${hour} * * ${days.length > 0 ? days.join(",") : "1"}`;
+		case "monthly":
+			return `${minute} ${hour} ${monthDay || "1"} * *`;
+		default:
+			return `${minute} ${hour} * * *`;
+	}
+};
+
+const describeSchedule = (expr) => {
 	if (!expr) return "";
 	const parts = expr.trim().split(/\s+/);
-	if (parts.length !== 5) return "";
-	const [min, hour, dom, mon, dow] = parts;
-	const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+	if (parts.length !== 5) return expr;
+	const [min, hour, dom, , dow] = parts;
 	const h = Number.parseInt(hour, 10);
 	const m = Number.parseInt(min, 10);
 	const time =
 		!Number.isNaN(h) && !Number.isNaN(m)
 			? `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`
 			: null;
-	if (!time) return "";
-	if (dom === "*" && mon === "*" && dow === "*") return `Daily at ${time}`;
-	if (dom === "*" && mon === "*" && dow !== "*") {
+	if (!time) return expr;
+	if (dom === "*" && dow === "*") return `Daily at ${time}`;
+	if (dom === "*" && dow === "1-5") return `Weekdays at ${time}`;
+	if (dom !== "*" && dow === "*") {
+		if (dom === "L") return `Last day of month at ${time}`;
+		const ordinal =
+			dom === "1" || dom === "21" || dom === "31"
+				? "st"
+				: dom === "2" || dom === "22"
+					? "nd"
+					: dom === "3" || dom === "23"
+						? "rd"
+						: "th";
+		return `${dom}${ordinal} of month at ${time}`;
+	}
+	if (dom === "*" && dow && dow !== "*") {
+		const dayNames = {
+			0: "Sun",
+			1: "Mon",
+			2: "Tue",
+			3: "Wed",
+			4: "Thu",
+			5: "Fri",
+			6: "Sat",
+		};
 		const days = dow
 			.split(",")
-			.map((d) => dayNames[Number.parseInt(d, 10)] || d)
+			.map((d) => dayNames[d] || d)
 			.join(", ");
 		return `${days} at ${time}`;
 	}
-	if (dom !== "*" && mon === "*" && dow === "*")
-		return `Day ${dom} of each month at ${time}`;
-	return "";
+	return expr;
 };
 
-const defaultWebhookConfig = () =>
-	JSON.stringify({ url: "", headers: {}, signing_secret: "" }, null, 2);
+const channelIcon = (type) => {
+	const ct = CHANNEL_TYPES.find((c) => c.value === type);
+	if (!ct) return null;
+	const Icon = ct.icon;
+	return <Icon className="h-4 w-4" />;
+};
 
-const defaultEmailConfig = () =>
-	JSON.stringify(
-		{
-			smtp_host: "",
-			smtp_port: 587,
-			username: "",
-			password: "",
-			from: "",
-			to: "",
-			use_tls: true,
-		},
-		null,
-		2,
+const INPUT =
+	"w-full px-3 py-2 bg-white dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md text-sm text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500 placeholder-secondary-400";
+const SELECT = `${INPUT} appearance-none`;
+
+const statusBadge = (status) => {
+	const ok = status === "sent";
+	return (
+		<span
+			className={`px-2 py-0.5 text-xs font-medium rounded-md ${ok ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" : "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"}`}
+		>
+			{status}
+		</span>
+	);
+};
+
+/* ───────────────── Destination Modal ───────────────── */
+
+const DestinationModal = ({
+	isOpen,
+	onClose,
+	onSave,
+	editingDest,
+	isPending,
+}) => {
+	const [step, setStep] = useState(editingDest ? 2 : 1);
+	const [channelType, setChannelType] = useState(
+		editingDest?.channel_type || "",
+	);
+	const [displayName, setDisplayName] = useState(
+		editingDest?.display_name || "",
+	);
+	const [enabled, setEnabled] = useState(editingDest?.enabled !== false);
+	const [config, setConfig] = useState(editingDest?._loadedConfig || {});
+	const toast = useToast();
+
+	if (!isOpen) return null;
+
+	const handleSave = () => {
+		if (!displayName.trim()) {
+			toast.warning("Display name is required");
+			return;
+		}
+		if (channelType === "webhook" && !config.url) {
+			toast.warning("Webhook URL is required");
+			return;
+		}
+		if (
+			channelType === "email" &&
+			(!config.smtp_host || !config.from || !config.to)
+		) {
+			toast.warning("SMTP host, from, and to are required");
+			return;
+		}
+		if (channelType === "ntfy" && !config.topic) {
+			toast.warning("Topic is required");
+			return;
+		}
+		onSave({
+			channel_type: channelType,
+			display_name: displayName.trim(),
+			config,
+			enabled,
+		});
+	};
+
+	const updateConfig = (key, value) =>
+		setConfig((p) => ({ ...p, [key]: value }));
+
+	const renderFields = () => {
+		switch (channelType) {
+			case "webhook":
+				return (
+					<div className="space-y-4">
+						<div>
+							<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+								Webhook URL <span className="text-danger-500">*</span>
+							</label>
+							<input
+								className={INPUT}
+								placeholder="https://hooks.slack.com/services/... or https://discord.com/api/webhooks/..."
+								value={config.url || ""}
+								onChange={(e) => updateConfig("url", e.target.value)}
+							/>
+							<p className="mt-1 text-xs text-secondary-500">
+								Discord and Slack URLs are auto-detected for rich formatting
+							</p>
+						</div>
+						<div>
+							<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+								Signing secret
+							</label>
+							<input
+								className={INPUT}
+								type="password"
+								placeholder="Optional HMAC signing secret"
+								value={config.signing_secret || ""}
+								onChange={(e) => updateConfig("signing_secret", e.target.value)}
+							/>
+						</div>
+					</div>
+				);
+			case "email":
+				return (
+					<div className="space-y-4">
+						<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+							<div>
+								<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+									SMTP host <span className="text-danger-500">*</span>
+								</label>
+								<input
+									className={INPUT}
+									placeholder="smtp.example.com"
+									value={config.smtp_host || ""}
+									onChange={(e) => updateConfig("smtp_host", e.target.value)}
+								/>
+							</div>
+							<div>
+								<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+									SMTP port
+								</label>
+								<input
+									className={INPUT}
+									type="number"
+									placeholder="587"
+									value={config.smtp_port || 587}
+									onChange={(e) =>
+										updateConfig("smtp_port", Number(e.target.value) || 587)
+									}
+								/>
+							</div>
+						</div>
+						<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+							<div>
+								<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+									Username
+								</label>
+								<input
+									className={INPUT}
+									value={config.username || ""}
+									onChange={(e) => updateConfig("username", e.target.value)}
+								/>
+							</div>
+							<div>
+								<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+									Password
+								</label>
+								<input
+									className={INPUT}
+									type="password"
+									value={config.password || ""}
+									onChange={(e) => updateConfig("password", e.target.value)}
+								/>
+							</div>
+						</div>
+						<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+							<div>
+								<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+									From <span className="text-danger-500">*</span>
+								</label>
+								<input
+									className={INPUT}
+									placeholder="noreply@example.com"
+									value={config.from || ""}
+									onChange={(e) => updateConfig("from", e.target.value)}
+								/>
+							</div>
+							<div>
+								<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+									To <span className="text-danger-500">*</span>
+								</label>
+								<input
+									className={INPUT}
+									placeholder="team@example.com"
+									value={config.to || ""}
+									onChange={(e) => updateConfig("to", e.target.value)}
+								/>
+							</div>
+						</div>
+						<label className="flex items-center gap-2 text-sm text-secondary-700 dark:text-white">
+							<input
+								type="checkbox"
+								checked={config.use_tls !== false}
+								onChange={(e) => updateConfig("use_tls", e.target.checked)}
+							/>
+							Use TLS
+						</label>
+					</div>
+				);
+			case "ntfy":
+				return (
+					<div className="space-y-4">
+						<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+							<div>
+								<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+									Server URL
+								</label>
+								<input
+									className={INPUT}
+									placeholder="https://ntfy.sh"
+									value={config.server_url || ""}
+									onChange={(e) => updateConfig("server_url", e.target.value)}
+								/>
+								<p className="mt-1 text-xs text-secondary-500">
+									Leave empty for ntfy.sh
+								</p>
+							</div>
+							<div>
+								<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+									Topic <span className="text-danger-500">*</span>
+								</label>
+								<input
+									className={INPUT}
+									placeholder="patchmon-alerts"
+									value={config.topic || ""}
+									onChange={(e) => updateConfig("topic", e.target.value)}
+								/>
+							</div>
+						</div>
+						<div>
+							<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+								Access token
+							</label>
+							<input
+								className={INPUT}
+								type="password"
+								placeholder="Optional"
+								value={config.token || ""}
+								onChange={(e) => updateConfig("token", e.target.value)}
+							/>
+						</div>
+						<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+							<div>
+								<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+									Username
+								</label>
+								<input
+									className={INPUT}
+									placeholder="Optional basic auth"
+									value={config.username || ""}
+									onChange={(e) => updateConfig("username", e.target.value)}
+								/>
+							</div>
+							<div>
+								<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+									Password
+								</label>
+								<input
+									className={INPUT}
+									type="password"
+									value={config.password || ""}
+									onChange={(e) => updateConfig("password", e.target.value)}
+								/>
+							</div>
+						</div>
+					</div>
+				);
+			default:
+				return null;
+		}
+	};
+
+	return (
+		<div
+			className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+			onClick={onClose}
+		>
+			<div
+				className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-lg w-full mx-4 relative z-10"
+				onClick={(e) => e.stopPropagation()}
+			>
+				<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600 flex items-center justify-between">
+					<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+						{editingDest
+							? "Edit destination"
+							: step === 1
+								? "Choose channel"
+								: "Configure destination"}
+					</h3>
+					<button
+						type="button"
+						onClick={onClose}
+						className="text-secondary-400 hover:text-secondary-600 dark:hover:text-white"
+					>
+						<X className="h-5 w-5" />
+					</button>
+				</div>
+
+				<div className="px-6 py-5">
+					{step === 1 && !editingDest && (
+						<div className="grid grid-cols-3 gap-4">
+							{CHANNEL_TYPES.map((ct) => {
+								const Icon = ct.icon;
+								return (
+									<button
+										key={ct.value}
+										type="button"
+										className={`flex flex-col items-center justify-center p-6 rounded-lg border-2 transition-all ${
+											channelType === ct.value
+												? "border-primary-500 bg-primary-50 dark:bg-primary-900/30"
+												: "border-secondary-300 dark:border-secondary-600 hover:border-primary-400"
+										}`}
+										onClick={() => setChannelType(ct.value)}
+									>
+										<Icon className="h-10 w-10 text-secondary-700 dark:text-secondary-200 mb-2" />
+										<span className="text-sm font-medium text-secondary-900 dark:text-white">
+											{ct.label}
+										</span>
+										<span className="text-xs text-secondary-500 mt-1 text-center">
+											{ct.description}
+										</span>
+									</button>
+								);
+							})}
+						</div>
+					)}
+
+					{step === 2 && (
+						<div className="space-y-5">
+							<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+								<div>
+									<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+										Display name <span className="text-danger-500">*</span>
+									</label>
+									<input
+										className={INPUT}
+										placeholder="e.g. Ops Discord"
+										value={displayName}
+										onChange={(e) => setDisplayName(e.target.value)}
+									/>
+								</div>
+								<div className="flex items-end pb-1">
+									<label className="flex items-center gap-2 text-sm text-secondary-700 dark:text-white">
+										<div
+											className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors ${enabled ? "bg-primary-600 dark:bg-primary-500" : "bg-secondary-200 dark:bg-secondary-600"}`}
+											onClick={() => setEnabled(!enabled)}
+											onKeyDown={() => {}}
+										>
+											<span
+												className={`inline-block h-3 w-3 transform rounded-md bg-white transition-transform ${enabled ? "translate-x-5" : "translate-x-1"}`}
+											/>
+										</div>
+										Enabled
+									</label>
+								</div>
+							</div>
+							{renderFields()}
+						</div>
+					)}
+				</div>
+
+				<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex justify-between">
+					{step === 2 && !editingDest ? (
+						<button
+							type="button"
+							className="btn-outline flex items-center gap-1"
+							onClick={() => setStep(1)}
+						>
+							<ChevronLeft className="h-4 w-4" /> Back
+						</button>
+					) : (
+						<div />
+					)}
+					<div className="flex gap-2">
+						<button type="button" className="btn-outline" onClick={onClose}>
+							Cancel
+						</button>
+						{step === 1 && (
+							<button
+								type="button"
+								className="btn-primary"
+								disabled={!channelType}
+								onClick={() => setStep(2)}
+							>
+								Next <ChevronRight className="h-4 w-4 inline ml-1" />
+							</button>
+						)}
+						{step === 2 && (
+							<button
+								type="button"
+								className="btn-primary flex items-center gap-1"
+								disabled={isPending}
+								onClick={handleSave}
+							>
+								{isPending ? (
+									<Loader2 className="h-4 w-4 animate-spin" />
+								) : (
+									<Check className="h-4 w-4" />
+								)}
+								{editingDest ? "Save" : "Create"}
+							</button>
+						)}
+					</div>
+				</div>
+			</div>
+		</div>
+	);
+};
+
+/* ───────────────── Route Modal ───────────────── */
+
+const RouteModal = ({
+	isOpen,
+	onClose,
+	onSave,
+	editingRoute,
+	destinations,
+	hostGroups,
+	hosts,
+	isPending,
+}) => {
+	const parseArr = (v) => (Array.isArray(v) ? v : []);
+	const [form, setForm] = useState({
+		destination_id: editingRoute?.destination_id || "",
+		event_types:
+			parseArr(editingRoute?.event_types).length > 0
+				? parseArr(editingRoute.event_types)
+				: ["*"],
+		min_severity: editingRoute?.min_severity || "informational",
+		host_group_ids: parseArr(editingRoute?.host_group_ids),
+		host_ids: parseArr(editingRoute?.host_ids),
+		enabled: editingRoute?.enabled !== false,
+	});
+	const toast = useToast();
+
+	if (!isOpen) return null;
+
+	const handleSave = () => {
+		if (!form.destination_id) {
+			toast.warning("Choose a destination");
+			return;
+		}
+		onSave({
+			destination_id: form.destination_id,
+			event_types: form.event_types.length > 0 ? form.event_types : ["*"],
+			min_severity: form.min_severity,
+			host_group_ids: form.host_group_ids,
+			host_ids: form.host_ids,
+			enabled: form.enabled,
+		});
+	};
+
+	const upd = (key, value) => setForm((p) => ({ ...p, [key]: value }));
+	const toggleArr = (key, id) =>
+		setForm((p) => ({
+			...p,
+			[key]: p[key].includes(id)
+				? p[key].filter((x) => x !== id)
+				: [...p[key], id],
+		}));
+
+	const allEventValues = EVENT_TYPES.filter((e) => e.value !== "*").map(
+		(e) => e.value,
 	);
 
-const defaultNtfyConfig = () =>
-	JSON.stringify(
-		{
-			server_url: "https://ntfy.sh",
-			topic: "",
-			token: "",
-			username: "",
-			password: "",
-			priority: "",
-		},
-		null,
-		2,
-	);
+	const toggleEvent = (value) => {
+		if (value === "*") {
+			// Toggle: if all selected, clear all; if not all, select all
+			setForm((p) =>
+				p.event_types.includes("*")
+					? { ...p, event_types: [] }
+					: { ...p, event_types: ["*"] },
+			);
+			return;
+		}
+		setForm((p) => {
+			// If currently "all", expand to individual events then remove the clicked one
+			const next = p.event_types.includes("*")
+				? allEventValues.filter((v) => v !== value)
+				: p.event_types.includes(value)
+					? p.event_types.filter((x) => x !== value)
+					: [...p.event_types, value];
+			// If all individual events are selected, collapse back to wildcard
+			if (next.length >= allEventValues.length)
+				return { ...p, event_types: ["*"] };
+			return { ...p, event_types: next.length > 0 ? next : ["*"] };
+		});
+	};
 
-const AlertChannels = () => {
+	const allEvents = form.event_types.includes("*");
+
+	return (
+		<div
+			className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+			onClick={onClose}
+		>
+			<div
+				className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-lg w-full mx-4 relative z-10 max-h-[90vh] overflow-y-auto"
+				onClick={(e) => e.stopPropagation()}
+			>
+				<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600 flex items-center justify-between sticky top-0 bg-white dark:bg-secondary-800 z-10">
+					<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+						{editingRoute ? "Edit route" : "Add route"}
+					</h3>
+					<button
+						type="button"
+						onClick={onClose}
+						className="text-secondary-400 hover:text-secondary-600 dark:hover:text-white"
+					>
+						<X className="h-5 w-5" />
+					</button>
+				</div>
+				<div className="px-6 py-5 space-y-5">
+					<div>
+						<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+							Destination <span className="text-danger-500">*</span>
+						</label>
+						<select
+							className={SELECT}
+							value={form.destination_id}
+							onChange={(e) => upd("destination_id", e.target.value)}
+						>
+							<option value="">Select destination...</option>
+							{destinations.map((d) => (
+								<option key={d.id} value={d.id}>
+									{d.display_name} ({d.channel_type})
+								</option>
+							))}
+						</select>
+					</div>
+
+					<div>
+						<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
+							Events
+						</label>
+						<div className="space-y-1.5">
+							<label className="flex items-center gap-2 text-sm text-secondary-700 dark:text-white font-medium">
+								<input
+									type="checkbox"
+									checked={allEvents}
+									onChange={() => toggleEvent("*")}
+								/>
+								All events
+							</label>
+							<div className="grid grid-cols-2 gap-1.5 pl-4 pt-1">
+								{EVENT_TYPES.filter((e) => e.value !== "*").map((o) => (
+									<label
+										key={o.value}
+										className="flex items-center gap-2 text-sm text-secondary-700 dark:text-white"
+									>
+										<input
+											type="checkbox"
+											checked={allEvents || form.event_types.includes(o.value)}
+											onChange={() => toggleEvent(o.value)}
+										/>
+										{o.label}
+									</label>
+								))}
+							</div>
+						</div>
+					</div>
+
+					<div>
+						<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+							Minimum severity
+						</label>
+						<select
+							className={SELECT}
+							value={form.min_severity}
+							onChange={(e) => upd("min_severity", e.target.value)}
+						>
+							{SEVERITIES.map((o) => (
+								<option key={o.value} value={o.value}>
+									{o.label}
+								</option>
+							))}
+						</select>
+					</div>
+
+					{hostGroups.length > 0 && (
+						<div>
+							<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
+								Host groups{" "}
+								<span className="text-xs font-normal text-secondary-500">
+									(optional, leave empty for all)
+								</span>
+							</label>
+							<div className="space-y-1.5 max-h-40 overflow-y-auto">
+								{hostGroups.map((g) => (
+									<label
+										key={g.id}
+										className="flex items-center gap-2 text-sm text-secondary-700 dark:text-white"
+									>
+										<input
+											type="checkbox"
+											checked={form.host_group_ids.includes(g.id)}
+											onChange={() => toggleArr("host_group_ids", g.id)}
+										/>
+										{g.name || g.id}
+									</label>
+								))}
+							</div>
+						</div>
+					)}
+
+					{hosts.length > 0 && (
+						<div>
+							<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
+								Individual hosts{" "}
+								<span className="text-xs font-normal text-secondary-500">
+									(optional, leave empty for all)
+								</span>
+							</label>
+							<div className="space-y-1.5 max-h-40 overflow-y-auto">
+								{hosts.map((h) => (
+									<label
+										key={h.id}
+										className="flex items-center gap-2 text-sm text-secondary-700 dark:text-white"
+									>
+										<input
+											type="checkbox"
+											checked={form.host_ids.includes(h.id)}
+											onChange={() => toggleArr("host_ids", h.id)}
+										/>
+										{h.friendly_name || h.hostname || h.id}
+									</label>
+								))}
+							</div>
+						</div>
+					)}
+
+					<label className="flex items-center gap-2 text-sm text-secondary-700 dark:text-white">
+						<input
+							type="checkbox"
+							checked={form.enabled}
+							onChange={(e) => upd("enabled", e.target.checked)}
+						/>
+						Enabled
+					</label>
+				</div>
+				<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex justify-end gap-2 sticky bottom-0 bg-white dark:bg-secondary-800">
+					<button type="button" className="btn-outline" onClick={onClose}>
+						Cancel
+					</button>
+					<button
+						type="button"
+						className="btn-primary flex items-center gap-1"
+						disabled={isPending}
+						onClick={handleSave}
+					>
+						{isPending ? (
+							<Loader2 className="h-4 w-4 animate-spin" />
+						) : (
+							<Check className="h-4 w-4" />
+						)}
+						{editingRoute ? "Save" : "Add"}
+					</button>
+				</div>
+			</div>
+		</div>
+	);
+};
+
+/* ───────────────── Report Modal ───────────────── */
+
+const ReportModal = ({
+	isOpen,
+	onClose,
+	onSave,
+	editingReport,
+	destinations,
+	hostGroups,
+	isPending,
+}) => {
+	const defRow = editingReport?.definition || {};
+
+	// Parse existing cron on init
+	const parseCronInit = () => {
+		let frequency = "daily";
+		let time = "08:00";
+		let days = ["1"];
+		let monthDay = "1";
+		if (editingReport?.cron_expr) {
+			const parts = editingReport.cron_expr.trim().split(/\s+/);
+			if (parts.length === 5) {
+				const [min, hour, dom, , dow] = parts;
+				const h = Number.parseInt(hour, 10);
+				const m = Number.parseInt(min, 10);
+				if (!Number.isNaN(h) && !Number.isNaN(m)) {
+					time = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+				}
+				if (dow === "1-5") frequency = "weekdays";
+				else if (dom !== "*") {
+					frequency = "monthly";
+					monthDay = dom;
+				} else if (dow && dow !== "*") {
+					frequency = "weekly";
+					days = dow.split(",");
+				}
+			}
+		}
+		return { frequency, time, days, monthDay };
+	};
+	const cronInit = parseCronInit();
+
+	const [form, setForm] = useState({
+		name: editingReport?.name || "",
+		frequency: cronInit.frequency,
+		time: cronInit.time,
+		days: cronInit.days,
+		monthDay: cronInit.monthDay,
+		enabled: editingReport?.enabled !== false,
+		destination_ids: Array.isArray(editingReport?.destination_ids)
+			? editingReport.destination_ids
+			: [],
+		sections:
+			Array.isArray(defRow.sections) && defRow.sections.length > 0
+				? defRow.sections
+				: ["executive_summary", "compliance_summary", "recent_patch_runs"],
+		host_group_ids: Array.isArray(defRow.host_group_ids)
+			? defRow.host_group_ids
+			: [],
+		top_hosts: defRow.limits?.top_hosts ?? 20,
+	});
+	const toast = useToast();
+
+	if (!isOpen) return null;
+
+	const upd = (key, value) => setForm((p) => ({ ...p, [key]: value }));
+	const toggleArr = (key, id) =>
+		setForm((p) => ({
+			...p,
+			[key]: p[key].includes(id)
+				? p[key].filter((x) => x !== id)
+				: [...p[key], id],
+		}));
+
+	const toggleDay = (d) =>
+		setForm((p) => ({
+			...p,
+			days: p.days.includes(d) ? p.days.filter((x) => x !== d) : [...p.days, d],
+		}));
+
+	const handleSave = () => {
+		if (!form.name.trim()) {
+			toast.warning("Report name is required");
+			return;
+		}
+		if (form.frequency === "weekly" && form.days.length === 0) {
+			toast.warning("Select at least one day");
+			return;
+		}
+		const cronExpr = buildCron(
+			form.frequency,
+			form.time,
+			form.days,
+			form.monthDay,
+		);
+		onSave({
+			name: form.name.trim(),
+			cron_expr: cronExpr,
+			enabled: form.enabled,
+			definition: {
+				version: 1,
+				sections: form.sections,
+				host_group_ids: form.host_group_ids,
+				limits: { top_hosts: Number(form.top_hosts) || 20 },
+			},
+			destination_ids: form.destination_ids,
+		});
+	};
+
+	return (
+		<div
+			className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+			onClick={onClose}
+		>
+			<div
+				className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-lg w-full mx-4 relative z-10 max-h-[90vh] overflow-y-auto"
+				onClick={(e) => e.stopPropagation()}
+			>
+				<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600 flex items-center justify-between sticky top-0 bg-white dark:bg-secondary-800 z-10">
+					<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+						{editingReport ? "Edit report" : "New scheduled report"}
+					</h3>
+					<button
+						type="button"
+						onClick={onClose}
+						className="text-secondary-400 hover:text-secondary-600 dark:hover:text-white"
+					>
+						<X className="h-5 w-5" />
+					</button>
+				</div>
+				<div className="px-6 py-5 space-y-5">
+					<div>
+						<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+							Report name <span className="text-danger-500">*</span>
+						</label>
+						<input
+							className={INPUT}
+							placeholder="Weekly ops report"
+							value={form.name}
+							onChange={(e) => upd("name", e.target.value)}
+						/>
+					</div>
+
+					<div>
+						<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
+							Schedule
+						</label>
+						<div className="flex flex-wrap gap-3 items-center">
+							<select
+								className={`${SELECT} w-auto`}
+								value={form.frequency}
+								onChange={(e) => upd("frequency", e.target.value)}
+							>
+								{FREQUENCY_OPTIONS.map((p) => (
+									<option key={p.value} value={p.value}>
+										{p.label}
+									</option>
+								))}
+							</select>
+							<span className="text-sm text-secondary-500">at</span>
+							<input
+								type="time"
+								className={`${INPUT} w-auto`}
+								value={form.time}
+								onChange={(e) => upd("time", e.target.value)}
+							/>
+						</div>
+						{form.frequency === "weekly" && (
+							<div className="flex gap-1.5 mt-3">
+								{DAY_LABELS.map((d) => (
+									<button
+										key={d.value}
+										type="button"
+										className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors ${
+											form.days.includes(d.value)
+												? "bg-primary-600 text-white border-primary-600"
+												: "bg-white dark:bg-secondary-900 text-secondary-700 dark:text-secondary-300 border-secondary-300 dark:border-secondary-600 hover:border-primary-400"
+										}`}
+										onClick={() => toggleDay(d.value)}
+									>
+										{d.short}
+									</button>
+								))}
+							</div>
+						)}
+						{form.frequency === "monthly" && (
+							<div className="mt-3 space-y-2">
+								<div className="flex gap-1.5 flex-wrap">
+									{MONTH_DAY_PRESETS.map((p) => (
+										<button
+											key={p.value}
+											type="button"
+											className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors ${
+												form.monthDay === p.value
+													? "bg-primary-600 text-white border-primary-600"
+													: "bg-white dark:bg-secondary-900 text-secondary-700 dark:text-secondary-300 border-secondary-300 dark:border-secondary-600 hover:border-primary-400"
+											}`}
+											onClick={() => upd("monthDay", p.value)}
+										>
+											{p.label}
+										</button>
+									))}
+									<span className="text-sm text-secondary-500 self-center px-1">
+										or
+									</span>
+									<input
+										type="number"
+										min={1}
+										max={31}
+										placeholder="Day"
+										className={`${INPUT} w-20 text-center`}
+										value={
+											!["1", "15", "L"].includes(form.monthDay)
+												? form.monthDay
+												: ""
+										}
+										onChange={(e) => {
+											const v = e.target.value;
+											if (v === "") return;
+											const n = Math.max(1, Math.min(31, Number(v) || 1));
+											upd("monthDay", String(n));
+										}}
+										onFocus={() => {
+											if (["1", "15", "L"].includes(form.monthDay))
+												upd("monthDay", "");
+										}}
+									/>
+								</div>
+							</div>
+						)}
+						<p className="mt-2 text-xs text-secondary-500 flex items-center gap-1">
+							<Clock className="h-3 w-3" /> Server timezone
+						</p>
+					</div>
+
+					<div>
+						<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
+							Sections
+						</label>
+						<div className="grid grid-cols-2 gap-2">
+							{REPORT_SECTIONS.map((s) => (
+								<label
+									key={s.id}
+									className="flex items-center gap-2 text-sm text-secondary-700 dark:text-white"
+								>
+									<input
+										type="checkbox"
+										checked={form.sections.includes(s.id)}
+										onChange={() => toggleArr("sections", s.id)}
+									/>
+									{s.label}
+								</label>
+							))}
+						</div>
+					</div>
+
+					<div>
+						<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
+							Deliver to
+						</label>
+						{destinations.length === 0 ? (
+							<p className="text-xs text-secondary-500">
+								Add a destination first.
+							</p>
+						) : (
+							<div className="space-y-1.5">
+								{destinations.map((d) => (
+									<label
+										key={d.id}
+										className="flex items-center gap-2 text-sm text-secondary-700 dark:text-white"
+									>
+										<input
+											type="checkbox"
+											checked={form.destination_ids.includes(d.id)}
+											onChange={() => toggleArr("destination_ids", d.id)}
+										/>
+										{channelIcon(d.channel_type)}
+										{d.display_name}
+									</label>
+								))}
+							</div>
+						)}
+					</div>
+
+					{hostGroups.length > 0 && (
+						<div>
+							<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
+								Scope to host groups
+							</label>
+							<div className="space-y-1.5">
+								{hostGroups.map((g) => (
+									<label
+										key={g.id}
+										className="flex items-center gap-2 text-sm text-secondary-700 dark:text-white"
+									>
+										<input
+											type="checkbox"
+											checked={form.host_group_ids.includes(g.id)}
+											onChange={() => toggleArr("host_group_ids", g.id)}
+										/>
+										{g.name || g.id}
+									</label>
+								))}
+							</div>
+						</div>
+					)}
+
+					<div className="grid grid-cols-2 gap-4">
+						<div>
+							<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+								Top rows per section
+							</label>
+							<input
+								className={INPUT}
+								type="number"
+								min={1}
+								value={form.top_hosts}
+								onChange={(e) => upd("top_hosts", e.target.value)}
+							/>
+						</div>
+						<div className="flex items-end pb-1">
+							<label className="flex items-center gap-2 text-sm text-secondary-700 dark:text-white">
+								<input
+									type="checkbox"
+									checked={form.enabled}
+									onChange={(e) => upd("enabled", e.target.checked)}
+								/>
+								Enabled
+							</label>
+						</div>
+					</div>
+				</div>
+				<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex justify-end gap-2 sticky bottom-0 bg-white dark:bg-secondary-800">
+					<button type="button" className="btn-outline" onClick={onClose}>
+						Cancel
+					</button>
+					<button
+						type="button"
+						className="btn-primary flex items-center gap-1"
+						disabled={isPending}
+						onClick={handleSave}
+					>
+						{isPending ? (
+							<Loader2 className="h-4 w-4 animate-spin" />
+						) : (
+							<Check className="h-4 w-4" />
+						)}
+						{editingReport ? "Save" : "Create"}
+					</button>
+				</div>
+			</div>
+		</div>
+	);
+};
+
+/* ───────────────── Main Page ───────────────── */
+
+/** Renders notification management for a specific panel. Used by Reporting page tabs. */
+export const NotificationPanel = ({ panel }) => {
 	const queryClient = useQueryClient();
 	const toast = useToast();
 	const { canManageNotifications, canViewNotificationLogs, hasPermission } =
@@ -115,50 +1188,27 @@ const AlertChannels = () => {
 	const canLog = canViewNotificationLogs();
 	const canListHostGroups = hasPermission("can_view_hosts");
 
-	const [destForm, setDestForm] = useState({
-		channel_type: "webhook",
-		display_name: "",
-		enabled: true,
-		configText: defaultWebhookConfig(),
+	// Modal states
+	const [destModal, setDestModal] = useState({ open: false, editing: null });
+	const [routeModal, setRouteModal] = useState({ open: false, editing: null });
+	const [reportModal, setReportModal] = useState({
+		open: false,
+		editing: null,
 	});
-	const [editingDestId, setEditingDestId] = useState(null);
-
-	const [routeForm, setRouteForm] = useState({
-		destination_id: "",
-		event_type: "host_down",
-		min_severity: "informational",
-		host_group_id: "",
-		enabled: true,
-	});
-	const [editingRouteId, setEditingRouteId] = useState(null);
-
-	const [reportForm, setReportForm] = useState({
-		name: "",
-		cron_expr: "0 8 * * *",
-		enabled: true,
-		destination_ids: [],
-		sections: ["executive_summary", "compliance_summary", "recent_patch_runs"],
-		host_group_ids: [],
-		top_hosts: 20,
-	});
-	const [editingReportId, setEditingReportId] = useState(null);
-
-	// Delivery log pagination state
 	const [logPage, setLogPage] = useState(0);
 	const logPageSize = 50;
 
+	// Queries
 	const { data: destinations = [], isLoading: destLoading } = useQuery({
 		queryKey: ["notifications", "destinations"],
 		queryFn: () => notificationsAPI.listDestinations().then((r) => r.data),
 		enabled: canManage,
 	});
-
 	const { data: routes = [], isLoading: routesLoading } = useQuery({
 		queryKey: ["notifications", "routes"],
 		queryFn: () => notificationsAPI.listRoutes().then((r) => r.data),
 		enabled: canManage,
 	});
-
 	const { data: deliveryLog = [], isLoading: logLoading } = useQuery({
 		queryKey: ["notifications", "delivery-log", logPage],
 		queryFn: () =>
@@ -167,709 +1217,327 @@ const AlertChannels = () => {
 				.then((r) => r.data),
 		enabled: canLog,
 	});
-
 	const { data: scheduledReports = [], isLoading: reportsLoading } = useQuery({
 		queryKey: ["notifications", "scheduled-reports"],
 		queryFn: () => notificationsAPI.listScheduledReports().then((r) => r.data),
 		enabled: canManage,
 	});
-
 	const { data: hostGroups = [] } = useQuery({
 		queryKey: ["host-groups"],
 		queryFn: () => hostGroupsAPI.list().then((r) => r.data ?? []),
 		enabled: canManage && canListHostGroups,
 	});
+	const { data: hostsList = [] } = useQuery({
+		queryKey: ["hosts-list"],
+		queryFn: () => adminHostsAPI.list().then((r) => r.data ?? []),
+		enabled: canManage && canListHostGroups,
+	});
 
-	const hostGroupOptions = useMemo(() => {
-		const list = Array.isArray(hostGroups) ? hostGroups : [];
-		return list;
-	}, [hostGroups]);
-
-	// Build destination ID -> display_name lookup
+	const hostGroupOptions = useMemo(
+		() => (Array.isArray(hostGroups) ? hostGroups : []),
+		[hostGroups],
+	);
 	const destNameMap = useMemo(() => {
-		const map = {};
-		for (const d of destinations) {
-			map[d.id] = d.display_name;
-		}
-		return map;
+		const m = {};
+		for (const d of destinations) m[d.id] = d.display_name;
+		return m;
 	}, [destinations]);
-
-	// Build host group ID -> name lookup
 	const hostGroupNameMap = useMemo(() => {
-		const map = {};
-		for (const g of hostGroupOptions) {
-			map[g.id] = g.name || g.id;
-		}
-		return map;
+		const m = {};
+		for (const g of hostGroupOptions) m[g.id] = g.name || g.id;
+		return m;
 	}, [hostGroupOptions]);
 
-	const invalidateNotifications = () => {
+	const invalidate = () =>
 		queryClient.invalidateQueries({ queryKey: ["notifications"] });
-	};
 
+	// Mutations
 	const createDest = useMutation({
 		mutationFn: (body) => notificationsAPI.createDestination(body),
 		onSuccess: () => {
-			invalidateNotifications();
+			invalidate();
 			toast.success("Destination created");
+			setDestModal({ open: false, editing: null });
 		},
 		onError: (err) =>
-			toast.error(err.response?.data?.error || "Failed to create destination"),
+			toast.error(err.response?.data?.error || "Failed to create"),
 	});
-
 	const updateDest = useMutation({
 		mutationFn: ({ id, body }) => notificationsAPI.updateDestination(id, body),
 		onSuccess: () => {
-			invalidateNotifications();
+			invalidate();
 			toast.success("Destination updated");
+			setDestModal({ open: false, editing: null });
 		},
 		onError: (err) =>
-			toast.error(err.response?.data?.error || "Failed to update destination"),
+			toast.error(err.response?.data?.error || "Failed to update"),
 	});
-
 	const deleteDest = useMutation({
 		mutationFn: (id) => notificationsAPI.deleteDestination(id),
 		onSuccess: () => {
-			invalidateNotifications();
+			invalidate();
 			toast.success("Destination deleted");
 		},
 		onError: (err) =>
-			toast.error(err.response?.data?.error || "Failed to delete destination"),
+			toast.error(err.response?.data?.error || "Failed to delete"),
+	});
+	const testNotify = useMutation({
+		mutationFn: (destination_id) => notificationsAPI.test({ destination_id }),
 	});
 
 	const createRoute = useMutation({
 		mutationFn: (body) => notificationsAPI.createRoute(body),
 		onSuccess: () => {
-			invalidateNotifications();
+			invalidate();
 			toast.success("Route created");
+			setRouteModal({ open: false, editing: null });
 		},
 		onError: (err) =>
-			toast.error(err.response?.data?.error || "Failed to create route"),
+			toast.error(err.response?.data?.error || "Failed to create"),
 	});
-
 	const updateRoute = useMutation({
 		mutationFn: ({ id, body }) => notificationsAPI.updateRoute(id, body),
 		onSuccess: () => {
-			invalidateNotifications();
+			invalidate();
 			toast.success("Route updated");
+			setRouteModal({ open: false, editing: null });
 		},
 		onError: (err) =>
-			toast.error(err.response?.data?.error || "Failed to update route"),
+			toast.error(err.response?.data?.error || "Failed to update"),
 	});
-
 	const deleteRoute = useMutation({
 		mutationFn: (id) => notificationsAPI.deleteRoute(id),
 		onSuccess: () => {
-			invalidateNotifications();
+			invalidate();
 			toast.success("Route deleted");
 		},
 		onError: (err) =>
-			toast.error(err.response?.data?.error || "Failed to delete route"),
+			toast.error(err.response?.data?.error || "Failed to delete"),
 	});
-
-	const testNotify = useMutation({
-		mutationFn: (destination_id) => notificationsAPI.test({ destination_id }),
-	});
-
-	const sendTest = (destinationId) => {
-		testNotify.mutate(destinationId, {
-			onSuccess: () => {
-				toast.info(
-					"Test notification enqueued. Check the delivery log below to confirm delivery.",
-				);
-				// Refresh the delivery log after a short delay so the result appears
-				setTimeout(() => {
-					queryClient.invalidateQueries({
-						queryKey: ["notifications", "delivery-log"],
-					});
-				}, 3000);
-			},
-			onError: (err) => {
-				toast.error(err.response?.data?.error || err.message || "Test failed");
-			},
-		});
-	};
 
 	const createReport = useMutation({
 		mutationFn: (body) => notificationsAPI.createScheduledReport(body),
 		onSuccess: () => {
-			invalidateNotifications();
-			toast.success("Scheduled report created");
+			invalidate();
+			toast.success("Report created");
+			setReportModal({ open: false, editing: null });
 		},
 		onError: (err) =>
-			toast.error(err.response?.data?.error || "Failed to create report"),
+			toast.error(err.response?.data?.error || "Failed to create"),
 	});
-
 	const updateReport = useMutation({
 		mutationFn: ({ id, body }) =>
 			notificationsAPI.updateScheduledReport(id, body),
 		onSuccess: () => {
-			invalidateNotifications();
-			toast.success("Scheduled report updated");
+			invalidate();
+			toast.success("Report updated");
+			setReportModal({ open: false, editing: null });
 		},
 		onError: (err) =>
-			toast.error(err.response?.data?.error || "Failed to update report"),
+			toast.error(err.response?.data?.error || "Failed to update"),
 	});
-
 	const deleteReport = useMutation({
 		mutationFn: (id) => notificationsAPI.deleteScheduledReport(id),
 		onSuccess: () => {
-			invalidateNotifications();
-			toast.success("Scheduled report deleted");
+			invalidate();
+			toast.success("Report deleted");
 		},
 		onError: (err) =>
-			toast.error(err.response?.data?.error || "Failed to delete report"),
+			toast.error(err.response?.data?.error || "Failed to delete"),
 	});
-
 	const runReportNow = useMutation({
 		mutationFn: (id) => notificationsAPI.runScheduledReportNow(id),
 		onSuccess: () => {
-			invalidateNotifications();
+			invalidate();
 			toast.success("Report scheduled for immediate delivery");
 		},
-		onError: (err) =>
-			toast.error(err.response?.data?.error || "Failed to trigger report run"),
+		onError: (err) => toast.error(err.response?.data?.error || "Failed to run"),
 	});
 
-	const parseConfig = () => {
-		try {
-			return JSON.parse(destForm.configText || "{}");
-		} catch {
-			throw new Error("Config must be valid JSON");
-		}
+	const sendTest = (id) => {
+		testNotify.mutate(id, {
+			onSuccess: () => {
+				toast.info("Test notification enqueued");
+				setTimeout(
+					() =>
+						queryClient.invalidateQueries({
+							queryKey: ["notifications", "delivery-log"],
+						}),
+					3000,
+				);
+			},
+			onError: (err) =>
+				toast.error(err.response?.data?.error || err.message || "Test failed"),
+		});
 	};
 
-	const submitDestination = async (e) => {
-		e.preventDefault();
-		const displayName = destForm.display_name.trim();
-		if (!displayName) {
-			toast.warning("Display name is required");
-			return;
-		}
-		try {
-			if (editingDestId) {
-				const patch = {
-					display_name: displayName,
-					enabled: destForm.enabled,
-				};
-				const raw = destForm.configText.trim();
-				// Strip leading comment lines (// ...) to find actual JSON
-				const jsonPart = raw
-					.split("\n")
-					.filter((line) => !line.trimStart().startsWith("//"))
-					.join("\n")
-					.trim();
-				if (jsonPart) {
-					try {
-						patch.config = JSON.parse(jsonPart);
-					} catch {
-						toast.warning("Config must be valid JSON");
-						return;
-					}
-				}
-				await updateDest.mutateAsync({ id: editingDestId, body: patch });
-			} else {
-				let config;
-				try {
-					config = parseConfig();
-				} catch (err) {
-					toast.warning(err.message);
-					return;
-				}
-				await createDest.mutateAsync({
-					channel_type: destForm.channel_type,
-					display_name: displayName,
-					config,
-					enabled: destForm.enabled,
-				});
-			}
-			setEditingDestId(null);
-			setDestForm({
-				channel_type: "webhook",
-				display_name: "",
-				enabled: true,
-				configText: defaultWebhookConfig(),
-			});
-		} catch {
-			// Error already handled by mutation onError
-		}
-	};
-
-	const startEditDestination = async (d) => {
-		setEditingDestId(d.id);
-		let configText;
+	const openEditDest = async (d) => {
+		let loadedConfig = {};
 		if (d.has_secret) {
 			try {
 				const resp = await notificationsAPI.getDestinationConfig(d.id);
-				configText = JSON.stringify(resp.data, null, 2);
+				loadedConfig = resp.data;
 			} catch {
-				configText =
-					d.channel_type === "email"
-						? defaultEmailConfig()
-						: d.channel_type === "ntfy"
-							? defaultNtfyConfig()
-							: defaultWebhookConfig();
+				/* fallback to empty */
 			}
+		}
+		setDestModal({
+			open: true,
+			editing: { ...d, _loadedConfig: loadedConfig },
+		});
+	};
+
+	const handleDestSave = (data) => {
+		if (destModal.editing) {
+			updateDest.mutate({ id: destModal.editing.id, body: data });
 		} else {
-			configText =
-				d.channel_type === "email"
-					? defaultEmailConfig()
-					: d.channel_type === "ntfy"
-						? defaultNtfyConfig()
-						: defaultWebhookConfig();
-		}
-		setDestForm({
-			channel_type: d.channel_type,
-			display_name: d.display_name,
-			enabled: d.enabled,
-			configText,
-		});
-	};
-
-	const submitRoute = async (e) => {
-		e.preventDefault();
-		if (!routeForm.destination_id) {
-			toast.warning("Choose a destination");
-			return;
-		}
-		const body = {
-			destination_id: routeForm.destination_id,
-			event_type: routeForm.event_type,
-			min_severity: routeForm.min_severity,
-			enabled: routeForm.enabled,
-		};
-		if (routeForm.host_group_id) {
-			body.host_group_id = routeForm.host_group_id;
-		}
-		try {
-			if (editingRouteId) {
-				await updateRoute.mutateAsync({ id: editingRouteId, body });
-			} else {
-				await createRoute.mutateAsync(body);
-			}
-			setEditingRouteId(null);
-			setRouteForm({
-				destination_id: "",
-				event_type: "host_down",
-				min_severity: "informational",
-				host_group_id: "",
-				enabled: true,
-			});
-		} catch {
-			// Error already handled by mutation onError
+			createDest.mutate(data);
 		}
 	};
 
-	const startEditRoute = (row) => {
-		setEditingRouteId(row.id);
-		setRouteForm({
-			destination_id: row.destination_id,
-			event_type: row.event_type,
-			min_severity: row.min_severity || "informational",
-			host_group_id: row.host_group_id || "",
-			enabled: row.enabled !== false,
-		});
-	};
-
-	const buildReportDefinition = () => ({
-		version: 1,
-		sections: reportForm.sections,
-		host_group_ids: reportForm.host_group_ids,
-		limits: { top_hosts: Number(reportForm.top_hosts) || 20 },
-	});
-
-	const submitReport = async (e) => {
-		e.preventDefault();
-		if (!reportForm.name.trim()) {
-			toast.warning("Report name is required");
-			return;
-		}
-		const body = {
-			name: reportForm.name.trim(),
-			cron_expr: reportForm.cron_expr.trim() || "0 8 * * *",
-			enabled: reportForm.enabled,
-			definition: buildReportDefinition(),
-			destination_ids: reportForm.destination_ids,
-		};
-		try {
-			if (editingReportId) {
-				await updateReport.mutateAsync({ id: editingReportId, body });
-			} else {
-				await createReport.mutateAsync(body);
-			}
-			setEditingReportId(null);
-			setReportForm({
-				name: "",
-				cron_expr: "0 8 * * *",
-				enabled: true,
-				destination_ids: [],
-				sections: [
-					"executive_summary",
-					"compliance_summary",
-					"recent_patch_runs",
-				],
-				host_group_ids: [],
-				top_hosts: 20,
-			});
-		} catch {
-			// Error already handled by mutation onError
+	const handleRouteSave = (data) => {
+		if (routeModal.editing) {
+			updateRoute.mutate({ id: routeModal.editing.id, body: data });
+		} else {
+			createRoute.mutate(data);
 		}
 	};
 
-	const startEditReport = (row) => {
-		const def = row.definition || {};
-		setEditingReportId(row.id);
-		setReportForm({
-			name: row.name,
-			cron_expr: row.cron_expr,
-			enabled: row.enabled !== false,
-			destination_ids: Array.isArray(row.destination_ids)
-				? row.destination_ids
-				: [],
-			sections:
-				Array.isArray(def.sections) && def.sections.length > 0
-					? def.sections
-					: ["executive_summary", "compliance_summary", "recent_patch_runs"],
-			host_group_ids: Array.isArray(def.host_group_ids)
-				? def.host_group_ids
-				: [],
-			top_hosts: def.limits?.top_hosts ?? 20,
-		});
+	const handleReportSave = (data) => {
+		if (reportModal.editing) {
+			updateReport.mutate({ id: reportModal.editing.id, body: data });
+		} else {
+			createReport.mutate(data);
+		}
 	};
 
-	const toggleSection = (id) => {
-		setReportForm((prev) => {
-			const has = prev.sections.includes(id);
-			return {
-				...prev,
-				sections: has
-					? prev.sections.filter((s) => s !== id)
-					: [...prev.sections, id],
-			};
-		});
-	};
+	const TH =
+		"px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider";
+	const TD =
+		"px-4 py-2 text-sm text-secondary-900 dark:text-white whitespace-nowrap";
+	const TDW = "px-4 py-2 text-sm text-secondary-900 dark:text-white";
+	const W_STATUS = "w-24";
+	const W_ACTIONS = "w-36";
 
-	const toggleReportDestination = (id) => {
-		setReportForm((prev) => {
-			const has = prev.destination_ids.includes(id);
-			return {
-				...prev,
-				destination_ids: has
-					? prev.destination_ids.filter((x) => x !== id)
-					: [...prev.destination_ids, id],
-			};
-		});
-	};
-
-	const toggleReportHostGroup = (id) => {
-		setReportForm((prev) => {
-			const has = prev.host_group_ids.includes(id);
-			return {
-				...prev,
-				host_group_ids: has
-					? prev.host_group_ids.filter((x) => x !== id)
-					: [...prev.host_group_ids, id],
-			};
-		});
-	};
-
-	const cardClass =
-		"bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg";
-
-	// Cron preview for the report form
-	const cronPreview = describeCron(reportForm.cron_expr);
+	// When used as a standalone page, render all sections. When panel prop is set, render only that section.
+	const showAll = !panel;
+	const showDest = showAll || panel === "destinations";
+	const showRoutes = showAll || panel === "routes";
+	const showReports = showAll || panel === "reports";
+	const showLog = showAll || panel === "log";
 
 	return (
-		<div className="space-y-8">
-			<div className="flex items-center justify-between gap-4 flex-wrap">
-				<div>
-					<h1 className="text-2xl font-bold text-secondary-900 dark:text-white">
-						Notifications
-					</h1>
-					<p className="mt-1 text-sm text-secondary-600 dark:text-secondary-300">
-						Destinations (webhook, email, or ntfy), routes, scheduled reports,
-						and delivery history
-					</p>
+		<div className="space-y-6">
+			{/* Header - only shown on standalone page */}
+			{showAll && (
+				<div className="flex items-center justify-between">
+					<div>
+						<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
+							Notifications
+						</h1>
+						<p className="text-sm text-secondary-600 dark:text-white mt-1">
+							Manage destinations, routing rules, scheduled reports, and
+							delivery history
+						</p>
+					</div>
+					{canLog && (
+						<button
+							type="button"
+							onClick={() =>
+								queryClient.invalidateQueries({
+									queryKey: ["notifications", "delivery-log"],
+								})
+							}
+							className="btn-outline flex items-center gap-2"
+						>
+							<RefreshCw className="h-4 w-4" /> Refresh log
+						</button>
+					)}
 				</div>
-				{canLog && (
-					<button
-						type="button"
-						onClick={() =>
-							queryClient.invalidateQueries({
-								queryKey: ["notifications", "delivery-log"],
-							})
-						}
-						className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-md border border-secondary-300 dark:border-secondary-600 hover:bg-secondary-50 dark:hover:bg-secondary-700"
-					>
-						<RefreshCw className="h-4 w-4" />
-						Refresh log
-					</button>
-				)}
-			</div>
+			)}
 
-			{canManage && (
-				<section className={`${cardClass} p-6 space-y-4`}>
+			{/* ── Destinations ── */}
+			{showDest && canManage && (
+				<div className="card p-4 md:p-6 space-y-4">
 					<div className="flex items-center justify-between">
 						<h2 className="text-lg font-semibold text-secondary-900 dark:text-white">
 							Destinations
 						</h2>
-						{destLoading && <Loader2 className="h-5 w-5 animate-spin" />}
+						<button
+							type="button"
+							className="btn-primary flex items-center gap-2"
+							onClick={() => setDestModal({ open: true, editing: null })}
+						>
+							<Plus className="h-4 w-4" /> Add destination
+						</button>
 					</div>
-					<p className="text-sm text-secondary-600 dark:text-secondary-300">
-						Webhook JSON: <code className="text-xs">url</code>, optional{" "}
-						<code className="text-xs">headers</code>,{" "}
-						<code className="text-xs">signing_secret</code> (leave both empty
-						for Slack (
-						<code className="text-xs">hooks.slack.com/services/…</code>) or
-						Discord (<code className="text-xs">discord.com/api/webhooks/…</code>
-						); otherwise the default JSON payload is sent. Email JSON:{" "}
-						<code className="text-xs">smtp_host</code>,{" "}
-						<code className="text-xs">smtp_port</code>,{" "}
-						<code className="text-xs">from</code>,{" "}
-						<code className="text-xs">to</code>, etc. ntfy JSON:{" "}
-						<code className="text-xs">server_url</code> (defaults to ntfy.sh),{" "}
-						<code className="text-xs">topic</code>, optional{" "}
-						<code className="text-xs">token</code> or{" "}
-						<code className="text-xs">username</code>/
-						<code className="text-xs">password</code>,{" "}
-						<code className="text-xs">priority</code>.
-					</p>
 
-					{destinations.length > 0 && (
-						<ul className="divide-y divide-secondary-200 dark:divide-secondary-600">
-							{destinations.map((d) => (
-								<li
-									key={d.id}
-									className="py-3 flex flex-wrap items-center justify-between gap-2"
-								>
-									<div>
-										<p className="font-medium text-secondary-900 dark:text-white">
-											{d.display_name}
-										</p>
-										<p className="text-xs text-secondary-500">
-											{d.channel_type}
-											{d.enabled ? "" : " · disabled"}
-											{d.has_secret ? " · credentials stored" : ""}
-										</p>
-									</div>
-									<div className="flex items-center gap-2">
-										<button
-											type="button"
-											className="text-sm text-primary-600 hover:underline"
-											onClick={() => sendTest(d.id)}
-											disabled={testNotify.isPending}
-										>
-											<span className="inline-flex items-center gap-1">
-												<Send className="h-3.5 w-3.5" />
-												Test
-											</span>
-										</button>
-										<button
-											type="button"
-											className="text-sm text-primary-600 hover:underline"
-											onClick={() => startEditDestination(d)}
-										>
-											Edit
-										</button>
-										<button
-											type="button"
-											className="text-sm text-red-600 hover:underline"
-											onClick={() => {
-												if (confirm("Delete this destination?")) {
-													deleteDest.mutate(d.id);
-												}
-											}}
-										>
-											<Trash2 className="h-4 w-4 inline" />
-										</button>
-									</div>
-								</li>
-							))}
-						</ul>
+					{destLoading && <Loader2 className="h-5 w-5 animate-spin mx-auto" />}
+
+					{!destLoading && destinations.length === 0 && (
+						<div className="rounded-md p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-center">
+							<p className="text-sm text-blue-800 dark:text-blue-200">
+								No destinations yet. Add one to start receiving notifications.
+							</p>
+						</div>
 					)}
 
-					<form
-						onSubmit={submitDestination}
-						className="space-y-3 border-t border-secondary-200 dark:border-secondary-600 pt-4"
-					>
-						<p className="text-sm font-medium text-secondary-800 dark:text-secondary-200">
-							{editingDestId ? "Edit destination" : "Add destination"}
-						</p>
-						<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-							<label className="block text-sm">
-								<span className="text-secondary-700 dark:text-secondary-300">
-									Channel
-								</span>
-								<select
-									className="mt-1 w-full rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-900 px-2 py-2 text-sm"
-									value={destForm.channel_type}
-									onChange={(e) => {
-										const t = e.target.value;
-										setDestForm((prev) => ({
-											...prev,
-											channel_type: t,
-											configText:
-												t === "email"
-													? defaultEmailConfig()
-													: t === "ntfy"
-														? defaultNtfyConfig()
-														: defaultWebhookConfig(),
-										}));
-									}}
-									disabled={!!editingDestId}
-								>
-									<option value="webhook">Webhook</option>
-									<option value="email">Email (SMTP)</option>
-									<option value="ntfy">ntfy</option>
-								</select>
-							</label>
-							<label className="block text-sm">
-								<span className="text-secondary-700 dark:text-secondary-300">
-									Display name
-								</span>
-								<input
-									className="mt-1 w-full rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-900 px-2 py-2 text-sm"
-									value={destForm.display_name}
-									onChange={(e) =>
-										setDestForm((p) => ({
-											...p,
-											display_name: e.target.value,
-										}))
-									}
-								/>
-							</label>
-						</div>
-						<label className="flex items-center gap-2 text-sm">
-							<input
-								type="checkbox"
-								checked={destForm.enabled}
-								onChange={(e) =>
-									setDestForm((p) => ({ ...p, enabled: e.target.checked }))
-								}
-							/>
-							Enabled
-						</label>
-						<label className="block text-sm">
-							<span className="text-secondary-700 dark:text-secondary-300">
-								Config (JSON)
-							</span>
-							<textarea
-								className="mt-1 w-full font-mono text-xs rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-900 px-2 py-2 min-h-[140px]"
-								value={destForm.configText}
-								onChange={(e) =>
-									setDestForm((p) => ({ ...p, configText: e.target.value }))
-								}
-							/>
-						</label>
-						<div className="flex gap-2">
-							<button
-								type="submit"
-								className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-primary-600 text-white text-sm hover:bg-primary-700"
-								disabled={createDest.isPending || updateDest.isPending}
-							>
-								<Plus className="h-4 w-4" />
-								{editingDestId ? "Save changes" : "Add destination"}
-							</button>
-							{editingDestId && (
-								<button
-									type="button"
-									className="px-4 py-2 text-sm rounded-md border border-secondary-300 dark:border-secondary-600"
-									onClick={() => {
-										setEditingDestId(null);
-										setDestForm({
-											channel_type: "webhook",
-											display_name: "",
-											enabled: true,
-											configText: defaultWebhookConfig(),
-										});
-									}}
-								>
-									Cancel
-								</button>
-							)}
-						</div>
-					</form>
-				</section>
-			)}
-
-			{canManage && (
-				<section className={`${cardClass} p-6 space-y-4`}>
-					<div className="flex items-center justify-between">
-						<h2 className="text-lg font-semibold text-secondary-900 dark:text-white">
-							Routes
-						</h2>
-						{routesLoading && <Loader2 className="h-5 w-5 animate-spin" />}
-					</div>
-					<p className="text-sm text-secondary-600 dark:text-secondary-300">
-						Map event types to destinations. Use &quot;All events&quot; to match
-						every event type. Optional host group limits routing to hosts in
-						that group.
-					</p>
-
-					{routes.length === 0 &&
-						destinations.length === 0 &&
-						!routesLoading && (
-							<div className="rounded-md p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
-								<p className="text-sm text-blue-800 dark:text-blue-200">
-									Create a destination above first, then add routes here to
-									start receiving notifications.
-								</p>
-							</div>
-						)}
-
-					{routes.length > 0 && (
+					{destinations.length > 0 && (
 						<div className="overflow-x-auto">
-							<table className="min-w-full text-sm">
-								<thead>
-									<tr className="text-left border-b border-secondary-200 dark:border-secondary-600">
-										<th className="py-2 pr-4">Destination</th>
-										<th className="py-2 pr-4">Event</th>
-										<th className="py-2 pr-4">Min severity</th>
-										<th className="py-2 pr-4">Host group</th>
-										<th className="py-2 pr-4">On</th>
-										<th className="py-2"> </th>
+							<table className="min-w-full table-fixed divide-y divide-secondary-200 dark:divide-secondary-600">
+								<thead className="bg-secondary-50 dark:bg-secondary-700">
+									<tr>
+										<th className={`${TH} w-28`}>Channel</th>
+										<th className={TH}>Name</th>
+										<th className={`${TH} ${W_STATUS}`}>Status</th>
+										<th className={`${TH} ${W_ACTIONS}`}>Actions</th>
 									</tr>
 								</thead>
-								<tbody>
-									{routes.map((row) => (
+								<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+									{destinations.map((d) => (
 										<tr
-											key={row.id}
-											className="border-b border-secondary-100 dark:border-secondary-700"
+											key={d.id}
+											className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
 										>
-											<td className="py-2 pr-4">
-												{row.destination_display_name || row.destination_id}
+											<td className={TD}>
+												<span className="inline-flex items-center gap-2">
+													{channelIcon(d.channel_type)}
+													{d.channel_type}
+												</span>
 											</td>
-											<td className="py-2 pr-4">
-												{row.event_type === "*" ? "All events" : row.event_type}
+											<td className={TD}>{d.display_name}</td>
+											<td className={TD}>
+												<span
+													className={`px-2 py-0.5 text-xs font-medium rounded-md ${d.enabled ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" : "bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-300"}`}
+												>
+													{d.enabled ? "Active" : "Disabled"}
+												</span>
 											</td>
-											<td className="py-2 pr-4">{row.min_severity}</td>
-											<td className="py-2 pr-4 text-xs">
-												{row.host_group_id
-													? hostGroupNameMap[row.host_group_id] ||
-														row.host_group_id
-													: " -"}
-											</td>
-											<td className="py-2 pr-4">
-												{row.enabled ? "yes" : "no"}
-											</td>
-											<td className="py-2">
+											<td className={`${TD} flex items-center gap-2`}>
 												<button
 													type="button"
-													className="text-primary-600 text-xs mr-2"
-													onClick={() => startEditRoute(row)}
+													className="text-primary-600 hover:text-primary-700 inline-flex items-center gap-1 text-xs"
+													onClick={() => sendTest(d.id)}
+													disabled={testNotify.isPending}
 												>
-													Edit
+													<Send className="h-3.5 w-3.5" /> Test
 												</button>
 												<button
 													type="button"
-													className="text-red-600 text-xs"
+													className="text-primary-600 hover:text-primary-700 inline-flex items-center gap-1 text-xs"
+													onClick={() => openEditDest(d)}
+												>
+													<Edit2 className="h-3.5 w-3.5" /> Edit
+												</button>
+												<button
+													type="button"
+													className="text-red-600 hover:text-red-700 inline-flex items-center gap-1 text-xs"
 													onClick={() => {
-														if (confirm("Delete this route?")) {
-															deleteRoute.mutate(row.id);
-														}
+														if (confirm("Delete this destination?"))
+															deleteDest.mutate(d.id);
 													}}
 												>
-													Delete
+													<Trash2 className="h-3.5 w-3.5" />
 												</button>
 											</td>
 										</tr>
@@ -878,470 +1546,292 @@ const AlertChannels = () => {
 							</table>
 						</div>
 					)}
-
-					<form
-						onSubmit={submitRoute}
-						className="space-y-3 border-t border-secondary-200 dark:border-secondary-600 pt-4"
-					>
-						<p className="text-sm font-medium text-secondary-800 dark:text-secondary-200">
-							{editingRouteId ? "Edit route" : "Add route"}
-						</p>
-						<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-							<label className="block text-sm">
-								<span className="text-secondary-700 dark:text-secondary-300">
-									Destination
-								</span>
-								<select
-									className="mt-1 w-full rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-900 px-2 py-2 text-sm"
-									value={routeForm.destination_id}
-									onChange={(e) =>
-										setRouteForm((p) => ({
-											...p,
-											destination_id: e.target.value,
-										}))
-									}
-								>
-									<option value="">Select…</option>
-									{destinations.map((d) => (
-										<option key={d.id} value={d.id}>
-											{d.display_name} ({d.channel_type})
-										</option>
-									))}
-								</select>
-							</label>
-							<label className="block text-sm">
-								<span className="text-secondary-700 dark:text-secondary-300">
-									Event type
-								</span>
-								<select
-									className="mt-1 w-full rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-900 px-2 py-2 text-sm"
-									value={routeForm.event_type}
-									onChange={(e) =>
-										setRouteForm((p) => ({
-											...p,
-											event_type: e.target.value,
-										}))
-									}
-								>
-									{EVENT_TYPES.map((o) => (
-										<option key={o.value} value={o.value}>
-											{o.label}
-										</option>
-									))}
-								</select>
-							</label>
-							<label className="block text-sm">
-								<span className="text-secondary-700 dark:text-secondary-300">
-									Minimum severity
-								</span>
-								<select
-									className="mt-1 w-full rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-900 px-2 py-2 text-sm"
-									value={routeForm.min_severity}
-									onChange={(e) =>
-										setRouteForm((p) => ({
-											...p,
-											min_severity: e.target.value,
-										}))
-									}
-								>
-									{SEVERITIES.map((o) => (
-										<option key={o.value} value={o.value}>
-											{o.label}
-										</option>
-									))}
-								</select>
-							</label>
-							<label className="block text-sm">
-								<span className="text-secondary-700 dark:text-secondary-300">
-									Host group (optional)
-								</span>
-								<select
-									className="mt-1 w-full rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-900 px-2 py-2 text-sm"
-									value={routeForm.host_group_id}
-									onChange={(e) =>
-										setRouteForm((p) => ({
-											...p,
-											host_group_id: e.target.value,
-										}))
-									}
-									disabled={!canListHostGroups}
-								>
-									<option value="">All hosts</option>
-									{hostGroupOptions.map((g) => (
-										<option key={g.id} value={g.id}>
-											{g.name || g.id}
-										</option>
-									))}
-								</select>
-							</label>
-						</div>
-						<label className="flex items-center gap-2 text-sm">
-							<input
-								type="checkbox"
-								checked={routeForm.enabled}
-								onChange={(e) =>
-									setRouteForm((p) => ({ ...p, enabled: e.target.checked }))
-								}
-							/>
-							Enabled
-						</label>
-						<div className="flex gap-2">
-							<button
-								type="submit"
-								className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-primary-600 text-white text-sm hover:bg-primary-700"
-								disabled={createRoute.isPending || updateRoute.isPending}
-							>
-								<Plus className="h-4 w-4" />
-								{editingRouteId ? "Save route" : "Add route"}
-							</button>
-							{editingRouteId && (
-								<button
-									type="button"
-									className="px-4 py-2 text-sm rounded-md border border-secondary-300 dark:border-secondary-600"
-									onClick={() => {
-										setEditingRouteId(null);
-										setRouteForm({
-											destination_id: "",
-											event_type: "host_down",
-											min_severity: "informational",
-											host_group_id: "",
-											enabled: true,
-										});
-									}}
-								>
-									Cancel
-								</button>
-							)}
-						</div>
-					</form>
-				</section>
+				</div>
 			)}
 
-			{canManage && (
-				<section className={`${cardClass} p-6 space-y-4`}>
+			{/* ── Routes ── */}
+			{showRoutes && canManage && (
+				<div className="card p-4 md:p-6 space-y-4">
+					<div className="flex items-center justify-between">
+						<h2 className="text-lg font-semibold text-secondary-900 dark:text-white">
+							Routes
+						</h2>
+						<button
+							type="button"
+							className="btn-primary flex items-center gap-2"
+							onClick={() => setRouteModal({ open: true, editing: null })}
+							disabled={destinations.length === 0}
+						>
+							<Plus className="h-4 w-4" /> Add route
+						</button>
+					</div>
+
+					{routesLoading && (
+						<Loader2 className="h-5 w-5 animate-spin mx-auto" />
+					)}
+
+					{!routesLoading && routes.length === 0 && destinations.length > 0 && (
+						<div className="rounded-md p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-center">
+							<p className="text-sm text-blue-800 dark:text-blue-200">
+								No routes yet. Routes map events to destinations.
+							</p>
+						</div>
+					)}
+
+					{routes.length > 0 && (
+						<div className="overflow-x-auto">
+							<table className="min-w-full table-fixed divide-y divide-secondary-200 dark:divide-secondary-600">
+								<thead className="bg-secondary-50 dark:bg-secondary-700">
+									<tr>
+										<th className={TH}>Destination</th>
+										<th className={TH}>Events</th>
+										<th className={`${TH} w-32`}>Min severity</th>
+										<th className={TH}>Scope</th>
+										<th className={`${TH} ${W_STATUS}`}>Status</th>
+										<th className={`${TH} ${W_ACTIONS}`}>Actions</th>
+									</tr>
+								</thead>
+								<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+									{routes.map((row) => (
+										<tr
+											key={row.id}
+											className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
+										>
+											<td className={TD}>
+												{row.destination_display_name || row.destination_id}
+											</td>
+											<td className={TDW}>
+												{Array.isArray(row.event_types) &&
+												row.event_types.includes("*")
+													? "All events"
+													: Array.isArray(row.event_types)
+														? row.event_types
+																.map((e) => e.replace(/_/g, " "))
+																.join(", ")
+														: "All events"}
+											</td>
+											<td className={TD}>
+												<span
+													className={`px-2 py-0.5 text-xs font-medium rounded-md ${
+														row.min_severity === "critical"
+															? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+															: row.min_severity === "error"
+																? "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
+																: row.min_severity === "warning"
+																	? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+																	: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+													}`}
+												>
+													{row.min_severity}
+												</span>
+											</td>
+											<td className={TDW}>
+												{Array.isArray(row.host_group_ids) &&
+												row.host_group_ids.length > 0
+													? row.host_group_ids
+															.map((id) => hostGroupNameMap[id] || id)
+															.join(", ")
+													: "All"}
+											</td>
+											<td className={TD}>
+												<span
+													className={`px-2 py-0.5 text-xs font-medium rounded-md ${row.enabled ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" : "bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-300"}`}
+												>
+													{row.enabled ? "Active" : "Disabled"}
+												</span>
+											</td>
+											<td className={`${TD} flex items-center gap-2`}>
+												<button
+													type="button"
+													className="text-primary-600 hover:text-primary-700 inline-flex items-center gap-1 text-xs"
+													onClick={() =>
+														setRouteModal({ open: true, editing: row })
+													}
+												>
+													<Edit2 className="h-3.5 w-3.5" /> Edit
+												</button>
+												<button
+													type="button"
+													className="text-red-600 hover:text-red-700 inline-flex items-center gap-1 text-xs"
+													onClick={() => {
+														if (confirm("Delete this route?"))
+															deleteRoute.mutate(row.id);
+													}}
+												>
+													<Trash2 className="h-3.5 w-3.5" />
+												</button>
+											</td>
+										</tr>
+									))}
+								</tbody>
+							</table>
+						</div>
+					)}
+				</div>
+			)}
+
+			{/* ── Scheduled Reports ── */}
+			{showReports && canManage && (
+				<div className="card p-4 md:p-6 space-y-4">
 					<div className="flex items-center justify-between">
 						<h2 className="text-lg font-semibold text-secondary-900 dark:text-white">
 							Scheduled reports
 						</h2>
-						{reportsLoading && <Loader2 className="h-5 w-5 animate-spin" />}
+						<button
+							type="button"
+							className="btn-primary flex items-center gap-2"
+							onClick={() => setReportModal({ open: true, editing: null })}
+							disabled={destinations.length === 0}
+						>
+							<Plus className="h-4 w-4" /> New report
+						</button>
 					</div>
-					<p className="text-sm text-secondary-600 dark:text-secondary-300">
-						Cron schedule uses the server&apos;s configured timezone (TZ
-						environment variable). Reports are emailed or sent via webhook
-						according to each destination&apos;s channel.
-					</p>
 
-					{scheduledReports.length > 0 && (
-						<ul className="divide-y divide-secondary-200 dark:divide-secondary-600">
-							{scheduledReports.map((r) => (
-								<li
-									key={r.id}
-									className="py-3 flex flex-wrap justify-between gap-2"
-								>
-									<div>
-										<p className="font-medium text-secondary-900 dark:text-white">
-											{r.name}
-										</p>
-										<p className="text-xs text-secondary-500">
-											{r.cron_expr}
-											{r.enabled ? "" : " · disabled"}
-											{describeCron(r.cron_expr)
-												? ` · ${describeCron(r.cron_expr)}`
-												: ""}
-										</p>
-										{r.next_run_at && (
-											<p className="text-xs text-secondary-500">
-												Next: {formatRelativeTime(r.next_run_at)}
-											</p>
-										)}
-									</div>
-									<div className="flex gap-2 items-center">
-										<button
-											type="button"
-											className="text-sm text-primary-600 inline-flex items-center gap-1"
-											onClick={() => runReportNow.mutate(r.id)}
-											disabled={runReportNow.isPending || !r.enabled}
-											title={
-												!r.enabled
-													? "Enable the report first"
-													: "Run this report now"
-											}
-										>
-											<Play className="h-3.5 w-3.5" />
-											Run now
-										</button>
-										<button
-											type="button"
-											className="text-sm text-primary-600"
-											onClick={() => startEditReport(r)}
-										>
-											Edit
-										</button>
-										<button
-											type="button"
-											className="text-sm text-red-600"
-											onClick={() => {
-												if (confirm("Delete this scheduled report?")) {
-													deleteReport.mutate(r.id);
-												}
-											}}
-										>
-											Delete
-										</button>
-									</div>
-								</li>
-							))}
-						</ul>
+					{reportsLoading && (
+						<Loader2 className="h-5 w-5 animate-spin mx-auto" />
 					)}
 
-					<form
-						onSubmit={submitReport}
-						className="space-y-3 border-t border-secondary-200 dark:border-secondary-600 pt-4"
-					>
-						<p className="text-sm font-medium text-secondary-800 dark:text-secondary-200">
-							{editingReportId
-								? "Edit scheduled report"
-								: "New scheduled report"}
-						</p>
-						<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-							<label className="block text-sm">
-								<span className="text-secondary-700 dark:text-secondary-300">
-									Name
-								</span>
-								<input
-									className="mt-1 w-full rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-900 px-2 py-2 text-sm"
-									value={reportForm.name}
-									onChange={(e) =>
-										setReportForm((p) => ({ ...p, name: e.target.value }))
-									}
-								/>
-							</label>
-							<div className="block text-sm">
-								<label>
-									<span className="text-secondary-700 dark:text-secondary-300">
-										Cron
-									</span>
-									<input
-										className="mt-1 w-full font-mono text-sm rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-900 px-2 py-2"
-										placeholder="0 8 * * *"
-										value={reportForm.cron_expr}
-										onChange={(e) =>
-											setReportForm((p) => ({
-												...p,
-												cron_expr: e.target.value,
-											}))
-										}
-									/>
-								</label>
-								{cronPreview && (
-									<p className="mt-1 text-xs text-secondary-500 flex items-center gap-1">
-										<Clock className="h-3 w-3" />
-										{cronPreview} (server timezone)
-									</p>
-								)}
-							</div>
-							<label className="block text-sm">
-								<span className="text-secondary-700 dark:text-secondary-300">
-									Top rows per section
-								</span>
-								<input
-									type="number"
-									min={1}
-									className="mt-1 w-full rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-900 px-2 py-2 text-sm"
-									value={reportForm.top_hosts}
-									onChange={(e) =>
-										setReportForm((p) => ({
-											...p,
-											top_hosts: e.target.value,
-										}))
-									}
-								/>
-							</label>
-						</div>
-						<label className="flex items-center gap-2 text-sm">
-							<input
-								type="checkbox"
-								checked={reportForm.enabled}
-								onChange={(e) =>
-									setReportForm((p) => ({
-										...p,
-										enabled: e.target.checked,
-									}))
-								}
-							/>
-							Enabled
-						</label>
-						<div>
-							<p className="text-sm text-secondary-700 dark:text-secondary-300 mb-2">
-								Sections
+					{!reportsLoading && scheduledReports.length === 0 && (
+						<div className="rounded-md p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-center">
+							<p className="text-sm text-blue-800 dark:text-blue-200">
+								No scheduled reports yet.
 							</p>
-							<div className="flex flex-wrap gap-3">
-								{REPORT_SECTIONS.map((s) => (
-									<label
-										key={s.id}
-										className="inline-flex items-center gap-2 text-sm"
-									>
-										<input
-											type="checkbox"
-											checked={reportForm.sections.includes(s.id)}
-											onChange={() => toggleSection(s.id)}
-										/>
-										{s.label}
-									</label>
-								))}
-							</div>
 						</div>
-						<div>
-							<p className="text-sm text-secondary-700 dark:text-secondary-300 mb-2">
-								Deliver to destinations
-							</p>
-							<div className="flex flex-wrap gap-3">
-								{destinations.length === 0 && (
-									<p className="text-xs text-secondary-500">
-										Add at least one destination above.
-									</p>
-								)}
-								{destinations.map((d) => (
-									<label
-										key={d.id}
-										className="inline-flex items-center gap-2 text-sm"
-									>
-										<input
-											type="checkbox"
-											checked={reportForm.destination_ids.includes(d.id)}
-											onChange={() => toggleReportDestination(d.id)}
-										/>
-										{d.display_name}{" "}
-										<span className="text-xs text-secondary-400">
-											({d.channel_type})
-										</span>
-									</label>
-								))}
-							</div>
-						</div>
-						{canListHostGroups && hostGroupOptions.length > 0 && (
-							<div>
-								<p className="text-sm text-secondary-700 dark:text-secondary-300 mb-2">
-									Scope to host groups (optional)
-								</p>
-								<div className="flex flex-wrap gap-3">
-									{hostGroupOptions.map((g) => (
-										<label
-											key={g.id}
-											className="inline-flex items-center gap-2 text-sm"
+					)}
+
+					{scheduledReports.length > 0 && (
+						<div className="overflow-x-auto">
+							<table className="min-w-full table-fixed divide-y divide-secondary-200 dark:divide-secondary-600">
+								<thead className="bg-secondary-50 dark:bg-secondary-700">
+									<tr>
+										<th className={`${TH} w-10`} />
+										<th className={TH}>Name</th>
+										<th className={TH}>Schedule</th>
+										<th className={TH}>Next run</th>
+										<th className={`${TH} ${W_STATUS}`}>Status</th>
+										<th className={`${TH} ${W_ACTIONS}`}>Actions</th>
+									</tr>
+								</thead>
+								<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+									{scheduledReports.map((r) => (
+										<tr
+											key={r.id}
+											className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
 										>
-											<input
-												type="checkbox"
-												checked={reportForm.host_group_ids.includes(g.id)}
-												onChange={() => toggleReportHostGroup(g.id)}
-											/>
-											{g.name || g.id}
-										</label>
+											<td className="px-2 py-2">
+												<button
+													type="button"
+													className="inline-flex items-center justify-center w-6 h-6 rounded border border-transparent text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-40"
+													onClick={() => runReportNow.mutate(r.id)}
+													disabled={runReportNow.isPending || !r.enabled}
+													title={
+														!r.enabled ? "Enable the report first" : "Run now"
+													}
+												>
+													<Play className="h-3.5 w-3.5" />
+												</button>
+											</td>
+											<td className={TD}>{r.name}</td>
+											<td className={TD}>
+												<span className="flex items-center gap-1">
+													<Clock className="h-3.5 w-3.5 text-secondary-400" />
+													{describeSchedule(r.cron_expr)}
+												</span>
+											</td>
+											<td className={TD}>
+												{r.next_run_at
+													? formatRelativeTime(r.next_run_at)
+													: " -"}
+											</td>
+											<td className={TD}>
+												<span
+													className={`px-2 py-0.5 text-xs font-medium rounded-md ${r.enabled ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" : "bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-300"}`}
+												>
+													{r.enabled ? "Active" : "Disabled"}
+												</span>
+											</td>
+											<td className={`${TD} flex items-center gap-2`}>
+												<button
+													type="button"
+													className="text-primary-600 hover:text-primary-700 inline-flex items-center gap-1 text-xs"
+													onClick={() =>
+														setReportModal({ open: true, editing: r })
+													}
+												>
+													<Edit2 className="h-3.5 w-3.5" /> Edit
+												</button>
+												<button
+													type="button"
+													className="text-red-600 hover:text-red-700 inline-flex items-center gap-1 text-xs"
+													onClick={() => {
+														if (confirm("Delete this report?"))
+															deleteReport.mutate(r.id);
+													}}
+												>
+													<Trash2 className="h-3.5 w-3.5" />
+												</button>
+											</td>
+										</tr>
 									))}
-								</div>
-							</div>
-						)}
-						<div className="flex gap-2">
-							<button
-								type="submit"
-								className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-primary-600 text-white text-sm hover:bg-primary-700"
-								disabled={createReport.isPending || updateReport.isPending}
-							>
-								<Bell className="h-4 w-4" />
-								{editingReportId ? "Save report" : "Create report"}
-							</button>
-							{editingReportId && (
-								<button
-									type="button"
-									className="px-4 py-2 text-sm rounded-md border border-secondary-300 dark:border-secondary-600"
-									onClick={() => {
-										setEditingReportId(null);
-										setReportForm({
-											name: "",
-											cron_expr: "0 8 * * *",
-											enabled: true,
-											destination_ids: [],
-											sections: [
-												"executive_summary",
-												"compliance_summary",
-												"recent_patch_runs",
-											],
-											host_group_ids: [],
-											top_hosts: 20,
-										});
-									}}
-								>
-									Cancel
-								</button>
-							)}
+								</tbody>
+							</table>
 						</div>
-					</form>
-				</section>
+					)}
+				</div>
 			)}
 
-			{canLog && (
-				<section className={`${cardClass} p-6 space-y-4`}>
+			{/* ── Delivery Log ── */}
+			{showLog && canLog && (
+				<div className="card p-4 md:p-6 space-y-4">
 					<div className="flex items-center justify-between">
 						<h2 className="text-lg font-semibold text-secondary-900 dark:text-white">
 							Delivery log
 						</h2>
 						{logLoading && <Loader2 className="h-5 w-5 animate-spin" />}
 					</div>
-					{deliveryLog.length === 0 && !logLoading ? (
+
+					{!logLoading && deliveryLog.length === 0 ? (
 						<p className="text-sm text-secondary-500">
 							No delivery entries yet.
 						</p>
 					) : (
 						<>
-							<div className="overflow-x-auto max-h-[480px] overflow-y-auto">
-								<table className="min-w-full text-xs">
-									<thead className="sticky top-0 bg-white dark:bg-secondary-800">
-										<tr className="text-left border-b border-secondary-200 dark:border-secondary-600">
-											<th className="py-2 pr-2">Time</th>
-											<th className="py-2 pr-2">Status</th>
-											<th className="py-2 pr-2">Event</th>
-											<th className="py-2 pr-2">Destination</th>
-											<th className="py-2 pr-2">Ref</th>
-											<th className="py-2">Error</th>
+							<div className="overflow-x-auto">
+								<table className="min-w-full table-fixed divide-y divide-secondary-200 dark:divide-secondary-600">
+									<thead className="bg-secondary-50 dark:bg-secondary-700">
+										<tr>
+											<th className={`${TH} w-28`}>Time</th>
+											<th className={`${TH} ${W_STATUS}`}>Status</th>
+											<th className={TH}>Event</th>
+											<th className={TH}>Destination</th>
+											<th className={`${TH} w-28`}>Reference</th>
+											<th className={TH}>Error</th>
 										</tr>
 									</thead>
-									<tbody>
+									<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
 										{deliveryLog.map((row) => (
 											<tr
 												key={row.id}
-												className="border-b border-secondary-100 dark:border-secondary-700 align-top"
+												className="hover:bg-secondary-50 dark:hover:bg-secondary-700 align-top"
 											>
-												<td
-													className="py-2 pr-2 whitespace-nowrap"
-													title={row.created_at || ""}
-												>
+												<td className={TD} title={row.created_at || ""}>
 													{row.created_at
 														? formatRelativeTime(row.created_at)
 														: " -"}
 												</td>
-												<td className="py-2 pr-2">
-													<span
-														className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${
-															row.status === "sent"
-																? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-																: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
-														}`}
-													>
-														{row.status}
-													</span>
-												</td>
-												<td className="py-2 pr-2">{row.event_type}</td>
-												<td className="py-2 pr-2">
+												<td className="px-4 py-2">{statusBadge(row.status)}</td>
+												<td className={TD}>{row.event_type}</td>
+												<td className={TD}>
 													{destNameMap[row.destination_id] ||
 														row.destination_id}
 												</td>
-												<td className="py-2 pr-2">
+												<td className={TD}>
 													{row.reference_type}:
 													{typeof row.reference_id === "string"
-														? `${row.reference_id.slice(0, 8)}…`
+														? `${row.reference_id.slice(0, 8)}...`
 														: " -"}
 												</td>
-												<td className="py-2 text-red-600 dark:text-red-400 max-w-xs break-words">
+												<td className="px-4 py-2 text-sm text-red-600 dark:text-red-400 max-w-xs break-words whitespace-normal">
 													{row.error_message || " -"}
 												</td>
 											</tr>
@@ -1349,7 +1839,6 @@ const AlertChannels = () => {
 									</tbody>
 								</table>
 							</div>
-							{/* Pagination controls */}
 							<div className="flex items-center justify-between pt-2">
 								<p className="text-xs text-secondary-500">
 									Page {logPage + 1}
@@ -1360,34 +1849,67 @@ const AlertChannels = () => {
 								<div className="flex gap-2">
 									<button
 										type="button"
-										className="px-3 py-1 text-xs rounded-md border border-secondary-300 dark:border-secondary-600 disabled:opacity-50"
+										className="p-1.5 rounded-lg bg-secondary-100 dark:bg-secondary-700 disabled:opacity-50"
 										disabled={logPage === 0}
 										onClick={() => setLogPage((p) => Math.max(0, p - 1))}
 									>
-										Previous
+										<ChevronLeft className="h-4 w-4" />
 									</button>
 									<button
 										type="button"
-										className="px-3 py-1 text-xs rounded-md border border-secondary-300 dark:border-secondary-600 disabled:opacity-50"
+										className="p-1.5 rounded-lg bg-secondary-100 dark:bg-secondary-700 disabled:opacity-50"
 										disabled={deliveryLog.length < logPageSize}
 										onClick={() => setLogPage((p) => p + 1)}
 									>
-										Next
+										<ChevronRight className="h-4 w-4" />
 									</button>
 								</div>
 							</div>
 						</>
 					)}
-				</section>
+				</div>
 			)}
 
-			{!canManage && !canLog && (
-				<div className={`${cardClass} p-8 text-center text-secondary-600`}>
+			{showAll && !canManage && !canLog && (
+				<div className="card p-8 text-center text-secondary-600">
 					You don&apos;t have permission to view this page.
 				</div>
 			)}
+
+			{/* Modals */}
+			<DestinationModal
+				key={destModal.editing?.id || "new-dest"}
+				isOpen={destModal.open}
+				onClose={() => setDestModal({ open: false, editing: null })}
+				onSave={handleDestSave}
+				editingDest={destModal.editing}
+				isPending={createDest.isPending || updateDest.isPending}
+			/>
+			<RouteModal
+				key={routeModal.editing?.id || "new-route"}
+				isOpen={routeModal.open}
+				onClose={() => setRouteModal({ open: false, editing: null })}
+				onSave={handleRouteSave}
+				editingRoute={routeModal.editing}
+				destinations={destinations}
+				hostGroups={hostGroupOptions}
+				hosts={Array.isArray(hostsList) ? hostsList : []}
+				isPending={createRoute.isPending || updateRoute.isPending}
+			/>
+			<ReportModal
+				key={reportModal.editing?.id || "new-report"}
+				isOpen={reportModal.open}
+				onClose={() => setReportModal({ open: false, editing: null })}
+				onSave={handleReportSave}
+				editingReport={reportModal.editing}
+				destinations={destinations}
+				hostGroups={hostGroupOptions}
+				isPending={createReport.isPending || updateReport.isPending}
+			/>
 		</div>
 	);
 };
 
+// Default export for standalone settings page (renders all panels)
+const AlertChannels = () => <NotificationPanel />;
 export default AlertChannels;

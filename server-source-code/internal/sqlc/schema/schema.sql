@@ -694,9 +694,10 @@ CREATE TABLE IF NOT EXISTS notification_destinations (
 CREATE TABLE IF NOT EXISTS notification_routes (
     id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
     destination_id TEXT NOT NULL REFERENCES notification_destinations(id) ON DELETE CASCADE,
-    event_type TEXT NOT NULL,
+    event_types JSONB NOT NULL DEFAULT '["*"]'::jsonb,
     min_severity TEXT NOT NULL DEFAULT 'informational',
-    host_group_id TEXT REFERENCES host_groups(id) ON DELETE CASCADE,
+    host_group_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    host_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
     match_rules JSONB,
     enabled BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,

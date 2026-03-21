@@ -489,15 +489,21 @@ export const formatRelativeTime = (date) => {
 	if (date == null) return " -";
 	const now = new Date();
 	const diff = now - new Date(date);
-	const seconds = Math.floor(diff / 1000);
+	const abs = Math.abs(diff);
+	const future = diff < 0;
+	const seconds = Math.floor(abs / 1000);
 	const minutes = Math.floor(seconds / 60);
 	const hours = Math.floor(minutes / 60);
 	const days = Math.floor(hours / 24);
 
-	if (days > 0) return `${days} day${days > 1 ? "s" : ""} ago`;
-	if (hours > 0) return `${hours} hour${hours > 1 ? "s" : ""} ago`;
-	if (minutes > 0) return `${minutes} minute${minutes > 1 ? "s" : ""} ago`;
-	return `${seconds} second${seconds > 1 ? "s" : ""} ago`;
+	const suffix = future ? "" : " ago";
+	const prefix = future ? "in " : "";
+	if (days > 0) return `${prefix}${days} day${days > 1 ? "s" : ""}${suffix}`;
+	if (hours > 0)
+		return `${prefix}${hours} hour${hours > 1 ? "s" : ""}${suffix}`;
+	if (minutes > 0) return `${prefix}${minutes} min${suffix}`;
+	if (future) return "in a few seconds";
+	return "just now";
 };
 
 // Search API

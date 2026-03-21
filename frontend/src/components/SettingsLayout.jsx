@@ -1,6 +1,5 @@
 import {
 	BarChart3,
-	Bell,
 	Bot,
 	ChevronDown,
 	ChevronLeft,
@@ -25,13 +24,7 @@ import DiscordIcon from "./DiscordIcon";
 const SettingsLayout = ({ children }) => {
 	const content = children ?? <Outlet />;
 	const location = useLocation();
-	const {
-		canManageSettings,
-		canViewUsers,
-		canManageUsers,
-		canManageNotifications,
-		canViewNotificationLogs,
-	} = useAuth();
+	const { canManageSettings, canViewUsers, canManageUsers } = useAuth();
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
 	// Build secondary navigation based on permissions
@@ -101,28 +94,7 @@ const SettingsLayout = ({ children }) => {
 			});
 		}
 
-		// Alert Management
-		const alertItems = [];
-		if (canManageSettings()) {
-			alertItems.push({
-				name: "Alert Settings",
-				href: "/settings/alert-settings",
-				icon: Bell,
-			});
-		}
-		if (canManageNotifications() || canViewNotificationLogs()) {
-			alertItems.push({
-				name: "Notifications",
-				href: "/settings/alert-channels",
-				icon: Bell,
-			});
-		}
-		if (alertItems.length > 0) {
-			nav.push({
-				section: "Alert Management",
-				items: alertItems,
-			});
-		}
+		// Alert Management moved to Reporting page tabs
 
 		// Patch Management
 		if (canManageSettings()) {

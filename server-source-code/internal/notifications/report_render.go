@@ -508,7 +508,7 @@ func wrapEmailTemplate(reportName string, bodyContent string, branding ReportBra
 	sb.WriteString(`<td style="color:#94a3b8;font-size:11px;">Sent by PatchMon</td>`)
 	if baseURL != "" {
 		sb.WriteString(`<td style="text-align:right;">`)
-		fmt.Fprintf(&sb, `<a href="%s/settings/alert-channels" style="color:#94a3b8;font-size:11px;text-decoration:none;">Manage notifications</a>`, esc(baseURL))
+		fmt.Fprintf(&sb, `<a href="%s/reporting" style="color:#94a3b8;font-size:11px;text-decoration:none;">Manage notifications</a>`, esc(baseURL))
 		sb.WriteString(`</td>`)
 	}
 	sb.WriteString(`</tr></table>`)

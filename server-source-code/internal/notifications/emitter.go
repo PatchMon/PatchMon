@@ -106,16 +106,41 @@ func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, e
 		if SeverityRank(row.MinSeverity) > evSev {
 			continue
 		}
-		if row.HostGroupID != nil && *row.HostGroupID != "" {
+		// Host group filtering: if route specifies host_group_ids, the event's host must be in at least one.
+		if hgIDs := parseJSONStringArray(row.HostGroupIds); len(hgIDs) > 0 {
 			hostID := metadataString(ev.Metadata, "host_id")
 			if hostID == "" {
 				continue
 			}
-			ok, err := d.Queries.HostInHostGroup(ctx, db.HostInHostGroupParams{
-				HostID:      hostID,
-				HostGroupID: *row.HostGroupID,
-			})
-			if err != nil || !ok {
+			inAny := false
+			for _, gid := range hgIDs {
+				ok, err := d.Queries.HostInHostGroup(ctx, db.HostInHostGroupParams{
+					HostID:      hostID,
+					HostGroupID: gid,
+				})
+				if err == nil && ok {
+					inAny = true
+					break
+				}
+			}
+			if !inAny {
+				continue
+			}
+		}
+		// Individual host filtering: if route specifies host_ids, the event's host must be in the list.
+		if hIDs := parseJSONStringArray(row.HostIds); len(hIDs) > 0 {
+			hostID := metadataString(ev.Metadata, "host_id")
+			if hostID == "" {
+				continue
+			}
+			found := false
+			for _, hid := range hIDs {
+				if hid == hostID {
+					found = true
+					break
+				}
+			}
+			if !found {
 				continue
 			}
 		}
@@ -232,7 +257,7 @@ func (e *Emitter) injectAppLink(ctx context.Context, d *database.DB, ev Event) m
 			link = baseURL + "/"
 		}
 	case "test":
-		link = baseURL + "/settings/alert-channels"
+		link = baseURL + "/reporting"
 	default:
 		link = baseURL + "/"
 	}
@@ -240,6 +265,17 @@ func (e *Emitter) injectAppLink(ctx context.Context, d *database.DB, ev Event) m
 		meta["app_link"] = link
 	}
 	return meta
+}
+
+func parseJSONStringArray(b []byte) []string {
+	if len(b) == 0 {
+		return nil
+	}
+	var arr []string
+	if err := json.Unmarshal(b, &arr); err != nil {
+		return nil
+	}
+	return arr
 }
 
 func metadataString(m map[string]interface{}, key string) string {

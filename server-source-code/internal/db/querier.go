@@ -282,7 +282,7 @@ type Querier interface {
 	ListNotificationDeliveryLog(ctx context.Context, arg ListNotificationDeliveryLogParams) ([]NotificationDeliveryLog, error)
 	ListNotificationDestinations(ctx context.Context) ([]NotificationDestination, error)
 	ListNotificationRoutes(ctx context.Context) ([]ListNotificationRoutesRow, error)
-	ListNotificationRoutesForEvent(ctx context.Context, eventType string) ([]ListNotificationRoutesForEventRow, error)
+	ListNotificationRoutesForEvent(ctx context.Context, dollar_1 string) ([]ListNotificationRoutesForEventRow, error)
 	ListOrphanedContainers(ctx context.Context) ([]ListOrphanedContainersRow, error)
 	ListOrphanedImages(ctx context.Context) ([]ListOrphanedImagesRow, error)
 	ListOrphanedPackages(ctx context.Context) ([]ListOrphanedPackagesRow, error)
