@@ -281,17 +281,23 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 
 // setAuthCookiesWithRemember sets cookies; rememberMe uses 30-day refresh token.
 // useLax forces SameSite=Lax (required for OIDC redirects from IdP).
-func setAuthCookiesWithRemember(w http.ResponseWriter, r *http.Request, accessToken, refreshToken string, tokenMaxAge int64, rememberMe bool, env string, useLax bool) {
+// browserSessionCookies: when true, both cookies use MaxAge 0 (session cookies) so they are not
+// persisted to disk and are dropped when the browser session ends (close all windows / quit).
+func setAuthCookiesWithRemember(w http.ResponseWriter, r *http.Request, accessToken, refreshToken string, tokenMaxAge int64, rememberMe bool, env string, useLax bool, browserSessionCookies bool) {
 	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 	sameSite := http.SameSiteLaxMode
 	if !useLax && env == "production" && secure {
 		sameSite = http.SameSiteStrictMode
 	}
+	tokenCookieMaxAge := int(tokenMaxAge)
+	if browserSessionCookies {
+		tokenCookieMaxAge = 0
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    accessToken,
 		Path:     "/",
-		MaxAge:   int(tokenMaxAge),
+		MaxAge:   tokenCookieMaxAge,
 		HttpOnly: true,
 		Secure:   secure && env == "production",
 		SameSite: sameSite,
@@ -299,6 +305,9 @@ func setAuthCookiesWithRemember(w http.ResponseWriter, r *http.Request, accessTo
 	refreshMaxAge := 7 * 24 * 3600 // 7 days
 	if rememberMe {
 		refreshMaxAge = 30 * 24 * 3600 // 30 days
+	}
+	if browserSessionCookies {
+		refreshMaxAge = 0
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token",
@@ -355,7 +364,7 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, user
 
 	expiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second).Format(time.RFC3339)
 
-	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, rememberMe, h.cfg.Env, false)
+	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, rememberMe, h.cfg.Env, false, h.authBrowserSessionCookies())
 
 	resp := map[string]interface{}{
 		"message":       "Login successful",
@@ -390,6 +399,14 @@ func (h *AuthHandler) clientIP(r *http.Request) string {
 		return host
 	}
 	return r.RemoteAddr
+}
+
+// authBrowserSessionCookies returns whether to use session-only cookies (env -> DB -> default).
+func (h *AuthHandler) authBrowserSessionCookies() bool {
+	if h.resolved != nil {
+		return h.resolved.AuthBrowserSessionCookies
+	}
+	return h.cfg.AuthBrowserSessionCookies
 }
 
 // getJwtExpiresInSeconds returns JWT access token expiry in seconds (resolved from env -> DB -> default).
@@ -468,7 +485,7 @@ func (h *AuthHandler) CompleteOidcLogin(w http.ResponseWriter, r *http.Request, 
 		http.Redirect(w, r, "/login?error=Authentication+failed", http.StatusFound)
 		return
 	}
-	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, true)
+	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, true, h.authBrowserSessionCookies())
 	// Use relative redirect so the browser resolves to the same origin as the callback request.
 	// This avoids ERR_INVALID_REDIRECT from malformed CORS_ORIGIN (e.g. trailing newline in .env).
 	http.Redirect(w, r, "/login?oidc=success", http.StatusFound)
@@ -499,7 +516,7 @@ func (h *AuthHandler) CompleteDiscordLogin(w http.ResponseWriter, r *http.Reques
 		http.Redirect(w, r, "/login?error=Authentication+failed", http.StatusFound)
 		return
 	}
-	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, true)
+	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, true, h.authBrowserSessionCookies())
 	// Use relative redirect so the browser resolves to the same origin as the callback request.
 	// This avoids ERR_INVALID_REDIRECT from malformed CORS_ORIGIN (e.g. trailing newline in .env).
 	http.Redirect(w, r, "/login?discord=success", http.StatusFound)
@@ -941,7 +958,7 @@ func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 	refreshToken, _ := h.createToken(u.ID, u.Role, 7*24*3600, "")
 	expiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second).Format(time.RFC3339)
 
-	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, false)
+	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, false, h.authBrowserSessionCookies())
 
 	JSON(w, http.StatusCreated, map[string]interface{}{
 		"message":       "Admin user created successfully",

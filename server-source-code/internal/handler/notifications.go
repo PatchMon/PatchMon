@@ -368,13 +368,13 @@ func (h *NotificationsHandler) DeleteRoute(w http.ResponseWriter, r *http.Reques
 func (h *NotificationsHandler) ListDeliveryLog(w http.ResponseWriter, r *http.Request) {
 	limit := int32(50)
 	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+		if n, err := strconv.ParseInt(v, 10, 32); err == nil && n > 0 && n <= 500 {
 			limit = int32(n)
 		}
 	}
 	offset := int32(0)
 	if v := r.URL.Query().Get("offset"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+		if n, err := strconv.ParseInt(v, 10, 32); err == nil && n >= 0 {
 			offset = int32(n)
 		}
 	}

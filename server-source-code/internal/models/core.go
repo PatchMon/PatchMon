@@ -161,4 +161,5 @@ type Settings struct {
 	AgentRateLimitMax               *int       `db:"agent_rate_limit_max"`
 	PasswordRateLimitWindowMs       *int       `db:"password_rate_limit_window_ms"`
 	PasswordRateLimitMax            *int       `db:"password_rate_limit_max"`
+	AuthBrowserSessionCookies       *bool      `db:"auth_browser_session_cookies"`
 }

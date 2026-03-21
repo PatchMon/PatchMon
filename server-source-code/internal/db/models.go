@@ -627,6 +627,7 @@ type Setting struct {
 	AgentRateLimitMax               *int32           `json:"agent_rate_limit_max"`
 	PasswordRateLimitWindowMs       *int32           `json:"password_rate_limit_window_ms"`
 	PasswordRateLimitMax            *int32           `json:"password_rate_limit_max"`
+	AuthBrowserSessionCookies       *bool            `json:"auth_browser_session_cookies"`
 }
 
 type SystemStatistic struct {

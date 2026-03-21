@@ -112,7 +112,8 @@ CREATE TABLE IF NOT EXISTS settings (
     agent_rate_limit_window_ms INTEGER,
     agent_rate_limit_max INTEGER,
     password_rate_limit_window_ms INTEGER,
-    password_rate_limit_max INTEGER
+    password_rate_limit_max INTEGER,
+    auth_browser_session_cookies BOOLEAN
 );
 
 -- host_groups

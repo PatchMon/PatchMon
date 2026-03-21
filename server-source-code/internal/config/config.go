@@ -37,6 +37,9 @@ type Config struct {
 	// Auth
 	JWTSecret    string
 	JWTExpiresIn string
+	// AuthBrowserSessionCookies: when true, token and refresh_token cookies omit Max-Age (session cookies)
+	// so they are cleared when the browser session ends instead of persisting across restarts.
+	AuthBrowserSessionCookies bool
 
 	// CORS
 	CORSOrigin string
@@ -166,8 +169,9 @@ func Load() (*Config, error) {
 		Env:     getEnvEnv(),
 		Version: DefaultVersion,
 
-		JWTSecret:    getEnv("JWT_SECRET", ""),
-		JWTExpiresIn: getEnv("JWT_EXPIRES_IN", "1h"),
+		JWTSecret:                 getEnv("JWT_SECRET", ""),
+		JWTExpiresIn:              getEnv("JWT_EXPIRES_IN", "1h"),
+		AuthBrowserSessionCookies: getEnv("AUTH_BROWSER_SESSION_COOKIES", "") == "true",
 
 		CORSOrigin: getEnv("CORS_ORIGIN", "http://localhost:3000"),
 		AssetsDir:  getEnv("ASSETS_DIR", ""),

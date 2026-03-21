@@ -133,6 +133,10 @@ func (s *SettingsStore) UpdateConfigKey(ctx context.Context, settingsID, key str
 			return errors.New("JWT_EXPIRES_IN requires a string value (e.g. 1h, 30m)")
 		}
 		arg.JwtExpiresIn = &v
+	case "AUTH_BROWSER_SESSION_COOKIES":
+		if v, ok := toBool(value); ok {
+			arg.AuthBrowserSessionCookies = &v
+		}
 	case "MAX_TFA_ATTEMPTS":
 		if v, ok := toInt32(value); ok {
 			arg.MaxTfaAttempts = &v

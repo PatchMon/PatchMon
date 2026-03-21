@@ -95,5 +95,6 @@ UPDATE settings SET
     agent_rate_limit_window_ms = COALESCE($28, agent_rate_limit_window_ms),
     agent_rate_limit_max = COALESCE($29, agent_rate_limit_max),
     password_rate_limit_window_ms = COALESCE($30, password_rate_limit_window_ms),
-    password_rate_limit_max = COALESCE($31, password_rate_limit_max)
-WHERE id = $32;
+    password_rate_limit_max = COALESCE($31, password_rate_limit_max),
+    auth_browser_session_cookies = COALESCE($32, auth_browser_session_cookies)
+WHERE id = $33;

@@ -21,6 +21,14 @@ import {
 import { useSidebar } from "../contexts/SidebarContext";
 import { aiAPI, settingsAPI } from "../utils/api";
 
+/** Remove line breaks from values before logging to avoid log injection (CWE-117). */
+function sanitizeForLog(value) {
+	if (value === undefined || value === null) {
+		return "";
+	}
+	return String(value).replace(/\n|\r/g, "");
+}
+
 const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	const { setSidebarCollapsed, sidebarCollapsed } = useSidebar();
 	const previousSidebarStateRef = useRef(null);
@@ -558,7 +566,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 						default:
 							console.warn(
 								"[SSH Terminal] Unknown message type:",
-								message.type,
+								sanitizeForLog(message.type),
 							);
 					}
 				} catch (err) {
@@ -589,7 +597,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 				console.log(
 					"[SSH Terminal] WebSocket closed",
 					event.code,
-					event.reason,
+					sanitizeForLog(event.reason),
 				);
 				const wasConnected = isConnected;
 				setIsConnected(false);

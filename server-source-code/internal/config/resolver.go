@@ -43,6 +43,7 @@ type ResolvedConfig struct {
 	TfaMaxRememberSessions      int
 	DBTransactionLongTimeout    int
 	JwtExpiresIn                string
+	AuthBrowserSessionCookies   bool
 	MaxTfaAttempts              int
 	TfaLockoutDurationMin       int
 	TfaRememberMeExpiresIn      string
@@ -83,6 +84,7 @@ func ResolveConfig(ctx context.Context, cfg *Config, settings *models.Settings) 
 	out.TfaMaxRememberSessions = resolveInt("TFA_MAX_REMEMBER_SESSIONS", settings.TfaMaxRememberSessions, cfg.TfaMaxRememberSessions)
 	out.DBTransactionLongTimeout = resolveInt("DB_TRANSACTION_LONG_TIMEOUT", settings.DBTransactionLongTimeout, cfg.DBTransactionLongTimeout)
 	out.JwtExpiresIn = resolveString("JWT_EXPIRES_IN", settings.JwtExpiresIn, cfg.JWTExpiresIn)
+	out.AuthBrowserSessionCookies = resolveBool("AUTH_BROWSER_SESSION_COOKIES", settings.AuthBrowserSessionCookies, cfg.AuthBrowserSessionCookies)
 	out.MaxTfaAttempts = resolveInt("MAX_TFA_ATTEMPTS", settings.MaxTfaAttempts, cfg.MaxTfaAttempts)
 	out.TfaLockoutDurationMin = resolveInt("TFA_LOCKOUT_DURATION_MINUTES", settings.TfaLockoutDurationMinutes, cfg.TfaLockoutDurationMin)
 	out.TfaRememberMeExpiresIn = resolveString("TFA_REMEMBER_ME_EXPIRES_IN", settings.TfaRememberMeExpiresIn, cfg.TfaRememberMeExpiresIn)
@@ -119,6 +121,7 @@ func resolveFromEnvAndDefaults(cfg *Config) *ResolvedConfig {
 		TfaMaxRememberSessions:      cfg.TfaMaxRememberSessions,
 		DBTransactionLongTimeout:    cfg.DBTransactionLongTimeout,
 		JwtExpiresIn:                cfg.JWTExpiresIn,
+		AuthBrowserSessionCookies:   cfg.AuthBrowserSessionCookies,
 		MaxTfaAttempts:              cfg.MaxTfaAttempts,
 		TfaLockoutDurationMin:       cfg.TfaLockoutDurationMin,
 		TfaRememberMeExpiresIn:      cfg.TfaRememberMeExpiresIn,
