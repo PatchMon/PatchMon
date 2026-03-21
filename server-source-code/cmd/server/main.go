@@ -124,6 +124,7 @@ func main() {
 		Log:           slog,
 		Emit:          notifyEmit,
 		Enc:           enc,
+		Timezone:      resolved.Timezone,
 	})
 	go func() {
 		if err := queueSrv.Run(queueMux); err != nil {

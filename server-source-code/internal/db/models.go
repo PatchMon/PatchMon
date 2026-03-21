@@ -516,7 +516,6 @@ type ScheduledReport struct {
 	ID             string           `json:"id"`
 	Name           string           `json:"name"`
 	CronExpr       string           `json:"cron_expr"`
-	Timezone       string           `json:"timezone"`
 	Enabled        bool             `json:"enabled"`
 	Definition     []byte           `json:"definition"`
 	DestinationIds []byte           `json:"destination_ids"`

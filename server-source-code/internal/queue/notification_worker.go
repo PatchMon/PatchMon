@@ -77,6 +77,8 @@ func (h *NotificationDeliverHandler) ProcessTask(ctx context.Context, t *asynq.T
 		err = h.sendWebhook(ctx, plain, p)
 	case "email":
 		err = h.sendEmail(ctx, plain, p)
+	case "ntfy":
+		err = h.sendNtfy(ctx, plain, p)
 	default:
 		err = fmt.Errorf("unknown channel_type %q", dest.ChannelType)
 	}
@@ -821,6 +823,215 @@ func (h *NotificationDeliverHandler) sendEmail(ctx context.Context, plain string
 		return err
 	}
 	return w.Close()
+}
+
+// ntfyConfig holds the configuration for an ntfy destination.
+type ntfyConfig struct {
+	ServerURL string `json:"server_url"` // e.g. "https://ntfy.sh"
+	Topic     string `json:"topic"`
+	Token     string `json:"token"`    // optional access token
+	Username  string `json:"username"` // optional basic auth
+	Password  string `json:"password"` // optional basic auth
+	Priority  string `json:"priority"` // optional: min, low, default, high, urgent (or 1-5)
+}
+
+// ntfyPriorityForSeverity maps PatchMon severity to ntfy priority integers (1-5).
+func ntfyPriorityForSeverity(sev string) int {
+	switch strings.ToLower(strings.TrimSpace(sev)) {
+	case "critical":
+		return 5 // urgent
+	case "error", "high":
+		return 4 // high
+	case "warning", "warn", "medium":
+		return 3 // default
+	default:
+		return 2 // low
+	}
+}
+
+// ntfyTagsForEvent returns ntfy emoji tags based on event type and severity.
+func ntfyTagsForEvent(eventType, severity string) []string {
+	tags := []string{}
+	switch strings.ToLower(strings.TrimSpace(severity)) {
+	case "critical":
+		tags = append(tags, "rotating_light")
+	case "error", "high":
+		tags = append(tags, "warning")
+	case "warning", "warn", "medium":
+		tags = append(tags, "large_orange_diamond")
+	default:
+		tags = append(tags, "white_check_mark")
+	}
+	switch {
+	case strings.HasPrefix(eventType, "patch_run_"):
+		tags = append(tags, "package")
+	case eventType == "host_down":
+		tags = append(tags, "skull")
+	case eventType == "host_recovered":
+		tags = append(tags, "tada")
+	case eventType == "server_update" || eventType == "agent_update":
+		tags = append(tags, "arrow_up")
+	case eventType == "compliance_scan_completed":
+		tags = append(tags, "shield")
+	case eventType == "test":
+		tags = append(tags, "test_tube")
+	}
+	return tags
+}
+
+// buildNtfyMessage creates a plain-text message body for ntfy notifications.
+func buildNtfyMessage(p notifications.NotificationDeliverPayload) string {
+	m := p.Metadata
+	var sb strings.Builder
+	if msg := strings.TrimSpace(p.Message); msg != "" {
+		sb.WriteString(msg)
+		sb.WriteString("\n")
+	}
+
+	addLine := func(label, value string) {
+		if value != "" {
+			sb.WriteString(label)
+			sb.WriteString(": ")
+			sb.WriteString(value)
+			sb.WriteString("\n")
+		}
+	}
+
+	switch {
+	case strings.HasPrefix(p.EventType, "patch_run_"):
+		addLine("Host", nocMetaStr(m, "host_name"))
+		addLine("Status", strings.ToUpper(nocMetaStr(m, "stage")))
+		addLine("Type", nocMetaStr(m, "patch_type"))
+		packages := nocMetaStrSlice(m, "packages")
+		if len(packages) > 0 {
+			pkgDisplay := strings.Join(packages, ", ")
+			if len(packages) > 5 {
+				pkgDisplay = strings.Join(packages[:5], ", ") + fmt.Sprintf(" +%d more", len(packages)-5)
+			}
+			addLine("Packages", pkgDisplay)
+		}
+		addLine("Policy", nocMetaStr(m, "policy_name"))
+		if nocMetaStr(m, "dry_run") == "true" {
+			addLine("Mode", "Dry Run")
+		}
+		if errMsg := nocMetaStr(m, "error_message"); errMsg != "" {
+			if len(errMsg) > 300 {
+				errMsg = errMsg[:300] + "..."
+			}
+			addLine("Error", errMsg)
+		}
+	case p.EventType == "compliance_scan_completed":
+		addLine("Host", nocMetaStr(m, "host_name"))
+		addLine("Scans", nocMetaStr(m, "scans_count"))
+		totalRules := nocMetaStr(m, "total_rules")
+		if totalRules != "" && totalRules != "0" {
+			addLine("Results", fmt.Sprintf("%s passed, %s failed (of %s)",
+				nocMetaStr(m, "passed_count"), nocMetaStr(m, "failed_count"), totalRules))
+		}
+	case p.EventType == "host_down":
+		addLine("Host", nocMetaStr(m, "host_name"))
+		addLine("Severity", strings.ToUpper(p.Severity))
+		addLine("Last seen", nocMetaStr(m, "last_update"))
+		if t := nocMetaStr(m, "threshold_minutes"); t != "" && t != "0" {
+			addLine("Threshold", t+" minutes")
+		}
+		addLine("Disconnect", nocMetaStr(m, "disconnect_reason"))
+	case p.EventType == "host_recovered":
+		addLine("Host", nocMetaStr(m, "host_name"))
+		addLine("Status", "RECOVERED")
+	case p.EventType == "server_update" || p.EventType == "agent_update":
+		addLine("Current version", nocMetaStr(m, "current_version"))
+		addLine("Available version", nocMetaStr(m, "latest_version"))
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+func (h *NotificationDeliverHandler) sendNtfy(ctx context.Context, plain string, p notifications.NotificationDeliverPayload) error {
+	var cfg ntfyConfig
+	if err := json.Unmarshal([]byte(plain), &cfg); err != nil {
+		return err
+	}
+	if cfg.Topic == "" {
+		return fmt.Errorf("ntfy topic is required")
+	}
+	if cfg.ServerURL == "" {
+		cfg.ServerURL = "https://ntfy.sh"
+	}
+	serverURL := strings.TrimRight(cfg.ServerURL, "/")
+
+	title := strings.TrimSpace(p.Title)
+	if title == "" {
+		title = "PatchMon"
+	}
+
+	priority := ntfyPriorityForSeverity(p.Severity)
+	if cfg.Priority != "" {
+		switch strings.ToLower(strings.TrimSpace(cfg.Priority)) {
+		case "1", "min":
+			priority = 1
+		case "2", "low":
+			priority = 2
+		case "3", "default":
+			priority = 3
+		case "4", "high":
+			priority = 4
+		case "5", "urgent", "max":
+			priority = 5
+		}
+	}
+
+	message := buildNtfyMessage(p)
+	if message == "" {
+		message = strings.TrimSpace(p.Message)
+		if message == "" {
+			message = title
+		}
+	}
+
+	tags := ntfyTagsForEvent(p.EventType, p.Severity)
+
+	body := map[string]interface{}{
+		"topic":    cfg.Topic,
+		"title":    truncateUTF8(title, 256),
+		"message":  truncateUTF8(message, 4000),
+		"priority": priority,
+		"tags":     tags,
+	}
+
+	if link := nocMetaStr(p.Metadata, "app_link"); link != "" {
+		body["click"] = link
+		body["actions"] = []map[string]interface{}{
+			{"action": "view", "label": "View in PatchMon", "url": link},
+		}
+	}
+
+	b, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, serverURL, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	if cfg.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	} else if cfg.Username != "" {
+		req.SetBasicAuth(cfg.Username, cfg.Password)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("ntfy status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (h *NotificationDeliverHandler) logDelivery(ctx context.Context, d *database.DB, p notifications.NotificationDeliverPayload, status string, logErr error, errMsg string) {

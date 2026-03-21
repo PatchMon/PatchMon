@@ -125,12 +125,16 @@ type ScheduledReportRunHandler struct {
 	defaultDB *database.DB
 	poolCache *hostctx.PoolCache
 	enc       *util.Encryption
+	timezone  string
 	log       *slog.Logger
 }
 
 // NewScheduledReportRunHandler creates the handler.
-func NewScheduledReportRunHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache, enc *util.Encryption, log *slog.Logger) *ScheduledReportRunHandler {
-	return &ScheduledReportRunHandler{defaultDB: defaultDB, poolCache: poolCache, enc: enc, log: log}
+func NewScheduledReportRunHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache, enc *util.Encryption, timezone string, log *slog.Logger) *ScheduledReportRunHandler {
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	return &ScheduledReportRunHandler{defaultDB: defaultDB, poolCache: poolCache, enc: enc, timezone: timezone, log: log}
 }
 
 func (h *ScheduledReportRunHandler) resolveDB(ctx context.Context, payload []byte) *database.DB {
@@ -209,6 +213,8 @@ func (h *ScheduledReportRunHandler) ProcessTask(ctx context.Context, t *asynq.Ta
 			err = sendScheduledWebhook(ctx, plain, subject, htmlBody, csvBody)
 		case "email":
 			err = sendScheduledEmail(plain, subject, htmlBody, csvBody)
+		case "ntfy":
+			err = sendScheduledNtfy(ctx, plain, subject, htmlBody, csvBody)
 		default:
 			err = fmt.Errorf("unknown channel %q", dest.ChannelType)
 		}
@@ -218,7 +224,7 @@ func (h *ScheduledReportRunHandler) ProcessTask(ctx context.Context, t *asynq.Ta
 	}
 
 	now := time.Now()
-	next, nerr := notifications.NextCronRun(rep.CronExpr, rep.Timezone, now)
+	next, nerr := notifications.NextCronRun(rep.CronExpr, h.timezone, now)
 	if nerr != nil {
 		next = now.Add(24 * time.Hour)
 	}
@@ -413,4 +419,66 @@ func sendScheduledEmail(plain, subject, html, csv string) error {
 		return err
 	}
 	return w.Close()
+}
+
+func sendScheduledNtfy(ctx context.Context, plain, subject, html, csv string) error {
+	var cfg ntfyConfig
+	if err := json.Unmarshal([]byte(plain), &cfg); err != nil {
+		return err
+	}
+	if cfg.Topic == "" {
+		return fmt.Errorf("ntfy topic is required")
+	}
+	if cfg.ServerURL == "" {
+		cfg.ServerURL = "https://ntfy.sh"
+	}
+	serverURL := strings.TrimRight(cfg.ServerURL, "/")
+
+	title := strings.TrimSpace(subject)
+	if title == "" {
+		title = "PatchMon scheduled report"
+	}
+
+	// Build a plain-text excerpt from the HTML for ntfy
+	message := stripScheduledReportHTML(html)
+	if message == "" {
+		message = "Scheduled report delivered"
+	}
+	message = truncateUTF8(message, 4000)
+
+	body := map[string]interface{}{
+		"topic":    cfg.Topic,
+		"title":    truncateUTF8(title, 256),
+		"message":  message,
+		"priority": 3,
+		"tags":     []string{"bar_chart", "clipboard"},
+	}
+
+	b, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, serverURL, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	if cfg.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	} else if cfg.Username != "" {
+		req.SetBasicAuth(cfg.Username, cfg.Password)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("ntfy status %d", resp.StatusCode)
+	}
+	return nil
 }

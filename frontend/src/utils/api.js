@@ -568,6 +568,8 @@ export const notificationsAPI = {
 	createDestination: (data) => api.post("/notifications/destinations", data),
 	updateDestination: (id, data) =>
 		api.put(`/notifications/destinations/${id}`, data),
+	getDestinationConfig: (id) =>
+		api.get(`/notifications/destinations/${id}/config`),
 	deleteDestination: (id) => api.delete(`/notifications/destinations/${id}`),
 	listRoutes: () => api.get("/notifications/routes"),
 	createRoute: (data) => api.post("/notifications/routes", data),

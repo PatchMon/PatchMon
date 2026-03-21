@@ -88,16 +88,15 @@ func (q *Queries) CreateNotificationRoute(ctx context.Context, arg CreateNotific
 }
 
 const createScheduledReport = `-- name: CreateScheduledReport :one
-INSERT INTO scheduled_reports (id, name, cron_expr, timezone, enabled, definition, destination_ids, next_run_at, last_run_at, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
-RETURNING id, name, cron_expr, timezone, enabled, definition, destination_ids, next_run_at, last_run_at, created_at, updated_at
+INSERT INTO scheduled_reports (id, name, cron_expr, enabled, definition, destination_ids, next_run_at, last_run_at, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+RETURNING id, name, cron_expr, enabled, definition, destination_ids, next_run_at, last_run_at, created_at, updated_at
 `
 
 type CreateScheduledReportParams struct {
 	ID             string           `json:"id"`
 	Name           string           `json:"name"`
 	CronExpr       string           `json:"cron_expr"`
-	Timezone       string           `json:"timezone"`
 	Enabled        bool             `json:"enabled"`
 	Definition     []byte           `json:"definition"`
 	DestinationIds []byte           `json:"destination_ids"`
@@ -110,7 +109,6 @@ func (q *Queries) CreateScheduledReport(ctx context.Context, arg CreateScheduled
 		arg.ID,
 		arg.Name,
 		arg.CronExpr,
-		arg.Timezone,
 		arg.Enabled,
 		arg.Definition,
 		arg.DestinationIds,
@@ -122,7 +120,6 @@ func (q *Queries) CreateScheduledReport(ctx context.Context, arg CreateScheduled
 		&i.ID,
 		&i.Name,
 		&i.CronExpr,
-		&i.Timezone,
 		&i.Enabled,
 		&i.Definition,
 		&i.DestinationIds,
@@ -202,7 +199,7 @@ func (q *Queries) GetNotificationRouteByID(ctx context.Context, id string) (Noti
 }
 
 const getScheduledReportByID = `-- name: GetScheduledReportByID :one
-SELECT id, name, cron_expr, timezone, enabled, definition, destination_ids, next_run_at, last_run_at, created_at, updated_at FROM scheduled_reports WHERE id = $1
+SELECT id, name, cron_expr, enabled, definition, destination_ids, next_run_at, last_run_at, created_at, updated_at FROM scheduled_reports WHERE id = $1
 `
 
 func (q *Queries) GetScheduledReportByID(ctx context.Context, id string) (ScheduledReport, error) {
@@ -212,7 +209,6 @@ func (q *Queries) GetScheduledReportByID(ctx context.Context, id string) (Schedu
 		&i.ID,
 		&i.Name,
 		&i.CronExpr,
-		&i.Timezone,
 		&i.Enabled,
 		&i.Definition,
 		&i.DestinationIds,
@@ -503,7 +499,7 @@ func (q *Queries) ListNotificationRoutesForEvent(ctx context.Context, eventType 
 }
 
 const listScheduledReports = `-- name: ListScheduledReports :many
-SELECT id, name, cron_expr, timezone, enabled, definition, destination_ids, next_run_at, last_run_at, created_at, updated_at FROM scheduled_reports ORDER BY name
+SELECT id, name, cron_expr, enabled, definition, destination_ids, next_run_at, last_run_at, created_at, updated_at FROM scheduled_reports ORDER BY name
 `
 
 func (q *Queries) ListScheduledReports(ctx context.Context) ([]ScheduledReport, error) {
@@ -519,7 +515,6 @@ func (q *Queries) ListScheduledReports(ctx context.Context) ([]ScheduledReport, 
 			&i.ID,
 			&i.Name,
 			&i.CronExpr,
-			&i.Timezone,
 			&i.Enabled,
 			&i.Definition,
 			&i.DestinationIds,
@@ -539,7 +534,7 @@ func (q *Queries) ListScheduledReports(ctx context.Context) ([]ScheduledReport, 
 }
 
 const listScheduledReportsDue = `-- name: ListScheduledReportsDue :many
-SELECT id, name, cron_expr, timezone, enabled, definition, destination_ids, next_run_at, last_run_at, created_at, updated_at FROM scheduled_reports
+SELECT id, name, cron_expr, enabled, definition, destination_ids, next_run_at, last_run_at, created_at, updated_at FROM scheduled_reports
 WHERE enabled = true AND (next_run_at IS NULL OR next_run_at <= $1)
 ORDER BY next_run_at NULLS FIRST
 `
@@ -557,7 +552,6 @@ func (q *Queries) ListScheduledReportsDue(ctx context.Context, nextRunAt pgtype.
 			&i.ID,
 			&i.Name,
 			&i.CronExpr,
-			&i.Timezone,
 			&i.Enabled,
 			&i.Definition,
 			&i.DestinationIds,
@@ -654,16 +648,15 @@ func (q *Queries) UpdateNotificationRoute(ctx context.Context, arg UpdateNotific
 
 const updateScheduledReport = `-- name: UpdateScheduledReport :one
 UPDATE scheduled_reports
-SET name = $2, cron_expr = $3, timezone = $4, enabled = $5, definition = $6, destination_ids = $7, next_run_at = $8, last_run_at = $9, updated_at = NOW()
+SET name = $2, cron_expr = $3, enabled = $4, definition = $5, destination_ids = $6, next_run_at = $7, last_run_at = $8, updated_at = NOW()
 WHERE id = $1
-RETURNING id, name, cron_expr, timezone, enabled, definition, destination_ids, next_run_at, last_run_at, created_at, updated_at
+RETURNING id, name, cron_expr, enabled, definition, destination_ids, next_run_at, last_run_at, created_at, updated_at
 `
 
 type UpdateScheduledReportParams struct {
 	ID             string           `json:"id"`
 	Name           string           `json:"name"`
 	CronExpr       string           `json:"cron_expr"`
-	Timezone       string           `json:"timezone"`
 	Enabled        bool             `json:"enabled"`
 	Definition     []byte           `json:"definition"`
 	DestinationIds []byte           `json:"destination_ids"`
@@ -676,7 +669,6 @@ func (q *Queries) UpdateScheduledReport(ctx context.Context, arg UpdateScheduled
 		arg.ID,
 		arg.Name,
 		arg.CronExpr,
-		arg.Timezone,
 		arg.Enabled,
 		arg.Definition,
 		arg.DestinationIds,
@@ -688,7 +680,6 @@ func (q *Queries) UpdateScheduledReport(ctx context.Context, arg UpdateScheduled
 		&i.ID,
 		&i.Name,
 		&i.CronExpr,
-		&i.Timezone,
 		&i.Enabled,
 		&i.Definition,
 		&i.DestinationIds,

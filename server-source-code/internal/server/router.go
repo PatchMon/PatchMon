@@ -227,7 +227,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	alertsHandler := handler.NewAlertsHandler(alertsStore, alertConfigStore, dbProvider)
 	agentVersionHandler := handler.NewAgentVersionHandler(log)
 	alertConfigHandler := handler.NewAlertConfigHandler(alertConfigStore)
-	notificationsHandler := handler.NewNotificationsHandler(dbProvider, enc, notifyEmit)
+	notificationsHandler := handler.NewNotificationsHandler(dbProvider, enc, notifyEmit, resolved)
 	automationHandler := handler.NewAutomationHandler(queueInspector, queueClient, registry, settingsStore, alertConfigStore)
 	apiHostsHandler := handler.NewApiHostsHandler(hostsStore, hostGroupsStore, dbProvider, dashboardStore, queueInspector)
 
@@ -579,6 +579,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 
 			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Get("/notifications/destinations", notificationsHandler.ListDestinations)
 			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Post("/notifications/destinations", notificationsHandler.CreateDestination)
+			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Get("/notifications/destinations/{id}/config", notificationsHandler.GetDestinationConfig)
 			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Put("/notifications/destinations/{id}", notificationsHandler.UpdateDestination)
 			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Delete("/notifications/destinations/{id}", notificationsHandler.DeleteDestination)
 			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Get("/notifications/routes", notificationsHandler.ListRoutes)

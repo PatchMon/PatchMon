@@ -724,7 +724,6 @@ CREATE TABLE IF NOT EXISTS scheduled_reports (
     id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
     name TEXT NOT NULL,
     cron_expr TEXT NOT NULL DEFAULT '0 8 * * *',
-    timezone TEXT NOT NULL DEFAULT 'UTC',
     enabled BOOLEAN NOT NULL DEFAULT true,
     definition JSONB NOT NULL DEFAULT '{}'::jsonb,
     destination_ids JSONB NOT NULL DEFAULT '[]'::jsonb,

@@ -42,6 +42,9 @@ const REPORT_SECTIONS = [
 	{ id: "compliance_summary", label: "Compliance summary" },
 	{ id: "recent_patch_runs", label: "Recent patch runs" },
 	{ id: "hosts_offline", label: "Hosts / status" },
+	{ id: "open_alerts", label: "Open alerts" },
+	{ id: "hosts_by_updates", label: "Hosts by outstanding updates" },
+	{ id: "top_security_packages", label: "Top outdated security packages" },
 ];
 
 // Human-readable cron description (common patterns)
@@ -89,6 +92,20 @@ const defaultEmailConfig = () =>
 		2,
 	);
 
+const defaultNtfyConfig = () =>
+	JSON.stringify(
+		{
+			server_url: "https://ntfy.sh",
+			topic: "",
+			token: "",
+			username: "",
+			password: "",
+			priority: "",
+		},
+		null,
+		2,
+	);
+
 const AlertChannels = () => {
 	const queryClient = useQueryClient();
 	const toast = useToast();
@@ -118,7 +135,6 @@ const AlertChannels = () => {
 	const [reportForm, setReportForm] = useState({
 		name: "",
 		cron_expr: "0 8 * * *",
-		timezone: "UTC",
 		enabled: true,
 		destination_ids: [],
 		sections: ["executive_summary", "compliance_summary", "recent_patch_runs"],
@@ -379,20 +395,34 @@ const AlertChannels = () => {
 		}
 	};
 
-	const startEditDestination = (d) => {
+	const startEditDestination = async (d) => {
 		setEditingDestId(d.id);
+		let configText;
+		if (d.has_secret) {
+			try {
+				const resp = await notificationsAPI.getDestinationConfig(d.id);
+				configText = JSON.stringify(resp.data, null, 2);
+			} catch {
+				configText =
+					d.channel_type === "email"
+						? defaultEmailConfig()
+						: d.channel_type === "ntfy"
+							? defaultNtfyConfig()
+							: defaultWebhookConfig();
+			}
+		} else {
+			configText =
+				d.channel_type === "email"
+					? defaultEmailConfig()
+					: d.channel_type === "ntfy"
+						? defaultNtfyConfig()
+						: defaultWebhookConfig();
+		}
 		setDestForm({
 			channel_type: d.channel_type,
 			display_name: d.display_name,
 			enabled: d.enabled,
-			configText: d.has_secret
-				? "// Credentials are stored securely. Leave this field as-is to keep them,\n// or paste new JSON to replace:\n// " +
-					(d.channel_type === "email"
-						? '{ "smtp_host": "...", "smtp_port": 587, "username": "...", "password": "...", "from": "...", "to": "...", "use_tls": true }'
-						: '{ "url": "https://...", "headers": {}, "signing_secret": "" }')
-				: d.channel_type === "email"
-					? defaultEmailConfig()
-					: defaultWebhookConfig(),
+			configText,
 		});
 	};
 
@@ -457,7 +487,6 @@ const AlertChannels = () => {
 		const body = {
 			name: reportForm.name.trim(),
 			cron_expr: reportForm.cron_expr.trim() || "0 8 * * *",
-			timezone: reportForm.timezone.trim() || "UTC",
 			enabled: reportForm.enabled,
 			definition: buildReportDefinition(),
 			destination_ids: reportForm.destination_ids,
@@ -472,7 +501,6 @@ const AlertChannels = () => {
 			setReportForm({
 				name: "",
 				cron_expr: "0 8 * * *",
-				timezone: "UTC",
 				enabled: true,
 				destination_ids: [],
 				sections: [
@@ -494,7 +522,6 @@ const AlertChannels = () => {
 		setReportForm({
 			name: row.name,
 			cron_expr: row.cron_expr,
-			timezone: row.timezone || "UTC",
 			enabled: row.enabled !== false,
 			destination_ids: Array.isArray(row.destination_ids)
 				? row.destination_ids
@@ -560,8 +587,8 @@ const AlertChannels = () => {
 						Notifications
 					</h1>
 					<p className="mt-1 text-sm text-secondary-600 dark:text-secondary-300">
-						Destinations (webhook or email), routes, scheduled reports, and
-						delivery history
+						Destinations (webhook, email, or ntfy), routes, scheduled reports,
+						and delivery history
 					</p>
 				</div>
 				{canLog && (
@@ -599,7 +626,13 @@ const AlertChannels = () => {
 						<code className="text-xs">smtp_host</code>,{" "}
 						<code className="text-xs">smtp_port</code>,{" "}
 						<code className="text-xs">from</code>,{" "}
-						<code className="text-xs">to</code>, etc.
+						<code className="text-xs">to</code>, etc. ntfy JSON:{" "}
+						<code className="text-xs">server_url</code> (defaults to ntfy.sh),{" "}
+						<code className="text-xs">topic</code>, optional{" "}
+						<code className="text-xs">token</code> or{" "}
+						<code className="text-xs">username</code>/
+						<code className="text-xs">password</code>,{" "}
+						<code className="text-xs">priority</code>.
 					</p>
 
 					{destinations.length > 0 && (
@@ -678,13 +711,16 @@ const AlertChannels = () => {
 											configText:
 												t === "email"
 													? defaultEmailConfig()
-													: defaultWebhookConfig(),
+													: t === "ntfy"
+														? defaultNtfyConfig()
+														: defaultWebhookConfig(),
 										}));
 									}}
 									disabled={!!editingDestId}
 								>
 									<option value="webhook">Webhook</option>
 									<option value="email">Email (SMTP)</option>
+									<option value="ntfy">ntfy</option>
 								</select>
 							</label>
 							<label className="block text-sm">
@@ -990,9 +1026,9 @@ const AlertChannels = () => {
 						{reportsLoading && <Loader2 className="h-5 w-5 animate-spin" />}
 					</div>
 					<p className="text-sm text-secondary-600 dark:text-secondary-300">
-						Cron in server timezone field (IANA, e.g. UTC, America/New_York).
-						Reports are emailed or sent via webhook according to each
-						destination&apos;s channel.
+						Cron schedule uses the server&apos;s configured timezone (TZ
+						environment variable). Reports are emailed or sent via webhook
+						according to each destination&apos;s channel.
 					</p>
 
 					{scheduledReports.length > 0 && (
@@ -1007,7 +1043,7 @@ const AlertChannels = () => {
 											{r.name}
 										</p>
 										<p className="text-xs text-secondary-500">
-											{r.cron_expr} · {r.timezone}
+											{r.cron_expr}
 											{r.enabled ? "" : " · disabled"}
 											{describeCron(r.cron_expr)
 												? ` · ${describeCron(r.cron_expr)}`
@@ -1100,26 +1136,10 @@ const AlertChannels = () => {
 								{cronPreview && (
 									<p className="mt-1 text-xs text-secondary-500 flex items-center gap-1">
 										<Clock className="h-3 w-3" />
-										{cronPreview}{" "}
-										{reportForm.timezone ? `(${reportForm.timezone})` : ""}
+										{cronPreview} (server timezone)
 									</p>
 								)}
 							</div>
-							<label className="block text-sm">
-								<span className="text-secondary-700 dark:text-secondary-300">
-									Timezone
-								</span>
-								<input
-									className="mt-1 w-full rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-900 px-2 py-2 text-sm"
-									value={reportForm.timezone}
-									onChange={(e) =>
-										setReportForm((p) => ({
-											...p,
-											timezone: e.target.value,
-										}))
-									}
-								/>
-							</label>
 							<label className="block text-sm">
 								<span className="text-secondary-700 dark:text-secondary-300">
 									Top rows per section
@@ -1239,7 +1259,6 @@ const AlertChannels = () => {
 										setReportForm({
 											name: "",
 											cron_expr: "0 8 * * *",
-											timezone: "UTC",
 											enabled: true,
 											destination_ids: [],
 											sections: [

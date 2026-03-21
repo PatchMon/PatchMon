@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -65,7 +66,7 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 				writeKPICard(&body, fmt.Sprintf("%d", dash.Summary.TotalHosts), "Total Hosts", "#2563eb")
 				writeKPICard(&body, fmt.Sprintf("%.1f%%", dash.Summary.AverageScore), "Avg Compliance", complianceColor(dash.Summary.AverageScore))
 				writeKPICard(&body, fmt.Sprintf("%d", dash.Summary.HostsCritical), "Critical Hosts", criticalColor(dash.Summary.HostsCritical))
-				writeKPICard(&body, fmt.Sprintf("%d", dash.Summary.HostsCompliant), "Compliant Hosts", "#059669")
+				writeKPICard(&body, fmt.Sprintf("%d", dash.Summary.HostsCompliant), "Compliant Hosts", "#16a34a")
 				body.WriteString(`</tr></table>`)
 
 				_ = cw.Write([]string{"executive_summary", "total_hosts", fmt.Sprintf("%d", dash.Summary.TotalHosts)})
@@ -73,15 +74,15 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 			}
 			total, byStatus, _, _, e := patchStore.GetDashboard(ctx)
 			if e == nil {
-				body.WriteString(`<h3 style="color:#1e293b;font-size:16px;margin:16px 0 8px;">Patching Overview</h3>`)
+				body.WriteString(`<h3 style="color:#0f172a;font-size:15px;font-weight:600;margin:16px 0 8px;">Patching Overview</h3>`)
 				body.WriteString(`<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;"><tr>`)
 				writeKPICard(&body, fmt.Sprintf("%d", total), "Total Runs", "#6366f1")
 				completed := byStatus["completed"]
 				failed := byStatus["failed"]
 				running := byStatus["running"]
-				writeKPICard(&body, fmt.Sprintf("%d", completed), "Completed", "#059669")
+				writeKPICard(&body, fmt.Sprintf("%d", completed), "Completed", "#16a34a")
 				writeKPICard(&body, fmt.Sprintf("%d", failed), "Failed", criticalColor(failed))
-				writeKPICard(&body, fmt.Sprintf("%d", running), "Running", "#f59e0b")
+				writeKPICard(&body, fmt.Sprintf("%d", running), "Running", "#d97706")
 				body.WriteString(`</tr></table>`)
 
 				for k, v := range byStatus {
@@ -94,7 +95,7 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 			dash, e := complianceStore.GetDashboard(ctx)
 			if e == nil {
 				body.WriteString(`<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;"><tr>`)
-				writeKPICard(&body, fmt.Sprintf("%d", dash.Summary.TotalPassedRules), "Passed Rules", "#059669")
+				writeKPICard(&body, fmt.Sprintf("%d", dash.Summary.TotalPassedRules), "Passed Rules", "#16a34a")
 				writeKPICard(&body, fmt.Sprintf("%d", dash.Summary.TotalFailedRules), "Failed Rules", criticalColor(dash.Summary.TotalFailedRules))
 				writeKPICard(&body, fmt.Sprintf("%d", dash.Summary.HostsCritical), "Critical Hosts", criticalColor(dash.Summary.HostsCritical))
 				writeKPICard(&body, fmt.Sprintf("%d", dash.Summary.Unscanned), "Unscanned", "#94a3b8")
@@ -102,13 +103,13 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 
 				// Worst hosts table
 				if len(dash.WorstHosts) > 0 {
-					body.WriteString(`<h3 style="color:#1e293b;font-size:14px;margin:16px 0 8px;">Lowest Scoring Hosts</h3>`)
+					body.WriteString(`<h3 style="color:#0f172a;font-size:14px;font-weight:600;margin:16px 0 8px;">Lowest Scoring Hosts</h3>`)
 					body.WriteString(tableOpen([]string{"Host", "Score", "Profile"}))
 					limit := top
 					if limit > len(dash.WorstHosts) {
 						limit = len(dash.WorstHosts)
 					}
-					for _, wh := range dash.WorstHosts[:limit] {
+					for i, wh := range dash.WorstHosts[:limit] {
 						hostName := ""
 						if wh.Host != nil {
 							if fn, ok := wh.Host["friendly_name"].(string); ok && fn != "" {
@@ -131,7 +132,7 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 						if baseURL != "" && wh.HostID != "" {
 							hostLink = fmt.Sprintf(`<a href="%s/hosts/%s" style="color:#2563eb;text-decoration:none;">%s</a>`, esc(baseURL), esc(wh.HostID), esc(hostName))
 						}
-						body.WriteString(tableRow([]string{hostLink, esc(score), esc(profile)}, false))
+						body.WriteString(tableRow([]string{hostLink, esc(score), esc(profile)}, i%2 == 1))
 					}
 					body.WriteString(`</table>`)
 				}
@@ -144,7 +145,7 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 			body.WriteString(sectionHeader("Recent Patch Runs"))
 			_, _, recent, _, e := patchStore.GetDashboard(ctx)
 			if e == nil && len(recent) > 0 {
-				body.WriteString(tableOpen([]string{"Host", "Status", "Type", "Package"}))
+				body.WriteString(tableOpen([]string{"Host", "Status", "Type", "Package", "Started", "Completed"}))
 				n := 0
 				for _, r := range recent {
 					if n >= top {
@@ -175,12 +176,23 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 						}
 					}
 
+					started := "-"
+					if r.StartedAt.Valid {
+						started = r.StartedAt.Time.Format("Jan 2, 15:04 UTC")
+					} else if r.CreatedAt.Valid {
+						started = r.CreatedAt.Time.Format("Jan 2, 15:04 UTC")
+					}
+					completed := "-"
+					if r.CompletedAt.Valid {
+						completed = r.CompletedAt.Time.Format("Jan 2, 15:04 UTC")
+					}
+
 					statusBadge := statusBadgeHTML(r.Status)
 					hostLink := esc(host)
 					if baseURL != "" {
 						hostLink = fmt.Sprintf(`<a href="%s/patching/runs/%s" style="color:#2563eb;text-decoration:none;">%s</a>`, esc(baseURL), esc(r.ID), esc(host))
 					}
-					body.WriteString(tableRow([]string{hostLink, statusBadge, esc(r.PatchType), esc(pkg)}, false))
+					body.WriteString(tableRow([]string{hostLink, statusBadge, esc(r.PatchType), esc(pkg), esc(started), esc(completed)}, n%2 == 1))
 					_ = cw.Write([]string{"recent_patch_run", r.ID, r.Status + "|" + r.PatchType + "|" + host})
 					n++
 				}
@@ -212,11 +224,202 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 					if baseURL != "" {
 						hostLink = fmt.Sprintf(`<a href="%s/hosts/%s" style="color:#2563eb;text-decoration:none;">%s</a>`, esc(baseURL), esc(h.ID), esc(name))
 					}
-					body.WriteString(tableRow([]string{hostLink, statusBadge, esc(lu)}, false))
+					body.WriteString(tableRow([]string{hostLink, statusBadge, esc(lu)}, n%2 == 1))
 					_ = cw.Write([]string{"host", h.ID, h.Status + "|" + lu})
 					n++
 				}
 				body.WriteString(`</table>`)
+			}
+
+		case "open_alerts":
+			body.WriteString(sectionHeader("Open Alerts"))
+			alertsStore := store.NewAlertsStore(d)
+
+			// Stats summary
+			stats, e := alertsStore.GetStats(ctx)
+			if e == nil {
+				body.WriteString(`<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;"><tr>`)
+				writeKPICard(&body, fmt.Sprintf("%d", stats["total"]), "Total Open", "#6366f1")
+				writeKPICard(&body, fmt.Sprintf("%d", stats["critical"]), "Critical", criticalColor(stats["critical"]))
+				writeKPICard(&body, fmt.Sprintf("%d", stats["error"]), "Error", criticalColor(stats["error"]))
+				writeKPICard(&body, fmt.Sprintf("%d", stats["warning"]), "Warning", "#d97706")
+				body.WriteString(`</tr></table>`)
+
+				for k, v := range stats {
+					_ = cw.Write([]string{"open_alerts", k, fmt.Sprintf("%d", v)})
+				}
+			}
+
+			// Active alerts list
+			alerts, e := alertsStore.List(ctx, nil)
+			if e == nil && len(alerts) > 0 {
+				body.WriteString(tableOpen([]string{"Severity", "Title", "Created", "Assigned To"}))
+				n := 0
+				for _, a := range alerts {
+					if !a.IsActive {
+						continue
+					}
+					if n >= top {
+						break
+					}
+					sevBadge := severityBadgeHTML(a.Severity)
+					created := a.CreatedAt.Format("Jan 2, 15:04 UTC")
+					assigned := "-"
+					if a.UsersAssigned != nil {
+						assigned = esc(a.UsersAssigned.Username)
+					}
+					titleLink := esc(a.Title)
+					if baseURL != "" {
+						titleLink = fmt.Sprintf(`<a href="%s/alerts" style="color:#2563eb;text-decoration:none;">%s</a>`, esc(baseURL), esc(a.Title))
+					}
+					body.WriteString(tableRow([]string{sevBadge, titleLink, esc(created), assigned}, n%2 == 1))
+					_ = cw.Write([]string{"open_alert", a.ID, a.Severity + "|" + a.Title})
+					n++
+				}
+				body.WriteString(`</table>`)
+			} else if e == nil {
+				body.WriteString(`<p style="color:#64748b;font-size:14px;">No open alerts.</p>`)
+			}
+
+		case "hosts_by_updates":
+			body.WriteString(sectionHeader("Hosts by Outstanding Updates"))
+			dashStore := store.NewDashboardStore(d)
+			hostsData, e := dashStore.GetHostsWithCounts(ctx, store.HostsListParams{})
+			if e == nil && len(hostsData) > 0 {
+				// Sort by updates count descending
+				sort.Slice(hostsData, func(i, j int) bool {
+					ci, _ := hostsData[i]["updatesCount"].(int64)
+					cj, _ := hostsData[j]["updatesCount"].(int64)
+					if ci == 0 {
+						if v, ok := hostsData[i]["updatesCount"].(int32); ok {
+							ci = int64(v)
+						}
+					}
+					if cj == 0 {
+						if v, ok := hostsData[j]["updatesCount"].(int32); ok {
+							cj = int64(v)
+						}
+					}
+					return ci > cj
+				})
+
+				body.WriteString(tableOpen([]string{"Host", "Outstanding Updates", "Security Updates", "Status", "Last Seen"}))
+				n := 0
+				for _, h := range hostsData {
+					if n >= top {
+						break
+					}
+					name := ""
+					if fn, ok := h["friendly_name"].(string); ok && fn != "" {
+						name = fn
+					} else if hn, ok := h["hostname"].(*string); ok && hn != nil {
+						name = *hn
+					}
+					if name == "" {
+						if apiID, ok := h["api_id"].(string); ok {
+							name = apiID
+						}
+					}
+					updatesCount := "0"
+					if v, ok := h["updatesCount"].(int64); ok {
+						updatesCount = fmt.Sprintf("%d", v)
+					} else if v, ok := h["updatesCount"].(int32); ok {
+						updatesCount = fmt.Sprintf("%d", v)
+					}
+					secCount := "0"
+					if v, ok := h["securityUpdatesCount"].(int64); ok {
+						secCount = fmt.Sprintf("%d", v)
+					} else if v, ok := h["securityUpdatesCount"].(int32); ok {
+						secCount = fmt.Sprintf("%d", v)
+					}
+					status := ""
+					if s, ok := h["effectiveStatus"].(string); ok {
+						status = s
+					} else if s, ok := h["status"].(string); ok {
+						status = s
+					}
+					lastSeen := "-"
+					if lu, ok := h["last_update"].(string); ok && lu != "" {
+						if t, err := time.Parse(time.RFC3339, lu); err == nil {
+							lastSeen = t.Format("Jan 2, 15:04 UTC")
+						}
+					}
+					hostLink := esc(name)
+					if baseURL != "" {
+						if hid, ok := h["id"].(string); ok {
+							hostLink = fmt.Sprintf(`<a href="%s/hosts/%s" style="color:#2563eb;text-decoration:none;">%s</a>`, esc(baseURL), esc(hid), esc(name))
+						}
+					}
+					body.WriteString(tableRow([]string{hostLink, esc(updatesCount), esc(secCount), statusBadgeHTML(status), esc(lastSeen)}, n%2 == 1))
+					_ = cw.Write([]string{"hosts_by_updates", name, updatesCount + "|" + secCount})
+					n++
+				}
+				body.WriteString(`</table>`)
+			} else {
+				body.WriteString(`<p style="color:#64748b;font-size:14px;">No host data available.</p>`)
+			}
+
+		case "top_security_packages":
+			body.WriteString(sectionHeader("Top Outdated Security Packages"))
+			pkgStore := store.NewPackagesStore(d)
+			pkgs, e := pkgStore.ListNeedingUpdates(ctx)
+			if e == nil && len(pkgs) > 0 {
+				// Filter to security updates and sort by affected hosts count
+				var secPkgs []map[string]interface{}
+				for _, p := range pkgs {
+					if isSec, ok := p["isSecurityUpdate"].(bool); ok && isSec {
+						secPkgs = append(secPkgs, p)
+					}
+				}
+				sort.Slice(secPkgs, func(i, j int) bool {
+					ci, _ := secPkgs[i]["affectedHostsCount"].(int)
+					cj, _ := secPkgs[j]["affectedHostsCount"].(int)
+					return ci > cj
+				})
+
+				if len(secPkgs) > 0 {
+					body.WriteString(tableOpen([]string{"Package", "Category", "Affected Hosts", "Latest Version"}))
+					n := 0
+					for _, p := range secPkgs {
+						if n >= top {
+							break
+						}
+						name := ""
+						if v, ok := p["name"].(string); ok {
+							name = v
+						}
+						category := "-"
+						if v, ok := p["category"].(*string); ok && v != nil {
+							category = *v
+						} else if v, ok := p["category"].(string); ok && v != "" {
+							category = v
+						}
+						affected := "0"
+						if v, ok := p["affectedHostsCount"].(int); ok {
+							affected = fmt.Sprintf("%d", v)
+						}
+						latest := "-"
+						if v, ok := p["latestVersion"].(*string); ok && v != nil {
+							latest = *v
+						} else if v, ok := p["latestVersion"].(string); ok && v != "" {
+							latest = v
+						}
+						pkgLink := esc(name)
+						if baseURL != "" {
+							if pid, ok := p["id"].(string); ok {
+								pkgLink = fmt.Sprintf(`<a href="%s/packages/%s" style="color:#2563eb;text-decoration:none;">%s</a>`, esc(baseURL), esc(pid), esc(name))
+							}
+						}
+						body.WriteString(tableRow([]string{pkgLink, esc(category), esc(affected), esc(latest)}, n%2 == 1))
+						_ = cw.Write([]string{"top_security_package", name, affected})
+						n++
+					}
+					body.WriteString(`</table>`)
+				} else {
+					body.WriteString(`<p style="color:#64748b;font-size:14px;">No outstanding security packages.</p>`)
+				}
+			} else {
+				body.WriteString(`<p style="color:#64748b;font-size:14px;">No package data available.</p>`)
 			}
 
 		default:
@@ -247,39 +450,40 @@ func wrapEmailTemplate(reportName string, bodyContent string, branding ReportBra
 	sb.WriteString(`<tr><td align="center">`)
 
 	// Inner card
-	sb.WriteString(`<table width="640" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%;background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">`)
+	sb.WriteString(`<table width="640" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">`)
 
-	// Header with logo
-	sb.WriteString(`<tr><td style="background: linear-gradient(135deg, #1e293b 0%, #334155 100%); padding:24px 32px;">`)
+	// Header — dark background with logo
+	sb.WriteString(`<tr><td style="background-color:#0f172a;padding:20px 32px;">`)
 	sb.WriteString(`<table width="100%" cellpadding="0" cellspacing="0"><tr>`)
 
 	// Logo
 	sb.WriteString(`<td style="vertical-align:middle;">`)
 	logoURL := branding.LogoLightURL
 	if logoURL == "" && baseURL != "" {
-		// Fall back to the light logo endpoint - if no custom logo is set the endpoint will 404 gracefully
 		logoURL = baseURL + "/api/v1/settings/logos/light"
 	}
 	if logoURL != "" {
-		fmt.Fprintf(&sb, `<img src="%s" alt="PatchMon" height="36" style="height:36px;max-width:200px;display:block;" />`, esc(logoURL))
+		// Use both width and height attributes, and provide alt text fallback
+		fmt.Fprintf(&sb, `<img src="%s" alt="PatchMon" width="140" height="32" style="height:32px;width:auto;max-width:180px;display:block;border:0;" />`, esc(logoURL))
 	} else {
-		sb.WriteString(`<span style="color:#ffffff;font-size:22px;font-weight:700;letter-spacing:-0.5px;">PatchMon</span>`)
+		sb.WriteString(`<span style="color:#ffffff;font-size:20px;font-weight:700;letter-spacing:-0.3px;">PatchMon</span>`)
 	}
 	sb.WriteString(`</td>`)
 
 	// Report date
 	sb.WriteString(`<td style="text-align:right;vertical-align:middle;">`)
-	fmt.Fprintf(&sb, `<span style="color:#94a3b8;font-size:13px;">%s</span>`, time.Now().UTC().Format("January 2, 2006"))
+	now := time.Now().UTC()
+	fmt.Fprintf(&sb, `<span style="color:#94a3b8;font-size:12px;">%s</span>`, now.Format("January 2, 2006"))
 	sb.WriteString(`</td>`)
 
 	sb.WriteString(`</tr></table>`)
 	sb.WriteString(`</td></tr>`)
 
 	// Report title bar
-	sb.WriteString(`<tr><td style="padding:20px 32px 12px;">`)
-	fmt.Fprintf(&sb, `<h1 style="margin:0;color:#0f172a;font-size:22px;font-weight:700;">%s</h1>`, esc(reportName))
-	sb.WriteString(`<p style="margin:4px 0 0;color:#64748b;font-size:13px;">Scheduled report generated at `)
-	sb.WriteString(time.Now().UTC().Format("15:04 UTC"))
+	sb.WriteString(`<tr><td style="padding:20px 32px 8px;">`)
+	fmt.Fprintf(&sb, `<h1 style="margin:0;color:#0f172a;font-size:20px;font-weight:700;">%s</h1>`, esc(reportName))
+	sb.WriteString(`<p style="margin:4px 0 0;color:#64748b;font-size:12px;">Generated `)
+	sb.WriteString(now.Format("Mon, Jan 2 2006 at 15:04 UTC"))
 	sb.WriteString(`</p>`)
 	sb.WriteString(`</td></tr>`)
 
@@ -287,24 +491,24 @@ func wrapEmailTemplate(reportName string, bodyContent string, branding ReportBra
 	sb.WriteString(`<tr><td style="padding:0 32px;"><hr style="border:none;border-top:1px solid #e2e8f0;margin:0;"/></td></tr>`)
 
 	// Body content
-	sb.WriteString(`<tr><td style="padding:20px 32px 32px;">`)
+	sb.WriteString(`<tr><td style="padding:16px 32px 28px;">`)
 	sb.WriteString(bodyContent)
 	sb.WriteString(`</td></tr>`)
 
 	// CTA button
 	if baseURL != "" {
-		sb.WriteString(`<tr><td style="padding:0 32px 32px;text-align:center;">`)
-		fmt.Fprintf(&sb, `<a href="%s" style="display:inline-block;background-color:#2563eb;color:#ffffff;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">Open PatchMon Dashboard</a>`, esc(baseURL))
+		sb.WriteString(`<tr><td style="padding:0 32px 28px;text-align:center;">`)
+		fmt.Fprintf(&sb, `<a href="%s" style="display:inline-block;background-color:#2563eb;color:#ffffff;padding:10px 28px;border-radius:6px;text-decoration:none;font-weight:600;font-size:13px;">Open PatchMon Dashboard</a>`, esc(baseURL))
 		sb.WriteString(`</td></tr>`)
 	}
 
 	// Footer
-	sb.WriteString(`<tr><td style="background-color:#f8fafc;padding:20px 32px;border-top:1px solid #e2e8f0;">`)
+	sb.WriteString(`<tr><td style="background-color:#f8fafc;padding:16px 32px;border-top:1px solid #e2e8f0;">`)
 	sb.WriteString(`<table width="100%" cellpadding="0" cellspacing="0"><tr>`)
-	sb.WriteString(`<td style="color:#94a3b8;font-size:12px;">Sent by PatchMon</td>`)
+	sb.WriteString(`<td style="color:#94a3b8;font-size:11px;">Sent by PatchMon</td>`)
 	if baseURL != "" {
 		sb.WriteString(`<td style="text-align:right;">`)
-		fmt.Fprintf(&sb, `<a href="%s/settings/alert-channels" style="color:#94a3b8;font-size:12px;text-decoration:none;">Manage notifications</a>`, esc(baseURL))
+		fmt.Fprintf(&sb, `<a href="%s/settings/alert-channels" style="color:#94a3b8;font-size:11px;text-decoration:none;">Manage notifications</a>`, esc(baseURL))
 		sb.WriteString(`</td>`)
 	}
 	sb.WriteString(`</tr></table>`)
@@ -319,14 +523,14 @@ func wrapEmailTemplate(reportName string, bodyContent string, branding ReportBra
 // --- HTML helpers ---
 
 func sectionHeader(title string) string {
-	return fmt.Sprintf(`<h2 style="color:#0f172a;font-size:18px;font-weight:600;margin:24px 0 12px;padding-bottom:8px;border-bottom:2px solid #e2e8f0;">%s</h2>`, TemplateEscape(title))
+	return fmt.Sprintf(`<h2 style="color:#0f172a;font-size:16px;font-weight:600;margin:24px 0 12px;padding-bottom:8px;border-bottom:2px solid #e2e8f0;">%s</h2>`, TemplateEscape(title))
 }
 
 func writeKPICard(sb *strings.Builder, value, label, color string) {
 	fmt.Fprintf(sb, `<td width="25%%" style="padding:4px;">
-		<table width="100%%" cellpadding="0" cellspacing="0" style="background-color:#f8fafc;border-radius:8px;border-left:4px solid %s;padding:12px 16px;">
-		<tr><td style="font-size:24px;font-weight:700;color:#0f172a;line-height:1.2;">%s</td></tr>
-		<tr><td style="font-size:12px;color:#64748b;padding-top:2px;">%s</td></tr>
+		<table width="100%%" cellpadding="0" cellspacing="0" style="background-color:#f8fafc;border-radius:6px;padding:12px 16px;">
+		<tr><td style="font-size:22px;font-weight:700;color:%s;line-height:1.2;">%s</td></tr>
+		<tr><td style="font-size:11px;color:#64748b;padding-top:2px;text-transform:uppercase;letter-spacing:0.03em;">%s</td></tr>
 		</table></td>`, color, TemplateEscape(value), TemplateEscape(label))
 }
 
@@ -335,7 +539,7 @@ func tableOpen(headers []string) string {
 	sb.WriteString(`<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:16px;">`)
 	sb.WriteString(`<tr>`)
 	for _, h := range headers {
-		fmt.Fprintf(&sb, `<th style="text-align:left;padding:10px 12px;background-color:#f1f5f9;color:#475569;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;border-bottom:2px solid #e2e8f0;">%s</th>`, TemplateEscape(h))
+		fmt.Fprintf(&sb, `<th style="text-align:left;padding:8px 10px;background-color:#f1f5f9;color:#475569;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;border-bottom:2px solid #e2e8f0;">%s</th>`, TemplateEscape(h))
 	}
 	sb.WriteString(`</tr>`)
 	return sb.String()
@@ -349,7 +553,7 @@ func tableRow(cells []string, isAlt bool) string {
 	var sb strings.Builder
 	sb.WriteString(`<tr>`)
 	for _, c := range cells {
-		fmt.Fprintf(&sb, `<td style="padding:10px 12px;font-size:14px;color:#334155;border-bottom:1px solid #f1f5f9;background-color:%s;">%s</td>`, bg, c)
+		fmt.Fprintf(&sb, `<td style="padding:8px 10px;font-size:13px;color:#334155;border-bottom:1px solid #f1f5f9;background-color:%s;">%s</td>`, bg, c)
 	}
 	sb.WriteString(`</tr>`)
 	return sb.String()
@@ -360,8 +564,8 @@ func statusBadgeHTML(status string) string {
 	bg := "#f1f5f9"
 	switch strings.ToLower(status) {
 	case "completed", "active", "compliant":
-		color = "#059669"
-		bg = "#ecfdf5"
+		color = "#16a34a"
+		bg = "#f0fdf4"
 	case "failed", "critical":
 		color = "#dc2626"
 		bg = "#fef2f2"
@@ -371,14 +575,38 @@ func statusBadgeHTML(status string) string {
 	case "queued", "pending", "pending_validation":
 		color = "#6366f1"
 		bg = "#eef2ff"
+	case "inactive", "offline":
+		color = "#94a3b8"
+		bg = "#f1f5f9"
 	}
-	return fmt.Sprintf(`<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;color:%s;background-color:%s;">%s</span>`,
+	return fmt.Sprintf(`<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;color:%s;background-color:%s;">%s</span>`,
 		color, bg, TemplateEscape(strings.ToUpper(status)))
+}
+
+func severityBadgeHTML(severity string) string {
+	color := "#64748b"
+	bg := "#f1f5f9"
+	switch strings.ToLower(severity) {
+	case "critical":
+		color = "#dc2626"
+		bg = "#fef2f2"
+	case "error":
+		color = "#dc2626"
+		bg = "#fef2f2"
+	case "warning":
+		color = "#d97706"
+		bg = "#fffbeb"
+	case "informational", "info":
+		color = "#2563eb"
+		bg = "#eff6ff"
+	}
+	return fmt.Sprintf(`<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;color:%s;background-color:%s;">%s</span>`,
+		color, bg, TemplateEscape(strings.ToUpper(severity)))
 }
 
 func complianceColor(score float64) string {
 	if score >= 80 {
-		return "#059669"
+		return "#16a34a"
 	}
 	if score >= 50 {
 		return "#d97706"
@@ -388,7 +616,7 @@ func complianceColor(score float64) string {
 
 func criticalColor(count int) string {
 	if count == 0 {
-		return "#059669"
+		return "#16a34a"
 	}
 	return "#dc2626"
 }

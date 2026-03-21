@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
@@ -20,18 +21,26 @@ import (
 
 // NotificationsHandler manages notification destinations, routes, logs, and scheduled reports.
 type NotificationsHandler struct {
-	db   database.DBProvider
-	enc  *util.Encryption
-	emit *notifications.Emitter
+	db       database.DBProvider
+	enc      *util.Encryption
+	emit     *notifications.Emitter
+	resolved *config.ResolvedConfig
 }
 
 // NewNotificationsHandler creates the handler.
-func NewNotificationsHandler(db database.DBProvider, enc *util.Encryption, emit *notifications.Emitter) *NotificationsHandler {
-	return &NotificationsHandler{db: db, enc: enc, emit: emit}
+func NewNotificationsHandler(db database.DBProvider, enc *util.Encryption, emit *notifications.Emitter, resolved *config.ResolvedConfig) *NotificationsHandler {
+	return &NotificationsHandler{db: db, enc: enc, emit: emit, resolved: resolved}
 }
 
 func (h *NotificationsHandler) q(ctx context.Context) *db.Queries {
 	return h.db.DB(ctx).Queries
+}
+
+func (h *NotificationsHandler) timezone() string {
+	if h.resolved != nil && h.resolved.Timezone != "" {
+		return h.resolved.Timezone
+	}
+	return "UTC"
 }
 
 // ListDestinations GET /notifications/destinations
@@ -145,6 +154,34 @@ func (h *NotificationsHandler) UpdateDestination(w http.ResponseWriter, r *http.
 		return
 	}
 	JSON(w, http.StatusOK, map[string]interface{}{"id": row.ID, "display_name": row.DisplayName, "enabled": row.Enabled})
+}
+
+// GetDestinationConfig GET /notifications/destinations/{id}/config
+// Returns the decrypted config for editing. Protected by can_manage_notifications.
+func (h *NotificationsHandler) GetDestinationConfig(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		Error(w, http.StatusBadRequest, "id required")
+		return
+	}
+	dest, err := h.q(r.Context()).GetNotificationDestinationByID(r.Context(), id)
+	if err != nil {
+		Error(w, http.StatusNotFound, "Not found")
+		return
+	}
+	plain := "{}"
+	if dest.ConfigEncrypted != "" && h.enc != nil {
+		if d, err := h.enc.Decrypt(dest.ConfigEncrypted); err == nil {
+			plain = d
+		}
+	} else if dest.ConfigEncrypted != "" {
+		plain = dest.ConfigEncrypted
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal([]byte(plain), &cfg); err != nil {
+		cfg = map[string]interface{}{}
+	}
+	JSON(w, http.StatusOK, cfg)
 }
 
 // DeleteDestination DELETE /notifications/destinations/{id}
@@ -402,7 +439,6 @@ func (h *NotificationsHandler) scheduledReportToMap(row db.ScheduledReport) map[
 		"id":              row.ID,
 		"name":            row.Name,
 		"cron_expr":       row.CronExpr,
-		"timezone":        row.Timezone,
 		"enabled":         row.Enabled,
 		"definition":      def,
 		"destination_ids": destIDs,
@@ -432,7 +468,6 @@ func (h *NotificationsHandler) CreateScheduledReport(w http.ResponseWriter, r *h
 	var req struct {
 		Name           string                 `json:"name"`
 		CronExpr       string                 `json:"cron_expr"`
-		Timezone       string                 `json:"timezone"`
 		Enabled        *bool                  `json:"enabled"`
 		Definition     map[string]interface{} `json:"definition"`
 		DestinationIDs []string               `json:"destination_ids"`
@@ -445,10 +480,7 @@ func (h *NotificationsHandler) CreateScheduledReport(w http.ResponseWriter, r *h
 	if cron == "" {
 		cron = "0 8 * * *"
 	}
-	tz := req.Timezone
-	if tz == "" {
-		tz = "UTC"
-	}
+	tz := h.timezone()
 	def, _ := json.Marshal(req.Definition)
 	if len(def) == 0 || string(def) == "null" {
 		def = []byte("{}")
@@ -460,14 +492,13 @@ func (h *NotificationsHandler) CreateScheduledReport(w http.ResponseWriter, r *h
 	}
 	next, err := notifications.NextCronRun(cron, tz, time.Now())
 	if err != nil {
-		Error(w, http.StatusBadRequest, "Invalid cron_expr or timezone")
+		Error(w, http.StatusBadRequest, "Invalid cron_expr")
 		return
 	}
 	row, err := h.q(r.Context()).CreateScheduledReport(r.Context(), db.CreateScheduledReportParams{
 		ID:             uuid.New().String(),
 		Name:           req.Name,
 		CronExpr:       cron,
-		Timezone:       tz,
 		Enabled:        en,
 		Definition:     def,
 		DestinationIds: dest,
@@ -487,7 +518,6 @@ func (h *NotificationsHandler) UpdateScheduledReport(w http.ResponseWriter, r *h
 	var req struct {
 		Name           string                 `json:"name"`
 		CronExpr       string                 `json:"cron_expr"`
-		Timezone       string                 `json:"timezone"`
 		Enabled        *bool                  `json:"enabled"`
 		Definition     map[string]interface{} `json:"definition"`
 		DestinationIDs []string               `json:"destination_ids"`
@@ -509,10 +539,7 @@ func (h *NotificationsHandler) UpdateScheduledReport(w http.ResponseWriter, r *h
 	if req.CronExpr != "" {
 		cron = req.CronExpr
 	}
-	tz := ex.Timezone
-	if req.Timezone != "" {
-		tz = req.Timezone
-	}
+	tz := h.timezone()
 	en := ex.Enabled
 	if req.Enabled != nil {
 		en = *req.Enabled
@@ -526,7 +553,7 @@ func (h *NotificationsHandler) UpdateScheduledReport(w http.ResponseWriter, r *h
 		dest, _ = json.Marshal(req.DestinationIDs)
 	}
 	nextAt := ex.NextRunAt
-	if req.CronExpr != "" || req.Timezone != "" {
+	if req.CronExpr != "" {
 		if n, err := notifications.NextCronRun(cron, tz, time.Now()); err == nil {
 			nextAt = pgtype.Timestamp{Time: n, Valid: true}
 		}
@@ -535,7 +562,6 @@ func (h *NotificationsHandler) UpdateScheduledReport(w http.ResponseWriter, r *h
 		ID:             id,
 		Name:           name,
 		CronExpr:       cron,
-		Timezone:       tz,
 		Enabled:        en,
 		Definition:     def,
 		DestinationIds: dest,
