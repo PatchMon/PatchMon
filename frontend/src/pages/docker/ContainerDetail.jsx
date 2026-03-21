@@ -74,7 +74,7 @@ const ContainerDetail = () => {
 		};
 		return (
 			<span
-				className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+				className={`inline-flex items-center px-3 py-1 rounded text-sm font-medium ${
 					statusClasses[status] ||
 					"bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
 				}`}
@@ -257,7 +257,7 @@ const ContainerDetail = () => {
 											{Object.entries(container.ports).map(([key, value]) => (
 												<span
 													key={key}
-													className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+													className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
 												>
 													{key} &gt; {value}
 												</span>

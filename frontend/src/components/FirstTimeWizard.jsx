@@ -941,7 +941,7 @@ const FirstTimeWizard = () => {
 												{`${wizardData.firstName} ${wizardData.lastName}`.trim() ||
 													" -"}
 											</span>
-											<span className="text-secondary-400 dark:text-secondary-500">
+											<span className="text-secondary-400 dark:text-secondary-300">
 												•
 											</span>
 											<span>{wizardData.email || " -"}</span>

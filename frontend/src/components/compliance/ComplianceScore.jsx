@@ -37,7 +37,7 @@ const ComplianceScore = ({ score, size = "md" }) => {
 
 	return (
 		<div
-			className={`inline-flex items-center gap-1.5 rounded-full ${getScoreBg(score)} ${sizeClasses[size]}`}
+			className={`inline-flex items-center gap-1.5 rounded ${getScoreBg(score)} ${sizeClasses[size]}`}
 		>
 			<Icon className={`h-4 w-4 ${getScoreColor(score)}`} />
 			<span className={`font-semibold ${getScoreColor(score)}`}>

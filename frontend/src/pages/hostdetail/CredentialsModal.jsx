@@ -232,7 +232,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 							className={`py-2 px-1 border-b-2 font-medium text-sm ${
 								activeTab === "quick-install"
 									? "border-primary-500 text-primary-600 dark:text-primary-400"
-									: "border-transparent text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300 hover:border-secondary-300 dark:hover:border-secondary-500"
+									: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-primary-400"
 							}`}
 						>
 							Quick Install
@@ -243,7 +243,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 							className={`py-2 px-1 border-b-2 font-medium text-sm ${
 								activeTab === "credentials"
 									? "border-primary-500 text-primary-600 dark:text-primary-400"
-									: "border-transparent text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300 hover:border-secondary-300 dark:hover:border-secondary-500"
+									: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-primary-400"
 							}`}
 						>
 							API Credentials

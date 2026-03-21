@@ -175,7 +175,7 @@ const ProtocolUrlTab = () => {
 					<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-1">
 						Agent communication URL
 					</p>
-					<p className="text-sm text-secondary-500 dark:text-secondary-500 mb-4">
+					<p className="text-sm text-secondary-500 dark:text-secondary-300 mb-4">
 						This is the URL agents use to connect. If you change your access
 						URL, update this in Settings &gt; Server URL.
 					</p>

@@ -313,7 +313,7 @@ const Profile = () => {
 									className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center ${
 										activeTab === tab.id
 											? "border-primary-500 text-primary-600 dark:text-primary-400"
-											: "border-transparent text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300 hover:border-secondary-300 dark:hover:border-secondary-500"
+											: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-primary-400"
 									}`}
 								>
 									<Icon className="h-4 w-4 mr-2" />
@@ -888,7 +888,7 @@ const Profile = () => {
 												</p>
 											</div>
 										</div>
-										<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+										<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
 											Active
 										</span>
 									</div>

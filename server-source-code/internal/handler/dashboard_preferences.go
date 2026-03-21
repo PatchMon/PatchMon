@@ -83,6 +83,13 @@ var defaultCardLayout = []struct {
 	{CardID: "patchingRunsByType", RequiredPermission: "can_view_hosts", Order: 29, Enabled: true, ColSpan: 1},
 	{CardID: "patchingActivePolicies", RequiredPermission: "can_view_hosts", Order: 30, Enabled: true, ColSpan: 1},
 	{CardID: "patchingRecentRuns", RequiredPermission: "can_view_hosts", Order: 31, Enabled: true, ColSpan: 1},
+	{CardID: "alertStatusBoxes", RequiredPermission: "can_view_hosts", Order: 32, Enabled: true, ColSpan: 1},
+	{CardID: "alertSeverityDoughnut", RequiredPermission: "can_view_hosts", Order: 33, Enabled: true, ColSpan: 1},
+	{CardID: "alertVolumeTrend", RequiredPermission: "can_view_hosts", Order: 34, Enabled: true, ColSpan: 2},
+	{CardID: "alertsByType", RequiredPermission: "can_view_hosts", Order: 35, Enabled: true, ColSpan: 1},
+	{CardID: "recentAlerts", RequiredPermission: "can_view_hosts", Order: 36, Enabled: true, ColSpan: 1},
+	{CardID: "alertResponderWorkload", RequiredPermission: "can_view_hosts", Order: 37, Enabled: true, ColSpan: 1},
+	{CardID: "deliveryByDestination", RequiredPermission: "can_view_hosts", Order: 38, Enabled: true, ColSpan: 2},
 }
 
 // Card metadata (matches Node CARD_METADATA).
@@ -122,6 +129,13 @@ var cardMetadata = map[string]struct {
 	"patchingRunsByType":             {Title: "Runs by Type", Icon: "PieChart"},
 	"patchingActivePolicies":         {Title: "Active Runs", Icon: "PlayCircle"},
 	"patchingRecentRuns":             {Title: "Recent Runs", Icon: "History"},
+	"alertStatusBoxes":               {Title: "Alert Status", Icon: "AlertTriangle"},
+	"alertSeverityDoughnut":          {Title: "Alert Severity", Icon: "PieChart"},
+	"alertVolumeTrend":               {Title: "Alert Volume Trend", Icon: "TrendingUp"},
+	"alertsByType":                   {Title: "Alerts by Type", Icon: "BarChart3"},
+	"recentAlerts":                   {Title: "Recent Alerts", Icon: "Bell"},
+	"alertResponderWorkload":         {Title: "Responder Workload", Icon: "Users"},
+	"deliveryByDestination":          {Title: "Delivery by Destination", Icon: "Send"},
 }
 
 // Get returns the user's dashboard preferences (GET /dashboard-preferences).

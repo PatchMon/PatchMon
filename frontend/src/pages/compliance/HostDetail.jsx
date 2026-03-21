@@ -159,7 +159,7 @@ const ComplianceHostDetail = () => {
 					<div className="flex items-center gap-3">
 						{/* Connection Status */}
 						<span
-							className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${
+							className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded ${
 								ws_status?.connected
 									? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
 									: "bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-white"

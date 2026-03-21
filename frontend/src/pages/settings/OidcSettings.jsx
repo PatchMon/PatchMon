@@ -649,7 +649,7 @@ const OidcSettings = () => {
 															className="w-full max-w-xs px-3 py-2 text-sm bg-white dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
 														/>
 													) : (
-														<span className="text-sm text-secondary-400 dark:text-secondary-500 italic">
+														<span className="text-sm text-secondary-400 dark:text-secondary-300 italic">
 															- Not configurable via OIDC
 														</span>
 													)}

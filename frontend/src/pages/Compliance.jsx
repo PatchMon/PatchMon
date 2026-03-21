@@ -22,13 +22,12 @@ import {
 	X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Doughnut } from "react-chartjs-2";
 import { Link, useLocation } from "react-router-dom";
 import {
 	Bar,
 	BarChart,
 	Cell,
-	Pie,
-	PieChart,
 	ResponsiveContainer,
 	Tooltip,
 	XAxis,
@@ -44,6 +43,8 @@ import {
 	LastScanAgeBar,
 	OpenSCAPDistributionDoughnut,
 } from "../components/compliance/widgets";
+import { getDoughnutOptions } from "../components/compliance/widgets/chartOptions";
+import { useTheme } from "../contexts/ThemeContext";
 import { useToast } from "../contexts/ToastContext";
 import { adminHostsAPI } from "../utils/api";
 import { complianceAPI } from "../utils/complianceApi";
@@ -114,6 +115,7 @@ const COMPLIANCE_TABS = [
 
 const Compliance = () => {
 	const queryClient = useQueryClient();
+	const { isDark } = useTheme();
 	const toast = useToast();
 	const location = useLocation();
 	const [activeTab, setActiveTab] = useState(() => {
@@ -581,7 +583,7 @@ const Compliance = () => {
 								className={`${
 									activeTab === tab.id
 										? "border-primary-500 text-primary-600 dark:text-primary-400"
-										: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-white"
+										: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-primary-400"
 								} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
 							>
 								<Icon className="h-4 w-4 mr-2" />
@@ -1335,37 +1337,22 @@ const Compliance = () => {
 											rules evaluated
 										</p>
 										<div className="h-40">
-											<ResponsiveContainer width="100%" height="100%">
-												<PieChart>
-													<Pie
-														data={[
-															{
-																name: "Passed",
-																value: openscapStats.total_passed || 0,
-																color: "#22c55e",
-															},
-															{
-																name: "Failed",
-																value: openscapStats.total_failed || 0,
-																color: "#ef4444",
-															},
-														].filter((d) => d.value > 0)}
-														cx="50%"
-														cy="50%"
-														innerRadius={35}
-														outerRadius={60}
-														dataKey="value"
-														label={({ value }) => `${value.toLocaleString()}`}
-														labelLine={false}
-													>
-														<Cell fill="#22c55e" />
-														<Cell fill="#ef4444" />
-													</Pie>
-													<Tooltip
-														content={<CustomTooltip type="ruleStatus" />}
-													/>
-												</PieChart>
-											</ResponsiveContainer>
+											<Doughnut
+												data={{
+													labels: ["Passed", "Failed"],
+													datasets: [
+														{
+															data: [
+																openscapStats.total_passed || 0,
+																openscapStats.total_failed || 0,
+															],
+															backgroundColor: ["#22c55e", "#ef4444"],
+															borderWidth: 0,
+														},
+													],
+												}}
+												options={getDoughnutOptions(isDark)}
+											/>
 										</div>
 										<div className="flex justify-center gap-6 mt-2 text-sm">
 											<div className="flex items-center gap-2">
@@ -1646,37 +1633,22 @@ const Compliance = () => {
 											rules evaluated
 										</p>
 										<div className="h-40">
-											<ResponsiveContainer width="100%" height="100%">
-												<PieChart>
-													<Pie
-														data={[
-															{
-																name: "Passed",
-																value: dockerBenchStats.total_passed || 0,
-																color: "#22c55e",
-															},
-															{
-																name: "Warnings",
-																value: dockerBenchStats.total_warnings || 0,
-																color: "#eab308",
-															},
-														].filter((d) => d.value > 0)}
-														cx="50%"
-														cy="50%"
-														innerRadius={35}
-														outerRadius={60}
-														dataKey="value"
-														label={({ value }) => `${value.toLocaleString()}`}
-														labelLine={false}
-													>
-														<Cell fill="#22c55e" />
-														<Cell fill="#eab308" />
-													</Pie>
-													<Tooltip
-														content={<CustomTooltip type="ruleStatus" />}
-													/>
-												</PieChart>
-											</ResponsiveContainer>
+											<Doughnut
+												data={{
+													labels: ["Passed", "Warnings"],
+													datasets: [
+														{
+															data: [
+																dockerBenchStats.total_passed || 0,
+																dockerBenchStats.total_warnings || 0,
+															],
+															backgroundColor: ["#22c55e", "#eab308"],
+															borderWidth: 0,
+														},
+													],
+												}}
+												options={getDoughnutOptions(isDark)}
+											/>
 										</div>
 										<div className="flex justify-center gap-6 mt-2 text-sm">
 											<div className="flex items-center gap-2">

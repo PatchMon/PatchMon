@@ -6,6 +6,7 @@ export function getDoughnutOptions(is_dark, is_mobile = false) {
 	return {
 		responsive: true,
 		maintainAspectRatio: false,
+		cutout: "70%",
 		elements: {
 			arc: { borderRadius: 5 },
 		},

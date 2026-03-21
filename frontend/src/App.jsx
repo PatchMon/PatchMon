@@ -51,7 +51,6 @@ const SettingsHomeRedirect = lazy(
 	() => import("./pages/settings/SettingsHomeRedirect"),
 );
 const Integrations = lazy(() => import("./pages/settings/Integrations"));
-const PatchManagement = lazy(() => import("./pages/settings/PatchManagement"));
 const SettingsAgentConfig = lazy(
 	() => import("./pages/settings/SettingsAgentConfig"),
 );
@@ -404,14 +403,6 @@ function AppRoutes() {
 							element={
 								<ProtectedRoute requirePermission="can_manage_settings">
 									<Integrations />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="patch-management"
-							element={
-								<ProtectedRoute requirePermission="can_manage_settings">
-									<PatchManagement />
 								</ProtectedRoute>
 							}
 						/>

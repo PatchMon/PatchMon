@@ -249,6 +249,7 @@ const Layout = ({ children }) => {
 					name: "Reporting",
 					href: "/reporting",
 					icon: AlertTriangle,
+					new: true,
 				});
 			}
 
@@ -279,7 +280,6 @@ const Layout = ({ children }) => {
 				name: "Compliance",
 				href: "/compliance",
 				icon: Shield,
-				beta: true,
 			});
 
 			if (canViewReports()) {

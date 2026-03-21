@@ -3,17 +3,22 @@ import {
 	AlertTriangle,
 	CheckCircle,
 	Clock,
+	Edit,
 	History,
 	LayoutDashboard,
 	ListChecks,
 	PlayCircle,
+	Plus,
 	RefreshCw,
 	Server,
+	Shield,
 	Trash2,
 	User,
+	Users,
+	X,
 	XCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { PackageListDisplay } from "../components/PackageListDisplay";
 import { PatchRunStatusBadge } from "../components/PatchRunStatusBadge";
@@ -25,11 +30,14 @@ import {
 	PatchRunStatusBoxes,
 	PatchRunsByType,
 } from "../components/patching/widgets";
+import { useToast } from "../contexts/ToastContext";
+import { adminHostsAPI, hostGroupsAPI } from "../utils/api";
 import { patchingAPI } from "../utils/patchingApi";
 
 const PATCHING_TABS = [
 	{ id: "overview", label: "Overview", icon: LayoutDashboard },
 	{ id: "runs", label: "Runs & History", icon: History },
+	{ id: "policies", label: "Policies", icon: Shield },
 ];
 
 const ValidatedBadge = () => (
@@ -41,7 +49,10 @@ const ValidatedBadge = () => (
 
 const Patching = () => {
 	const [searchParams] = useSearchParams();
-	const initialTab = searchParams.get("tab") === "runs" ? "runs" : "overview";
+	const urlTab = searchParams.get("tab");
+	const initialTab = ["runs", "policies"].includes(urlTab)
+		? urlTab
+		: "overview";
 	const initialStatus = searchParams.get("status") || "";
 	const [activeTab, setActiveTab] = useState(initialTab);
 	const [runsFilterStatus, setRunsFilterStatus] = useState(initialStatus);
@@ -197,7 +208,7 @@ const Patching = () => {
 					<div className="flex items-center">
 						<ListChecks className="h-5 w-5 text-primary-600 mr-2" />
 						<div>
-							<p className="text-sm text-secondary-500 dark:text-secondary-400">
+							<p className="text-sm text-secondary-500 dark:text-white">
 								Total runs
 							</p>
 							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
@@ -210,7 +221,7 @@ const Patching = () => {
 					<div className="flex items-center">
 						<Clock className="h-5 w-5 text-blue-600 mr-2" />
 						<div>
-							<p className="text-sm text-secondary-500 dark:text-secondary-400">
+							<p className="text-sm text-secondary-500 dark:text-white">
 								Queued / Running
 							</p>
 							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
@@ -223,7 +234,7 @@ const Patching = () => {
 					<div className="flex items-center">
 						<CheckCircle className="h-5 w-5 text-green-600 mr-2" />
 						<div>
-							<p className="text-sm text-secondary-500 dark:text-secondary-400">
+							<p className="text-sm text-secondary-500 dark:text-white">
 								Completed
 							</p>
 							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
@@ -236,7 +247,7 @@ const Patching = () => {
 					<div className="flex items-center">
 						<XCircle className="h-5 w-5 text-red-600 mr-2" />
 						<div>
-							<p className="text-sm text-secondary-500 dark:text-secondary-400">
+							<p className="text-sm text-secondary-500 dark:text-white">
 								Failed
 							</p>
 							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
@@ -245,49 +256,48 @@ const Patching = () => {
 						</div>
 					</div>
 				</div>
-				<Link
-					to="/settings/patch-management"
-					className="card p-4 hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow"
+				<button
+					type="button"
+					onClick={() => setActiveTab("policies")}
+					className="card p-4 hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow text-left"
 				>
 					<div className="flex items-center">
-						<Server className="h-5 w-5 text-secondary-600 mr-2" />
+						<Shield className="h-5 w-5 text-secondary-600 mr-2" />
 						<div>
-							<p className="text-sm text-secondary-500 dark:text-secondary-400">
+							<p className="text-sm text-secondary-500 dark:text-white">
 								Patch policies
 							</p>
 							<p className="text-sm font-medium text-primary-600 dark:text-primary-400">
-								Manage in Settings
+								Manage policies
 							</p>
 						</div>
 					</div>
-				</Link>
+				</button>
 			</div>
 
 			{/* Tabs */}
 			<div>
-				<div className="card">
-					<div className="border-b border-secondary-200 dark:border-secondary-600">
-						<nav className="-mb-px flex space-x-8 px-4" aria-label="Tabs">
-							{PATCHING_TABS.map((tab) => {
-								const Icon = tab.icon;
-								return (
-									<button
-										key={tab.id}
-										type="button"
-										onClick={() => setActiveTab(tab.id)}
-										className={`flex items-center gap-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors whitespace-nowrap ${
-											activeTab === tab.id
-												? "border-primary-500 text-primary-600 dark:text-primary-400"
-												: "border-transparent text-secondary-500 hover:text-secondary-700 dark:text-secondary-400 dark:hover:text-secondary-300"
-										}`}
-									>
-										<Icon className="h-4 w-4" />
-										{tab.label}
-									</button>
-								);
-							})}
-						</nav>
-					</div>
+				<div className="border-b border-secondary-200 dark:border-secondary-600">
+					<nav className="-mb-px flex space-x-8 px-4" aria-label="Tabs">
+						{PATCHING_TABS.map((tab) => {
+							const Icon = tab.icon;
+							return (
+								<button
+									key={tab.id}
+									type="button"
+									onClick={() => setActiveTab(tab.id)}
+									className={`${
+										activeTab === tab.id
+											? "border-primary-500 text-primary-600 dark:text-primary-400"
+											: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-primary-400"
+									} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
+								>
+									<Icon className="h-4 w-4 mr-2" />
+									{tab.label}
+								</button>
+							);
+						})}
+					</nav>
 				</div>
 
 				{activeTab === "overview" && (
@@ -553,9 +563,645 @@ const Patching = () => {
 						</div>
 					</div>
 				)}
+				{activeTab === "policies" && <PoliciesTab />}
 			</div>
 		</div>
 	);
 };
+
+/* ───────────────────── Policies Tab ───────────────────── */
+
+const delay_type_labels = {
+	immediate: "Immediate",
+	delayed: "Delayed",
+	fixed_time: "Fixed time",
+};
+
+function PoliciesTab() {
+	const queryClient = useQueryClient();
+	const toast = useToast();
+	const [showModal, setShowModal] = useState(false);
+	const [editingPolicy, setEditingPolicy] = useState(null);
+	const [form, setForm] = useState({
+		name: "",
+		description: "",
+		patch_delay_type: "immediate",
+		delay_minutes: 60,
+		fixed_time_utc: "03:00",
+		timezone: "UTC",
+	});
+	const [expandedPolicyId, setExpandedPolicyId] = useState(null);
+
+	const { data: policies = [], isLoading } = useQuery({
+		queryKey: ["patching-policies"],
+		queryFn: () => patchingAPI.getPolicies(),
+	});
+
+	const { data: hostGroups = [] } = useQuery({
+		queryKey: ["hostGroups"],
+		queryFn: () => hostGroupsAPI.list().then((res) => res.data),
+	});
+
+	const { data: hostsData } = useQuery({
+		queryKey: ["hosts-list"],
+		queryFn: () => adminHostsAPI.list().then((res) => res.data),
+	});
+	const hosts = hostsData?.data || [];
+
+	const createMutation = useMutation({
+		mutationFn: (data) => patchingAPI.createPolicy(data),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["patching-policies"] });
+			setShowModal(false);
+			resetForm();
+			toast.success("Policy created");
+		},
+		onError: (err) => toast.error(err.response?.data?.error || err.message),
+	});
+
+	const updateMutation = useMutation({
+		mutationFn: ({ id, data }) => patchingAPI.updatePolicy(id, data),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["patching-policies"] });
+			setShowModal(false);
+			setEditingPolicy(null);
+			toast.success("Policy updated");
+		},
+		onError: (err) => toast.error(err.response?.data?.error || err.message),
+	});
+
+	const deleteMutation = useMutation({
+		mutationFn: (id) => patchingAPI.deletePolicy(id),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["patching-policies"] });
+			toast.success("Policy deleted");
+		},
+		onError: (err) => toast.error(err.response?.data?.error || err.message),
+	});
+
+	const resetForm = () =>
+		setForm({
+			name: "",
+			description: "",
+			patch_delay_type: "immediate",
+			delay_minutes: 60,
+			fixed_time_utc: "03:00",
+			timezone: "UTC",
+		});
+
+	const openCreate = () => {
+		setEditingPolicy(null);
+		resetForm();
+		setShowModal(true);
+	};
+
+	const openEdit = (policy) => {
+		setEditingPolicy(policy);
+		setForm({
+			name: policy.name,
+			description: policy.description || "",
+			patch_delay_type: policy.patch_delay_type || "immediate",
+			delay_minutes: policy.delay_minutes ?? 60,
+			fixed_time_utc: policy.fixed_time_utc || "03:00",
+			timezone: policy.timezone || "UTC",
+		});
+		setShowModal(true);
+	};
+
+	const handleSubmit = (e) => {
+		e.preventDefault();
+		const payload = {
+			name: form.name.trim(),
+			description: form.description.trim() || null,
+			patch_delay_type: form.patch_delay_type,
+			delay_minutes:
+				form.patch_delay_type === "delayed" ? Number(form.delay_minutes) : null,
+			fixed_time_utc:
+				form.patch_delay_type === "fixed_time" ? form.fixed_time_utc : null,
+			timezone: form.timezone?.trim() || null,
+		};
+		if (editingPolicy) {
+			updateMutation.mutate({ id: editingPolicy.id, data: payload });
+		} else {
+			createMutation.mutate(payload);
+		}
+	};
+
+	const formatSchedule = (policy) => {
+		const label =
+			delay_type_labels[policy.patch_delay_type] || policy.patch_delay_type;
+		if (policy.patch_delay_type === "delayed" && policy.delay_minutes != null) {
+			return `${label} (${policy.delay_minutes} min)`;
+		}
+		if (policy.patch_delay_type === "fixed_time" && policy.fixed_time_utc) {
+			return `${label} at ${policy.fixed_time_utc} ${policy.timezone || "UTC"}`;
+		}
+		return label;
+	};
+
+	return (
+		<div className="mt-4 space-y-4">
+			<div className="flex items-center justify-between">
+				<p className="text-sm text-secondary-600 dark:text-secondary-400">
+					Patch policies control when patches run. Assign policies to hosts or
+					host groups.
+				</p>
+				<button
+					type="button"
+					onClick={openCreate}
+					className="btn-primary flex items-center gap-2"
+				>
+					<Plus className="h-4 w-4" />
+					Create policy
+				</button>
+			</div>
+
+			<div className="card p-4 md:p-6">
+				{isLoading ? (
+					<div className="p-8 text-center text-secondary-500">Loading...</div>
+				) : policies.length === 0 ? (
+					<div className="p-8 text-center text-secondary-500">
+						No policies yet. Create one to control when patches run.
+					</div>
+				) : (
+					<div className="overflow-x-auto">
+						<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+							<thead className="bg-secondary-50 dark:bg-secondary-700">
+								<tr>
+									<th
+										scope="col"
+										className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+									>
+										Name
+									</th>
+									<th
+										scope="col"
+										className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+									>
+										Description
+									</th>
+									<th
+										scope="col"
+										className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+									>
+										Schedule
+									</th>
+									<th
+										scope="col"
+										className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+									>
+										Assignments
+									</th>
+									<th
+										scope="col"
+										className="px-4 py-3 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+									>
+										Actions
+									</th>
+								</tr>
+							</thead>
+							<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+								{policies.map((policy) => (
+									<Fragment key={policy.id}>
+										<tr className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors">
+											<td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-secondary-900 dark:text-white">
+												{policy.name}
+											</td>
+											<td className="px-4 py-3 text-sm text-secondary-600 dark:text-secondary-400 max-w-xs truncate">
+												{policy.description || "-"}
+											</td>
+											<td className="px-4 py-3 whitespace-nowrap text-sm text-secondary-600 dark:text-secondary-400">
+												<span className="inline-flex items-center gap-1">
+													<Clock className="h-3.5 w-3.5" />
+													{formatSchedule(policy)}
+												</span>
+											</td>
+											<td className="px-4 py-3 whitespace-nowrap text-sm">
+												<button
+													type="button"
+													onClick={() =>
+														setExpandedPolicyId(
+															expandedPolicyId === policy.id ? null : policy.id,
+														)
+													}
+													className="text-primary-600 dark:text-primary-400 hover:underline"
+												>
+													{expandedPolicyId === policy.id
+														? "Hide"
+														: `${policy._count?.assignments ?? 0} assignment(s)`}
+												</button>
+											</td>
+											<td className="px-4 py-3 whitespace-nowrap text-right">
+												<div className="flex items-center justify-end gap-2">
+													<button
+														type="button"
+														onClick={() => openEdit(policy)}
+														className="p-1.5 rounded hover:bg-secondary-100 dark:hover:bg-secondary-700 text-secondary-600 dark:text-secondary-300"
+														title="Edit"
+													>
+														<Edit className="h-4 w-4" />
+													</button>
+													<button
+														type="button"
+														onClick={() => {
+															if (
+																window.confirm(
+																	`Delete policy "${policy.name}"?`,
+																)
+															)
+																deleteMutation.mutate(policy.id);
+														}}
+														className="p-1.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-red-600"
+														title="Delete"
+													>
+														<Trash2 className="h-4 w-4" />
+													</button>
+												</div>
+											</td>
+										</tr>
+										{expandedPolicyId === policy.id && (
+											<tr key={`${policy.id}-assignments`}>
+												<td colSpan={5} className="p-0">
+													<PolicyAssignments
+														policy={policy}
+														hosts={hosts}
+														hostGroups={hostGroups}
+														onUpdate={() =>
+															queryClient.invalidateQueries({
+																queryKey: ["patching-policies"],
+															})
+														}
+													/>
+												</td>
+											</tr>
+										)}
+									</Fragment>
+								))}
+							</tbody>
+						</table>
+					</div>
+				)}
+			</div>
+
+			{/* Create/Edit Modal */}
+			{showModal && (
+				<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+						<div className="flex items-center justify-between p-4 border-b border-secondary-200 dark:border-secondary-600">
+							<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+								{editingPolicy ? "Edit policy" : "Create policy"}
+							</h3>
+							<button
+								type="button"
+								onClick={() => setShowModal(false)}
+								className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-700"
+							>
+								<X className="h-5 w-5" />
+							</button>
+						</div>
+						<form onSubmit={handleSubmit} className="p-4 space-y-4">
+							<div>
+								<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+									Name
+								</label>
+								<input
+									type="text"
+									value={form.name}
+									onChange={(e) =>
+										setForm((f) => ({ ...f, name: e.target.value }))
+									}
+									className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
+									required
+								/>
+							</div>
+							<div>
+								<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+									Description (optional)
+								</label>
+								<input
+									type="text"
+									value={form.description}
+									onChange={(e) =>
+										setForm((f) => ({
+											...f,
+											description: e.target.value,
+										}))
+									}
+									className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
+								/>
+							</div>
+							<div>
+								<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+									Patch delay
+								</label>
+								<select
+									value={form.patch_delay_type}
+									onChange={(e) =>
+										setForm((f) => ({
+											...f,
+											patch_delay_type: e.target.value,
+										}))
+									}
+									className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
+								>
+									<option value="immediate">Immediate</option>
+									<option value="delayed">Delayed (run after N minutes)</option>
+									<option value="fixed_time">Fixed time (e.g. 3:00 AM)</option>
+								</select>
+							</div>
+							{form.patch_delay_type === "delayed" && (
+								<div>
+									<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+										Delay (minutes)
+									</label>
+									<input
+										type="number"
+										min={1}
+										value={form.delay_minutes}
+										onChange={(e) =>
+											setForm((f) => ({
+												...f,
+												delay_minutes: e.target.value,
+											}))
+										}
+										className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
+									/>
+								</div>
+							)}
+							{form.patch_delay_type === "fixed_time" && (
+								<>
+									<div>
+										<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+											Time (HH:MM)
+										</label>
+										<input
+											type="text"
+											placeholder="03:00"
+											value={form.fixed_time_utc}
+											onChange={(e) =>
+												setForm((f) => ({
+													...f,
+													fixed_time_utc: e.target.value,
+												}))
+											}
+											className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
+										/>
+									</div>
+									<div>
+										<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+											Timezone
+										</label>
+										<input
+											type="text"
+											placeholder="UTC"
+											value={form.timezone}
+											onChange={(e) =>
+												setForm((f) => ({
+													...f,
+													timezone: e.target.value,
+												}))
+											}
+											className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
+										/>
+									</div>
+								</>
+							)}
+							<div className="flex justify-end gap-2 pt-2">
+								<button
+									type="button"
+									onClick={() => setShowModal(false)}
+									className="btn-outline"
+								>
+									Cancel
+								</button>
+								<button
+									type="submit"
+									className="btn-primary"
+									disabled={
+										createMutation.isPending || updateMutation.isPending
+									}
+								>
+									{editingPolicy ? "Update" : "Create"}
+								</button>
+							</div>
+						</form>
+					</div>
+				</div>
+			)}
+		</div>
+	);
+}
+
+/* ───────────────── Policy Assignments (inline) ───────────────── */
+
+function PolicyAssignments({ policy, hosts, hostGroups, onUpdate }) {
+	const queryClient = useQueryClient();
+	const toast = useToast();
+	const [addTargetType, setAddTargetType] = useState("host");
+	const [addTargetId, setAddTargetId] = useState("");
+	const [addExclusionHostId, setAddExclusionHostId] = useState("");
+
+	const { data: fullPolicy } = useQuery({
+		queryKey: ["patching-policy", policy.id],
+		queryFn: () => patchingAPI.getPolicyById(policy.id),
+		enabled: !!policy.id,
+	});
+
+	const assignments = fullPolicy?.assignments || [];
+	const exclusions = fullPolicy?.exclusions || [];
+
+	const addAssignmentMutation = useMutation({
+		mutationFn: () =>
+			patchingAPI.addPolicyAssignment(policy.id, addTargetType, addTargetId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["patching-policies"] });
+			queryClient.invalidateQueries({
+				queryKey: ["patching-policy", policy.id],
+			});
+			setAddTargetId("");
+			onUpdate?.();
+			toast.success("Assignment added");
+		},
+		onError: (err) => toast.error(err.response?.data?.error || err.message),
+	});
+
+	const removeAssignmentMutation = useMutation({
+		mutationFn: (assignmentId) =>
+			patchingAPI.removePolicyAssignment(policy.id, assignmentId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["patching-policies"] });
+			queryClient.invalidateQueries({
+				queryKey: ["patching-policy", policy.id],
+			});
+			onUpdate?.();
+			toast.success("Assignment removed");
+		},
+		onError: (err) => toast.error(err.response?.data?.error || err.message),
+	});
+
+	const addExclusionMutation = useMutation({
+		mutationFn: () =>
+			patchingAPI.addPolicyExclusion(policy.id, addExclusionHostId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({
+				queryKey: ["patching-policy", policy.id],
+			});
+			setAddExclusionHostId("");
+			onUpdate?.();
+			toast.success("Exclusion added");
+		},
+		onError: (err) => toast.error(err.response?.data?.error || err.message),
+	});
+
+	const removeExclusionMutation = useMutation({
+		mutationFn: (hostId) =>
+			patchingAPI.removePolicyExclusion(policy.id, hostId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({
+				queryKey: ["patching-policy", policy.id],
+			});
+			onUpdate?.();
+			toast.success("Exclusion removed");
+		},
+		onError: (err) => toast.error(err.response?.data?.error || err.message),
+	});
+
+	const getTargetLabel = (a) => {
+		if (a.target_type === "host") {
+			const h = hosts.find((x) => x.id === a.target_id);
+			return h?.friendly_name || h?.hostname || a.target_id;
+		}
+		const g = hostGroups.find((x) => x.id === a.target_id);
+		return g?.name || a.target_id;
+	};
+
+	return (
+		<div className="px-4 pb-4 pt-3 bg-secondary-50 dark:bg-secondary-900/50 border-t border-secondary-200 dark:border-secondary-600">
+			<div className="space-y-3">
+				<div className="flex items-center gap-2 text-sm font-medium text-secondary-700 dark:text-secondary-300">
+					<Users className="h-4 w-4" />
+					Applied to
+				</div>
+				{assignments.length === 0 ? (
+					<p className="text-sm text-secondary-500">
+						No assignments. Add a host or host group.
+					</p>
+				) : (
+					<ul className="flex flex-wrap gap-2">
+						{assignments.map((a) => (
+							<li
+								key={a.id}
+								className="inline-flex items-center gap-1 px-2 py-1 rounded bg-secondary-200 dark:bg-secondary-700 text-sm"
+							>
+								{a.target_type === "host" ? (
+									<Server className="h-3 w-3" />
+								) : (
+									<Users className="h-3 w-3" />
+								)}
+								{getTargetLabel(a)}
+								<button
+									type="button"
+									onClick={() => removeAssignmentMutation.mutate(a.id)}
+									className="ml-1 text-secondary-500 hover:text-red-600"
+								>
+									<X className="h-3 w-3" />
+								</button>
+							</li>
+						))}
+					</ul>
+				)}
+				<div className="flex flex-wrap items-center gap-2">
+					<select
+						value={addTargetType}
+						onChange={(e) => {
+							setAddTargetType(e.target.value);
+							setAddTargetId("");
+						}}
+						className="rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white text-sm px-2 py-1"
+					>
+						<option value="host">Host</option>
+						<option value="host_group">Host group</option>
+					</select>
+					<select
+						value={addTargetId}
+						onChange={(e) => setAddTargetId(e.target.value)}
+						className="rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white text-sm px-2 py-1 min-w-[160px]"
+					>
+						<option value="">
+							Select {addTargetType === "host" ? "host" : "group"}...
+						</option>
+						{addTargetType === "host"
+							? hosts.map((h) => (
+									<option key={h.id} value={h.id}>
+										{h.friendly_name || h.hostname || h.id}
+									</option>
+								))
+							: hostGroups.map((g) => (
+									<option key={g.id} value={g.id}>
+										{g.name}
+									</option>
+								))}
+					</select>
+					<button
+						type="button"
+						onClick={() => addTargetId && addAssignmentMutation.mutate()}
+						disabled={!addTargetId || addAssignmentMutation.isPending}
+						className="btn-outline text-sm py-1"
+					>
+						Add
+					</button>
+				</div>
+
+				<div className="flex items-center gap-2 text-sm font-medium text-secondary-700 dark:text-secondary-300 pt-2 border-t border-secondary-200 dark:border-secondary-600">
+					<Clock className="h-4 w-4" />
+					Exclusions (hosts excluded from this policy when applied via group)
+				</div>
+				{exclusions.length === 0 ? (
+					<p className="text-sm text-secondary-500">No exclusions.</p>
+				) : (
+					<ul className="flex flex-wrap gap-2">
+						{exclusions.map((exc) => (
+							<li
+								key={exc.id}
+								className="inline-flex items-center gap-1 px-2 py-1 rounded bg-amber-100 dark:bg-amber-900/30 text-sm"
+							>
+								{exc.hosts?.friendly_name || exc.hosts?.hostname || exc.host_id}
+								<button
+									type="button"
+									onClick={() => removeExclusionMutation.mutate(exc.host_id)}
+									className="ml-1 text-amber-700 dark:text-amber-400 hover:text-red-600"
+								>
+									<X className="h-3 w-3" />
+								</button>
+							</li>
+						))}
+					</ul>
+				)}
+				<div className="flex flex-wrap items-center gap-2">
+					<select
+						value={addExclusionHostId}
+						onChange={(e) => setAddExclusionHostId(e.target.value)}
+						className="rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white text-sm px-2 py-1 min-w-[160px]"
+					>
+						<option value="">Select host to exclude...</option>
+						{hosts.map((h) => (
+							<option key={h.id} value={h.id}>
+								{h.friendly_name || h.hostname || h.id}
+							</option>
+						))}
+					</select>
+					<button
+						type="button"
+						onClick={() => addExclusionHostId && addExclusionMutation.mutate()}
+						disabled={!addExclusionHostId || addExclusionMutation.isPending}
+						className="btn-outline text-sm py-1"
+					>
+						Exclude host
+					</button>
+				</div>
+			</div>
+		</div>
+	);
+}
 
 export default Patching;

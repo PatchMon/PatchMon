@@ -1203,7 +1203,7 @@ const HostDetail = () => {
 								</span>
 							)}
 							<div
-								className={`flex items-center gap-2 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(isStale, host.stats.outdated_packages > 0)}`}
+								className={`flex items-center gap-2 px-2 py-1 rounded text-xs font-medium ${getStatusColor(isStale, host.stats.outdated_packages > 0)}`}
 							>
 								{getStatusIcon(isStale, host.stats.outdated_packages > 0)}
 								{getStatusText(isStale, host.stats.outdated_packages > 0)}
@@ -1858,7 +1858,7 @@ const HostDetail = () => {
 													SELinux Status
 												</p>
 												<span
-													className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+													className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${
 														host.selinux_status === "enabled"
 															? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
 															: host.selinux_status === "permissive"
@@ -2464,7 +2464,7 @@ const HostDetail = () => {
 							className={`px-4 py-2 text-sm font-medium ${
 								activeTab === "host"
 									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 							}`}
 						>
 							Host Info
@@ -2475,7 +2475,7 @@ const HostDetail = () => {
 							className={`px-4 py-2 text-sm font-medium ${
 								activeTab === "network"
 									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 							}`}
 						>
 							Network
@@ -2486,7 +2486,7 @@ const HostDetail = () => {
 							className={`px-4 py-2 text-sm font-medium ${
 								activeTab === "system"
 									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 							}`}
 						>
 							System
@@ -2497,7 +2497,7 @@ const HostDetail = () => {
 							className={`px-4 py-2 text-sm font-medium ${
 								activeTab === "history"
 									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 							}`}
 						>
 							Package Reports
@@ -2508,7 +2508,7 @@ const HostDetail = () => {
 							className={`px-4 py-2 text-sm font-medium ${
 								activeTab === "queue"
 									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 							}`}
 						>
 							Agent Queue
@@ -2519,7 +2519,7 @@ const HostDetail = () => {
 							className={`px-4 py-2 text-sm font-medium ${
 								activeTab === "notes"
 									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 							}`}
 						>
 							Notes
@@ -2530,7 +2530,7 @@ const HostDetail = () => {
 							className={`px-4 py-2 text-sm font-medium ${
 								activeTab === "integrations"
 									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 							}`}
 						>
 							Integrations
@@ -2542,7 +2542,7 @@ const HostDetail = () => {
 								className={`px-4 py-2 text-sm font-medium ${
 									activeTab === "reporting"
 										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 								}`}
 							>
 								Reporting
@@ -2555,7 +2555,7 @@ const HostDetail = () => {
 								className={`px-4 py-2 text-sm font-medium ${
 									activeTab === "docker"
 										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 								}`}
 							>
 								Docker
@@ -2567,7 +2567,7 @@ const HostDetail = () => {
 							className={`px-4 py-2 text-sm font-medium ${
 								activeTab === "patching"
 									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 							}`}
 						>
 							Patching
@@ -2579,7 +2579,7 @@ const HostDetail = () => {
 								className={`px-4 py-2 text-sm font-medium ${
 									activeTab === "compliance"
 										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 								}`}
 							>
 								Compliance
@@ -2591,7 +2591,7 @@ const HostDetail = () => {
 							className={`px-4 py-2 text-sm font-medium ${
 								activeTab === "terminal"
 									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 							}`}
 						>
 							Terminal
@@ -2603,7 +2603,7 @@ const HostDetail = () => {
 								className={`px-4 py-2 text-sm font-medium ${
 									activeTab === "rdp"
 										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300"
+										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 								}`}
 							>
 								RDP
@@ -3087,7 +3087,7 @@ const HostDetail = () => {
 														SELinux Status
 													</p>
 													<span
-														className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+														className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${
 															host.selinux_status === "enabled"
 																? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
 																: host.selinux_status === "permissive"
@@ -4478,7 +4478,7 @@ const HostDetail = () => {
 																					</h4>
 																				</div>
 																				<span
-																					className={`text-xs px-2 py-1 rounded-full ${
+																					className={`text-xs px-2 py-1 rounded ${
 																						allRunning
 																							? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
 																							: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400"
@@ -4610,7 +4610,7 @@ const HostDetail = () => {
 																	>
 																		<td className="py-2">
 																			<span
-																				className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+																				className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium ${
 																					container.state === "running"
 																						? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
 																						: container.state === "exited"
@@ -4946,7 +4946,7 @@ const HostDetail = () => {
 																			</td>
 																			<td className="py-2">
 																				<span
-																					className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+																					className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium ${
 																						port.containerState === "running"
 																							? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
 																							: port.containerState === "exited"

@@ -256,7 +256,7 @@ const HostDetail = () => {
 										{container.image_name}:{container.image_tag}
 									</td>
 									<td className="px-6 py-4 whitespace-nowrap">
-										<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
+										<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
 											{container.status}
 										</span>
 									</td>
@@ -325,7 +325,7 @@ const HostDetail = () => {
 										</Link>
 									</td>
 									<td className="px-6 py-4 whitespace-nowrap">
-										<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
+										<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
 											{image.tag}
 										</span>
 									</td>

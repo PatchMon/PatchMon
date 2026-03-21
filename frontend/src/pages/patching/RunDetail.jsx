@@ -25,17 +25,17 @@ const RunDetail = () => {
 	const approveMutation = useMutation({
 		mutationFn: (runId) => patchingAPI.approveRun(runId),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["patching-run", id]);
-			queryClient.invalidateQueries(["patching-runs"]);
-			queryClient.invalidateQueries(["patching-dashboard"]);
+			queryClient.invalidateQueries({ queryKey: ["patching-run", id] });
+			queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
+			queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
 		},
 	});
 	const retryValidationMutation = useMutation({
 		mutationFn: (runId) => patchingAPI.retryValidation(runId),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["patching-run", id]);
-			queryClient.invalidateQueries(["patching-runs"]);
-			queryClient.invalidateQueries(["patching-dashboard"]);
+			queryClient.invalidateQueries({ queryKey: ["patching-run", id] });
+			queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
+			queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
 		},
 	});
 	const [retryingId, setRetryingId] = useState(null);

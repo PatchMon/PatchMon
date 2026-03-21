@@ -20,6 +20,15 @@ import {
 	XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import {
+	AlertResponderWorkload,
+	AlertSeverityDoughnut,
+	AlertsByType,
+	AlertVolumeTrend,
+	DeliveryByDestination,
+	RecentAlerts,
+} from "../components/alerting/widgets";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { adminUsersAPI, alertsAPI, formatRelativeTime } from "../utils/api";
@@ -29,24 +38,46 @@ import { AlertSettings } from "./settings/AlertSettings";
 // System-only actions that should not appear in user-facing menus
 const SYSTEM_ONLY_ACTIONS = new Set(["created", "updated"]);
 
+const VALID_TABS = new Set([
+	"overview",
+	"alerts",
+	"alert-settings",
+	"destinations",
+	"rules",
+	"reports",
+	"log",
+]);
+
 const Reporting = () => {
 	const { user: _user } = useAuth();
 	const queryClient = useQueryClient();
 	const toast = useToast();
+	const [searchParams] = useSearchParams();
+
+	const urlTab = searchParams.get("tab");
+	const urlSeverity = searchParams.get("severity");
+	const urlStatus = searchParams.get("status");
+	const urlType = searchParams.get("type");
+	const urlAssignment = searchParams.get("assignment");
+
 	const [searchTerm, setSearchTerm] = useState("");
-	const [severityFilter, setSeverityFilter] = useState("all");
-	const [typeFilter, setTypeFilter] = useState("all");
-	const [statusFilter, setStatusFilter] = useState("all");
-	const [assignmentFilter, setAssignmentFilter] = useState("all");
+	const [severityFilter, setSeverityFilter] = useState(urlSeverity || "all");
+	const [typeFilter, setTypeFilter] = useState(urlType || "all");
+	const [statusFilter, setStatusFilter] = useState(urlStatus || "all");
+	const [assignmentFilter, setAssignmentFilter] = useState(
+		urlAssignment || "all",
+	);
 	const [sortField, setSortField] = useState("created_at");
 	const [sortDirection, setSortDirection] = useState("desc");
 	const [selectedAlert, setSelectedAlert] = useState(null);
 	const [showAlertModal, setShowAlertModal] = useState(false);
-	const [openActionMenu, setOpenActionMenu] = useState(null); // Track which alert's menu is open
-	const [menuPosition, setMenuPosition] = useState({ top: 0, right: 0 }); // Position for fixed dropdown
-	const menuButtonRefs = useRef({}); // Store refs for each menu button
-	const [selectedAlerts, setSelectedAlerts] = useState(new Set()); // Track selected alerts for bulk operations
-	const [activeTab, setActiveTab] = useState("overview");
+	const [openActionMenu, setOpenActionMenu] = useState(null);
+	const [menuPosition, setMenuPosition] = useState({ top: 0, right: 0 });
+	const menuButtonRefs = useRef({});
+	const [selectedAlerts, setSelectedAlerts] = useState(new Set());
+	const [activeTab, setActiveTab] = useState(
+		VALID_TABS.has(urlTab) ? urlTab : "overview",
+	);
 
 	const tabs = [
 		{ id: "overview", name: "Overview", icon: LayoutDashboard },
@@ -729,7 +760,7 @@ const Reporting = () => {
 							className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${
 								activeTab === tab.id
 									? "border-blue-500 text-blue-600 dark:text-blue-400"
-									: "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
+									: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-primary-400"
 							}`}
 						>
 							<tab.icon className="h-4 w-4" />
@@ -741,16 +772,13 @@ const Reporting = () => {
 
 			{/* Overview Tab */}
 			{activeTab === "overview" && (
-				<div className="card p-6 md:p-8">
-					<div className="text-center py-12">
-						<LayoutDashboard className="h-12 w-12 text-secondary-300 dark:text-secondary-600 mx-auto mb-4" />
-						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-2">
-							Overview dashboard
-						</h3>
-						<p className="text-sm text-secondary-500 max-w-md mx-auto">
-							Dashboard cards and summary metrics will appear here.
-						</p>
-					</div>
+				<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 auto-rows-[320px]">
+					<DeliveryByDestination />
+					<AlertSeverityDoughnut stats={stats} />
+					<AlertVolumeTrend alerts={alerts} />
+					<AlertsByType alerts={alerts} />
+					<RecentAlerts alerts={alerts} />
+					<AlertResponderWorkload alerts={alerts} users={usersData} />
 				</div>
 			)}
 
@@ -1133,7 +1161,7 @@ const Reporting = () => {
 								<div className="py-1">
 									{workflowActions.length > 0 && (
 										<>
-											<div className="px-4 py-1 text-xs font-semibold text-secondary-400 dark:text-secondary-500 uppercase tracking-wider">
+											<div className="px-4 py-1 text-xs font-semibold text-secondary-400 dark:text-secondary-300 uppercase tracking-wider">
 												Workflow
 											</div>
 											{workflowActions.map((action) => (
@@ -1159,7 +1187,7 @@ const Reporting = () => {
 										)}
 									{resolutionActions.length > 0 && (
 										<>
-											<div className="px-4 py-1 text-xs font-semibold text-secondary-400 dark:text-secondary-500 uppercase tracking-wider">
+											<div className="px-4 py-1 text-xs font-semibold text-secondary-400 dark:text-secondary-300 uppercase tracking-wider">
 												Resolve
 											</div>
 											{resolutionActions.map((action) => (

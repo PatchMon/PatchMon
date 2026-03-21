@@ -2488,7 +2488,7 @@ const ComplianceTab = ({
 												<Icon className="h-4 w-4" />
 												<span>{tab.label}</span>
 												<span
-													className={`px-2 py-0.5 rounded-full text-xs ${
+													className={`px-2 py-0.5 rounded text-xs ${
 														isActive ? tab.bgColor : "bg-secondary-600"
 													}`}
 												>
@@ -2514,7 +2514,7 @@ const ComplianceTab = ({
 														setSeverityFilter(tab.id);
 														setCurrentPage(1);
 													}}
-													className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${
+													className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
 														isActive
 															? `bg-secondary-600 ${tab.color || "text-white"}`
 															: "text-secondary-400 dark:text-white hover:text-secondary-200 hover:bg-secondary-700"
@@ -2651,7 +2651,7 @@ const ComplianceTab = ({
 														<span className="text-white font-medium">
 															Section {section}
 														</span>
-														<span className="px-2 py-0.5 rounded-full text-xs bg-secondary-600 text-secondary-300 dark:text-white">
+														<span className="px-2 py-0.5 rounded text-xs bg-secondary-600 text-secondary-300 dark:text-white">
 															{groupedResults[section].length} rules
 														</span>
 														{expandedSections[section] ? (

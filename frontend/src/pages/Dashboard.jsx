@@ -51,6 +51,16 @@ import { useCallback, useEffect, useState } from "react";
 import { Bar, Doughnut, Line, Pie } from "react-chartjs-2";
 import { useNavigate } from "react-router-dom";
 import {
+	ALERTING_WIDGET_CARD_IDS,
+	AlertResponderWorkload,
+	AlertSeverityDoughnut,
+	AlertStatusBoxes,
+	AlertsByType,
+	AlertVolumeTrend,
+	DeliveryByDestination,
+	RecentAlerts,
+} from "../components/alerting/widgets";
+import {
 	ActiveBenchmarkScans,
 	COMPLIANCE_WIDGET_CARD_IDS,
 	ComplianceProfilesPie,
@@ -73,6 +83,8 @@ import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { useToast } from "../contexts/ToastContext";
 import {
+	adminUsersAPI,
+	alertsAPI,
 	dashboardAPI,
 	dashboardPreferencesAPI,
 	formatRelativeTime,
@@ -471,6 +483,44 @@ const Dashboard = () => {
 		enabled: has_view_hosts && is_any_patching_card_enabled,
 	});
 
+	// Fetch alerting data only when at least one alerting card is enabled
+	const is_any_alerting_card_enabled = cardPreferences.some(
+		(c) => ALERTING_WIDGET_CARD_IDS.includes(c.cardId) && c.enabled,
+	);
+	const { data: alerting_alerts } = useQuery({
+		queryKey: ["alerts"],
+		queryFn: async () => {
+			const response = await alertsAPI.getAlerts();
+			return response.data.data || [];
+		},
+		staleTime: 30 * 1000,
+		refetchInterval: 30 * 1000,
+		enabled: is_any_alerting_card_enabled,
+	});
+	const { data: alerting_stats } = useQuery({
+		queryKey: ["alert-stats"],
+		queryFn: async () => {
+			const response = await alertsAPI.getAlertStats();
+			return response.data.data || {};
+		},
+		staleTime: 30 * 1000,
+		refetchInterval: 30 * 1000,
+		enabled: is_any_alerting_card_enabled,
+	});
+	const { data: alerting_users } = useQuery({
+		queryKey: ["users", "for-assignment"],
+		queryFn: async () => {
+			try {
+				const response = await adminUsersAPI.listForAssignment();
+				return response.data.data || [];
+			} catch (_e) {
+				return [];
+			}
+		},
+		staleTime: 5 * 60 * 1000,
+		enabled: is_any_alerting_card_enabled,
+	});
+
 	// Fetch settings to get the agent update interval
 	const { data: settings } = useQuery({
 		queryKey: ["settings"],
@@ -728,7 +778,12 @@ const Dashboard = () => {
 		}
 		if (PATCHING_WIDGET_CARD_IDS.includes(cardId)) {
 			if (permissions?.can_view_hosts !== true) {
-				return false; // Hide patching cards if user can't view hosts
+				return false;
+			}
+		}
+		if (ALERTING_WIDGET_CARD_IDS.includes(cardId)) {
+			if (permissions?.can_view_hosts !== true) {
+				return false;
 			}
 		}
 
@@ -764,6 +819,7 @@ const Dashboard = () => {
 				"recentCollection",
 				...COMPLIANCE_WIDGET_CARD_IDS,
 				...PATCHING_WIDGET_CARD_IDS,
+				...ALERTING_WIDGET_CARD_IDS,
 			].includes(cardId)
 		) {
 			return "charts";
@@ -1408,6 +1464,34 @@ const Dashboard = () => {
 			case "patchingRecentRuns":
 				return <PatchingRecentRuns data={patching_dashboard} />;
 
+			case "alertStatusBoxes":
+				return (
+					<AlertStatusBoxes stats={alerting_stats} alerts={alerting_alerts} />
+				);
+
+			case "alertSeverityDoughnut":
+				return <AlertSeverityDoughnut stats={alerting_stats} />;
+
+			case "alertVolumeTrend":
+				return <AlertVolumeTrend alerts={alerting_alerts} />;
+
+			case "alertsByType":
+				return <AlertsByType alerts={alerting_alerts} />;
+
+			case "recentAlerts":
+				return <RecentAlerts alerts={alerting_alerts} />;
+
+			case "alertResponderWorkload":
+				return (
+					<AlertResponderWorkload
+						alerts={alerting_alerts}
+						users={alerting_users}
+					/>
+				);
+
+			case "deliveryByDestination":
+				return <DeliveryByDestination />;
+
 			case "packageTrends":
 				return (
 					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
@@ -1644,7 +1728,7 @@ const Dashboard = () => {
 								Recent Users Logged in
 							</h3>
 							{recentUsers?.length > 0 && (
-								<span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+								<span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
 									<Users className="h-3 w-3" />
 									{recentUsers.length} users
 								</span>
@@ -1701,7 +1785,7 @@ const Dashboard = () => {
 								Recent Collection
 							</h3>
 							{recentCollection?.length > 0 && (
-								<span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+								<span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
 									<Server className="h-3 w-3" />
 									{recentCollection.length} hosts
 								</span>
@@ -1823,6 +1907,7 @@ const Dashboard = () => {
 	const doughnutChartOptions = {
 		responsive: true,
 		maintainAspectRatio: false,
+		cutout: "70%",
 		elements: {
 			arc: { borderRadius: 5 },
 		},
@@ -2427,6 +2512,9 @@ const Dashboard = () => {
 									if (permissions?.can_view_hosts !== true) return false;
 								}
 								if (PATCHING_WIDGET_CARD_IDS.includes(c.cardId)) {
+									if (permissions?.can_view_hosts !== true) return false;
+								}
+								if (ALERTING_WIDGET_CARD_IDS.includes(c.cardId)) {
 									if (permissions?.can_view_hosts !== true) return false;
 								}
 								return true;

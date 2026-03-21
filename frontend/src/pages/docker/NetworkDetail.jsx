@@ -67,12 +67,12 @@ const NetworkDetail = () => {
 
 	const BooleanBadge = ({ value, trueLabel = "Yes", falseLabel = "No" }) => {
 		return value ? (
-			<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+			<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
 				<CheckCircle className="h-3 w-3 mr-1" />
 				{trueLabel}
 			</span>
 		) : (
-			<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
+			<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
 				<XCircle className="h-3 w-3 mr-1" />
 				{falseLabel}
 			</span>
@@ -200,7 +200,7 @@ const NetworkDetail = () => {
 								Driver
 							</dt>
 							<dd className="mt-1">
-								<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+								<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
 									{network.driver}
 								</span>
 							</dd>
@@ -210,7 +210,7 @@ const NetworkDetail = () => {
 								Scope
 							</dt>
 							<dd className="mt-1">
-								<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+								<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
 									{network.scope}
 								</span>
 							</dd>
@@ -303,7 +303,7 @@ const NetworkDetail = () => {
 									Driver
 								</dt>
 								<dd>
-									<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+									<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
 										{network.ipam.driver}
 									</span>
 								</dd>

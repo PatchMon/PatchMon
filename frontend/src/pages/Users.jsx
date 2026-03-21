@@ -157,12 +157,12 @@ const Users = () => {
 													{user.username}
 												</p>
 												{user.id === currentUser?.id && (
-													<span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+													<span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
 														You
 													</span>
 												)}
 												<span
-													className={`ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+													className={`ml-2 inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium ${
 														user.role === "superadmin"
 															? "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
 															: user.role === "admin"

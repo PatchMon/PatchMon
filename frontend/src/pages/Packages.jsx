@@ -682,7 +682,7 @@ const Packages = () => {
 						canManageHosts() &&
 						isWindowsHostFilter && (
 							<span
-								className="text-xs text-secondary-400 dark:text-secondary-500 italic"
+								className="text-xs text-secondary-400 dark:text-secondary-300 italic"
 								title="Windows patching is managed through Windows Update or WinGet on the host"
 							>
 								Patching managed via Windows Update

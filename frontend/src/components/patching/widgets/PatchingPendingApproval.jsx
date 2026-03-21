@@ -52,7 +52,7 @@ const PatchingPendingApproval = ({ data }) => {
 					Pending Approval
 				</h3>
 				{needs_action > 0 && (
-					<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+					<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
 						<AlertTriangle className="h-3 w-3" />
 						{needs_action} need action
 					</span>

@@ -25,7 +25,7 @@ const ActiveBenchmarkScans = () => {
 					Active Benchmark Scans
 				</h3>
 				{scans.length > 0 && (
-					<span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+					<span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
 						<RefreshCw className="h-3 w-3 animate-spin" />
 						{scans.length} running
 					</span>

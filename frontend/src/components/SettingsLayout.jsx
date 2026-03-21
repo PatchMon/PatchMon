@@ -96,20 +96,7 @@ const SettingsLayout = ({ children }) => {
 
 		// Alert Management moved to Reporting page tabs
 
-		// Patch Management
-		if (canManageSettings()) {
-			nav.push({
-				section: "Patch Management",
-				items: [
-					{
-						name: "Policies",
-						href: "/settings/patch-management",
-						icon: Settings,
-						comingSoon: true,
-					},
-				],
-			});
-		}
+		// Patch Management moved to /patching?tab=policies
 
 		// Server Config
 		if (canManageSettings()) {

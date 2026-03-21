@@ -475,7 +475,7 @@ const Docker = () => {
 		};
 		return (
 			<span
-				className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+				className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium ${
 					statusClasses[status] ||
 					"bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
 				}`}
@@ -527,7 +527,7 @@ const Docker = () => {
 					href={registryLink}
 					target="_blank"
 					rel="noopener noreferrer"
-					className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors ${colorScheme}`}
+					className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-xs font-medium transition-colors ${colorScheme}`}
 					title={`View on ${displayName}`}
 				>
 					{displayName}
@@ -539,7 +539,7 @@ const Docker = () => {
 		// Return as non-clickable badge
 		return (
 			<span
-				className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${colorScheme.split(" hover:")[0]}`}
+				className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium ${colorScheme.split(" hover:")[0]}`}
 			>
 				{displayName}
 			</span>
@@ -678,54 +678,54 @@ const Docker = () => {
 				</button>
 			</div>
 
+			{/* Tab Navigation */}
+			<div className="border-b border-secondary-200 dark:border-secondary-600">
+				<nav className="-mb-px flex space-x-8 px-4" aria-label="Tabs">
+					{[
+						{ id: "containers", label: "Containers", icon: Container },
+						{ id: "images", label: "Images", icon: Package },
+						{ id: "volumes", label: "Volumes", icon: HardDrive },
+						{ id: "networks", label: "Networks", icon: Network },
+						{ id: "hosts", label: "Hosts", icon: Server },
+					].map((tab) => {
+						const Icon = tab.icon;
+						return (
+							<button
+								key={tab.id}
+								type="button"
+								onClick={() => {
+									setActiveTab(tab.id);
+									setSearchTerm("");
+									setUpdatesFilter("all"); // Reset updates filter when switching tabs
+									setSortField(
+										tab.id === "containers"
+											? "status"
+											: tab.id === "images"
+												? "repository"
+												: tab.id === "volumes"
+													? "name"
+													: tab.id === "networks"
+														? "name"
+														: "name",
+									);
+									setSortDirection("asc");
+								}}
+								className={`${
+									activeTab === tab.id
+										? "border-primary-500 text-primary-600 dark:text-primary-400"
+										: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-primary-400"
+								} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
+							>
+								<Icon className="h-4 w-4 mr-2" />
+								{tab.label}
+							</button>
+						);
+					})}
+				</nav>
+			</div>
+
 			{/* Docker List */}
 			<div className="card flex-1 flex flex-col overflow-hidden min-h-0">
-				{/* Tab Navigation */}
-				<div className="border-b border-secondary-200 dark:border-secondary-600">
-					<nav className="-mb-px flex space-x-8 px-4" aria-label="Tabs">
-						{[
-							{ id: "containers", label: "Containers", icon: Container },
-							{ id: "images", label: "Images", icon: Package },
-							{ id: "volumes", label: "Volumes", icon: HardDrive },
-							{ id: "networks", label: "Networks", icon: Network },
-							{ id: "hosts", label: "Hosts", icon: Server },
-						].map((tab) => {
-							const Icon = tab.icon;
-							return (
-								<button
-									key={tab.id}
-									type="button"
-									onClick={() => {
-										setActiveTab(tab.id);
-										setSearchTerm("");
-										setUpdatesFilter("all"); // Reset updates filter when switching tabs
-										setSortField(
-											tab.id === "containers"
-												? "status"
-												: tab.id === "images"
-													? "repository"
-													: tab.id === "volumes"
-														? "name"
-														: tab.id === "networks"
-															? "name"
-															: "name",
-										);
-										setSortDirection("asc");
-									}}
-									className={`${
-										activeTab === tab.id
-											? "border-primary-500 text-primary-600 dark:text-primary-400"
-											: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-secondary-300"
-									} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
-								>
-									<Icon className="h-4 w-4 mr-2" />
-									{tab.label}
-								</button>
-							);
-						})}
-					</nav>
-				</div>
-
 				{/* Filters and Search */}
 				<div className="p-4 border-b border-secondary-200 dark:border-secondary-600">
 					<div className="flex flex-col sm:flex-row gap-4">
@@ -1070,12 +1070,12 @@ const Docker = () => {
 													{getSourceBadge(image.source, image.repository)}
 												</div>
 												{image.hasUpdates ? (
-													<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+													<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
 														<AlertTriangle className="h-3 w-3 mr-1" />
 														Updates Available
 													</span>
 												) : (
-													<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+													<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
 														Up to date
 													</span>
 												)}
@@ -1181,7 +1181,7 @@ const Docker = () => {
 														</div>
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap">
-														<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
+														<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
 															{image.tag}
 														</span>
 													</td>
@@ -1193,12 +1193,12 @@ const Docker = () => {
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap text-center">
 														{image.hasUpdates ? (
-															<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+															<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
 																<AlertTriangle className="h-3 w-3 mr-1" />
 																Available
 															</span>
 														) : (
-															<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+															<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
 																Up to date
 															</span>
 														)}
@@ -1473,11 +1473,11 @@ const Docker = () => {
 
 											{/* Driver and In Use Status */}
 											<div className="flex items-center justify-between gap-2">
-												<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+												<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
 													{volume.driver}
 												</span>
 												{volume.ref_count > 0 ? (
-													<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+													<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
 														{volume.ref_count} container
 														{volume.ref_count !== 1 ? "s" : ""}
 													</span>
@@ -1623,7 +1623,7 @@ const Docker = () => {
 														</div>
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap">
-														<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+														<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
 															{volume.driver}
 														</span>
 													</td>
@@ -1634,7 +1634,7 @@ const Docker = () => {
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap text-center text-sm text-secondary-900 dark:text-white">
 														{volume.ref_count > 0 ? (
-															<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+															<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
 																{volume.ref_count} container
 																{volume.ref_count !== 1 ? "s" : ""}
 															</span>
@@ -1739,14 +1739,14 @@ const Docker = () => {
 
 											{/* Driver, Scope, and Containers */}
 											<div className="flex flex-wrap items-center gap-2">
-												<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+												<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
 													{network.driver}
 												</span>
-												<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
+												<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
 													{network.scope}
 												</span>
 												{network.container_count > 0 && (
-													<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+													<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
 														{network.container_count} container
 														{network.container_count !== 1 ? "s" : ""}
 													</span>
@@ -1900,18 +1900,18 @@ const Docker = () => {
 														</div>
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap">
-														<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+														<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
 															{network.driver}
 														</span>
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap text-center">
-														<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
+														<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
 															{network.scope}
 														</span>
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap text-center text-sm text-secondary-900 dark:text-white">
 														{network.container_count > 0 ? (
-															<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+															<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
 																{network.container_count}
 															</span>
 														) : (

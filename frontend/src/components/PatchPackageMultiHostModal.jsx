@@ -670,7 +670,7 @@ export default function PatchPackageMultiHostModal({
 													</span>
 												)}
 											{!validationDone && (
-												<span className="text-xs text-secondary-400 dark:text-secondary-500">
+												<span className="text-xs text-secondary-400 dark:text-secondary-300">
 													No validation
 												</span>
 											)}
