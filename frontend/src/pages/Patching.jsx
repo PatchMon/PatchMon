@@ -202,8 +202,7 @@ const Patching = () => {
 				</p>
 			</div>
 
-			{/* Summary cards - above tabs like Docker page */}
-			<div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+			<div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
 				<div className="card p-4">
 					<div className="flex items-center">
 						<ListChecks className="h-5 w-5 text-primary-600 mr-2" />

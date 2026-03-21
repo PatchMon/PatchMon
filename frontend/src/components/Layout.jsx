@@ -223,13 +223,13 @@ const Layout = ({ children }) => {
 			nav.push({ name: "Dashboard", href: "/", icon: Home });
 		}
 
-		// Inventory section - only show if user has any inventory permissions
-		if (canViewHosts() || canViewPackages() || canViewReports()) {
-			const inventoryItems = [];
+		// Assets section
+		if (canViewHosts() || canViewPackages()) {
+			const assetItems = [];
 
 			if (canViewHosts()) {
-				inventoryItems.push({ name: "Hosts", href: "/hosts", icon: Server });
-				inventoryItems.push({
+				assetItems.push({ name: "Hosts", href: "/hosts", icon: Server });
+				assetItems.push({
 					name: "Repos",
 					href: "/repositories",
 					icon: GitBranch,
@@ -237,37 +237,27 @@ const Layout = ({ children }) => {
 			}
 
 			if (canViewPackages()) {
-				inventoryItems.push({
+				assetItems.push({
 					name: "Packages",
 					href: "/packages",
 					icon: Package,
 				});
 			}
 
-			if (canViewReports() && settings?.alerts_enabled !== false) {
-				inventoryItems.push({
-					name: "Reporting",
-					href: "/reporting",
-					icon: AlertTriangle,
-					new: true,
-				});
-			}
-
-			if (inventoryItems.length > 0) {
+			if (assetItems.length > 0) {
 				nav.push({
-					section: "INVENTORY",
-					items: inventoryItems,
+					section: "ASSETS",
+					items: assetItems,
 				});
 			}
 		}
 
-		// Integrations section
-		if (canViewHosts() || canViewPackages() || canViewReports()) {
-			const integrationsItems = [];
+		// Operations section
+		if (canViewHosts() || canViewReports()) {
+			const opsItems = [];
 
-			// Add Patching at top (available to users who can view hosts)
 			if (canViewHosts()) {
-				integrationsItems.push({
+				opsItems.push({
 					name: "Patching",
 					href: "/patching",
 					icon: Wrench,
@@ -275,15 +265,23 @@ const Layout = ({ children }) => {
 				});
 			}
 
-			// Add Compliance item (available to all users with inventory access)
-			integrationsItems.push({
+			opsItems.push({
 				name: "Compliance",
 				href: "/compliance",
 				icon: Shield,
 			});
 
+			if (canViewReports() && settings?.alerts_enabled !== false) {
+				opsItems.push({
+					name: "Reporting",
+					href: "/reporting",
+					icon: AlertTriangle,
+					new: true,
+				});
+			}
+
 			if (canViewReports()) {
-				integrationsItems.push({
+				opsItems.push({
 					name: "Docker",
 					href: "/docker",
 					icon: Container,
@@ -291,20 +289,19 @@ const Layout = ({ children }) => {
 				});
 			}
 
-			if (integrationsItems.length > 0) {
+			if (opsItems.length > 0) {
 				nav.push({
-					section: "INTEGRATIONS",
-					items: integrationsItems,
+					section: "OPERATIONS",
+					items: opsItems,
 				});
 			}
 		}
 
-		// Server section
+		// System section
 		if (canViewHosts() || canViewPackages() || canViewReports()) {
-			const serverItems = [];
+			const systemItems = [];
 
-			// Add Automation item (available to all users with inventory access)
-			serverItems.push({
+			systemItems.push({
 				name: "Automation",
 				href: "/automation",
 				icon: RefreshCw,
@@ -317,7 +314,7 @@ const Layout = ({ children }) => {
 				canViewReports() ||
 				canExportData()
 			) {
-				serverItems.push({
+				systemItems.push({
 					name: "Settings",
 					href: "/settings/users",
 					icon: Settings,
@@ -325,10 +322,10 @@ const Layout = ({ children }) => {
 				});
 			}
 
-			if (serverItems.length > 0) {
+			if (systemItems.length > 0) {
 				nav.push({
-					section: "SERVER",
-					items: serverItems,
+					section: "SYSTEM",
+					items: systemItems,
 				});
 			}
 		}
@@ -796,17 +793,17 @@ const Layout = ({ children }) => {
 																			</span>
 																		)}
 																		{subItem.alpha && (
-																			<span className="text-xs bg-purple-100 dark:bg-purple-900 text-purple-600 dark:text-purple-200 px-1.5 py-0.5 rounded font-medium">
+																			<span className="text-[10px] bg-purple-50 dark:bg-purple-900/50 text-purple-600 dark:text-purple-300 px-1 py-px rounded font-medium leading-tight">
 																				Alpha
 																			</span>
 																		)}
 																		{subItem.beta && (
-																			<span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-200 px-1.5 py-0.5 rounded font-medium">
+																			<span className="text-[10px] bg-blue-50 dark:bg-blue-900/50 text-blue-600 dark:text-blue-300 px-1 py-px rounded font-medium leading-tight">
 																				Beta
 																			</span>
 																		)}
 																		{subItem.new && (
-																			<span className="text-xs bg-green-100 dark:bg-green-900 text-green-600 dark:text-green-200 px-1.5 py-0.5 rounded font-medium">
+																			<span className="text-[10px] bg-green-50 dark:bg-green-900/50 text-green-600 dark:text-green-300 px-1 py-px rounded font-medium leading-tight">
 																				New
 																			</span>
 																		)}
@@ -943,7 +940,7 @@ const Layout = ({ children }) => {
 							)}
 						</div>
 						<nav className="flex-1 flex flex-col overflow-y-auto overflow-x-hidden min-h-0">
-							<ul className="flex flex-1 flex-col space-y-2">
+							<ul className="flex flex-1 flex-col space-y-1">
 								{/* Show message for users with very limited permissions */}
 								{navigation.length === 0 && settingsNavigation.length === 0 && (
 									<li className="px-2 py-4 text-center">
@@ -959,14 +956,14 @@ const Layout = ({ children }) => {
 									if (item.name) {
 										// Single item (Dashboard)
 										return (
-											<li key={item.name} className="mb-4">
+											<li key={item.name} className="mb-1">
 												<Link
 													to={item.href}
-													className={`group flex items-center gap-x-3 rounded-lg text-sm leading-6 font-medium transition-all duration-200 min-h-[44px] ${
+													className={`group flex items-center gap-x-2.5 rounded-lg text-sm leading-6 font-medium transition-all duration-200 min-h-[36px] ${
 														isActive(item.href)
 															? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
 															: "text-secondary-700 dark:text-secondary-200 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
-													} ${sidebarCollapsed ? "justify-center px-2 py-2" : "px-2 py-3"}`}
+													} ${sidebarCollapsed ? "justify-center px-2 py-1.5" : "px-2 py-2"}`}
 													onMouseEnter={() => prefetchRoute(item.href)}
 													title={sidebarCollapsed ? item.name : ""}
 												>
@@ -1041,35 +1038,30 @@ const Layout = ({ children }) => {
 										}
 										// Section with items
 										return (
-											<li key={item.section} className="mt-4">
+											<li
+												key={item.section}
+												className="mt-2 pt-2 border-t border-secondary-100 dark:border-white/5 first:mt-0 first:pt-0 first:border-t-0"
+											>
 												{!sidebarCollapsed && (
-													<h3 className="text-xs font-semibold text-secondary-500 dark:text-white uppercase tracking-wider mb-2">
+													<h3 className="text-[11px] font-medium text-secondary-400 dark:text-white/50 uppercase tracking-widest mb-1.5 px-2">
 														{item.section}
 													</h3>
 												)}
-												<ul className="space-y-0.1">
-													{item.items.map((subItem, index) => {
-														const isLastItem = index === item.items.length - 1;
-														const shouldAddSpacing =
-															isLastItem &&
-															(item.section === "INVENTORY" ||
-																item.section === "INTEGRATIONS");
+												<ul className="space-y-0.5">
+													{item.items.map((subItem) => {
 														return (
-															<li
-																key={subItem.name}
-																className={shouldAddSpacing ? "mb-4" : ""}
-															>
+															<li key={subItem.name}>
 																{subItem.name === "Hosts" &&
 																canManageHosts() ? (
 																	// Special handling for Hosts item with integrated + button
 																	<div className="flex items-center gap-1">
 																		<Link
 																			to={subItem.href}
-																			className={`group flex items-center gap-x-3 rounded-lg text-sm leading-6 font-medium transition-all duration-200 flex-1 min-h-[44px] ${
+																			className={`group flex items-center gap-x-2.5 rounded-lg text-sm leading-6 font-medium transition-all duration-200 flex-1 min-h-[36px] ${
 																				isActive(subItem.href)
 																					? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
 																					: "text-secondary-700 dark:text-secondary-200 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
-																			} ${sidebarCollapsed ? "justify-center px-2 py-2" : "px-2 py-3"}`}
+																			} ${sidebarCollapsed ? "justify-center px-2 py-1.5" : "px-2 py-2"}`}
 																			onMouseEnter={() =>
 																				prefetchRoute(subItem.href)
 																			}
@@ -1169,11 +1161,11 @@ const Layout = ({ children }) => {
 																	// Standard navigation item
 																	<Link
 																		to={subItem.href}
-																		className={`group flex items-center gap-x-3 rounded-lg text-sm leading-6 font-medium transition-all duration-200 min-h-[44px] ${
+																		className={`group flex items-center gap-x-2.5 rounded-lg text-sm leading-6 font-medium transition-all duration-200 min-h-[36px] ${
 																			isActive(subItem.href)
 																				? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
 																				: "text-secondary-700 dark:text-secondary-200 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
-																		} ${sidebarCollapsed ? "justify-center px-2 py-2 relative" : "px-2 py-3"} ${
+																		} ${sidebarCollapsed ? "justify-center px-2 py-1.5 relative" : "px-2 py-2"} ${
 																			subItem.comingSoon
 																				? "opacity-50 cursor-not-allowed"
 																				: ""
@@ -1262,17 +1254,17 @@ const Layout = ({ children }) => {
 																					</span>
 																				)}
 																				{subItem.alpha && (
-																					<span className="text-xs bg-purple-100 dark:bg-purple-900 text-purple-600 dark:text-purple-200 px-1.5 py-0.5 rounded font-medium">
+																					<span className="text-[10px] bg-purple-50 dark:bg-purple-900/50 text-purple-600 dark:text-purple-300 px-1 py-px rounded font-medium leading-tight">
 																						Alpha
 																					</span>
 																				)}
 																				{subItem.beta && (
-																					<span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-200 px-1.5 py-0.5 rounded font-medium">
+																					<span className="text-[10px] bg-blue-50 dark:bg-blue-900/50 text-blue-600 dark:text-blue-300 px-1 py-px rounded font-medium leading-tight">
 																						Beta
 																					</span>
 																				)}
 																				{subItem.new && (
-																					<span className="text-xs bg-green-100 dark:bg-green-900 text-green-600 dark:text-green-200 px-1.5 py-0.5 rounded font-medium">
+																					<span className="text-[10px] bg-green-50 dark:bg-green-900/50 text-green-600 dark:text-green-300 px-1 py-px rounded font-medium leading-tight">
 																						New
 																					</span>
 																				)}
@@ -1296,7 +1288,7 @@ const Layout = ({ children }) => {
 						</nav>
 
 						{/* LINKS + Profile - Bottom of Sidebar, grouped with minimal gap */}
-						<div className="flex-shrink-0 flex flex-col gap-y-2 px-2 pb-1">
+						<div className="flex-shrink-0 flex flex-col gap-y-1 px-2 pb-1">
 							{/* LINKS Section */}
 							{!sidebarCollapsed && (
 								<div>
@@ -1306,7 +1298,7 @@ const Layout = ({ children }) => {
 											setShowDonateModal(true);
 											setSidebarOpen(false);
 										}}
-										className="w-full h-10 flex items-center justify-center gap-2 px-3 mb-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-secondary-50 dark:bg-secondary-800 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+										className="w-full h-8 flex items-center justify-center gap-1.5 px-3 mb-1 text-xs font-medium text-secondary-700 dark:text-secondary-200 bg-secondary-50 dark:bg-secondary-800 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
 									>
 										<BuyMeACoffeeIcon className="h-4 w-4 text-yellow-500" />
 										Donate a coffee
@@ -1317,7 +1309,7 @@ const Layout = ({ children }) => {
 											href="https://github.com/orgs/PatchMon/projects/2/views/1"
 											target="_blank"
 											rel="noopener noreferrer"
-											className="flex-1 min-w-0 flex items-center justify-center h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+											className="flex-1 min-w-0 flex items-center justify-center h-8 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
 											title="Roadmap"
 										>
 											<Route className="h-5 w-5" />
@@ -1326,14 +1318,14 @@ const Layout = ({ children }) => {
 											href="https://docs.patchmon.net"
 											target="_blank"
 											rel="noopener noreferrer"
-											className="flex-1 min-w-0 flex items-center justify-center h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+											className="flex-1 min-w-0 flex items-center justify-center h-8 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
 											title="Documentation"
 										>
 											<BookOpen className="h-5 w-5" />
 										</a>
 										<a
 											href="mailto:support@patchmon.net"
-											className="flex-1 min-w-0 flex items-center justify-center h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+											className="flex-1 min-w-0 flex items-center justify-center h-8 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
 											title="Email Support"
 										>
 											<Mail className="h-5 w-5" />
@@ -1342,7 +1334,7 @@ const Layout = ({ children }) => {
 											href="https://patchmon.net"
 											target="_blank"
 											rel="noopener noreferrer"
-											className="flex-1 min-w-0 flex items-center justify-center h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+											className="flex-1 min-w-0 flex items-center justify-center h-8 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
 											title="Website"
 										>
 											<Globe className="h-5 w-5" />

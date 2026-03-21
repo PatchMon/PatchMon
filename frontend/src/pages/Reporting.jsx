@@ -654,7 +654,6 @@ const Reporting = () => {
 
 	return (
 		<div className="space-y-6">
-			{/* Page Header */}
 			<div className="flex items-center justify-between">
 				<div>
 					<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
@@ -679,7 +678,6 @@ const Reporting = () => {
 				</div>
 			</div>
 
-			{/* Stats Cards */}
 			<div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
 				{[
 					{

@@ -473,8 +473,7 @@ const Compliance = () => {
 
 	return (
 		<div className="space-y-6">
-			{/* Page Header */}
-			<div className="mb-6">
+			<div>
 				<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
 					Security Compliance
 				</h1>
@@ -483,8 +482,7 @@ const Compliance = () => {
 				</p>
 			</div>
 
-			{/* Top: 5 host status cards - same layout/style as Hosts page */}
-			<div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 mb-6">
+			<div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
 				<div className="card p-4 cursor-default text-left w-full">
 					<div className="flex items-center">
 						<Server className="h-5 w-5 text-primary-600 mr-2" />

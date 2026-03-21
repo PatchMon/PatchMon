@@ -547,9 +547,8 @@ const Docker = () => {
 	};
 
 	return (
-		<div className="md:h-[calc(100vh-7rem)] md:flex md:flex-col md:overflow-hidden">
-			{/* Header */}
-			<div className="flex items-center justify-between mb-6">
+		<div className="space-y-6 md:h-[calc(100vh-7rem)] md:flex md:flex-col md:overflow-hidden">
+			<div className="flex items-center justify-between">
 				<div>
 					<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
 						Docker Inventory
@@ -579,7 +578,7 @@ const Docker = () => {
 			</div>
 
 			{/* Stats Summary */}
-			<div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+			<div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
 				<div className="card p-4">
 					<div className="flex items-center">
 						<div className="flex-shrink-0">
