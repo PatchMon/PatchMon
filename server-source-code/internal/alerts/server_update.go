@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
-	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
@@ -63,28 +62,42 @@ func ProcessServerUpdate(ctx context.Context, db *database.DB, serverVersion str
 	severity := DefaultSeverity(cfg.DefaultSeverity, "informational")
 
 	if util.CompareVersions(latest, serverVersion) > 0 {
-		// Update available: create alert only if none exists for this latest version
-		active, _ := db.Queries.ListActiveAlertsByType(ctx, "server_update")
-		hasMatching := false
-		for _, a := range active {
-			var m map[string]interface{}
-			if len(a.Metadata) > 0 && json.Unmarshal(a.Metadata, &m) == nil {
-				if lv, _ := m["latest_version"].(string); lv == latest {
-					hasMatching = true
-					break
+		title := "Server Update Available"
+		msg := fmt.Sprintf("A new server version (%s) is available. Current version: %s", latest, serverVersion)
+		meta := map[string]interface{}{"current_version": serverVersion, "latest_version": latest}
+
+		// Create alert record only if Internal Alerts destination is enabled.
+		if IsInternalAlertsEnabled(ctx, db) {
+			active, _ := db.Queries.ListActiveAlertsByType(ctx, "server_update")
+			hasMatching := false
+			for _, a := range active {
+				var m map[string]interface{}
+				if len(a.Metadata) > 0 && json.Unmarshal(a.Metadata, &m) == nil {
+					if lv, _ := m["latest_version"].(string); lv == latest {
+						hasMatching = true
+						break
+					}
+				}
+			}
+			if !hasMatching {
+				alert, _ := alertsStore.Create(ctx, "server_update", severity, title, msg, meta)
+				if alert != nil {
+					if cfg.AutoAssignEnabled && cfg.AutoAssignUserID != nil {
+						_ = alertsStore.UpdateAssignment(ctx, alert.ID, *cfg.AutoAssignUserID)
+						_ = alertsStore.RecordHistory(ctx, alert.ID, nil, "assigned", map[string]interface{}{"assigned_to": *cfg.AutoAssignUserID})
+					}
+					log.Info("server_update: created alert", "current", serverVersion, "latest", latest)
 				}
 			}
 		}
-		if !hasMatching {
-			title := "Server Update Available"
-			msg := fmt.Sprintf("A new server version (%s) is available. Current version: %s", latest, serverVersion)
-			meta := map[string]interface{}{"current_version": serverVersion, "latest_version": latest}
-			alert, _ := alertsStore.Create(ctx, "server_update", severity, title, msg, meta)
-			if alert != nil && emit != nil {
-				a := &models.Alert{ID: alert.ID, Type: alert.Type, Severity: alert.Severity, Title: alert.Title, Message: alert.Message}
-				emit.EmitForAlert(ctx, db, tenantHost, a, meta, cfg)
-			}
-			log.Info("server_update: created alert", "current", serverVersion, "latest", latest)
+
+		// Emit event for notification routing (webhooks, email, ntfy, etc.) regardless.
+		if emit != nil {
+			emit.EmitEvent(ctx, db, tenantHost, notifications.Event{
+				Type: "server_update", Severity: severity, Title: title, Message: msg,
+				ReferenceType: "host", ReferenceID: "",
+				Metadata: meta,
+			})
 		}
 	} else {
 		// Up to date: resolve all active server_update alerts

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/alerts"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
@@ -301,10 +302,11 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 	}
 	if h.notify != nil {
 		if d := hostctx.DBFromContext(r.Context()); d != nil {
-			sev := "informational"
+			fallbackSev := "informational"
 			if failedTotal > 0 {
-				sev = "warning"
+				fallbackSev = "warning"
 			}
+			sev := alerts.ResolveSeverity(r.Context(), d, "compliance_scan_completed", fallbackSev)
 
 			// Resolve host display name
 			hostName := host.FriendlyName

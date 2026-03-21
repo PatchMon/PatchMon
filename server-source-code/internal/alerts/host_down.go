@@ -9,7 +9,6 @@ import (
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
-	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 )
@@ -87,6 +86,7 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 			}
 			hostName := hostDisplayName(host)
 			severity := DefaultSeverity(cfg.DefaultSeverity, "warning")
+			title := "Host " + hostName + " is offline"
 			meta := map[string]interface{}{
 				"host_id":           host.ID,
 				"host_name":         hostName,
@@ -94,23 +94,27 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 				"threshold_minutes": thresholdMinutes,
 			}
 			msg := fmt.Sprintf("Host \"%s\" has not reported in %d minutes. Last update: %s", hostName, thresholdMinutes, lastUpdate.Time.Format(time.RFC3339))
-			alert, err := alertsStore.Create(ctx, "host_down", severity,
-				"Host "+hostName+" is offline",
-				msg,
-				meta)
-			if err != nil || alert == nil {
-				continue
-			}
-			alertsCreated++
-			alertsByHostID[host.ID] = alert.ID
-			if emit != nil {
-				a := &models.Alert{ID: alert.ID, Type: alert.Type, Severity: alert.Severity, Title: alert.Title, Message: alert.Message}
-				emit.EmitForAlert(ctx, d, tenantHost, a, meta, cfg)
+
+			// Create alert record only if Internal Alerts destination is enabled.
+			if IsInternalAlertsEnabled(ctx, d) {
+				alert, err := alertsStore.Create(ctx, "host_down", severity, title, msg, meta)
+				if err == nil && alert != nil {
+					alertsCreated++
+					alertsByHostID[host.ID] = alert.ID
+					if cfg.AutoAssignEnabled && cfg.AutoAssignUserID != nil {
+						_ = alertsStore.UpdateAssignment(ctx, alert.ID, *cfg.AutoAssignUserID)
+						_ = alertsStore.RecordHistory(ctx, alert.ID, nil, "assigned", map[string]interface{}{"assigned_to": *cfg.AutoAssignUserID})
+					}
+				}
 			}
 
-			if cfg.AutoAssignEnabled && cfg.AutoAssignUserID != nil {
-				_ = alertsStore.UpdateAssignment(ctx, alert.ID, *cfg.AutoAssignUserID)
-				_ = alertsStore.RecordHistory(ctx, alert.ID, nil, "assigned", map[string]interface{}{"assigned_to": *cfg.AutoAssignUserID})
+			// Emit event for notification routing regardless.
+			if emit != nil {
+				emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
+					Type: "host_down", Severity: severity, Title: title, Message: msg,
+					ReferenceType: "host", ReferenceID: host.ID,
+					Metadata: meta,
+				})
 			}
 		} else if !isStale {
 			if alertID, exists := alertsByHostID[host.ID]; exists {
@@ -122,7 +126,7 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 						hn := hostDisplayName(host)
 						emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
 							Type:          "host_recovered",
-							Severity:      "informational",
+							Severity:      ResolveSeverity(ctx, d, "host_recovered", "informational"),
 							Title:         "Host back online",
 							Message:       fmt.Sprintf("Host %s is reporting again.", hn),
 							ReferenceType: "host",
@@ -190,24 +194,32 @@ func OnDisconnect(ctx context.Context, d *database.DB, apiID string, tenantHost 
 		"threshold_minutes": 0,
 		"disconnect_reason": "websocket",
 	}
+	title := "Host " + hostName + " disconnected"
 	msg := fmt.Sprintf("Host \"%s\" WebSocket connection lost. Last update: %s", hostName, lastUpdate.Format(time.RFC3339))
-	alert, err := store.NewAlertsStore(d).Create(ctx, "host_down", severity,
-		"Host "+hostName+" disconnected",
-		msg,
-		meta)
-	if err != nil || alert == nil {
-		log.Debug("host_down: failed to create alert on disconnect", "api_id", apiID, "error", err)
-		return
+
+	// Create alert record only if Internal Alerts destination is enabled.
+	if IsInternalAlertsEnabled(ctx, d) {
+		alertsStore := store.NewAlertsStore(d)
+		alert, err := alertsStore.Create(ctx, "host_down", severity, title, msg, meta)
+		if err != nil || alert == nil {
+			log.Debug("host_down: failed to create alert on disconnect", "api_id", apiID, "error", err)
+		} else {
+			if cfg.AutoAssignEnabled && cfg.AutoAssignUserID != nil {
+				_ = alertsStore.UpdateAssignment(ctx, alert.ID, *cfg.AutoAssignUserID)
+				_ = alertsStore.RecordHistory(ctx, alert.ID, nil, "assigned", map[string]interface{}{"assigned_to": *cfg.AutoAssignUserID})
+			}
+			log.Info("host_down: created alert on disconnect", "api_id", apiID, "host_id", host.ID, "alert_id", alert.ID)
+		}
 	}
+
+	// Emit event for notification routing regardless.
 	if emit != nil {
-		a := &models.Alert{ID: alert.ID, Type: alert.Type, Severity: alert.Severity, Title: alert.Title, Message: alert.Message}
-		emit.EmitForAlert(ctx, d, tenantHost, a, meta, cfg)
+		emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
+			Type: "host_down", Severity: severity, Title: title, Message: msg,
+			ReferenceType: "host", ReferenceID: host.ID,
+			Metadata: meta,
+		})
 	}
-	if cfg.AutoAssignEnabled && cfg.AutoAssignUserID != nil {
-		_ = store.NewAlertsStore(d).UpdateAssignment(ctx, alert.ID, *cfg.AutoAssignUserID)
-		_ = store.NewAlertsStore(d).RecordHistory(ctx, alert.ID, nil, "assigned", map[string]interface{}{"assigned_to": *cfg.AutoAssignUserID})
-	}
-	log.Info("host_down: created alert on disconnect", "api_id", apiID, "host_id", host.ID, "alert_id", alert.ID)
 }
 
 // OnConnect resolves any active host_down alert for the host when an agent reconnects.
@@ -252,7 +264,7 @@ func OnConnect(ctx context.Context, d *database.DB, apiID string, tenantHost str
 					hn := hostDisplayNameFromRow(host)
 					emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
 						Type:          "host_recovered",
-						Severity:      "informational",
+						Severity:      ResolveSeverity(ctx, d, "host_recovered", "informational"),
 						Title:         "Host reconnected",
 						Message:       fmt.Sprintf("Host %s WebSocket reconnected.", hn),
 						ReferenceType: "host",

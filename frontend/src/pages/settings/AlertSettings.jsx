@@ -61,6 +61,7 @@ const configsEqual = (a, b) => {
 		"notification_enabled",
 		"escalation_enabled",
 		"escalation_after_hours",
+		"alert_delay_seconds",
 	];
 	return fields.every((f) => {
 		const va = a[f];
@@ -177,6 +178,7 @@ const AlertSettings = () => {
 				"retention_days",
 				"auto_resolve_after_days",
 				"escalation_after_hours",
+				"alert_delay_seconds",
 			].includes(field)
 		) {
 			v = null;
@@ -206,6 +208,7 @@ const AlertSettings = () => {
 				notification_enabled: c.notification_enabled,
 				escalation_enabled: c.escalation_enabled,
 				escalation_after_hours: c.escalation_after_hours ?? null,
+				alert_delay_seconds: c.alert_delay_seconds ?? null,
 				metadata: c.metadata || null,
 			})),
 		);
@@ -344,7 +347,7 @@ const AlertSettings = () => {
 									<th className={TH}>Alert type</th>
 									<th className={`${TH} w-20`}>Active</th>
 									<th className={`${TH} w-28`}>Severity</th>
-									<th className={`${TH} w-20`}>Notify</th>
+									<th className={`${TH} w-24`}>Alert delay</th>
 									<th className={TH}>Auto-assign</th>
 									<th className={`${TH} w-24`}>Retention</th>
 									<th className={`${TH} w-28`}>Auto-resolve</th>
@@ -401,17 +404,28 @@ const AlertSettings = () => {
 												{off ? (
 													<span className="text-secondary-400">-</span>
 												) : (
-													<Toggle
-														checked={c.notification_enabled}
-														onChange={(v) =>
-															handleFieldChange(
-																c.alert_type,
-																"notification_enabled",
-																v,
-															)
-														}
-														disabled={dis}
-													/>
+													<div className="flex items-center gap-1">
+														<input
+															type="number"
+															min={0}
+															className={INPUT_SM}
+															value={c.alert_delay_seconds || ""}
+															placeholder="-"
+															onChange={(e) =>
+																handleFieldChange(
+																	c.alert_type,
+																	"alert_delay_seconds",
+																	e.target.value
+																		? Number.parseInt(e.target.value, 10)
+																		: null,
+																)
+															}
+															disabled={dis}
+														/>
+														<span className="text-xs text-secondary-400">
+															sec
+														</span>
+													</div>
 												)}
 											</td>
 											<td className={TD}>

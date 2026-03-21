@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
-	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
@@ -53,28 +52,42 @@ func ProcessAgentUpdate(ctx context.Context, d *database.DB, agentsDir string, t
 	severity := DefaultSeverity(cfg.DefaultSeverity, "informational")
 
 	if currentVersion != "" && latest != "" && util.CompareVersions(latest, currentVersion) > 0 {
-		// Create alert only if none exists for this latest version
-		active, _ := d.Queries.ListActiveAlertsByType(ctx, "agent_update")
-		hasMatching := false
-		for _, a := range active {
-			var m map[string]interface{}
-			if len(a.Metadata) > 0 && json.Unmarshal(a.Metadata, &m) == nil {
-				if lv, _ := m["latest_version"].(string); lv == latest {
-					hasMatching = true
-					break
+		title := "Agent Files Update Available"
+		msg := fmt.Sprintf("A new agent version (%s) is available. Current version: %s", latest, currentVersion)
+		meta := map[string]interface{}{"current_version": currentVersion, "latest_version": latest}
+
+		// Create alert record only if Internal Alerts destination is enabled.
+		if IsInternalAlertsEnabled(ctx, d) {
+			active, _ := d.Queries.ListActiveAlertsByType(ctx, "agent_update")
+			hasMatching := false
+			for _, a := range active {
+				var m map[string]interface{}
+				if len(a.Metadata) > 0 && json.Unmarshal(a.Metadata, &m) == nil {
+					if lv, _ := m["latest_version"].(string); lv == latest {
+						hasMatching = true
+						break
+					}
+				}
+			}
+			if !hasMatching {
+				alert, _ := alertsStore.Create(ctx, "agent_update", severity, title, msg, meta)
+				if alert != nil {
+					if cfg.AutoAssignEnabled && cfg.AutoAssignUserID != nil {
+						_ = alertsStore.UpdateAssignment(ctx, alert.ID, *cfg.AutoAssignUserID)
+						_ = alertsStore.RecordHistory(ctx, alert.ID, nil, "assigned", map[string]interface{}{"assigned_to": *cfg.AutoAssignUserID})
+					}
+					log.Info("agent_update: created alert", "current", currentVersion, "latest", latest)
 				}
 			}
 		}
-		if !hasMatching {
-			title := "Agent Files Update Available"
-			msg := fmt.Sprintf("A new agent version (%s) is available. Current version: %s", latest, currentVersion)
-			meta := map[string]interface{}{"current_version": currentVersion, "latest_version": latest}
-			alert, _ := alertsStore.Create(ctx, "agent_update", severity, title, msg, meta)
-			if alert != nil && emit != nil {
-				a := &models.Alert{ID: alert.ID, Type: alert.Type, Severity: alert.Severity, Title: alert.Title, Message: alert.Message}
-				emit.EmitForAlert(ctx, d, tenantHost, a, meta, cfg)
-			}
-			log.Info("agent_update: created alert", "current", currentVersion, "latest", latest)
+
+		// Emit event for notification routing regardless.
+		if emit != nil {
+			emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
+				Type: "agent_update", Severity: severity, Title: title, Message: msg,
+				ReferenceType: "host", ReferenceID: "",
+				Metadata: meta,
+			})
 		}
 	} else if currentVersion != "" && latest != "" && util.CompareVersions(latest, currentVersion) <= 0 {
 		// Up to date: resolve all active agent_update alerts

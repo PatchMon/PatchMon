@@ -13,7 +13,7 @@ import (
 
 const getAlertConfigByType = `-- name: GetAlertConfigByType :one
 SELECT
-    ac.id, ac.alert_type, ac.is_enabled, ac.default_severity, ac.auto_assign_enabled, ac.auto_assign_user_id, ac.auto_assign_rule, ac.auto_assign_conditions, ac.retention_days, ac.auto_resolve_after_days, ac.cleanup_resolved_only, ac.notification_enabled, ac.escalation_enabled, ac.escalation_after_hours, ac.metadata, ac.created_at, ac.updated_at,
+    ac.id, ac.alert_type, ac.is_enabled, ac.default_severity, ac.auto_assign_enabled, ac.auto_assign_user_id, ac.auto_assign_rule, ac.auto_assign_conditions, ac.retention_days, ac.auto_resolve_after_days, ac.cleanup_resolved_only, ac.notification_enabled, ac.escalation_enabled, ac.escalation_after_hours, ac.alert_delay_seconds, ac.metadata, ac.created_at, ac.updated_at,
     u.id AS auto_assign_user_id_val,
     u.username AS auto_assign_username,
     u.email AS auto_assign_email,
@@ -39,6 +39,7 @@ type GetAlertConfigByTypeRow struct {
 	NotificationEnabled  bool             `json:"notification_enabled"`
 	EscalationEnabled    bool             `json:"escalation_enabled"`
 	EscalationAfterHours *int32           `json:"escalation_after_hours"`
+	AlertDelaySeconds    *int32           `json:"alert_delay_seconds"`
 	Metadata             []byte           `json:"metadata"`
 	CreatedAt            pgtype.Timestamp `json:"created_at"`
 	UpdatedAt            pgtype.Timestamp `json:"updated_at"`
@@ -67,6 +68,7 @@ func (q *Queries) GetAlertConfigByType(ctx context.Context, alertType string) (G
 		&i.NotificationEnabled,
 		&i.EscalationEnabled,
 		&i.EscalationAfterHours,
+		&i.AlertDelaySeconds,
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -81,7 +83,7 @@ func (q *Queries) GetAlertConfigByType(ctx context.Context, alertType string) (G
 
 const listAlertConfig = `-- name: ListAlertConfig :many
 SELECT
-    ac.id, ac.alert_type, ac.is_enabled, ac.default_severity, ac.auto_assign_enabled, ac.auto_assign_user_id, ac.auto_assign_rule, ac.auto_assign_conditions, ac.retention_days, ac.auto_resolve_after_days, ac.cleanup_resolved_only, ac.notification_enabled, ac.escalation_enabled, ac.escalation_after_hours, ac.metadata, ac.created_at, ac.updated_at,
+    ac.id, ac.alert_type, ac.is_enabled, ac.default_severity, ac.auto_assign_enabled, ac.auto_assign_user_id, ac.auto_assign_rule, ac.auto_assign_conditions, ac.retention_days, ac.auto_resolve_after_days, ac.cleanup_resolved_only, ac.notification_enabled, ac.escalation_enabled, ac.escalation_after_hours, ac.alert_delay_seconds, ac.metadata, ac.created_at, ac.updated_at,
     u.id AS auto_assign_user_id_val,
     u.username AS auto_assign_username,
     u.email AS auto_assign_email,
@@ -107,6 +109,7 @@ type ListAlertConfigRow struct {
 	NotificationEnabled  bool             `json:"notification_enabled"`
 	EscalationEnabled    bool             `json:"escalation_enabled"`
 	EscalationAfterHours *int32           `json:"escalation_after_hours"`
+	AlertDelaySeconds    *int32           `json:"alert_delay_seconds"`
 	Metadata             []byte           `json:"metadata"`
 	CreatedAt            pgtype.Timestamp `json:"created_at"`
 	UpdatedAt            pgtype.Timestamp `json:"updated_at"`
@@ -141,6 +144,7 @@ func (q *Queries) ListAlertConfig(ctx context.Context) ([]ListAlertConfigRow, er
 			&i.NotificationEnabled,
 			&i.EscalationEnabled,
 			&i.EscalationAfterHours,
+			&i.AlertDelaySeconds,
 			&i.Metadata,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -165,10 +169,10 @@ INSERT INTO alert_config (
     id, alert_type, is_enabled, default_severity,
     auto_assign_enabled, auto_assign_user_id, auto_assign_rule, auto_assign_conditions,
     retention_days, auto_resolve_after_days, cleanup_resolved_only,
-    notification_enabled, escalation_enabled, escalation_after_hours, metadata,
+    notification_enabled, escalation_enabled, escalation_after_hours, alert_delay_seconds, metadata,
     created_at, updated_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, COALESCE($15, '{}'::jsonb),
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, COALESCE($16, '{}'::jsonb),
     NOW(), NOW()
 )
 ON CONFLICT (alert_type) DO UPDATE SET
@@ -184,9 +188,10 @@ ON CONFLICT (alert_type) DO UPDATE SET
     notification_enabled = EXCLUDED.notification_enabled,
     escalation_enabled = EXCLUDED.escalation_enabled,
     escalation_after_hours = EXCLUDED.escalation_after_hours,
+    alert_delay_seconds = EXCLUDED.alert_delay_seconds,
     metadata = EXCLUDED.metadata,
     updated_at = NOW()
-RETURNING id, alert_type, is_enabled, default_severity, auto_assign_enabled, auto_assign_user_id, auto_assign_rule, auto_assign_conditions, retention_days, auto_resolve_after_days, cleanup_resolved_only, notification_enabled, escalation_enabled, escalation_after_hours, metadata, created_at, updated_at
+RETURNING id, alert_type, is_enabled, default_severity, auto_assign_enabled, auto_assign_user_id, auto_assign_rule, auto_assign_conditions, retention_days, auto_resolve_after_days, cleanup_resolved_only, notification_enabled, escalation_enabled, escalation_after_hours, alert_delay_seconds, metadata, created_at, updated_at
 `
 
 type UpsertAlertConfigParams struct {
@@ -204,7 +209,8 @@ type UpsertAlertConfigParams struct {
 	NotificationEnabled  bool        `json:"notification_enabled"`
 	EscalationEnabled    bool        `json:"escalation_enabled"`
 	EscalationAfterHours *int32      `json:"escalation_after_hours"`
-	Column15             interface{} `json:"column_15"`
+	AlertDelaySeconds    *int32      `json:"alert_delay_seconds"`
+	Column16             interface{} `json:"column_16"`
 }
 
 func (q *Queries) UpsertAlertConfig(ctx context.Context, arg UpsertAlertConfigParams) (AlertConfig, error) {
@@ -223,7 +229,8 @@ func (q *Queries) UpsertAlertConfig(ctx context.Context, arg UpsertAlertConfigPa
 		arg.NotificationEnabled,
 		arg.EscalationEnabled,
 		arg.EscalationAfterHours,
-		arg.Column15,
+		arg.AlertDelaySeconds,
+		arg.Column16,
 	)
 	var i AlertConfig
 	err := row.Scan(
@@ -241,6 +248,7 @@ func (q *Queries) UpsertAlertConfig(ctx context.Context, arg UpsertAlertConfigPa
 		&i.NotificationEnabled,
 		&i.EscalationEnabled,
 		&i.EscalationAfterHours,
+		&i.AlertDelaySeconds,
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,

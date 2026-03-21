@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/alerts"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
@@ -168,11 +169,12 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 			}
 
 			evType := "patch_run_completed"
-			sev := "informational"
+			fallbackSev := "informational"
 			if body.Stage == "failed" {
 				evType = "patch_run_failed"
-				sev = "error"
+				fallbackSev = "error"
 			}
+			sev := alerts.ResolveSeverity(r.Context(), d, evType, fallbackSev)
 
 			title := fmt.Sprintf("Patch Run %s - %s", strings.ToUpper(body.Stage[:1])+body.Stage[1:], hostName)
 			if run.DryRun {

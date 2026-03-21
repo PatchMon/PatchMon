@@ -22,6 +22,8 @@ type NotificationDeliverPayload struct {
 	ReferenceType    string                 `json:"reference_type"`
 	ReferenceID      string                 `json:"reference_id"`
 	EventFingerprint string                 `json:"event_fingerprint"`
+	Delayed          bool                   `json:"delayed,omitempty"`
+	CancelKey        string                 `json:"cancel_key,omitempty"`
 	Metadata         map[string]interface{} `json:"metadata,omitempty"`
 }
 

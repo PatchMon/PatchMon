@@ -49,6 +49,7 @@ type AlertConfig struct {
 	NotificationEnabled  bool             `json:"notification_enabled"`
 	EscalationEnabled    bool             `json:"escalation_enabled"`
 	EscalationAfterHours *int32           `json:"escalation_after_hours"`
+	AlertDelaySeconds    *int32           `json:"alert_delay_seconds"`
 	Metadata             []byte           `json:"metadata"`
 	CreatedAt            pgtype.Timestamp `json:"created_at"`
 	UpdatedAt            pgtype.Timestamp `json:"updated_at"`

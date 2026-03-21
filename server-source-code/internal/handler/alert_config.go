@@ -176,6 +176,7 @@ func alertConfigToMap(c *models.AlertConfig, autoAssignUser *store.UserRef) map[
 		"notification_enabled":    c.NotificationEnabled,
 		"escalation_enabled":      c.EscalationEnabled,
 		"escalation_after_hours":  c.EscalationAfterHours,
+		"alert_delay_seconds":     c.AlertDelaySeconds,
 		"created_at":              c.CreatedAt,
 		"updated_at":              c.UpdatedAt,
 	}
@@ -263,6 +264,16 @@ func applyAlertConfigUpdate(cfg *models.AlertConfig, req map[string]interface{})
 	}
 	if req["escalation_after_hours"] == nil {
 		cfg.EscalationAfterHours = nil
+	}
+	if v, ok := req["alert_delay_seconds"].(float64); ok {
+		n := int(v)
+		cfg.AlertDelaySeconds = &n
+	}
+	if v, ok := req["alert_delay_seconds"].(int); ok {
+		cfg.AlertDelaySeconds = &v
+	}
+	if req["alert_delay_seconds"] == nil {
+		cfg.AlertDelaySeconds = nil
 	}
 	if v, ok := req["auto_assign_conditions"].(map[string]interface{}); ok {
 		b, _ := json.Marshal(v)

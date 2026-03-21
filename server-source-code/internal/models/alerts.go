@@ -57,6 +57,7 @@ type AlertConfig struct {
 	NotificationEnabled  bool      `db:"notification_enabled"`
 	EscalationEnabled    bool      `db:"escalation_enabled"`
 	EscalationAfterHours *int      `db:"escalation_after_hours"`
+	AlertDelaySeconds    *int      `db:"alert_delay_seconds"`
 	Metadata             JSON      `db:"metadata"`
 	CreatedAt            time.Time `db:"created_at"`
 	UpdatedAt            time.Time `db:"updated_at"`

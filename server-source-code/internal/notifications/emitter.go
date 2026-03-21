@@ -95,12 +95,42 @@ func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, e
 		return
 	}
 
+	// Check alert_config: if the event type is explicitly disabled, skip all notifications.
+	var alertDelay time.Duration
+	if cfg, err := d.Queries.GetAlertConfigByType(ctx, ev.Type); err == nil {
+		if !cfg.IsEnabled {
+			if e.log != nil {
+				e.log.Debug("notifications: event type disabled in alert lifecycle", "event_type", ev.Type)
+			}
+			return
+		}
+		if cfg.AlertDelaySeconds != nil && *cfg.AlertDelaySeconds > 0 {
+			alertDelay = time.Duration(*cfg.AlertDelaySeconds) * time.Second
+		}
+	}
+	// If no config row exists for this event type, allow it through (backwards compat).
+
 	// Inject app_link into metadata so formatters can render clickable links.
 	ev.Metadata = e.injectAppLink(ctx, d, ev)
+
+	// If this event cancels a delayed counterpart (e.g. host_recovered cancels host_down),
+	// set a cancel key so the delayed notification is suppressed when it processes.
+	if e.rdb != nil {
+		if cancel := cancelKeyForEvent(ev); cancel != "" {
+			ttl := 10 * time.Minute // keep cancel key long enough to outlive any delay
+			_ = e.rdb.Set(ctx, tenantRedisKey(tenantHost, cancel), "1", ttl).Err()
+		}
+	}
 
 	evSev := SeverityRank(ev.Severity)
 	for _, row := range routes {
 		if !row.DestinationEnabled {
+			continue
+		}
+		// For event types with built-in alert creation code (host_down, server_update,
+		// agent_update), skip the internal destination to prevent double alert records.
+		// Their alert code checks IsInternalAlertsEnabled directly.
+		if row.DestinationID == "internal-alerts" && hasBuiltInAlertCreation(ev.Type) {
 			continue
 		}
 		if SeverityRank(row.MinSeverity) > evSev {
@@ -157,7 +187,7 @@ func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, e
 			}
 			continue
 		}
-		task, err := NewNotificationDeliverTask(NotificationDeliverPayload{
+		payload := NotificationDeliverPayload{
 			Host:             tenantHost,
 			DestinationID:    row.DestinationID,
 			RouteID:          row.ID,
@@ -170,14 +200,23 @@ func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, e
 			ReferenceID:      ev.ReferenceID,
 			EventFingerprint: fp,
 			Metadata:         ev.Metadata,
-		})
+		}
+		if alertDelay > 0 {
+			payload.Delayed = true
+			payload.CancelKey = delayedCancelKey(ev)
+		}
+		task, err := NewNotificationDeliverTask(payload)
 		if err != nil {
 			if e.log != nil {
 				e.log.Error("notifications: build task failed", "error", err)
 			}
 			continue
 		}
-		if _, err := e.qc.Enqueue(task, asynq.Queue(QueueNotifications), asynq.MaxRetry(5)); err != nil && e.log != nil {
+		enqueueOpts := []asynq.Option{asynq.Queue(QueueNotifications), asynq.MaxRetry(5)}
+		if alertDelay > 0 {
+			enqueueOpts = append(enqueueOpts, asynq.ProcessIn(alertDelay))
+		}
+		if _, err := e.qc.Enqueue(task, enqueueOpts...); err != nil && e.log != nil {
 			e.log.Error("notifications: enqueue failed", "error", err)
 		}
 	}
@@ -381,4 +420,60 @@ func (e *Emitter) allowRate(tenantHost, destinationID string) bool {
 		_ = e.rdb.Expire(ctx, key, 2*time.Minute).Err()
 	}
 	return n <= ratePerMinute
+}
+
+// hasBuiltInAlertCreation returns true for event types that create alert records
+// in their own Go code (gated by IsInternalAlertsEnabled). These skip the worker's
+// sendInternal to avoid duplicate records.
+func hasBuiltInAlertCreation(eventType string) bool {
+	switch eventType {
+	case "host_down", "server_update", "agent_update":
+		return true
+	}
+	return false
+}
+
+// cancelPairs maps an event type to the delayed event type it should cancel.
+// When host_recovered fires, any pending delayed host_down notification for the same reference should be suppressed.
+var cancelPairs = map[string]string{
+	"host_recovered": "host_down",
+}
+
+// cancelKeyForEvent returns the Redis cancel key to set when this event fires,
+// suppressing a delayed counterpart. Returns "" if this event doesn't cancel anything.
+func cancelKeyForEvent(ev Event) string {
+	target, ok := cancelPairs[ev.Type]
+	if !ok {
+		return ""
+	}
+	// Use reference_id (host ID) to scope cancellation to the specific resource.
+	refID := ev.ReferenceID
+	if refID == "" {
+		refID = metadataString(ev.Metadata, "host_id")
+	}
+	if refID == "" {
+		return ""
+	}
+	return fmt.Sprintf("notif:cancel:%s:%s", target, refID)
+}
+
+// delayedCancelKey returns the Redis key that, if set, means this delayed notification should be suppressed.
+func delayedCancelKey(ev Event) string {
+	refID := ev.ReferenceID
+	if refID == "" {
+		refID = metadataString(ev.Metadata, "host_id")
+	}
+	if refID == "" {
+		return ""
+	}
+	return fmt.Sprintf("notif:cancel:%s:%s", ev.Type, refID)
+}
+
+// IsDelayedCancelled checks if a delayed notification has been cancelled by a counterpart event.
+func IsDelayedCancelled(rdb *redis.Client, tenantHost, cancelKey string) bool {
+	if rdb == nil || cancelKey == "" {
+		return false
+	}
+	val, err := rdb.Get(context.Background(), tenantRedisKey(tenantHost, cancelKey)).Result()
+	return err == nil && val == "1"
 }

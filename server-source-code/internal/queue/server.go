@@ -97,7 +97,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeUpdateAgent, wrap(TypeUpdateAgent, NewUpdateAgentHandler(registry, db, log)))
 	dbResolver := &hostctx.DBResolver{Default: db}
 	mux.Handle(TypeHostStatusMonitor, wrap(TypeHostStatusMonitor, NewHostStatusMonitorHandler(db, opts.PoolCache, opts.Emit, log)))
-	mux.Handle(notifications.TypeNotificationDeliver, wrap(notifications.TypeNotificationDeliver, NewNotificationDeliverHandler(db, opts.PoolCache, opts.Enc, log)))
+	mux.Handle(notifications.TypeNotificationDeliver, wrap(notifications.TypeNotificationDeliver, NewNotificationDeliverHandler(db, opts.PoolCache, opts.Enc, opts.RDB, log)))
 	mux.Handle(TypeScheduledReportsDispatch, wrap(TypeScheduledReportsDispatch, NewScheduledReportsDispatchHandler(db, opts.PoolCache, opts.QueueClient, log)))
 	mux.Handle(TypeScheduledReportRun, wrap(TypeScheduledReportRun, NewScheduledReportRunHandler(db, opts.PoolCache, opts.Enc, opts.Timezone, log)))
 	mux.Handle(TypeAlertCleanup, wrap(TypeAlertCleanup, NewAlertCleanupHandler(db, opts.PoolCache, store.NewAlertConfigStore(dbResolver), log)))

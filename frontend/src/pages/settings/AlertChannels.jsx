@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+	Bell,
 	Check,
 	ChevronLeft,
 	ChevronRight,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { SiDiscord, SiNtfy, SiSlack } from "react-icons/si";
+import { Link } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { useToast } from "../../contexts/ToastContext";
 import {
@@ -75,6 +77,12 @@ const CHANNEL_TYPES = [
 		label: "ntfy",
 		description: "Push notifications via ntfy.sh",
 		icon: SiNtfy,
+	},
+	{
+		value: "internal",
+		label: "Internal Alerts",
+		description: "Alert records in the Alerts tab",
+		icon: Bell,
 	},
 ];
 
@@ -459,29 +467,31 @@ const DestinationModal = ({
 				<div className="px-6 py-5">
 					{step === 1 && !editingDest && (
 						<div className="grid grid-cols-3 gap-4">
-							{CHANNEL_TYPES.map((ct) => {
-								const Icon = ct.icon;
-								return (
-									<button
-										key={ct.value}
-										type="button"
-										className={`flex flex-col items-center justify-center p-6 rounded-lg border-2 transition-all ${
-											channelType === ct.value
-												? "border-primary-500 bg-primary-50 dark:bg-primary-900/30"
-												: "border-secondary-300 dark:border-secondary-600 hover:border-primary-400"
-										}`}
-										onClick={() => setChannelType(ct.value)}
-									>
-										<Icon className="h-10 w-10 text-secondary-700 dark:text-secondary-200 mb-2" />
-										<span className="text-sm font-medium text-secondary-900 dark:text-white">
-											{ct.label}
-										</span>
-										<span className="text-xs text-secondary-500 mt-1 text-center">
-											{ct.description}
-										</span>
-									</button>
-								);
-							})}
+							{CHANNEL_TYPES.filter((ct) => ct.value !== "internal").map(
+								(ct) => {
+									const Icon = ct.icon;
+									return (
+										<button
+											key={ct.value}
+											type="button"
+											className={`flex flex-col items-center justify-center p-6 rounded-lg border-2 transition-all ${
+												channelType === ct.value
+													? "border-primary-500 bg-primary-50 dark:bg-primary-900/30"
+													: "border-secondary-300 dark:border-secondary-600 hover:border-primary-400"
+											}`}
+											onClick={() => setChannelType(ct.value)}
+										>
+											<Icon className="h-10 w-10 text-secondary-700 dark:text-secondary-200 mb-2" />
+											<span className="text-sm font-medium text-secondary-900 dark:text-white">
+												{ct.label}
+											</span>
+											<span className="text-xs text-secondary-500 mt-1 text-center">
+												{ct.description}
+											</span>
+										</button>
+									);
+								},
+							)}
 						</div>
 					)}
 
@@ -1489,59 +1499,86 @@ export const NotificationPanel = ({ panel }) => {
 									<tr>
 										<th className={`${TH} w-28`}>Channel</th>
 										<th className={TH}>Name</th>
-										<th className={`${TH} ${W_STATUS}`}>Status</th>
+										<th className={`${TH} w-20`}>Enabled</th>
 										<th className={`${TH} ${W_ACTIONS}`}>Actions</th>
 									</tr>
 								</thead>
 								<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
-									{destinations.map((d) => (
-										<tr
-											key={d.id}
-											className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
-										>
-											<td className={TD}>
-												<span className="inline-flex items-center gap-2">
-													{channelIcon(d.channel_type)}
-													{d.channel_type}
-												</span>
-											</td>
-											<td className={TD}>{d.display_name}</td>
-											<td className={TD}>
-												<span
-													className={`px-2 py-0.5 text-xs font-medium rounded-md ${d.enabled ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" : "bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-300"}`}
-												>
-													{d.enabled ? "Active" : "Disabled"}
-												</span>
-											</td>
-											<td className={`${TD} flex items-center gap-2`}>
-												<button
-													type="button"
-													className="text-primary-600 hover:text-primary-700 inline-flex items-center gap-1 text-xs"
-													onClick={() => sendTest(d.id)}
-													disabled={testNotify.isPending}
-												>
-													<Send className="h-3.5 w-3.5" /> Test
-												</button>
-												<button
-													type="button"
-													className="text-primary-600 hover:text-primary-700 inline-flex items-center gap-1 text-xs"
-													onClick={() => openEditDest(d)}
-												>
-													<Edit2 className="h-3.5 w-3.5" /> Edit
-												</button>
-												<button
-													type="button"
-													className="text-red-600 hover:text-red-700 inline-flex items-center gap-1 text-xs"
-													onClick={() => {
-														if (confirm("Delete this destination?"))
-															deleteDest.mutate(d.id);
-													}}
-												>
-													<Trash2 className="h-3.5 w-3.5" />
-												</button>
-											</td>
-										</tr>
-									))}
+									{destinations.map((d) => {
+										const isBuiltIn = d.id === "internal-alerts";
+										return (
+											<tr
+												key={d.id}
+												className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
+											>
+												<td className={TD}>
+													<span className="inline-flex items-center gap-2">
+														{channelIcon(d.channel_type)}
+														{isBuiltIn ? (
+															<span className="text-xs text-secondary-500">
+																Built-in
+															</span>
+														) : (
+															d.channel_type
+														)}
+													</span>
+												</td>
+												<td className={TD}>{d.display_name}</td>
+												<td className={TD}>
+													<button
+														type="button"
+														onClick={() =>
+															updateDest.mutate({
+																id: d.id,
+																body: { enabled: !d.enabled },
+															})
+														}
+														disabled={updateDest.isPending}
+														className={`relative inline-flex h-5 w-9 items-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+															d.enabled
+																? "bg-primary-600 dark:bg-primary-500"
+																: "bg-secondary-200 dark:bg-secondary-600"
+														} disabled:opacity-50`}
+													>
+														<span
+															className={`inline-block h-3 w-3 transform rounded-md bg-white transition-transform ${d.enabled ? "translate-x-5" : "translate-x-1"}`}
+														/>
+													</button>
+												</td>
+												<td className={`${TD} flex items-center gap-2`}>
+													{!isBuiltIn && (
+														<button
+															type="button"
+															className="text-primary-600 hover:text-primary-700 inline-flex items-center gap-1 text-xs"
+															onClick={() => sendTest(d.id)}
+															disabled={testNotify.isPending}
+														>
+															<Send className="h-3.5 w-3.5" /> Test
+														</button>
+													)}
+													<button
+														type="button"
+														className="text-primary-600 hover:text-primary-700 inline-flex items-center gap-1 text-xs"
+														onClick={() => openEditDest(d)}
+													>
+														<Edit2 className="h-3.5 w-3.5" /> Edit
+													</button>
+													{!isBuiltIn && (
+														<button
+															type="button"
+															className="text-red-600 hover:text-red-700 inline-flex items-center gap-1 text-xs"
+															onClick={() => {
+																if (confirm("Delete this destination?"))
+																	deleteDest.mutate(d.id);
+															}}
+														>
+															<Trash2 className="h-3.5 w-3.5" />
+														</button>
+													)}
+												</td>
+											</tr>
+										);
+									})}
 								</tbody>
 							</table>
 						</div>
@@ -1804,7 +1841,7 @@ export const NotificationPanel = ({ panel }) => {
 											<th className={`${TH} ${W_STATUS}`}>Status</th>
 											<th className={TH}>Event</th>
 											<th className={TH}>Destination</th>
-											<th className={`${TH} w-28`}>Reference</th>
+											<th className={TH}>Reference</th>
 											<th className={TH}>Error</th>
 										</tr>
 									</thead>
@@ -1825,11 +1862,38 @@ export const NotificationPanel = ({ panel }) => {
 													{destNameMap[row.destination_id] ||
 														row.destination_id}
 												</td>
-												<td className={TD}>
-													{row.reference_type}:
-													{typeof row.reference_id === "string"
-														? `${row.reference_id.slice(0, 8)}...`
-														: " -"}
+												<td className={TDW}>
+													{(() => {
+														const rid =
+															typeof row.reference_id === "string"
+																? row.reference_id
+																: "";
+														const rt = row.reference_type;
+														let href = null;
+														if (rid) {
+															if (rt === "patch_run")
+																href = `/patching/runs/${rid}`;
+															else if (
+																rt === "host" &&
+																row.event_type === "compliance_scan_completed"
+															)
+																href = `/compliance/hosts/${rid}`;
+															else if (rt === "host") href = `/hosts/${rid}`;
+															else if (rt === "alert") href = `/hosts/${rid}`;
+														}
+														return href ? (
+															<Link
+																to={href}
+																className="text-primary-600 hover:text-primary-700 hover:underline"
+															>
+																{rt}:{rid}
+															</Link>
+														) : (
+															<span>
+																{rt}:{rid || " -"}
+															</span>
+														);
+													})()}
 												</td>
 												<td className="px-4 py-2 text-sm text-red-600 dark:text-red-400 max-w-xs break-words whitespace-normal">
 													{row.error_message || " -"}

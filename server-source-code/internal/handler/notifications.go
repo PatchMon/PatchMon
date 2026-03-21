@@ -187,6 +187,10 @@ func (h *NotificationsHandler) GetDestinationConfig(w http.ResponseWriter, r *ht
 // DeleteDestination DELETE /notifications/destinations/{id}
 func (h *NotificationsHandler) DeleteDestination(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if id == "internal-alerts" {
+		Error(w, http.StatusBadRequest, "The Internal Alerts destination cannot be deleted. You can disable it instead.")
+		return
+	}
 	if err := h.q(r.Context()).DeleteNotificationDestination(r.Context(), id); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to delete")
 		return

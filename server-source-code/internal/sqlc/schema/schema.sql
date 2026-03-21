@@ -674,6 +674,7 @@ CREATE TABLE IF NOT EXISTS alert_config (
     notification_enabled BOOLEAN NOT NULL DEFAULT true,
     escalation_enabled BOOLEAN NOT NULL DEFAULT false,
     escalation_after_hours INTEGER,
+    alert_delay_seconds INTEGER,
     metadata JSONB,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP(3) NOT NULL

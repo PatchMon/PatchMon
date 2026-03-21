@@ -51,7 +51,7 @@ const Reporting = () => {
 	const tabs = [
 		{ id: "overview", name: "Overview", icon: LayoutDashboard },
 		{ id: "alerts", name: "Alerts", icon: AlertTriangle },
-		{ id: "alert-settings", name: "Alert Settings", icon: Settings },
+		{ id: "alert-settings", name: "Alert Lifecycle", icon: Settings },
 		{ id: "destinations", name: "Destinations", icon: Bell },
 		{ id: "rules", name: "Event Rules", icon: GitBranch },
 		{ id: "reports", name: "Scheduled Reports", icon: Calendar },
@@ -650,95 +650,72 @@ const Reporting = () => {
 
 			{/* Stats Cards */}
 			<div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-				{/* Informational Card */}
-				<div className="card p-4">
-					<div className="flex items-center">
-						<div className="flex-shrink-0">
-							<Info className="h-5 w-5 text-blue-600 mr-2" />
+				{[
+					{
+						label: "Informational",
+						icon: Info,
+						color: "text-blue-600",
+						value: stats.informational || 0,
+						filter: "informational",
+					},
+					{
+						label: "Warning",
+						icon: AlertTriangle,
+						color: "text-yellow-600",
+						value: stats.warning || 0,
+						filter: "warning",
+					},
+					{
+						label: "Error",
+						icon: XCircle,
+						color: "text-orange-600",
+						value: stats.error || 0,
+						filter: "error",
+					},
+					{
+						label: "Critical",
+						icon: AlertTriangle,
+						color: "text-red-600",
+						value: stats.critical || 0,
+						filter: "critical",
+					},
+					{
+						label: "Total Active",
+						icon: CheckCircle,
+						color: "text-secondary-600",
+						value:
+							(stats.informational || 0) +
+							(stats.warning || 0) +
+							(stats.error || 0) +
+							(stats.critical || 0),
+						filter: "all",
+					},
+				].map((card) => (
+					<button
+						key={card.label}
+						type="button"
+						className={`card card-hover p-4 text-left ${activeTab === "alerts" && severityFilter === card.filter ? "ring-2 ring-primary-500" : ""}`}
+						onClick={() => {
+							setActiveTab("alerts");
+							setSeverityFilter(card.filter);
+							setStatusFilter("open");
+						}}
+					>
+						<div className="flex items-center">
+							<div className="flex-shrink-0">
+								<card.icon className={`h-5 w-5 ${card.color} mr-2`} />
+							</div>
+							<div className="w-0 flex-1">
+								<p className="text-sm text-secondary-500 dark:text-white">
+									{card.label}
+								</p>
+								<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+									{statsLoading ? "..." : card.value}
+								</p>
+							</div>
 						</div>
-						<div className="w-0 flex-1">
-							<p className="text-sm text-secondary-500 dark:text-white">
-								Informational
-							</p>
-							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{statsLoading ? "..." : stats.informational || 0}
-							</p>
-						</div>
-					</div>
-				</div>
-
-				{/* Warning Card */}
-				<div className="card p-4">
-					<div className="flex items-center">
-						<div className="flex-shrink-0">
-							<AlertTriangle className="h-5 w-5 text-yellow-600 mr-2" />
-						</div>
-						<div className="w-0 flex-1">
-							<p className="text-sm text-secondary-500 dark:text-white">
-								Warning
-							</p>
-							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{statsLoading ? "..." : stats.warning || 0}
-							</p>
-						</div>
-					</div>
-				</div>
-
-				{/* Error Card */}
-				<div className="card p-4">
-					<div className="flex items-center">
-						<div className="flex-shrink-0">
-							<XCircle className="h-5 w-5 text-orange-600 mr-2" />
-						</div>
-						<div className="w-0 flex-1">
-							<p className="text-sm text-secondary-500 dark:text-white">
-								Error
-							</p>
-							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{statsLoading ? "..." : stats.error || 0}
-							</p>
-						</div>
-					</div>
-				</div>
-
-				{/* Critical Card */}
-				<div className="card p-4">
-					<div className="flex items-center">
-						<div className="flex-shrink-0">
-							<AlertTriangle className="h-5 w-5 text-red-600 mr-2" />
-						</div>
-						<div className="w-0 flex-1">
-							<p className="text-sm text-secondary-500 dark:text-white">
-								Critical
-							</p>
-							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{statsLoading ? "..." : stats.critical || 0}
-							</p>
-						</div>
-					</div>
-				</div>
-
-				{/* Total Active Card */}
-				<div className="card p-4">
-					<div className="flex items-center">
-						<div className="flex-shrink-0">
-							<CheckCircle className="h-5 w-5 text-secondary-600 mr-2" />
-						</div>
-						<div className="w-0 flex-1">
-							<p className="text-sm text-secondary-500 dark:text-white">
-								Total Active
-							</p>
-							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{statsLoading
-									? "..."
-									: (stats.informational || 0) +
-										(stats.warning || 0) +
-										(stats.error || 0) +
-										(stats.critical || 0)}
-							</p>
-						</div>
-					</div>
-				</div>
+					</button>
+				))}
 			</div>
 
 			{/* Tabs */}

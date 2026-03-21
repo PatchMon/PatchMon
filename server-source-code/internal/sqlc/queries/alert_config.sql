@@ -27,10 +27,10 @@ INSERT INTO alert_config (
     id, alert_type, is_enabled, default_severity,
     auto_assign_enabled, auto_assign_user_id, auto_assign_rule, auto_assign_conditions,
     retention_days, auto_resolve_after_days, cleanup_resolved_only,
-    notification_enabled, escalation_enabled, escalation_after_hours, metadata,
+    notification_enabled, escalation_enabled, escalation_after_hours, alert_delay_seconds, metadata,
     created_at, updated_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, COALESCE($15, '{}'::jsonb),
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, COALESCE($16, '{}'::jsonb),
     NOW(), NOW()
 )
 ON CONFLICT (alert_type) DO UPDATE SET
@@ -46,6 +46,7 @@ ON CONFLICT (alert_type) DO UPDATE SET
     notification_enabled = EXCLUDED.notification_enabled,
     escalation_enabled = EXCLUDED.escalation_enabled,
     escalation_after_hours = EXCLUDED.escalation_after_hours,
+    alert_delay_seconds = EXCLUDED.alert_delay_seconds,
     metadata = EXCLUDED.metadata,
     updated_at = NOW()
 RETURNING *;

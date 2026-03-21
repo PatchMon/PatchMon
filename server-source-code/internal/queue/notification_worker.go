@@ -27,6 +27,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
 )
 
 // NotificationDeliverHandler sends webhook or email notifications.
@@ -34,12 +35,13 @@ type NotificationDeliverHandler struct {
 	defaultDB *database.DB
 	poolCache *hostctx.PoolCache
 	enc       *util.Encryption
+	rdb       *redis.Client
 	log       *slog.Logger
 }
 
 // NewNotificationDeliverHandler creates the handler.
-func NewNotificationDeliverHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache, enc *util.Encryption, log *slog.Logger) *NotificationDeliverHandler {
-	return &NotificationDeliverHandler{defaultDB: defaultDB, poolCache: poolCache, enc: enc, log: log}
+func NewNotificationDeliverHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache, enc *util.Encryption, rdb *redis.Client, log *slog.Logger) *NotificationDeliverHandler {
+	return &NotificationDeliverHandler{defaultDB: defaultDB, poolCache: poolCache, enc: enc, rdb: rdb, log: log}
 }
 
 func (h *NotificationDeliverHandler) resolveDB(ctx context.Context, payload []byte) *database.DB {
@@ -62,6 +64,13 @@ func (h *NotificationDeliverHandler) ProcessTask(ctx context.Context, t *asynq.T
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return err
 	}
+	// If this was a delayed notification, check if it's been cancelled by a counterpart event.
+	if p.Delayed && p.CancelKey != "" && notifications.IsDelayedCancelled(h.rdb, p.Host, p.CancelKey) {
+		if h.log != nil {
+			h.log.Debug("notification_deliver: cancelled by counterpart event", "event_type", p.EventType, "cancel_key", p.CancelKey)
+		}
+		return nil
+	}
 	d := h.resolveDB(ctx, t.Payload())
 	dest, err := d.Queries.GetNotificationDestinationByID(ctx, p.DestinationID)
 	if err != nil || !dest.Enabled {
@@ -79,6 +88,8 @@ func (h *NotificationDeliverHandler) ProcessTask(ctx context.Context, t *asynq.T
 		err = h.sendEmail(ctx, plain, p)
 	case "ntfy":
 		err = h.sendNtfy(ctx, plain, p)
+	case "internal":
+		err = h.sendInternal(ctx, d, p)
 	default:
 		err = fmt.Errorf("unknown channel_type %q", dest.ChannelType)
 	}
@@ -1030,6 +1041,62 @@ func (h *NotificationDeliverHandler) sendNtfy(ctx context.Context, plain string,
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("ntfy status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// sendInternal creates an alert record in the alerts table (the built-in "Internal Alerts" destination).
+func (h *NotificationDeliverHandler) sendInternal(ctx context.Context, d *database.DB, p notifications.NotificationDeliverPayload) error {
+	if d == nil {
+		return fmt.Errorf("no database available")
+	}
+	// Check if alerts are globally enabled.
+	settings, err := d.Queries.GetFirstSettings(ctx)
+	if err != nil {
+		return err
+	}
+	if !settings.AlertsEnabled {
+		return nil // silently skip
+	}
+	metaJSON, _ := json.Marshal(p.Metadata)
+	if metaJSON == nil {
+		metaJSON = []byte("{}")
+	}
+	alertID := uuid.New().String()
+	_, err = d.Queries.CreateAlert(ctx, db.CreateAlertParams{
+		ID:       alertID,
+		Type:     p.EventType,
+		Severity: p.Severity,
+		Title:    p.Title,
+		Message:  p.Message,
+		Column6:  metaJSON,
+		Column7:  true, // is_active
+	})
+	if err != nil {
+		return fmt.Errorf("create alert: %w", err)
+	}
+	// Record "created" in alert history.
+	_, _ = d.Queries.InsertAlertHistory(ctx, db.InsertAlertHistoryParams{
+		ID:      uuid.New().String(),
+		AlertID: alertID,
+		UserID:  nil,
+		Action:  "created",
+		Column5: []byte(`{"system_action":true}`),
+	})
+	// Auto-assign if configured for this alert type.
+	if cfg, cfgErr := d.Queries.GetAlertConfigByType(ctx, p.EventType); cfgErr == nil && cfg.AutoAssignEnabled && cfg.AutoAssignUserID != nil && *cfg.AutoAssignUserID != "" {
+		_ = d.Queries.UpdateAlertAssignment(ctx, db.UpdateAlertAssignmentParams{
+			ID:               alertID,
+			AssignedToUserID: cfg.AutoAssignUserID,
+		})
+		assignMeta, _ := json.Marshal(map[string]interface{}{"assigned_to": *cfg.AutoAssignUserID, "system_action": true})
+		_, _ = d.Queries.InsertAlertHistory(ctx, db.InsertAlertHistoryParams{
+			ID:      uuid.New().String(),
+			AlertID: alertID,
+			UserID:  nil,
+			Action:  "assigned",
+			Column5: assignMeta,
+		})
 	}
 	return nil
 }
