@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Doughnut } from "react-chartjs-2";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import {
 	Bar,
 	BarChart,
@@ -118,7 +118,10 @@ const Compliance = () => {
 	const { isDark } = useTheme();
 	const toast = useToast();
 	const location = useLocation();
+	const [searchParams] = useSearchParams();
 	const [activeTab, setActiveTab] = useState(() => {
+		const urlTab = searchParams.get("tab");
+		if (urlTab && COMPLIANCE_TABS.some((t) => t.id === urlTab)) return urlTab;
 		const requested = location.state?.complianceTab;
 		if (requested && COMPLIANCE_TABS.some((t) => t.id === requested))
 			return requested;
@@ -126,6 +129,15 @@ const Compliance = () => {
 	});
 
 	const [scanResultsFilters, setScanResultsFilters] = useState(null);
+
+	// Sync tab only on actual URL navigation (not in-page tab clicks)
+	useEffect(() => {
+		const params = new URLSearchParams(location.search);
+		const tab = params.get("tab");
+		if (tab && COMPLIANCE_TABS.some((t) => t.id === tab)) {
+			setActiveTab(tab);
+		}
+	}, [location.search]);
 
 	// Handle tab navigation and filters from external links (e.g. host compliance cards)
 	useEffect(() => {
@@ -569,8 +581,11 @@ const Compliance = () => {
 			</div>
 
 			{/* Tab Navigation - same pattern as Docker page */}
-			<div className="border-b border-secondary-200 dark:border-secondary-600">
-				<nav className="-mb-px flex space-x-8 px-4" aria-label="Tabs">
+			<div className="border-b border-secondary-200 dark:border-secondary-600 overflow-x-auto scrollbar-hide">
+				<nav
+					className="-mb-px flex space-x-4 sm:space-x-8 px-4"
+					aria-label="Tabs"
+				>
 					{COMPLIANCE_TABS.map((tab) => {
 						const Icon = tab.icon;
 						return (
@@ -1076,7 +1091,7 @@ const Compliance = () => {
 			{activeTab === "overview" && (
 				<>
 					{/* Compliance dashboard widgets - same 6 cards as main Dashboard */}
-					<div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 mb-6">
+					<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6">
 						<FailuresBySeverityDoughnut
 							data={dashboard}
 							onTabChange={(tab, filters) => {

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	BookOpen,
+	ChevronDown,
 	ChevronLeft,
 	ChevronRight,
 	Clock,
@@ -10,7 +11,7 @@ import {
 	Github,
 	Globe,
 	Heart,
-	Home,
+	LayoutDashboard,
 	LogOut,
 	Mail,
 	Menu,
@@ -59,6 +60,7 @@ const Layout = ({ children }) => {
 	const [mobileLinksOpen, setMobileLinksOpen] = useState(false);
 	const [showReleaseNotes, setShowReleaseNotes] = useState(false);
 	const [showDonateModal, setShowDonateModal] = useState(false);
+	const [expandedNav, setExpandedNav] = useState(null);
 	const location = useLocation();
 	const navigate = useNavigate();
 	const {
@@ -220,7 +222,7 @@ const Layout = ({ children }) => {
 
 		// Dashboard - only show if user can view dashboard
 		if (canViewDashboard()) {
-			nav.push({ name: "Dashboard", href: "/", icon: Home });
+			nav.push({ name: "Dashboard", href: "/", icon: LayoutDashboard });
 		}
 
 		// Assets section
@@ -262,6 +264,11 @@ const Layout = ({ children }) => {
 					href: "/patching",
 					icon: Wrench,
 					new: true,
+					children: [
+						{ name: "Overview", href: "/patching?tab=overview" },
+						{ name: "Runs & History", href: "/patching?tab=runs" },
+						{ name: "Policies", href: "/patching?tab=policies" },
+					],
 				});
 			}
 
@@ -269,6 +276,12 @@ const Layout = ({ children }) => {
 				name: "Compliance",
 				href: "/compliance",
 				icon: Shield,
+				children: [
+					{ name: "Overview", href: "/compliance?tab=overview" },
+					{ name: "Hosts", href: "/compliance?tab=hosts" },
+					{ name: "Scan Results", href: "/compliance?tab=scan-results" },
+					{ name: "History", href: "/compliance?tab=history" },
+				],
 			});
 
 			if (canViewReports() && settings?.alerts_enabled !== false) {
@@ -277,6 +290,15 @@ const Layout = ({ children }) => {
 					href: "/reporting",
 					icon: AlertTriangle,
 					new: true,
+					children: [
+						{ name: "Overview", href: "/reporting?tab=overview" },
+						{ name: "Alerts", href: "/reporting?tab=alerts" },
+						{ name: "Alert Lifecycle", href: "/reporting?tab=alert-settings" },
+						{ name: "Destinations", href: "/reporting?tab=destinations" },
+						{ name: "Event Rules", href: "/reporting?tab=rules" },
+						{ name: "Scheduled Reports", href: "/reporting?tab=reports" },
+						{ name: "Delivery Log", href: "/reporting?tab=log" },
+					],
 				});
 			}
 
@@ -286,6 +308,13 @@ const Layout = ({ children }) => {
 					href: "/docker",
 					icon: Container,
 					beta: true,
+					children: [
+						{ name: "Containers", href: "/docker?tab=containers" },
+						{ name: "Images", href: "/docker?tab=images" },
+						{ name: "Volumes", href: "/docker?tab=volumes" },
+						{ name: "Networks", href: "/docker?tab=networks" },
+						{ name: "Hosts", href: "/docker?tab=hosts" },
+					],
 				});
 			}
 
@@ -340,6 +369,38 @@ const Layout = ({ children }) => {
 	const isActive = (path) =>
 		location.pathname === path ||
 		(path !== "/" && location.pathname.startsWith(`${path}/`));
+
+	// Auto-expand the nav item matching the current path on navigation
+	const prevPathnameRef = useRef(location.pathname);
+	useEffect(() => {
+		const path = location.pathname;
+		const prevPath = prevPathnameRef.current;
+		prevPathnameRef.current = path;
+
+		// Only auto-expand when navigating to a different base path
+		if (path === prevPath) return;
+
+		// Find which expandable item matches the new path
+		let matched = null;
+		for (const item of navigation) {
+			if (item.items) {
+				for (const sub of item.items) {
+					if (
+						sub.children &&
+						(path === sub.href ||
+							(sub.href !== "/" && path.startsWith(`${sub.href}/`)))
+					) {
+						matched = sub.name;
+						break;
+					}
+				}
+			}
+			if (matched) break;
+		}
+
+		// Expand the matched item, or collapse if navigating to an unrelated page
+		setExpandedNav(matched);
+	}, [location.pathname, navigation]);
 
 	// Get page title based on current route
 	const getPageTitle = () => {
@@ -730,85 +791,127 @@ const Layout = ({ children }) => {
 																</Link>
 															) : (
 																// Standard navigation item (mobile)
-																<Link
-																	to={subItem.href}
-																	className={`group flex items-center px-2 py-2 text-sm font-medium rounded-md ${
-																		isActive(subItem.href)
-																			? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
-																			: "text-secondary-600 dark:text-white hover:bg-secondary-50 dark:hover:bg-secondary-700 hover:text-secondary-900 dark:hover:text-white"
-																	} ${subItem.comingSoon ? "opacity-50 cursor-not-allowed" : ""}`}
-																	onMouseEnter={() =>
-																		!subItem.comingSoon &&
-																		prefetchRoute(subItem.href)
-																	}
-																	onClick={
-																		subItem.comingSoon
-																			? (e) => e.preventDefault()
-																			: () => setSidebarOpen(false)
-																	}
-																>
-																	<subItem.icon className="mr-3 h-5 w-5" />
-																	<span className="flex items-center gap-2 flex-1">
-																		{subItem.name}
-																		{subItem.name === "Hosts" &&
-																			stats?.cards?.totalHosts !==
-																				undefined && (
-																				<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-200">
-																					{stats.cards.totalHosts}
+																<>
+																	<Link
+																		to={subItem.href}
+																		className={`group flex items-center px-2 py-2 text-sm font-medium rounded-md ${
+																			isActive(subItem.href)
+																				? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
+																				: "text-secondary-600 dark:text-white hover:bg-secondary-50 dark:hover:bg-secondary-700 hover:text-secondary-900 dark:hover:text-white"
+																		} ${subItem.comingSoon ? "opacity-50 cursor-not-allowed" : ""}`}
+																		onMouseEnter={() =>
+																			!subItem.comingSoon &&
+																			prefetchRoute(subItem.href)
+																		}
+																		onClick={(e) => {
+																			if (subItem.comingSoon) {
+																				e.preventDefault();
+																				return;
+																			}
+																			if (subItem.children) {
+																				setExpandedNav(
+																					expandedNav === subItem.name
+																						? null
+																						: subItem.name,
+																				);
+																			} else {
+																				setSidebarOpen(false);
+																			}
+																		}}
+																	>
+																		<subItem.icon className="mr-3 h-5 w-5" />
+																		<span className="flex items-center gap-2 flex-1">
+																			{subItem.name}
+																			{subItem.name === "Hosts" &&
+																				stats?.cards?.totalHosts !==
+																					undefined && (
+																					<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-200">
+																						{stats.cards.totalHosts}
+																					</span>
+																				)}
+																			{subItem.name === "Reporting" &&
+																				alertStats && (
+																					<div className="ml-2 flex items-center gap-0.5">
+																						{(alertStats.informational || 0) >
+																							0 && (
+																							<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200">
+																								{alertStats.informational}
+																							</span>
+																						)}
+																						{(alertStats.warning || 0) > 0 && (
+																							<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-200">
+																								{alertStats.warning}
+																							</span>
+																						)}
+																						{(alertStats.error || 0) > 0 && (
+																							<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-200">
+																								{alertStats.error}
+																							</span>
+																						)}
+																						{(alertStats.critical || 0) > 0 && (
+																							<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200">
+																								{alertStats.critical}
+																							</span>
+																						)}
+																					</div>
+																				)}
+																			{subItem.comingSoon && (
+																				<span className="text-xs bg-secondary-100 dark:bg-secondary-600 text-secondary-600 dark:text-secondary-200 px-1.5 py-0.5 rounded">
+																					Soon
 																				</span>
 																			)}
-																		{subItem.name === "Reporting" &&
-																			alertStats && (
-																				<div className="ml-2 flex items-center gap-0.5">
-																					{/* Informational - Blue */}
-																					{(alertStats.informational || 0) >
-																						0 && (
-																						<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200">
-																							{alertStats.informational}
-																						</span>
-																					)}
-																					{/* Warning - Yellow */}
-																					{(alertStats.warning || 0) > 0 && (
-																						<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-200">
-																							{alertStats.warning}
-																						</span>
-																					)}
-																					{/* Error - Orange/Red */}
-																					{(alertStats.error || 0) > 0 && (
-																						<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-200">
-																							{alertStats.error}
-																						</span>
-																					)}
-																					{/* Critical - Red */}
-																					{(alertStats.critical || 0) > 0 && (
-																						<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200">
-																							{alertStats.critical}
-																						</span>
-																					)}
-																				</div>
+																			{subItem.alpha && (
+																				<span className="text-[10px] bg-purple-50 dark:bg-purple-900/50 text-purple-600 dark:text-purple-300 px-1 py-px rounded font-medium leading-tight">
+																					Alpha
+																				</span>
 																			)}
-																		{subItem.comingSoon && (
-																			<span className="text-xs bg-secondary-100 dark:bg-secondary-600 text-secondary-600 dark:text-secondary-200 px-1.5 py-0.5 rounded">
-																				Soon
-																			</span>
+																			{subItem.beta && (
+																				<span className="text-[10px] bg-blue-50 dark:bg-blue-900/50 text-blue-600 dark:text-blue-300 px-1 py-px rounded font-medium leading-tight">
+																					Beta
+																				</span>
+																			)}
+																			{subItem.new && (
+																				<span className="text-[10px] bg-green-50 dark:bg-green-900/50 text-green-600 dark:text-green-300 px-1 py-px rounded font-medium leading-tight">
+																					New
+																				</span>
+																			)}
+																			{subItem.children && (
+																				<ChevronDown
+																					className={`ml-auto h-4 w-4 shrink-0 text-secondary-400 transition-transform duration-200 ${
+																						expandedNav === subItem.name
+																							? "rotate-180"
+																							: ""
+																					}`}
+																				/>
+																			)}
+																		</span>
+																	</Link>
+																	{/* Expandable children (mobile) */}
+																	{subItem.children &&
+																		expandedNav === subItem.name && (
+																			<ul className="ml-8 mt-0.5 space-y-0.5 border-l border-secondary-200 dark:border-secondary-700 pl-2">
+																				{subItem.children.map((child) => (
+																					<li key={child.name}>
+																						<Link
+																							to={child.href}
+																							className={`block text-sm py-2 px-2 rounded transition-colors min-h-[44px] flex items-center ${
+																								location.pathname +
+																									location.search ===
+																								child.href
+																									? "text-primary-600 dark:text-primary-400 font-medium"
+																									: "text-secondary-500 dark:text-white hover:text-secondary-900 dark:hover:text-primary-400"
+																							}`}
+																							onClick={() =>
+																								setSidebarOpen(false)
+																							}
+																						>
+																							{child.name}
+																						</Link>
+																					</li>
+																				))}
+																			</ul>
 																		)}
-																		{subItem.alpha && (
-																			<span className="text-[10px] bg-purple-50 dark:bg-purple-900/50 text-purple-600 dark:text-purple-300 px-1 py-px rounded font-medium leading-tight">
-																				Alpha
-																			</span>
-																		)}
-																		{subItem.beta && (
-																			<span className="text-[10px] bg-blue-50 dark:bg-blue-900/50 text-blue-600 dark:text-blue-300 px-1 py-px rounded font-medium leading-tight">
-																				Beta
-																			</span>
-																		)}
-																		{subItem.new && (
-																			<span className="text-[10px] bg-green-50 dark:bg-green-900/50 text-green-600 dark:text-green-300 px-1 py-px rounded font-medium leading-tight">
-																				New
-																			</span>
-																		)}
-																	</span>
-																</Link>
+																</>
 															)}
 														</div>
 													))}
@@ -1159,121 +1262,149 @@ const Layout = ({ children }) => {
 																	</div>
 																) : (
 																	// Standard navigation item
-																	<Link
-																		to={subItem.href}
-																		className={`group flex items-center gap-x-2.5 rounded-lg text-sm leading-6 font-medium transition-all duration-200 min-h-[36px] ${
-																			isActive(subItem.href)
-																				? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
-																				: "text-secondary-700 dark:text-secondary-200 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
-																		} ${sidebarCollapsed ? "justify-center px-2 py-1.5 relative" : "px-2 py-2"} ${
-																			subItem.comingSoon
-																				? "opacity-50 cursor-not-allowed"
-																				: ""
-																		}`}
-																		title={sidebarCollapsed ? subItem.name : ""}
-																		onMouseEnter={() =>
-																			!subItem.comingSoon &&
-																			prefetchRoute(subItem.href)
-																		}
-																		onClick={
-																			subItem.comingSoon
-																				? (e) => e.preventDefault()
-																				: undefined
-																		}
-																	>
-																		<div
-																			className={`flex items-center ${sidebarCollapsed ? "justify-center" : ""}`}
+																	<>
+																		<Link
+																			to={subItem.href}
+																			className={`group flex items-center gap-x-2.5 rounded-lg text-sm leading-6 font-medium transition-all duration-200 min-h-[36px] ${
+																				isActive(subItem.href)
+																					? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
+																					: "text-secondary-700 dark:text-secondary-200 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
+																			} ${sidebarCollapsed ? "justify-center px-2 py-1.5 relative" : "px-2 py-2"} ${
+																				subItem.comingSoon
+																					? "opacity-50 cursor-not-allowed"
+																					: ""
+																			}`}
+																			title={
+																				sidebarCollapsed ? subItem.name : ""
+																			}
+																			onMouseEnter={() =>
+																				!subItem.comingSoon &&
+																				prefetchRoute(subItem.href)
+																			}
+																			onClick={(e) => {
+																				if (subItem.comingSoon) {
+																					e.preventDefault();
+																					return;
+																				}
+																				if (subItem.children) {
+																					setExpandedNav(
+																						expandedNav === subItem.name
+																							? null
+																							: subItem.name,
+																					);
+																				}
+																			}}
 																		>
-																			<subItem.icon
-																				className={`h-5 w-5 shrink-0 ${sidebarCollapsed ? "mx-auto" : ""}`}
-																			/>
-																			{sidebarCollapsed &&
-																				subItem.showUpgradeIcon && (
-																					<UpgradeNotificationIcon className="h-3 w-3 absolute -top-1 -right-1" />
-																				)}
-																		</div>
-																		{!sidebarCollapsed && (
-																			<span className="truncate flex items-center gap-2">
-																				{subItem.name}
-																				{subItem.name === "Hosts" &&
-																					stats?.cards?.totalHosts !==
-																						undefined && (
-																						<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
-																							{stats.cards.totalHosts}
+																			<div
+																				className={`flex items-center ${sidebarCollapsed ? "justify-center" : ""}`}
+																			>
+																				<subItem.icon
+																					className={`h-5 w-5 shrink-0 ${sidebarCollapsed ? "mx-auto" : ""}`}
+																				/>
+																				{sidebarCollapsed &&
+																					subItem.showUpgradeIcon && (
+																						<UpgradeNotificationIcon className="h-3 w-3 absolute -top-1 -right-1" />
+																					)}
+																			</div>
+																			{!sidebarCollapsed && (
+																				<span className="truncate flex items-center gap-2 flex-1">
+																					{subItem.name}
+																					{subItem.name === "Hosts" &&
+																						stats?.cards?.totalHosts !==
+																							undefined && (
+																							<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
+																								{stats.cards.totalHosts}
+																							</span>
+																						)}
+																					{subItem.name === "Reporting" &&
+																						alertStats && (
+																							<div className="ml-2 flex items-center gap-0.5">
+																								{(alertStats.informational ||
+																									0) > 0 && (
+																									<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200">
+																										{alertStats.informational}
+																									</span>
+																								)}
+																								{(alertStats.warning || 0) >
+																									0 && (
+																									<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-200">
+																										{alertStats.warning}
+																									</span>
+																								)}
+																								{(alertStats.error || 0) >
+																									0 && (
+																									<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-200">
+																										{alertStats.error}
+																									</span>
+																								)}
+																								{(alertStats.critical || 0) >
+																									0 && (
+																									<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200">
+																										{alertStats.critical}
+																									</span>
+																								)}
+																							</div>
+																						)}
+																					{subItem.comingSoon && (
+																						<span className="text-xs bg-secondary-100 text-secondary-600 px-1.5 py-0.5 rounded">
+																							Soon
 																						</span>
 																					)}
-																				{subItem.name === "Reporting" &&
-																					alertStats && (
-																						<div className="ml-2 flex items-center gap-0.5">
-																							{/* Informational - Blue */}
-																							{(alertStats.informational || 0) >
-																								0 && (
-																								<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200">
-																									{alertStats.informational}
-																								</span>
-																							)}
-																							{/* Warning - Yellow */}
-																							{(alertStats.warning || 0) >
-																								0 && (
-																								<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-200">
-																									{alertStats.warning}
-																								</span>
-																							)}
-																							{/* Error - Orange/Red */}
-																							{(alertStats.error || 0) > 0 && (
-																								<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-200">
-																									{alertStats.error}
-																								</span>
-																							)}
-																							{/* Critical - Red */}
-																							{(alertStats.critical || 0) >
-																								0 && (
-																								<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200">
-																									{alertStats.critical}
-																								</span>
-																							)}
-																						</div>
+																					{subItem.alpha && (
+																						<span className="text-[10px] bg-purple-50 dark:bg-purple-900/50 text-purple-600 dark:text-purple-300 px-1 py-px rounded font-medium leading-tight">
+																							Alpha
+																						</span>
 																					)}
-																				{/* {subItem.name === "Packages" &&
-																			stats?.cards?.totalOutdatedPackages !==
-																				undefined && (
-																				<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
-																					{stats.cards.totalOutdatedPackages}
+																					{subItem.beta && (
+																						<span className="text-[10px] bg-blue-50 dark:bg-blue-900/50 text-blue-600 dark:text-blue-300 px-1 py-px rounded font-medium leading-tight">
+																							Beta
+																						</span>
+																					)}
+																					{subItem.new && (
+																						<span className="text-[10px] bg-green-50 dark:bg-green-900/50 text-green-600 dark:text-green-300 px-1 py-px rounded font-medium leading-tight">
+																							New
+																						</span>
+																					)}
+																					{subItem.showUpgradeIcon && (
+																						<UpgradeNotificationIcon className="h-3 w-3" />
+																					)}
+																					{subItem.children &&
+																						!sidebarCollapsed && (
+																							<ChevronDown
+																								className={`ml-auto h-4 w-4 shrink-0 text-secondary-400 transition-transform duration-200 ${
+																									expandedNav === subItem.name
+																										? "rotate-180"
+																										: ""
+																								}`}
+																							/>
+																						)}
 																				</span>
-																			)} */}
-																				{/* {subItem.name === "Repos" &&
-																			stats?.cards?.totalRepos !==
-																				undefined && (
-																				<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
-																					{stats.cards.totalRepos}
-																				</span>
-																			)} */}
-																				{subItem.comingSoon && (
-																					<span className="text-xs bg-secondary-100 text-secondary-600 px-1.5 py-0.5 rounded">
-																						Soon
-																					</span>
-																				)}
-																				{subItem.alpha && (
-																					<span className="text-[10px] bg-purple-50 dark:bg-purple-900/50 text-purple-600 dark:text-purple-300 px-1 py-px rounded font-medium leading-tight">
-																						Alpha
-																					</span>
-																				)}
-																				{subItem.beta && (
-																					<span className="text-[10px] bg-blue-50 dark:bg-blue-900/50 text-blue-600 dark:text-blue-300 px-1 py-px rounded font-medium leading-tight">
-																						Beta
-																					</span>
-																				)}
-																				{subItem.new && (
-																					<span className="text-[10px] bg-green-50 dark:bg-green-900/50 text-green-600 dark:text-green-300 px-1 py-px rounded font-medium leading-tight">
-																						New
-																					</span>
-																				)}
-																				{subItem.showUpgradeIcon && (
-																					<UpgradeNotificationIcon className="h-3 w-3" />
-																				)}
-																			</span>
-																		)}
-																	</Link>
+																			)}
+																		</Link>
+																		{/* Expandable children */}
+																		{subItem.children &&
+																			!sidebarCollapsed &&
+																			expandedNav === subItem.name && (
+																				<ul className="ml-7 mt-0.5 space-y-0.5 border-l border-secondary-200 dark:border-secondary-700 pl-2">
+																					{subItem.children.map((child) => (
+																						<li key={child.name}>
+																							<Link
+																								to={child.href}
+																								className={`block text-[13px] py-1 px-2 rounded transition-colors ${
+																									location.pathname +
+																										location.search ===
+																									child.href
+																										? "text-primary-600 dark:text-primary-400 font-medium"
+																										: "text-secondary-500 dark:text-white hover:text-secondary-900 dark:hover:text-primary-400"
+																								}`}
+																							>
+																								{child.name}
+																							</Link>
+																						</li>
+																					))}
+																				</ul>
+																			)}
+																	</>
 																)}
 															</li>
 														);

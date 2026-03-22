@@ -65,8 +65,14 @@ export const patchingAPI = {
 					: {}),
 			})
 			.then((res) => res.data),
-	approveRun: (id) =>
-		api.post(`/patching/runs/${id}/approve`).then((res) => res.data),
+	approveRun: (id, opts = {}) =>
+		api
+			.post(`/patching/runs/${id}/approve`, {
+				...(opts.schedule_override
+					? { schedule_override: opts.schedule_override }
+					: {}),
+			})
+			.then((res) => res.data),
 	retryValidation: (id) =>
 		api.post(`/patching/runs/${id}/retry-validation`).then((res) => res.data),
 	deleteRun: (id) => api.delete(`/patching/runs/${id}`),

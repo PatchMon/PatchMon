@@ -326,7 +326,7 @@ FROM hosts h
 LEFT JOIN (SELECT host_id, COUNT(*) as cnt FROM host_packages WHERE needs_update = true GROUP BY host_id) uc ON uc.host_id = h.id
 LEFT JOIN (SELECT host_id, COUNT(*) as cnt FROM host_packages WHERE needs_update = true AND is_security_update = true GROUP BY host_id) sc ON sc.host_id = h.id
 LEFT JOIN (SELECT host_id, COUNT(*) as cnt FROM host_packages GROUP BY host_id) tc ON tc.host_id = h.id
-WHERE ($1::text IS NULL OR h.friendly_name ILIKE '%' || $1 || '%' OR h.ip ILIKE '%' || $1 || '%' OR h.os_type ILIKE '%' || $1 || '%' OR h.notes ILIKE '%' || $1 || '%')
+WHERE ($1::text IS NULL OR h.friendly_name ILIKE '%' || $1 || '%' OR h.hostname ILIKE '%' || $1 || '%' OR h.ip ILIKE '%' || $1 || '%' OR h.os_type ILIKE '%' || $1 || '%' OR h.notes ILIKE '%' || $1 || '%')
 AND (
     $2::text IS NULL
     OR ($2 = 'ungrouped' AND NOT EXISTS (SELECT 1 FROM host_group_memberships hgm WHERE hgm.host_id = h.id))

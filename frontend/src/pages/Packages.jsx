@@ -293,10 +293,6 @@ const Packages = () => {
 
 		// Filter packages
 		const filtered = packages.filter((pkg) => {
-			const matchesSearch =
-				pkg.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-				pkg.description?.toLowerCase().includes(searchTerm.toLowerCase());
-
 			const matchesCategory =
 				categoryFilter === "all" || pkg.category === categoryFilter;
 
@@ -312,7 +308,7 @@ const Packages = () => {
 
 			// Host filter: when set, backend already returned only packages on that host.
 			// No need to re-check packageHosts (truncated for display; backend did the filter).
-			return matchesSearch && matchesCategory && matchesUpdateStatus;
+			return matchesCategory && matchesUpdateStatus;
 		});
 
 		// Sorting
@@ -371,14 +367,7 @@ const Packages = () => {
 		});
 
 		return filtered;
-	}, [
-		packages,
-		searchTerm,
-		categoryFilter,
-		updateStatusFilter,
-		sortField,
-		sortDirection,
-	]);
+	}, [packages, categoryFilter, updateStatusFilter, sortField, sortDirection]);
 
 	// Calculate pagination
 	const totalPages = Math.ceil(filteredAndSortedPackages.length / pageSize);
@@ -826,7 +815,7 @@ const Packages = () => {
 					<div className="mb-4 space-y-4">
 						<div className="flex flex-col sm:flex-row gap-4">
 							{/* Search */}
-							<div className="hidden md:flex flex-1">
+							<div className="flex flex-1">
 								<div className="relative w-full">
 									<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-white" />
 									<input

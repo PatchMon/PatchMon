@@ -20,7 +20,7 @@ import {
 	XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import {
 	AlertResponderWorkload,
 	AlertSeverityDoughnut,
@@ -53,6 +53,7 @@ const Reporting = () => {
 	const queryClient = useQueryClient();
 	const toast = useToast();
 	const [searchParams] = useSearchParams();
+	const location = useLocation();
 
 	const urlTab = searchParams.get("tab");
 	const urlSeverity = searchParams.get("severity");
@@ -78,6 +79,15 @@ const Reporting = () => {
 	const [activeTab, setActiveTab] = useState(
 		VALID_TABS.has(urlTab) ? urlTab : "overview",
 	);
+
+	// Sync tab only on actual URL navigation (not in-page tab clicks)
+	useEffect(() => {
+		const params = new URLSearchParams(location.search);
+		const tab = params.get("tab");
+		if (tab && VALID_TABS.has(tab)) {
+			setActiveTab(tab);
+		}
+	}, [location.search]);
 
 	const tabs = [
 		{ id: "overview", name: "Overview", icon: LayoutDashboard },
@@ -748,8 +758,11 @@ const Reporting = () => {
 			</div>
 
 			{/* Tabs */}
-			<div className="border-b border-gray-200 dark:border-gray-700">
-				<nav className="-mb-px flex space-x-8">
+			<div className="border-b border-secondary-200 dark:border-secondary-600 overflow-x-auto scrollbar-hide">
+				<nav
+					className="-mb-px flex space-x-4 sm:space-x-8 px-4"
+					aria-label="Tabs"
+				>
 					{tabs.map((tab) => (
 						<button
 							type="button"

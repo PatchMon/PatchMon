@@ -66,38 +66,28 @@ func ProcessServerUpdate(ctx context.Context, db *database.DB, serverVersion str
 		msg := fmt.Sprintf("A new server version (%s) is available. Current version: %s", latest, serverVersion)
 		meta := map[string]interface{}{"current_version": serverVersion, "latest_version": latest}
 
-		// Create alert record only if Internal Alerts destination is enabled.
-		if IsInternalAlertsEnabled(ctx, db) {
-			active, _ := db.Queries.ListActiveAlertsByType(ctx, "server_update")
-			hasMatching := false
-			for _, a := range active {
-				var m map[string]interface{}
-				if len(a.Metadata) > 0 && json.Unmarshal(a.Metadata, &m) == nil {
-					if lv, _ := m["latest_version"].(string); lv == latest {
-						hasMatching = true
-						break
-					}
-				}
-			}
-			if !hasMatching {
-				alert, _ := alertsStore.Create(ctx, "server_update", severity, title, msg, meta)
-				if alert != nil {
-					if cfg.AutoAssignEnabled && cfg.AutoAssignUserID != nil {
-						_ = alertsStore.UpdateAssignment(ctx, alert.ID, *cfg.AutoAssignUserID)
-						_ = alertsStore.RecordHistory(ctx, alert.ID, nil, "assigned", map[string]interface{}{"assigned_to": *cfg.AutoAssignUserID})
-					}
-					log.Info("server_update: created alert", "current", serverVersion, "latest", latest)
+		// Skip if an active alert for this version already exists.
+		active, _ := db.Queries.ListActiveAlertsByType(ctx, "server_update")
+		hasMatching := false
+		for _, a := range active {
+			var m map[string]interface{}
+			if len(a.Metadata) > 0 && json.Unmarshal(a.Metadata, &m) == nil {
+				if lv, _ := m["latest_version"].(string); lv == latest {
+					hasMatching = true
+					break
 				}
 			}
 		}
-
-		// Emit event for notification routing (webhooks, email, ntfy, etc.) regardless.
-		if emit != nil {
-			emit.EmitEvent(ctx, db, tenantHost, notifications.Event{
-				Type: "server_update", Severity: severity, Title: title, Message: msg,
-				ReferenceType: "host", ReferenceID: "",
-				Metadata: meta,
-			})
+		if !hasMatching {
+			// Emit event — notification routing decides which destinations receive it
+			// (including internal alerts if that destination is enabled).
+			if emit != nil {
+				emit.EmitEvent(ctx, db, tenantHost, notifications.Event{
+					Type: "server_update", Severity: severity, Title: title, Message: msg,
+					ReferenceType: "host", ReferenceID: "",
+					Metadata: meta,
+				})
+			}
 		}
 	} else {
 		// Up to date: resolve all active server_update alerts

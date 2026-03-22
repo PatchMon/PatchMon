@@ -10,7 +10,7 @@ import {
 import { ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Line } from "react-chartjs-2";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useTheme } from "../../../contexts/ThemeContext";
 
 ChartJS.register(
@@ -31,6 +31,7 @@ const SEVERITY_COLORS = {
 
 const AlertVolumeTrend = ({ alerts }) => {
 	const { isDark } = useTheme();
+	const navigate = useNavigate();
 	const [period, setPeriod] = useState("7d");
 	const [view, setView] = useState("volume");
 	const days = period === "7d" ? 7 : 30;
@@ -143,6 +144,15 @@ const AlertVolumeTrend = ({ alerts }) => {
 			mode: "index",
 			intersect: false,
 		},
+		onClick: (_event, elements) => {
+			if (elements.length > 0) {
+				navigate("/reporting?tab=alerts");
+			}
+		},
+		onHover: (event, elements) => {
+			event.native.target.style.cursor =
+				elements.length > 0 ? "pointer" : "default";
+		},
 		plugins: {
 			legend: {
 				position: "top",
@@ -185,7 +195,7 @@ const AlertVolumeTrend = ({ alerts }) => {
 
 	return (
 		<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
-			<div className="flex items-center justify-between mb-4 flex-shrink-0">
+			<div className="flex items-center justify-between mb-4 flex-shrink-0 gap-2 flex-wrap">
 				<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
 					Alert Volume Trend
 				</h3>

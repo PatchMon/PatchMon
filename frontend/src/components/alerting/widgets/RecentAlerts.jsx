@@ -1,6 +1,6 @@
 import { formatDistanceToNow } from "date-fns";
 import { BellOff, ChevronRight } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 const DISPLAY_LIMIT = 5;
 
@@ -29,6 +29,7 @@ const STATUS_INDICATORS = {
 };
 
 const RecentAlerts = ({ alerts }) => {
+	const navigate = useNavigate();
 	const recent = (alerts || [])
 		.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
 		.slice(0, DISPLAY_LIMIT);
@@ -79,7 +80,8 @@ const RecentAlerts = ({ alerts }) => {
 									return (
 										<tr
 											key={alert.id}
-											className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
+											className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors cursor-pointer"
+											onClick={() => navigate("/reporting?tab=alerts")}
 										>
 											<td className="px-3 py-1.5 whitespace-nowrap">
 												<span

@@ -550,26 +550,27 @@ const Automation = () => {
 			</div>
 
 			{/* Tabs */}
-			<div className="mb-6">
-				<div className="border-b border-gray-200 dark:border-gray-700">
-					<nav className="-mb-px flex space-x-8">
-						{tabs.map((tab) => (
-							<button
-								type="button"
-								key={tab.id}
-								onClick={() => setActiveTab(tab.id)}
-								className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${
-									activeTab === tab.id
-										? "border-blue-500 text-blue-600 dark:text-blue-400"
-										: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-primary-400"
-								}`}
-							>
-								<tab.icon className="h-4 w-4" />
-								{tab.name}
-							</button>
-						))}
-					</nav>
-				</div>
+			<div className="border-b border-secondary-200 dark:border-secondary-600 overflow-x-auto scrollbar-hide">
+				<nav
+					className="-mb-px flex space-x-4 sm:space-x-8 px-4"
+					aria-label="Tabs"
+				>
+					{tabs.map((tab) => (
+						<button
+							type="button"
+							key={tab.id}
+							onClick={() => setActiveTab(tab.id)}
+							className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${
+								activeTab === tab.id
+									? "border-blue-500 text-blue-600 dark:text-blue-400"
+									: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-primary-400"
+							}`}
+						>
+							<tab.icon className="h-4 w-4" />
+							{tab.name}
+						</button>
+					))}
+				</nav>
 			</div>
 
 			{/* Tab Content */}

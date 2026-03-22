@@ -127,12 +127,6 @@ func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, e
 		if !row.DestinationEnabled {
 			continue
 		}
-		// For event types with built-in alert creation code (host_down, server_update,
-		// agent_update), skip the internal destination to prevent double alert records.
-		// Their alert code checks IsInternalAlertsEnabled directly.
-		if row.DestinationID == "internal-alerts" && hasBuiltInAlertCreation(ev.Type) {
-			continue
-		}
 		if SeverityRank(row.MinSeverity) > evSev {
 			continue
 		}
@@ -420,17 +414,6 @@ func (e *Emitter) allowRate(tenantHost, destinationID string) bool {
 		_ = e.rdb.Expire(ctx, key, 2*time.Minute).Err()
 	}
 	return n <= ratePerMinute
-}
-
-// hasBuiltInAlertCreation returns true for event types that create alert records
-// in their own Go code (gated by IsInternalAlertsEnabled). These skip the worker's
-// sendInternal to avoid duplicate records.
-func hasBuiltInAlertCreation(eventType string) bool {
-	switch eventType {
-	case "host_down", "server_update", "agent_update":
-		return true
-	}
-	return false
 }
 
 // cancelPairs maps an event type to the delayed event type it should cancel.

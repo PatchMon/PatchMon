@@ -322,8 +322,6 @@ export const packagesAPI = {
 	getActivity: (packageId, params = {}) =>
 		api.get(`/packages/${packageId}/activity`, { params }).then((r) => r.data),
 	update: (packageId, data) => api.put(`/packages/${packageId}`, data),
-	search: (query, params = {}) =>
-		api.get(`/packages/search/${query}`, { params }),
 };
 
 // Utility functions
@@ -508,7 +506,8 @@ export const formatRelativeTime = (date) => {
 
 // Search API
 export const searchAPI = {
-	global: (query) => api.get("/search", { params: { q: query } }),
+	global: (query, config = {}) =>
+		api.get("/search", { params: { q: query }, ...config }),
 };
 
 // AI Terminal Assistant API

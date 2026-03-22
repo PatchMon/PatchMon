@@ -54,7 +54,7 @@ FROM hosts h
 LEFT JOIN (SELECT host_id, COUNT(*) as cnt FROM host_packages WHERE needs_update = true GROUP BY host_id) uc ON uc.host_id = h.id
 LEFT JOIN (SELECT host_id, COUNT(*) as cnt FROM host_packages WHERE needs_update = true AND is_security_update = true GROUP BY host_id) sc ON sc.host_id = h.id
 LEFT JOIN (SELECT host_id, COUNT(*) as cnt FROM host_packages GROUP BY host_id) tc ON tc.host_id = h.id
-WHERE (sqlc.narg('search')::text IS NULL OR h.friendly_name ILIKE '%' || sqlc.narg('search') || '%' OR h.ip ILIKE '%' || sqlc.narg('search') || '%' OR h.os_type ILIKE '%' || sqlc.narg('search') || '%' OR h.notes ILIKE '%' || sqlc.narg('search') || '%')
+WHERE (sqlc.narg('search')::text IS NULL OR h.friendly_name ILIKE '%' || sqlc.narg('search') || '%' OR h.hostname ILIKE '%' || sqlc.narg('search') || '%' OR h.ip ILIKE '%' || sqlc.narg('search') || '%' OR h.os_type ILIKE '%' || sqlc.narg('search') || '%' OR h.notes ILIKE '%' || sqlc.narg('search') || '%')
 AND (
     sqlc.narg('group')::text IS NULL
     OR (sqlc.narg('group') = 'ungrouped' AND NOT EXISTS (SELECT 1 FROM host_group_memberships hgm WHERE hgm.host_id = h.id))

@@ -617,8 +617,8 @@ const Settings = () => {
 
 			{/* Tab Navigation */}
 			<div className="bg-white dark:bg-secondary-800 shadow rounded-lg">
-				<div className="border-b border-secondary-200 dark:border-secondary-600">
-					<nav className="-mb-px flex space-x-8 px-6">
+				<div className="border-b border-secondary-200 dark:border-secondary-600 overflow-x-auto scrollbar-hide">
+					<nav className="-mb-px flex space-x-4 sm:space-x-8 px-6">
 						{tabs.map((tab) => {
 							const Icon = tab.icon;
 							return (

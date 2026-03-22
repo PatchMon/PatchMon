@@ -1,8 +1,9 @@
 import { ChevronRight, User, Users } from "lucide-react";
 import { useMemo } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 const AlertResponderWorkload = ({ alerts, users }) => {
+	const navigate = useNavigate();
 	const { responders, unassigned_count, avg_load } = useMemo(() => {
 		const user_map = {};
 		let _unassigned = 0;
@@ -74,7 +75,14 @@ const AlertResponderWorkload = ({ alerts, users }) => {
 								avg_load > 0 && responder.count > avg_load * 1.5;
 							const bar_pct = Math.round((responder.count / max_count) * 100);
 							return (
-								<div key={responder.id} className="flex flex-col gap-0.5">
+								<button
+									type="button"
+									key={responder.id}
+									className="flex flex-col gap-0.5 cursor-pointer rounded px-1 -mx-1 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors text-left w-full"
+									onClick={() =>
+										navigate(`/reporting?tab=alerts&assignment=${responder.id}`)
+									}
+								>
 									<div className="flex items-center justify-between">
 										<div className="flex items-center gap-1.5">
 											<User className="h-3.5 w-3.5 text-secondary-400" />
@@ -103,13 +111,19 @@ const AlertResponderWorkload = ({ alerts, users }) => {
 											style={{ width: `${bar_pct}%` }}
 										/>
 									</div>
-								</div>
+								</button>
 							);
 						})}
 
 						{/* Unassigned row */}
 						{unassigned_count > 0 && (
-							<div className="mt-1 pt-2 border-t border-secondary-200 dark:border-secondary-700">
+							<button
+								type="button"
+								className="mt-1 pt-2 border-t border-secondary-200 dark:border-secondary-700 cursor-pointer rounded px-1 -mx-1 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors text-left w-full"
+								onClick={() =>
+									navigate("/reporting?tab=alerts&assignment=unassigned")
+								}
+							>
 								<div className="flex items-center justify-between">
 									<span className="text-sm text-amber-600 dark:text-amber-400 font-medium">
 										Unassigned
@@ -118,7 +132,7 @@ const AlertResponderWorkload = ({ alerts, users }) => {
 										{unassigned_count}
 									</span>
 								</div>
-							</div>
+							</button>
 						)}
 					</div>
 				)}

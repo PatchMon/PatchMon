@@ -257,8 +257,8 @@ const Options = () => {
 			</div>
 
 			{/* Tabs */}
-			<div className="border-b border-secondary-200 dark:border-secondary-600">
-				<nav className="-mb-px flex space-x-8">
+			<div className="border-b border-secondary-200 dark:border-secondary-600 overflow-x-auto scrollbar-hide">
+				<nav className="-mb-px flex space-x-4 sm:space-x-8">
 					{tabs.map((tab) => {
 						const Icon = tab.icon;
 						return (

@@ -389,6 +389,7 @@ func (h *PatchingHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 // ApproveRun handles POST /patching/runs/:id/approve.
 // Creates a NEW patch run (dry_run=false) linked to the validation run via validation_run_id.
 // The validation run is marked as "approved" (terminal state) and preserved as-is.
+// Accepts an optional JSON body with schedule_override ("immediate" or a policy ID).
 func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 	validationID := chi.URLParam(r, "id")
 	if !isValidPatchUUID(validationID) {
@@ -403,6 +404,14 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 	if valRun.Status != "validated" && valRun.Status != "pending_validation" {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Only validated or pending-validation runs can be approved"})
 		return
+	}
+
+	// Parse optional body for schedule_override.
+	var body struct {
+		ScheduleOverride string `json:"schedule_override"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
 	}
 
 	host, err := h.hosts.GetByID(r.Context(), valRun.HostID)
@@ -429,6 +438,10 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 	runAt := h.patchPolicies.ComputeRunAt(policy)
 	delayMs := time.Until(runAt).Milliseconds()
 	if delayMs < 0 {
+		delayMs = 0
+	}
+	// Manual schedule override: "immediate" bypasses policy delay.
+	if body.ScheduleOverride == "immediate" {
 		delayMs = 0
 	}
 

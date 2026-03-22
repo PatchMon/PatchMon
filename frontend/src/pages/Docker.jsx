@@ -15,15 +15,37 @@ import {
 	Trash2,
 	X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import api, { formatError } from "../utils/api";
 import { generateRegistryLink, getSourceDisplayName } from "../utils/docker";
 
+const VALID_DOCKER_TABS = [
+	"containers",
+	"images",
+	"volumes",
+	"networks",
+	"hosts",
+];
+
 const Docker = () => {
 	const queryClient = useQueryClient();
+	const [searchParams] = useSearchParams();
+	const location = useLocation();
 	const [searchTerm, setSearchTerm] = useState("");
-	const [activeTab, setActiveTab] = useState("containers");
+	const urlTab = searchParams.get("tab");
+	const [activeTab, setActiveTab] = useState(
+		VALID_DOCKER_TABS.includes(urlTab) ? urlTab : "containers",
+	);
+
+	// Sync tab only on actual URL navigation (not in-page tab clicks)
+	useEffect(() => {
+		const params = new URLSearchParams(location.search);
+		const tab = params.get("tab");
+		if (tab && VALID_DOCKER_TABS.includes(tab)) {
+			setActiveTab(tab);
+		}
+	}, [location.search]);
 	const [sortField, setSortField] = useState("status");
 	const [sortDirection, setSortDirection] = useState("asc");
 	const [statusFilter, setStatusFilter] = useState("all");
@@ -678,8 +700,11 @@ const Docker = () => {
 			</div>
 
 			{/* Tab Navigation */}
-			<div className="border-b border-secondary-200 dark:border-secondary-600">
-				<nav className="-mb-px flex space-x-8 px-4" aria-label="Tabs">
+			<div className="border-b border-secondary-200 dark:border-secondary-600 overflow-x-auto scrollbar-hide">
+				<nav
+					className="-mb-px flex space-x-4 sm:space-x-8 px-4"
+					aria-label="Tabs"
+				>
 					{[
 						{ id: "containers", label: "Containers", icon: Container },
 						{ id: "images", label: "Images", icon: Package },
@@ -728,7 +753,7 @@ const Docker = () => {
 				{/* Filters and Search */}
 				<div className="p-4 border-b border-secondary-200 dark:border-secondary-600">
 					<div className="flex flex-col sm:flex-row gap-4">
-						<div className="hidden md:flex flex-1">
+						<div className="flex flex-1">
 							<div className="relative w-full">
 								<div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
 									<Search className="h-5 w-5 text-secondary-400" />

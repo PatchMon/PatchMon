@@ -44,7 +44,7 @@ const PatchRunsByType = ({ data }) => {
 			if (elements.length > 0) {
 				const type = TYPE_FILTERS[elements[0].index];
 				if (type) {
-					navigate(`/patching?tab=runs`);
+					navigate(`/patching?tab=runs&type=${type}`);
 				}
 			}
 		},

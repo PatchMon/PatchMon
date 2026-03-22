@@ -1,6 +1,6 @@
 import { ChevronRight } from "lucide-react";
 import { Doughnut } from "react-chartjs-2";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useTheme } from "../../../contexts/ThemeContext";
 import { getDoughnutOptions } from "./chartOptions";
 
@@ -9,6 +9,7 @@ const COLORS = ["#10B981", "#3B82F6", "#F59E0B", "#6B7280"];
 
 const LastScanAgeBar = ({ data, onTabChange }) => {
 	const { isDark } = useTheme();
+	const navigate = useNavigate();
 
 	const scan_age = data?.scan_age_distribution || {};
 	const values = [
@@ -32,7 +33,24 @@ const LastScanAgeBar = ({ data, onTabChange }) => {
 		],
 	};
 
-	const options = getDoughnutOptions(isDark, false);
+	const base_options = getDoughnutOptions(isDark, false);
+	const options = {
+		...base_options,
+		plugins: { ...base_options.plugins },
+		onClick: (_event, elements) => {
+			if (elements.length > 0) {
+				if (onTabChange) {
+					onTabChange("hosts");
+				} else {
+					navigate("/compliance?tab=hosts");
+				}
+			}
+		},
+		onHover: (event, elements) => {
+			event.native.target.style.cursor =
+				elements.length > 0 ? "pointer" : "default";
+		},
+	};
 
 	return (
 		<div className="card p-4 sm:p-6 w-full h-full flex flex-col">

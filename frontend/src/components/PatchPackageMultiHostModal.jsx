@@ -207,7 +207,7 @@ export default function PatchPackageMultiHostModal({
 					continue;
 				}
 				const result = await pollDryRunUntilDone(runId);
-				results[hostId] = result;
+				results[hostId] = { ...result, patch_run_id: runId };
 			} catch (err) {
 				results[hostId] = {
 					status: "failed",
@@ -232,13 +232,30 @@ export default function PatchPackageMultiHostModal({
 		try {
 			for (const hostId of ids) {
 				const override = policyOverrides[hostId];
-				await patchingAPI.trigger(
-					hostId,
-					"patch_package",
-					null,
-					packageNames,
-					override ? { schedule_override: override } : {},
-				);
+				const validation = validationByHost[hostId];
+				const validationRunId = validation?.patch_run_id;
+				// If we have a validation run (validated or pending_validation), approve it
+				// instead of creating a brand new run. This marks the validation entry as
+				// "approved" and creates a linked execution run on the backend.
+				if (
+					validationRunId &&
+					(validation.status === "validated" ||
+						validation.status === "pending_validation")
+				) {
+					await patchingAPI.approveRun(
+						validationRunId,
+						override ? { schedule_override: override } : {},
+					);
+				} else {
+					// No usable validation run: trigger a fresh run directly.
+					await patchingAPI.trigger(
+						hostId,
+						"patch_package",
+						null,
+						packageNames,
+						override ? { schedule_override: override } : {},
+					);
+				}
 			}
 			onSuccess?.("patch");
 			onClose();

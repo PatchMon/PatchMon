@@ -1,6 +1,6 @@
 import { ChevronRight } from "lucide-react";
 import { Bar } from "react-chartjs-2";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useTheme } from "../../../contexts/ThemeContext";
 import { getBarOptions } from "./chartOptions";
 
@@ -15,6 +15,7 @@ const PROFILE_COLORS = [
 
 const ComplianceProfilesPie = ({ data, onTabChange }) => {
 	const { isDark } = useTheme();
+	const navigate = useNavigate();
 
 	const profile_distribution = data?.profile_distribution || [];
 	const labels = profile_distribution.map((p) => p.name || p.type || "Unknown");
@@ -38,7 +39,25 @@ const ComplianceProfilesPie = ({ data, onTabChange }) => {
 		],
 	};
 
-	const options = getBarOptions(isDark, "y");
+	const base_options = getBarOptions(isDark, "y");
+	const options = {
+		...base_options,
+		plugins: { ...base_options.plugins },
+		scales: { ...base_options.scales },
+		onClick: (_event, elements) => {
+			if (elements.length > 0) {
+				if (onTabChange) {
+					onTabChange("scan-results");
+				} else {
+					navigate("/compliance?tab=scan-results");
+				}
+			}
+		},
+		onHover: (event, elements) => {
+			event.native.target.style.cursor =
+				elements.length > 0 ? "pointer" : "default";
+		},
+	};
 
 	return (
 		<div className="card p-4 sm:p-6 w-full h-full flex flex-col">

@@ -95,26 +95,15 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 			}
 			msg := fmt.Sprintf("Host \"%s\" has not reported in %d minutes. Last update: %s", hostName, thresholdMinutes, lastUpdate.Time.Format(time.RFC3339))
 
-			// Create alert record only if Internal Alerts destination is enabled.
-			if IsInternalAlertsEnabled(ctx, d) {
-				alert, err := alertsStore.Create(ctx, "host_down", severity, title, msg, meta)
-				if err == nil && alert != nil {
-					alertsCreated++
-					alertsByHostID[host.ID] = alert.ID
-					if cfg.AutoAssignEnabled && cfg.AutoAssignUserID != nil {
-						_ = alertsStore.UpdateAssignment(ctx, alert.ID, *cfg.AutoAssignUserID)
-						_ = alertsStore.RecordHistory(ctx, alert.ID, nil, "assigned", map[string]interface{}{"assigned_to": *cfg.AutoAssignUserID})
-					}
-				}
-			}
-
-			// Emit event for notification routing regardless.
+			// Emit event — notification routing decides which destinations receive it
+			// (including internal alerts if that destination is enabled).
 			if emit != nil {
 				emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
 					Type: "host_down", Severity: severity, Title: title, Message: msg,
 					ReferenceType: "host", ReferenceID: host.ID,
 					Metadata: meta,
 				})
+				alertsCreated++
 			}
 		} else if !isStale {
 			if alertID, exists := alertsByHostID[host.ID]; exists {
@@ -197,28 +186,15 @@ func OnDisconnect(ctx context.Context, d *database.DB, apiID string, tenantHost 
 	title := "Host " + hostName + " disconnected"
 	msg := fmt.Sprintf("Host \"%s\" WebSocket connection lost. Last update: %s", hostName, lastUpdate.Format(time.RFC3339))
 
-	// Create alert record only if Internal Alerts destination is enabled.
-	if IsInternalAlertsEnabled(ctx, d) {
-		alertsStore := store.NewAlertsStore(d)
-		alert, err := alertsStore.Create(ctx, "host_down", severity, title, msg, meta)
-		if err != nil || alert == nil {
-			log.Debug("host_down: failed to create alert on disconnect", "api_id", apiID, "error", err)
-		} else {
-			if cfg.AutoAssignEnabled && cfg.AutoAssignUserID != nil {
-				_ = alertsStore.UpdateAssignment(ctx, alert.ID, *cfg.AutoAssignUserID)
-				_ = alertsStore.RecordHistory(ctx, alert.ID, nil, "assigned", map[string]interface{}{"assigned_to": *cfg.AutoAssignUserID})
-			}
-			log.Info("host_down: created alert on disconnect", "api_id", apiID, "host_id", host.ID, "alert_id", alert.ID)
-		}
-	}
-
-	// Emit event for notification routing regardless.
+	// Emit event — notification routing decides which destinations receive it
+	// (including internal alerts if that destination is enabled).
 	if emit != nil {
 		emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
 			Type: "host_down", Severity: severity, Title: title, Message: msg,
 			ReferenceType: "host", ReferenceID: host.ID,
 			Metadata: meta,
 		})
+		log.Info("host_down: emitted alert event on disconnect", "api_id", apiID, "host_id", host.ID)
 	}
 }
 

@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Bar } from "react-chartjs-2";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useTheme } from "../../../contexts/ThemeContext";
 import { notificationsAPI } from "../../../utils/api";
 
@@ -19,6 +19,7 @@ const DEST_COLORS = [
 
 const DeliveryByDestination = () => {
 	const { isDark } = useTheme();
+	const navigate = useNavigate();
 	const [period, setPeriod] = useState("7d");
 	const days = period === "7d" ? 7 : 30;
 
@@ -114,6 +115,15 @@ const DeliveryByDestination = () => {
 		interaction: {
 			mode: "index",
 			intersect: false,
+		},
+		onClick: (_event, elements) => {
+			if (elements.length > 0) {
+				navigate("/reporting?tab=log");
+			}
+		},
+		onHover: (event, elements) => {
+			event.native.target.style.cursor =
+				elements.length > 0 ? "pointer" : "default";
 		},
 		plugins: {
 			legend: {

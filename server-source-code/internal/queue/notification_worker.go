@@ -1058,6 +1058,11 @@ func (h *NotificationDeliverHandler) sendInternal(ctx context.Context, d *databa
 	if !settings.AlertsEnabled {
 		return nil // silently skip
 	}
+	// Dedup: skip if a matching active alert already exists for this event type.
+	// This prevents duplicate records from periodic checks (host_down, agent_update, server_update).
+	if h.hasActiveMatchingAlert(ctx, d, p) {
+		return nil
+	}
 	metaJSON, _ := json.Marshal(p.Metadata)
 	if metaJSON == nil {
 		metaJSON = []byte("{}")
@@ -1099,6 +1104,47 @@ func (h *NotificationDeliverHandler) sendInternal(ctx context.Context, d *databa
 		})
 	}
 	return nil
+}
+
+// hasActiveMatchingAlert returns true if an active alert already exists that
+// matches this event's type and key metadata, preventing duplicate records
+// from periodic checks.
+func (h *NotificationDeliverHandler) hasActiveMatchingAlert(ctx context.Context, d *database.DB, p notifications.NotificationDeliverPayload) bool {
+	active, err := d.Queries.ListActiveAlertsByType(ctx, p.EventType)
+	if err != nil || len(active) == 0 {
+		return false
+	}
+	switch p.EventType {
+	case "host_down":
+		hostID := nocMetaStr(p.Metadata, "host_id")
+		if hostID == "" {
+			return false
+		}
+		for _, a := range active {
+			var m map[string]interface{}
+			if len(a.Metadata) > 0 {
+				_ = json.Unmarshal(a.Metadata, &m)
+			}
+			if hid, _ := m["host_id"].(string); hid == hostID {
+				return true
+			}
+		}
+	case "agent_update", "server_update":
+		latestVer := nocMetaStr(p.Metadata, "latest_version")
+		if latestVer == "" {
+			return false
+		}
+		for _, a := range active {
+			var m map[string]interface{}
+			if len(a.Metadata) > 0 {
+				_ = json.Unmarshal(a.Metadata, &m)
+			}
+			if lv, _ := m["latest_version"].(string); lv == latestVer {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (h *NotificationDeliverHandler) logDelivery(ctx context.Context, d *database.DB, p notifications.NotificationDeliverPayload, status string, logErr error, errMsg string) {

@@ -243,6 +243,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	releaseNotesHandler := handler.NewReleaseNotesHandler()
 	releaseNotesAcceptanceHandler := handler.NewReleaseNotesAcceptanceHandler(releaseNotesAcceptanceStore, log)
 	marketingHandler := handler.NewMarketingHandler()
+	searchStore := store.NewSearchStore(dbProvider)
+	searchHandler := handler.NewSearchHandler(searchStore)
 	communityHandler := handler.NewCommunityHandler()
 
 	r.Get("/health", healthHandler(db, rdb))
@@ -435,6 +437,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Post("/ai/test", aiHandler.TestConnection)
 			r.Post("/ai/assist", aiHandler.Assist)
 			r.Post("/ai/complete", aiHandler.Complete)
+			r.Get("/search", searchHandler.HandleGlobalSearch)
 			r.Get("/dashboard-preferences/defaults", dashboardPrefsHandler.GetDefaults)
 			r.Get("/dashboard-preferences/layout", dashboardPrefsHandler.GetLayout)
 			r.Put("/dashboard-preferences/layout", dashboardPrefsHandler.UpdateLayout)
@@ -499,6 +502,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_view_packages", permissionsStore)).Get("/dashboard/package-trends", dashboardHandler.PackageTrends)
 			r.With(middleware.RequirePermission("can_view_users", permissionsStore)).Get("/dashboard/recent-users", dashboardHandler.RecentUsers)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/recent-collection", dashboardHandler.RecentCollection)
+
+			r.Get("/search", searchHandler.HandleGlobalSearch)
 
 			r.With(middleware.RequirePermission("can_view_dashboard", permissionsStore)).Get("/automation/overview", automationHandler.Overview)
 			r.With(middleware.RequirePermission("can_view_dashboard", permissionsStore)).Get("/automation/stats", automationHandler.Stats)
