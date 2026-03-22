@@ -1947,6 +1947,12 @@ func isDryRunExit1Success(err error, output string) bool {
 // runPatch runs package manager update and upgrade (patch_all) or install (patch_package).
 // Supports apt-get (Debian/Ubuntu), dnf, yum (RHEL-based), pkg (FreeBSD), pacman (Arch),
 // and windows (WinGet for applications + WUA COM API for OS updates).
+// formatCmd returns a shell-style "$ command args..." line for display in output.
+func formatCmd(name string, args ...string) string {
+	parts := append([]string{name}, args...)
+	return "$ " + strings.Join(parts, " ") + "\n"
+}
+
 // When dryRun is true, simulates and sends dry_run_completed instead of completed.
 func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -2004,6 +2010,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 	// Update package cache
 	switch pkgManager {
 	case "apt":
+		fullOutput.WriteString(formatCmd("apt-get", "update", "-qq"))
 		updateCmd := exec.CommandContext(ctx, "apt-get", "update", "-qq")
 		updateCmd.Env = env
 		updateOut, updateErr := updateCmd.CombinedOutput()
@@ -2015,6 +2022,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 			return fmt.Errorf("apt-get update failed: %w", updateErr)
 		}
 	case "pkg":
+		fullOutput.WriteString(formatCmd(upgradeBin, "update"))
 		updateCmd := exec.CommandContext(ctx, upgradeBin, "update")
 		updateCmd.Env = env
 		updateOut, updateErr := updateCmd.CombinedOutput()
@@ -2026,6 +2034,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 			return fmt.Errorf("pkg update failed: %w", updateErr)
 		}
 	case "pacman":
+		fullOutput.WriteString(formatCmd("pacman", "-Sy", "--noconfirm"))
 		refreshCmd := exec.CommandContext(ctx, "pacman", "-Sy", "--noconfirm")
 		refreshOut, refreshErr := refreshCmd.CombinedOutput()
 		fullOutput.Write(refreshOut)
@@ -2036,6 +2045,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 			return fmt.Errorf("pacman -Sy failed: %w", refreshErr)
 		}
 	default:
+		fullOutput.WriteString(formatCmd(upgradeBin, "makecache", "-q"))
 		makecacheCmd := exec.CommandContext(ctx, upgradeBin, "makecache", "-q")
 		makecacheOut, makecacheErr := makecacheCmd.CombinedOutput()
 		fullOutput.Write(makecacheOut)
@@ -2051,6 +2061,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		switch pkgManager {
 		case "apt":
 			if dryRun {
+				fullOutput.WriteString(formatCmd("apt-get", "-s", "upgrade"))
 				upgradeCmd := exec.CommandContext(ctx, "apt-get", "-s", "upgrade")
 				upgradeCmd.Env = env
 				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
@@ -2062,6 +2073,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 					return fmt.Errorf("apt-get -s upgrade failed: %w", upgradeErr)
 				}
 			} else {
+				fullOutput.WriteString(formatCmd("apt-get", "upgrade", "-y"))
 				upgradeCmd := exec.CommandContext(ctx, "apt-get", "upgrade", "-y")
 				upgradeCmd.Env = env
 				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
@@ -2075,6 +2087,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 			}
 		case "pkg":
 			if dryRun {
+				fullOutput.WriteString(formatCmd(upgradeBin, "upgrade", "-n"))
 				upgradeCmd := exec.CommandContext(ctx, upgradeBin, "upgrade", "-n")
 				upgradeCmd.Env = env
 				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
@@ -2086,6 +2099,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 					return fmt.Errorf("pkg upgrade -n failed: %w", upgradeErr)
 				}
 			} else {
+				fullOutput.WriteString(formatCmd(upgradeBin, "upgrade", "-y"))
 				upgradeCmd := exec.CommandContext(ctx, upgradeBin, "upgrade", "-y")
 				upgradeCmd.Env = env
 				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
@@ -2099,6 +2113,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 			}
 		case "pacman":
 			if dryRun {
+				fullOutput.WriteString(formatCmd("pacman", "-Syu", "-p"))
 				upgradeCmd := exec.CommandContext(ctx, "pacman", "-Syu", "-p")
 				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
 				fullOutput.Write(upgradeOut)
@@ -2109,6 +2124,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 					return fmt.Errorf("pacman -Syu -p failed: %w", upgradeErr)
 				}
 			} else {
+				fullOutput.WriteString(formatCmd("pacman", "-Syu", "--noconfirm"))
 				upgradeCmd := exec.CommandContext(ctx, "pacman", "-Syu", "--noconfirm")
 				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
 				fullOutput.Write(upgradeOut)
@@ -2121,6 +2137,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 			}
 		default: // dnf, yum
 			if dryRun {
+				fullOutput.WriteString(formatCmd(upgradeBin, "upgrade", "--assumeno"))
 				upgradeCmd := exec.CommandContext(ctx, upgradeBin, "upgrade", "--assumeno")
 				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
 				fullOutput.Write(upgradeOut)
@@ -2131,6 +2148,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 					return fmt.Errorf("%s upgrade --assumeno failed: %w", upgradeBin, upgradeErr)
 				}
 			} else {
+				fullOutput.WriteString(formatCmd(upgradeBin, "upgrade", "-y"))
 				upgradeCmd := exec.CommandContext(ctx, upgradeBin, "upgrade", "-y")
 				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
 				fullOutput.Write(upgradeOut)
@@ -2151,6 +2169,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		case "apt":
 			if dryRun {
 				installArgs := append([]string{"-s", "install"}, packageNames...)
+				fullOutput.WriteString(formatCmd("apt-get", installArgs...))
 				installCmd := exec.CommandContext(ctx, "apt-get", installArgs...)
 				installCmd.Env = env
 				installOut, installErr := installCmd.CombinedOutput()
@@ -2163,6 +2182,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 				}
 			} else {
 				installArgs := append([]string{"install", "-y"}, packageNames...)
+				fullOutput.WriteString(formatCmd("apt-get", installArgs...))
 				installCmd := exec.CommandContext(ctx, "apt-get", installArgs...)
 				installCmd.Env = env
 				installOut, installErr := installCmd.CombinedOutput()
@@ -2177,6 +2197,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		case "pkg":
 			if dryRun {
 				installArgs := append([]string{"install", "-n"}, packageNames...)
+				fullOutput.WriteString(formatCmd(upgradeBin, installArgs...))
 				installCmd := exec.CommandContext(ctx, upgradeBin, installArgs...)
 				installCmd.Env = env
 				installOut, installErr := installCmd.CombinedOutput()
@@ -2189,6 +2210,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 				}
 			} else {
 				installArgs := append([]string{"install", "-y"}, packageNames...)
+				fullOutput.WriteString(formatCmd(upgradeBin, installArgs...))
 				installCmd := exec.CommandContext(ctx, upgradeBin, installArgs...)
 				installCmd.Env = env
 				installOut, installErr := installCmd.CombinedOutput()
@@ -2203,6 +2225,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		case "pacman":
 			if dryRun {
 				installArgs := append([]string{"-S", "-p"}, packageNames...)
+				fullOutput.WriteString(formatCmd("pacman", installArgs...))
 				installCmd := exec.CommandContext(ctx, "pacman", installArgs...)
 				installOut, installErr := installCmd.CombinedOutput()
 				fullOutput.Write(installOut)
@@ -2214,6 +2237,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 				}
 			} else {
 				installArgs := append([]string{"-S", "--noconfirm"}, packageNames...)
+				fullOutput.WriteString(formatCmd("pacman", installArgs...))
 				installCmd := exec.CommandContext(ctx, "pacman", installArgs...)
 				installOut, installErr := installCmd.CombinedOutput()
 				fullOutput.Write(installOut)
@@ -2227,6 +2251,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		default: // dnf, yum
 			if dryRun {
 				installArgs := append([]string{"install", "--assumeno"}, packageNames...)
+				fullOutput.WriteString(formatCmd(upgradeBin, installArgs...))
 				installCmd := exec.CommandContext(ctx, upgradeBin, installArgs...)
 				installOut, installErr := installCmd.CombinedOutput()
 				fullOutput.Write(installOut)
@@ -2238,6 +2263,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 				}
 			} else {
 				installArgs := append([]string{"install", "-y"}, packageNames...)
+				fullOutput.WriteString(formatCmd(upgradeBin, installArgs...))
 				installCmd := exec.CommandContext(ctx, upgradeBin, installArgs...)
 				installOut, installErr := installCmd.CombinedOutput()
 				fullOutput.Write(installOut)
