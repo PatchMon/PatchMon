@@ -32,7 +32,6 @@ package_results AS (
         COALESCE(description, category, '') AS description
     FROM packages
     WHERE name ILIKE '%' || $1::text || '%'
-       OR description ILIKE '%' || $1::text || '%'
     ORDER BY name ASC
     LIMIT 5
 ),

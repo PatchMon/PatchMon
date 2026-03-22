@@ -1,4 +1,4 @@
-import { ChevronRight, User, Users } from "lucide-react";
+import { ChevronRight, User, UserCheck, Users } from "lucide-react";
 import { useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -15,7 +15,6 @@ const AlertResponderWorkload = ({ alerts, users }) => {
 
 			if (alert.assigned_to_user_id) {
 				if (!user_map[alert.assigned_to_user_id]) {
-					// Find user details
 					const user = (users || []).find(
 						(u) => u.id === alert.assigned_to_user_id,
 					);
@@ -115,34 +114,58 @@ const AlertResponderWorkload = ({ alerts, users }) => {
 							);
 						})}
 
-						{/* Unassigned row */}
-						{unassigned_count > 0 && (
-							<button
-								type="button"
-								className="mt-1 pt-2 border-t border-secondary-200 dark:border-secondary-700 cursor-pointer rounded px-1 -mx-1 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors text-left w-full"
-								onClick={() =>
-									navigate("/reporting?tab=alerts&assignment=unassigned")
-								}
-							>
-								<div className="flex items-center justify-between">
+						{/* Active unassigned */}
+						<button
+							type="button"
+							className="mt-1 pt-2 border-t border-secondary-200 dark:border-secondary-700 cursor-pointer rounded px-1 -mx-1 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors text-left w-full"
+							onClick={() =>
+								navigate(
+									"/reporting?tab=alerts&status=open&assignment=unassigned",
+								)
+							}
+						>
+							<div className="flex items-center justify-between">
+								<div className="flex items-center gap-1.5">
+									<Users className="h-3.5 w-3.5 text-amber-500" />
 									<span className="text-sm text-amber-600 dark:text-amber-400 font-medium">
-										Unassigned
-									</span>
-									<span className="text-sm font-semibold text-amber-600 dark:text-amber-400">
-										{unassigned_count}
+										Active unassigned
 									</span>
 								</div>
-							</button>
-						)}
+								<span className="text-sm font-semibold text-amber-600 dark:text-amber-400">
+									{unassigned_count}
+								</span>
+							</div>
+						</button>
+
+						{/* My active alerts */}
+						<button
+							type="button"
+							className="cursor-pointer rounded px-1 -mx-1 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors text-left w-full"
+							onClick={() =>
+								navigate(
+									"/reporting?tab=alerts&status=open&assignment=assignedToMe",
+								)
+							}
+						>
+							<div className="flex items-center justify-between">
+								<div className="flex items-center gap-1.5">
+									<UserCheck className="h-3.5 w-3.5 text-primary-500" />
+									<span className="text-sm text-primary-600 dark:text-primary-400 font-medium">
+										My active alerts
+									</span>
+								</div>
+								<ChevronRight className="h-3.5 w-3.5 text-primary-400" />
+							</div>
+						</button>
 					</div>
 				)}
 			</div>
 
 			<Link
-				to="/reporting?tab=alerts&assignment=unassigned"
+				to="/reporting?tab=alerts"
 				className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline flex-shrink-0"
 			>
-				View assignments
+				View all alerts
 				<ChevronRight className="h-4 w-4" />
 			</Link>
 		</div>

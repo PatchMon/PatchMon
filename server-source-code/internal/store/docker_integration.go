@@ -84,6 +84,16 @@ type DockerReceiveImageUpdate struct {
 	ImageID         string
 }
 
+// ContainerStatusChange records a container that transitioned between running and stopped.
+type ContainerStatusChange struct {
+	ContainerID string // Docker container ID
+	Name        string
+	ImageName   string
+	HostID      string
+	OldStatus   string
+	NewStatus   string
+}
+
 // DockerReceiveResult holds counts from ReceiveDockerData.
 type DockerReceiveResult struct {
 	ContainersReceived int
@@ -91,6 +101,7 @@ type DockerReceiveResult struct {
 	VolumesReceived    int
 	NetworksReceived   int
 	UpdatesFound       int
+	StatusChanges      []ContainerStatusChange
 }
 
 func timeToPg(t *time.Time) pgtype.Timestamp {
@@ -195,7 +206,14 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 	}
 	result.ImagesReceived = len(payload.Images)
 
-	// 3. Process containers
+	// 3. Process containers — snapshot existing statuses for change detection.
+	oldContainers, _ := d.Queries.GetContainersByHostID(ctx, hostID)
+	oldStatusMap := make(map[string]string, len(oldContainers)) // container_id -> status
+	oldNameMap := make(map[string]string, len(oldContainers))
+	for _, oc := range oldContainers {
+		oldStatusMap[oc.ContainerID] = oc.Status
+		oldNameMap[oc.ContainerID] = oc.Name
+	}
 	for _, c := range payload.Containers {
 		var imgUUID *string
 		if c.ImageRepository != "" && c.ImageTag != "" {
@@ -243,6 +261,34 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 		}
 	}
 	result.ContainersReceived = len(payload.Containers)
+
+	// Detect container status transitions (running ↔ stopped/exited).
+	for _, c := range payload.Containers {
+		oldStatus, existed := oldStatusMap[c.ContainerID]
+		if !existed {
+			continue // new container, no transition
+		}
+		newStatus := c.Status
+		if oldStatus == newStatus {
+			continue
+		}
+		wasRunning := isRunningStatus(oldStatus)
+		nowRunning := isRunningStatus(newStatus)
+		if wasRunning != nowRunning {
+			name := c.Name
+			if name == "" {
+				name = oldNameMap[c.ContainerID]
+			}
+			result.StatusChanges = append(result.StatusChanges, ContainerStatusChange{
+				ContainerID: c.ContainerID,
+				Name:        name,
+				ImageName:   c.ImageName,
+				HostID:      hostID,
+				OldStatus:   oldStatus,
+				NewStatus:   newStatus,
+			})
+		}
+	}
 
 	// 4. Process volumes
 	for _, v := range payload.Volumes {
@@ -359,4 +405,13 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 	}
 
 	return result, nil
+}
+
+// isRunningStatus returns true for Docker container statuses that indicate a running container.
+func isRunningStatus(status string) bool {
+	switch status {
+	case "running", "restarting":
+		return true
+	}
+	return false
 }

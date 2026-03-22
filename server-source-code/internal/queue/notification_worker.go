@@ -1143,6 +1143,20 @@ func (h *NotificationDeliverHandler) hasActiveMatchingAlert(ctx context.Context,
 				return true
 			}
 		}
+	case "container_stopped", "container_started":
+		containerID := nocMetaStr(p.Metadata, "container_id")
+		if containerID == "" {
+			return false
+		}
+		for _, a := range active {
+			var m map[string]interface{}
+			if len(a.Metadata) > 0 {
+				_ = json.Unmarshal(a.Metadata, &m)
+			}
+			if cid, _ := m["container_id"].(string); cid == containerID {
+				return true
+			}
+		}
 	}
 	return false
 }

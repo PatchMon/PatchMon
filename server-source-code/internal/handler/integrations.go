@@ -2,11 +2,15 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"time"
 
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 )
@@ -16,14 +20,18 @@ type IntegrationsHandler struct {
 	hosts             *store.HostsStore
 	docker            *store.DockerStore
 	integrationStatus *store.IntegrationStatusStore
+	db                database.DBProvider
+	notify            *notifications.Emitter
 }
 
 // NewIntegrationsHandler creates a new integrations handler.
-func NewIntegrationsHandler(hosts *store.HostsStore, docker *store.DockerStore, integrationStatus *store.IntegrationStatusStore) *IntegrationsHandler {
+func NewIntegrationsHandler(hosts *store.HostsStore, docker *store.DockerStore, integrationStatus *store.IntegrationStatusStore, db database.DBProvider, notify *notifications.Emitter) *IntegrationsHandler {
 	return &IntegrationsHandler{
 		hosts:             hosts,
 		docker:            docker,
 		integrationStatus: integrationStatus,
+		db:                db,
+		notify:            notify,
 	}
 }
 
@@ -239,6 +247,47 @@ func (h *IntegrationsHandler) ReceiveDockerData(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Emit notification events for container status transitions.
+	if h.notify != nil && len(result.StatusChanges) > 0 {
+		d := h.db.DB(r.Context())
+		tenantHost := hostctx.TenantHostKey(r.Context())
+		hostName := host.FriendlyName
+		if hostName == "" && host.Hostname != nil {
+			hostName = *host.Hostname
+		}
+		for _, sc := range result.StatusChanges {
+			eventType := "container_stopped"
+			if isContainerRunning(sc.NewStatus) {
+				eventType = "container_started"
+			}
+			containerLabel := sc.Name
+			if containerLabel == "" {
+				containerLabel = sc.ContainerID[:12]
+			}
+			title := fmt.Sprintf("Container %s %s", containerLabel, eventType[len("container_"):])
+			msg := fmt.Sprintf("Container \"%s\" (%s) on host \"%s\" changed from %s to %s.",
+				containerLabel, sc.ImageName, hostName, sc.OldStatus, sc.NewStatus)
+
+			h.notify.EmitEvent(r.Context(), d, tenantHost, notifications.Event{
+				Type:          eventType,
+				Severity:      "informational",
+				Title:         title,
+				Message:       msg,
+				ReferenceType: "host",
+				ReferenceID:   host.ID,
+				Metadata: map[string]interface{}{
+					"host_id":        host.ID,
+					"host_name":      hostName,
+					"container_id":   sc.ContainerID,
+					"container_name": sc.Name,
+					"image_name":     sc.ImageName,
+					"old_status":     sc.OldStatus,
+					"new_status":     sc.NewStatus,
+				},
+			})
+		}
+	}
+
 	JSON(w, http.StatusOK, dockerResponse{
 		Message:            "Docker data collected successfully",
 		ContainersReceived: result.ContainersReceived,
@@ -247,6 +296,10 @@ func (h *IntegrationsHandler) ReceiveDockerData(w http.ResponseWriter, r *http.R
 		NetworksReceived:   result.NetworksReceived,
 		UpdatesFound:       result.UpdatesFound,
 	})
+}
+
+func isContainerRunning(status string) bool {
+	return status == "running" || status == "restarting"
 }
 
 // integrationStatusReq matches agent IntegrationSetupStatus payload.

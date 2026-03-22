@@ -4,9 +4,11 @@ import {
 	ArrowDown,
 	ArrowUp,
 	ArrowUpDown,
+	ChevronRight,
 	Container,
 	ExternalLink,
 	HardDrive,
+	Layers,
 	Network,
 	Package,
 	RefreshCw,
@@ -15,12 +17,13 @@ import {
 	Trash2,
 	X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import api, { formatError } from "../utils/api";
 import { generateRegistryLink, getSourceDisplayName } from "../utils/docker";
 
 const VALID_DOCKER_TABS = [
+	"stacks",
 	"containers",
 	"images",
 	"volumes",
@@ -35,7 +38,7 @@ const Docker = () => {
 	const [searchTerm, setSearchTerm] = useState("");
 	const urlTab = searchParams.get("tab");
 	const [activeTab, setActiveTab] = useState(
-		VALID_DOCKER_TABS.includes(urlTab) ? urlTab : "containers",
+		VALID_DOCKER_TABS.includes(urlTab) ? urlTab : "stacks",
 	);
 
 	// Sync tab only on actual URL navigation (not in-page tab clicks)
@@ -81,7 +84,7 @@ const Docker = () => {
 			const response = await api.get(`/docker/containers?${params}`);
 			return response.data;
 		},
-		enabled: activeTab === "containers",
+		enabled: activeTab === "containers" || activeTab === "stacks",
 	});
 
 	// Fetch images
@@ -584,7 +587,8 @@ const Docker = () => {
 						type="button"
 						onClick={() => {
 							// Trigger refresh based on active tab
-							if (activeTab === "containers") refetchContainers();
+							if (activeTab === "stacks") refetchContainers();
+							else if (activeTab === "containers") refetchContainers();
 							else if (activeTab === "images") refetchImages();
 							else if (activeTab === "volumes") refetchVolumes();
 							else if (activeTab === "networks") refetchNetworks();
@@ -706,6 +710,7 @@ const Docker = () => {
 					aria-label="Tabs"
 				>
 					{[
+						{ id: "stacks", label: "Stacks", icon: Layers },
 						{ id: "containers", label: "Containers", icon: Container },
 						{ id: "images", label: "Images", icon: Package },
 						{ id: "volumes", label: "Volumes", icon: HardDrive },
@@ -839,6 +844,22 @@ const Docker = () => {
 
 				{/* Tab Content */}
 				<div className="p-4 flex-1 overflow-auto">
+					{/* Stacks Tab */}
+					{activeTab === "stacks" &&
+						(containersLoading ? (
+							<div className="text-center py-8">
+								<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto" />
+								<p className="text-secondary-500 dark:text-white mt-2">
+									Loading stacks...
+								</p>
+							</div>
+						) : (
+							<StacksView
+								containers={containersData?.containers || []}
+								getStatusBadge={getStatusBadge}
+							/>
+						))}
+
 					{/* Containers Tab */}
 					{activeTab === "containers" &&
 						(containersLoading ? (
@@ -2300,5 +2321,337 @@ const Docker = () => {
 		</div>
 	);
 };
+
+/* ───────────────── Stacks View ───────────────── */
+
+function StacksView({ containers, getStatusBadge }) {
+	const [expandedStack, setExpandedStack] = useState(null);
+
+	const stacksMap = new Map();
+	const standaloneContainers = [];
+
+	for (const container of containers) {
+		const project = container.labels?.["com.docker.compose.project"];
+		if (project) {
+			if (!stacksMap.has(project)) {
+				stacksMap.set(project, []);
+			}
+			stacksMap.get(project).push(container);
+		} else {
+			standaloneContainers.push(container);
+		}
+	}
+
+	const stacks = Array.from(stacksMap.entries()).sort((a, b) =>
+		a[0].localeCompare(b[0]),
+	);
+
+	if (stacks.length === 0 && standaloneContainers.length === 0) {
+		return (
+			<div className="text-center py-12">
+				<Layers className="h-12 w-12 text-secondary-400 mx-auto mb-3" />
+				<p className="text-secondary-500 dark:text-white">
+					No Docker Compose stacks found
+				</p>
+				<p className="text-xs text-secondary-400 mt-1">
+					Containers started with docker-compose will appear here
+				</p>
+			</div>
+		);
+	}
+
+	return (
+		<>
+			<div className="flex items-center gap-4 text-sm text-secondary-500 dark:text-white mb-4">
+				<span>
+					{stacks.length} stack{stacks.length !== 1 ? "s" : ""}
+				</span>
+				<span>
+					{containers.length} container{containers.length !== 1 ? "s" : ""}
+				</span>
+				{standaloneContainers.length > 0 && (
+					<span>{standaloneContainers.length} standalone</span>
+				)}
+			</div>
+
+			{/* Desktop table */}
+			<div className="hidden md:block overflow-x-auto">
+				<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+					<thead className="bg-secondary-50 dark:bg-secondary-700">
+						<tr>
+							<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider w-8" />
+							<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+								Stack Name
+							</th>
+							<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+								Host
+							</th>
+							<th className="px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+								Services
+							</th>
+							<th className="px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+								Status
+							</th>
+						</tr>
+					</thead>
+					<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+						{stacks.map(([stackName, stackContainers]) => {
+							const isExpanded = expandedStack === stackName;
+							const runningCount = stackContainers.filter(
+								(c) => c.state === "running",
+							).length;
+							const totalCount = stackContainers.length;
+							const allRunning = runningCount === totalCount;
+							const hostName =
+								stackContainers[0]?.host?.friendly_name ||
+								stackContainers[0]?.host?.hostname ||
+								"Unknown";
+							const hostId = stackContainers[0]?.host_id;
+
+							return (
+								<Fragment key={stackName}>
+									<tr
+										onClick={() =>
+											setExpandedStack(isExpanded ? null : stackName)
+										}
+										className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors cursor-pointer"
+									>
+										<td className="px-4 py-2 whitespace-nowrap">
+											<ChevronRight
+												className={`h-4 w-4 text-secondary-400 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+											/>
+										</td>
+										<td className="px-4 py-2 whitespace-nowrap">
+											<div className="flex items-center gap-2">
+												<Layers className="h-4 w-4 text-secondary-400 dark:text-white flex-shrink-0" />
+												<span className="text-sm font-medium text-secondary-900 dark:text-white">
+													{stackName}
+												</span>
+											</div>
+										</td>
+										<td className="px-4 py-2 whitespace-nowrap">
+											{hostId ? (
+												<Link
+													to={`/hosts/${hostId}`}
+													className="text-sm text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300"
+													onClick={(e) => e.stopPropagation()}
+												>
+													{hostName}
+												</Link>
+											) : (
+												<span className="text-sm text-secondary-600 dark:text-secondary-400">
+													{hostName}
+												</span>
+											)}
+										</td>
+										<td className="px-4 py-2 whitespace-nowrap text-center">
+											<span className="text-sm text-secondary-600 dark:text-secondary-400">
+												{totalCount} service{totalCount !== 1 ? "s" : ""}
+											</span>
+										</td>
+										<td className="px-4 py-2 whitespace-nowrap text-center">
+											<span
+												className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium ${allRunning ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"}`}
+											>
+												{runningCount}/{totalCount} running
+											</span>
+										</td>
+									</tr>
+									{isExpanded && (
+										<tr>
+											<td colSpan={5} className="p-0">
+												<div className="bg-secondary-50 dark:bg-secondary-700/30 border-t border-secondary-200 dark:border-secondary-600">
+													<table className="min-w-full">
+														<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
+															{stackContainers.map((container) => (
+																<tr
+																	key={container.id}
+																	className="hover:bg-secondary-100 dark:hover:bg-secondary-700/50 transition-colors"
+																>
+																	<td className="w-8" />
+																	<td className="px-4 py-2 whitespace-nowrap">
+																		<div className="flex items-center gap-2 pl-6">
+																			<Container className="h-3.5 w-3.5 text-secondary-400 flex-shrink-0" />
+																			<Link
+																				to={`/docker/containers/${container.id}`}
+																				className="text-sm text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300"
+																			>
+																				{container.labels?.[
+																					"com.docker.compose.service"
+																				] || container.name}
+																			</Link>
+																		</div>
+																	</td>
+																	<td className="px-4 py-2 whitespace-nowrap">
+																		<span className="text-sm text-secondary-500 dark:text-secondary-400 font-mono">
+																			{container.image}
+																		</span>
+																	</td>
+																	<td />
+																	<td className="px-4 py-2 whitespace-nowrap text-center">
+																		{getStatusBadge(container.state)}
+																	</td>
+																</tr>
+															))}
+														</tbody>
+													</table>
+												</div>
+											</td>
+										</tr>
+									)}
+								</Fragment>
+							);
+						})}
+						{standaloneContainers.length > 0 && (
+							<>
+								<tr>
+									<td
+										colSpan={5}
+										className="px-4 py-2 bg-secondary-100 dark:bg-secondary-700"
+									>
+										<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider">
+											Standalone Containers ({standaloneContainers.length})
+										</span>
+									</td>
+								</tr>
+								{standaloneContainers.map((container) => (
+									<tr
+										key={container.id}
+										className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
+									>
+										<td className="w-8" />
+										<td className="px-4 py-2 whitespace-nowrap">
+											<div className="flex items-center gap-2">
+												<Container className="h-4 w-4 text-secondary-400 dark:text-white flex-shrink-0" />
+												<Link
+													to={`/docker/containers/${container.id}`}
+													className="text-sm font-medium text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300"
+												>
+													{container.name}
+												</Link>
+											</div>
+										</td>
+										<td className="px-4 py-2 whitespace-nowrap">
+											{container.host_id ? (
+												<Link
+													to={`/hosts/${container.host_id}`}
+													className="text-sm text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300"
+												>
+													{container.host?.friendly_name ||
+														container.host?.hostname ||
+														"Unknown"}
+												</Link>
+											) : (
+												<span className="text-sm text-secondary-600 dark:text-secondary-400">
+													Unknown
+												</span>
+											)}
+										</td>
+										<td />
+										<td className="px-4 py-2 whitespace-nowrap text-center">
+											{getStatusBadge(container.state)}
+										</td>
+									</tr>
+								))}
+							</>
+						)}
+					</tbody>
+				</table>
+			</div>
+
+			{/* Mobile cards */}
+			<div className="md:hidden space-y-3 pb-4">
+				{stacks.map(([stackName, stackContainers]) => {
+					const isExpanded = expandedStack === stackName;
+					const runningCount = stackContainers.filter(
+						(c) => c.state === "running",
+					).length;
+					const totalCount = stackContainers.length;
+					const allRunning = runningCount === totalCount;
+					const hostName =
+						stackContainers[0]?.host?.friendly_name ||
+						stackContainers[0]?.host?.hostname ||
+						"Unknown";
+
+					return (
+						<div key={stackName} className="card p-4 space-y-3">
+							<button
+								type="button"
+								onClick={() => setExpandedStack(isExpanded ? null : stackName)}
+								className="flex items-center gap-3 w-full text-left"
+							>
+								<ChevronRight
+									className={`h-4 w-4 text-secondary-400 transition-transform flex-shrink-0 ${isExpanded ? "rotate-90" : ""}`}
+								/>
+								<Layers className="h-5 w-5 text-secondary-400 flex-shrink-0" />
+								<span className="text-base font-semibold text-secondary-900 dark:text-white truncate">
+									{stackName}
+								</span>
+							</button>
+							<div className="flex items-center gap-2">
+								<span
+									className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium ${allRunning ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"}`}
+								>
+									{runningCount}/{totalCount} running
+								</span>
+							</div>
+							<div className="space-y-2 pt-2 border-t border-secondary-200 dark:border-secondary-600">
+								<div className="text-sm">
+									<span className="text-secondary-500 dark:text-white">
+										Host:{" "}
+									</span>
+									<span className="text-secondary-900 dark:text-white">
+										{hostName}
+									</span>
+								</div>
+								<div className="text-sm">
+									<span className="text-secondary-500 dark:text-white">
+										Services:{" "}
+									</span>
+									<span className="text-secondary-900 dark:text-white">
+										{totalCount}
+									</span>
+								</div>
+							</div>
+							{isExpanded && (
+								<div className="pt-2 border-t border-secondary-200 dark:border-secondary-600 space-y-2">
+									{stackContainers.map((container) => (
+										<div
+											key={container.id}
+											className="flex items-center justify-between pl-4"
+										>
+											<Link
+												to={`/docker/containers/${container.id}`}
+												className="text-sm text-primary-600 dark:text-primary-400 hover:text-primary-900 dark:hover:text-primary-300 truncate"
+											>
+												{container.labels?.["com.docker.compose.service"] ||
+													container.name}
+											</Link>
+											{getStatusBadge(container.state)}
+										</div>
+									))}
+								</div>
+							)}
+						</div>
+					);
+				})}
+				{standaloneContainers.length > 0 &&
+					standaloneContainers.map((container) => (
+						<div key={container.id} className="card p-4 space-y-2">
+							<div className="flex items-center justify-between">
+								<Link
+									to={`/docker/containers/${container.id}`}
+									className="text-sm font-medium text-primary-600 dark:text-primary-400"
+								>
+									{container.name}
+								</Link>
+								{getStatusBadge(container.state)}
+							</div>
+						</div>
+					))}
+			</div>
+		</>
+	);
+}
 
 export default Docker;

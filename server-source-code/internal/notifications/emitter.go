@@ -419,7 +419,8 @@ func (e *Emitter) allowRate(tenantHost, destinationID string) bool {
 // cancelPairs maps an event type to the delayed event type it should cancel.
 // When host_recovered fires, any pending delayed host_down notification for the same reference should be suppressed.
 var cancelPairs = map[string]string{
-	"host_recovered": "host_down",
+	"host_recovered":    "host_down",
+	"container_started": "container_stopped",
 }
 
 // cancelKeyForEvent returns the Redis cancel key to set when this event fires,

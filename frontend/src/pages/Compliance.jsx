@@ -12,6 +12,7 @@ import {
 	Play,
 	RefreshCw,
 	Server,
+	Settings,
 	ShieldAlert,
 	ShieldCheck,
 	ShieldOff,
@@ -33,6 +34,7 @@ import {
 	XAxis,
 	YAxis,
 } from "recharts";
+import ComplianceSettings from "../components/compliance/ComplianceSettings";
 import ScanHistoryTab from "../components/compliance/ScanHistoryTab";
 import ScanResultsTab from "../components/compliance/ScanResultsTab";
 import {
@@ -111,6 +113,7 @@ const COMPLIANCE_TABS = [
 	{ id: "hosts", label: "Hosts", icon: Users },
 	{ id: "scan-results", label: "Scan Results", icon: ListChecks },
 	{ id: "history", label: "History", icon: History },
+	{ id: "settings", label: "Settings", icon: Settings },
 ];
 
 const Compliance = () => {
@@ -1958,6 +1961,9 @@ const Compliance = () => {
 			{activeTab === "history" && (
 				<ScanHistoryTab scanned_hosts={hosts_with_latest_scan} />
 			)}
+
+			{/* ==================== SETTINGS TAB ==================== */}
+			{activeTab === "settings" && <ComplianceSettings />}
 		</div>
 	);
 };

@@ -51,7 +51,6 @@ func (s *SearchStore) GlobalSearch(ctx context.Context, query string, limit int)
 				COALESCE(description, category, '') AS description
 			FROM packages
 			WHERE name ILIKE $1
-				OR description ILIKE $1
 			ORDER BY name ASC
 			LIMIT 5
 		),

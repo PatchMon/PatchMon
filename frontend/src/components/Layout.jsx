@@ -10,15 +10,12 @@ import {
 	GitBranch,
 	Github,
 	Globe,
-	Heart,
 	LayoutDashboard,
 	LogOut,
-	Mail,
 	Menu,
 	Package,
 	Plus,
 	RefreshCw,
-	Route,
 	Server,
 	Settings,
 	Shield,
@@ -281,6 +278,7 @@ const Layout = ({ children }) => {
 					{ name: "Hosts", href: "/compliance?tab=hosts" },
 					{ name: "Scan Results", href: "/compliance?tab=scan-results" },
 					{ name: "History", href: "/compliance?tab=history" },
+					{ name: "Settings", href: "/compliance?tab=settings" },
 				],
 			});
 
@@ -309,6 +307,7 @@ const Layout = ({ children }) => {
 					icon: Container,
 					beta: true,
 					children: [
+						{ name: "Stacks", href: "/docker?tab=stacks" },
 						{ name: "Containers", href: "/docker?tab=containers" },
 						{ name: "Images", href: "/docker?tab=images" },
 						{ name: "Volumes", href: "/docker?tab=volumes" },
@@ -350,6 +349,34 @@ const Layout = ({ children }) => {
 					showUpgradeIcon: updateAvailable,
 				});
 			}
+
+			systemItems.push({
+				name: "Links",
+				href: "#links",
+				icon: BookOpen,
+				children: [
+					{
+						name: "Roadmap",
+						href: "https://github.com/orgs/PatchMon/projects/2/views/1",
+						external: true,
+					},
+					{
+						name: "Documentation",
+						href: "https://docs.patchmon.net",
+						external: true,
+					},
+					{
+						name: "Email Support",
+						href: "mailto:support@patchmon.net",
+						external: true,
+					},
+					{
+						name: "Website",
+						href: "https://patchmon.net",
+						external: true,
+					},
+				],
+			});
 
 			if (systemItems.length > 0) {
 				nav.push({
@@ -809,6 +836,9 @@ const Layout = ({ children }) => {
 																				return;
 																			}
 																			if (subItem.children) {
+																				if (subItem.href.startsWith("#")) {
+																					e.preventDefault();
+																				}
 																				setExpandedNav(
 																					expandedNav === subItem.name
 																						? null
@@ -892,21 +922,41 @@ const Layout = ({ children }) => {
 																			<ul className="ml-8 mt-0.5 space-y-0.5 border-l border-secondary-200 dark:border-secondary-700 pl-2">
 																				{subItem.children.map((child) => (
 																					<li key={child.name}>
-																						<Link
-																							to={child.href}
-																							className={`block text-sm py-2 px-2 rounded transition-colors min-h-[44px] flex items-center ${
-																								location.pathname +
-																									location.search ===
-																								child.href
-																									? "text-primary-600 dark:text-primary-400 font-medium"
-																									: "text-secondary-500 dark:text-white hover:text-secondary-900 dark:hover:text-primary-400"
-																							}`}
-																							onClick={() =>
-																								setSidebarOpen(false)
-																							}
-																						>
-																							{child.name}
-																						</Link>
+																						{child.external ? (
+																							<a
+																								href={child.href}
+																								target={
+																									child.href.startsWith(
+																										"mailto:",
+																									)
+																										? undefined
+																										: "_blank"
+																								}
+																								rel="noopener noreferrer"
+																								className="block text-sm py-2 px-2 rounded transition-colors min-h-[44px] flex items-center text-secondary-500 dark:text-white hover:text-secondary-900 dark:hover:text-primary-400"
+																								onClick={() =>
+																									setSidebarOpen(false)
+																								}
+																							>
+																								{child.name}
+																							</a>
+																						) : (
+																							<Link
+																								to={child.href}
+																								className={`block text-sm py-2 px-2 rounded transition-colors min-h-[44px] flex items-center ${
+																									location.pathname +
+																										location.search ===
+																									child.href
+																										? "text-primary-600 dark:text-primary-400 font-medium"
+																										: "text-secondary-500 dark:text-white hover:text-secondary-900 dark:hover:text-primary-400"
+																								}`}
+																								onClick={() =>
+																									setSidebarOpen(false)
+																								}
+																							>
+																								{child.name}
+																							</Link>
+																						)}
 																					</li>
 																				))}
 																			</ul>
@@ -1043,7 +1093,7 @@ const Layout = ({ children }) => {
 							)}
 						</div>
 						<nav className="flex-1 flex flex-col overflow-y-auto overflow-x-hidden min-h-0">
-							<ul className="flex flex-1 flex-col space-y-1">
+							<ul className="flex flex-col space-y-1">
 								{/* Show message for users with very limited permissions */}
 								{navigation.length === 0 && settingsNavigation.length === 0 && (
 									<li className="px-2 py-4 text-center">
@@ -1287,6 +1337,9 @@ const Layout = ({ children }) => {
 																					return;
 																				}
 																				if (subItem.children) {
+																					if (subItem.href.startsWith("#")) {
+																						e.preventDefault();
+																					}
 																					setExpandedNav(
 																						expandedNav === subItem.name
 																							? null
@@ -1388,18 +1441,35 @@ const Layout = ({ children }) => {
 																				<ul className="ml-7 mt-0.5 space-y-0.5 border-l border-secondary-200 dark:border-secondary-700 pl-2">
 																					{subItem.children.map((child) => (
 																						<li key={child.name}>
-																							<Link
-																								to={child.href}
-																								className={`block text-[13px] py-1 px-2 rounded transition-colors ${
-																									location.pathname +
-																										location.search ===
-																									child.href
-																										? "text-primary-600 dark:text-primary-400 font-medium"
-																										: "text-secondary-500 dark:text-white hover:text-secondary-900 dark:hover:text-primary-400"
-																								}`}
-																							>
-																								{child.name}
-																							</Link>
+																							{child.external ? (
+																								<a
+																									href={child.href}
+																									target={
+																										child.href.startsWith(
+																											"mailto:",
+																										)
+																											? undefined
+																											: "_blank"
+																									}
+																									rel="noopener noreferrer"
+																									className="block text-[13px] py-1 px-2 rounded transition-colors text-secondary-500 dark:text-white hover:text-secondary-900 dark:hover:text-primary-400"
+																								>
+																									{child.name}
+																								</a>
+																							) : (
+																								<Link
+																									to={child.href}
+																									className={`block text-[13px] py-1 px-2 rounded transition-colors ${
+																										location.pathname +
+																											location.search ===
+																										child.href
+																											? "text-primary-600 dark:text-primary-400 font-medium"
+																											: "text-secondary-500 dark:text-white hover:text-secondary-900 dark:hover:text-primary-400"
+																									}`}
+																								>
+																									{child.name}
+																								</Link>
+																							)}
 																						</li>
 																					))}
 																				</ul>
@@ -1418,70 +1488,14 @@ const Layout = ({ children }) => {
 							</ul>
 						</nav>
 
-						{/* LINKS + Profile - Bottom of Sidebar, grouped with minimal gap */}
-						<div className="flex-shrink-0 flex flex-col gap-y-1 px-2 pb-1">
-							{/* LINKS Section */}
-							{!sidebarCollapsed && (
-								<div>
-									<button
-										type="button"
-										onClick={() => {
-											setShowDonateModal(true);
-											setSidebarOpen(false);
-										}}
-										className="w-full h-8 flex items-center justify-center gap-1.5 px-3 mb-1 text-xs font-medium text-secondary-700 dark:text-secondary-200 bg-secondary-50 dark:bg-secondary-800 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
-									>
-										<BuyMeACoffeeIcon className="h-4 w-4 text-yellow-500" />
-										Donate a coffee
-										<Heart className="h-4 w-4" />
-									</button>
-									<div className="flex w-full gap-1">
-										<a
-											href="https://github.com/orgs/PatchMon/projects/2/views/1"
-											target="_blank"
-											rel="noopener noreferrer"
-											className="flex-1 min-w-0 flex items-center justify-center h-8 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
-											title="Roadmap"
-										>
-											<Route className="h-5 w-5" />
-										</a>
-										<a
-											href="https://docs.patchmon.net"
-											target="_blank"
-											rel="noopener noreferrer"
-											className="flex-1 min-w-0 flex items-center justify-center h-8 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
-											title="Documentation"
-										>
-											<BookOpen className="h-5 w-5" />
-										</a>
-										<a
-											href="mailto:support@patchmon.net"
-											className="flex-1 min-w-0 flex items-center justify-center h-8 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
-											title="Email Support"
-										>
-											<Mail className="h-5 w-5" />
-										</a>
-										<a
-											href="https://patchmon.net"
-											target="_blank"
-											rel="noopener noreferrer"
-											className="flex-1 min-w-0 flex items-center justify-center h-8 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
-											title="Website"
-										>
-											<Globe className="h-5 w-5" />
-										</a>
-									</div>
-								</div>
-							)}
-
-							{/* Profile Section - directly below links */}
+						{/* Profile - Bottom of Sidebar */}
+						<div className="flex-shrink-0 px-2 pb-1">
 							{!sidebarCollapsed ? (
 								<div>
-									{/* User Info with Sign Out - Username is clickable */}
-									<div className="flex items-center justify-between py-1">
+									<div className="flex items-center justify-between">
 										<Link
 											to="/settings/profile"
-											className={`flex-1 min-w-0 rounded-md p-2 transition-all duration-200 ${
+											className={`flex-1 min-w-0 rounded-md px-2 py-1.5 transition-all duration-200 ${
 												isActive("/settings/profile")
 													? "bg-primary-50 dark:bg-primary-600"
 													: "hover:bg-secondary-50 dark:hover:bg-secondary-700"
@@ -1540,10 +1554,9 @@ const Layout = ({ children }) => {
 											<LogOut className="h-4 w-4" />
 										</button>
 									</div>
-									{/* Updated info */}
 									{stats && (
-										<div className="pt-1">
-											<div className="flex items-center gap-x-1 text-xs text-secondary-500 dark:text-white/70">
+										<div className="px-2">
+											<div className="flex items-center gap-x-1 text-[11px] text-secondary-400 dark:text-white/50">
 												<Clock className="h-3 w-3 flex-shrink-0" />
 												<span className="truncate">
 													Updated: {formatRelativeTimeShort(stats.lastUpdated)}
@@ -1770,6 +1783,21 @@ const Layout = ({ children }) => {
 										</>
 									)}
 								</div>
+
+								{/* Donate Button */}
+								<button
+									type="button"
+									onClick={() => setShowDonateModal(true)}
+									className="hidden md:flex items-center justify-center gap-1.5 px-2.5 h-10 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm"
+									style={{
+										backgroundColor: "var(--button-bg, rgb(249, 250, 251))",
+										backdropFilter: "var(--button-blur, none)",
+										WebkitBackdropFilter: "var(--button-blur, none)",
+									}}
+									title="Donate a coffee"
+								>
+									<BuyMeACoffeeIcon className="h-5 w-5 text-yellow-500 flex-shrink-0" />
+								</button>
 
 								{/* Desktop External Links */}
 								<div className="hidden md:flex items-center gap-1">

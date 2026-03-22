@@ -80,13 +80,21 @@ const Reporting = () => {
 		VALID_TABS.has(urlTab) ? urlTab : "overview",
 	);
 
-	// Sync tab only on actual URL navigation (not in-page tab clicks)
+	// Sync tab and filters on actual URL navigation (not in-page tab clicks)
 	useEffect(() => {
 		const params = new URLSearchParams(location.search);
 		const tab = params.get("tab");
 		if (tab && VALID_TABS.has(tab)) {
 			setActiveTab(tab);
 		}
+		const severity = params.get("severity");
+		if (severity) setSeverityFilter(severity);
+		const status = params.get("status");
+		if (status) setStatusFilter(status);
+		const type = params.get("type");
+		if (type) setTypeFilter(type);
+		const assignment = params.get("assignment");
+		if (assignment) setAssignmentFilter(assignment);
 	}, [location.search]);
 
 	const tabs = [
@@ -99,15 +107,30 @@ const Reporting = () => {
 		{ id: "log", name: "Delivery Log", icon: BookOpen },
 	];
 
-	// Fetch alerts - with aggressive polling for real-time updates
+	// Fetch ALL alerts (unfiltered) for overview widgets
+	const {
+		data: allAlertsData,
+		refetch: refetchAlerts,
+		isFetching: isFetchingAlerts,
+	} = useQuery({
+		queryKey: ["alerts"],
+		queryFn: async () => {
+			const response = await alertsAPI.getAlerts();
+			return response.data.data || [];
+		},
+		refetchInterval: 30000,
+		refetchOnWindowFocus: true,
+		refetchOnMount: true,
+		staleTime: 0,
+	});
+
+	// Fetch alerts for the alerts table tab (respects assignment filter)
 	const {
 		data: alertsData,
 		isLoading: alertsLoading,
 		error: alertsError,
-		refetch: refetchAlerts,
-		isFetching: isFetchingAlerts,
 	} = useQuery({
-		queryKey: ["alerts", assignmentFilter],
+		queryKey: ["alerts", "filtered", assignmentFilter],
 		queryFn: async () => {
 			const params = {};
 			if (assignmentFilter === "assignedToMe") {
@@ -116,10 +139,10 @@ const Reporting = () => {
 			const response = await alertsAPI.getAlerts(params);
 			return response.data.data || [];
 		},
-		refetchInterval: 30000, // Refresh every 30 seconds to reduce API load
-		refetchOnWindowFocus: true, // Refetch when user returns to tab
-		refetchOnMount: true, // Always refetch on mount
-		staleTime: 0, // Data is immediately stale, always refetch
+		refetchInterval: 30000,
+		refetchOnWindowFocus: true,
+		refetchOnMount: true,
+		staleTime: 0,
 	});
 
 	// Fetch alert stats - polling for updates
@@ -273,6 +296,7 @@ const Reporting = () => {
 		}
 	}, [statsData]);
 
+	const allAlerts = allAlertsData || [];
 	const alerts = alertsData || [];
 	const stats = statsData || {};
 
@@ -786,10 +810,10 @@ const Reporting = () => {
 				<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 auto-rows-[320px]">
 					<DeliveryByDestination />
 					<AlertSeverityDoughnut stats={stats} />
-					<AlertVolumeTrend alerts={alerts} />
-					<AlertsByType alerts={alerts} />
-					<RecentAlerts alerts={alerts} />
-					<AlertResponderWorkload alerts={alerts} users={usersData} />
+					<AlertVolumeTrend alerts={allAlerts} />
+					<AlertsByType alerts={allAlerts} />
+					<RecentAlerts alerts={allAlerts} />
+					<AlertResponderWorkload alerts={allAlerts} users={usersData} />
 				</div>
 			)}
 

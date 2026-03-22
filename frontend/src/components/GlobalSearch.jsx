@@ -278,20 +278,17 @@ const GlobalSearch = () => {
 															: "hover:bg-secondary-50 dark:hover:bg-secondary-700"
 													}`}
 												>
-													<Icon className={`h-4 w-4 ${config.color}`} />
-													<div className="flex-1 min-w-0 flex items-center gap-2">
-														<span className="text-sm font-medium text-secondary-900 dark:text-white truncate">
+													<Icon
+														className={`h-4 w-4 flex-shrink-0 ${config.color}`}
+													/>
+													<div className="flex-1 min-w-0">
+														<div className="text-sm font-medium text-secondary-900 dark:text-white break-all">
 															{item.name}
-														</span>
+														</div>
 														{item.description && (
-															<>
-																<span className="text-xs text-secondary-400 dark:text-white/50">
-																	•
-																</span>
-																<span className="text-xs text-secondary-500 dark:text-white/70 truncate">
-																	{item.description}
-																</span>
-															</>
+															<div className="text-xs text-secondary-500 dark:text-white/70 truncate">
+																{item.description}
+															</div>
 														)}
 													</div>
 												</button>

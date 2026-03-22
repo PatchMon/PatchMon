@@ -39,6 +39,8 @@ const EVENT_TYPES = [
 	{ value: "patch_run_completed", label: "Patch run completed" },
 	{ value: "patch_run_failed", label: "Patch run failed" },
 	{ value: "compliance_scan_completed", label: "Compliance scan completed" },
+	{ value: "container_stopped", label: "Container stopped" },
+	{ value: "container_started", label: "Container started" },
 ];
 
 const SEVERITIES = [
