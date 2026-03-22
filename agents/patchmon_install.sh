@@ -591,7 +591,9 @@ log_level: "info"
 skip_ssl_verify: ${SKIP_SSL_VERIFY:-false}
 integrations:
   docker: false
-  compliance: "disabled"
+  compliance:
+    enabled: "disabled"
+    scan_interval: 1440
   ssh-proxy-enabled: false
 EOF
 

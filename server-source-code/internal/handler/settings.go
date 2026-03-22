@@ -610,6 +610,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	oldInterval := s.UpdateInterval
+	oldComplianceScanInterval := s.ComplianceScanInterval
 	applySettingsUpdate(s, req, h.enc)
 
 	if err := h.settings.Update(r.Context(), s); err != nil {
@@ -617,11 +618,13 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// When update_interval changes, push to all connected agents so they recalculate offset and restart ticker
-	if h.registry != nil && s.UpdateInterval != oldInterval && s.UpdateInterval > 0 {
+	intervalChanged := s.UpdateInterval != oldInterval && s.UpdateInterval > 0
+	complianceIntervalChanged := s.ComplianceScanInterval != oldComplianceScanInterval && s.ComplianceScanInterval > 0
+	if h.registry != nil && (intervalChanged || complianceIntervalChanged) {
 		msg := map[string]interface{}{
-			"type":            "settings_update",
-			"update_interval": s.UpdateInterval,
+			"type":                     "settings_update",
+			"update_interval":          s.UpdateInterval,
+			"compliance_scan_interval": s.ComplianceScanInterval,
 		}
 		pushed := 0
 		for _, apiID := range h.registry.GetConnectedApiIDs() {
@@ -635,7 +638,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if pushed > 0 {
-			slog.Info("pushed settings_update to connected agents", "interval", s.UpdateInterval, "count", pushed)
+			slog.Info("pushed settings_update to connected agents", "interval", s.UpdateInterval, "compliance_scan_interval", s.ComplianceScanInterval, "count", pushed)
 		}
 	}
 
@@ -653,7 +656,7 @@ func settingsToResponse(s *models.Settings, enc *util.Encryption) map[string]int
 		"server_host": s.ServerHost, "server_port": s.ServerPort,
 		"created_at": s.CreatedAt, "updated_at": s.UpdatedAt,
 		"update_interval": s.UpdateInterval, "auto_update": s.AutoUpdate,
-		"default_compliance_mode": s.DefaultComplianceMode, "github_repo_url": s.GithubRepoURL,
+		"default_compliance_mode": s.DefaultComplianceMode, "compliance_scan_interval": s.ComplianceScanInterval, "github_repo_url": s.GithubRepoURL,
 		"ssh_key_path": s.SSHKeyPath, "repository_type": s.RepositoryType,
 		"last_update_check": s.LastUpdateCheck, "latest_version": s.LatestVersion,
 		"update_available": s.UpdateAvailable,
@@ -756,6 +759,12 @@ func applySettingsUpdate(s *models.Settings, req map[string]interface{}, enc *ut
 	}
 	if v, ok := getReqString(req, "default_compliance_mode", "defaultComplianceMode"); ok {
 		s.DefaultComplianceMode = v
+	}
+	if v, ok := getReqFloat64(req, "compliance_scan_interval", "complianceScanInterval"); ok {
+		val := int(v)
+		if val >= 60 && val <= 10080 {
+			s.ComplianceScanInterval = val
+		}
 	}
 	if v, ok := getReqString(req, "github_repo_url", "githubRepoUrl"); ok {
 		s.GithubRepoURL = v

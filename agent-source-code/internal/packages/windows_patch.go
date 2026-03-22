@@ -89,25 +89,51 @@ func IsSuperseded(output string) bool {
 	return strings.HasPrefix(output, "SUPERSEDED:")
 }
 
+// wingetResolveBlock is a PowerShell snippet that resolves the winget.exe path
+// in SYSTEM/Session 0 context where it may not be on PATH.
+const wingetResolveBlock = `
+# Resolve winget.exe path — handle SYSTEM/Session 0 where it's not on PATH
+$wingetPath = $null
+$candidate = Get-Command winget.exe -ErrorAction SilentlyContinue
+if ($candidate) {
+    $wingetPath = $candidate.Source
+} else {
+    $candidates = @(
+        "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe",
+        "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe",
+        "C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe"
+    )
+    foreach ($pattern in $candidates) {
+        $found = Get-Item $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($found) {
+            $wingetPath = $found.FullName
+            break
+        }
+    }
+}
+if (-not $wingetPath) {
+    Write-Output "ERROR:winget.exe not found"
+    exit 1
+}
+`
+
 // WinGetUpgradeAll upgrades all installed applications via WinGet.
 // dryRun=true lists what would be upgraded without actually installing.
 func (p *WindowsPatcher) WinGetUpgradeAll(ctx context.Context, dryRun bool) (string, error) {
-	var psScript string
+	var action string
 	if dryRun {
-		psScript = `
-$ErrorActionPreference = "SilentlyContinue"
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$env:TERM = 'dumb'
-& winget.exe upgrade --accept-source-agreements --disable-interactivity 2>&1 | Out-String
-`
+		action = `& $wingetPath upgrade --accept-source-agreements --disable-interactivity 2>&1 | Out-String`
 	} else {
-		psScript = `
+		action = `& $wingetPath upgrade --all --silent --accept-source-agreements --accept-package-agreements --disable-interactivity 2>&1 | Out-String`
+	}
+	psScript := fmt.Sprintf(`
 $ErrorActionPreference = "SilentlyContinue"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $env:TERM = 'dumb'
-& winget.exe upgrade --all --silent --accept-source-agreements --accept-package-agreements --disable-interactivity 2>&1 | Out-String
-`
-	}
+%s
+%s
+`, wingetResolveBlock, action)
+
 	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
 	out, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(out))
@@ -122,25 +148,24 @@ func (p *WindowsPatcher) WinGetUpgradePackage(ctx context.Context, packageID str
 	if packageID == "" {
 		return "", fmt.Errorf("package ID is required")
 	}
-	var psScript string
+	var action string
 	if dryRun {
-		// WinGet has no simulate flag; list pending upgrades and filter by ID
-		psScript = fmt.Sprintf(`
-$ErrorActionPreference = "SilentlyContinue"
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$env:TERM = 'dumb'
-$out = & winget.exe upgrade --accept-source-agreements --disable-interactivity 2>&1 | Out-String
+		action = fmt.Sprintf(`
+$out = & $wingetPath upgrade --accept-source-agreements --disable-interactivity 2>&1 | Out-String
 Write-Output "[dry-run] Would upgrade: %s"
 Write-Output $out
 `, packageID)
 	} else {
-		psScript = fmt.Sprintf(`
+		action = fmt.Sprintf(`& $wingetPath upgrade --id '%s' --silent --accept-source-agreements --accept-package-agreements --disable-interactivity 2>&1 | Out-String`, packageID)
+	}
+	psScript := fmt.Sprintf(`
 $ErrorActionPreference = "SilentlyContinue"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $env:TERM = 'dumb'
-& winget.exe upgrade --id '%s' --silent --accept-source-agreements --accept-package-agreements --disable-interactivity 2>&1 | Out-String
-`, packageID)
-	}
+%s
+%s
+`, wingetResolveBlock, action)
+
 	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
 	out, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(out))

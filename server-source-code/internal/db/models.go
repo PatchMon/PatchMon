@@ -548,6 +548,7 @@ type Setting struct {
 	UpdateInterval                  int32            `json:"update_interval"`
 	AutoUpdate                      bool             `json:"auto_update"`
 	DefaultComplianceMode           string           `json:"default_compliance_mode"`
+	ComplianceScanInterval          int32            `json:"compliance_scan_interval"`
 	GithubRepoUrl                   string           `json:"github_repo_url"`
 	SshKeyPath                      *string          `json:"ssh_key_path"`
 	RepositoryType                  string           `json:"repository_type"`

@@ -462,9 +462,11 @@ func getArchitecture() string {
 	return runtime.GOARCH
 }
 
-// getPlatform returns "linux" or "freebsd" for the version/download API (server uses this to pick the right binary)
+// getPlatform returns the OS name for the version/download API (server uses this to pick the right binary)
 func getPlatform() string {
 	switch runtime.GOOS {
+	case "windows":
+		return "windows"
 	case "freebsd":
 		return "freebsd"
 	default:

@@ -31,12 +31,15 @@
 
 # Go binaries and test artifacts (built during Docker build, not from repo)
 **/*.exe
+!agents-prebuilt/patchmon-agent-*.exe
 **/*.test
 **/*.out
 **/*.prof
 **/patchmon-server
 **/patchmon-server-*
-**/agents/patchmon-agent-*
+# Exclude agent binaries from agents/ (they're copied from agents-prebuilt/ instead)
+# but keep agents/ scripts (install, remove, etc.)
+agents/patchmon-agent-*
 
 # Temporary files
 **/tmp

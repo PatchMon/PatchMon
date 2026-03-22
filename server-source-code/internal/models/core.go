@@ -82,6 +82,7 @@ type Settings struct {
 	UpdateInterval                  int        `db:"update_interval"`
 	AutoUpdate                      bool       `db:"auto_update"`
 	DefaultComplianceMode           string     `db:"default_compliance_mode"`
+	ComplianceScanInterval          int        `db:"compliance_scan_interval"`
 	GithubRepoURL                   string     `db:"github_repo_url"`
 	SSHKeyPath                      *string    `db:"ssh_key_path"`
 	RepositoryType                  string     `db:"repository_type"`

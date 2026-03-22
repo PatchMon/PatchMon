@@ -1,0 +1,1 @@
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS compliance_scan_interval INTEGER NOT NULL DEFAULT 1440;

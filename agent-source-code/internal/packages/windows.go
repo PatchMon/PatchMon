@@ -34,28 +34,35 @@ type wingetEntry struct {
 	Source    string
 }
 
-// GetPackages returns installed applications (via WinGet or registry) merged with
-// Windows OS updates (installed KB patches + any pending updates).
+// GetPackages returns installed applications merged with Windows OS updates.
+//
+// Collection strategy (inspired by rmmagent):
+//  1. Always collect from Windows Registry (reliable in Session 0 / SYSTEM context)
+//  2. Try WinGet as supplementary source for update availability enrichment
+//  3. Merge: registry provides the baseline, WinGet adds NeedsUpdate/AvailableVersion
+//  4. Collect Windows OS updates (installed KBs + pending via WUA COM API)
 func (m *WindowsManager) GetPackages() []models.Package {
 	if runtime.GOOS != "windows" {
 		return nil
 	}
 
-	// Collect installed applications
-	var appPackages []models.Package
-	appPackages = m.getPackagesFromWinget()
-	if len(appPackages) > 0 {
-		m.logger.WithField("count", len(appPackages)).Info("Collected packages via WinGet")
-	} else {
-		appPackages = m.getPackagesFromRegistry()
-		if len(appPackages) > 0 {
-			m.logger.WithField("count", len(appPackages)).Info("Collected packages via registry (winget not available)")
-		} else {
-			m.logger.Warn("No application packages collected (winget and registry both returned empty)")
-		}
+	// 1. Registry is the primary source — works reliably as SYSTEM in Session 0
+	//    (same approach as rmmagent's go-win64api which reads Uninstall registry keys)
+	regPackages := m.getPackagesFromRegistry()
+	m.logger.WithField("count", len(regPackages)).Info("Collected packages via registry")
+
+	// 2. Try WinGet for update availability enrichment
+	//    WinGet may not be available in Session 0 (per-user UWP app); that's OK
+	wingetPackages := m.getPackagesFromWinget()
+	if len(wingetPackages) > 0 {
+		m.logger.WithField("count", len(wingetPackages)).Info("Collected packages via WinGet (supplementary)")
 	}
 
-	// Collect Windows OS updates (installed KBs + pending updates)
+	// 3. Merge: start with registry baseline, enrich with WinGet update info
+	appPackages := m.mergeRegistryAndWinget(regPackages, wingetPackages)
+	m.logger.WithField("count", len(appPackages)).Info("Application packages after merge")
+
+	// 4. Collect Windows OS updates (installed KBs + pending updates)
 	winUpdates := m.getWindowsUpdates()
 	m.logger.WithField("count", len(winUpdates)).Info("Collected Windows OS updates")
 
@@ -69,24 +76,246 @@ func (m *WindowsManager) GetPackages() []models.Package {
 	return all
 }
 
-// getPackagesFromWinget runs winget list (text-table output) and parses it.
-// Uses PowerShell wrapper for UTF-8 encoding to avoid U+FFFD mojibake when capturing output.
+// mergeRegistryAndWinget merges registry-discovered packages with WinGet data.
+// Registry provides the reliable baseline; WinGet enriches with update availability.
+// Any WinGet-only entries (not in registry) are also included.
+func (m *WindowsManager) mergeRegistryAndWinget(regPkgs, wingetPkgs []models.Package) []models.Package {
+	if len(wingetPkgs) == 0 {
+		return regPkgs
+	}
+
+	// Build lookup from WinGet by normalized name for fuzzy matching
+	type wingetInfo struct {
+		AvailableVersion string
+		NeedsUpdate      bool
+		matched          bool
+	}
+	wingetByName := make(map[string]*wingetInfo, len(wingetPkgs))
+	for i := range wingetPkgs {
+		key := normalizePackageName(wingetPkgs[i].Name)
+		wingetByName[key] = &wingetInfo{
+			AvailableVersion: wingetPkgs[i].AvailableVersion,
+			NeedsUpdate:      wingetPkgs[i].NeedsUpdate,
+		}
+	}
+
+	// Enrich registry entries with WinGet update info
+	for i := range regPkgs {
+		key := normalizePackageName(regPkgs[i].Name)
+		if winfo, ok := wingetByName[key]; ok {
+			if winfo.NeedsUpdate {
+				regPkgs[i].NeedsUpdate = true
+				if regPkgs[i].AvailableVersion == "" {
+					regPkgs[i].AvailableVersion = winfo.AvailableVersion
+				}
+			}
+			winfo.matched = true
+		}
+	}
+
+	// Add WinGet-only entries that weren't in registry
+	for i := range wingetPkgs {
+		key := normalizePackageName(wingetPkgs[i].Name)
+		if winfo, ok := wingetByName[key]; ok && !winfo.matched {
+			regPkgs = append(regPkgs, wingetPkgs[i])
+		}
+	}
+
+	return regPkgs
+}
+
+// normalizePackageName lowercases and trims for fuzzy matching between registry and WinGet names
+func normalizePackageName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+// getPackagesFromRegistry uses registry Uninstall keys (HKLM + HKCU) to list installed programs.
+// This is the primary collection method — works reliably as SYSTEM in Session 0.
+// Inspired by rmmagent's use of go-win64api (which also reads these same registry keys).
+// Collects: Name, Version, Publisher, InstallDate, EstimatedSize.
+func (m *WindowsManager) getPackagesFromRegistry() []models.Package {
+	// SilentlyContinue throughout — never let a single bad entry kill the whole collection.
+	// rmmagent's go-win64api also silently skips entries with missing fields.
+	psScript := `
+$ErrorActionPreference = "SilentlyContinue"
+$seen = @{}
+$result = @()
+$paths = @(
+  "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+  "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+  "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+)
+foreach ($path in $paths) {
+  try {
+    Get-ItemProperty $path -ErrorAction SilentlyContinue | ForEach-Object {
+      $name = $_.DisplayName
+      if (-not $name) { return }
+      # SystemComponent=1 entries are hidden from Programs and Features (drivers, runtime deps)
+      if ($_.SystemComponent -eq 1) { return }
+      # Skip entries without a valid name or that are just GUIDs
+      $trimmed = $name.Trim()
+      if ($trimmed -eq "" -or $trimmed -match "^{[0-9a-fA-F-]+}$") { return }
+      # Deduplicate by name (first seen wins — 64-bit path is first)
+      if ($seen[$name]) { return }
+      $seen[$name] = $true
+      $ver = if ($_.DisplayVersion) { $_.DisplayVersion } else { "unknown" }
+      $pub = if ($_.Publisher) { $_.Publisher } else { "" }
+      $installDate = ""
+      if ($_.InstallDate) {
+        try {
+          $d = $_.InstallDate
+          if ($d -match "^\d{8}$") {
+            $installDate = "$($d.Substring(0,4))-$($d.Substring(4,2))-$($d.Substring(6,2))"
+          } else {
+            $installDate = $d
+          }
+        } catch {}
+      }
+      $size = ""
+      if ($_.EstimatedSize) {
+        try {
+          $kb = [int]$_.EstimatedSize
+          if ($kb -gt 1048576) {
+            $size = "{0:N1} GB" -f ($kb / 1048576)
+          } elseif ($kb -gt 1024) {
+            $size = "{0:N1} MB" -f ($kb / 1024)
+          } else {
+            $size = "$kb KB"
+          }
+        } catch {}
+      }
+      $result += @{
+        Name        = $name
+        Version     = $ver
+        Publisher   = $pub
+        InstallDate = $installDate
+        Size        = $size
+      }
+    }
+  } catch {}
+}
+if ($result.Count -gt 5000) { $result = $result[0..4999] }
+$result | ConvertTo-Json -Compress -Depth 3
+`
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	output, err := cmd.Output()
+	if err != nil {
+		m.logger.WithError(err).Warn("Registry Uninstall query failed")
+		return nil
+	}
+
+	outputStr := strings.TrimSpace(string(output))
+	if outputStr == "" || outputStr == "null" || outputStr == "[]" {
+		return nil
+	}
+
+	// PowerShell outputs a single object (not array) when there is exactly one result
+	if !strings.HasPrefix(outputStr, "[") {
+		outputStr = "[" + outputStr + "]"
+	}
+
+	var raw []struct {
+		Name        string `json:"Name"`
+		Version     string `json:"Version"`
+		Publisher   string `json:"Publisher"`
+		InstallDate string `json:"InstallDate"`
+		Size        string `json:"Size"`
+	}
+	if err := json.Unmarshal([]byte(outputStr), &raw); err != nil {
+		m.logger.WithError(err).Warn("Failed to parse registry JSON")
+		return nil
+	}
+
+	var packages []models.Package
+	for _, p := range raw {
+		if p.Name == "" {
+			continue
+		}
+		version := p.Version
+		if version == "" {
+			version = "unknown"
+		}
+		// Build description from publisher + install date + size (like rmmagent's SoftwareList fields)
+		desc := buildAppDescription(p.Publisher, p.InstallDate, p.Size)
+		packages = append(packages, models.Package{
+			Name:           p.Name,
+			Description:    desc,
+			Category:       "Application",
+			CurrentVersion: version,
+			NeedsUpdate:    false,
+		})
+	}
+	return packages
+}
+
+// buildAppDescription creates a human-readable description from registry metadata
+func buildAppDescription(publisher, installDate, size string) string {
+	var parts []string
+	if publisher != "" {
+		parts = append(parts, publisher)
+	}
+	if installDate != "" {
+		parts = append(parts, "installed "+installDate)
+	}
+	if size != "" {
+		parts = append(parts, size)
+	}
+	return strings.Join(parts, " | ")
+}
+
+// getPackagesFromWinget runs winget list and parses the text-table output.
+// Uses PowerShell wrapper for UTF-8 encoding to avoid U+FFFD mojibake.
+// Resolves the actual winget.exe path to work in SYSTEM/Session 0 context
+// where winget may not be on PATH (it's a per-user UWP app).
 func (m *WindowsManager) getPackagesFromWinget() []models.Package {
+	// Resolve winget.exe — it's installed as a UWP app (App Installer) and not always on SYSTEM PATH.
+	// Try PATH first, then known WindowsApps locations.
 	psScript := `
 $ErrorActionPreference = "SilentlyContinue"
 $env:TERM = 'dumb'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$out = & winget.exe list --accept-source-agreements --disable-interactivity 2>&1
+
+# Resolve winget.exe path — handle SYSTEM/Session 0 where it's not on PATH
+$wingetPath = $null
+$candidate = Get-Command winget.exe -ErrorAction SilentlyContinue
+if ($candidate) {
+    $wingetPath = $candidate.Source
+} else {
+    # UWP package location (works for SYSTEM when App Installer is installed machine-wide)
+    $candidates = @(
+        "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe",
+        "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe",
+        "C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe"
+    )
+    foreach ($pattern in $candidates) {
+        $found = Get-Item $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($found) {
+            $wingetPath = $found.FullName
+            break
+        }
+    }
+}
+if (-not $wingetPath) {
+    Write-Output "WINGET_NOT_FOUND"
+    exit 0
+}
+$out = & $wingetPath list --accept-source-agreements --disable-interactivity 2>&1
 if ($out) { $out | Out-String }
 `
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
 	output, err := cmd.Output()
 	if err != nil {
-		m.logger.WithError(err).Debug("winget list failed (winget may not be installed)")
+		m.logger.WithError(err).Debug("winget list failed")
 		return nil
 	}
 
-	entries := m.parseWingetTable(string(output))
+	outputStr := string(output)
+	if strings.Contains(outputStr, "WINGET_NOT_FOUND") {
+		m.logger.Debug("WinGet not available (not found on PATH or in WindowsApps)")
+		return nil
+	}
+
+	entries := m.parseWingetTable(outputStr)
 	if len(entries) == 0 {
 		return nil
 	}
@@ -253,7 +482,28 @@ func (m *WindowsManager) getWingetUpgradeAvailable() map[string]string {
 $ErrorActionPreference = "SilentlyContinue"
 $env:TERM = 'dumb'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$out = & winget.exe list --upgrade-available --accept-source-agreements --disable-interactivity 2>&1
+
+# Resolve winget.exe path (same logic as main list)
+$wingetPath = $null
+$candidate = Get-Command winget.exe -ErrorAction SilentlyContinue
+if ($candidate) {
+    $wingetPath = $candidate.Source
+} else {
+    $candidates = @(
+        "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe",
+        "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe",
+        "C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe"
+    )
+    foreach ($pattern in $candidates) {
+        $found = Get-Item $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($found) {
+            $wingetPath = $found.FullName
+            break
+        }
+    }
+}
+if (-not $wingetPath) { exit 0 }
+$out = & $wingetPath list --upgrade-available --accept-source-agreements --disable-interactivity 2>&1
 if ($out) { $out | Out-String }
 `
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
@@ -492,76 +742,6 @@ $result | ConvertTo-Json -Compress -Depth 4
 			WUACategories:     u.WUACategories,
 			WUASupportURL:     u.WUASupportURL,
 			WUARevisionNumber: u.WUARevisionNumber,
-		})
-	}
-	return packages
-}
-
-// getPackagesFromRegistry uses registry Uninstall keys (HKLM + HKCU) to list installed programs
-func (m *WindowsManager) getPackagesFromRegistry() []models.Package {
-	psScript := `
-$ErrorActionPreference = "Stop"
-$seen = @{}
-$result = @()
-$paths = @(
-  "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-  "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
-  "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
-)
-foreach ($path in $paths) {
-  Get-ItemProperty $path -ErrorAction SilentlyContinue | ForEach-Object {
-    $name = $_.DisplayName
-    $ver = $_.DisplayVersion
-    if ($name -and -not $seen[$name]) {
-      $seen[$name] = $true
-      if (-not $ver) { $ver = "unknown" }
-      $result += @{ Name = $name; Version = $ver }
-    }
-  }
-}
-if ($result.Count -gt 5000) { $result = $result[0..4999] }
-$result | ConvertTo-Json -Compress
-`
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
-	output, err := cmd.Output()
-	if err != nil {
-		m.logger.WithError(err).Debug("Registry Uninstall query failed")
-		return nil
-	}
-
-	outputStr := strings.TrimSpace(string(output))
-	if outputStr == "" || outputStr == "[]" {
-		return nil
-	}
-
-	// PowerShell outputs a single object (not array) when there is exactly one result
-	if !strings.HasPrefix(outputStr, "[") {
-		outputStr = "[" + outputStr + "]"
-	}
-
-	var raw []struct {
-		Name    string `json:"Name"`
-		Version string `json:"Version"`
-	}
-	if err := json.Unmarshal([]byte(outputStr), &raw); err != nil {
-		m.logger.WithError(err).Warn("Failed to parse registry JSON")
-		return nil
-	}
-
-	var packages []models.Package
-	for _, p := range raw {
-		if p.Name == "" {
-			continue
-		}
-		version := p.Version
-		if version == "" {
-			version = "unknown"
-		}
-		packages = append(packages, models.Package{
-			Name:           p.Name,
-			Category:       "Application",
-			CurrentVersion: version,
-			NeedsUpdate:    false,
 		})
 	}
 	return packages

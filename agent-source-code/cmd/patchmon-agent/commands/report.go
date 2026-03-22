@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -331,33 +332,10 @@ func sendIntegrationData() {
 	// Register available integrations
 	integrationMgr.Register(docker.New(logger))
 
-	// Register compliance integration based on mode
-	// Three states: disabled (false), on-demand ("on-demand"), enabled (true)
-	// Check if compliance is enabled and not in on-demand mode
-	if cfgManager.IsIntegrationEnabled("compliance") && !cfgManager.IsComplianceOnDemandOnly() {
-		// Compliance is enabled (true) - register for automatic scheduled scans
-		complianceInteg := compliance.New(logger)
-		complianceInteg.SetDockerIntegrationEnabled(cfgManager.IsIntegrationEnabled("docker"))
-		complianceInteg.SetScannerOptionsGetter(func() (bool, bool) {
-			return cfgManager.GetComplianceOpenscapEnabled(), cfgManager.GetComplianceDockerBenchEnabled()
-		})
-		integrationMgr.Register(complianceInteg)
-		logger.Debug("Compliance integration registered for automatic scheduled scans")
-	} else if cfgManager.IsIntegrationEnabled("compliance") && cfgManager.IsComplianceOnDemandOnly() {
-		// Compliance is in on-demand mode - skip scheduled scans
-		// Note: UI-triggered scans work independently and are not affected by this check
-		logger.Info("Skipping compliance scan in scheduled report (mode=on-demand). UI-triggered scans from the web interface work independently and will run normally.")
-	} else {
-		// Compliance is disabled
-		logger.Debug("Compliance integration is disabled in config")
-	}
 	// Future: integrationMgr.Register(proxmox.New(logger))
 	// Future: integrationMgr.Register(kubernetes.New(logger))
 
-	// Discover and collect from all available integrations
-	// 25 minute timeout to allow OpenSCAP scans to complete (they can take 15+ minutes on complex systems)
-	// This gives time for both OpenSCAP and Docker Bench to complete
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	integrationData := integrationMgr.CollectAll(ctx)
@@ -378,11 +356,6 @@ func sendIntegrationData() {
 	// Send Docker data if available
 	if dockerData, exists := integrationData["docker"]; exists && dockerData.Error == "" {
 		sendDockerData(httpClient, dockerData, hostname, machineID)
-	}
-
-	// Send Compliance data if available
-	if complianceData, exists := integrationData["compliance"]; exists && complianceData.Error == "" {
-		sendComplianceData(httpClient, complianceData, hostname, machineID)
 	}
 
 	// Future: Send other integration data here
@@ -430,7 +403,7 @@ func sendDockerData(httpClient *client.Client, integrationData *models.Integrati
 }
 
 // sendComplianceData sends compliance scan data to server
-func sendComplianceData(httpClient *client.Client, integrationData *models.IntegrationData, hostname, machineID string) {
+func sendComplianceData(httpClient *client.Client, integrationData *models.IntegrationData, hostname, machineID, scanType string) {
 	// Extract Compliance data from integration data
 	complianceData, ok := integrationData.Data.(*models.ComplianceData)
 	if !ok {
@@ -448,6 +421,7 @@ func sendComplianceData(httpClient *client.Client, integrationData *models.Integ
 		Hostname:       hostname,
 		MachineID:      machineID,
 		AgentVersion:   pkgversion.Version,
+		ScanType:       scanType,
 	}
 
 	totalRules := 0
@@ -473,4 +447,86 @@ func sendComplianceData(httpClient *client.Client, integrationData *models.Integ
 		"scans_received": response.ScansReceived,
 		"message":        response.Message,
 	}).Info("Compliance data sent successfully")
+}
+
+func runScheduledComplianceScan() {
+	if !cfgManager.IsIntegrationEnabled("compliance") || cfgManager.IsComplianceOnDemandOnly() {
+		logger.Debug("Skipping scheduled compliance scan (not in enabled mode)")
+		return
+	}
+
+	if !complianceScanRunning.CompareAndSwap(false, true) {
+		complianceScanCancelMu.Lock()
+		source := complianceScanSource
+		complianceScanCancelMu.Unlock()
+		logger.WithField("running_source", source).Debug("Skipping scheduled compliance scan (scan already running)")
+		return
+	}
+
+	complianceScanCancelMu.Lock()
+	complianceScanSource = "scheduled"
+	complianceScanCancelMu.Unlock()
+
+	defer func() {
+		complianceScanCancelMu.Lock()
+		complianceScanSource = ""
+		complianceScanCancelMu.Unlock()
+		complianceScanRunning.Store(false)
+	}()
+
+	startTime := time.Now()
+	logger.Info("Starting scheduled compliance scan")
+
+	if err := cfgManager.LoadConfig(); err != nil {
+		logger.WithError(err).Debug("Failed to load config for scheduled compliance scan")
+	}
+
+	complianceInteg := compliance.New(logger)
+	complianceInteg.SetDockerIntegrationEnabled(cfgManager.IsIntegrationEnabled("docker"))
+	complianceInteg.SetScannerOptionsGetter(func() (bool, bool) {
+		return cfgManager.GetComplianceOpenscapEnabled(), cfgManager.GetComplianceDockerBenchEnabled()
+	})
+
+	if !complianceInteg.IsAvailable() {
+		logger.Debug("Compliance scanning not available on this system, skipping scheduled scan")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
+	defer cancel()
+
+	complianceScanCancelMu.Lock()
+	complianceScanCancel = cancel
+	complianceScanCancelMu.Unlock()
+	defer func() {
+		complianceScanCancelMu.Lock()
+		complianceScanCancel = nil
+		complianceScanCancelMu.Unlock()
+	}()
+
+	integrationData, err := complianceInteg.Collect(ctx)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			logger.Info("Scheduled compliance scan was cancelled")
+		} else {
+			logger.WithError(err).Warn("Scheduled compliance scan failed")
+		}
+		return
+	}
+
+	if integrationData == nil || integrationData.Error != "" {
+		if integrationData != nil {
+			logger.WithField("error", integrationData.Error).Warn("Scheduled compliance scan returned error")
+		}
+		return
+	}
+
+	systemDetector := system.New(logger)
+	hostname, _ := systemDetector.GetHostname()
+	machineID := systemDetector.GetMachineID()
+
+	httpClient := client.New(cfgManager, logger)
+	sendComplianceData(httpClient, integrationData, hostname, machineID, "scheduled")
+
+	logger.WithField("elapsed_ms", time.Since(startTime).Milliseconds()).Info("Scheduled compliance scan completed")
 }

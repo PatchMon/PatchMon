@@ -59,8 +59,9 @@ UPDATE settings SET
     favicon_data = $53,
     logo_dark_content_type = $54,
     logo_light_content_type = $55,
-    favicon_content_type = $56
-WHERE id = $57;
+    favicon_content_type = $56,
+    compliance_scan_interval = $57
+WHERE id = $58;
 
 -- name: UpdateSettingsConfig :exec
 UPDATE settings SET

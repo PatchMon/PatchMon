@@ -106,24 +106,32 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 				alertsCreated++
 			}
 		} else if !isStale {
+			hadAlert := false
+			// Resolve any active host_down alert for this host.
 			if alertID, exists := alertsByHostID[host.ID]; exists {
+				hadAlert = true
 				if cfg.AutoResolveAfterDays == nil {
 					_ = alertsStore.UpdateResolved(ctx, alertID, nil)
 					_ = alertsStore.RecordHistory(ctx, alertID, nil, "resolved", map[string]interface{}{"resolved_reason": "Host came back online", "system_action": true})
 					delete(alertsByHostID, host.ID)
-					if emit != nil {
-						hn := hostDisplayName(host)
-						emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
-							Type:          "host_recovered",
-							Severity:      ResolveSeverity(ctx, d, "host_recovered", "informational"),
-							Title:         "Host back online",
-							Message:       fmt.Sprintf("Host %s is reporting again.", hn),
-							ReferenceType: "host",
-							ReferenceID:   host.ID,
-							Metadata:      map[string]interface{}{"host_id": host.ID, "host_name": hn},
-						})
-					}
 				}
+			}
+			// Emit host_recovered if this host had an active alert OR was
+			// recently stale (last_update just crossed back over threshold).
+			// The second condition ensures host_recovered fires even when
+			// host_down was disabled and no alert record was created.
+			recentlyRecovered := lastUpdate.Time.After(threshold.Add(-time.Duration(updateInterval) * time.Minute))
+			if emit != nil && (hadAlert || recentlyRecovered) {
+				hn := hostDisplayName(host)
+				emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
+					Type:          "host_recovered",
+					Severity:      ResolveSeverity(ctx, d, "host_recovered", "informational"),
+					Title:         "Host back online",
+					Message:       fmt.Sprintf("Host %s is reporting again.", hn),
+					ReferenceType: "host",
+					ReferenceID:   host.ID,
+					Metadata:      map[string]interface{}{"host_id": host.ID, "host_name": hn},
+				})
 			}
 		}
 	}
@@ -205,20 +213,14 @@ func OnConnect(ctx context.Context, d *database.DB, apiID string, tenantHost str
 	if err != nil || !enabled {
 		return
 	}
-	cfg, err := GetConfigForType(ctx, d, "host_down")
-	if err != nil || cfg == nil || !cfg.IsEnabled {
-		return
-	}
 
 	host, err := d.Queries.GetHostByApiID(ctx, apiID)
 	if err != nil {
 		return
 	}
 
-	activeAlerts, err := d.Queries.ListActiveAlertsByType(ctx, "host_down")
-	if err != nil {
-		return
-	}
+	// Resolve any active host_down alert for this host.
+	activeAlerts, _ := d.Queries.ListActiveAlertsByType(ctx, "host_down")
 	alertsStore := store.NewAlertsStore(d)
 	for _, a := range activeAlerts {
 		var meta map[string]interface{}
@@ -229,28 +231,31 @@ func OnConnect(ctx context.Context, d *database.DB, apiID string, tenantHost str
 			if hid, ok := meta["host_id"].(string); ok && hid == host.ID {
 				if err := alertsStore.UpdateResolved(ctx, a.ID, nil); err != nil {
 					log.Debug("host_down: failed to resolve alert on connect", "api_id", apiID, "alert_id", a.ID, "error", err)
-					return
-				}
-				_ = alertsStore.RecordHistory(ctx, a.ID, nil, "resolved", map[string]interface{}{
-					"resolved_reason": "Host reconnected via WebSocket",
-					"system_action":   true,
-				})
-				log.Info("host_down: resolved alert on connect", "api_id", apiID, "host_id", host.ID, "alert_id", a.ID)
-				if emit != nil {
-					hn := hostDisplayNameFromRow(host)
-					emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
-						Type:          "host_recovered",
-						Severity:      ResolveSeverity(ctx, d, "host_recovered", "informational"),
-						Title:         "Host reconnected",
-						Message:       fmt.Sprintf("Host %s WebSocket reconnected.", hn),
-						ReferenceType: "host",
-						ReferenceID:   host.ID,
-						Metadata:      map[string]interface{}{"host_id": host.ID, "host_name": hn},
+				} else {
+					_ = alertsStore.RecordHistory(ctx, a.ID, nil, "resolved", map[string]interface{}{
+						"resolved_reason": "Host reconnected via WebSocket",
+						"system_action":   true,
 					})
+					log.Info("host_down: resolved alert on connect", "api_id", apiID, "host_id", host.ID, "alert_id", a.ID)
 				}
-				return
+				break
 			}
 		}
+	}
+
+	// Always emit host_recovered — notify subscribers regardless of whether
+	// a host_down alert existed (host_down may have been disabled).
+	if emit != nil {
+		hn := hostDisplayNameFromRow(host)
+		emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
+			Type:          "host_recovered",
+			Severity:      ResolveSeverity(ctx, d, "host_recovered", "informational"),
+			Title:         "Host reconnected",
+			Message:       fmt.Sprintf("Host %s WebSocket reconnected.", hn),
+			ReferenceType: "host",
+			ReferenceID:   host.ID,
+			Metadata:      map[string]interface{}{"host_id": host.ID, "host_name": hn},
+		})
 	}
 }
 

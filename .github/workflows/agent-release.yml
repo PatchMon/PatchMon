@@ -35,7 +35,7 @@ jobs:
           - goos: windows
             goarch: 'amd64'
           - goos: windows
-            goarch: 'arm64'
+            goarch: '386'
 
     steps:
       - name: Checkout code

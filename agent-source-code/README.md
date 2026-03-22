@@ -117,6 +117,7 @@ integrations:
   docker: false
   compliance:
     enabled: "on-demand"
+    scan_interval: 1440
     openscap_enabled: true
     docker_bench_enabled: false
   ssh-proxy-enabled: false
@@ -134,6 +135,7 @@ integrations:
 | `report_offset` | Stagger offset in seconds (auto-calculated from API ID) |
 | `skip_ssl_verify` | Skip TLS verification (for self-signed or internal CA certs) |
 | `integrations` | Toggle integrations on/off (synced from server) |
+| `compliance.scan_interval` | Compliance scan interval in minutes (default 1440 = 24h, min 60, max 10080). Runs independently from the report timer. |
 
 ### Example Credentials File
 

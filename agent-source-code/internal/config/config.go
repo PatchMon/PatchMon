@@ -177,6 +177,12 @@ func (m *Manager) LoadConfig() error {
 	// Ensure compliance is a nested object for YAML output
 	m.ensureComplianceNested()
 
+	// Persist normalized config so new defaults (e.g. scan_interval) appear on disk
+	if err := m.SaveConfig(); err != nil {
+		// Non-fatal: config is correct in memory even if save fails
+		_ = err
+	}
+
 	// ReportOffset can be 0 - it will be recalculated if missing
 	// No need to set a default here as it's calculated dynamically
 
@@ -237,6 +243,9 @@ func (m *Manager) ensureComplianceNested() {
 		} else {
 			nested["docker_bench_enabled"] = false
 		}
+	}
+	if _, has := nested["scan_interval"]; !has {
+		nested["scan_interval"] = 1440
 	}
 	m.config.Integrations["compliance"] = nested
 	delete(m.config.Integrations, "compliance_openscap_enabled")
@@ -604,6 +613,47 @@ func (m *Manager) SetComplianceScanners(openscapEnabled, dockerBenchEnabled bool
 	nested := m.config.Integrations["compliance"].(map[string]interface{})
 	nested["openscap_enabled"] = openscapEnabled
 	nested["docker_bench_enabled"] = dockerBenchEnabled
+	return m.SaveConfig()
+}
+
+// GetComplianceScanInterval returns the compliance scan interval in minutes (default 1440, min 60, max 10080).
+func (m *Manager) GetComplianceScanInterval() int {
+	if m.config.Integrations == nil {
+		return 1440
+	}
+	val := m.getComplianceVal("scan_interval")
+	if val == nil {
+		return 1440
+	}
+	var minutes int
+	switch v := val.(type) {
+	case int:
+		minutes = v
+	case float64:
+		minutes = int(v)
+	default:
+		return 1440
+	}
+	if minutes < 60 {
+		minutes = 60
+	}
+	if minutes > 10080 {
+		minutes = 10080
+	}
+	return minutes
+}
+
+// SetComplianceScanInterval sets the compliance scan interval and saves it to config file.
+func (m *Manager) SetComplianceScanInterval(minutes int) error {
+	if minutes < 60 || minutes > 10080 {
+		return fmt.Errorf("invalid compliance scan interval: %d (must be between 60 and 10080 minutes)", minutes)
+	}
+	if m.config.Integrations == nil {
+		m.config.Integrations = make(map[string]interface{})
+	}
+	m.ensureComplianceNested()
+	nested := m.config.Integrations["compliance"].(map[string]interface{})
+	nested["scan_interval"] = minutes
 	return m.SaveConfig()
 }
 

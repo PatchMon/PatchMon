@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"patchmon-agent/internal/client"
@@ -252,7 +253,6 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 	}()
 
 	// Run initial report in background so it doesn't block WebSocket
-	// Compliance scans can take 5-10 minutes, we don't want agent to appear offline
 	go func() {
 		logger.Info("Sending initial report on startup (background)...")
 		if err := sendReport(false); err != nil {
@@ -261,6 +261,13 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 			logger.Info("✅ Initial report sent successfully")
 		}
 	}()
+
+	var compScheduler *complianceScheduler
+	if cfgManager.IsIntegrationEnabled("compliance") && !cfgManager.IsComplianceOnDemandOnly() {
+		compScheduler = newComplianceScheduler(cfgManager.GetComplianceScanInterval())
+		compScheduler.Start()
+		defer compScheduler.Stop()
+	}
 
 	// Create ticker with initial interval for package reports
 	ticker := time.NewTicker(time.Duration(intervalMinutes) * time.Minute)
@@ -338,6 +345,14 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 
 					logger.WithField("new_interval", m.interval).Info("interval updated, no report sent")
 				}
+				if m.complianceScanInterval > 0 && compScheduler != nil {
+					if err := cfgManager.SetComplianceScanInterval(m.complianceScanInterval); err != nil {
+						logger.WithError(err).Warn("Failed to save compliance scan interval to config.yml")
+					} else {
+						compScheduler.Reset(m.complianceScanInterval)
+						logger.WithField("compliance_scan_interval", m.complianceScanInterval).Info("Compliance scan interval updated")
+					}
+				}
 			case "report_now":
 				if err := sendReport(false); err != nil {
 					logger.WithError(err).Warn("report_now failed")
@@ -386,6 +401,34 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					"enable_remediation": m.enableRemediation,
 				})).Info("Running on-demand compliance scan...")
 				go func(msg wsMsg) {
+					complianceScanCancelMu.Lock()
+					if complianceScanSource == "scheduled" && complianceScanCancel != nil {
+						complianceScanCancel()
+						logger.Info("Cancelled running scheduled scan to run on-demand scan")
+					}
+					complianceScanCancelMu.Unlock()
+
+					for i := 0; i < 10; i++ {
+						if complianceScanRunning.CompareAndSwap(false, true) {
+							break
+						}
+						time.Sleep(500 * time.Millisecond)
+					}
+					if !complianceScanRunning.Load() {
+						complianceScanRunning.Store(true)
+					}
+
+					complianceScanCancelMu.Lock()
+					complianceScanSource = "on-demand"
+					complianceScanCancelMu.Unlock()
+
+					defer func() {
+						complianceScanCancelMu.Lock()
+						complianceScanSource = ""
+						complianceScanCancelMu.Unlock()
+						complianceScanRunning.Store(false)
+					}()
+
 					ctx, cancel := context.WithCancel(context.Background())
 					complianceScanCancelMu.Lock()
 					complianceScanCancel = cancel
@@ -1069,6 +1112,7 @@ func startIntegrationMonitoring(ctx context.Context, eventChan chan<- interface{
 type wsMsg struct {
 	kind                   string
 	interval               int
+	complianceScanInterval int
 	version                string
 	force                  bool
 	integrationName        string
@@ -1197,9 +1241,70 @@ var complianceProgressChan = make(chan ComplianceScanProgress, 10)
 var globalWsConn *websocket.Conn
 var globalWsConnMu sync.RWMutex
 
-// Cancel function for the currently running compliance scan (nil if none). Guarded by complianceScanCancelMu.
+var complianceScanRunning atomic.Bool
 var complianceScanCancel context.CancelFunc
 var complianceScanCancelMu sync.Mutex
+var complianceScanSource string
+
+type complianceScheduler struct {
+	interval time.Duration
+	stopCh   chan struct{}
+	resetCh  chan time.Duration
+}
+
+func newComplianceScheduler(intervalMinutes int) *complianceScheduler {
+	return &complianceScheduler{
+		interval: time.Duration(intervalMinutes) * time.Minute,
+		stopCh:   make(chan struct{}),
+		resetCh:  make(chan time.Duration, 1),
+	}
+}
+
+func (cs *complianceScheduler) Start() {
+	go cs.loop()
+}
+
+func (cs *complianceScheduler) Stop() {
+	close(cs.stopCh)
+}
+
+func (cs *complianceScheduler) Reset(intervalMinutes int) {
+	newInterval := time.Duration(intervalMinutes) * time.Minute
+	select {
+	case cs.resetCh <- newInterval:
+	default:
+	}
+}
+
+func (cs *complianceScheduler) loop() {
+	logger.WithField("compliance_scan_interval_minutes", int(cs.interval.Minutes())).Info("Compliance scheduler started")
+
+	select {
+	case <-time.After(30 * time.Second):
+	case <-cs.stopCh:
+		return
+	}
+
+	runScheduledComplianceScan()
+
+	ticker := time.NewTicker(cs.interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-cs.stopCh:
+			logger.Info("Compliance scheduler stopped")
+			return
+		case newInterval := <-cs.resetCh:
+			ticker.Stop()
+			cs.interval = newInterval
+			ticker = time.NewTicker(cs.interval)
+			logger.WithField("compliance_scan_interval_minutes", int(cs.interval.Minutes())).Info("Compliance scan interval updated")
+		case <-ticker.C:
+			runScheduledComplianceScan()
+		}
+	}
+}
 
 func wsLoop(out chan<- wsMsg, dockerEvents <-chan interface{}) {
 	backoff := time.Second
@@ -1408,26 +1513,27 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		}
 		logger.WithField("raw_message", logutil.Sanitize(string(data))).Debug("WebSocket message received")
 		var payload struct {
-			Type                 string                 `json:"type"`
-			UpdateInterval       int                    `json:"update_interval"`
-			Version              string                 `json:"version"`
-			Force                bool                   `json:"force"`
-			Message              string                 `json:"message"`
-			Integration          string                 `json:"integration"`
-			Enabled              bool                   `json:"enabled"`
-			ProfileType          string                 `json:"profile_type"`           // For compliance_scan
-			ProfileID            string                 `json:"profile_id"`             // For compliance_scan: specific XCCDF profile ID
-			EnableRemediation    bool                   `json:"enable_remediation"`     // For compliance_scan
-			FetchRemoteResources bool                   `json:"fetch_remote_resources"` // For compliance_scan
-			OpenSCAPEnabled      *bool                  `json:"openscap_enabled"`       // For compliance_scan: per-host toggle
-			DockerBenchEnabled   *bool                  `json:"docker_bench_enabled"`   // For compliance_scan: per-host toggle
-			RuleID               string                 `json:"rule_id"`                // For remediate_rule: specific rule to remediate
-			ImageName            string                 `json:"image_name"`             // For docker_image_scan: Docker image to scan
-			ContainerName        string                 `json:"container_name"`         // For docker_image_scan: container to scan
-			ScanAllImages        bool                   `json:"scan_all_images"`        // For docker_image_scan: scan all images
-			OnDemandOnly         bool                   `json:"on_demand_only"`         // For set_compliance_on_demand_only (legacy)
-			Mode                 string                 `json:"mode"`                   // For set_compliance_mode: "disabled", "on-demand", or "enabled"
-			Config               map[string]interface{} `json:"config"`                 // For apply_config: full config to apply
+			Type                   string                 `json:"type"`
+			UpdateInterval         int                    `json:"update_interval"`
+			ComplianceScanInterval int                    `json:"compliance_scan_interval"`
+			Version                string                 `json:"version"`
+			Force                  bool                   `json:"force"`
+			Message                string                 `json:"message"`
+			Integration            string                 `json:"integration"`
+			Enabled                bool                   `json:"enabled"`
+			ProfileType            string                 `json:"profile_type"`           // For compliance_scan
+			ProfileID              string                 `json:"profile_id"`             // For compliance_scan: specific XCCDF profile ID
+			EnableRemediation      bool                   `json:"enable_remediation"`     // For compliance_scan
+			FetchRemoteResources   bool                   `json:"fetch_remote_resources"` // For compliance_scan
+			OpenSCAPEnabled        *bool                  `json:"openscap_enabled"`       // For compliance_scan: per-host toggle
+			DockerBenchEnabled     *bool                  `json:"docker_bench_enabled"`   // For compliance_scan: per-host toggle
+			RuleID                 string                 `json:"rule_id"`                // For remediate_rule: specific rule to remediate
+			ImageName              string                 `json:"image_name"`             // For docker_image_scan: Docker image to scan
+			ContainerName          string                 `json:"container_name"`         // For docker_image_scan: container to scan
+			ScanAllImages          bool                   `json:"scan_all_images"`        // For docker_image_scan: scan all images
+			OnDemandOnly           bool                   `json:"on_demand_only"`         // For set_compliance_on_demand_only (legacy)
+			Mode                   string                 `json:"mode"`                   // For set_compliance_mode: "disabled", "on-demand", or "enabled"
+			Config                 map[string]interface{} `json:"config"`                 // For apply_config: full config to apply
 			// SSH proxy fields
 			SessionID  string `json:"session_id"`  // SSH proxy session ID
 			Host       string `json:"host"`        // SSH proxy target host
@@ -1455,7 +1561,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		switch payload.Type {
 		case "settings_update":
 			logger.WithField("interval", payload.UpdateInterval).Info("settings_update received")
-			out <- wsMsg{kind: "settings_update", interval: payload.UpdateInterval}
+			out <- wsMsg{kind: "settings_update", interval: payload.UpdateInterval, complianceScanInterval: payload.ComplianceScanInterval}
 		case "report_now":
 			logger.Info("report_now received")
 			out <- wsMsg{kind: "report_now"}
@@ -3062,6 +3168,7 @@ func runComplianceScanWithOptions(ctx context.Context, options *models.Complianc
 		Hostname:       hostname,
 		MachineID:      machineID,
 		AgentVersion:   pkgversion.Version,
+		ScanType:       "on-demand",
 	}
 
 	// Debug: log what we're about to send

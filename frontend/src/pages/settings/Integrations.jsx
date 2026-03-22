@@ -211,7 +211,6 @@ const Integrations = () => {
 		});
 	};
 
-	// Fetch current settings for compliance mode
 	const { data: settings } = useQuery({
 		queryKey: ["settings"],
 		queryFn: () => settingsAPI.get().then((res) => res.data),
@@ -630,17 +629,6 @@ const Integrations = () => {
 							}`}
 						>
 							Docker
-						</button>
-						<button
-							type="button"
-							onClick={() => handleTabChange("compliance")}
-							className={`px-6 py-3 text-sm font-medium ${
-								activeTab === "compliance"
-									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500 bg-primary-50 dark:bg-primary-900/20"
-									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
-							}`}
-						>
-							Compliance
 						</button>
 						<button
 							type="button"

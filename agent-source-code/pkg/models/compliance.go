@@ -76,6 +76,7 @@ type CompliancePayload struct {
 	Hostname     string `json:"hostname"`
 	MachineID    string `json:"machine_id"`
 	AgentVersion string `json:"agent_version"`
+	ScanType     string `json:"scan_type,omitempty"`
 }
 
 // ComplianceResponse represents the response from the compliance endpoint

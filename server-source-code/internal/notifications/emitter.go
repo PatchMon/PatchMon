@@ -198,6 +198,12 @@ func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, e
 		if alertDelay > 0 {
 			payload.Delayed = true
 			payload.CancelKey = delayedCancelKey(ev)
+			// Clear any stale cancel key from a previous cycle so it doesn't
+			// suppress this new delayed notification. If the counterpart event
+			// fires *after* this enqueue it will set a fresh key.
+			if e.rdb != nil && payload.CancelKey != "" {
+				_ = e.rdb.Del(ctx, tenantRedisKey(tenantHost, payload.CancelKey)).Err()
+			}
 		}
 		task, err := NewNotificationDeliverTask(payload)
 		if err != nil {
