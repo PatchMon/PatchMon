@@ -319,6 +319,9 @@ const fs = require("node:fs");
 let geoipReader = null;
 let geoipMtime = 0;
 let geoipType = null; // "city" or "country"
+let geoipLoadPromise = null; // Prevents parallel maxmind.open() calls
+let geoipLastCheck = 0; // Throttle mtime checks to once per 60s
+const GEOIP_CHECK_INTERVAL = 60000; // 60 seconds between mtime checks
 const GEOIP_DB_PATH = process.env.GEOIP_DB_PATH || "";
 const GEOIP_DB_NAMES = [
 	{ file: "GeoLite2-City.mmdb", type: "city" },
@@ -330,49 +333,69 @@ function findGeoIPDB() {
 	if (!GEOIP_DB_PATH) return null;
 	for (const db of GEOIP_DB_NAMES) {
 		const dbPath = path.join(GEOIP_DB_PATH, db.file);
-		if (fs.existsSync(dbPath)) {
+		try {
+			fs.accessSync(dbPath, fs.constants.R_OK);
 			return { path: dbPath, type: db.type };
+		} catch {
+			continue;
 		}
 	}
 	return null;
 }
 
 async function loadGeoIPReader() {
-	const db = findGeoIPDB();
-	if (!db) return null;
-
-	try {
-		const stat = fs.statSync(db.path);
-		const mtime = stat.mtimeMs;
-
-		if (!geoipReader || mtime !== geoipMtime) {
-			geoipReader = await maxmind.open(db.path);
-			geoipMtime = mtime;
-			geoipType = db.type;
-			logger.info(
-				`GeoIP database loaded: ${path.basename(db.path)} (${new Date(mtime).toISOString()})`,
-			);
-		}
+	// Return cached reader if mtime check interval not reached
+	const now = Date.now();
+	if (geoipReader && (now - geoipLastCheck) < GEOIP_CHECK_INTERVAL) {
 		return geoipReader;
-	} catch (err) {
-		logger.warn(`GeoIP database error: ${err.message}`);
-		return null;
 	}
+
+	// Prevent parallel loads (race condition)
+	if (geoipLoadPromise) return geoipLoadPromise;
+
+	geoipLoadPromise = (async () => {
+		const db = findGeoIPDB();
+		if (!db) return geoipReader; // Keep existing reader if DB disappeared
+
+		try {
+			const stat = await fs.promises.stat(db.path);
+			const mtime = stat.mtimeMs;
+			geoipLastCheck = now;
+
+			if (!geoipReader || mtime !== geoipMtime) {
+				geoipReader = await maxmind.open(db.path);
+				geoipMtime = mtime;
+				geoipType = db.type;
+				logger.info(
+					`GeoIP database loaded: ${path.basename(db.path)} (${new Date(mtime).toISOString()})`,
+				);
+			}
+			return geoipReader;
+		} catch (err) {
+			logger.warn(`GeoIP database error: ${err.message}`);
+			geoipLastCheck = now; // Don't retry immediately on error
+			return geoipReader; // Return existing reader if available
+		} finally {
+			geoipLoadPromise = null;
+		}
+	})();
+
+	return geoipLoadPromise;
 }
 
 function isPrivateIP(ip) {
 	if (!ip) return false;
 	// IPv6 loopback
 	if (ip === "::1") return true;
-	// Strip IPv6 prefix for mapped IPv4
-	const cleanIP = ip.replace(/^::ffff:/, "");
+	// Strip IPv6 prefix for mapped IPv4, normalize case for IPv6
+	const cleanIP = ip.replace(/^::ffff:/, "").toLowerCase();
 	return (
 		cleanIP === "127.0.0.1" ||
 		cleanIP.startsWith("10.") ||
 		cleanIP.startsWith("192.168.") ||
 		/^172\.(1[6-9]|2\d|3[01])\./.test(cleanIP) ||
 		/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(cleanIP) ||
-		cleanIP.startsWith("fd") // IPv6 ULA
+		cleanIP.startsWith("fd") // IPv6 ULA (fc00::/7)
 	);
 }
 
