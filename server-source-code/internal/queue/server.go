@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/alerts"
@@ -13,6 +14,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/hibiken/asynq"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -104,7 +106,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeUpdateThresholdMonitor, wrap(TypeUpdateThresholdMonitor, NewUpdateThresholdMonitorHandler(db, opts.PoolCache, opts.Emit, log)))
 	mux.Handle(notifications.TypeNotificationDeliver, wrap(notifications.TypeNotificationDeliver, NewNotificationDeliverHandler(db, opts.PoolCache, opts.Enc, opts.RDB, log)))
 	mux.Handle(TypeScheduledReportsDispatch, wrap(TypeScheduledReportsDispatch, NewScheduledReportsDispatchHandler(db, opts.PoolCache, opts.QueueClient, log)))
-	mux.Handle(TypeScheduledReportRun, wrap(TypeScheduledReportRun, NewScheduledReportRunHandler(db, opts.PoolCache, opts.Enc, opts.Timezone, log)))
+	mux.Handle(TypeScheduledReportRun, wrap(TypeScheduledReportRun, NewScheduledReportRunHandler(db, opts.PoolCache, opts.QueueClient, opts.Enc, opts.Timezone, log)))
 	mux.Handle(TypeAlertCleanup, wrap(TypeAlertCleanup, NewAlertCleanupHandler(db, opts.PoolCache, store.NewAlertConfigStore(dbResolver), log)))
 	mux.Handle(TypeSessionCleanup, wrap(TypeSessionCleanup, NewSessionCleanupHandler(db, opts.PoolCache, log)))
 	mux.Handle(TypeOrphanedRepoCleanup, wrap(TypeOrphanedRepoCleanup, NewOrphanedRepoCleanupHandler(db, opts.PoolCache, log)))
@@ -236,8 +238,10 @@ func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) 
 		return nil, err
 	}
 
+	// Scheduled reports use event-driven enqueue (self-chaining after each run).
+	// This hourly fallback catches any reports missed during restarts or edge cases.
 	dispatchReports := asynq.NewTask(TypeScheduledReportsDispatch, nil)
-	if _, err := scheduler.Register("* * * * *", dispatchReports, asynq.Queue(QueueScheduledReports), asynq.Retention(AutomationRetention)); err != nil {
+	if _, err := scheduler.Register("0 * * * *", dispatchReports, asynq.Queue(QueueScheduledReports), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 
@@ -246,4 +250,54 @@ func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) 
 		"update_threshold_interval_min", thresholdInterval,
 	)
 	return scheduler, nil
+}
+
+// RehydrateScheduledReports enqueues delayed tasks for all enabled scheduled reports.
+// Call this at startup so that event-driven report chains are seeded after a restart.
+func RehydrateScheduledReports(qc *asynq.Client, defaultDB *database.DB, poolCache *hostctx.PoolCache, log *slog.Logger) {
+	if qc == nil || defaultDB == nil {
+		return
+	}
+	ctx := context.Background()
+	rehydrateDB := func(d *database.DB, host string) {
+		now := time.Now()
+		// Use a far-future cutoff to get ALL enabled reports with a next_run_at.
+		rows, err := d.Queries.ListScheduledReportsDue(ctx, pgtype.Timestamp{Time: now.Add(365 * 24 * time.Hour), Valid: true})
+		if err != nil {
+			if log != nil {
+				log.Error("rehydrate scheduled reports: list failed", "error", err)
+			}
+			return
+		}
+		for _, r := range rows {
+			runAt := r.NextRunAt.Time
+			if !r.NextRunAt.Valid || runAt.Before(now) {
+				// Compute actual next cron time instead of running immediately,
+				// to avoid spurious duplicate runs on every restart.
+				if next, nerr := notifications.NextCronRun(r.CronExpr, "UTC", now); nerr == nil {
+					runAt = next
+				} else {
+					runAt = now
+				}
+			}
+			if err := EnqueueScheduledReportAt(qc, r.ID, host, runAt); err != nil {
+				if log != nil {
+					log.Error("rehydrate scheduled reports: enqueue failed", "report_id", r.ID, "error", err)
+				}
+			}
+		}
+		if log != nil && len(rows) > 0 {
+			log.Info("rehydrate scheduled reports", "host", host, "count", len(rows))
+		}
+	}
+	rehydrateDB(defaultDB, "")
+	if poolCache != nil {
+		for _, host := range poolCache.ListHosts() {
+			d, err := poolCache.GetOrCreate(ctx, host)
+			if err != nil || d == nil {
+				continue
+			}
+			rehydrateDB(d, host)
+		}
+	}
 }

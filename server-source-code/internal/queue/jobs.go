@@ -184,12 +184,17 @@ func NewReportNowTask(apiID, host string) (*asynq.Task, error) {
 }
 
 // NewRefreshIntegrationStatusTask creates a refresh_integration_status task.
+// Uses TaskID to deduplicate rapid successive requests for the same agent.
 func NewRefreshIntegrationStatusTask(apiID, host string) (*asynq.Task, error) {
 	payload, err := json.Marshal(ReportNowPayload{ApiID: apiID, Host: host})
 	if err != nil {
 		return nil, err
 	}
-	return asynq.NewTask(TypeRefreshIntegrationStatus, payload, asynq.Queue(QueueAgentCommands), asynq.MaxRetry(2)), nil
+	return asynq.NewTask(TypeRefreshIntegrationStatus, payload,
+		asynq.Queue(QueueAgentCommands),
+		asynq.MaxRetry(2),
+		asynq.TaskID("refresh-integration-status-"+apiID),
+	), nil
 }
 
 // NewDockerInventoryRefreshTask creates a docker_inventory_refresh task.

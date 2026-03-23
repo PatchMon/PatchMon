@@ -13,9 +13,11 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -25,11 +27,12 @@ type NotificationsHandler struct {
 	enc      *util.Encryption
 	emit     *notifications.Emitter
 	resolved *config.ResolvedConfig
+	qc       *asynq.Client
 }
 
 // NewNotificationsHandler creates the handler.
-func NewNotificationsHandler(db database.DBProvider, enc *util.Encryption, emit *notifications.Emitter, resolved *config.ResolvedConfig) *NotificationsHandler {
-	return &NotificationsHandler{db: db, enc: enc, emit: emit, resolved: resolved}
+func NewNotificationsHandler(db database.DBProvider, enc *util.Encryption, emit *notifications.Emitter, resolved *config.ResolvedConfig, qc *asynq.Client) *NotificationsHandler {
+	return &NotificationsHandler{db: db, enc: enc, emit: emit, resolved: resolved, qc: qc}
 }
 
 func (h *NotificationsHandler) q(ctx context.Context) *db.Queries {
@@ -527,8 +530,9 @@ func (h *NotificationsHandler) CreateScheduledReport(w http.ResponseWriter, r *h
 		Error(w, http.StatusBadRequest, "Invalid cron_expr")
 		return
 	}
+	id := uuid.New().String()
 	row, err := h.q(r.Context()).CreateScheduledReport(r.Context(), db.CreateScheduledReportParams{
-		ID:             uuid.New().String(),
+		ID:             id,
 		Name:           req.Name,
 		CronExpr:       cron,
 		Enabled:        en,
@@ -540,6 +544,10 @@ func (h *NotificationsHandler) CreateScheduledReport(w http.ResponseWriter, r *h
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to create")
 		return
+	}
+	// Enqueue the first run at the computed next_run_at (event-driven).
+	if en {
+		_ = queue.EnqueueScheduledReportAt(h.qc, id, hostFromRequest(r), next)
 	}
 	JSON(w, http.StatusCreated, h.scheduledReportToMap(row))
 }
@@ -604,6 +612,10 @@ func (h *NotificationsHandler) UpdateScheduledReport(w http.ResponseWriter, r *h
 		Error(w, http.StatusInternalServerError, "Failed to update")
 		return
 	}
+	// Re-enqueue if enabled and schedule changed (dedup handles existing tasks).
+	if en && nextAt.Valid {
+		_ = queue.EnqueueScheduledReportAt(h.qc, id, hostFromRequest(r), nextAt.Time)
+	}
 	JSON(w, http.StatusOK, h.scheduledReportToMap(row))
 }
 
@@ -623,11 +635,8 @@ func (h *NotificationsHandler) RunScheduledReportNow(w http.ResponseWriter, r *h
 		Error(w, http.StatusBadRequest, "Report is disabled")
 		return
 	}
-	if err := h.q(r.Context()).UpdateScheduledReportRunTimes(r.Context(), db.UpdateScheduledReportRunTimesParams{
-		ID:        id,
-		LastRunAt: ex.LastRunAt,
-		NextRunAt: pgtype.Timestamp{Time: time.Now().Add(-1 * time.Minute), Valid: true},
-	}); err != nil {
+	// Enqueue immediately for instant execution.
+	if err := queue.EnqueueScheduledReportAt(h.qc, id, hostFromRequest(r), time.Now()); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to schedule report")
 		return
 	}

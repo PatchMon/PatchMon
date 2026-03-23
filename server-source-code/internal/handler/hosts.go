@@ -556,6 +556,13 @@ func (h *HostsHandler) RefreshIntegrationStatus(w http.ResponseWriter, r *http.R
 		return
 	}
 	info, err := h.queueClient.Enqueue(task)
+	if err == asynq.ErrDuplicateTask || err == asynq.ErrTaskIDConflict {
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"success": true,
+			"message": "Integration status refresh already in progress",
+		})
+		return
+	}
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to refresh integration status")
 		return
@@ -932,7 +939,7 @@ func (h *HostsHandler) RequestComplianceStatus(w http.ResponseWriter, r *http.Re
 		Error(w, http.StatusInternalServerError, "Failed to create refresh integration status task")
 		return
 	}
-	if _, err := h.queueClient.Enqueue(task); err != nil {
+	if _, err := h.queueClient.Enqueue(task); err != nil && err != asynq.ErrDuplicateTask && err != asynq.ErrTaskIDConflict {
 		Error(w, http.StatusInternalServerError, "Failed to request compliance status")
 		return
 	}

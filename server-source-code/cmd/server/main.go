@@ -145,6 +145,9 @@ func main() {
 		slog.Info("scheduler started")
 	}
 
+	// Seed event-driven scheduled report chains so reports fire at their next_run_at.
+	go queue.RehydrateScheduledReports(queueClient, db, poolCache, slog)
+
 	// Fire an SSG update check shortly after startup so agents are notified
 	// of new SSG content immediately after a server deployment, rather than
 	// waiting for the next daily 5 AM scheduled run.
