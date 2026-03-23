@@ -325,7 +325,7 @@ function get_location_from_ip(ip) {
 router.get("/check-admin-users", async (_req, res) => {
 	try {
 		const adminCount = await prisma.users.count({
-			where: { role: "admin" },
+			where: { role: { in: ["admin", "superadmin"] } },
 		});
 
 		// Check OIDC configuration
