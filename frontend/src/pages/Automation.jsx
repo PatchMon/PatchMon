@@ -72,6 +72,7 @@ const Automation = () => {
 		if (queue?.includes("host-status-monitor")) return "host-status-monitor";
 		if (queue?.includes("compliance-scan-cleanup"))
 			return "compliance-scan-cleanup";
+		if (queue?.includes("patch-run-cleanup")) return "patch-run-cleanup";
 		if (queue?.includes("ssg-update-check")) return "ssg-update-check";
 		return null;
 	};
@@ -137,6 +138,20 @@ const Automation = () => {
 			const tomorrow = new Date(now);
 			tomorrow.setDate(tomorrow.getDate() + 1);
 			tomorrow.setHours(0, 0, 0, 0);
+			return tomorrow.toLocaleString([], {
+				hour12: true,
+				hour: "numeric",
+				minute: "2-digit",
+				day: "numeric",
+				month: "numeric",
+				year: "numeric",
+			});
+		}
+		if (schedule === "Daily at 12:30 AM") {
+			const now = new Date();
+			const tomorrow = new Date(now);
+			tomorrow.setDate(tomorrow.getDate() + 1);
+			tomorrow.setHours(0, 30, 0, 0);
 			return tomorrow.toLocaleString([], {
 				hour12: true,
 				hour: "numeric",
@@ -281,6 +296,13 @@ const Automation = () => {
 			tomorrow.setHours(0, 0, 0, 0);
 			return tomorrow.getTime();
 		}
+		if (schedule === "Daily at 12:30 AM") {
+			const now = new Date();
+			const tomorrow = new Date(now);
+			tomorrow.setDate(tomorrow.getDate() + 1);
+			tomorrow.setHours(0, 30, 0, 0);
+			return tomorrow.getTime();
+		}
 		if (schedule === "Daily at 1 AM") {
 			const now = new Date();
 			const tomorrow = new Date(now);
@@ -374,6 +396,8 @@ const Automation = () => {
 				endpoint = "/automation/trigger/host-status-monitor";
 			} else if (jobType === "compliance-scan-cleanup") {
 				endpoint = "/compliance/scans/cleanup";
+			} else if (jobType === "patch-run-cleanup") {
+				endpoint = "/automation/trigger/patch-run-cleanup";
 			} else if (jobType === "ssg-update-check") {
 				endpoint = "/automation/trigger/ssg-update-check";
 			}

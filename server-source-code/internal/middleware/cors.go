@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -85,11 +86,31 @@ func CORS(origin string, dynamicResolver OriginResolver) func(http.Handler) http
 				}
 			}
 
-			if allowOrigin == "*" && reqOrigin != "" {
-				// Browsers reject credentials with a wildcard origin.
-				// Reflect the specific request origin so credentialed requests work.
-				allowOrigin = reqOrigin
+			// Enforce allowed hosts via Host header for direct access (no reverse proxy).
+			// When X-Forwarded-Host is present, the check above already handles enforcement.
+			// Internal requests (health checks, agents) typically connect to localhost/IP directly,
+			// so skip enforcement for loopback addresses.
+			if !effectiveWildcard && r.Header.Get("X-Forwarded-Host") == "" {
+				host := strings.ToLower(r.Host)
+				if host != "" && !isLoopback(host) && !effectiveAllowedHosts[host] {
+					// Also check without port for default ports
+					hostname := host
+					if idx := strings.LastIndex(host, ":"); idx != -1 {
+						hostname = host[:idx]
+					}
+					if !effectiveAllowedHosts[hostname] {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusForbidden)
+						_, _ = w.Write([]byte(`{"error":"Host not allowed. Access this app via the URL configured in CORS_ORIGIN (.env or Database settings).","code":"host_mismatch"}`))
+						return
+					}
+				}
 			}
+
+			// When wildcard is configured, keep the literal "*" as the origin.
+			// Browsers will block credentialed requests with wildcard origin (per spec),
+			// which is the correct security behavior — wildcard mode should not
+			// allow credentialed cross-origin access from arbitrary sites.
 			if allowOrigin != "" {
 				w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
 			}
@@ -124,12 +145,7 @@ func parseOrigins(origin string) []string {
 }
 
 func hasWildcard(origins []string) bool {
-	for _, o := range origins {
-		if o == "*" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(origins, "*")
 }
 
 // EffectiveOrigin derives an origin URL from the request and host.
@@ -171,4 +187,22 @@ func buildAllowedHosts(origins []string) map[string]bool {
 		}
 	}
 	return m
+}
+
+// isLoopback returns true if the host (with or without port) is a loopback address.
+// This allows internal health checks and agent connections that bypass the proxy.
+func isLoopback(hostPort string) bool {
+	host := hostPort
+	if idx := strings.LastIndex(hostPort, ":"); idx != -1 {
+		// Handle IPv6 [::1]:port
+		if strings.Contains(hostPort, "]") {
+			host = strings.TrimPrefix(hostPort[:strings.Index(hostPort, "]")+1], "[")
+			host = strings.TrimSuffix(host, "]")
+		} else {
+			host = hostPort[:idx]
+		}
+	}
+	host = strings.TrimPrefix(host, "[")
+	host = strings.TrimSuffix(host, "]")
+	return host == "localhost" || host == "127.0.0.1" || host == "::1" || strings.HasPrefix(host, "127.")
 }

@@ -513,6 +513,50 @@ func (h *ComplianceScanCleanupHandler) cleanupDB(ctx context.Context, d *databas
 	})
 }
 
+// PatchRunCleanupHandler handles patch-run-cleanup jobs.
+type PatchRunCleanupHandler struct {
+	defaultDB *database.DB
+	poolCache *hostctx.PoolCache
+	log       *slog.Logger
+}
+
+// NewPatchRunCleanupHandler creates a patch run cleanup handler.
+func NewPatchRunCleanupHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache, log *slog.Logger) *PatchRunCleanupHandler {
+	return &PatchRunCleanupHandler{defaultDB: defaultDB, poolCache: poolCache, log: log}
+}
+
+// ProcessTask implements asynq.Handler.
+func (h *PatchRunCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
+	if len(t.Payload()) > 0 {
+		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		return h.cleanupDB(ctx, d)
+	}
+	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
+		if err := h.cleanupDB(ctx, d); err != nil {
+			h.log.Warn("patch run cleanup failed", "host", host, "error", err)
+		}
+	})
+	h.log.Info("patch run cleanup completed")
+	return nil
+}
+
+func (h *PatchRunCleanupHandler) cleanupDB(ctx context.Context, d *database.DB) error {
+	threshold := time.Now().Add(-30 * time.Minute)
+	pgThreshold := pgtype.Timestamp{Time: threshold, Valid: true}
+	msg := "Automatically cancelled after running for more than 30 minutes"
+	cancelled, err := d.Queries.CancelStalledPatchRuns(ctx, db.CancelStalledPatchRunsParams{
+		StartedAt:    pgThreshold,
+		ErrorMessage: &msg,
+	})
+	if err != nil {
+		return err
+	}
+	if cancelled > 0 {
+		h.log.Info("patch run cleanup: cancelled stale runs", "count", cancelled)
+	}
+	return nil
+}
+
 // AlertCleanupHandler handles alert-cleanup jobs.
 type AlertCleanupHandler struct {
 	defaultDB   *database.DB

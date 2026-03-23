@@ -51,6 +51,8 @@ const (
 	QueueScheduledReports        = "scheduled-reports"
 	TypeUpdateThresholdMonitor   = "update-threshold-monitor"
 	QueueUpdateThresholdMonitor  = "update-threshold-monitor"
+	TypePatchRunCleanup          = "patch-run-cleanup"
+	QueuePatchRunCleanup         = "patch-run-cleanup"
 )
 
 // RunScanPayload is the payload for run_scan job.
@@ -280,6 +282,15 @@ func NewComplianceScanCleanupTask(host string) (*asynq.Task, error) {
 		return nil, err
 	}
 	return asynq.NewTask(TypeComplianceScanCleanup, payload, asynq.Queue(QueueComplianceScanCleanup), asynq.MaxRetry(2), asynq.Retention(AutomationRetention)), nil
+}
+
+// NewPatchRunCleanupTask creates a patch-run-cleanup task.
+func NewPatchRunCleanupTask(host string) (*asynq.Task, error) {
+	payload, err := json.Marshal(AutomationPayload{Host: host})
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TypePatchRunCleanup, payload, asynq.Queue(QueuePatchRunCleanup), asynq.MaxRetry(2), asynq.Retention(AutomationRetention)), nil
 }
 
 // NewSSGUpdateCheckTask creates an ssg-update-check task (manual trigger from automation page).

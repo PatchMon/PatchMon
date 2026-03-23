@@ -60,6 +60,7 @@ func NewServer(opts asynq.RedisClientOpt, registry *agentregistry.Registry, db *
 			QueueSystemStatistics:            1,
 			QueueVersionUpdateCheck:          1,
 			QueueComplianceScanCleanup:       1,
+			QueuePatchRunCleanup:             1,
 			QueueSSGUpdateCheck:              1,
 			QueueUpdateThresholdMonitor:      1,
 			QueueCompliance:                  2,
@@ -112,6 +113,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeSystemStatistics, wrap(TypeSystemStatistics, NewSystemStatisticsHandler(db, opts.PoolCache, log)))
 	mux.Handle(TypeVersionUpdateCheck, wrap(TypeVersionUpdateCheck, NewVersionUpdateCheckHandler(db, opts.PoolCache, opts.ServerVersion, opts.Emit, log)))
 	mux.Handle(TypeComplianceScanCleanup, wrap(TypeComplianceScanCleanup, NewComplianceScanCleanupHandler(db, opts.PoolCache, log)))
+	mux.Handle(TypePatchRunCleanup, wrap(TypePatchRunCleanup, NewPatchRunCleanupHandler(db, opts.PoolCache, log)))
 	mux.Handle(TypeSSGUpdateCheck, wrap(TypeSSGUpdateCheck, NewSSGUpdateCheckHandler(registry, db, opts.PoolCache, opts.QueueClient, opts.SSGContentDir, log)))
 	mux.Handle(TypeSSGUpgrade, wrap(TypeSSGUpgrade, NewSSGUpgradeHandler(registry, db, opts.PoolCache, log)))
 	complianceStore := store.NewComplianceStore(db)
@@ -216,6 +218,11 @@ func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) 
 
 	complianceScanTask := asynq.NewTask(TypeComplianceScanCleanup, nil)
 	if _, err := scheduler.Register("0 1 * * *", complianceScanTask, asynq.Queue(QueueComplianceScanCleanup), asynq.Retention(AutomationRetention)); err != nil {
+		return nil, err
+	}
+
+	patchRunCleanupTask := asynq.NewTask(TypePatchRunCleanup, nil)
+	if _, err := scheduler.Register("30 0 * * *", patchRunCleanupTask, asynq.Queue(QueuePatchRunCleanup), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 

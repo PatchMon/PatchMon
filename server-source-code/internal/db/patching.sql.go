@@ -11,6 +11,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelStalledPatchRuns = `-- name: CancelStalledPatchRuns :execrows
+UPDATE patch_runs
+SET status = 'cancelled', error_message = $2, completed_at = NOW(), updated_at = NOW()
+WHERE status = 'running'
+  AND started_at < $1
+`
+
+type CancelStalledPatchRunsParams struct {
+	StartedAt    pgtype.Timestamp `json:"started_at"`
+	ErrorMessage *string          `json:"error_message"`
+}
+
+func (q *Queries) CancelStalledPatchRuns(ctx context.Context, arg CancelStalledPatchRunsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelStalledPatchRuns, arg.StartedAt, arg.ErrorMessage)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearScheduledAt = `-- name: ClearScheduledAt :exec
 UPDATE patch_runs SET scheduled_at = NULL, updated_at = NOW() WHERE id = $1
 `

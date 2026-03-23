@@ -11,6 +11,7 @@ import (
 )
 
 type Querier interface {
+	CancelStalledPatchRuns(ctx context.Context, arg CancelStalledPatchRunsParams) (int64, error)
 	ClearScheduledAt(ctx context.Context, id string) error
 	CountActiveAdmins(ctx context.Context) (int64, error)
 	CountActiveRepositories(ctx context.Context) (int32, error)

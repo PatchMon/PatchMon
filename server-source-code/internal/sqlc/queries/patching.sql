@@ -252,3 +252,9 @@ VALUES ($1, $2, $3, NOW(), NOW());
 
 -- name: DeletePatchPolicyExclusion :exec
 DELETE FROM patch_policy_exclusions WHERE patch_policy_id = $1 AND host_id = $2;
+
+-- name: CancelStalledPatchRuns :execrows
+UPDATE patch_runs
+SET status = 'cancelled', error_message = $2, completed_at = NOW(), updated_at = NOW()
+WHERE status = 'running'
+  AND started_at < $1;
