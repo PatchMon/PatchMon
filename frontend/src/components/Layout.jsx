@@ -610,10 +610,39 @@ const Layout = ({ children }) => {
 		return `${seconds}s ago`;
 	};
 
-	// Save sidebar collapsed state to localStorage
+	// Auto-collapse main sidebar on settings pages, restore when leaving
+	const sidebarStateBeforeSettings = useRef(null);
+	const isSettingsPage = location.pathname.startsWith("/settings");
+	const prevIsSettingsPage = useRef(isSettingsPage);
+
 	useEffect(() => {
-		localStorage.setItem("sidebarCollapsed", JSON.stringify(sidebarCollapsed));
-	}, [sidebarCollapsed]);
+		const wasSettings = prevIsSettingsPage.current;
+		prevIsSettingsPage.current = isSettingsPage;
+
+		if (isSettingsPage && !wasSettings) {
+			// Entering settings — remember current state and collapse
+			sidebarStateBeforeSettings.current = sidebarCollapsed;
+			setSidebarCollapsed(true);
+		} else if (
+			!isSettingsPage &&
+			wasSettings &&
+			sidebarStateBeforeSettings.current !== null
+		) {
+			// Leaving settings — restore previous state
+			setSidebarCollapsed(sidebarStateBeforeSettings.current);
+			sidebarStateBeforeSettings.current = null;
+		}
+	}, [isSettingsPage, sidebarCollapsed]);
+
+	// Save sidebar collapsed state to localStorage (skip when auto-collapsed for settings)
+	useEffect(() => {
+		if (!isSettingsPage) {
+			localStorage.setItem(
+				"sidebarCollapsed",
+				JSON.stringify(sidebarCollapsed),
+			);
+		}
+	}, [sidebarCollapsed, isSettingsPage]);
 
 	// Close user menu when clicking outside
 	useEffect(() => {

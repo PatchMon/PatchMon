@@ -88,7 +88,7 @@ const RolesTab = () => {
 		mutationFn: ({ role, permissions }) =>
 			permissionsAPI.updateRole(role, permissions),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["rolePermissions"]);
+			queryClient.invalidateQueries({ queryKey: ["rolePermissions"] });
 			setEditingRole(null);
 			// Refresh user permissions to apply changes immediately
 			refreshPermissions();
@@ -99,7 +99,7 @@ const RolesTab = () => {
 	const deleteRoleMutation = useMutation({
 		mutationFn: (role) => permissionsAPI.deleteRole(role),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["rolePermissions"]);
+			queryClient.invalidateQueries({ queryKey: ["rolePermissions"] });
 		},
 	});
 
@@ -342,7 +342,7 @@ const RolesTab = () => {
 					isOpen={showAddModal}
 					onClose={() => setShowAddModal(false)}
 					onSuccess={() => {
-						queryClient.invalidateQueries(["rolePermissions"]);
+						queryClient.invalidateQueries({ queryKey: ["rolePermissions"] });
 						setShowAddModal(false);
 					}}
 				/>
@@ -661,7 +661,7 @@ const AddRoleModal = ({ isOpen, onClose, onSuccess }) => {
 									className={`rounded-lg border border-secondary-200 dark:border-secondary-700 border-l-4 ${riskBorderColor(group.riskLevel)} overflow-hidden`}
 								>
 									{/* Group header */}
-									<div className="flex items-center justify-between px-4 py-2.5 bg-secondary-50 dark:bg-secondary-750">
+									<div className="flex items-center justify-between px-4 py-2.5 bg-secondary-50 dark:bg-secondary-700">
 										<div className="flex items-center gap-2">
 											<GroupIcon className="h-4 w-4 text-secondary-500 dark:text-secondary-300" />
 											<span className="text-sm font-semibold text-secondary-800 dark:text-secondary-100">

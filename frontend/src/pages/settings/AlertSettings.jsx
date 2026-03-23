@@ -388,46 +388,48 @@ const AlertSettings = () => {
 						</button>
 					</div>
 
-					{groupedConfigs.map(({ category, configs: catConfigs }) => {
-						const isCollapsed = !!collapsedCategories[category];
-						return (
-							<div key={category}>
-								<button
-									type="button"
-									onClick={() => toggleCategory(category)}
-									className="w-full flex items-center gap-2 py-2 px-3 rounded-md bg-secondary-100 dark:bg-secondary-700 hover:bg-secondary-200 dark:hover:bg-secondary-600 transition-colors"
-								>
-									{isCollapsed ? (
-										<ChevronRight className="h-4 w-4 text-secondary-500 dark:text-secondary-400 shrink-0" />
-									) : (
-										<ChevronDown className="h-4 w-4 text-secondary-500 dark:text-secondary-400 shrink-0" />
-									)}
-									<span className="text-sm font-semibold text-secondary-800 dark:text-white">
-										{formatCategory(category)}
-									</span>
-									<span className="text-xs text-secondary-500 dark:text-secondary-400">
-										({catConfigs.length})
-									</span>
-								</button>
-
-								{!isCollapsed && (
-									<div className="overflow-x-auto mt-1">
-										<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
-											<thead className="bg-secondary-50 dark:bg-secondary-700">
-												<tr>
-													<th className={`${TH} min-w-[160px]`}>Alert type</th>
-													<th className={`${TH} w-16`}>Active</th>
-													<th className={`${TH} w-28`}>Severity</th>
-													<th className={`${TH} w-28`}>Alert delay</th>
-													<th className={`${TH} w-28`}>Frequency</th>
-													<th className={`${TH} w-24`}>Threshold</th>
-													<th className={`${TH} min-w-[180px]`}>Auto-assign</th>
-													<th className={`${TH} w-28`}>Retention</th>
-													<th className={`${TH} w-28`}>Auto-resolve</th>
-												</tr>
-											</thead>
-											<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
-												{catConfigs.map((c) => {
+					<div className="overflow-x-auto">
+						<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+							<thead className="bg-secondary-50 dark:bg-secondary-700">
+								<tr>
+									<th className={`${TH} min-w-[160px]`}>Alert type</th>
+									<th className={`${TH} w-16`}>Active</th>
+									<th className={`${TH} w-28`}>Severity</th>
+									<th className={`${TH} w-28`}>Alert delay</th>
+									<th className={`${TH} w-28`}>Frequency</th>
+									<th className={`${TH} w-24`}>Threshold</th>
+									<th className={`${TH} min-w-[180px]`}>Auto-assign</th>
+									<th className={`${TH} w-28`}>Retention</th>
+									<th className={`${TH} w-28`}>Auto-resolve</th>
+								</tr>
+							</thead>
+							<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+								{groupedConfigs.map(({ category, configs: catConfigs }) => {
+									const isCollapsed = !!collapsedCategories[category];
+									return [
+										<tr
+											key={`cat-${category}`}
+											className="bg-secondary-100 dark:bg-secondary-700 cursor-pointer hover:bg-secondary-200 dark:hover:bg-secondary-600 transition-colors"
+											onClick={() => toggleCategory(category)}
+										>
+											<td colSpan={9} className="px-3 py-2">
+												<div className="flex items-center gap-2">
+													{isCollapsed ? (
+														<ChevronRight className="h-4 w-4 text-secondary-500 dark:text-secondary-400 shrink-0" />
+													) : (
+														<ChevronDown className="h-4 w-4 text-secondary-500 dark:text-secondary-400 shrink-0" />
+													)}
+													<span className="text-sm font-semibold text-secondary-800 dark:text-white">
+														{formatCategory(category)}
+													</span>
+													<span className="text-xs text-secondary-500 dark:text-secondary-400">
+														({catConfigs.length})
+													</span>
+												</div>
+											</td>
+										</tr>,
+										...(!isCollapsed
+											? catConfigs.map((c) => {
 													const dis = bulkUpdateMutation.isPending;
 													const off = !c.is_enabled;
 													return (
@@ -688,14 +690,13 @@ const AlertSettings = () => {
 															</td>
 														</tr>
 													);
-												})}
-											</tbody>
-										</table>
-									</div>
-								)}
-							</div>
-						);
-					})}
+												})
+											: []),
+									];
+								})}
+							</tbody>
+						</table>
+					</div>
 				</div>
 			)}
 

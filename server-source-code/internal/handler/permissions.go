@@ -79,10 +79,10 @@ func (h *PermissionsHandler) UpdateRole(w http.ResponseWriter, r *http.Request) 
 		Error(w, http.StatusBadRequest, "Role is required")
 		return
 	}
-	builtInRoles := map[string]bool{
-		"superadmin": true, "admin": true, "host_manager": true, "readonly": true, "user": true,
+	immutableRoles := map[string]bool{
+		"superadmin": true, "admin": true, "user": true,
 	}
-	if builtInRoles[role] {
+	if immutableRoles[role] {
 		Error(w, http.StatusBadRequest, "Cannot modify built-in role permissions")
 		return
 	}
