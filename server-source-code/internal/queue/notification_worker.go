@@ -1143,6 +1143,20 @@ func (h *NotificationDeliverHandler) hasActiveMatchingAlert(ctx context.Context,
 				return true
 			}
 		}
+	case "host_security_updates_exceeded", "host_pending_updates_exceeded":
+		hostID := nocMetaStr(p.Metadata, "host_id")
+		if hostID == "" {
+			return false
+		}
+		for _, a := range active {
+			var m map[string]interface{}
+			if len(a.Metadata) > 0 {
+				_ = json.Unmarshal(a.Metadata, &m)
+			}
+			if hid, _ := m["host_id"].(string); hid == hostID {
+				return true
+			}
+		}
 	case "container_stopped", "container_started":
 		containerID := nocMetaStr(p.Metadata, "container_id")
 		if containerID == "" {

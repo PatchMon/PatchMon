@@ -11,8 +11,11 @@ import (
 	"strings"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/rdpproxy"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/wwt/guac"
@@ -30,6 +33,8 @@ type RDPHandler struct {
 	registry       *agentregistry.Registry
 	guacdAddress   string
 	log            *slog.Logger
+	db             database.DBProvider
+	notify         *notifications.Emitter
 }
 
 // NewRDPHandler creates a new RDP handler.
@@ -42,6 +47,8 @@ func NewRDPHandler(
 	registry *agentregistry.Registry,
 	guacdAddress string,
 	log *slog.Logger,
+	db database.DBProvider,
+	notify *notifications.Emitter,
 ) *RDPHandler {
 	return &RDPHandler{
 		rdpTicketStore: rdpTicketStore,
@@ -52,6 +59,8 @@ func NewRDPHandler(
 		registry:       registry,
 		guacdAddress:   guacdAddress,
 		log:            log,
+		db:             db,
+		notify:         notify,
 	}
 }
 
@@ -84,9 +93,9 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if user.Role != "admin" {
+	if user.Role != "admin" && user.Role != "superadmin" {
 		perm, err := h.permissions.GetByRole(r.Context(), user.Role)
-		if err != nil || perm == nil || !perm.CanManageHosts {
+		if err != nil || perm == nil || !perm.CanUseRemoteAccess {
 			h.log.Info("rdp-ticket access denied", "user_id", userID, "role", user.Role)
 			JSON(w, http.StatusForbidden, map[string]string{"error": "Access denied"})
 			return
@@ -141,6 +150,29 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 		h.rdpSessions.SendDisconnect(agentConn, sessionID)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create ticket"})
 		return
+	}
+
+	// Emit rdp_session_started event.
+	if h.notify != nil {
+		if d := h.db.DB(r.Context()); d != nil {
+			hostName := host.FriendlyName
+			if hostName == "" && host.Hostname != nil {
+				hostName = *host.Hostname
+			}
+			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+				Type:          "rdp_session_started",
+				Severity:      "informational",
+				Title:         "RDP Session - " + hostName,
+				Message:       "RDP session initiated to host \"" + hostName + "\".",
+				ReferenceType: "host",
+				ReferenceID:   host.ID,
+				Metadata: map[string]interface{}{
+					"host_id":   host.ID,
+					"host_name": hostName,
+					"user_id":   userID,
+				},
+			})
+		}
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{

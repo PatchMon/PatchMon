@@ -66,6 +66,12 @@ type RolePermission struct {
 	CanManageSettings       bool      `db:"can_manage_settings"`
 	CanManageNotifications  bool      `db:"can_manage_notifications"`
 	CanViewNotificationLogs bool      `db:"can_view_notification_logs"`
+	CanManagePatching       bool      `db:"can_manage_patching"`
+	CanManageCompliance     bool      `db:"can_manage_compliance"`
+	CanManageDocker         bool      `db:"can_manage_docker"`
+	CanManageAlerts         bool      `db:"can_manage_alerts"`
+	CanManageAutomation     bool      `db:"can_manage_automation"`
+	CanUseRemoteAccess      bool      `db:"can_use_remote_access"`
 	CreatedAt               time.Time `db:"created_at"`
 	UpdatedAt               time.Time `db:"updated_at"`
 }

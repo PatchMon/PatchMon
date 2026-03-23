@@ -539,6 +539,12 @@ export const AuthProvider = ({ children }) => {
 		hasPermission("can_manage_notifications");
 	const canViewNotificationLogs = () =>
 		hasPermission("can_view_notification_logs");
+	const canManagePatching = () => hasPermission("can_manage_patching");
+	const canManageCompliance = () => hasPermission("can_manage_compliance");
+	const canManageDocker = () => hasPermission("can_manage_docker");
+	const canManageAlerts = () => hasPermission("can_manage_alerts");
+	const canManageAutomation = () => hasPermission("can_manage_automation");
+	const canUseRemoteAccess = () => hasPermission("can_use_remote_access");
 
 	const SETUP_COMPLETE_CACHE_KEY = "patchmon_setup_complete";
 
@@ -731,6 +737,12 @@ export const AuthProvider = ({ children }) => {
 		canManageSettings,
 		canManageNotifications,
 		canViewNotificationLogs,
+		canManagePatching,
+		canManageCompliance,
+		canManageDocker,
+		canManageAlerts,
+		canManageAutomation,
+		canUseRemoteAccess,
 		acceptReleaseNotes,
 	};
 

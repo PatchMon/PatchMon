@@ -198,7 +198,7 @@ function AppRoutes() {
 					<Route
 						path="/automation"
 						element={
-							<ProtectedRoute requirePermission="can_view_hosts">
+							<ProtectedRoute requirePermission="can_view_dashboard">
 								<Automation />
 							</ProtectedRoute>
 						}
@@ -222,7 +222,7 @@ function AppRoutes() {
 					<Route
 						path="/compliance"
 						element={
-							<ProtectedRoute requirePermission="can_view_hosts">
+							<ProtectedRoute requirePermission="can_view_reports">
 								<Compliance />
 							</ProtectedRoute>
 						}
@@ -230,7 +230,7 @@ function AppRoutes() {
 					<Route
 						path="/compliance/hosts/:id"
 						element={
-							<ProtectedRoute requirePermission="can_view_hosts">
+							<ProtectedRoute requirePermission="can_view_reports">
 								<ComplianceHostDetail />
 							</ProtectedRoute>
 						}
@@ -238,7 +238,7 @@ function AppRoutes() {
 					<Route
 						path="/compliance/rules/:id"
 						element={
-							<ProtectedRoute requirePermission="can_view_hosts">
+							<ProtectedRoute requirePermission="can_view_reports">
 								<ComplianceRuleDetail />
 							</ProtectedRoute>
 						}
@@ -246,7 +246,7 @@ function AppRoutes() {
 					<Route
 						path="/docker"
 						element={
-							<ProtectedRoute requirePermission="can_view_reports">
+							<ProtectedRoute requirePermission="can_view_hosts">
 								<Docker />
 							</ProtectedRoute>
 						}
@@ -254,7 +254,7 @@ function AppRoutes() {
 					<Route
 						path="/docker/containers/:id"
 						element={
-							<ProtectedRoute requirePermission="can_view_reports">
+							<ProtectedRoute requirePermission="can_view_hosts">
 								<DockerContainerDetail />
 							</ProtectedRoute>
 						}
@@ -262,7 +262,7 @@ function AppRoutes() {
 					<Route
 						path="/docker/images/:id"
 						element={
-							<ProtectedRoute requirePermission="can_view_reports">
+							<ProtectedRoute requirePermission="can_view_hosts">
 								<DockerImageDetail />
 							</ProtectedRoute>
 						}
@@ -270,7 +270,7 @@ function AppRoutes() {
 					<Route
 						path="/docker/hosts/:id"
 						element={
-							<ProtectedRoute requirePermission="can_view_reports">
+							<ProtectedRoute requirePermission="can_view_hosts">
 								<DockerHostDetail />
 							</ProtectedRoute>
 						}
@@ -278,7 +278,7 @@ function AppRoutes() {
 					<Route
 						path="/docker/volumes/:id"
 						element={
-							<ProtectedRoute requirePermission="can_view_reports">
+							<ProtectedRoute requirePermission="can_view_hosts">
 								<DockerVolumeDetail />
 							</ProtectedRoute>
 						}
@@ -286,7 +286,7 @@ function AppRoutes() {
 					<Route
 						path="/docker/networks/:id"
 						element={
-							<ProtectedRoute requirePermission="can_view_reports">
+							<ProtectedRoute requirePermission="can_view_hosts">
 								<DockerNetworkDetail />
 							</ProtectedRoute>
 						}
@@ -316,6 +316,7 @@ function AppRoutes() {
 									"can_view_users",
 									"can_manage_notifications",
 									"can_view_notification_logs",
+									"can_manage_settings",
 								]}
 							>
 								<SettingsLayout>

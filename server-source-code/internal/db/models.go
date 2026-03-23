@@ -510,6 +510,12 @@ type RolePermission struct {
 	CanManageSettings       bool             `json:"can_manage_settings"`
 	CanManageNotifications  bool             `json:"can_manage_notifications"`
 	CanViewNotificationLogs bool             `json:"can_view_notification_logs"`
+	CanManagePatching       bool             `json:"can_manage_patching"`
+	CanManageCompliance     bool             `json:"can_manage_compliance"`
+	CanManageDocker         bool             `json:"can_manage_docker"`
+	CanManageAlerts         bool             `json:"can_manage_alerts"`
+	CanManageAutomation     bool             `json:"can_manage_automation"`
+	CanUseRemoteAccess      bool             `json:"can_use_remote_access"`
 	CreatedAt               pgtype.Timestamp `json:"created_at"`
 	UpdatedAt               pgtype.Timestamp `json:"updated_at"`
 }

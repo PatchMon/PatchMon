@@ -118,10 +118,10 @@ func (h *SshTerminalWSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// SSH terminal requires can_manage_hosts (admin always has access)
-	if user.Role != "admin" {
+	// SSH terminal requires can_use_remote_access (admin/superadmin always have access)
+	if user.Role != "admin" && user.Role != "superadmin" {
 		perm, err := h.permissions.GetByRole(r.Context(), user.Role)
-		if err != nil || perm == nil || !perm.CanManageHosts {
+		if err != nil || perm == nil || !perm.CanUseRemoteAccess {
 			h.log.Info("ssh-terminal access denied", "user_id", userID, "role", user.Role)
 			h.rejectUpgrade(w, r, 403, "Access denied")
 			return

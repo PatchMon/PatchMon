@@ -18,6 +18,12 @@ CREATE TABLE IF NOT EXISTS role_permissions (
     can_manage_settings BOOLEAN NOT NULL DEFAULT false,
     can_manage_notifications BOOLEAN NOT NULL DEFAULT false,
     can_view_notification_logs BOOLEAN NOT NULL DEFAULT false,
+    can_manage_patching BOOLEAN NOT NULL DEFAULT false,
+    can_manage_compliance BOOLEAN NOT NULL DEFAULT false,
+    can_manage_docker BOOLEAN NOT NULL DEFAULT false,
+    can_manage_alerts BOOLEAN NOT NULL DEFAULT false,
+    can_manage_automation BOOLEAN NOT NULL DEFAULT false,
+    can_use_remote_access BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP(3) NOT NULL
 );

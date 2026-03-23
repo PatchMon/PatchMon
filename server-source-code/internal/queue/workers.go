@@ -151,6 +151,80 @@ func (h *HostStatusMonitorHandler) ProcessTask(ctx context.Context, t *asynq.Tas
 	return nil
 }
 
+// UpdateThresholdMonitorHandler handles update-threshold-monitor jobs.
+type UpdateThresholdMonitorHandler struct {
+	defaultDB *database.DB
+	poolCache *hostctx.PoolCache
+	emit      *notifications.Emitter
+	log       *slog.Logger
+}
+
+// NewUpdateThresholdMonitorHandler creates an update threshold monitor handler.
+func NewUpdateThresholdMonitorHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache, emit *notifications.Emitter, log *slog.Logger) *UpdateThresholdMonitorHandler {
+	return &UpdateThresholdMonitorHandler{defaultDB: defaultDB, poolCache: poolCache, emit: emit, log: log}
+}
+
+// ProcessTask implements asynq.Handler.
+func (h *UpdateThresholdMonitorHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
+	payload := t.Payload()
+
+	// Payload has host: single-host or manual trigger with host
+	if len(payload) > 0 {
+		db := resolveDBFromPayload(ctx, payload, h.defaultDB, h.poolCache)
+		alertsCreated, err := alerts.ProcessUpdateThresholdMonitor(ctx, db, tenantHostFromPayload(payload), h.emit, h.log)
+		if err != nil {
+			return err
+		}
+		h.log.Info("update threshold monitor completed", "alerts_created", alertsCreated)
+		return nil
+	}
+
+	// Empty payload: single-host (PoolCache nil) or multi-host fan-out
+	if h.poolCache == nil {
+		alertsCreated, err := alerts.ProcessUpdateThresholdMonitor(ctx, h.defaultDB, "", h.emit, h.log)
+		if err != nil {
+			return err
+		}
+		h.log.Info("update threshold monitor completed", "alerts_created", alertsCreated)
+		return nil
+	}
+
+	// Multi-host: process defaultDB first, then all registry hosts in parallel
+	var totalCreated atomic.Int64
+	if n, err := alerts.ProcessUpdateThresholdMonitor(ctx, h.defaultDB, "", h.emit, h.log); err == nil {
+		totalCreated.Add(int64(n))
+	}
+
+	hosts := h.poolCache.ListHosts()
+	if len(hosts) == 0 {
+		h.log.Info("update threshold monitor completed", "alerts_created", totalCreated.Load(), "hosts_processed", 1)
+		return nil
+	}
+
+	sem := make(chan struct{}, hostStatusMonitorConcurrency)
+	var wg sync.WaitGroup
+	for _, host := range hosts {
+		host := host
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			db, err := h.poolCache.GetOrCreate(ctx, host)
+			if err != nil || db == nil {
+				return
+			}
+			if n, err := alerts.ProcessUpdateThresholdMonitor(ctx, db, host, h.emit, h.log); err == nil {
+				totalCreated.Add(int64(n))
+			}
+		}()
+	}
+	wg.Wait()
+
+	h.log.Info("update threshold monitor completed", "alerts_created", totalCreated.Load(), "hosts_processed", len(hosts)+1)
+	return nil
+}
+
 // SessionCleanupHandler handles session-cleanup jobs.
 type SessionCleanupHandler struct {
 	defaultDB *database.DB

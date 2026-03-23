@@ -10,8 +10,11 @@ import (
 	"log/slog"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/go-chi/chi/v5"
@@ -31,12 +34,14 @@ type AuthHandler struct {
 	tfaLockout             *store.TfaLockoutStore
 	loginLockout           *store.LoginLockoutStore
 	releaseNotesAcceptance *store.ReleaseNotesAcceptanceStore
+	db                     database.DBProvider
+	notify                 *notifications.Emitter
 	log                    *slog.Logger
 }
 
 // NewAuthHandler creates a new auth handler.
-func NewAuthHandler(cfg *config.Config, resolved *config.ResolvedConfig, users *store.UsersStore, sessions *store.SessionsStore, settings *store.SettingsStore, tfaLockout *store.TfaLockoutStore, loginLockout *store.LoginLockoutStore, releaseNotesAcceptance *store.ReleaseNotesAcceptanceStore, log *slog.Logger) *AuthHandler {
-	return &AuthHandler{cfg: cfg, resolved: resolved, users: users, sessions: sessions, settings: settings, tfaLockout: tfaLockout, loginLockout: loginLockout, releaseNotesAcceptance: releaseNotesAcceptance, log: log}
+func NewAuthHandler(cfg *config.Config, resolved *config.ResolvedConfig, users *store.UsersStore, sessions *store.SessionsStore, settings *store.SettingsStore, tfaLockout *store.TfaLockoutStore, loginLockout *store.LoginLockoutStore, releaseNotesAcceptance *store.ReleaseNotesAcceptanceStore, db database.DBProvider, notify *notifications.Emitter, log *slog.Logger) *AuthHandler {
+	return &AuthHandler{cfg: cfg, resolved: resolved, users: users, sessions: sessions, settings: settings, tfaLockout: tfaLockout, loginLockout: loginLockout, releaseNotesAcceptance: releaseNotesAcceptance, db: db, notify: notify, log: log}
 }
 
 // LoginRequest is the request body for login.
@@ -136,6 +141,25 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			identifier := h.loginLockout.Identifier(h.clientIP(r), req.Username)
 			_, locked := h.loginLockout.RecordFailedAttempt(r.Context(), identifier)
 			if locked {
+				// Emit account_locked event
+				if h.notify != nil {
+					if d := h.db.DB(r.Context()); d != nil {
+						h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+							Type:          "account_locked",
+							Severity:      "error",
+							Title:         "Account Locked",
+							Message:       "Account locked due to too many failed login attempts for user " + user.Username + ".",
+							ReferenceType: "user",
+							ReferenceID:   user.ID,
+							Metadata: map[string]interface{}{
+								"user_id":    user.ID,
+								"username":   user.Username,
+								"ip_address": h.clientIP(r),
+								"user_agent": r.UserAgent(),
+							},
+						})
+					}
+				}
 				_, remainingSec := h.loginLockout.IsLocked(r.Context(), identifier)
 				if remainingSec <= 0 {
 					remainingSec = 900 // fallback 15 min
@@ -149,6 +173,26 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 					"remaining_seconds": remainingSec,
 				})
 				return
+			}
+		}
+		// Emit user_login_failed event
+		if h.notify != nil {
+			if d := h.db.DB(r.Context()); d != nil {
+				h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+					Type:          "user_login_failed",
+					Severity:      "warning",
+					Title:         "Failed Login Attempt",
+					Message:       "Failed login attempt for user " + user.Username + ".",
+					ReferenceType: "user",
+					ReferenceID:   user.ID,
+					Metadata: map[string]interface{}{
+						"user_id":    user.ID,
+						"username":   user.Username,
+						"ip_address": h.clientIP(r),
+						"user_agent": r.UserAgent(),
+						"reason":     "invalid_password",
+					},
+				})
 			}
 		}
 		if h.log != nil {
@@ -366,6 +410,27 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, user
 
 	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, rememberMe, h.cfg.Env, false, h.authBrowserSessionCookies())
 
+	// Emit user_login event
+	if h.notify != nil {
+		if d := h.db.DB(r.Context()); d != nil {
+			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+				Type:          "user_login",
+				Severity:      "informational",
+				Title:         "User Login",
+				Message:       "User " + user.Username + " logged in successfully.",
+				ReferenceType: "user",
+				ReferenceID:   user.ID,
+				Metadata: map[string]interface{}{
+					"user_id":    user.ID,
+					"username":   user.Username,
+					"role":       user.Role,
+					"ip_address": h.clientIP(r),
+					"user_agent": r.UserAgent(),
+				},
+			})
+		}
+	}
+
 	resp := map[string]interface{}{
 		"message":       "Login successful",
 		"token":         accessToken,
@@ -486,6 +551,29 @@ func (h *AuthHandler) CompleteOidcLogin(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, true, h.authBrowserSessionCookies())
+
+	// Emit user_login event for OIDC login
+	if h.notify != nil {
+		if d := h.db.DB(r.Context()); d != nil {
+			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+				Type:          "user_login",
+				Severity:      "informational",
+				Title:         "User Login",
+				Message:       "User " + user.Username + " logged in via OIDC.",
+				ReferenceType: "user",
+				ReferenceID:   user.ID,
+				Metadata: map[string]interface{}{
+					"user_id":    user.ID,
+					"username":   user.Username,
+					"role":       user.Role,
+					"ip_address": h.clientIP(r),
+					"user_agent": r.UserAgent(),
+					"method":     "oidc",
+				},
+			})
+		}
+	}
+
 	// Use relative redirect so the browser resolves to the same origin as the callback request.
 	// This avoids ERR_INVALID_REDIRECT from malformed CORS_ORIGIN (e.g. trailing newline in .env).
 	http.Redirect(w, r, "/login?oidc=success", http.StatusFound)
@@ -517,6 +605,29 @@ func (h *AuthHandler) CompleteDiscordLogin(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, true, h.authBrowserSessionCookies())
+
+	// Emit user_login event for Discord login
+	if h.notify != nil {
+		if d := h.db.DB(r.Context()); d != nil {
+			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+				Type:          "user_login",
+				Severity:      "informational",
+				Title:         "User Login",
+				Message:       "User " + user.Username + " logged in via Discord.",
+				ReferenceType: "user",
+				ReferenceID:   user.ID,
+				Metadata: map[string]interface{}{
+					"user_id":    user.ID,
+					"username":   user.Username,
+					"role":       user.Role,
+					"ip_address": h.clientIP(r),
+					"user_agent": r.UserAgent(),
+					"method":     "discord",
+				},
+			})
+		}
+	}
+
 	// Use relative redirect so the browser resolves to the same origin as the callback request.
 	// This avoids ERR_INVALID_REDIRECT from malformed CORS_ORIGIN (e.g. trailing newline in .env).
 	http.Redirect(w, r, "/login?discord=success", http.StatusFound)

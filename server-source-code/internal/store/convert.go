@@ -25,6 +25,12 @@ func dbRolePermissionToModel(r db.RolePermission) models.RolePermission {
 		CanManageSettings:       r.CanManageSettings,
 		CanManageNotifications:  r.CanManageNotifications,
 		CanViewNotificationLogs: r.CanViewNotificationLogs,
+		CanManagePatching:       r.CanManagePatching,
+		CanManageCompliance:     r.CanManageCompliance,
+		CanManageDocker:         r.CanManageDocker,
+		CanManageAlerts:         r.CanManageAlerts,
+		CanManageAutomation:     r.CanManageAutomation,
+		CanUseRemoteAccess:      r.CanUseRemoteAccess,
 		CreatedAt:               pgTime(r.CreatedAt),
 		UpdatedAt:               pgTime(r.UpdatedAt),
 	}

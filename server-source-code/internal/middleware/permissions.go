@@ -57,6 +57,8 @@ func hasPermission(p *models.RolePermission, perm string) bool {
 		return p.CanViewUsers
 	case "can_manage_users":
 		return p.CanManageUsers
+	case "can_manage_superusers":
+		return p.CanManageSuperusers
 	case "can_view_reports":
 		return p.CanViewReports
 	case "can_export_data":
@@ -67,6 +69,18 @@ func hasPermission(p *models.RolePermission, perm string) bool {
 		return p.CanManageNotifications
 	case "can_view_notification_logs":
 		return p.CanViewNotificationLogs
+	case "can_manage_patching":
+		return p.CanManagePatching
+	case "can_manage_compliance":
+		return p.CanManageCompliance
+	case "can_manage_docker":
+		return p.CanManageDocker
+	case "can_manage_alerts":
+		return p.CanManageAlerts
+	case "can_manage_automation":
+		return p.CanManageAutomation
+	case "can_use_remote_access":
+		return p.CanUseRemoteAccess
 	default:
 		return false
 	}

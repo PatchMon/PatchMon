@@ -59,6 +59,7 @@ func NewServer(opts asynq.RedisClientOpt, registry *agentregistry.Registry, db *
 			QueueVersionUpdateCheck:          1,
 			QueueComplianceScanCleanup:       1,
 			QueueSSGUpdateCheck:              1,
+			QueueUpdateThresholdMonitor:      1,
 			QueueCompliance:                  2,
 			QueuePatching:                    2,
 			notifications.QueueNotifications: 2,
@@ -97,6 +98,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeUpdateAgent, wrap(TypeUpdateAgent, NewUpdateAgentHandler(registry, db, log)))
 	dbResolver := &hostctx.DBResolver{Default: db}
 	mux.Handle(TypeHostStatusMonitor, wrap(TypeHostStatusMonitor, NewHostStatusMonitorHandler(db, opts.PoolCache, opts.Emit, log)))
+	mux.Handle(TypeUpdateThresholdMonitor, wrap(TypeUpdateThresholdMonitor, NewUpdateThresholdMonitorHandler(db, opts.PoolCache, opts.Emit, log)))
 	mux.Handle(notifications.TypeNotificationDeliver, wrap(notifications.TypeNotificationDeliver, NewNotificationDeliverHandler(db, opts.PoolCache, opts.Enc, opts.RDB, log)))
 	mux.Handle(TypeScheduledReportsDispatch, wrap(TypeScheduledReportsDispatch, NewScheduledReportsDispatchHandler(db, opts.PoolCache, opts.QueueClient, log)))
 	mux.Handle(TypeScheduledReportRun, wrap(TypeScheduledReportRun, NewScheduledReportRunHandler(db, opts.PoolCache, opts.Enc, opts.Timezone, log)))
@@ -173,6 +175,11 @@ func NewScheduler(opts asynq.RedisClientOpt, log *slog.Logger) (*asynq.Scheduler
 
 	ssgUpdateTask := asynq.NewTask(TypeSSGUpdateCheck, nil)
 	if _, err := scheduler.Register("0 5 * * *", ssgUpdateTask, asynq.Queue(QueueSSGUpdateCheck), asynq.Retention(AutomationRetention)); err != nil {
+		return nil, err
+	}
+
+	updateThresholdTask := asynq.NewTask(TypeUpdateThresholdMonitor, nil)
+	if _, err := scheduler.Register("*/30 * * * *", updateThresholdTask, asynq.Queue(QueueUpdateThresholdMonitor), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 

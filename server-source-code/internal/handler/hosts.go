@@ -10,7 +10,9 @@ import (
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/go-chi/chi/v5"
@@ -28,10 +30,12 @@ type HostsHandler struct {
 	registry          *agentregistry.Registry
 	integrationStatus *store.IntegrationStatusStore
 	pendingConfig     *store.PendingConfigStore
+	db                database.DBProvider
+	notify            *notifications.Emitter
 }
 
 // NewHostsHandler creates a new hosts handler.
-func NewHostsHandler(hosts *store.HostsStore, hostGroups *store.HostGroupsStore, settings *store.SettingsStore, queueClient *asynq.Client, registry *agentregistry.Registry, integrationStatus *store.IntegrationStatusStore, pendingConfig *store.PendingConfigStore) *HostsHandler {
+func NewHostsHandler(hosts *store.HostsStore, hostGroups *store.HostGroupsStore, settings *store.SettingsStore, queueClient *asynq.Client, registry *agentregistry.Registry, integrationStatus *store.IntegrationStatusStore, pendingConfig *store.PendingConfigStore, db database.DBProvider, notify *notifications.Emitter) *HostsHandler {
 	return &HostsHandler{
 		hosts:             hosts,
 		hostGroups:        hostGroups,
@@ -40,6 +44,8 @@ func NewHostsHandler(hosts *store.HostsStore, hostGroups *store.HostGroupsStore,
 		registry:          registry,
 		integrationStatus: integrationStatus,
 		pendingConfig:     pendingConfig,
+		db:                db,
+		notify:            notify,
 	}
 }
 
@@ -192,6 +198,24 @@ func (h *HostsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	hostGroupsResp := make([]map[string]interface{}, len(groups))
 	for i, g := range groups {
 		hostGroupsResp[i] = map[string]interface{}{"id": g.ID, "name": g.Name, "color": g.Color}
+	}
+
+	// Emit host_enrolled event.
+	if h.notify != nil {
+		if d := h.db.DB(r.Context()); d != nil {
+			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+				Type:          "host_enrolled",
+				Severity:      "informational",
+				Title:         fmt.Sprintf("Host Enrolled - %s", host.FriendlyName),
+				Message:       fmt.Sprintf("New host \"%s\" has been enrolled.", host.FriendlyName),
+				ReferenceType: "host",
+				ReferenceID:   host.ID,
+				Metadata: map[string]interface{}{
+					"host_id":   host.ID,
+					"host_name": host.FriendlyName,
+				},
+			})
+		}
 	}
 
 	JSON(w, http.StatusCreated, map[string]interface{}{
@@ -629,6 +653,29 @@ func (h *HostsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to delete host")
 		return
 	}
+
+	// Emit host_deleted event.
+	if h.notify != nil {
+		if d := h.db.DB(r.Context()); d != nil {
+			hostName := host.FriendlyName
+			if hostName == "" && host.Hostname != nil {
+				hostName = *host.Hostname
+			}
+			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+				Type:          "host_deleted",
+				Severity:      "warning",
+				Title:         fmt.Sprintf("Host Deleted - %s", hostName),
+				Message:       fmt.Sprintf("Host \"%s\" has been removed from inventory.", hostName),
+				ReferenceType: "host",
+				ReferenceID:   host.ID,
+				Metadata: map[string]interface{}{
+					"host_id":   host.ID,
+					"host_name": hostName,
+				},
+			})
+		}
+	}
+
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"message":     "Host deleted successfully",
 		"deletedHost": map[string]interface{}{"id": host.ID, "friendly_name": host.FriendlyName},

@@ -374,6 +374,32 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 					"profile_summaries": profileSummaries,
 				},
 			})
+
+			// Also emit compliance_scan_failed for any scans that errored.
+			for _, s := range storeScans {
+				if s.Error == "" {
+					continue
+				}
+				scanErr := s.Error
+				if len(scanErr) > 300 {
+					scanErr = scanErr[:300] + "…"
+				}
+				h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+					Type:          "compliance_scan_failed",
+					Severity:      alerts.ResolveSeverity(r.Context(), d, "compliance_scan_failed", "error"),
+					Title:         fmt.Sprintf("Compliance Scan Failed - %s - %s", s.ProfileName, hostName),
+					Message:       fmt.Sprintf("Compliance scan \"%s\" failed on host %s: %s", s.ProfileName, hostName, scanErr),
+					ReferenceType: "host",
+					ReferenceID:   host.ID,
+					Metadata: map[string]interface{}{
+						"host_id":      host.ID,
+						"host_name":    hostName,
+						"profile_name": s.ProfileName,
+						"profile_type": s.ProfileType,
+						"error":        s.Error,
+					},
+				})
+			}
 		}
 	}
 

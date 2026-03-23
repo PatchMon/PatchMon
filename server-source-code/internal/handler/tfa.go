@@ -7,7 +7,10 @@ import (
 
 	"log/slog"
 
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/skip2/go-qrcode"
@@ -18,12 +21,14 @@ import (
 type TfaHandler struct {
 	users    *store.UsersStore
 	sessions *store.SessionsStore
+	db       database.DBProvider
+	notify   *notifications.Emitter
 	log      *slog.Logger
 }
 
 // NewTfaHandler creates a new TFA handler.
-func NewTfaHandler(users *store.UsersStore, sessions *store.SessionsStore, log *slog.Logger) *TfaHandler {
-	return &TfaHandler{users: users, sessions: sessions, log: log}
+func NewTfaHandler(users *store.UsersStore, sessions *store.SessionsStore, db database.DBProvider, notify *notifications.Emitter, log *slog.Logger) *TfaHandler {
+	return &TfaHandler{users: users, sessions: sessions, db: db, notify: notify, log: log}
 }
 
 // Setup handles GET /tfa/setup.
@@ -191,6 +196,26 @@ func (h *TfaHandler) Disable(w http.ResponseWriter, r *http.Request) {
 		}
 		Error(w, http.StatusInternalServerError, "Failed to disable two-factor authentication")
 		return
+	}
+
+	// Emit user_tfa_disabled event
+	if h.notify != nil {
+		if d := h.db.DB(r.Context()); d != nil {
+			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+				Type:          "user_tfa_disabled",
+				Severity:      "warning",
+				Title:         "Two-Factor Authentication Disabled",
+				Message:       "Two-factor authentication was disabled for user " + user.Username + ".",
+				ReferenceType: "user",
+				ReferenceID:   user.ID,
+				Metadata: map[string]interface{}{
+					"user_id":    user.ID,
+					"username":   user.Username,
+					"ip_address": r.RemoteAddr,
+					"user_agent": r.UserAgent(),
+				},
+			})
+		}
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{

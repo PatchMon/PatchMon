@@ -295,6 +295,8 @@ func (e *Emitter) injectAppLink(ctx context.Context, d *database.DB, ev Event) m
 		} else {
 			link = baseURL + "/"
 		}
+	case "user":
+		link = baseURL + "/settings/users"
 	case "test":
 		link = baseURL + "/reporting"
 	default:
@@ -425,8 +427,10 @@ func (e *Emitter) allowRate(tenantHost, destinationID string) bool {
 // cancelPairs maps an event type to the delayed event type it should cancel.
 // When host_recovered fires, any pending delayed host_down notification for the same reference should be suppressed.
 var cancelPairs = map[string]string{
-	"host_recovered":    "host_down",
-	"container_started": "container_stopped",
+	"host_recovered":                 "host_down",
+	"container_started":              "container_stopped",
+	"host_security_updates_resolved": "host_security_updates_exceeded",
+	"host_pending_updates_resolved":  "host_pending_updates_exceeded",
 }
 
 // cancelKeyForEvent returns the Redis cancel key to set when this event fires,

@@ -321,6 +321,42 @@ func (q *Queries) GetPackageByID(ctx context.Context, id string) (Package, error
 	return i, err
 }
 
+const getPendingUpdateCountsPerHost = `-- name: GetPendingUpdateCountsPerHost :many
+SELECT
+    hp.host_id,
+    SUM(CASE WHEN hp.needs_update THEN 1 ELSE 0 END)::int AS pending_count,
+    SUM(CASE WHEN hp.needs_update AND hp.is_security_update THEN 1 ELSE 0 END)::int AS security_count
+FROM host_packages hp
+JOIN hosts h ON h.id = hp.host_id AND h.status = 'active'
+GROUP BY hp.host_id
+`
+
+type GetPendingUpdateCountsPerHostRow struct {
+	HostID        string `json:"host_id"`
+	PendingCount  int32  `json:"pending_count"`
+	SecurityCount int32  `json:"security_count"`
+}
+
+func (q *Queries) GetPendingUpdateCountsPerHost(ctx context.Context) ([]GetPendingUpdateCountsPerHostRow, error) {
+	rows, err := q.db.Query(ctx, getPendingUpdateCountsPerHost)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetPendingUpdateCountsPerHostRow
+	for rows.Next() {
+		var i GetPendingUpdateCountsPerHostRow
+		if err := rows.Scan(&i.HostID, &i.PendingCount, &i.SecurityCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getSecurityCountByPackageIDs = `-- name: GetSecurityCountByPackageIDs :many
 SELECT package_id, COUNT(*)::int as cnt FROM host_packages
 WHERE package_id = ANY($1::text[]) AND needs_update = true AND is_security_update = true

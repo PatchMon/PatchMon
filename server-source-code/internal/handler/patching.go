@@ -136,6 +136,35 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to save patch output"})
 		return
 	}
+	// Emit patch_run_started when the agent begins execution.
+	if h.notify != nil && body.Stage == "running" {
+		if d := hostctx.DBFromContext(r.Context()); d != nil {
+			hostName := ""
+			if run.HostFriendlyName != nil && *run.HostFriendlyName != "" {
+				hostName = *run.HostFriendlyName
+			} else if run.HostHostname != nil && *run.HostHostname != "" {
+				hostName = *run.HostHostname
+			}
+			title := fmt.Sprintf("Patch Run Started - %s", hostName)
+			if run.DryRun {
+				title = fmt.Sprintf("Dry Run Started - %s", hostName)
+			}
+			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+				Type:          "patch_run_started",
+				Severity:      alerts.ResolveSeverity(r.Context(), d, "patch_run_started", "informational"),
+				Title:         title,
+				Message:       fmt.Sprintf("Patch run started on host %s.", hostName),
+				ReferenceType: "patch_run",
+				ReferenceID:   patchRunID,
+				Metadata: map[string]interface{}{
+					"host_id":    run.HostID,
+					"host_name":  hostName,
+					"patch_type": run.PatchType,
+					"dry_run":    run.DryRun,
+				},
+			})
+		}
+	}
 	if h.notify != nil && (body.Stage == "completed" || body.Stage == "failed") {
 		if d := hostctx.DBFromContext(r.Context()); d != nil {
 			// Resolve host display name
@@ -526,6 +555,31 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 	if delayMs > 0 {
 		msg = "Approved - patch scheduled for " + runAt.UTC().Format(time.RFC3339)
 	}
+
+	// Emit patch_run_approved event.
+	if h.notify != nil {
+		if d := hostctx.DBFromContext(r.Context()); d != nil {
+			hostName := host.FriendlyName
+			if hostName == "" && host.Hostname != nil {
+				hostName = *host.Hostname
+			}
+			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+				Type:          "patch_run_approved",
+				Severity:      alerts.ResolveSeverity(r.Context(), d, "patch_run_approved", "informational"),
+				Title:         fmt.Sprintf("Patch Run Approved - %s", hostName),
+				Message:       fmt.Sprintf("Patch run approved for host %s. %s", hostName, msg),
+				ReferenceType: "patch_run",
+				ReferenceID:   newRunID,
+				Metadata: map[string]interface{}{
+					"host_id":           valRun.HostID,
+					"host_name":         hostName,
+					"patch_type":        valRun.PatchType,
+					"validation_run_id": validationID,
+				},
+			})
+		}
+	}
+
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"message":           msg,
 		"patch_run_id":      newRunID,
@@ -630,6 +684,33 @@ func (h *PatchingHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete patch run"})
 		return
 	}
+
+	// Emit patch_run_cancelled event.
+	if h.notify != nil {
+		if d := hostctx.DBFromContext(r.Context()); d != nil {
+			hostName := ""
+			if run.HostFriendlyName != nil && *run.HostFriendlyName != "" {
+				hostName = *run.HostFriendlyName
+			} else if run.HostHostname != nil && *run.HostHostname != "" {
+				hostName = *run.HostHostname
+			}
+			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+				Type:          "patch_run_cancelled",
+				Severity:      alerts.ResolveSeverity(r.Context(), d, "patch_run_cancelled", "informational"),
+				Title:         fmt.Sprintf("Patch Run Cancelled - %s", hostName),
+				Message:       fmt.Sprintf("Patch run cancelled on host %s (was %s).", hostName, run.Status),
+				ReferenceType: "patch_run",
+				ReferenceID:   id,
+				Metadata: map[string]interface{}{
+					"host_id":         run.HostID,
+					"host_name":       hostName,
+					"patch_type":      run.PatchType,
+					"previous_status": run.Status,
+				},
+			})
+		}
+	}
+
 	JSON(w, http.StatusOK, map[string]interface{}{"message": "Patch run deleted"})
 }
 

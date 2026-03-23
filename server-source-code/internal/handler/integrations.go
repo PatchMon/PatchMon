@@ -288,6 +288,29 @@ func (h *IntegrationsHandler) ReceiveDockerData(w http.ResponseWriter, r *http.R
 		}
 	}
 
+	// Emit container_image_update_available when new image updates are detected.
+	if h.notify != nil && result.UpdatesFound > 0 {
+		d := h.db.DB(r.Context())
+		tenantHost := hostctx.TenantHostKey(r.Context())
+		hostName := host.FriendlyName
+		if hostName == "" && host.Hostname != nil {
+			hostName = *host.Hostname
+		}
+		h.notify.EmitEvent(r.Context(), d, tenantHost, notifications.Event{
+			Type:          "container_image_update_available",
+			Severity:      "informational",
+			Title:         fmt.Sprintf("Docker Image Updates - %s", hostName),
+			Message:       fmt.Sprintf("%d Docker image update(s) detected on host \"%s\".", result.UpdatesFound, hostName),
+			ReferenceType: "host",
+			ReferenceID:   host.ID,
+			Metadata: map[string]interface{}{
+				"host_id":       host.ID,
+				"host_name":     hostName,
+				"updates_found": result.UpdatesFound,
+			},
+		})
+	}
+
 	JSON(w, http.StatusOK, dockerResponse{
 		Message:            "Docker data collected successfully",
 		ContainersReceived: result.ContainersReceived,

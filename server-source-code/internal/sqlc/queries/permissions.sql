@@ -10,9 +10,12 @@ INSERT INTO role_permissions (
     can_view_packages, can_manage_packages, can_view_users, can_manage_users,
     can_manage_superusers, can_view_reports, can_export_data, can_manage_settings,
     can_manage_notifications, can_view_notification_logs,
+    can_manage_patching, can_manage_compliance, can_manage_docker,
+    can_manage_alerts, can_manage_automation, can_use_remote_access,
     created_at, updated_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+    $16, $17, $18, $19, $20, $21,
     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 )
 ON CONFLICT (role) DO UPDATE SET
@@ -29,6 +32,12 @@ ON CONFLICT (role) DO UPDATE SET
     can_manage_settings = EXCLUDED.can_manage_settings,
     can_manage_notifications = EXCLUDED.can_manage_notifications,
     can_view_notification_logs = EXCLUDED.can_view_notification_logs,
+    can_manage_patching = EXCLUDED.can_manage_patching,
+    can_manage_compliance = EXCLUDED.can_manage_compliance,
+    can_manage_docker = EXCLUDED.can_manage_docker,
+    can_manage_alerts = EXCLUDED.can_manage_alerts,
+    can_manage_automation = EXCLUDED.can_manage_automation,
+    can_use_remote_access = EXCLUDED.can_use_remote_access,
     updated_at = CURRENT_TIMESTAMP
 RETURNING *;
 

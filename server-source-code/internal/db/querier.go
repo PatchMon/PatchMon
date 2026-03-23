@@ -200,6 +200,7 @@ type Querier interface {
 	GetPatchRunByID(ctx context.Context, id string) (GetPatchRunByIDRow, error)
 	GetPatchRunByIDSimple(ctx context.Context, id string) (PatchRun, error)
 	GetPendingConfig(ctx context.Context, hostID string) (HostPendingConfig, error)
+	GetPendingUpdateCountsPerHost(ctx context.Context) ([]GetPendingUpdateCountsPerHostRow, error)
 	// Returns WUA GUIDs that are still pending (needs_update=true, not yet installed) for a host.
 	// Used by the server to tell the agent which updates to install.
 	GetPendingWindowsUpdateGUIDs(ctx context.Context, hostID string) ([]*string, error)

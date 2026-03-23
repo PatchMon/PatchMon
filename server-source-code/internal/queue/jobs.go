@@ -49,6 +49,8 @@ const (
 	QueueComplianceScanCleanup   = "compliance-scan-cleanup"
 	QueueSSGUpdateCheck          = "ssg-update-check"
 	QueueScheduledReports        = "scheduled-reports"
+	TypeUpdateThresholdMonitor   = "update-threshold-monitor"
+	QueueUpdateThresholdMonitor  = "update-threshold-monitor"
 )
 
 // RunScanPayload is the payload for run_scan job.
@@ -153,6 +155,15 @@ func NewRunPatchRetryTask(p RunPatchPayload, taskID string) (*asynq.Task, error)
 		asynq.TaskID(taskID),
 	}
 	return asynq.NewTask(TypeRunPatch, payload, opts...), nil
+}
+
+// NewUpdateThresholdMonitorTask creates an update-threshold-monitor task.
+func NewUpdateThresholdMonitorTask(host string) (*asynq.Task, error) {
+	payload, err := json.Marshal(AutomationPayload{Host: host})
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TypeUpdateThresholdMonitor, payload, asynq.Queue(QueueUpdateThresholdMonitor), asynq.MaxRetry(2), asynq.Retention(AutomationRetention)), nil
 }
 
 // ReportNowPayload is the payload for report_now job.
