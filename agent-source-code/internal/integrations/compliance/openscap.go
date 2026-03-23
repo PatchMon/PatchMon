@@ -263,7 +263,7 @@ func (s *OpenSCAPScanner) GetScannerDetails() *models.ComplianceScannerDetails {
 			// Check if the correct content file exists despite old package version
 			// (e.g., installed via Ubuntu Security Guide or manual install)
 			osVersion := strings.ReplaceAll(s.osInfo.Version, ".", "")
-			if contentFile != "" && strings.Contains(filepath.Base(contentFile), osVersion) {
+			if contentFile != "" && osVersion != "" && strings.Contains(filepath.Base(contentFile), osVersion) {
 				// Correct content file found — package version is outdated but content is valid
 				ssgUpgradeMessage = fmt.Sprintf("ssg-base %s is installed (outdated), but correct content file %s is available.",
 					contentVersion, filepath.Base(contentFile))
@@ -276,7 +276,7 @@ func (s *OpenSCAPScanner) GetScannerDetails() *models.ComplianceScannerDetails {
 	} else if minVersion != "" && contentVersion == "" {
 		// Check if content file exists despite missing package (e.g., USG provides it)
 		osVersion := strings.ReplaceAll(s.osInfo.Version, ".", "")
-		if contentFile != "" && strings.Contains(filepath.Base(contentFile), osVersion) {
+		if contentFile != "" && osVersion != "" && strings.Contains(filepath.Base(contentFile), osVersion) {
 			ssgUpgradeMessage = fmt.Sprintf("ssg-base is not installed, but correct content file %s is available.",
 				filepath.Base(contentFile))
 		} else {
