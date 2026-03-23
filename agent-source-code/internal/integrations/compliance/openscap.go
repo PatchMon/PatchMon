@@ -260,14 +260,30 @@ func (s *OpenSCAPScanner) GetScannerDetails() *models.ComplianceScannerDetails {
 	ssgUpgradeMessage := ""
 	if minVersion != "" && contentVersion != "" {
 		if compareVersions(contentVersion, minVersion) < 0 {
-			ssgNeedsUpgrade = true
-			ssgUpgradeMessage = fmt.Sprintf("ssg-base %s is installed, but %s %s requires v%s+ for proper CIS/STIG content.",
-				contentVersion, s.osInfo.Name, s.osInfo.Version, minVersion)
+			// Check if the correct content file exists despite old package version
+			// (e.g., installed via Ubuntu Security Guide or manual install)
+			osVersion := strings.ReplaceAll(s.osInfo.Version, ".", "")
+			if contentFile != "" && strings.Contains(filepath.Base(contentFile), osVersion) {
+				// Correct content file found — package version is outdated but content is valid
+				ssgUpgradeMessage = fmt.Sprintf("ssg-base %s is installed (outdated), but correct content file %s is available.",
+					contentVersion, filepath.Base(contentFile))
+			} else {
+				ssgNeedsUpgrade = true
+				ssgUpgradeMessage = fmt.Sprintf("ssg-base %s is installed, but %s %s requires v%s+ for proper CIS/STIG content.",
+					contentVersion, s.osInfo.Name, s.osInfo.Version, minVersion)
+			}
 		}
 	} else if minVersion != "" && contentVersion == "" {
-		ssgNeedsUpgrade = true
-		ssgUpgradeMessage = fmt.Sprintf("ssg-base is not installed. %s %s requires ssg-base v%s+ for CIS/STIG scanning.",
-			s.osInfo.Name, s.osInfo.Version, minVersion)
+		// Check if content file exists despite missing package (e.g., USG provides it)
+		osVersion := strings.ReplaceAll(s.osInfo.Version, ".", "")
+		if contentFile != "" && strings.Contains(filepath.Base(contentFile), osVersion) {
+			ssgUpgradeMessage = fmt.Sprintf("ssg-base is not installed, but correct content file %s is available.",
+				filepath.Base(contentFile))
+		} else {
+			ssgNeedsUpgrade = true
+			ssgUpgradeMessage = fmt.Sprintf("ssg-base is not installed. %s %s requires ssg-base v%s+ for CIS/STIG scanning.",
+				s.osInfo.Name, s.osInfo.Version, minVersion)
+		}
 	}
 
 	// Check for content mismatch
@@ -278,11 +294,7 @@ func (s *OpenSCAPScanner) GetScannerDetails() *models.ComplianceScannerDetails {
 		baseName := filepath.Base(contentFile)
 		if !strings.Contains(baseName, osVersion) {
 			contentMismatch = true
-			if ssgNeedsUpgrade {
-				mismatchWarning = ssgUpgradeMessage
-			} else {
-				mismatchWarning = fmt.Sprintf("Content file %s may not match OS version %s.", baseName, s.osInfo.Version)
-			}
+			mismatchWarning = fmt.Sprintf("Content file %s may not match OS version %s.", baseName, s.osInfo.Version)
 		}
 	} else if contentFile == "" && baseOSName == "ubuntu" && s.osInfo.Version >= "24.04" {
 		contentMismatch = true
