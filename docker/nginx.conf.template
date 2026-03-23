@@ -28,6 +28,16 @@ server {
     # Prevent search engine indexing
     add_header X-Robots-Tag "noindex, nofollow, noarchive, nosnippet" always;
 
+    # Resolve real client IP when behind a reverse proxy (e.g., Traefik, Nginx, Caddy).
+    # Without this, $remote_addr contains the proxy's internal IP, causing
+    # X-Real-IP and X-Forwarded-For to be set incorrectly for the backend.
+    set_real_ip_from 10.0.0.0/8;
+    set_real_ip_from 172.16.0.0/12;
+    set_real_ip_from 192.168.0.0/16;
+    set_real_ip_from 100.64.0.0/10;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+
     # Bull Board proxy - must come before the root location to avoid conflicts
     location /bullboard {
         proxy_pass http://${BACKEND_HOST}:${BACKEND_PORT};
