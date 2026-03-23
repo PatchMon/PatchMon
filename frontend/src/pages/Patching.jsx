@@ -55,18 +55,25 @@ const Patching = () => {
 		? urlTab
 		: "overview";
 	const initialStatus = searchParams.get("status") || "";
+	const initialType = searchParams.get("type") || "";
 	const [activeTab, setActiveTab] = useState(initialTab);
 
-	// Sync tab only on actual URL navigation (not in-page tab clicks)
+	// Sync tab and filter state on actual URL navigation (not in-page tab clicks)
 	useEffect(() => {
 		const params = new URLSearchParams(location.search);
 		const tab = params.get("tab");
 		if (tab && ["overview", "runs", "policies"].includes(tab)) {
 			setActiveTab(tab);
 		}
+		const status = params.get("status") || "";
+		setRunsFilterStatus(status);
+		const type = params.get("type") || "";
+		setRunsFilterType(type);
+		setRunsPage(1);
 	}, [location.search]);
 
 	const [runsFilterStatus, setRunsFilterStatus] = useState(initialStatus);
+	const [runsFilterType, setRunsFilterType] = useState(initialType);
 	const [runsPage, setRunsPage] = useState(1);
 	const runsLimit = 25;
 	const queryClient = useQueryClient();
@@ -83,10 +90,11 @@ const Patching = () => {
 	});
 
 	const { data: runsData } = useQuery({
-		queryKey: ["patching-runs", runsFilterStatus, runsPage],
+		queryKey: ["patching-runs", runsFilterStatus, runsFilterType, runsPage],
 		queryFn: () =>
 			patchingAPI.getRuns({
 				...(runsFilterStatus ? { status: runsFilterStatus } : {}),
+				...(runsFilterType ? { patch_type: runsFilterType } : {}),
 				limit: runsLimit,
 				offset: (runsPage - 1) * runsLimit,
 			}),
@@ -347,6 +355,21 @@ const Patching = () => {
 							<option value="completed">Completed</option>
 							<option value="failed">Failed</option>
 							<option value="cancelled">Cancelled</option>
+						</select>
+						<span className="text-sm text-secondary-600 dark:text-secondary-400">
+							Type:
+						</span>
+						<select
+							value={runsFilterType}
+							onChange={(e) => {
+								setRunsFilterType(e.target.value);
+								setRunsPage(1);
+							}}
+							className="rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
+						>
+							<option value="">All</option>
+							<option value="patch_all">Patch All</option>
+							<option value="patch_package">Patch Package</option>
 						</select>
 						{selectedRunIds.size > 0 && (
 							<>

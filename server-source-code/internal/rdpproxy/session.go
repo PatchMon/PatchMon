@@ -5,52 +5,80 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 const (
-	sessionTimeout = 5 * time.Minute
+	// sessionIdleTimeout is how long a session can remain idle (no data flowing) before being killed.
+	sessionIdleTimeout = 30 * time.Minute
+	// DefaultMaxSessions is the default maximum number of concurrent RDP proxy sessions.
+	DefaultMaxSessions = 50
 )
+
+// ErrMaxSessionsReached is returned when the concurrent session limit is exceeded.
+var ErrMaxSessionsReached = errors.New("maximum concurrent RDP sessions reached")
 
 // Session holds an RDP proxy session: TCP listener bridged to agent WebSocket stream.
 type Session struct {
-	SessionID string
-	Port      int
-	Listener  net.Listener
-	AgentConn *websocket.Conn
-	ApiID     string
-	HostID    string
-	guacdConn net.Conn
-	mu        sync.Mutex
-	createdAt time.Time
-	cancel    context.CancelFunc
-	log       *slog.Logger
+	SessionID     string
+	Port          int
+	Listener      net.Listener
+	agentConn     *websocket.Conn
+	ApiID         string
+	HostID        string
+	guacdConn     net.Conn
+	mu            sync.Mutex
+	writeMu       sync.Mutex
+	lastActivity  atomic.Int64 // unix nano timestamp of last data activity
+	cancel        context.CancelFunc
+	log           *slog.Logger
+	removeFromMap func()
+	cleanupOnce   sync.Once
 }
 
 // Sessions manages RDP proxy sessions.
 type Sessions struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
-	log      *slog.Logger
+	mu          sync.RWMutex
+	sessions    map[string]*Session
+	log         *slog.Logger
+	maxSessions int
 }
 
 // NewSessions creates a new session store.
 func NewSessions(log *slog.Logger) *Sessions {
 	return &Sessions{
-		sessions: make(map[string]*Session),
-		log:      log,
+		sessions:    make(map[string]*Session),
+		log:         log,
+		maxSessions: DefaultMaxSessions,
 	}
 }
 
+// SetMaxSessions sets the maximum number of concurrent sessions. Zero or negative means unlimited.
+func (s *Sessions) SetMaxSessions(max int) {
+	s.mu.Lock()
+	s.maxSessions = max
+	s.mu.Unlock()
+}
+
 // Create creates a new RDP proxy session. It starts a TCP listener and returns the session ID and port.
-// The caller must send rdp_proxy to the agent. Session is ready when guacd connects to the listener.
+// The caller must send rdp_proxy to the agent via SendToAgentConn. Session is ready when guacd connects.
+// Returns ErrMaxSessionsReached if the concurrent session limit is exceeded.
 func (s *Sessions) Create(ctx context.Context, agentConn *websocket.Conn, apiID, hostID string) (sessionID string, port int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.maxSessions > 0 && len(s.sessions) >= s.maxSessions {
+		return "", 0, ErrMaxSessionsReached
+	}
+
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", 0, err
@@ -65,26 +93,48 @@ func (s *Sessions) Create(ctx context.Context, agentConn *websocket.Conn, apiID,
 	port = addr.Port
 
 	sessCtx, cancel := context.WithCancel(context.Background())
+	sid := sessionID // capture for closure
 	sess := &Session{
 		SessionID: sessionID,
 		Port:      port,
 		Listener:  listener,
-		AgentConn: agentConn,
+		agentConn: agentConn,
 		ApiID:     apiID,
 		HostID:    hostID,
-		createdAt: time.Now(),
 		cancel:    cancel,
 		log:       s.log,
+		removeFromMap: func() {
+			s.mu.Lock()
+			delete(s.sessions, sid)
+			s.mu.Unlock()
+		},
 	}
+	sess.touchActivity()
 
-	s.mu.Lock()
 	s.sessions[sessionID] = sess
-	s.mu.Unlock()
+
+	if s.log != nil {
+		s.log.Info("rdp proxy session created", "session_id", sessionID, "port", port, "host_id", hostID)
+	}
 
 	go sess.acceptLoop(sessCtx)
 	go sess.timeoutLoop(sessCtx)
 
 	return sessionID, port, nil
+}
+
+// SendToAgentConn sends a message to the agent connection for the given session,
+// using the session's write mutex to prevent concurrent WebSocket writes.
+func (s *Sessions) SendToAgentConn(sessionID string, msg any) error {
+	s.mu.RLock()
+	sess, ok := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if !ok {
+		return errors.New("session not found")
+	}
+	sess.writeMu.Lock()
+	defer sess.writeMu.Unlock()
+	return sess.agentConn.WriteJSON(msg)
 }
 
 func (s *Session) acceptLoop(ctx context.Context) {
@@ -123,6 +173,7 @@ func (s *Session) bridgeGuacdToAgent(conn net.Conn) {
 	for {
 		n, err := conn.Read(buf)
 		if n > 0 {
+			s.touchActivity()
 			data := base64.StdEncoding.EncodeToString(buf[:n])
 			if err := s.sendToAgent("rdp_proxy_input", data); err != nil {
 				if s.log != nil {
@@ -148,6 +199,7 @@ func (s *Session) bridgeAgentToGuacd(data string) {
 		}
 		return
 	}
+	s.touchActivity()
 	s.mu.Lock()
 	conn := s.guacdConn
 	s.mu.Unlock()
@@ -155,15 +207,17 @@ func (s *Session) bridgeAgentToGuacd(data string) {
 		if _, err := conn.Write(decoded); err != nil && s.log != nil {
 			s.log.Debug("rdp proxy write to guacd failed", "session_id", s.SessionID, "error", err)
 		}
+	} else if s.log != nil {
+		s.log.Warn("rdp proxy data dropped, guacd connection is nil", "session_id", s.SessionID)
 	}
 }
 
 func (s *Session) sendToAgent(msgType string, data string) error {
 	s.mu.Lock()
-	conn := s.AgentConn
+	conn := s.agentConn
 	s.mu.Unlock()
 	if conn == nil {
-		return nil
+		return errors.New("agent connection is nil")
 	}
 	msg := map[string]interface{}{
 		"type":       msgType,
@@ -172,7 +226,15 @@ func (s *Session) sendToAgent(msgType string, data string) error {
 	if data != "" {
 		msg["data"] = data
 	}
-	return conn.WriteJSON(msg)
+	s.writeMu.Lock()
+	err := conn.WriteJSON(msg)
+	s.writeMu.Unlock()
+	return err
+}
+
+// touchActivity updates the last activity timestamp.
+func (s *Session) touchActivity() {
+	s.lastActivity.Store(time.Now().UnixNano())
 }
 
 func (s *Session) closeGuacdConn() {
@@ -192,9 +254,10 @@ func (s *Session) timeoutLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if time.Since(s.createdAt) > sessionTimeout {
+			last := time.Unix(0, s.lastActivity.Load())
+			if time.Since(last) > sessionIdleTimeout {
 				if s.log != nil {
-					s.log.Info("rdp proxy session timeout", "session_id", s.SessionID)
+					s.log.Info("rdp proxy session idle timeout", "session_id", s.SessionID)
 				}
 				s.cleanup()
 				return
@@ -204,13 +267,18 @@ func (s *Session) timeoutLoop(ctx context.Context) {
 }
 
 func (s *Session) cleanup() {
-	if s.cancel != nil {
-		s.cancel()
-	}
-	if s.Listener != nil {
-		_ = s.Listener.Close()
-	}
-	s.closeGuacdConn()
+	s.cleanupOnce.Do(func() {
+		if s.removeFromMap != nil {
+			s.removeFromMap()
+		}
+		if s.cancel != nil {
+			s.cancel()
+		}
+		if s.Listener != nil {
+			_ = s.Listener.Close()
+		}
+		s.closeGuacdConn()
+	})
 }
 
 // OnAgentData is called when the agent sends rdp_proxy_data. It forwards to the guacd connection.
@@ -226,24 +294,19 @@ func (s *Sessions) OnAgentData(apiID string, sessionID string, data string) {
 
 // OnAgentConnected is called when the agent sends rdp_proxy_connected. No-op for now; session is ready.
 func (s *Sessions) OnAgentConnected(apiID string, sessionID string) {
-	// Session already created; agent has connected to localhost:3389
+	if s.log != nil {
+		s.log.Debug("rdp proxy agent connected", "session_id", sessionID, "api_id", apiID)
+	}
 }
 
 // OnAgentClosed is called when the agent sends rdp_proxy_closed or rdp_proxy_error.
 func (s *Sessions) OnAgentClosed(apiID string, sessionID string) {
-	s.mu.Lock()
+	s.mu.RLock()
 	sess, ok := s.sessions[sessionID]
+	s.mu.RUnlock()
 	if ok && sess.ApiID == apiID {
-		delete(s.sessions, sessionID)
-		if sess.cancel != nil {
-			sess.cancel()
-		}
-		if sess.Listener != nil {
-			_ = sess.Listener.Close()
-		}
-		sess.closeGuacdConn()
+		sess.cleanup()
 	}
-	s.mu.Unlock()
 }
 
 // Get returns the session and port for a session ID. Used by DoConnect to get proxy port.
@@ -259,25 +322,30 @@ func (s *Sessions) Get(sessionID string) (port int, ok bool) {
 
 // Delete removes a session (e.g. when ticket is consumed and tunnel is done).
 func (s *Sessions) Delete(sessionID string) {
-	s.mu.Lock()
+	s.mu.RLock()
 	sess, ok := s.sessions[sessionID]
+	s.mu.RUnlock()
 	if ok {
-		delete(s.sessions, sessionID)
-		if sess.cancel != nil {
-			sess.cancel()
-		}
-		if sess.Listener != nil {
-			_ = sess.Listener.Close()
-		}
-		sess.closeGuacdConn()
+		sess.cleanup()
 	}
-	s.mu.Unlock()
 }
 
 // SendDisconnect tells the agent to disconnect the RDP proxy.
+// If the session is already removed, the write is skipped; the agent will
+// clean up via its own timeout.
 func (s *Sessions) SendDisconnect(agentConn *websocket.Conn, sessionID string) {
-	_ = agentConn.WriteJSON(map[string]interface{}{
+	s.mu.RLock()
+	sess, ok := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if !ok {
+		return
+	}
+
+	msg := map[string]interface{}{
 		"type":       "rdp_proxy_disconnect",
 		"session_id": sessionID,
-	})
+	}
+	sess.writeMu.Lock()
+	_ = agentConn.WriteJSON(msg)
+	sess.writeMu.Unlock()
 }

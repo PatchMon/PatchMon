@@ -32,6 +32,7 @@ type RDPHandler struct {
 	permissions    *store.PermissionsStore
 	registry       *agentregistry.Registry
 	guacdAddress   string
+	allowedOrigins []string // parsed from CORS_ORIGIN for WebSocket origin validation
 	log            *slog.Logger
 	db             database.DBProvider
 	notify         *notifications.Emitter
@@ -46,6 +47,7 @@ func NewRDPHandler(
 	permissions *store.PermissionsStore,
 	registry *agentregistry.Registry,
 	guacdAddress string,
+	corsOrigin string,
 	log *slog.Logger,
 	db database.DBProvider,
 	notify *notifications.Emitter,
@@ -58,10 +60,36 @@ func NewRDPHandler(
 		permissions:    permissions,
 		registry:       registry,
 		guacdAddress:   guacdAddress,
+		allowedOrigins: parseAllowedOrigins(corsOrigin),
 		log:            log,
 		db:             db,
 		notify:         notify,
 	}
+}
+
+// parseAllowedOrigins splits the CORS_ORIGIN config value into individual origins.
+func parseAllowedOrigins(corsOrigin string) []string {
+	var origins []string
+	for _, part := range strings.Split(corsOrigin, ",") {
+		if s := strings.TrimSpace(part); s != "" {
+			origins = append(origins, s)
+		}
+	}
+	return origins
+}
+
+// isOriginAllowed checks whether the given Origin header value matches configured CORS origins.
+func (h *RDPHandler) isOriginAllowed(origin string) bool {
+	if origin == "" {
+		// Non-browser clients (agents, curl) do not send Origin; allow them.
+		return true
+	}
+	for _, allowed := range h.allowedOrigins {
+		if allowed == "*" || allowed == origin {
+			return true
+		}
+	}
+	return false
 }
 
 // ServeCreateTicket handles POST /auth/rdp-ticket.
@@ -76,6 +104,8 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 		HostID   string `json:"hostId"`
 		Username string `json:"username"`
 		Password string `json:"password"`
+		Width    int    `json:"width,omitempty"`
+		Height   int    `json:"height,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
@@ -84,6 +114,21 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 	if req.HostID == "" {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "hostId is required"})
 		return
+	}
+
+	// Validate and clamp requested screen dimensions.
+	reqWidth, reqHeight := req.Width, req.Height
+	if reqWidth < 320 {
+		reqWidth = 1024
+	}
+	if reqHeight < 480 {
+		reqHeight = 768
+	}
+	if reqWidth > 8192 {
+		reqWidth = 8192
+	}
+	if reqHeight > 8192 {
+		reqHeight = 8192
 	}
 
 	user, err := h.users.GetByID(r.Context(), userID)
@@ -126,13 +171,17 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 
 	sessionID, port, err := h.rdpSessions.Create(r.Context(), agentConn, host.ApiID, host.ID)
 	if err != nil {
+		if errors.Is(err, rdpproxy.ErrMaxSessionsReached) {
+			JSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Too many concurrent RDP sessions, please try again later"})
+			return
+		}
 		h.log.Error("rdp proxy session create failed", "host_id", host.ID, "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create RDP proxy session"})
 		return
 	}
 
-	// Send rdp_proxy to agent
-	if err := agentConn.WriteJSON(map[string]interface{}{
+	// Send rdp_proxy to agent via the session's write mutex to avoid data races.
+	if err := h.rdpSessions.SendToAgentConn(sessionID, map[string]interface{}{
 		"type":       "rdp_proxy",
 		"session_id": sessionID,
 		"host":       "localhost",
@@ -144,7 +193,7 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ticket, err := h.rdpTicketStore.CreateTicket(r.Context(), userID, host.ID, sessionID, port, req.Username, req.Password)
+	ticket, err := h.rdpTicketStore.CreateTicket(r.Context(), userID, host.ID, sessionID, port, req.Username, req.Password, reqWidth, reqHeight)
 	if err != nil {
 		h.rdpSessions.Delete(sessionID)
 		h.rdpSessions.SendDisconnect(agentConn, sessionID)
@@ -178,8 +227,8 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"ticket":             ticket,
 		"websocketTunnelUrl": "/api/v1/rdp/websocket-tunnel",
-		"width":              1024,
-		"height":             768,
+		"width":              reqWidth,
+		"height":             reqHeight,
 	})
 }
 
@@ -201,9 +250,11 @@ func (h *RDPHandler) HandleRDPProxyMessage(apiID string, raw []byte) {
 		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(raw, &msg); err != nil {
+		h.log.Warn("rdp proxy message unmarshal error", "api_id", apiID, "error", err)
 		return
 	}
 	if msg.Session == "" {
+		h.log.Warn("rdp proxy message with empty session ID", "api_id", apiID, "type", msg.Type)
 		return
 	}
 	switch msg.Type {
@@ -217,70 +268,113 @@ func (h *RDPHandler) HandleRDPProxyMessage(apiID string, raw []byte) {
 }
 
 // WebsocketTunnelHandler returns an http.Handler for the Guacamole WebSocket tunnel.
+// It wraps the guac WebSocket server with origin validation to prevent cross-origin hijacking.
 func (h *RDPHandler) WebsocketTunnelHandler() http.Handler {
-	doConnect := func(r *http.Request) (guac.Tunnel, error) {
-		ticket := r.URL.Query().Get("ticket")
-		if ticket == "" {
-			return nil, ErrRDPTicketRequired
-		}
+	guacWSHandler := guac.NewWebsocketServer(h.doGuacConnect)
 
-		data, err := h.rdpTicketStore.ConsumeTicket(r.Context(), ticket)
-		if err != nil {
-			h.log.Info("rdp tunnel invalid ticket", "error", err)
-			return nil, ErrRDPTicketRequired
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Validate Origin header before handing off to guac's WebSocket upgrader.
+		// The guac library unconditionally sets CheckOrigin to return true, so we
+		// enforce origin policy here at the HTTP layer.
+		origin := r.Header.Get("Origin")
+		if !h.isOriginAllowed(origin) {
+			h.log.Info("rdp tunnel origin rejected", "origin", origin)
+			http.Error(w, "Forbidden: origin not allowed", http.StatusForbidden)
+			return
 		}
+		guacWSHandler.ServeHTTP(w, r)
+	})
+}
 
-		// Verify session still exists
-		port, ok := h.rdpSessions.Get(data.SessionID)
-		if !ok {
-			h.log.Info("rdp tunnel session not found", "session_id", data.SessionID)
-			return nil, ErrRDPTicketRequired
-		}
-
-		// Connect to guacd
-		conn, err := net.Dial("tcp", h.guacdAddress)
-		if err != nil {
-			h.log.Error("rdp tunnel guacd connect failed", "addr", h.guacdAddress, "error", err)
-			return nil, err
-		}
-
-		stream := guac.NewStream(conn, guac.SocketTimeout)
-		config := guac.NewGuacamoleConfiguration()
-		config.Protocol = "rdp"
-		config.Parameters = map[string]string{
-			"hostname": "127.0.0.1",
-			"port":     strconv.Itoa(port),
-			"username": data.Username,
-			"password": data.Password,
-			"security": "nla",
-		}
-		config.OptimalScreenWidth = 1024
-		config.OptimalScreenHeight = 768
-
-		// Override from query params
-		q := r.URL.Query()
-		if w := q.Get("width"); w != "" {
-			if n, err := strconv.Atoi(w); err == nil && n > 0 {
-				config.OptimalScreenWidth = n
-			}
-		}
-		if ht := q.Get("height"); ht != "" {
-			if n, err := strconv.Atoi(ht); err == nil && n > 0 {
-				config.OptimalScreenHeight = n
-			}
-		}
-
-		if err := stream.Handshake(config); err != nil {
-			_ = conn.Close()
-			h.log.Error("rdp tunnel guacd handshake failed", "error", err)
-			return nil, err
-		}
-
-		// Clean up session when tunnel closes (handled by caller)
-		return guac.NewSimpleTunnel(stream), nil
+// doGuacConnect is the guac.DoConnect callback for the WebSocket tunnel.
+func (h *RDPHandler) doGuacConnect(r *http.Request) (guac.Tunnel, error) {
+	ticket := r.URL.Query().Get("ticket")
+	if ticket == "" {
+		return nil, ErrRDPTicketRequired
 	}
 
-	return guac.NewWebsocketServer(doConnect)
+	data, err := h.rdpTicketStore.ConsumeTicket(r.Context(), ticket)
+	if err != nil {
+		h.log.Info("rdp tunnel invalid ticket", "error", err)
+		return nil, ErrRDPTicketRequired
+	}
+
+	// Verify the user who created this ticket is still active.
+	// This closes the window where a revoked/deactivated user could use
+	// a previously-issued ticket that has not yet expired.
+	user, err := h.users.GetByID(r.Context(), data.UserID)
+	if err != nil || user == nil || !user.IsActive {
+		h.log.Info("rdp tunnel user revoked or inactive", "user_id", data.UserID)
+		return nil, ErrRDPTicketRequired
+	}
+
+	// Verify session still exists
+	port, ok := h.rdpSessions.Get(data.SessionID)
+	if !ok {
+		h.log.Info("rdp tunnel session not found", "session_id", data.SessionID)
+		return nil, ErrRDPTicketRequired
+	}
+
+	// Connect to guacd
+	conn, err := net.Dial("tcp", h.guacdAddress)
+	if err != nil {
+		h.log.Error("rdp tunnel guacd connect failed", "addr", h.guacdAddress, "error", err)
+		return nil, err
+	}
+
+	stream := guac.NewStream(conn, guac.SocketTimeout)
+	config := guac.NewGuacamoleConfiguration()
+	config.Protocol = "rdp"
+	config.Parameters = map[string]string{
+		"hostname": "127.0.0.1",
+		"port":     strconv.Itoa(port),
+		"username": data.Username,
+		"password": data.Password,
+		"security": "nla",
+	}
+	// Resolve screen dimensions: ticket data > query params > defaults.
+	screenW, screenH := 1024, 768
+	if data.Width > 0 {
+		screenW = data.Width
+	}
+	if data.Height > 0 {
+		screenH = data.Height
+	}
+	q := r.URL.Query()
+	if w := q.Get("width"); w != "" {
+		if n, err := strconv.Atoi(w); err == nil && n > 0 {
+			screenW = n
+		}
+	}
+	if ht := q.Get("height"); ht != "" {
+		if n, err := strconv.Atoi(ht); err == nil && n > 0 {
+			screenH = n
+		}
+	}
+	// Clamp to prevent resource exhaustion on guacd and reject tiny values.
+	if screenW < 320 {
+		screenW = 320
+	}
+	if screenH < 240 {
+		screenH = 240
+	}
+	if screenW > 8192 {
+		screenW = 8192
+	}
+	if screenH > 8192 {
+		screenH = 8192
+	}
+	config.OptimalScreenWidth = screenW
+	config.OptimalScreenHeight = screenH
+
+	if err := stream.Handshake(config); err != nil {
+		_ = conn.Close()
+		h.log.Error("rdp tunnel guacd handshake failed", "error", err)
+		return nil, err
+	}
+
+	// Clean up session when tunnel closes (handled by caller)
+	return guac.NewSimpleTunnel(stream), nil
 }
 
 // WebsocketTunnelHandlerWithQuery builds the WebSocket URL with ticket and params.

@@ -2,9 +2,11 @@ package queue
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/alerts"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
@@ -124,12 +126,56 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	return mux
 }
 
+// minutesToCron converts an interval in minutes to a cron expression.
+// For intervals that divide evenly into 60, it uses */N syntax.
+// For other intervals, it falls back to the most frequent safe schedule.
+func minutesToCron(minutes int) string {
+	if minutes <= 0 {
+		minutes = 1
+	}
+	if minutes >= 60 {
+		hours := minutes / 60
+		if hours >= 24 {
+			return fmt.Sprintf("0 */%d * * *", 24)
+		}
+		return fmt.Sprintf("0 */%d * * *", hours)
+	}
+	if 60%minutes == 0 {
+		return fmt.Sprintf("*/%d * * * *", minutes)
+	}
+	// For non-divisor intervals, use the nearest lower divisor
+	for _, d := range []int{30, 20, 15, 10, 5, 3, 2, 1} {
+		if d <= minutes {
+			return fmt.Sprintf("*/%d * * * *", d)
+		}
+	}
+	return "* * * * *"
+}
+
 // NewScheduler creates a scheduler with periodic tasks registered.
-func NewScheduler(opts asynq.RedisClientOpt, log *slog.Logger) (*asynq.Scheduler, error) {
+// If db is non-nil, check intervals for periodic alert monitors are read from the
+// alert_config table. Changes to the interval take effect on the next server restart.
+func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) (*asynq.Scheduler, error) {
 	scheduler := asynq.NewScheduler(opts, nil)
 
+	// Resolve configurable intervals from alert_config, falling back to defaults.
+	ctx := context.Background()
+	hostDownInterval := 5   // default: every 5 minutes
+	thresholdInterval := 30 // default: every 30 minutes
+	if db != nil {
+		hostDownInterval = alerts.CheckIntervalMinutes(ctx, db, "host_down", hostDownInterval)
+		// Both threshold types share a single scheduler entry; use the smaller configured value.
+		secInterval := alerts.CheckIntervalMinutes(ctx, db, "host_security_updates_exceeded", thresholdInterval)
+		pendInterval := alerts.CheckIntervalMinutes(ctx, db, "host_pending_updates_exceeded", thresholdInterval)
+		if secInterval < pendInterval {
+			thresholdInterval = secInterval
+		} else {
+			thresholdInterval = pendInterval
+		}
+	}
+
 	hostStatusTask := asynq.NewTask(TypeHostStatusMonitor, nil)
-	if _, err := scheduler.Register("*/5 * * * *", hostStatusTask, asynq.Queue(QueueHostStatus), asynq.Retention(AutomationRetention)); err != nil {
+	if _, err := scheduler.Register(minutesToCron(hostDownInterval), hostStatusTask, asynq.Queue(QueueHostStatus), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 
@@ -179,7 +225,7 @@ func NewScheduler(opts asynq.RedisClientOpt, log *slog.Logger) (*asynq.Scheduler
 	}
 
 	updateThresholdTask := asynq.NewTask(TypeUpdateThresholdMonitor, nil)
-	if _, err := scheduler.Register("*/30 * * * *", updateThresholdTask, asynq.Queue(QueueUpdateThresholdMonitor), asynq.Retention(AutomationRetention)); err != nil {
+	if _, err := scheduler.Register(minutesToCron(thresholdInterval), updateThresholdTask, asynq.Queue(QueueUpdateThresholdMonitor), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 
@@ -188,6 +234,9 @@ func NewScheduler(opts asynq.RedisClientOpt, log *slog.Logger) (*asynq.Scheduler
 		return nil, err
 	}
 
-	log.Info("scheduler: registered all automation tasks")
+	log.Info("scheduler: registered all automation tasks",
+		"host_down_interval_min", hostDownInterval,
+		"update_threshold_interval_min", thresholdInterval,
+	)
 	return scheduler, nil
 }

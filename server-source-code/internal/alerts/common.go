@@ -33,6 +33,19 @@ func DefaultSeverity(severity, fallback string) string {
 	return fallback
 }
 
+// CheckIntervalMinutes returns the configured check interval for an alert type, or the fallback.
+// This is used by the scheduler to dynamically set cron schedules for periodic alert checks.
+func CheckIntervalMinutes(ctx context.Context, db *database.DB, alertType string, fallback int) int {
+	cfg, err := GetConfigForType(ctx, db, alertType)
+	if err != nil || cfg == nil || cfg.CheckIntervalMinutes == nil {
+		return fallback
+	}
+	if *cfg.CheckIntervalMinutes < 1 {
+		return fallback
+	}
+	return *cfg.CheckIntervalMinutes
+}
+
 // ResolveSeverity looks up the default_severity for an event type from alert_config,
 // falling back to the provided default if not found or not enabled.
 func ResolveSeverity(ctx context.Context, db *database.DB, eventType, fallback string) string {

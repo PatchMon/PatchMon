@@ -256,6 +256,14 @@ func (s *ComplianceStore) SubmitScan(ctx context.Context, hostID string, opensca
 		if err := q.DeleteRunningComplianceScansByHost(ctx, hostID); err != nil {
 			return nil, err
 		}
+		// Delete previous completed scan for this host+profile to prevent duplicates.
+		// Each new submission replaces the prior completed scan entirely.
+		if err := q.DeletePreviousCompletedScansByHostAndProfile(ctx, db.DeletePreviousCompletedScansByHostAndProfileParams{
+			HostID:    hostID,
+			ProfileID: profile.ID,
+		}); err != nil {
+			return nil, err
+		}
 		// Create scan
 		startedAt := time.Now()
 		if scanData.StartedAt != nil {

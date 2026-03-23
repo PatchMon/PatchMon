@@ -177,6 +177,8 @@ func alertConfigToMap(c *models.AlertConfig, autoAssignUser *store.UserRef) map[
 		"escalation_enabled":      c.EscalationEnabled,
 		"escalation_after_hours":  c.EscalationAfterHours,
 		"alert_delay_seconds":     c.AlertDelaySeconds,
+		"category":                c.Category,
+		"check_interval_minutes":  c.CheckIntervalMinutes,
 		"created_at":              c.CreatedAt,
 		"updated_at":              c.UpdatedAt,
 	}
@@ -275,6 +277,16 @@ func applyAlertConfigUpdate(cfg *models.AlertConfig, req map[string]interface{})
 	if req["alert_delay_seconds"] == nil {
 		cfg.AlertDelaySeconds = nil
 	}
+	if v, ok := req["check_interval_minutes"].(float64); ok {
+		n := int(v)
+		cfg.CheckIntervalMinutes = &n
+	}
+	if v, ok := req["check_interval_minutes"].(int); ok {
+		cfg.CheckIntervalMinutes = &v
+	}
+	if req["check_interval_minutes"] == nil {
+		cfg.CheckIntervalMinutes = nil
+	}
 	if v, ok := req["auto_assign_conditions"].(map[string]interface{}); ok {
 		b, _ := json.Marshal(v)
 		cfg.AutoAssignConditions = b
@@ -282,5 +294,8 @@ func applyAlertConfigUpdate(cfg *models.AlertConfig, req map[string]interface{})
 	if v, ok := req["metadata"].(map[string]interface{}); ok {
 		b, _ := json.Marshal(v)
 		cfg.Metadata = b
+	}
+	if v, ok := req["category"].(string); ok {
+		cfg.Category = v
 	}
 }

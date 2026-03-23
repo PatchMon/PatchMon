@@ -33,7 +33,7 @@ import {
 const EVENT_TYPES = [
 	{ value: "*", label: "All events" },
 	{ value: "host_down", label: "Host down" },
-	{ value: "host_recovered", label: "Host recovered" },
+	{ value: "host_recovered", label: "Host recovered / up" },
 	{ value: "host_enrolled", label: "Host enrolled" },
 	{ value: "host_deleted", label: "Host deleted" },
 	{ value: "server_update", label: "Server update" },

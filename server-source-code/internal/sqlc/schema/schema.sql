@@ -542,6 +542,11 @@ CREATE TABLE IF NOT EXISTS compliance_scans (
     updated_at TIMESTAMP(3) NOT NULL
 );
 
+-- Only one completed scan per host+profile at a time (newer replaces older)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_compliance_scans_host_profile_completed
+ON compliance_scans (host_id, profile_id)
+WHERE status = 'completed';
+
 -- compliance_rules
 CREATE TABLE IF NOT EXISTS compliance_rules (
     id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
@@ -684,6 +689,8 @@ CREATE TABLE IF NOT EXISTS alert_config (
     escalation_after_hours INTEGER,
     alert_delay_seconds INTEGER,
     metadata JSONB,
+    category TEXT NOT NULL DEFAULT 'general',
+    check_interval_minutes INTEGER,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP(3) NOT NULL
 );

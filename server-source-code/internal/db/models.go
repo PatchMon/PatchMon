@@ -51,6 +51,8 @@ type AlertConfig struct {
 	EscalationAfterHours *int32           `json:"escalation_after_hours"`
 	AlertDelaySeconds    *int32           `json:"alert_delay_seconds"`
 	Metadata             []byte           `json:"metadata"`
+	Category             string           `json:"category"`
+	CheckIntervalMinutes *int32           `json:"check_interval_minutes"`
 	CreatedAt            pgtype.Timestamp `json:"created_at"`
 	UpdatedAt            pgtype.Timestamp `json:"updated_at"`
 }

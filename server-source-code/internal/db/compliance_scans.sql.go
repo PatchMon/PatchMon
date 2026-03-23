@@ -114,6 +114,21 @@ func (q *Queries) CreateComplianceScan(ctx context.Context, arg CreateCompliance
 	return i, err
 }
 
+const deletePreviousCompletedScansByHostAndProfile = `-- name: DeletePreviousCompletedScansByHostAndProfile :exec
+DELETE FROM compliance_scans
+WHERE host_id = $1 AND profile_id = $2 AND status = 'completed'
+`
+
+type DeletePreviousCompletedScansByHostAndProfileParams struct {
+	HostID    string `json:"host_id"`
+	ProfileID string `json:"profile_id"`
+}
+
+func (q *Queries) DeletePreviousCompletedScansByHostAndProfile(ctx context.Context, arg DeletePreviousCompletedScansByHostAndProfileParams) error {
+	_, err := q.db.Exec(ctx, deletePreviousCompletedScansByHostAndProfile, arg.HostID, arg.ProfileID)
+	return err
+}
+
 const deleteRunningComplianceScansByHost = `-- name: DeleteRunningComplianceScansByHost :exec
 DELETE FROM compliance_scans
 WHERE host_id = $1 AND status = 'running'

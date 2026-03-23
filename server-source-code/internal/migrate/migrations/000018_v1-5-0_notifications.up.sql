@@ -33,7 +33,18 @@ CREATE TABLE IF NOT EXISTS notification_routes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_notification_routes_destination ON notification_routes(destination_id);
-CREATE INDEX IF NOT EXISTS idx_notification_routes_event ON notification_routes(event_type) WHERE enabled = true;
+
+-- Conditional index: event_type exists when running fresh, but may have been
+-- renamed to event_types by migration 020 if the DB was previously migrated.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'notification_routes' AND column_name = 'event_type'
+    ) THEN
+        CREATE INDEX IF NOT EXISTS idx_notification_routes_event ON notification_routes(event_type) WHERE enabled = true;
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS notification_delivery_log (
     id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,

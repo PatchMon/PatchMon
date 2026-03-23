@@ -133,12 +133,16 @@ const Compliance = () => {
 
 	const [scanResultsFilters, setScanResultsFilters] = useState(null);
 
-	// Sync tab only on actual URL navigation (not in-page tab clicks)
+	// Sync tab and filters on actual URL navigation (not in-page tab clicks)
 	useEffect(() => {
 		const params = new URLSearchParams(location.search);
 		const tab = params.get("tab");
 		if (tab && COMPLIANCE_TABS.some((t) => t.id === tab)) {
 			setActiveTab(tab);
+		}
+		const profileType = params.get("profile_type");
+		if (profileType && ["openscap", "docker-bench"].includes(profileType)) {
+			setProfileTypeFilter(profileType);
 		}
 	}, [location.search]);
 
@@ -161,7 +165,12 @@ const Compliance = () => {
 	const [bulkScanResult, setBulkScanResult] = useState(null);
 	const [pendingScans, setPendingScans] = useState([]); // Hosts where scan was triggered but not yet in database
 	const prevActiveScanIds = useRef(new Set());
-	const [profileTypeFilter, _setProfileTypeFilter] = useState("all"); // "all", "openscap", "docker-bench"
+	const [profileTypeFilter, setProfileTypeFilter] = useState(() => {
+		const urlProfileType = searchParams.get("profile_type");
+		if (urlProfileType && ["openscap", "docker-bench"].includes(urlProfileType))
+			return urlProfileType;
+		return "all";
+	}); // "all", "openscap", "docker-bench"
 	const [tableFilter, setTableFilter] = useState(null); // null = compliance-enabled only, 'never-scanned' = only never-scanned hosts
 
 	// Fetch active/running scans first so we can use it for dashboard refetch rate

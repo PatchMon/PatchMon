@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_compliance_scans_host_profile_completed;

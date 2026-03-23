@@ -187,11 +187,11 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	var sshTerminalWSHandler *handler.SshTerminalWSHandler
 	var rdpHandler *handler.RDPHandler
 	if rdb != nil && cfg.GuacdAddress != "" {
-		rdpTicketStore := store.NewRDPTicketStore(redisResolver)
+		rdpTicketStore := store.NewRDPTicketStore(redisResolver, enc)
 		rdpSessions := rdpproxy.NewSessions(log)
 		rdpHandler = handler.NewRDPHandler(
 			rdpTicketStore, rdpSessions, hostsStore, usersStore, permissionsStore,
-			registry, cfg.GuacdAddress, log, dbProvider, notifyEmit,
+			registry, cfg.GuacdAddress, resolved.CORSOrigin, log, dbProvider, notifyEmit,
 		)
 	}
 	var agentWsHandler *handler.AgentWSHandler

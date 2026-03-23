@@ -133,7 +133,7 @@ func main() {
 	}()
 	slog.Info("queue server started")
 
-	scheduler, err := queue.NewScheduler(queueOpts, slog)
+	scheduler, err := queue.NewScheduler(queueOpts, db, slog)
 	if err != nil {
 		slog.Error("scheduler init", "error", err)
 	} else {

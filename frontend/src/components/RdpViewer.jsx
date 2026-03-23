@@ -8,7 +8,7 @@
  */
 
 import Guacamole from "guacamole-common-js";
-import { Maximize2, Minimize2, Monitor, RefreshCw } from "lucide-react";
+import { Maximize2, Minimize2, Monitor, Power, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { rdpAPI } from "../utils/api";
 
@@ -21,6 +21,8 @@ const RdpViewer = ({ host, isOpen }) => {
 	const tunnelRef = useRef(null);
 	const mouseRef = useRef(null);
 	const keyboardRef = useRef(null);
+	const resizeObserverRef = useRef(null);
+	const pasteHandlerRef = useRef(null);
 
 	const [isConnecting, setIsConnecting] = useState(false);
 	const [isConnected, setIsConnected] = useState(false);
@@ -31,7 +33,36 @@ const RdpViewer = ({ host, isOpen }) => {
 		password: "",
 	});
 
+	/** Scale the Guacamole display to fit the container */
+	const scaleDisplay = useCallback(() => {
+		const client = clientRef.current;
+		const container = displayRef.current;
+		if (!client || !container) return;
+
+		const display = client.getDisplay();
+		const displayWidth = display.getWidth();
+		const displayHeight = display.getHeight();
+		if (!displayWidth || !displayHeight) return;
+
+		const containerWidth = container.offsetWidth;
+		const containerHeight = container.offsetHeight;
+		const scale = Math.min(
+			containerWidth / displayWidth,
+			containerHeight / displayHeight,
+		);
+
+		display.scale(scale);
+	}, []);
+
 	const disconnect = useCallback(() => {
+		if (pasteHandlerRef.current && displayRef.current) {
+			displayRef.current.removeEventListener("paste", pasteHandlerRef.current);
+			pasteHandlerRef.current = null;
+		}
+		if (resizeObserverRef.current) {
+			resizeObserverRef.current.disconnect();
+			resizeObserverRef.current = null;
+		}
 		if (clientRef.current) {
 			try {
 				clientRef.current.disconnect();
@@ -72,12 +103,18 @@ const RdpViewer = ({ host, isOpen }) => {
 		setError(null);
 		setIsConnecting(true);
 
+		// Measure the display container to request matching dimensions
+		const containerWidth = displayRef.current?.offsetWidth || 1024;
+		const containerHeight = displayRef.current?.offsetHeight || 768;
+
 		let ticketData;
 		try {
 			const res = await rdpAPI.createTicket({
 				hostId: host.id,
 				username: credentials.username || undefined,
 				password: credentials.password || undefined,
+				width: containerWidth,
+				height: containerHeight,
 			});
 			ticketData = res.data;
 		} catch (err) {
@@ -95,8 +132,8 @@ const RdpViewer = ({ host, isOpen }) => {
 		const {
 			ticket,
 			websocketTunnelUrl,
-			width = 1024,
-			height = 768,
+			width = containerWidth,
+			height = containerHeight,
 		} = ticketData;
 		if (!ticket || !websocketTunnelUrl) {
 			setError("Invalid ticket response");
@@ -134,6 +171,14 @@ const RdpViewer = ({ host, isOpen }) => {
 					setIsConnecting(false);
 					setIsConnected(true);
 					setError(null);
+
+					// Auto-focus the display element for keyboard input
+					if (displayRef.current) {
+						displayRef.current.focus();
+					}
+
+					// Scale display to fit after connection
+					scaleDisplay();
 				} else if (
 					state === Guacamole.Client.State.DISCONNECTED ||
 					state === Guacamole.Client.State.CONNECTING
@@ -152,8 +197,28 @@ const RdpViewer = ({ host, isOpen }) => {
 				setIsConnected(false);
 			};
 
+			// Clipboard sync: receive remote clipboard data
+			client.onclipboard = (stream, mimetype) => {
+				if (mimetype !== "text/plain") return;
+				const reader = new Guacamole.StringReader(stream);
+				let clipboardData = "";
+				reader.ontext = (text) => {
+					clipboardData += text;
+				};
+				reader.onend = () => {
+					if (clipboardData && navigator.clipboard?.writeText) {
+						navigator.clipboard.writeText(clipboardData).catch(() => {
+							// Clipboard write may fail without user gesture
+						});
+					}
+				};
+			};
+
 			if (displayRef.current) {
-				displayRef.current.innerHTML = "";
+				// Properly clean up existing child nodes
+				while (displayRef.current.firstChild) {
+					displayRef.current.removeChild(displayRef.current.firstChild);
+				}
 				displayRef.current.appendChild(client.getDisplay().getElement());
 
 				const display = client.getDisplay();
@@ -171,6 +236,7 @@ const RdpViewer = ({ host, isOpen }) => {
 								mouseState.middle,
 								mouseState.right,
 							);
+							client.sendMouseState(mouseState);
 						};
 				mouseRef.current = mouse;
 
@@ -182,7 +248,27 @@ const RdpViewer = ({ host, isOpen }) => {
 					client.sendKeyEvent(0, keysym);
 				};
 				keyboardRef.current = keyboard;
+
+				// Observe container resize and scale display accordingly
+				const observer = new ResizeObserver(() => {
+					scaleDisplay();
+				});
+				observer.observe(displayRef.current);
+				resizeObserverRef.current = observer;
 			}
+
+			// Clipboard sync: send local clipboard on paste
+			const handlePaste = (e) => {
+				const text = e.clipboardData?.getData("text/plain");
+				if (text && clientRef.current) {
+					const stream = clientRef.current.createClipboardStream("text/plain");
+					const writer = new Guacamole.StringWriter(stream);
+					writer.sendText(text);
+					writer.sendEnd();
+				}
+			};
+			pasteHandlerRef.current = handlePaste;
+			displayRef.current?.addEventListener("paste", handlePaste);
 
 			client.connect(connectData);
 		} catch (err) {
@@ -196,17 +282,25 @@ const RdpViewer = ({ host, isOpen }) => {
 		credentials.username,
 		credentials.password,
 		disconnect,
+		scaleDisplay,
 	]);
+
+	const handleCredentialKeyDown = useCallback(
+		(e) => {
+			if (e.key === "Enter") {
+				connect();
+			}
+		},
+		[connect],
+	);
 
 	const toggleFullscreen = () => {
 		const container = displayRef.current?.closest(".rdp-viewer-container");
 		if (!container) return;
 		if (!document.fullscreenElement) {
 			container.requestFullscreen?.();
-			setIsFullscreen(true);
 		} else {
 			document.exitFullscreen?.();
-			setIsFullscreen(false);
 		}
 	};
 
@@ -228,6 +322,17 @@ const RdpViewer = ({ host, isOpen }) => {
 					<span className="font-medium text-white">
 						{host?.friendly_name || host?.hostname || host?.ip}
 					</span>
+					{isConnected ? (
+						<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-900/50 text-green-400 border border-green-700/50">
+							<span className="h-1.5 w-1.5 rounded-full bg-green-400" />
+							Connected
+						</span>
+					) : (
+						<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-secondary-700 text-secondary-400 border border-secondary-600">
+							<span className="h-1.5 w-1.5 rounded-full bg-secondary-500" />
+							Disconnected
+						</span>
+					)}
 				</div>
 				<div className="flex items-center gap-2">
 					{!isConnected && !isConnecting && (
@@ -242,6 +347,7 @@ const RdpViewer = ({ host, isOpen }) => {
 										username: e.target.value,
 									}))
 								}
+								onKeyDown={handleCredentialKeyDown}
 								className="px-2 py-1 text-sm rounded bg-secondary-700 text-white border border-secondary-600 w-32"
 							/>
 							<input
@@ -254,36 +360,49 @@ const RdpViewer = ({ host, isOpen }) => {
 										password: e.target.value,
 									}))
 								}
+								onKeyDown={handleCredentialKeyDown}
 								className="px-2 py-1 text-sm rounded bg-secondary-700 text-white border border-secondary-600 w-32"
 							/>
 						</div>
 					)}
-					<button
-						type="button"
-						onClick={connect}
-						disabled={isConnecting}
-						className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-					>
-						{isConnecting ? (
-							<RefreshCw className="h-4 w-4 animate-spin" />
-						) : (
-							<RefreshCw className="h-4 w-4" />
-						)}
-						{isConnecting ? "Connecting…" : "Connect"}
-					</button>
-					{isConnected && (
+					{!isConnected && (
 						<button
 							type="button"
-							onClick={toggleFullscreen}
-							className="p-1.5 rounded hover:bg-secondary-600 text-secondary-300 hover:text-white"
-							title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+							onClick={connect}
+							disabled={isConnecting}
+							className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
 						>
-							{isFullscreen ? (
-								<Minimize2 className="h-4 w-4" />
+							{isConnecting ? (
+								<RefreshCw className="h-4 w-4 animate-spin" />
 							) : (
-								<Maximize2 className="h-4 w-4" />
+								<RefreshCw className="h-4 w-4" />
 							)}
+							{isConnecting ? "Connecting..." : "Connect"}
 						</button>
+					)}
+					{isConnected && (
+						<>
+							<button
+								type="button"
+								onClick={disconnect}
+								className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-red-700 hover:bg-red-600 text-white text-sm font-medium"
+							>
+								<Power className="h-4 w-4" />
+								Disconnect
+							</button>
+							<button
+								type="button"
+								onClick={toggleFullscreen}
+								className="p-1.5 rounded hover:bg-secondary-600 text-secondary-300 hover:text-white"
+								title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+							>
+								{isFullscreen ? (
+									<Minimize2 className="h-4 w-4" />
+								) : (
+									<Maximize2 className="h-4 w-4" />
+								)}
+							</button>
+						</>
 					)}
 				</div>
 			</div>
@@ -308,7 +427,7 @@ const RdpViewer = ({ host, isOpen }) => {
 						<div className="flex flex-col items-center gap-2">
 							<RefreshCw className="h-8 w-8 text-primary-500 animate-spin" />
 							<span className="text-sm text-secondary-400">
-								Connecting to RDP…
+								Connecting to RDP...
 							</span>
 						</div>
 					</div>
@@ -316,7 +435,9 @@ const RdpViewer = ({ host, isOpen }) => {
 
 				<div
 					ref={displayRef}
-					className="flex-1 min-h-[200px] bg-black overflow-hidden"
+					// biome-ignore lint/a11y/noNoninteractiveTabindex: RDP display container needs focus for keyboard input capture
+					tabIndex={0}
+					className="flex-1 min-h-[200px] bg-black overflow-hidden outline-none"
 					style={{ cursor: isConnected ? "default" : "not-allowed" }}
 				/>
 			</div>

@@ -46,6 +46,8 @@ func alertConfigRowToModel(r db.GetAlertConfigByTypeRow) AlertConfigWithUser {
 			EscalationAfterHours: ptrInt32ToInt(r.EscalationAfterHours),
 			AlertDelaySeconds:    ptrInt32ToInt(r.AlertDelaySeconds),
 			Metadata:             models.JSON(r.Metadata),
+			Category:             r.Category,
+			CheckIntervalMinutes: ptrInt32ToInt(r.CheckIntervalMinutes),
 			CreatedAt:            pgTime(r.CreatedAt),
 			UpdatedAt:            pgTime(r.UpdatedAt),
 		},
@@ -88,6 +90,8 @@ func (s *AlertConfigStore) GetAll(ctx context.Context) ([]AlertConfigWithUser, e
 				EscalationAfterHours: ptrInt32ToInt(r.EscalationAfterHours),
 				AlertDelaySeconds:    ptrInt32ToInt(r.AlertDelaySeconds),
 				Metadata:             models.JSON(r.Metadata),
+				Category:             r.Category,
+				CheckIntervalMinutes: ptrInt32ToInt(r.CheckIntervalMinutes),
 				CreatedAt:            pgTime(r.CreatedAt),
 				UpdatedAt:            pgTime(r.UpdatedAt),
 			},
@@ -138,6 +142,15 @@ func (s *AlertConfigStore) Upsert(ctx context.Context, cfg *models.AlertConfig) 
 		v := int32(*cfg.AlertDelaySeconds)
 		alertDelay = &v
 	}
+	var checkInterval *int32
+	if cfg.CheckIntervalMinutes != nil {
+		v := int32(*cfg.CheckIntervalMinutes)
+		checkInterval = &v
+	}
+	category := cfg.Category
+	if category == "" {
+		category = "general"
+	}
 	_, err := d.Queries.UpsertAlertConfig(ctx, db.UpsertAlertConfigParams{
 		ID:                   uuid.New().String(),
 		AlertType:            cfg.AlertType,
@@ -155,6 +168,8 @@ func (s *AlertConfigStore) Upsert(ctx context.Context, cfg *models.AlertConfig) 
 		EscalationAfterHours: escHours,
 		AlertDelaySeconds:    alertDelay,
 		Column16:             meta,
+		Category:             category,
+		CheckIntervalMinutes: checkInterval,
 	})
 	return err
 }

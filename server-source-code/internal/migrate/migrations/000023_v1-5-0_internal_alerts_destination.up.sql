@@ -12,4 +12,4 @@ VALUES
     (gen_random_uuid()::TEXT, 'internal-alerts', '["host_down"]'::jsonb, 'informational', '[]'::jsonb, '[]'::jsonb, NULL, true, NOW(), NOW()),
     (gen_random_uuid()::TEXT, 'internal-alerts', '["server_update"]'::jsonb, 'informational', '[]'::jsonb, '[]'::jsonb, NULL, true, NOW(), NOW()),
     (gen_random_uuid()::TEXT, 'internal-alerts', '["agent_update"]'::jsonb, 'informational', '[]'::jsonb, '[]'::jsonb, NULL, true, NOW(), NOW())
-ON CONFLICT DO NOTHING;
+ON CONFLICT (id) DO NOTHING;

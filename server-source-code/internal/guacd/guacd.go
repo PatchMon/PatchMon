@@ -1,10 +1,11 @@
 package guacd
 
 import (
+	"bufio"
 	"context"
+	"io"
 	"log/slog"
 	"net"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ func IsRemoteAddress(addr string) bool {
 type Process struct {
 	cmd    *exec.Cmd
 	cancel context.CancelFunc
+	done   chan struct{} // closed when wait() returns
 	mu     sync.Mutex
 	log    *slog.Logger
 }
@@ -50,24 +52,35 @@ func Start(ctx context.Context, guacdPath string, listenAddr string, log *slog.L
 	// guacd -b 127.0.0.1 -l 4822
 	host, port := "127.0.0.1", "4822"
 	if listenAddr != "" {
-		// Simple parse: "host:port"
-		for i, c := range listenAddr {
-			if c == ':' {
-				if i > 0 {
-					host = listenAddr[:i]
-				}
-				if i+1 < len(listenAddr) {
-					port = listenAddr[i+1:]
-				}
-				break
+		if h, p, err := net.SplitHostPort(listenAddr); err == nil {
+			if h != "" {
+				host = h
+			}
+			if p != "" {
+				port = p
 			}
 		}
 	}
 
 	procCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(procCtx, binary, "-b", host, "-l", port)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		if log != nil {
+			log.Warn("guacd stdout pipe failed", "error", err)
+		}
+		cancel()
+		return nil
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		if log != nil {
+			log.Warn("guacd stderr pipe failed", "error", err)
+		}
+		cancel()
+		return nil
+	}
 
 	if err := cmd.Start(); err != nil {
 		if log != nil {
@@ -81,7 +94,13 @@ func Start(ctx context.Context, guacdPath string, listenAddr string, log *slog.L
 		log.Info("guacd started", "addr", listenAddr, "pid", cmd.Process.Pid)
 	}
 
-	p := &Process{cmd: cmd, cancel: cancel, log: log}
+	// Pipe subprocess output to the logger.
+	if log != nil {
+		go pipeToLogger(log, "stdout", stdoutPipe)
+		go pipeToLogger(log, "stderr", stderrPipe)
+	}
+
+	p := &Process{cmd: cmd, cancel: cancel, done: make(chan struct{}), log: log}
 	go p.wait()
 	return p
 }
@@ -91,31 +110,33 @@ func (p *Process) wait() {
 	p.mu.Lock()
 	p.cmd = nil
 	p.mu.Unlock()
+	close(p.done)
 	if p.log != nil && err != nil {
 		p.log.Debug("guacd exited", "error", err)
 	}
 }
 
-// Stop stops the guacd process.
+// Stop stops the guacd process. It signals the process via context cancellation
+// and waits for the existing wait() goroutine to finish, avoiding a double Wait race.
 func (p *Process) Stop() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.cancel != nil {
 		p.cancel()
 		p.cancel = nil
 	}
-	if p.cmd != nil && p.cmd.Process != nil {
-		_ = p.cmd.Process.Signal(os.Interrupt)
-		done := make(chan struct{})
-		go func() {
-			_ = p.cmd.Wait()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-time.After(3 * time.Second):
+	p.mu.Unlock()
+
+	// Wait for the existing wait() goroutine to observe the exit.
+	select {
+	case <-p.done:
+	case <-time.After(3 * time.Second):
+		// Force kill if context cancellation wasn't enough.
+		p.mu.Lock()
+		if p.cmd != nil && p.cmd.Process != nil {
 			_ = p.cmd.Process.Kill()
 		}
+		p.mu.Unlock()
+		<-p.done
 	}
 }
 
@@ -124,4 +145,12 @@ func (p *Process) Running() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.cmd != nil && p.cmd.Process != nil
+}
+
+// pipeToLogger reads lines from r and logs them at Debug level.
+func pipeToLogger(log *slog.Logger, stream string, r io.Reader) {
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		log.Debug("guacd", "stream", stream, "line", scanner.Text())
+	}
 }
