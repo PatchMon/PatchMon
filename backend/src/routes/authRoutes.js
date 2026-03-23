@@ -383,9 +383,9 @@ router.post(
 			// could both pass the admin check and create duplicate admins
 			const user = await prisma
 				.$transaction(async (tx) => {
-					// Check if any admin users already exist
+					// Check if any admin users already exist (including superadmin)
 					const adminCount = await tx.users.count({
-						where: { role: "admin" },
+						where: { role: { in: ["admin", "superadmin"] } },
 					});
 
 					if (adminCount > 0) {
