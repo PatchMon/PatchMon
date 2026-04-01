@@ -23,7 +23,7 @@
 		"@bull-board/express": "^6.19.0",
 		"@prisma/client": "^6.19.2",
 		"axios": "^1.7.9",
-		"bcryptjs": "^2.4.3",
+		"bcryptjs": "^3.0.0",
 		"bullmq": "^5.69.3",
 		"cookie-parser": "^1.4.7",
 		"cors": "^2.8.5",
@@ -46,7 +46,7 @@
 		"ws": "^8.18.0"
 	},
 	"devDependencies": {
-		"@types/bcryptjs": "^2.4.6",
+		"@types/bcryptjs": "^3.0.0",
 		"jest": "^30.2.0",
 		"nodemon": "^3.1.9",
 		"supertest": "^7.0.0",
