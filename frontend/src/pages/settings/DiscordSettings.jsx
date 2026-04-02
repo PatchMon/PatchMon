@@ -9,16 +9,28 @@ import {
 	Loader2,
 	X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import DiscordIcon from "../../components/DiscordIcon";
 import SettingsLayout from "../../components/SettingsLayout";
 import { discordAPI } from "../../utils/api";
+
+const DEFAULT_BUTTON_TEXT = "Login with Discord";
+
+const getFormDataFromSettings = (settings) => ({
+	discord_oauth_enabled: settings?.discord_oauth_enabled || false,
+	discord_client_id: settings?.discord_client_id || "",
+	discord_redirect_uri: settings?.discord_redirect_uri || "",
+	discord_button_text: settings?.discord_button_text || DEFAULT_BUTTON_TEXT,
+});
+
+const getComparableFieldValue = (source, field) => source?.[field] ?? "";
 
 const DiscordSettings = () => {
 	const queryClient = useQueryClient();
 	const [showSecret, setShowSecret] = useState(false);
 	const [secretInput, setSecretInput] = useState("");
 	const [showSetupGuide, setShowSetupGuide] = useState(false);
+	const [formData, setFormData] = useState(() => getFormDataFromSettings());
 
 	// Fetch Discord settings
 	const { data: settings, isLoading: settingsLoading } = useQuery({
@@ -26,23 +38,59 @@ const DiscordSettings = () => {
 		queryFn: () => discordAPI.getSettings().then((res) => res.data),
 	});
 
+	useEffect(() => {
+		if (settings) {
+			setFormData(getFormDataFromSettings(settings));
+		}
+	}, [settings]);
+
 	// Update settings mutation
 	const updateMutation = useMutation({
-		mutationFn: (data) => discordAPI.updateSettings(data),
-		onSuccess: () => {
+		mutationFn: (data) =>
+			discordAPI.updateSettings(data).then((res) => res.data),
+		onSuccess: (updatedSettings, variables) => {
+			queryClient.setQueryData(["discordSettings"], (currentSettings = {}) => ({
+				...currentSettings,
+				...updatedSettings,
+			}));
+			setFormData((currentFormData) => ({
+				...currentFormData,
+				...getFormDataFromSettings(updatedSettings),
+			}));
+			if (Object.hasOwn(variables, "discord_client_secret")) {
+				setSecretInput("");
+			}
+		},
+		onError: () => {
 			queryClient.invalidateQueries(["discordSettings"]);
-			setSecretInput("");
 		},
 	});
 
 	const handleToggleEnabled = () => {
-		updateMutation.mutate({
-			discord_oauth_enabled: !settings?.discord_oauth_enabled,
-		});
+		const nextValue = !formData.discord_oauth_enabled;
+		setFormData((currentFormData) => ({
+			...currentFormData,
+			discord_oauth_enabled: nextValue,
+		}));
+		updateMutation.mutate({ discord_oauth_enabled: nextValue });
 	};
 
 	const handleFieldChange = (field, value) => {
-		updateMutation.mutate({ [field]: value });
+		setFormData((currentFormData) => ({
+			...currentFormData,
+			[field]: value,
+		}));
+	};
+
+	const handleFieldBlur = (field) => {
+		if (
+			getComparableFieldValue(formData, field) ===
+			getComparableFieldValue(settings, field)
+		) {
+			return;
+		}
+
+		updateMutation.mutate({ [field]: formData[field] });
 	};
 
 	const handleSaveSecret = () => {
@@ -100,16 +148,15 @@ const DiscordSettings = () => {
 						<button
 							type="button"
 							onClick={handleToggleEnabled}
-							disabled={updateMutation.isPending}
 							className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[#5865F2] focus:ring-offset-2 ${
-								settings?.discord_oauth_enabled
+								formData.discord_oauth_enabled
 									? "bg-[#5865F2]"
 									: "bg-secondary-300 dark:bg-secondary-600"
 							}`}
 						>
 							<span
 								className={`inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-									settings?.discord_oauth_enabled
+									formData.discord_oauth_enabled
 										? "translate-x-5"
 										: "translate-x-0"
 								}`}
@@ -136,11 +183,11 @@ const DiscordSettings = () => {
 							<input
 								id="discord-client-id"
 								type="text"
-								value={settings?.discord_client_id || ""}
+								value={formData.discord_client_id}
 								onChange={(e) =>
 									handleFieldChange("discord_client_id", e.target.value)
 								}
-								disabled={updateMutation.isPending}
+								onBlur={() => handleFieldBlur("discord_client_id")}
 								placeholder="Enter your Discord application Client ID"
 								className="w-full px-3 py-2 bg-white dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md text-secondary-900 dark:text-white focus:ring-2 focus:ring-[#5865F2] focus:border-[#5865F2] placeholder-secondary-400"
 							/>
@@ -171,7 +218,6 @@ const DiscordSettings = () => {
 										type={showSecret ? "text" : "password"}
 										value={secretInput}
 										onChange={(e) => setSecretInput(e.target.value)}
-										disabled={updateMutation.isPending}
 										placeholder={
 											settings?.discord_client_secret_set
 												? "Enter new secret to replace"
@@ -194,7 +240,7 @@ const DiscordSettings = () => {
 								<button
 									type="button"
 									onClick={handleSaveSecret}
-									disabled={!secretInput.trim() || updateMutation.isPending}
+									disabled={!secretInput.trim()}
 									className="px-4 py-2 text-sm font-medium text-white rounded-md hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
 									style={{ backgroundColor: "#5865F2" }}
 								>
@@ -204,7 +250,6 @@ const DiscordSettings = () => {
 									<button
 										type="button"
 										onClick={handleClearSecret}
-										disabled={updateMutation.isPending}
 										className="px-3 py-2 text-sm font-medium text-red-700 dark:text-red-400 border border-red-300 dark:border-red-700 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20"
 									>
 										<X className="h-4 w-4" />
@@ -224,11 +269,11 @@ const DiscordSettings = () => {
 							<input
 								id="discord-redirect-uri"
 								type="text"
-								value={settings?.discord_redirect_uri || ""}
+								value={formData.discord_redirect_uri}
 								onChange={(e) =>
 									handleFieldChange("discord_redirect_uri", e.target.value)
 								}
-								disabled={updateMutation.isPending}
+								onBlur={() => handleFieldBlur("discord_redirect_uri")}
 								placeholder="https://your-domain.com/api/v1/auth/discord/callback"
 								className="w-full px-3 py-2 bg-white dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md text-secondary-900 dark:text-white focus:ring-2 focus:ring-[#5865F2] focus:border-[#5865F2] placeholder-secondary-400"
 							/>
@@ -253,11 +298,11 @@ const DiscordSettings = () => {
 							<input
 								id="discord-button-text"
 								type="text"
-								value={settings?.discord_button_text || ""}
+								value={formData.discord_button_text}
 								onChange={(e) =>
 									handleFieldChange("discord_button_text", e.target.value)
 								}
-								disabled={updateMutation.isPending}
+								onBlur={() => handleFieldBlur("discord_button_text")}
 								placeholder="Login with Discord"
 								className="w-full px-3 py-2 bg-white dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md text-secondary-900 dark:text-white focus:ring-2 focus:ring-[#5865F2] focus:border-[#5865F2] placeholder-secondary-400"
 							/>
