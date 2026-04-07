@@ -10,8 +10,8 @@ import (
 
 	"patchmon-agent/pkg/models"
 
-	"github.com/docker/docker/api/types/events"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/events"
+	"github.com/moby/moby/client"
 	"github.com/sirupsen/logrus"
 )
 
@@ -183,9 +183,11 @@ func (d *Integration) monitorEvents(ctx context.Context, eventChan chan<- interf
 	// Get a fresh event stream from Docker
 	// Use Since parameter to only get events from startTime onwards
 	// This prevents replaying a backlog of historical events when reconnecting
-	eventsCh, errCh := d.client.Events(ctx, events.ListOptions{
+	eventsResult := d.client.Events(ctx, client.EventsListOptions{
 		Since: startTime.Format(time.RFC3339Nano),
 	})
+	eventsCh := eventsResult.Messages
+	errCh := eventsResult.Err
 
 	d.logger.Debug("Docker event stream established")
 
@@ -387,7 +389,7 @@ func (d *Integration) verifyDockerStable(ctx context.Context) bool {
 	if d.client != nil {
 		cli = d.client
 	} else {
-		cli, err = client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+		cli, err = client.New(client.FromEnv)
 		if err != nil {
 			return false
 		}
@@ -397,7 +399,7 @@ func (d *Integration) verifyDockerStable(ctx context.Context) bool {
 	// Require multiple consecutive successful pings
 	for i := 0; i < dockerPingRetries; i++ {
 		pingCtx, cancel := context.WithTimeout(ctx, dockerPingTimeout)
-		_, err := cli.Ping(pingCtx)
+		_, err := cli.Ping(pingCtx, client.PingOptions{})
 		cancel()
 
 		if err != nil {

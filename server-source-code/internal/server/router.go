@@ -74,20 +74,24 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	// hijacked ResponseWriter causing "WriteHeader on hijacked connection".
 	// Instead, timeout is applied per-group below, skipping WS routes.
 
-	if cfg.EnablePprof {
-		r.Handle("/debug/pprof/*", http.HandlerFunc(pprof.Index))
-		r.Handle("/debug/pprof/cmdline", http.HandlerFunc(pprof.Cmdline))
-		r.Handle("/debug/pprof/profile", http.HandlerFunc(pprof.Profile))
-		r.Handle("/debug/pprof/symbol", http.HandlerFunc(pprof.Symbol))
-		r.Handle("/debug/pprof/trace", http.HandlerFunc(pprof.Trace))
-	}
-
 	if poolCache != nil && cfg.RegistryReloadSecret != "" {
 		r.Post("/internal/reload-tenant", hostctx.ReloadHandler(poolCache, redisCache, cfg.RegistryReloadSecret))
 	}
 
 	usersStore := store.NewUsersStore(dbProvider)
 	permissionsStore := store.NewPermissionsStore(dbProvider)
+
+	if cfg.EnablePprof {
+		// Pprof endpoints require admin authentication to prevent information leakage.
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("can_manage_settings", permissionsStore))
+			r.Handle("/debug/pprof/*", http.HandlerFunc(pprof.Index))
+			r.Handle("/debug/pprof/cmdline", http.HandlerFunc(pprof.Cmdline))
+			r.Handle("/debug/pprof/profile", http.HandlerFunc(pprof.Profile))
+			r.Handle("/debug/pprof/symbol", http.HandlerFunc(pprof.Symbol))
+			r.Handle("/debug/pprof/trace", http.HandlerFunc(pprof.Trace))
+		})
+	}
 	dashboardPrefsStore := store.NewDashboardPreferencesStore(dbProvider)
 
 	enc, _ := util.NewEncryption()

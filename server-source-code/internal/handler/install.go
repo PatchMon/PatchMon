@@ -134,6 +134,11 @@ func (h *InstallHandler) ServeInstall(w http.ResponseWriter, r *http.Request) {
 
 	forceInstall := r.URL.Query().Get("force") == "true" || r.URL.Query().Get("force") == "1"
 	architecture := r.URL.Query().Get("arch")
+	// Allowlist architecture to prevent shell injection in generated install script.
+	validArchitectures := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
+	if architecture != "" && !validArchitectures[architecture] {
+		architecture = ""
+	}
 	osParam := r.URL.Query().Get("os")
 	if osParam != "linux" && osParam != "freebsd" && osParam != "windows" {
 		osParam = "linux"

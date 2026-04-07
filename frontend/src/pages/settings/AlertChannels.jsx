@@ -1615,12 +1615,12 @@ export const NotificationPanel = ({ panel }) => {
 				</div>
 			)}
 
-			{/* ── Routes ── */}
+			{/* ── Event Rules ── */}
 			{showRoutes && canManage && (
 				<div className="card p-4 md:p-6 space-y-4">
 					<div className="flex items-center justify-between">
 						<h2 className="text-lg font-semibold text-secondary-900 dark:text-white">
-							Routes
+							Event Rules
 						</h2>
 						<button
 							type="button"
@@ -1628,7 +1628,7 @@ export const NotificationPanel = ({ panel }) => {
 							onClick={() => setRouteModal({ open: true, editing: null })}
 							disabled={destinations.length === 0}
 						>
-							<Plus className="h-4 w-4" /> Add route
+							<Plus className="h-4 w-4" /> Add event rule
 						</button>
 					</div>
 
@@ -1639,7 +1639,7 @@ export const NotificationPanel = ({ panel }) => {
 					{!routesLoading && routes.length === 0 && destinations.length > 0 && (
 						<div className="rounded-md p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-center">
 							<p className="text-sm text-blue-800 dark:text-blue-200">
-								No routes yet. Routes map events to destinations.
+								No event rules yet. Event rules map events to destinations.
 							</p>
 						</div>
 					)}

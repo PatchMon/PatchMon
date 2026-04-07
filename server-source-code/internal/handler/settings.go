@@ -1063,23 +1063,47 @@ func (h *SettingsHandler) GetLogo(w http.ResponseWriter, r *http.Request) {
 func sanitizeSVG(s string) string {
 	// Remove script tags and contents (loop: RE2 has no lookahead)
 	s = removeTagAndContent(s, "script")
-	// Remove foreignObject
+	// Remove self-closing script tags: <script ... />
+	selfCloseScript := regexp.MustCompile(`(?i)<script[^>]*/\s*>`)
+	s = selfCloseScript.ReplaceAllString(s, "")
+	// Remove foreignObject (can embed arbitrary HTML)
 	s = removeTagAndContent(s, "foreignObject")
+	// Remove dangerous SVG animation/mutation elements
+	for _, tag := range []string{"set", "animate", "animateTransform", "animateMotion"} {
+		s = removeTagAndContent(s, tag)
+		selfClose := regexp.MustCompile(`(?i)<` + tag + `[^>]*/\s*>`)
+		s = selfClose.ReplaceAllString(s, "")
+	}
+	// Remove <use> elements with external references (can load external SVG)
+	useExtRe := regexp.MustCompile(`(?i)<use[^>]+href\s*=\s*["']https?://[^"']*["'][^>]*/?\s*>`)
+	s = useExtRe.ReplaceAllString(s, "")
+	s = removeTagAndContent(s, "use")
 	// Remove on* event handlers
 	onRe := regexp.MustCompile(`(?i)\s+on\w+\s*=\s*["'][^"']*["']`)
 	s = onRe.ReplaceAllString(s, "")
 	onRe2 := regexp.MustCompile(`(?i)\s+on\w+\s*=\s*[^\s>]+`)
 	s = onRe2.ReplaceAllString(s, "")
-	// Remove javascript: URLs
-	jsRe := regexp.MustCompile(`(?i)href\s*=\s*["']javascript:[^"']*["']`)
-	s = jsRe.ReplaceAllString(s, `href=""`)
-	xlinkRe := regexp.MustCompile(`(?i)xlink:href\s*=\s*["']javascript:[^"']*["']`)
-	s = xlinkRe.ReplaceAllString(s, `xlink:href=""`)
-	// Remove data: URLs
-	dataRe := regexp.MustCompile(`(?i)href\s*=\s*["']data:[^"']*["']`)
-	s = dataRe.ReplaceAllString(s, `href=""`)
-	xlinkDataRe := regexp.MustCompile(`(?i)xlink:href\s*=\s*["']data:[^"']*["']`)
-	s = xlinkDataRe.ReplaceAllString(s, `xlink:href=""`)
+	// Remove javascript: URLs (href, xlink:href, and any src-like attributes)
+	jsRe := regexp.MustCompile(`(?i)(href|src|xlink:href)\s*=\s*["']\s*javascript:[^"']*["']`)
+	s = jsRe.ReplaceAllString(s, `$1=""`)
+	// Remove data: URLs (RE2 has no lookahead, so match all data: and restore safe image types)
+	dataRe := regexp.MustCompile(`(?i)(href|src|xlink:href)\s*=\s*["']\s*data:[^"']*["']`)
+	s = dataRe.ReplaceAllStringFunc(s, func(m string) string {
+		lower := strings.ToLower(m)
+		for _, safe := range []string{"data:image/png", "data:image/jpeg", "data:image/jpg", "data:image/gif", "data:image/svg+xml", "data:image/webp"} {
+			if strings.Contains(lower, safe) {
+				return m
+			}
+		}
+		eqIdx := strings.Index(m, "=")
+		if eqIdx >= 0 {
+			return m[:eqIdx] + `=""`
+		}
+		return m
+	})
+	// Remove CSS @import (can exfiltrate data or load external styles)
+	importRe := regexp.MustCompile(`(?i)@import\s+[^;]+;?`)
+	s = importRe.ReplaceAllString(s, "")
 	return s
 }
 

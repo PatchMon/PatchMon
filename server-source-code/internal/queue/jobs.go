@@ -53,6 +53,8 @@ const (
 	QueueUpdateThresholdMonitor  = "update-threshold-monitor"
 	TypePatchRunCleanup          = "patch-run-cleanup"
 	QueuePatchRunCleanup         = "patch-run-cleanup"
+	TypeMetricsSend              = "metrics-send"
+	QueueMetricsSend             = "metrics-send"
 )
 
 // RunScanPayload is the payload for run_scan job.

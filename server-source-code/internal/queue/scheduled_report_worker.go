@@ -374,6 +374,8 @@ func sendScheduledEmail(plain, subject, html, csv string) error {
 	if cfg.SMTPPort == 0 {
 		cfg.SMTPPort = 587
 	}
+	// Sanitize subject to prevent SMTP header injection.
+	subject = strings.NewReplacer("\r", "", "\n", "").Replace(subject)
 	msg := []byte(fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n%s",
 		cfg.From, cfg.To, subject, html))
 	addr := cfg.SMTPHost + ":" + strconv.Itoa(cfg.SMTPPort)

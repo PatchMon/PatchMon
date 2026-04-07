@@ -1,10 +1,13 @@
 package queue
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -606,5 +609,97 @@ func (h *AlertCleanupHandler) cleanupDB(ctx context.Context, d *database.DB) err
 	if deleted > 0 || autoResolved > 0 {
 		h.log.Info("alert cleanup", "deleted", deleted, "auto_resolved", autoResolved)
 	}
+	return nil
+}
+
+const defaultMetricsAPIURL = "https://metrics.patchmon.cloud"
+
+// MetricsSendHandler handles metrics-send jobs (automatic anonymous telemetry).
+type MetricsSendHandler struct {
+	defaultDB     *database.DB
+	poolCache     *hostctx.PoolCache
+	serverVersion string
+	log           *slog.Logger
+}
+
+// NewMetricsSendHandler creates a metrics send handler.
+func NewMetricsSendHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache, serverVersion string, log *slog.Logger) *MetricsSendHandler {
+	return &MetricsSendHandler{defaultDB: defaultDB, poolCache: poolCache, serverVersion: serverVersion, log: log}
+}
+
+// ProcessTask implements asynq.Handler.
+func (h *MetricsSendHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
+	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
+		if err := h.sendMetrics(ctx, d, host); err != nil {
+			h.log.Warn("metrics send failed", "host", host, "error", err)
+		}
+	})
+	h.log.Info("metrics send completed")
+	return nil
+}
+
+func (h *MetricsSendHandler) sendMetrics(ctx context.Context, d *database.DB, tenantHost string) error {
+	dbResolver := &hostctx.DBResolver{Default: d}
+	settingsStore := store.NewSettingsStore(dbResolver)
+	hostsStore := store.NewHostsStore(dbResolver)
+
+	// Use WithDB so the store resolves to the correct tenant DB.
+	ctx = hostctx.WithDB(ctx, d)
+
+	s, err := settingsStore.GetFirst(ctx)
+	if err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
+	if !s.MetricsEnabled {
+		return nil
+	}
+	if s.MetricsAnonymousID == nil || *s.MetricsAnonymousID == "" {
+		return nil
+	}
+
+	hostCount, err := hostsStore.Count(ctx)
+	if err != nil {
+		return fmt.Errorf("count hosts: %w", err)
+	}
+
+	version := h.serverVersion
+	if version == "" {
+		version = "unknown"
+	}
+
+	metricsData := map[string]any{
+		"anonymous_id": *s.MetricsAnonymousID,
+		"host_count":   hostCount,
+		"version":      version,
+	}
+	body, _ := json.Marshal(metricsData)
+
+	apiURL := os.Getenv("METRICS_API_URL")
+	if apiURL == "" {
+		apiURL = defaultMetricsAPIURL
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL+"/metrics/submit", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("prepare request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("send request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("metrics API returned status %d", resp.StatusCode)
+	}
+
+	now := time.Now()
+	s.MetricsLastSent = &now
+	_ = settingsStore.Update(ctx, s)
+
+	h.log.Info("metrics sent", "host", tenantHost, "host_count", hostCount)
 	return nil
 }

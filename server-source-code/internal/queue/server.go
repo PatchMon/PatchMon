@@ -69,6 +69,7 @@ func NewServer(opts asynq.RedisClientOpt, registry *agentregistry.Registry, db *
 			QueuePatching:                    2,
 			notifications.QueueNotifications: 2,
 			QueueScheduledReports:            1,
+			QueueMetricsSend:                 1,
 		},
 	})
 
@@ -127,6 +128,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeInstallComplianceTools, wrap(TypeInstallComplianceTools, NewInstallComplianceToolsHandler(registry, db, opts.RDB, opts.RedisCache, log)))
 	patchRunsStore := store.NewPatchRunsStore(&hostctx.DBResolver{Default: db})
 	mux.Handle(TypeRunPatch, wrap(TypeRunPatch, NewRunPatchHandler(registry, patchRunsStore, opts.PoolCache, opts.QueueClient, log)))
+	mux.Handle(TypeMetricsSend, wrap(TypeMetricsSend, NewMetricsSendHandler(db, opts.PoolCache, opts.ServerVersion, log)))
 	return mux
 }
 
@@ -235,6 +237,11 @@ func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) 
 
 	updateThresholdTask := asynq.NewTask(TypeUpdateThresholdMonitor, nil)
 	if _, err := scheduler.Register(minutesToCron(thresholdInterval), updateThresholdTask, asynq.Queue(QueueUpdateThresholdMonitor), asynq.Retention(AutomationRetention)); err != nil {
+		return nil, err
+	}
+
+	metricsSendTask := asynq.NewTask(TypeMetricsSend, nil)
+	if _, err := scheduler.Register("0 6 * * *", metricsSendTask, asynq.Queue(QueueMetricsSend), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 

@@ -756,6 +756,8 @@ func (h *NotificationDeliverHandler) sendEmail(ctx context.Context, plain string
 		cfg.SMTPPort = 587
 	}
 	subject := fmt.Sprintf("[%s] %s", strings.ToUpper(p.Severity), p.Title)
+	// Sanitize subject to prevent SMTP header injection via \r\n in host names / alert titles.
+	subject = strings.NewReplacer("\r", "", "\n", "").Replace(subject)
 	html := buildEmailHTML(p)
 	msg := []byte(fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n%s",
 		cfg.From, cfg.To, subject, html))

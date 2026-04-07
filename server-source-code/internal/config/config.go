@@ -12,7 +12,7 @@ import (
 )
 
 // DefaultVersion is the default server version. Bump this when releasing; config_test.go uses it.
-const DefaultVersion = "1.4.97"
+const DefaultVersion = "1.4.98"
 
 // Config holds application configuration loaded from environment.
 // Uses same variable names as PatchMon/server for compatibility.
@@ -179,7 +179,7 @@ func Load() (*Config, error) {
 		EnableLogging: getEnv("ENABLE_LOGGING", "") == "true",
 		LogLevel:      getEnv("LOG_LEVEL", "info"),
 
-		EnablePprof:         getEnv("ENABLE_PPROF", "") == "true" || getEnvEnv() != "production",
+		EnablePprof:         getEnv("ENABLE_PPROF", "") == "true",
 		MemstatsIntervalSec: getEnvInt("MEMSTATS_INTERVAL_SEC", 60),
 
 		RedisHost:           getEnv("REDIS_HOST", "localhost"),

@@ -46,15 +46,6 @@ const Users = () => {
 		},
 	});
 
-	// Update user mutation
-	const updateUserMutation = useMutation({
-		mutationFn: ({ id, data }) => adminUsersAPI.update(id, data),
-		onSuccess: () => {
-			queryClient.invalidateQueries(["users"]);
-			setEditingUser(null);
-		},
-	});
-
 	// Reset password mutation
 	const resetPasswordMutation = useMutation({
 		mutationFn: ({ userId, newPassword }) =>
@@ -281,7 +272,10 @@ const Users = () => {
 					user={editingUser}
 					isOpen={!!editingUser}
 					onClose={() => setEditingUser(null)}
-					onUserUpdated={() => updateUserMutation.mutate()}
+					onUserUpdated={() => {
+						queryClient.invalidateQueries(["users"]);
+						setEditingUser(null);
+					}}
 					roles={roles}
 				/>
 			)}
