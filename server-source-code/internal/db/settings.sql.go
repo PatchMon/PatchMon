@@ -12,7 +12,7 @@ import (
 )
 
 const getFirstSettings = `-- name: GetFirstSettings :one
-SELECT id, server_url, server_protocol, server_host, server_port, created_at, updated_at, update_interval, auto_update, default_compliance_mode, compliance_scan_interval, github_repo_url, ssh_key_path, repository_type, last_update_check, latest_version, update_available, signup_enabled, default_user_role, ignore_ssl_self_signed, logo_dark, logo_light, favicon, logo_dark_data, logo_light_data, favicon_data, logo_dark_content_type, logo_light_content_type, favicon_content_type, metrics_enabled, metrics_anonymous_id, metrics_last_sent, show_github_version_on_login, ai_enabled, ai_provider, ai_model, ai_api_key, alerts_enabled, discord_oauth_enabled, discord_client_id, discord_client_secret, discord_redirect_uri, discord_button_text, oidc_enabled, oidc_issuer_url, oidc_client_id, oidc_client_secret, oidc_redirect_uri, oidc_scopes, oidc_auto_create_users, oidc_default_role, oidc_disable_local_auth, oidc_button_text, oidc_sync_roles, oidc_admin_group, oidc_superadmin_group, oidc_host_manager_group, oidc_readonly_group, oidc_user_group, oidc_enforce_https, max_login_attempts, lockout_duration_minutes, session_inactivity_timeout_minutes, tfa_max_remember_sessions, password_min_length, password_require_uppercase, password_require_lowercase, password_require_number, password_require_special, enable_hsts, json_body_limit, agent_update_body_limit, db_transaction_long_timeout, cors_origin, enable_logging, log_level, timezone, jwt_expires_in, max_tfa_attempts, tfa_lockout_duration_minutes, tfa_remember_me_expires_in, trust_proxy, rate_limit_window_ms, rate_limit_max, auth_rate_limit_window_ms, auth_rate_limit_max, agent_rate_limit_window_ms, agent_rate_limit_max, password_rate_limit_window_ms, password_rate_limit_max, auth_browser_session_cookies FROM settings LIMIT 1
+SELECT id, server_url, server_protocol, server_host, server_port, created_at, updated_at, update_interval, auto_update, default_compliance_mode, compliance_scan_interval, package_cache_refresh_mode, package_cache_refresh_max_age, github_repo_url, ssh_key_path, repository_type, last_update_check, latest_version, update_available, signup_enabled, default_user_role, ignore_ssl_self_signed, logo_dark, logo_light, favicon, logo_dark_data, logo_light_data, favicon_data, logo_dark_content_type, logo_light_content_type, favicon_content_type, metrics_enabled, metrics_anonymous_id, metrics_last_sent, show_github_version_on_login, ai_enabled, ai_provider, ai_model, ai_api_key, alerts_enabled, discord_oauth_enabled, discord_client_id, discord_client_secret, discord_redirect_uri, discord_button_text, oidc_enabled, oidc_issuer_url, oidc_client_id, oidc_client_secret, oidc_redirect_uri, oidc_scopes, oidc_auto_create_users, oidc_default_role, oidc_disable_local_auth, oidc_button_text, oidc_sync_roles, oidc_admin_group, oidc_superadmin_group, oidc_host_manager_group, oidc_readonly_group, oidc_user_group, oidc_enforce_https, max_login_attempts, lockout_duration_minutes, session_inactivity_timeout_minutes, tfa_max_remember_sessions, password_min_length, password_require_uppercase, password_require_lowercase, password_require_number, password_require_special, enable_hsts, json_body_limit, agent_update_body_limit, db_transaction_long_timeout, cors_origin, enable_logging, log_level, timezone, jwt_expires_in, max_tfa_attempts, tfa_lockout_duration_minutes, tfa_remember_me_expires_in, trust_proxy, rate_limit_window_ms, rate_limit_max, auth_rate_limit_window_ms, auth_rate_limit_max, agent_rate_limit_window_ms, agent_rate_limit_max, password_rate_limit_window_ms, password_rate_limit_max, auth_browser_session_cookies FROM settings LIMIT 1
 `
 
 func (q *Queries) GetFirstSettings(ctx context.Context) (Setting, error) {
@@ -30,6 +30,8 @@ func (q *Queries) GetFirstSettings(ctx context.Context) (Setting, error) {
 		&i.AutoUpdate,
 		&i.DefaultComplianceMode,
 		&i.ComplianceScanInterval,
+		&i.PackageCacheRefreshMode,
+		&i.PackageCacheRefreshMaxAge,
 		&i.GithubRepoUrl,
 		&i.SshKeyPath,
 		&i.RepositoryType,
@@ -173,69 +175,73 @@ UPDATE settings SET
     logo_dark_content_type = $54,
     logo_light_content_type = $55,
     favicon_content_type = $56,
-    compliance_scan_interval = $57
-WHERE id = $58
+    compliance_scan_interval = $57,
+    package_cache_refresh_mode = $58,
+    package_cache_refresh_max_age = $59
+WHERE id = $60
 `
 
 type UpdateSettingsParams struct {
-	ServerUrl                string           `json:"server_url"`
-	ServerProtocol           string           `json:"server_protocol"`
-	ServerHost               string           `json:"server_host"`
-	ServerPort               int32            `json:"server_port"`
-	UpdateInterval           int32            `json:"update_interval"`
-	AutoUpdate               bool             `json:"auto_update"`
-	DefaultComplianceMode    string           `json:"default_compliance_mode"`
-	GithubRepoUrl            string           `json:"github_repo_url"`
-	SshKeyPath               *string          `json:"ssh_key_path"`
-	RepositoryType           string           `json:"repository_type"`
-	LastUpdateCheck          pgtype.Timestamp `json:"last_update_check"`
-	LatestVersion            *string          `json:"latest_version"`
-	UpdateAvailable          bool             `json:"update_available"`
-	SignupEnabled            bool             `json:"signup_enabled"`
-	DefaultUserRole          string           `json:"default_user_role"`
-	IgnoreSslSelfSigned      bool             `json:"ignore_ssl_self_signed"`
-	LogoDark                 *string          `json:"logo_dark"`
-	LogoLight                *string          `json:"logo_light"`
-	Favicon                  *string          `json:"favicon"`
-	MetricsEnabled           bool             `json:"metrics_enabled"`
-	MetricsAnonymousID       *string          `json:"metrics_anonymous_id"`
-	MetricsLastSent          pgtype.Timestamp `json:"metrics_last_sent"`
-	ShowGithubVersionOnLogin bool             `json:"show_github_version_on_login"`
-	AiEnabled                bool             `json:"ai_enabled"`
-	AiProvider               string           `json:"ai_provider"`
-	AiModel                  *string          `json:"ai_model"`
-	AiApiKey                 *string          `json:"ai_api_key"`
-	AlertsEnabled            bool             `json:"alerts_enabled"`
-	DiscordOauthEnabled      bool             `json:"discord_oauth_enabled"`
-	DiscordClientID          *string          `json:"discord_client_id"`
-	DiscordClientSecret      *string          `json:"discord_client_secret"`
-	DiscordRedirectUri       *string          `json:"discord_redirect_uri"`
-	DiscordButtonText        *string          `json:"discord_button_text"`
-	OidcEnabled              bool             `json:"oidc_enabled"`
-	OidcIssuerUrl            *string          `json:"oidc_issuer_url"`
-	OidcClientID             *string          `json:"oidc_client_id"`
-	OidcClientSecret         *string          `json:"oidc_client_secret"`
-	OidcRedirectUri          *string          `json:"oidc_redirect_uri"`
-	OidcScopes               *string          `json:"oidc_scopes"`
-	OidcAutoCreateUsers      bool             `json:"oidc_auto_create_users"`
-	OidcDefaultRole          *string          `json:"oidc_default_role"`
-	OidcDisableLocalAuth     bool             `json:"oidc_disable_local_auth"`
-	OidcButtonText           *string          `json:"oidc_button_text"`
-	OidcSyncRoles            bool             `json:"oidc_sync_roles"`
-	OidcAdminGroup           *string          `json:"oidc_admin_group"`
-	OidcSuperadminGroup      *string          `json:"oidc_superadmin_group"`
-	OidcHostManagerGroup     *string          `json:"oidc_host_manager_group"`
-	OidcReadonlyGroup        *string          `json:"oidc_readonly_group"`
-	OidcUserGroup            *string          `json:"oidc_user_group"`
-	OidcEnforceHttps         bool             `json:"oidc_enforce_https"`
-	LogoDarkData             []byte           `json:"logo_dark_data"`
-	LogoLightData            []byte           `json:"logo_light_data"`
-	FaviconData              []byte           `json:"favicon_data"`
-	LogoDarkContentType      *string          `json:"logo_dark_content_type"`
-	LogoLightContentType     *string          `json:"logo_light_content_type"`
-	FaviconContentType       *string          `json:"favicon_content_type"`
-	ComplianceScanInterval   int32            `json:"compliance_scan_interval"`
-	ID                       string           `json:"id"`
+	ServerUrl                 string           `json:"server_url"`
+	ServerProtocol            string           `json:"server_protocol"`
+	ServerHost                string           `json:"server_host"`
+	ServerPort                int32            `json:"server_port"`
+	UpdateInterval            int32            `json:"update_interval"`
+	AutoUpdate                bool             `json:"auto_update"`
+	DefaultComplianceMode     string           `json:"default_compliance_mode"`
+	GithubRepoUrl             string           `json:"github_repo_url"`
+	SshKeyPath                *string          `json:"ssh_key_path"`
+	RepositoryType            string           `json:"repository_type"`
+	LastUpdateCheck           pgtype.Timestamp `json:"last_update_check"`
+	LatestVersion             *string          `json:"latest_version"`
+	UpdateAvailable           bool             `json:"update_available"`
+	SignupEnabled             bool             `json:"signup_enabled"`
+	DefaultUserRole           string           `json:"default_user_role"`
+	IgnoreSslSelfSigned       bool             `json:"ignore_ssl_self_signed"`
+	LogoDark                  *string          `json:"logo_dark"`
+	LogoLight                 *string          `json:"logo_light"`
+	Favicon                   *string          `json:"favicon"`
+	MetricsEnabled            bool             `json:"metrics_enabled"`
+	MetricsAnonymousID        *string          `json:"metrics_anonymous_id"`
+	MetricsLastSent           pgtype.Timestamp `json:"metrics_last_sent"`
+	ShowGithubVersionOnLogin  bool             `json:"show_github_version_on_login"`
+	AiEnabled                 bool             `json:"ai_enabled"`
+	AiProvider                string           `json:"ai_provider"`
+	AiModel                   *string          `json:"ai_model"`
+	AiApiKey                  *string          `json:"ai_api_key"`
+	AlertsEnabled             bool             `json:"alerts_enabled"`
+	DiscordOauthEnabled       bool             `json:"discord_oauth_enabled"`
+	DiscordClientID           *string          `json:"discord_client_id"`
+	DiscordClientSecret       *string          `json:"discord_client_secret"`
+	DiscordRedirectUri        *string          `json:"discord_redirect_uri"`
+	DiscordButtonText         *string          `json:"discord_button_text"`
+	OidcEnabled               bool             `json:"oidc_enabled"`
+	OidcIssuerUrl             *string          `json:"oidc_issuer_url"`
+	OidcClientID              *string          `json:"oidc_client_id"`
+	OidcClientSecret          *string          `json:"oidc_client_secret"`
+	OidcRedirectUri           *string          `json:"oidc_redirect_uri"`
+	OidcScopes                *string          `json:"oidc_scopes"`
+	OidcAutoCreateUsers       bool             `json:"oidc_auto_create_users"`
+	OidcDefaultRole           *string          `json:"oidc_default_role"`
+	OidcDisableLocalAuth      bool             `json:"oidc_disable_local_auth"`
+	OidcButtonText            *string          `json:"oidc_button_text"`
+	OidcSyncRoles             bool             `json:"oidc_sync_roles"`
+	OidcAdminGroup            *string          `json:"oidc_admin_group"`
+	OidcSuperadminGroup       *string          `json:"oidc_superadmin_group"`
+	OidcHostManagerGroup      *string          `json:"oidc_host_manager_group"`
+	OidcReadonlyGroup         *string          `json:"oidc_readonly_group"`
+	OidcUserGroup             *string          `json:"oidc_user_group"`
+	OidcEnforceHttps          bool             `json:"oidc_enforce_https"`
+	LogoDarkData              []byte           `json:"logo_dark_data"`
+	LogoLightData             []byte           `json:"logo_light_data"`
+	FaviconData               []byte           `json:"favicon_data"`
+	LogoDarkContentType       *string          `json:"logo_dark_content_type"`
+	LogoLightContentType      *string          `json:"logo_light_content_type"`
+	FaviconContentType        *string          `json:"favicon_content_type"`
+	ComplianceScanInterval    int32            `json:"compliance_scan_interval"`
+	PackageCacheRefreshMode   string           `json:"package_cache_refresh_mode"`
+	PackageCacheRefreshMaxAge int32            `json:"package_cache_refresh_max_age"`
+	ID                        string           `json:"id"`
 }
 
 func (q *Queries) UpdateSettings(ctx context.Context, arg UpdateSettingsParams) error {
@@ -297,6 +303,8 @@ func (q *Queries) UpdateSettings(ctx context.Context, arg UpdateSettingsParams) 
 		arg.LogoLightContentType,
 		arg.FaviconContentType,
 		arg.ComplianceScanInterval,
+		arg.PackageCacheRefreshMode,
+		arg.PackageCacheRefreshMaxAge,
 		arg.ID,
 	)
 	return err

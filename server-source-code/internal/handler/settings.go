@@ -611,6 +611,8 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	oldInterval := s.UpdateInterval
 	oldComplianceScanInterval := s.ComplianceScanInterval
+	oldPackageCacheRefreshMode := s.PackageCacheRefreshMode
+	oldPackageCacheRefreshMaxAge := s.PackageCacheRefreshMaxAge
 	applySettingsUpdate(s, req, h.enc)
 
 	if err := h.settings.Update(r.Context(), s); err != nil {
@@ -620,11 +622,14 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	intervalChanged := s.UpdateInterval != oldInterval && s.UpdateInterval > 0
 	complianceIntervalChanged := s.ComplianceScanInterval != oldComplianceScanInterval && s.ComplianceScanInterval > 0
-	if h.registry != nil && (intervalChanged || complianceIntervalChanged) {
+	cacheRefreshChanged := s.PackageCacheRefreshMode != oldPackageCacheRefreshMode || s.PackageCacheRefreshMaxAge != oldPackageCacheRefreshMaxAge
+	if h.registry != nil && (intervalChanged || complianceIntervalChanged || cacheRefreshChanged) {
 		msg := map[string]interface{}{
-			"type":                     "settings_update",
-			"update_interval":          s.UpdateInterval,
-			"compliance_scan_interval": s.ComplianceScanInterval,
+			"type":                          "settings_update",
+			"update_interval":               s.UpdateInterval,
+			"compliance_scan_interval":      s.ComplianceScanInterval,
+			"package_cache_refresh_mode":    s.PackageCacheRefreshMode,
+			"package_cache_refresh_max_age": s.PackageCacheRefreshMaxAge,
 		}
 		pushed := 0
 		for _, apiID := range h.registry.GetConnectedApiIDs() {
@@ -656,8 +661,10 @@ func settingsToResponse(s *models.Settings, enc *util.Encryption) map[string]int
 		"server_host": s.ServerHost, "server_port": s.ServerPort,
 		"created_at": s.CreatedAt, "updated_at": s.UpdatedAt,
 		"update_interval": s.UpdateInterval, "auto_update": s.AutoUpdate,
-		"default_compliance_mode": s.DefaultComplianceMode, "compliance_scan_interval": s.ComplianceScanInterval, "github_repo_url": s.GithubRepoURL,
-		"ssh_key_path": s.SSHKeyPath, "repository_type": s.RepositoryType,
+		"default_compliance_mode": s.DefaultComplianceMode, "compliance_scan_interval": s.ComplianceScanInterval,
+		"package_cache_refresh_mode": s.PackageCacheRefreshMode, "package_cache_refresh_max_age": s.PackageCacheRefreshMaxAge,
+		"github_repo_url": s.GithubRepoURL,
+		"ssh_key_path":    s.SSHKeyPath, "repository_type": s.RepositoryType,
 		"last_update_check": s.LastUpdateCheck, "latest_version": s.LatestVersion,
 		"update_available": s.UpdateAvailable,
 		"signup_enabled":   s.SignupEnabled, "default_user_role": s.DefaultUserRole,
@@ -764,6 +771,17 @@ func applySettingsUpdate(s *models.Settings, req map[string]interface{}, enc *ut
 		val := int(v)
 		if val >= 60 && val <= 10080 {
 			s.ComplianceScanInterval = val
+		}
+	}
+	if v, ok := getReqString(req, "package_cache_refresh_mode", "packageCacheRefreshMode"); ok {
+		if v == "always" || v == "if_stale" || v == "never" {
+			s.PackageCacheRefreshMode = v
+		}
+	}
+	if v, ok := getReqFloat64(req, "package_cache_refresh_max_age", "packageCacheRefreshMaxAge"); ok {
+		val := int(v)
+		if val >= 1 && val <= 1440 {
+			s.PackageCacheRefreshMaxAge = val
 		}
 	}
 	if v, ok := getReqString(req, "github_repo_url", "githubRepoUrl"); ok {

@@ -589,6 +589,8 @@ credentials_file: "/etc/patchmon/credentials.yml"
 log_file: "/etc/patchmon/logs/patchmon-agent.log"
 log_level: "info"
 skip_ssl_verify: ${SKIP_SSL_VERIFY:-false}
+package_cache_refresh_mode: "always"
+package_cache_refresh_max_age: 60
 integrations:
   docker: false
   compliance:

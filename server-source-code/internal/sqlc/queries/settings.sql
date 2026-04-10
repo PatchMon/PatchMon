@@ -60,8 +60,10 @@ UPDATE settings SET
     logo_dark_content_type = $54,
     logo_light_content_type = $55,
     favicon_content_type = $56,
-    compliance_scan_interval = $57
-WHERE id = $58;
+    compliance_scan_interval = $57,
+    package_cache_refresh_mode = $58,
+    package_cache_refresh_max_age = $59
+WHERE id = $60;
 
 -- name: UpdateSettingsConfig :exec
 UPDATE settings SET

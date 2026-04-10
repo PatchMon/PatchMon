@@ -558,6 +558,8 @@ type Setting struct {
 	AutoUpdate                      bool             `json:"auto_update"`
 	DefaultComplianceMode           string           `json:"default_compliance_mode"`
 	ComplianceScanInterval          int32            `json:"compliance_scan_interval"`
+	PackageCacheRefreshMode         string           `json:"package_cache_refresh_mode"`
+	PackageCacheRefreshMaxAge       int32            `json:"package_cache_refresh_max_age"`
 	GithubRepoUrl                   string           `json:"github_repo_url"`
 	SshKeyPath                      *string          `json:"ssh_key_path"`
 	RepositoryType                  string           `json:"repository_type"`

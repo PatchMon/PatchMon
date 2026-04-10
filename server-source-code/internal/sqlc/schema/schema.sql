@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS settings (
     auto_update BOOLEAN NOT NULL DEFAULT false,
     default_compliance_mode TEXT NOT NULL DEFAULT 'on-demand',
     compliance_scan_interval INTEGER NOT NULL DEFAULT 1440,
+    package_cache_refresh_mode TEXT NOT NULL DEFAULT 'always',
+    package_cache_refresh_max_age INTEGER NOT NULL DEFAULT 60,
     github_repo_url TEXT NOT NULL DEFAULT 'https://github.com/PatchMon/PatchMon.git',
     ssh_key_path TEXT,
     repository_type TEXT NOT NULL DEFAULT 'public',

@@ -12,6 +12,12 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// CacheRefreshConfig controls whether package managers refresh their cache before collecting packages.
+type CacheRefreshConfig struct {
+	Mode   string // "always", "if_stale", "never"
+	MaxAge int    // minutes, only used when Mode == "if_stale"
+}
+
 // Manager handles package information collection
 type Manager struct {
 	logger         *logrus.Logger
@@ -24,8 +30,8 @@ type Manager struct {
 }
 
 // New creates a new package manager
-func New(logger *logrus.Logger) *Manager {
-	aptManager := NewAPTManager(logger)
+func New(logger *logrus.Logger, cacheRefresh CacheRefreshConfig) *Manager {
+	aptManager := NewAPTManager(logger, cacheRefresh)
 	dnfManager := NewDNFManager(logger)
 	apkManager := NewAPKManager(logger)
 	pacmanManager := NewPacmanManager(logger)

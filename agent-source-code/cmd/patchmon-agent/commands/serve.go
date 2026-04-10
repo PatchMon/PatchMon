@@ -353,6 +353,16 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 						logger.WithField("compliance_scan_interval", m.complianceScanInterval).Info("Compliance scan interval updated")
 					}
 				}
+				if m.packageCacheRefreshMode != "" {
+					if err := cfgManager.SetPackageCacheRefresh(m.packageCacheRefreshMode, m.packageCacheRefreshMaxAge); err != nil {
+						logger.WithError(err).Warn("Failed to save package cache refresh settings to config.yml")
+					} else {
+						logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+							"mode":    m.packageCacheRefreshMode,
+							"max_age": m.packageCacheRefreshMaxAge,
+						})).Info("Package cache refresh settings updated")
+					}
+				}
 			case "report_now":
 				if err := sendReport(false); err != nil {
 					logger.WithError(err).Warn("report_now failed")
@@ -1110,26 +1120,28 @@ func startIntegrationMonitoring(ctx context.Context, eventChan chan<- interface{
 }
 
 type wsMsg struct {
-	kind                   string
-	interval               int
-	complianceScanInterval int
-	version                string
-	force                  bool
-	integrationName        string
-	integrationEnabled     bool
-	profileType            string                 // For compliance_scan: openscap, docker-bench, all
-	profileID              string                 // For compliance_scan: specific XCCDF profile ID
-	enableRemediation      bool                   // For compliance_scan: enable auto-remediation
-	fetchRemoteResources   bool                   // For compliance_scan: fetch remote resources
-	openscapEnabled        *bool                  // For compliance_scan: per-host OpenSCAP scanner toggle
-	dockerBenchEnabled     *bool                  // For compliance_scan: per-host Docker Bench scanner toggle
-	ruleID                 string                 // For remediate_rule: specific rule ID to remediate
-	imageName              string                 // For docker_image_scan: Docker image to scan
-	containerName          string                 // For docker_image_scan: Docker container to scan
-	scanAllImages          bool                   // For docker_image_scan: scan all images on system
-	complianceOnDemandOnly bool                   // For set_compliance_on_demand_only (legacy)
-	complianceMode         string                 // For set_compliance_mode: "disabled", "on-demand", or "enabled"
-	applyConfig            map[string]interface{} // For apply_config: full config to apply
+	kind                      string
+	interval                  int
+	complianceScanInterval    int
+	packageCacheRefreshMode   string
+	packageCacheRefreshMaxAge int
+	version                   string
+	force                     bool
+	integrationName           string
+	integrationEnabled        bool
+	profileType               string                 // For compliance_scan: openscap, docker-bench, all
+	profileID                 string                 // For compliance_scan: specific XCCDF profile ID
+	enableRemediation         bool                   // For compliance_scan: enable auto-remediation
+	fetchRemoteResources      bool                   // For compliance_scan: fetch remote resources
+	openscapEnabled           *bool                  // For compliance_scan: per-host OpenSCAP scanner toggle
+	dockerBenchEnabled        *bool                  // For compliance_scan: per-host Docker Bench scanner toggle
+	ruleID                    string                 // For remediate_rule: specific rule ID to remediate
+	imageName                 string                 // For docker_image_scan: Docker image to scan
+	containerName             string                 // For docker_image_scan: Docker container to scan
+	scanAllImages             bool                   // For docker_image_scan: scan all images on system
+	complianceOnDemandOnly    bool                   // For set_compliance_on_demand_only (legacy)
+	complianceMode            string                 // For set_compliance_mode: "disabled", "on-demand", or "enabled"
+	applyConfig               map[string]interface{} // For apply_config: full config to apply
 	// SSH proxy fields
 	sshProxySessionID  string // Unique session ID for SSH proxy
 	sshProxyHost       string // SSH target host
@@ -1513,27 +1525,29 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		}
 		logger.WithField("raw_message", logutil.Sanitize(string(data))).Debug("WebSocket message received")
 		var payload struct {
-			Type                   string                 `json:"type"`
-			UpdateInterval         int                    `json:"update_interval"`
-			ComplianceScanInterval int                    `json:"compliance_scan_interval"`
-			Version                string                 `json:"version"`
-			Force                  bool                   `json:"force"`
-			Message                string                 `json:"message"`
-			Integration            string                 `json:"integration"`
-			Enabled                bool                   `json:"enabled"`
-			ProfileType            string                 `json:"profile_type"`           // For compliance_scan
-			ProfileID              string                 `json:"profile_id"`             // For compliance_scan: specific XCCDF profile ID
-			EnableRemediation      bool                   `json:"enable_remediation"`     // For compliance_scan
-			FetchRemoteResources   bool                   `json:"fetch_remote_resources"` // For compliance_scan
-			OpenSCAPEnabled        *bool                  `json:"openscap_enabled"`       // For compliance_scan: per-host toggle
-			DockerBenchEnabled     *bool                  `json:"docker_bench_enabled"`   // For compliance_scan: per-host toggle
-			RuleID                 string                 `json:"rule_id"`                // For remediate_rule: specific rule to remediate
-			ImageName              string                 `json:"image_name"`             // For docker_image_scan: Docker image to scan
-			ContainerName          string                 `json:"container_name"`         // For docker_image_scan: container to scan
-			ScanAllImages          bool                   `json:"scan_all_images"`        // For docker_image_scan: scan all images
-			OnDemandOnly           bool                   `json:"on_demand_only"`         // For set_compliance_on_demand_only (legacy)
-			Mode                   string                 `json:"mode"`                   // For set_compliance_mode: "disabled", "on-demand", or "enabled"
-			Config                 map[string]interface{} `json:"config"`                 // For apply_config: full config to apply
+			Type                      string                 `json:"type"`
+			UpdateInterval            int                    `json:"update_interval"`
+			ComplianceScanInterval    int                    `json:"compliance_scan_interval"`
+			PackageCacheRefreshMode   string                 `json:"package_cache_refresh_mode"`
+			PackageCacheRefreshMaxAge int                    `json:"package_cache_refresh_max_age"`
+			Version                   string                 `json:"version"`
+			Force                     bool                   `json:"force"`
+			Message                   string                 `json:"message"`
+			Integration               string                 `json:"integration"`
+			Enabled                   bool                   `json:"enabled"`
+			ProfileType               string                 `json:"profile_type"`           // For compliance_scan
+			ProfileID                 string                 `json:"profile_id"`             // For compliance_scan: specific XCCDF profile ID
+			EnableRemediation         bool                   `json:"enable_remediation"`     // For compliance_scan
+			FetchRemoteResources      bool                   `json:"fetch_remote_resources"` // For compliance_scan
+			OpenSCAPEnabled           *bool                  `json:"openscap_enabled"`       // For compliance_scan: per-host toggle
+			DockerBenchEnabled        *bool                  `json:"docker_bench_enabled"`   // For compliance_scan: per-host toggle
+			RuleID                    string                 `json:"rule_id"`                // For remediate_rule: specific rule to remediate
+			ImageName                 string                 `json:"image_name"`             // For docker_image_scan: Docker image to scan
+			ContainerName             string                 `json:"container_name"`         // For docker_image_scan: container to scan
+			ScanAllImages             bool                   `json:"scan_all_images"`        // For docker_image_scan: scan all images
+			OnDemandOnly              bool                   `json:"on_demand_only"`         // For set_compliance_on_demand_only (legacy)
+			Mode                      string                 `json:"mode"`                   // For set_compliance_mode: "disabled", "on-demand", or "enabled"
+			Config                    map[string]interface{} `json:"config"`                 // For apply_config: full config to apply
 			// SSH proxy fields
 			SessionID  string `json:"session_id"`  // SSH proxy session ID
 			Host       string `json:"host"`        // SSH proxy target host
@@ -1561,7 +1575,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		switch payload.Type {
 		case "settings_update":
 			logger.WithField("interval", payload.UpdateInterval).Info("settings_update received")
-			out <- wsMsg{kind: "settings_update", interval: payload.UpdateInterval, complianceScanInterval: payload.ComplianceScanInterval}
+			out <- wsMsg{kind: "settings_update", interval: payload.UpdateInterval, complianceScanInterval: payload.ComplianceScanInterval, packageCacheRefreshMode: payload.PackageCacheRefreshMode, packageCacheRefreshMaxAge: payload.PackageCacheRefreshMaxAge}
 		case "report_now":
 			logger.Info("report_now received")
 			out <- wsMsg{kind: "report_now"}
@@ -1959,7 +1973,10 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 	defer cancel()
 
 	httpClient := client.New(cfgManager, logger)
-	packageMgr := packages.New(logger)
+	packageMgr := packages.New(logger, packages.CacheRefreshConfig{
+		Mode:   cfgManager.GetPackageCacheRefreshMode(),
+		MaxAge: cfgManager.GetPackageCacheRefreshMaxAge(),
+	})
 	pkgManager := packageMgr.DetectPackageManager()
 
 	if pkgManager == "windows" {

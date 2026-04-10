@@ -38,7 +38,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
-          go-version: '1.26.1'
+          go-version: '1.26.2'
 
       - name: Download dependencies
         working-directory: server-source-code
@@ -81,7 +81,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
-          go-version: '1.26.1'
+          go-version: '1.26.2'
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9
@@ -112,7 +112,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
-          go-version: '1.26.1'
+          go-version: '1.26.2'
 
       - name: Check formatting
         working-directory: server-source-code
@@ -147,7 +147,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
-          go-version: '1.26.1'
+          go-version: '1.26.2'
 
       - name: Verify server source structure
         run: |
@@ -172,7 +172,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
-          go-version: '1.26.1'
+          go-version: '1.26.2'
 
       - name: Download dependencies
         working-directory: agent-source-code
@@ -202,7 +202,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
-          go-version: '1.26.1'
+          go-version: '1.26.2'
 
       - name: Check formatting
         working-directory: agent-source-code
@@ -224,7 +224,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
-          go-version: '1.26.1'
+          go-version: '1.26.2'
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9
@@ -242,7 +242,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
-          go-version: '1.26.1'
+          go-version: '1.26.2'
 
       - name: Build
         working-directory: agent-source-code

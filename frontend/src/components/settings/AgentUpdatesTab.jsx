@@ -9,6 +9,8 @@ const AgentUpdatesTab = () => {
 	const [formData, setFormData] = useState({
 		updateInterval: 60,
 		autoUpdate: false,
+		packageCacheRefreshMode: "always",
+		packageCacheRefreshMaxAge: 60,
 	});
 	const [uninstallOs, setUninstallOs] = useState("linux");
 	const [errors, setErrors] = useState({});
@@ -89,6 +91,9 @@ const AgentUpdatesTab = () => {
 			const newFormData = {
 				updateInterval: settings.update_interval || 60,
 				autoUpdate: settings.auto_update || false,
+				packageCacheRefreshMode:
+					settings.package_cache_refresh_mode || "always",
+				packageCacheRefreshMaxAge: settings.package_cache_refresh_max_age || 60,
 			};
 			setFormData(newFormData);
 			setIsDirty(false);
@@ -407,6 +412,105 @@ const AgentUpdatesTab = () => {
 							}`}
 						/>
 					</button>
+				</div>
+
+				{/* Host Package Cache Refresh */}
+				<div className="p-4 bg-secondary-50 dark:bg-secondary-800/50 rounded-lg border border-secondary-200 dark:border-secondary-700">
+					<div className="mb-3">
+						<h3 className="text-sm font-medium text-secondary-900 dark:text-secondary-100">
+							Host Package Cache Refresh
+						</h3>
+						<p className="mt-1 text-sm text-secondary-500 dark:text-white">
+							Controls whether agents refresh the host's package cache (e.g.{" "}
+							<code className="text-xs bg-secondary-200 dark:bg-secondary-700 px-1 py-0.5 rounded">
+								apt update
+							</code>
+							) before collecting package data.
+						</p>
+					</div>
+
+					{/* Mode selector */}
+					<div className="flex flex-wrap gap-2 mb-3">
+						{[
+							{ value: "always", label: "Refresh every time" },
+							{ value: "if_stale", label: "Refresh if stale" },
+							{ value: "never", label: "Don't refresh" },
+						].map((option) => (
+							<button
+								key={option.value}
+								type="button"
+								onClick={() => {
+									handleInputChange("packageCacheRefreshMode", option.value);
+								}}
+								className={`px-3 py-1.5 rounded-md text-xs font-medium border ${
+									formData.packageCacheRefreshMode === option.value
+										? "bg-primary-600 text-white border-primary-600"
+										: "bg-white dark:bg-secondary-700 text-secondary-700 dark:text-secondary-200 border-secondary-300 dark:border-secondary-600 hover:bg-secondary-50 dark:hover:bg-secondary-600"
+								}`}
+							>
+								{option.label}
+							</button>
+						))}
+					</div>
+
+					{/* Max age input — visible only when mode is if_stale */}
+					{formData.packageCacheRefreshMode === "if_stale" && (
+						<div className="mt-3">
+							<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2">
+								Maximum cache age (minutes)
+							</label>
+							<div className="flex items-center gap-2">
+								<input
+									type="number"
+									min="1"
+									max="1440"
+									step="1"
+									value={formData.packageCacheRefreshMaxAge}
+									onChange={(e) => {
+										const val = parseInt(e.target.value, 10);
+										if (!Number.isNaN(val)) {
+											handleInputChange(
+												"packageCacheRefreshMaxAge",
+												Math.min(1440, Math.max(1, val)),
+											);
+										}
+									}}
+									className="w-28 border rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white border-secondary-300 dark:border-secondary-600"
+								/>
+							</div>
+							<div className="mt-2 flex flex-wrap gap-2">
+								{[15, 30, 60, 120, 360].map((m) => (
+									<button
+										key={m}
+										type="button"
+										onClick={() =>
+											handleInputChange("packageCacheRefreshMaxAge", m)
+										}
+										className={`px-2 py-1 rounded-md text-xs font-medium border ${
+											formData.packageCacheRefreshMaxAge === m
+												? "bg-primary-600 text-white border-primary-600"
+												: "bg-white dark:bg-secondary-700 text-secondary-700 dark:text-secondary-200 border-secondary-300 dark:border-secondary-600 hover:bg-secondary-50 dark:hover:bg-secondary-600"
+										}`}
+									>
+										{m >= 60 ? `${m / 60}h` : `${m}m`}
+									</button>
+								))}
+							</div>
+							<p className="mt-1 text-xs text-secondary-500 dark:text-white">
+								The agent will only run a cache refresh if the host's package
+								cache is older than this value.
+							</p>
+						</div>
+					)}
+
+					<p className="mt-3 text-xs text-secondary-500 dark:text-white">
+						{formData.packageCacheRefreshMode === "always" &&
+							"The agent will always refresh the package cache before collecting updates. This ensures the most accurate data but adds time to each report."}
+						{formData.packageCacheRefreshMode === "if_stale" &&
+							"The agent will only refresh the cache if it is older than the specified maximum age. Balances accuracy with performance."}
+						{formData.packageCacheRefreshMode === "never" &&
+							"The agent will never refresh the package cache. It relies on the host's own update schedule (e.g. systemd timers, cron). Fastest but may report stale data."}
+					</p>
 				</div>
 
 				{/* Save Button */}

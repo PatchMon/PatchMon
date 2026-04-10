@@ -263,13 +263,15 @@ type Credentials struct {
 
 // Config represents agent configuration
 type Config struct {
-	PatchmonServer  string                 `yaml:"patchmon_server" mapstructure:"patchmon_server"`
-	APIVersion      string                 `yaml:"api_version" mapstructure:"api_version"`
-	CredentialsFile string                 `yaml:"credentials_file" mapstructure:"credentials_file"`
-	LogFile         string                 `yaml:"log_file" mapstructure:"log_file"`
-	LogLevel        string                 `yaml:"log_level" mapstructure:"log_level"`
-	SkipSSLVerify   bool                   `yaml:"skip_ssl_verify" mapstructure:"skip_ssl_verify"`
-	UpdateInterval  int                    `yaml:"update_interval" mapstructure:"update_interval"` // Interval in minutes
-	ReportOffset    int                    `yaml:"report_offset" mapstructure:"report_offset"`     // Offset in seconds
-	Integrations    map[string]interface{} `yaml:"integrations" mapstructure:"integrations"`       // Supports bool for simple integrations, string for compliance mode
+	PatchmonServer            string                 `yaml:"patchmon_server" mapstructure:"patchmon_server"`
+	APIVersion                string                 `yaml:"api_version" mapstructure:"api_version"`
+	CredentialsFile           string                 `yaml:"credentials_file" mapstructure:"credentials_file"`
+	LogFile                   string                 `yaml:"log_file" mapstructure:"log_file"`
+	LogLevel                  string                 `yaml:"log_level" mapstructure:"log_level"`
+	SkipSSLVerify             bool                   `yaml:"skip_ssl_verify" mapstructure:"skip_ssl_verify"`
+	UpdateInterval            int                    `yaml:"update_interval" mapstructure:"update_interval"`                             // Interval in minutes
+	ReportOffset              int                    `yaml:"report_offset" mapstructure:"report_offset"`                                 // Offset in seconds
+	PackageCacheRefreshMode   string                 `yaml:"package_cache_refresh_mode" mapstructure:"package_cache_refresh_mode"`       // always, if_stale, never
+	PackageCacheRefreshMaxAge int                    `yaml:"package_cache_refresh_max_age" mapstructure:"package_cache_refresh_max_age"` // minutes
+	Integrations              map[string]interface{} `yaml:"integrations" mapstructure:"integrations"`                                   // Supports bool for simple integrations, string for compliance mode
 }

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"time"
 
 	"patchmon-agent/pkg/models"
 
@@ -14,13 +15,15 @@ import (
 
 // APTManager handles APT package information collection
 type APTManager struct {
-	logger *logrus.Logger
+	logger       *logrus.Logger
+	cacheRefresh CacheRefreshConfig
 }
 
 // NewAPTManager creates a new APT package manager
-func NewAPTManager(logger *logrus.Logger) *APTManager {
+func NewAPTManager(logger *logrus.Logger, cacheRefresh CacheRefreshConfig) *APTManager {
 	return &APTManager{
-		logger: logger,
+		logger:       logger,
+		cacheRefresh: cacheRefresh,
 	}
 }
 
@@ -43,14 +46,18 @@ func (m *APTManager) GetPackages() []models.Package {
 	// Determine package manager
 	packageManager := m.detectPackageManager()
 
-	// Update package lists using detected package manager
-	// OPTIMIZATION: Skip updating package lists to reduce runtime and memory usage
-	// m.logger.WithField("manager", packageManager).Debug("Updating package lists")
-	// updateCmd := exec.Command(packageManager, "update", "-qq")
-
-	// if err := updateCmd.Run(); err != nil {
-	// 	m.logger.WithError(err).WithField("manager", packageManager).Warn("Failed to update package lists")
-	// }
+	// Conditionally refresh the package cache based on configuration
+	shouldRefresh := m.cacheRefresh.Mode == "always" ||
+		(m.cacheRefresh.Mode == "if_stale" && m.isCacheStale(m.cacheRefresh.MaxAge))
+	if shouldRefresh {
+		m.logger.WithField("mode", m.cacheRefresh.Mode).Debug("Refreshing package cache")
+		updateCmd := exec.Command(packageManager, "update", "-qq")
+		if err := updateCmd.Run(); err != nil {
+			m.logger.WithError(err).WithField("manager", packageManager).Warn("Failed to update package lists")
+		}
+	} else {
+		m.logger.WithField("mode", m.cacheRefresh.Mode).Debug("Skipping package cache refresh")
+	}
 
 	// Get installed packages
 	m.logger.Debug("Getting installed packages...")
@@ -88,6 +95,22 @@ func (m *APTManager) GetPackages() []models.Package {
 	packages := CombinePackageData(installedPackages, upgradablePackages)
 
 	return packages
+}
+
+// isCacheStale checks if the APT package cache is older than maxAgeMinutes.
+func (m *APTManager) isCacheStale(maxAgeMinutes int) bool {
+	// Check standard cache file locations
+	paths := []string{"/var/cache/apt/pkgcache.bin", "/var/lib/apt/lists"}
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		age := time.Since(info.ModTime())
+		return age > time.Duration(maxAgeMinutes)*time.Minute
+	}
+	// If we can't determine age, assume stale
+	return true
 }
 
 // parseAPTUpgrade parses apt/apt-get upgrade simulation output

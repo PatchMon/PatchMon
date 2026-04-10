@@ -65,7 +65,10 @@ func sendReport(outputJSON bool) error {
 
 	// Initialise managers
 	systemDetector := system.New(logger)
-	packageMgr := packages.New(logger)
+	packageMgr := packages.New(logger, packages.CacheRefreshConfig{
+		Mode:   cfgManager.GetPackageCacheRefreshMode(),
+		MaxAge: cfgManager.GetPackageCacheRefreshMaxAge(),
+	})
 	repoMgr := repositories.New(logger)
 	hardwareMgr := hardware.New(logger)
 	networkMgr := network.New(logger)

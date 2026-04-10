@@ -89,6 +89,8 @@ type Settings struct {
 	AutoUpdate                      bool       `db:"auto_update"`
 	DefaultComplianceMode           string     `db:"default_compliance_mode"`
 	ComplianceScanInterval          int        `db:"compliance_scan_interval"`
+	PackageCacheRefreshMode         string     `db:"package_cache_refresh_mode"`
+	PackageCacheRefreshMaxAge       int        `db:"package_cache_refresh_max_age"`
 	GithubRepoURL                   string     `db:"github_repo_url"`
 	SSHKeyPath                      *string    `db:"ssh_key_path"`
 	RepositoryType                  string     `db:"repository_type"`

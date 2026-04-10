@@ -78,13 +78,15 @@ func New() *Manager {
 	configFile, credentialsFile, logFile := getDefaultPaths()
 	return &Manager{
 		config: &models.Config{
-			PatchmonServer:  "", // No default server - user must provide
-			APIVersion:      DefaultAPIVersion,
-			CredentialsFile: credentialsFile,
-			LogFile:         logFile,
-			LogLevel:        DefaultLogLevel,
-			UpdateInterval:  60, // Default to 60 minutes
-			Integrations:    make(map[string]interface{}),
+			PatchmonServer:            "", // No default server - user must provide
+			APIVersion:                DefaultAPIVersion,
+			CredentialsFile:           credentialsFile,
+			LogFile:                   logFile,
+			LogLevel:                  DefaultLogLevel,
+			UpdateInterval:            60,       // Default to 60 minutes
+			PackageCacheRefreshMode:   "always", // Default to always refresh package cache
+			PackageCacheRefreshMaxAge: 60,       // Default max age in minutes (used when mode is if_stale)
+			Integrations:              make(map[string]interface{}),
 		},
 		configFile: configFile,
 	}
@@ -367,6 +369,8 @@ func (m *Manager) SaveConfig() error {
 	configViper.Set("skip_ssl_verify", m.config.SkipSSLVerify)
 	configViper.Set("update_interval", m.config.UpdateInterval)
 	configViper.Set("report_offset", m.config.ReportOffset)
+	configViper.Set("package_cache_refresh_mode", m.config.PackageCacheRefreshMode)
+	configViper.Set("package_cache_refresh_max_age", m.config.PackageCacheRefreshMaxAge)
 
 	// Always save integrations map with all available integrations
 	if m.config.Integrations == nil {
@@ -415,6 +419,35 @@ func (m *Manager) SetReportOffset(offsetSeconds int) error {
 	}
 	m.config.ReportOffset = offsetSeconds
 	return m.SaveConfig()
+}
+
+// SetPackageCacheRefresh sets the package cache refresh mode and max age, and saves to config file
+func (m *Manager) SetPackageCacheRefresh(mode string, maxAge int) error {
+	if mode != "always" && mode != "if_stale" && mode != "never" {
+		return fmt.Errorf("invalid package cache refresh mode: %s", mode)
+	}
+	if maxAge < 1 || maxAge > 1440 {
+		return fmt.Errorf("invalid package cache refresh max age: %d (must be 1-1440)", maxAge)
+	}
+	m.config.PackageCacheRefreshMode = mode
+	m.config.PackageCacheRefreshMaxAge = maxAge
+	return m.SaveConfig()
+}
+
+// GetPackageCacheRefreshMode returns the package cache refresh mode, defaulting to "always"
+func (m *Manager) GetPackageCacheRefreshMode() string {
+	if m.config.PackageCacheRefreshMode == "" {
+		return "always"
+	}
+	return m.config.PackageCacheRefreshMode
+}
+
+// GetPackageCacheRefreshMaxAge returns the max age in minutes for stale cache checks, defaulting to 60
+func (m *Manager) GetPackageCacheRefreshMaxAge() int {
+	if m.config.PackageCacheRefreshMaxAge <= 0 {
+		return 60
+	}
+	return m.config.PackageCacheRefreshMaxAge
 }
 
 // IsIntegrationEnabled checks if an integration is enabled

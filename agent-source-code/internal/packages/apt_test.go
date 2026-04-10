@@ -12,7 +12,7 @@ import (
 func TestAPTManager_parseInstalledPackages(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel)
-	manager := NewAPTManager(logger)
+	manager := NewAPTManager(logger, CacheRefreshConfig{Mode: "never"})
 
 	tests := []struct {
 		name     string
@@ -73,7 +73,7 @@ bash 5.1-6ubuntu1.1 GNU Bourne Again SHell
 func TestAPTManager_parseAPTUpgrade(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel)
-	manager := NewAPTManager(logger)
+	manager := NewAPTManager(logger, CacheRefreshConfig{Mode: "never"})
 
 	tests := []struct {
 		name     string
