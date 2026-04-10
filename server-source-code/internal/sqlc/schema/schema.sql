@@ -233,7 +233,8 @@ CREATE TABLE IF NOT EXISTS hosts (
     host_down_alerts_enabled BOOLEAN,
     expected_platform TEXT,
     package_manager TEXT,
-    primary_interface TEXT
+    primary_interface TEXT,
+    awaiting_post_patch_report_run_id TEXT REFERENCES patch_runs(id) ON DELETE SET NULL
 );
 
 -- dashboard_preferences

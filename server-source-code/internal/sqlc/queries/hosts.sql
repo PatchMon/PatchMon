@@ -88,3 +88,6 @@ FROM hosts;
 -- name: CountUnscannedHosts :one
 SELECT COUNT(*) FROM hosts h
 WHERE NOT EXISTS (SELECT 1 FROM compliance_scans cs WHERE cs.host_id = h.id);
+
+-- name: SetHostAwaitingPostPatchReport :exec
+UPDATE hosts SET awaiting_post_patch_report_run_id = $1, updated_at = NOW() WHERE id = $2;

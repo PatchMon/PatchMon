@@ -136,6 +136,11 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to save patch output"})
 		return
 	}
+	if body.Stage == "completed" && !run.DryRun {
+		if err := h.hosts.SetAwaitingPostPatchReport(r.Context(), run.HostID, &patchRunID); err != nil {
+			h.log.Error("patching: failed to set awaiting post-patch report", "host_id", run.HostID, "patch_run_id", patchRunID, "error", err)
+		}
+	}
 	// Emit patch_run_started when the agent begins execution.
 	if h.notify != nil && body.Stage == "running" {
 		if d := hostctx.DBFromContext(r.Context()); d != nil {
@@ -412,7 +417,13 @@ func (h *PatchingHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 		JSON(w, http.StatusNotFound, map[string]string{"error": "Patch run not found"})
 		return
 	}
-	JSON(w, http.StatusOK, patchRunToResponse(run))
+	resp := patchRunToResponse(run)
+	if host, err := h.hosts.GetByID(r.Context(), run.HostID); err == nil && host != nil {
+		if hosts, ok := resp["hosts"].(map[string]interface{}); ok {
+			hosts["awaiting_post_patch_report_run_id"] = host.AwaitingPostPatchReportRunID
+		}
+	}
+	JSON(w, http.StatusOK, resp)
 }
 
 // ApproveRun handles POST /patching/runs/:id/approve.

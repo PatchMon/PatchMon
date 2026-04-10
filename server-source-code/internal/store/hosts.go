@@ -271,6 +271,15 @@ func (s *HostsStore) UpdateComplianceScannerStatus(ctx context.Context, id strin
 	})
 }
 
+// SetAwaitingPostPatchReport marks a host as awaiting a fresh inventory report after a real patch run completed.
+func (s *HostsStore) SetAwaitingPostPatchReport(ctx context.Context, hostID string, patchRunID *string) error {
+	d := s.db.DB(ctx)
+	return d.Queries.SetHostAwaitingPostPatchReport(ctx, db.SetHostAwaitingPostPatchReportParams{
+		AwaitingPostPatchReportRunID: patchRunID,
+		ID:                           hostID,
+	})
+}
+
 // UpdateApiCredentials updates api_id and api_key for a host.
 func (s *HostsStore) UpdateApiCredentials(ctx context.Context, id, apiID, apiKeyHash string) error {
 	d := s.db.DB(ctx)

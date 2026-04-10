@@ -484,6 +484,7 @@ func dbHostToModel(h db.Host) *models.Host {
 		ExpectedPlatform:             h.ExpectedPlatform,
 		PackageManager:               h.PackageManager,
 		PrimaryInterface:             h.PrimaryInterface,
+		AwaitingPostPatchReportRunID: h.AwaitingPostPatchReportRunID,
 	}
 }
 

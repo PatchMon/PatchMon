@@ -112,7 +112,7 @@ func (q *Queries) DeleteHostsByIDs(ctx context.Context, dollar_1 []string) error
 }
 
 const getHostByApiID = `-- name: GetHostByApiID :one
-SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface FROM hosts WHERE api_id = $1
+SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id FROM hosts WHERE api_id = $1
 `
 
 func (q *Queries) GetHostByApiID(ctx context.Context, apiID string) (Host, error) {
@@ -163,12 +163,13 @@ func (q *Queries) GetHostByApiID(ctx context.Context, apiID string) (Host, error
 		&i.ExpectedPlatform,
 		&i.PackageManager,
 		&i.PrimaryInterface,
+		&i.AwaitingPostPatchReportRunID,
 	)
 	return i, err
 }
 
 const getHostByID = `-- name: GetHostByID :one
-SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface FROM hosts WHERE id = $1
+SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id FROM hosts WHERE id = $1
 `
 
 func (q *Queries) GetHostByID(ctx context.Context, id string) (Host, error) {
@@ -219,12 +220,13 @@ func (q *Queries) GetHostByID(ctx context.Context, id string) (Host, error) {
 		&i.ExpectedPlatform,
 		&i.PackageManager,
 		&i.PrimaryInterface,
+		&i.AwaitingPostPatchReportRunID,
 	)
 	return i, err
 }
 
 const getHostsByIDs = `-- name: GetHostsByIDs :many
-SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface FROM hosts WHERE id = ANY($1::text[])
+SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id FROM hosts WHERE id = ANY($1::text[])
 `
 
 func (q *Queries) GetHostsByIDs(ctx context.Context, dollar_1 []string) ([]Host, error) {
@@ -281,6 +283,7 @@ func (q *Queries) GetHostsByIDs(ctx context.Context, dollar_1 []string) ([]Host,
 			&i.ExpectedPlatform,
 			&i.PackageManager,
 			&i.PrimaryInterface,
+			&i.AwaitingPostPatchReportRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -293,7 +296,7 @@ func (q *Queries) GetHostsByIDs(ctx context.Context, dollar_1 []string) ([]Host,
 }
 
 const listHosts = `-- name: ListHosts :many
-SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface FROM hosts ORDER BY friendly_name
+SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id FROM hosts ORDER BY friendly_name
 `
 
 func (q *Queries) ListHosts(ctx context.Context) ([]Host, error) {
@@ -350,6 +353,7 @@ func (q *Queries) ListHosts(ctx context.Context) ([]Host, error) {
 			&i.ExpectedPlatform,
 			&i.PackageManager,
 			&i.PrimaryInterface,
+			&i.AwaitingPostPatchReportRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -472,6 +476,20 @@ func (q *Queries) ListHostsPaginated(ctx context.Context, arg ListHostsPaginated
 		return nil, err
 	}
 	return items, nil
+}
+
+const setHostAwaitingPostPatchReport = `-- name: SetHostAwaitingPostPatchReport :exec
+UPDATE hosts SET awaiting_post_patch_report_run_id = $1, updated_at = NOW() WHERE id = $2
+`
+
+type SetHostAwaitingPostPatchReportParams struct {
+	AwaitingPostPatchReportRunID *string `json:"awaiting_post_patch_report_run_id"`
+	ID                           string  `json:"id"`
+}
+
+func (q *Queries) SetHostAwaitingPostPatchReport(ctx context.Context, arg SetHostAwaitingPostPatchReportParams) error {
+	_, err := q.db.Exec(ctx, setHostAwaitingPostPatchReport, arg.AwaitingPostPatchReportRunID, arg.ID)
+	return err
 }
 
 const updateHostApiCredentials = `-- name: UpdateHostApiCredentials :exec

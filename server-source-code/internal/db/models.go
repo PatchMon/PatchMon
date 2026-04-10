@@ -299,6 +299,7 @@ type Host struct {
 	ExpectedPlatform             *string          `json:"expected_platform"`
 	PackageManager               *string          `json:"package_manager"`
 	PrimaryInterface             *string          `json:"primary_interface"`
+	AwaitingPostPatchReportRunID *string          `json:"awaiting_post_patch_report_run_id"`
 }
 
 type HostGroup struct {

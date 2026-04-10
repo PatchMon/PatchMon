@@ -48,6 +48,7 @@ type Host struct {
 	ExpectedPlatform             *string    `db:"expected_platform"`
 	PackageManager               *string    `db:"package_manager"`
 	PrimaryInterface             *string    `db:"primary_interface"`
+	AwaitingPostPatchReportRunID *string    `db:"awaiting_post_patch_report_run_id"`
 }
 
 // HostGroup matches host_groups table.

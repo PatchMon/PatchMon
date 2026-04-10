@@ -8,6 +8,7 @@ import {
 	Shield,
 	User,
 } from "lucide-react";
+
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
@@ -170,6 +171,14 @@ const RunDetail = () => {
 								<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
 									<AlertTriangle className="h-3 w-3" />
 									Extra dependencies
+								</span>
+							)}
+						{run.status === "completed" &&
+							!run.dry_run &&
+							run.hosts?.awaiting_post_patch_report_run_id === run.id && (
+								<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+									<RefreshCw className="h-3 w-3 animate-spin" />
+									Awaiting inventory report
 								</span>
 							)}
 					</div>

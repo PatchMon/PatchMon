@@ -43,7 +43,7 @@ services:
   database:
     image: postgres:17-alpine
     restart: unless-stopped
-    env_file: .env 
+    env_file: .env
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:

@@ -220,7 +220,8 @@ UPDATE hosts SET
     load_average = COALESCE($20::jsonb, load_average),
     needs_reboot = COALESCE($21::boolean, needs_reboot),
     reboot_reason = $22,
-    package_manager = COALESCE($23::text, package_manager)
+    package_manager = COALESCE($23::text, package_manager),
+    awaiting_post_patch_report_run_id = NULL
 WHERE id = $24
 `
 

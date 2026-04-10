@@ -1237,6 +1237,7 @@ func hostToResponse(h *models.Host, groups []models.HostGroup) map[string]interf
 		"system_uptime": h.SystemUptime, "needs_reboot": h.NeedsReboot,
 		"docker_enabled": h.DockerEnabled, "compliance_enabled": h.ComplianceEnabled,
 		"package_manager": h.PackageManager, "primary_interface": h.PrimaryInterface,
+		"awaiting_post_patch_report_run_id": h.AwaitingPostPatchReportRunID,
 	}
 	hg := make([]map[string]interface{}, len(groups))
 	for i, g := range groups {

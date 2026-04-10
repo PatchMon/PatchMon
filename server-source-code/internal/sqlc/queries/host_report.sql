@@ -27,7 +27,8 @@ UPDATE hosts SET
     load_average = COALESCE(sqlc.narg('load_average')::jsonb, load_average),
     needs_reboot = COALESCE(sqlc.narg('needs_reboot')::boolean, needs_reboot),
     reboot_reason = sqlc.narg('reboot_reason'),
-    package_manager = COALESCE(sqlc.narg('package_manager')::text, package_manager)
+    package_manager = COALESCE(sqlc.narg('package_manager')::text, package_manager),
+    awaiting_post_patch_report_run_id = NULL
 WHERE id = sqlc.arg('id');
 
 -- name: DeleteHostPackagesByHostID :exec

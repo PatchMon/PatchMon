@@ -324,6 +324,7 @@ type Querier interface {
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error
 	RevokeAllSessionsForUserExcept(ctx context.Context, arg RevokeAllSessionsForUserExceptParams) error
 	RevokeSessionByID(ctx context.Context, arg RevokeSessionByIDParams) error
+	SetHostAwaitingPostPatchReport(ctx context.Context, arg SetHostAwaitingPostPatchReportParams) error
 	SetPatchRunPolicySnapshot(ctx context.Context, arg SetPatchRunPolicySnapshotParams) error
 	ToggleHostRepository(ctx context.Context, arg ToggleHostRepositoryParams) error
 	UpdateAlert(ctx context.Context, id string) error

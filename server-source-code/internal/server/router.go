@@ -252,7 +252,6 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	communityHandler := handler.NewCommunityHandler()
 
 	r.Get("/health", healthHandler(db, rdb))
-	r.Get("/api/v1/version", versionHandler(cfg))
 
 	// Start guacd subprocess if RDP enabled and address is localhost.
 	// When GUACD_ADDRESS points to a remote host (e.g. guacd:4822 in Docker), guacd runs as a sidecar.
@@ -683,13 +682,6 @@ func boolStatus(ok bool) string {
 		return "ok"
 	}
 	return "unhealthy"
-}
-
-func versionHandler(cfg *config.Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"version":"` + cfg.Version + `"}`))
-	}
 }
 
 // corsOriginResolver returns a dynamic origin for context-aware mode.

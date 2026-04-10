@@ -2287,14 +2287,19 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 	}
 
 	if !dryRun {
-		go func() {
-			logger.Info("Sending report after patch to refresh package lists...")
-			if err := sendReport(false); err != nil {
+		logger.Info("Sending post-patch report to refresh package lists...")
+		reportDone := make(chan error, 1)
+		go func() { reportDone <- sendReport(false) }()
+		select {
+		case err := <-reportDone:
+			if err != nil {
 				logger.WithError(err).Warn("Post-patch report failed")
 			} else {
 				logger.Info("Post-patch report sent successfully")
 			}
-		}()
+		case <-time.After(2 * time.Minute):
+			logger.Warn("Post-patch report timed out after 2 minutes; will retry on next scheduled report")
+		}
 	}
 
 	return nil
@@ -2400,12 +2405,19 @@ func runPatchWindows(ctx context.Context, httpClient *client.Client, patchRunID,
 	}
 
 	if !dryRun {
-		go func() {
-			logger.Info("Sending report after Windows patch to refresh package lists...")
-			if err := sendReport(false); err != nil {
+		logger.Info("Sending post-patch report to refresh package lists...")
+		reportDone := make(chan error, 1)
+		go func() { reportDone <- sendReport(false) }()
+		select {
+		case err := <-reportDone:
+			if err != nil {
 				logger.WithError(err).Warn("Post-patch report failed")
+			} else {
+				logger.Info("Post-patch report sent successfully")
 			}
-		}()
+		case <-time.After(2 * time.Minute):
+			logger.Warn("Post-patch report timed out after 2 minutes; will retry on next scheduled report")
+		}
 	}
 
 	return nil

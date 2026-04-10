@@ -1217,6 +1217,16 @@ const HostDetail = () => {
 									Reboot Required
 								</span>
 							)}
+							{host.awaiting_post_patch_report_run_id && (
+								<Link
+									to={`/patching/runs/${host.awaiting_post_patch_report_run_id}`}
+									className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors"
+									title="Patches were applied — awaiting a fresh inventory report from the agent"
+								>
+									<RefreshCw className="h-3 w-3 animate-spin" />
+									Awaiting inventory report
+								</Link>
+							)}
 						</div>
 						{/* Info row with uptime and last updated */}
 						<div className="flex items-center gap-4 text-sm text-secondary-600 dark:text-white">
