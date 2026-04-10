@@ -1,7 +1,8 @@
 <div align="center">
 
-# PLEASE NOTE VERSION 1.5.0 IS BEING RELEASED ON 10TH APRIL 2026 - SEE OTHER BRANCH "1-5-0-POST-JOBS"
+# PLEASE NOTE VERSION 1.5.0 IS BEING RELEASED ON ~~10TH~~ 26th APRIL 2026 - SEE OTHER BRANCH "1-5-0-POST-JOBS"
 ## So please don't work on any PRs for the node backend as we have replaced it totally with GO
+## Give me more time please :) - I need to still fix some bugs and create relevant documentation etc <3 Thank you for your patience
 
 # PatchMon
 
