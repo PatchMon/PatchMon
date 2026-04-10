@@ -17,6 +17,11 @@ on:
         required: false
         type: boolean
         default: false
+      ssg_version:
+        description: 'Pin SSG version (e.g. 0.1.80). Leave empty for latest.'
+        required: false
+        type: string
+        default: ''
 
 env:
   REGISTRY: ghcr.io
@@ -45,7 +50,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
-          go-version: '1.26.1'
+          go-version: '1.26.2'
 
       - name: Build all agent binaries
         working-directory: agent-source-code
@@ -133,6 +138,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           build-args: |
             VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+            SSG_VERSION=${{ inputs.ssg_version || '' }}
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -149,6 +155,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           build-args: |
             VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+            SSG_VERSION=${{ inputs.ssg_version || '' }}
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
           tags: |
             ${{ github.event_name == 'pull_request_target' && format('{0}/pr/patchmon-server:pr-{1}', env.HARBOR_REGISTRY, github.event.pull_request.number) || '' }}
@@ -188,5 +195,5 @@ jobs:
             ```yaml
             services:
               patchmon-server:
-                image: ${{ env.HARBOR_REGISTRY }}/pr/patchmon-server@${{ steps.build.outputs.digest }}
-            ``
+                image: ${{ env.HARBOR_REGISTRY }}/pr/patchmon-server@${{ steps.build-harbor.outputs.digest }}
+            ```
