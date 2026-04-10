@@ -1,6 +1,6 @@
 module patchmon-agent
 
-go 1.24.0
+go 1.26.2
 
 require (
 	github.com/docker/docker v28.5.1+incompatible
