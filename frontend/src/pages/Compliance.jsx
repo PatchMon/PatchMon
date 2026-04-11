@@ -68,7 +68,7 @@ const CustomTooltip = ({ active, payload, label, type }) => {
 		<div className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 shadow-lg">
 			<p className="text-white font-medium text-sm mb-1">{getTitle()}</p>
 			<div className="space-y-1">
-				{payload.map((entry, index) => {
+				{payload.map((entry) => {
 					let name = entry.name;
 					let color = entry.color;
 
@@ -87,7 +87,7 @@ const CustomTooltip = ({ active, payload, label, type }) => {
 
 					return (
 						<div
-							key={`entry-${index}-${entry.name || entry.dataKey || ""}`}
+							key={`entry-${entry.name || entry.dataKey}`}
 							className="flex items-center justify-between gap-4 text-sm"
 						>
 							<div className="flex items-center gap-2">
@@ -1051,8 +1051,8 @@ const Compliance = () => {
 										<div className="mt-2 text-xs text-yellow-400">
 											<p>Failed hosts:</p>
 											<ul className="list-disc list-inside">
-												{bulkScanResult.failed.map((f, i) => (
-													<li key={`failed-${i}-${f.hostName || ""}`}>
+												{bulkScanResult.failed.map((f) => (
+													<li key={`failed-${f.hostName}`}>
 														{f.hostName}: {f.error}
 													</li>
 												))}
@@ -1458,9 +1458,9 @@ const Compliance = () => {
 																content={<CustomTooltip type="severity" />}
 															/>
 															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-																{chartData.map((entry, index) => (
+																{chartData.map((entry) => (
 																	<Cell
-																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		key={`cell-${entry.name || entry.color || entry.dataKey}`}
 																		fill={entry.color}
 																	/>
 																))}
@@ -1538,9 +1538,9 @@ const Compliance = () => {
 																content={<CustomTooltip type="scoreRange" />}
 															/>
 															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-																{scoreRanges.map((entry, index) => (
+																{scoreRanges.map((entry) => (
 																	<Cell
-																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		key={`cell-${entry.name || entry.color || entry.dataKey}`}
 																		fill={entry.color}
 																	/>
 																))}
@@ -1612,9 +1612,9 @@ const Compliance = () => {
 																content={<CustomTooltip type="scanAge" />}
 															/>
 															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-																{chartData.map((entry, index) => (
+																{chartData.map((entry) => (
 																	<Cell
-																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		key={`cell-${entry.name || entry.color || entry.dataKey}`}
 																		fill={entry.color}
 																	/>
 																))}
@@ -1778,9 +1778,9 @@ const Compliance = () => {
 																}}
 															/>
 															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-																{chartData.map((entry, index) => (
+																{chartData.map((entry) => (
 																	<Cell
-																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		key={`cell-${entry.name || entry.color || entry.dataKey}`}
 																		fill={entry.color}
 																	/>
 																))}
@@ -1858,9 +1858,9 @@ const Compliance = () => {
 																content={<CustomTooltip type="scoreRange" />}
 															/>
 															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-																{scoreRanges.map((entry, index) => (
+																{scoreRanges.map((entry) => (
 																	<Cell
-																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		key={`cell-${entry.name || entry.color || entry.dataKey}`}
 																		fill={entry.color}
 																	/>
 																))}
@@ -1938,9 +1938,9 @@ const Compliance = () => {
 																content={<CustomTooltip type="scanAge" />}
 															/>
 															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-																{chartData.map((entry, index) => (
+																{chartData.map((entry) => (
 																	<Cell
-																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		key={`cell-${entry.name || entry.color || entry.dataKey}`}
 																		fill={entry.color}
 																	/>
 																))}

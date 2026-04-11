@@ -326,7 +326,7 @@ export const AuthProvider = ({ children }) => {
 
 			if (response.ok) {
 				// Validate that we received user data with expected fields
-				if (!data.user || !data.user.id) {
+				if (!data.user?.id) {
 					console.error("Invalid user data in response:", data);
 					return {
 						success: false,

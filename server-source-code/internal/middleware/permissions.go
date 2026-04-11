@@ -17,10 +17,6 @@ func RequirePermission(perm string, permissions *store.PermissionsStore) func(ht
 				writeJSONError(w, http.StatusUnauthorized, "Unauthorized")
 				return
 			}
-			if role == "admin" || role == "superadmin" {
-				next.ServeHTTP(w, r)
-				return
-			}
 			p, err := permissions.GetByRole(r.Context(), role)
 			if err != nil || p == nil {
 				writeJSONError(w, http.StatusForbidden, "Access denied")

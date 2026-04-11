@@ -70,12 +70,15 @@ func (h *OidcHandler) Config(w http.ResponseWriter, r *http.Request) {
 	enabled := configuredValid
 	var disableLocalAuth bool
 	var buttonText string
+	var syncRoles bool
 	if resolved != nil {
 		disableLocalAuth = enabled && resolved.DisableLocalAuth
 		buttonText = resolved.ButtonText
+		syncRoles = resolved.SyncRoles
 	} else {
 		disableLocalAuth = enabled && h.cfg.OidcDisableLocalAuth
 		buttonText = h.cfg.OidcButtonText
+		syncRoles = h.cfg.OidcSyncRoles
 	}
 	if buttonText == "" {
 		buttonText = "Login with SSO"
@@ -84,6 +87,7 @@ func (h *OidcHandler) Config(w http.ResponseWriter, r *http.Request) {
 		"enabled":          enabled,
 		"buttonText":       buttonText,
 		"disableLocalAuth": disableLocalAuth,
+		"syncRoles":        syncRoles,
 	})
 }
 
@@ -244,20 +248,21 @@ func (h *OidcHandler) Callback(w http.ResponseWriter, r *http.Request) {
 			user.AvatarURL = strPtr(userInfo.Picture)
 		}
 	}
-	role := h.mapGroupsToRole(userInfo.Groups)
-	if h.log != nil && len(userInfo.Groups) == 0 && h.oidcSyncRoles() {
-		h.log.Warn("oidc no groups in token", "email", userInfo.Email, "hint", "Create a Scope Mapping in Authentik to add 'groups' claim")
-	}
-	if h.oidcSyncRoles() && role != user.Role {
-		user.Role = role
+	effectiveRole := user.Role // preserve existing role by default
+	if h.oidcSyncRoles() {
+		mappedRole := h.mapGroupsToRole(userInfo.Groups)
+		if h.log != nil && len(userInfo.Groups) == 0 {
+			h.log.Warn("oidc no groups in token", "email", userInfo.Email, "hint", "Create a Scope Mapping in Authentik to add 'groups' claim")
+		}
+		effectiveRole = mappedRole
 	}
 	now := time.Now()
-	_ = h.users.UpdateOidcProfile(r.Context(), user.ID, now, strPtr(userInfo.Picture), strPtr(userInfo.GivenName), strPtr(userInfo.FamilyName), role)
+	_ = h.users.UpdateOidcProfile(r.Context(), user.ID, now, strPtr(userInfo.Picture), strPtr(userInfo.GivenName), strPtr(userInfo.FamilyName), effectiveRole)
 	user.LastLogin = &now
 	user.AvatarURL = strPtr(userInfo.Picture)
 	user.FirstName = strPtr(userInfo.GivenName)
 	user.LastName = strPtr(userInfo.FamilyName)
-	user.Role = role
+	user.Role = effectiveRole
 	if userInfo.IDToken != "" {
 		_ = h.oidcStore.StoreIDToken(r.Context(), user.ID, userInfo.IDToken)
 	}
@@ -808,6 +813,14 @@ func (h *OidcHandler) createOidcUser(ctx context.Context, info *oidc.UserInfo) *
 	role := h.mapGroupsToRole(info.Groups)
 	if h.log != nil && len(info.Groups) == 0 && h.oidcSyncRoles() {
 		h.log.Warn("oidc no groups in token for new user", "email", info.Email, "hint", "Create a Scope Mapping in Authentik to add 'groups' claim")
+	}
+	// If no admin/superadmin exists yet, promote the first auto-created user to superadmin.
+	adminCount, _ := h.users.CountAdmins(ctx)
+	if adminCount == 0 {
+		role = "superadmin"
+		if h.log != nil {
+			h.log.Info("oidc first user promoted to superadmin", "email", info.Email)
+		}
 	}
 	issuerHost := extractHost(h.oidcIssuerURL())
 	u := &models.User{

@@ -53,6 +53,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	const [aiMessages, setAiMessages] = useState([]);
 	const [aiInput, setAiInput] = useState("");
 	const [aiLoading, setAiLoading] = useState(false);
+	const aiMsgIdRef = useRef(0);
 	const terminalBufferRef = useRef("");
 	const aiInputRef = useRef(null);
 	const currentLineRef = useRef(""); // Track current line for AI context
@@ -147,7 +148,10 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 
 		const userMessage = aiInput.trim();
 		setAiInput("");
-		setAiMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+		setAiMessages((prev) => [
+			...prev,
+			{ id: ++aiMsgIdRef.current, role: "user", content: userMessage },
+		]);
 		setAiLoading(true);
 
 		try {
@@ -159,12 +163,17 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 
 			setAiMessages((prev) => [
 				...prev,
-				{ role: "assistant", content: response.data.response },
+				{
+					id: ++aiMsgIdRef.current,
+					role: "assistant",
+					content: response.data.response,
+				},
 			]);
 		} catch (err) {
 			setAiMessages((prev) => [
 				...prev,
 				{
+					id: ++aiMsgIdRef.current,
 					role: "assistant",
 					content: `Error: ${err.response?.data?.error || "Failed to get AI response"}`,
 					isError: true,
@@ -1395,14 +1404,14 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 											</p>
 										</div>
 									)}
-									{aiMessages.map((msg, idx) => {
+									{aiMessages.map((msg) => {
 										const codeBlocks =
 											msg.role === "assistant" && !msg.isError
 												? extractCodeBlocks(msg.content)
 												: [];
 										return (
 											<div
-												key={`msg-${idx}-${msg.role}-${msg.content.slice(0, 10)}`}
+												key={`msg-${msg.id}`}
 												className={`text-sm ${
 													msg.role === "user"
 														? "bg-primary-900/30 border border-primary-700/30 rounded-lg p-2 ml-4"
@@ -1427,9 +1436,9 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 																<span className="text-xs text-secondary-400">
 																	Send to terminal:
 																</span>
-																{codeBlocks.map((cmd, cmdIdx) => (
+																{codeBlocks.map((cmd) => (
 																	<button
-																		key={`cmd-${cmdIdx}-${cmd.slice(0, 20)}`}
+																		key={`cmd-${cmd}`}
 																		type="button"
 																		onClick={() => sendCommandToTerminal(cmd)}
 																		className="w-full flex items-center gap-2 px-2 py-1.5 text-xs bg-secondary-600/50 hover:bg-primary-600/50 border border-secondary-500/50 hover:border-primary-500/50 rounded text-left transition-colors group"

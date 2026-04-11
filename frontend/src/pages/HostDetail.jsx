@@ -1764,9 +1764,9 @@ const HostDetail = () => {
 																		IP Addresses
 																	</p>
 																	<div className="space-y-2">
-																		{iface.addresses.map((addr, idx) => (
+																		{iface.addresses.map((addr) => (
 																			<div
-																				key={`${addr.address}-${addr.family}-${idx}`}
+																				key={`${addr.address}-${addr.family}`}
 																				className="bg-white dark:bg-secondary-800 rounded p-2 border border-secondary-200 dark:border-secondary-700"
 																			>
 																				<div className="flex items-center gap-2 mb-1">
@@ -1971,7 +1971,7 @@ const HostDetail = () => {
 														{host.load_average
 															.filter((load) => load != null)
 															.map((load, index) => (
-																<span key={`load-${index}-${load}`}>
+																<span key={`load-${load}`}>
 																	{typeof load === "number"
 																		? load.toFixed(2)
 																		: String(load)}
@@ -2997,9 +2997,9 @@ const HostDetail = () => {
 																			IP Addresses
 																		</p>
 																		<div className="space-y-2">
-																			{iface.addresses.map((addr, idx) => (
+																			{iface.addresses.map((addr) => (
 																				<div
-																					key={`${addr.address}-${addr.family}-${idx}`}
+																					key={`${addr.address}-${addr.family}`}
 																					className="bg-white dark:bg-secondary-800 rounded p-2 border border-secondary-200 dark:border-secondary-700"
 																				>
 																					<div className="flex items-center gap-2 mb-1">
@@ -3237,7 +3237,7 @@ const HostDetail = () => {
 															{host.load_average
 																.filter((load) => load != null)
 																.map((load, index) => (
-																	<span key={`load-${index}-${load}`}>
+																	<span key={`load-${load}`}>
 																		{typeof load === "number"
 																			? load.toFixed(2)
 																			: String(load)}
@@ -4924,9 +4924,9 @@ const HostDetail = () => {
 																	</tr>
 																</thead>
 																<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
-																	{allPorts.map((port, idx) => (
+																	{allPorts.map((port) => (
 																		<tr
-																			key={`${port.containerId}-${idx}`}
+																			key={`${port.containerId}-${port.privatePort}-${port.publicPort || "none"}-${port.type || "tcp"}`}
 																			className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
 																		>
 																			<td className="py-2 font-medium text-secondary-900 dark:text-white">

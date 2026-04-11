@@ -4184,9 +4184,9 @@ const ComplianceTab = ({
 									</div>
 									<div className="space-y-2">
 										{info?.available_profiles?.length > 0 ? (
-											info.available_profiles.map((profile, idx) => (
+											info.available_profiles.map((profile) => (
 												<div
-													key={`profile-${idx}-${profile || ""}`}
+													key={`profile-${profile.name || profile.type || ""}`}
 													className="flex items-center justify-between text-sm"
 												>
 													<span className="text-secondary-300 dark:text-white">

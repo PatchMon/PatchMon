@@ -43,18 +43,19 @@ const UsersTab = () => {
 	});
 
 	const isOIDCEnabled = oidcConfig?.enabled || false;
+	const isOIDCSyncRoles = isOIDCEnabled && (oidcConfig?.syncRoles || false);
 
-	// Listen for the header button event to open add modal (only if OIDC is not enabled)
+	// Listen for the header button event to open add modal (only blocked when OIDC sync roles is active)
 	useEffect(() => {
 		const handleOpenAddModal = () => {
-			if (!isOIDCEnabled) {
+			if (!isOIDCSyncRoles) {
 				setShowAddModal(true);
 			}
 		};
 		window.addEventListener("openAddUserModal", handleOpenAddModal);
 		return () =>
 			window.removeEventListener("openAddUserModal", handleOpenAddModal);
-	}, [isOIDCEnabled]);
+	}, [isOIDCSyncRoles]);
 
 	// Fetch users
 	const {
@@ -536,8 +537,8 @@ const UsersTab = () => {
 				)}
 			</div>
 
-			{/* Add User Modal - only show when OIDC is not enabled */}
-			{!isOIDCEnabled && (
+			{/* Add User Modal - only hidden when OIDC sync roles is active */}
+			{!isOIDCSyncRoles && (
 				<AddUserModal
 					isOpen={showAddModal}
 					onClose={() => setShowAddModal(false)}
@@ -569,8 +570,8 @@ const UsersTab = () => {
 				/>
 			)}
 
-			{/* OIDC Info Banner - show when OIDC is enabled */}
-			{isOIDCEnabled && (
+			{/* OIDC Info Banner - only show when OIDC sync roles is active */}
+			{isOIDCSyncRoles && (
 				<div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
 					<div className="flex">
 						<Info className="h-5 w-5 text-blue-500 dark:text-blue-400 flex-shrink-0" />
@@ -589,8 +590,8 @@ const UsersTab = () => {
 				</div>
 			)}
 
-			{/* User Registration Settings - only show when OIDC is not enabled */}
-			{!isOIDCEnabled && (
+			{/* User Registration Settings - hidden when OIDC sync roles is active (IdP manages users) */}
+			{!isOIDCSyncRoles && (
 				<div className="bg-white dark:bg-secondary-800 shadow overflow-hidden sm:rounded-lg">
 					<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white">

@@ -339,7 +339,7 @@ const Reporting = () => {
 	// Get status badge from current state
 	const getStatusBadge = (alert) => {
 		const currentState = alert.current_state;
-		if (!currentState || !currentState.action) {
+		if (!currentState?.action) {
 			return (
 				<span className="px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
 					Open

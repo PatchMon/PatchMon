@@ -59,10 +59,10 @@ const ComplianceTrend = ({ hostId, days = 30 }) => {
 			<div className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 shadow-lg">
 				<p className="text-gray-400 text-sm mb-1">{label}</p>
 				{payload.map(
-					(entry, index) =>
+					(entry) =>
 						entry.value != null && (
 							<div
-								key={`entry-${index}-${entry.name || entry.dataKey || ""}`}
+								key={`entry-${entry.name || entry.dataKey}`}
 								className="flex items-center gap-2 text-sm"
 							>
 								<div

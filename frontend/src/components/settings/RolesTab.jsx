@@ -42,18 +42,19 @@ const RolesTab = () => {
 	});
 
 	const isOIDCEnabled = oidcConfig?.enabled || false;
+	const isOIDCSyncRoles = isOIDCEnabled && (oidcConfig?.syncRoles || false);
 
-	// Listen for the header button event to open add modal (only if OIDC is not enabled)
+	// Listen for the header button event to open add modal (only blocked when OIDC sync roles is active)
 	useEffect(() => {
 		const handleOpenAddModal = () => {
-			if (!isOIDCEnabled) {
+			if (!isOIDCSyncRoles) {
 				setShowAddModal(true);
 			}
 		};
 		window.addEventListener("openAddRoleModal", handleOpenAddModal);
 		return () =>
 			window.removeEventListener("openAddRoleModal", handleOpenAddModal);
-	}, [isOIDCEnabled]);
+	}, [isOIDCSyncRoles]);
 
 	// Fetch all role permissions
 	const {
@@ -151,8 +152,8 @@ const RolesTab = () => {
 
 	return (
 		<div className="space-y-6">
-			{/* OIDC Info Banner */}
-			{isOIDCEnabled && (
+			{/* OIDC Info Banner - only show when OIDC sync roles is active */}
+			{isOIDCSyncRoles && (
 				<div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
 					<div className="flex">
 						<Info className="h-5 w-5 text-blue-500 dark:text-blue-400 flex-shrink-0" />
@@ -326,7 +327,7 @@ const RolesTab = () => {
 								key={`editor-${r.role}`}
 								role={r}
 								isEditing={true}
-								isOIDCEnabled={isOIDCEnabled}
+								isOIDCSyncRoles={isOIDCSyncRoles}
 								onEdit={() => {}}
 								onCancel={() => setEditingRole(null)}
 								onSave={handleSavePermissions}
@@ -336,8 +337,8 @@ const RolesTab = () => {
 				</div>
 			)}
 
-			{/* Add Role Modal - only show when OIDC is not enabled */}
-			{!isOIDCEnabled && (
+			{/* Add Role Modal - only hidden when OIDC sync roles is active */}
+			{!isOIDCSyncRoles && (
 				<AddRoleModal
 					isOpen={showAddModal}
 					onClose={() => setShowAddModal(false)}
@@ -355,7 +356,7 @@ const RolesTab = () => {
 const RolePermissionsCard = ({
 	role,
 	isEditing,
-	isOIDCEnabled = false,
+	isOIDCSyncRoles = false,
 	onEdit,
 	onCancel,
 	onSave,
@@ -381,13 +382,13 @@ const RolePermissionsCard = ({
 
 	// Standard built-in roles (always protected from deletion and permission changes)
 	const standardBuiltInRoles = ["superadmin", "admin", "user"];
-	// OIDC roles (protected from deletion when OIDC is enabled, but permissions can be edited)
+	// OIDC roles (protected from deletion when OIDC sync roles is active, but permissions can be edited)
 	const oidcRoles = ["superadmin", "admin", "host_manager", "readonly", "user"];
 
 	const isBuiltInRole = standardBuiltInRoles.includes(role.role);
 	const isOIDCRole = oidcRoles.includes(role.role);
-	// Can't delete OIDC roles or built-in roles
-	const cannotDelete = isOIDCEnabled ? isOIDCRole : isBuiltInRole;
+	// Can't delete OIDC roles when sync is active, or built-in roles ever
+	const cannotDelete = isOIDCSyncRoles ? isOIDCRole : isBuiltInRole;
 	// Can't edit permissions for built-in roles (superadmin, admin, user)
 	const cannotEditPermissions = isBuiltInRole;
 
@@ -400,12 +401,12 @@ const RolePermissionsCard = ({
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white capitalize">
 							{role.role.replace(/_/g, " ")}
 						</h3>
-						{isOIDCEnabled && isOIDCRole && (
+						{isOIDCSyncRoles && isOIDCRole && (
 							<span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-								OIDC Role
+								OIDC Synced
 							</span>
 						)}
-						{!isOIDCEnabled && isBuiltInRole && (
+						{!isOIDCSyncRoles && isBuiltInRole && (
 							<span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200">
 								Built-in Role
 							</span>

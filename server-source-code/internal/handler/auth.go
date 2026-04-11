@@ -1054,7 +1054,7 @@ func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 		Username:     req.Username,
 		Email:        req.Email,
 		PasswordHash: &hashStr,
-		Role:         "admin",
+		Role:         "superadmin",
 		IsActive:     true,
 		FirstName:    &req.FirstName,
 		LastName:     &req.LastName,

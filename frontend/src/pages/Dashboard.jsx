@@ -2554,19 +2554,19 @@ const Dashboard = () => {
 							};
 							return (
 								<>
-									{card_groups.map((group, group_index) => (
+									{card_groups.map((group) => (
 										<div
-											key={`edit-group-${group.type}-${group_index}`}
+											key={`edit-group-${group.type}`}
 											className={getGroupClassNameForLayout(group.type, layout)}
 										>
-											{group.cards.map((card, card_index) => {
+											{group.cards.map((card) => {
 												const is_drop_target =
 													card.enabled &&
 													over_id === card.cardId &&
 													active_drag_id !== card.cardId;
 												return (
 													<div
-														key={`card-${card.cardId}-${group_index}-${card_index}`}
+														key={`card-${card.cardId}`}
 														className={
 															"relative h-full min-h-0 " +
 															get_card_col_span_class(card) +
@@ -2706,14 +2706,14 @@ const Dashboard = () => {
 
 					return (
 						<>
-							{cardGroups.map((group, groupIndex) => (
+							{cardGroups.map((group) => (
 								<div
-									key={`group-${group.type}-${groupIndex}`}
+									key={`group-${group.type}`}
 									className={getGroupClassName(group.type)}
 								>
-									{group.cards.map((card, cardIndex) => (
+									{group.cards.map((card) => (
 										<div
-											key={`card-${card.cardId}-${groupIndex}-${cardIndex}`}
+											key={`card-${card.cardId}`}
 											className={`h-full ${get_card_col_span_class(card)}`}
 										>
 											{renderCard(card.cardId)}
