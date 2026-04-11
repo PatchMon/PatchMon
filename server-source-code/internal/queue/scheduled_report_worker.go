@@ -144,16 +144,12 @@ type ScheduledReportRunHandler struct {
 	poolCache *hostctx.PoolCache
 	qc        *asynq.Client
 	enc       *util.Encryption
-	timezone  string
 	log       *slog.Logger
 }
 
 // NewScheduledReportRunHandler creates the handler.
-func NewScheduledReportRunHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache, qc *asynq.Client, enc *util.Encryption, timezone string, log *slog.Logger) *ScheduledReportRunHandler {
-	if timezone == "" {
-		timezone = "UTC"
-	}
-	return &ScheduledReportRunHandler{defaultDB: defaultDB, poolCache: poolCache, qc: qc, enc: enc, timezone: timezone, log: log}
+func NewScheduledReportRunHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache, qc *asynq.Client, enc *util.Encryption, log *slog.Logger) *ScheduledReportRunHandler {
+	return &ScheduledReportRunHandler{defaultDB: defaultDB, poolCache: poolCache, qc: qc, enc: enc, log: log}
 }
 
 func (h *ScheduledReportRunHandler) resolveDB(ctx context.Context, payload []byte) *database.DB {
@@ -243,7 +239,11 @@ func (h *ScheduledReportRunHandler) ProcessTask(ctx context.Context, t *asynq.Ta
 	}
 
 	now := time.Now()
-	next, nerr := notifications.NextCronRun(rep.CronExpr, h.timezone, now)
+	tz := rep.Timezone
+	if tz == "" {
+		tz = "UTC"
+	}
+	next, nerr := notifications.NextCronRun(rep.CronExpr, tz, now)
 	if nerr != nil {
 		next = now.Add(24 * time.Hour)
 	}

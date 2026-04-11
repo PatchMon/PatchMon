@@ -14,7 +14,7 @@ import { LoginCommunityLinks } from "../components/CommunityLinks";
 import DiscordIcon from "../components/DiscordIcon";
 import { useAuth } from "../contexts/AuthContext";
 import { useColorTheme } from "../contexts/ColorThemeContext";
-import { authAPI, isCorsError } from "../utils/api";
+import { authAPI, getGlobalTimezone, isCorsError } from "../utils/api";
 import { resolveLogoPath } from "../utils/logoPaths";
 
 const Login = () => {
@@ -49,7 +49,6 @@ const Login = () => {
 		useState(null);
 	const [latestRelease, setLatestRelease] = useState(null);
 	const [currentVersion, setCurrentVersion] = useState(null);
-	const [_githubStars, setGithubStars] = useState(null);
 	const [oidcConfig, setOidcConfig] = useState({
 		enabled: false,
 		buttonText: "Login with SSO",
@@ -308,38 +307,9 @@ const Login = () => {
 						localStorage.removeItem("githubLatestRelease");
 					}
 				}
-				const cachedStars = localStorage.getItem("githubStarsCount");
-				if (cachedStars && isMounted) {
-					setGithubStars(parseInt(cachedStars, 10));
-				}
-
 				// Use cache if less than 1 hour old
 				const shouldFetchFresh =
 					!cacheTime || now - parseInt(cacheTime, 10) >= 3600000;
-
-				// Fetch repository info (includes star count) - still from GitHub for stars
-				try {
-					const repoResponse = await fetch(
-						"https://api.github.com/repos/PatchMon/PatchMon",
-						{
-							headers: {
-								Accept: "application/vnd.github.v3+json",
-							},
-							signal: abortController.signal,
-						},
-					);
-
-					if (repoResponse.ok && isMounted) {
-						const repoData = await repoResponse.json();
-						setGithubStars(repoData.stargazers_count);
-						localStorage.setItem(
-							"githubStarsCount",
-							repoData.stargazers_count.toString(),
-						);
-					}
-				} catch (_repoError) {
-					// Silently fail - stars are optional
-				}
 
 				// Fetch latest release from GitHub API (for release notes, published date, etc.)
 				if (shouldFetchFresh) {
@@ -365,6 +335,7 @@ const Login = () => {
 										year: "numeric",
 										month: "long",
 										day: "numeric",
+										timeZone: getGlobalTimezone() || undefined,
 									},
 								),
 								body: data.body?.split("\n").slice(0, 3).join("\n") || "", // First 3 lines
@@ -609,7 +580,7 @@ const Login = () => {
 										className="h-16 mb-4"
 									/>
 									<p className="text-sm text-blue-200 font-medium tracking-wide uppercase">
-										Linux Patch Monitoring
+										Linux Patch Management
 									</p>
 								</div>
 

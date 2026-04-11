@@ -46,7 +46,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		dbProvider = db
 	}
 
-	// Build a RedisResolver so stores always call .RDB(ctx) for per-tenant isolation.
+	// Build a RedisResolver so stores always call .RDB(ctx) for per-context isolation.
 	redisResolver := &hostctx.RedisResolver{Default: rdb}
 	settingsStore := store.NewSettingsStore(dbProvider)
 	settings, _ := settingsStore.GetFirst(ctx)
@@ -231,7 +231,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	alertsHandler := handler.NewAlertsHandler(alertsStore, alertConfigStore, dbProvider)
 	agentVersionHandler := handler.NewAgentVersionHandler(log)
 	alertConfigHandler := handler.NewAlertConfigHandler(alertConfigStore)
-	notificationsHandler := handler.NewNotificationsHandler(dbProvider, enc, notifyEmit, resolved, queueClient)
+	notificationsHandler := handler.NewNotificationsHandler(dbProvider, enc, notifyEmit, resolved, cfg, settingsStore, queueClient)
 	automationHandler := handler.NewAutomationHandler(queueInspector, queueClient, registry, settingsStore, alertConfigStore)
 	apiHostsHandler := handler.NewApiHostsHandler(hostsStore, hostGroupsStore, dbProvider, dashboardStore, queueInspector)
 
@@ -249,7 +249,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	marketingHandler := handler.NewMarketingHandler()
 	searchStore := store.NewSearchStore(dbProvider)
 	searchHandler := handler.NewSearchHandler(searchStore)
-	communityHandler := handler.NewCommunityHandler()
+	communityHandler := handler.NewCommunityHandler(cfg)
 
 	r.Get("/health", healthHandler(db, rdb))
 

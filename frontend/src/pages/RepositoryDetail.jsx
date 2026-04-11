@@ -18,7 +18,11 @@ import {
 import { useId, useMemo, useState } from "react";
 
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { formatRelativeTime, repositoryAPI } from "../utils/api";
+import {
+	formatDateOnly,
+	formatRelativeTime,
+	repositoryAPI,
+} from "../utils/api";
 
 const RepositoryDetail = () => {
 	const isActiveId = useId();
@@ -492,7 +496,7 @@ const RepositoryDetail = () => {
 									<div className="flex items-center mt-1">
 										<Calendar className="h-4 w-4 text-secondary-400 mr-2" />
 										<span className="text-secondary-900 dark:text-white">
-											{new Date(repository.created_at).toLocaleDateString()}
+											{formatDateOnly(repository.created_at)}
 										</span>
 									</div>
 								</div>

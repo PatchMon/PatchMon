@@ -9,7 +9,7 @@ import {
 	X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { agentVersionAPI } from "../../utils/api";
+import { agentVersionAPI, getGlobalTimezone } from "../../utils/api";
 
 const AgentManagementTab = () => {
 	const [toasts, setToasts] = useState([]);
@@ -355,6 +355,7 @@ const AgentManagementTab = () => {
 									day: "numeric",
 									hour: "2-digit",
 									minute: "2-digit",
+									timeZone: getGlobalTimezone() || undefined,
 								})
 							: "Never"}
 					</p>

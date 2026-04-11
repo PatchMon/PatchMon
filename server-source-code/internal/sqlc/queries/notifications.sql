@@ -76,13 +76,13 @@ WHERE enabled = true AND (next_run_at IS NULL OR next_run_at <= $1)
 ORDER BY next_run_at NULLS FIRST;
 
 -- name: CreateScheduledReport :one
-INSERT INTO scheduled_reports (id, name, cron_expr, enabled, definition, destination_ids, next_run_at, last_run_at, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+INSERT INTO scheduled_reports (id, name, cron_expr, enabled, definition, destination_ids, timezone, next_run_at, last_run_at, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
 RETURNING *;
 
 -- name: UpdateScheduledReport :one
 UPDATE scheduled_reports
-SET name = $2, cron_expr = $3, enabled = $4, definition = $5, destination_ids = $6, next_run_at = $7, last_run_at = $8, updated_at = NOW()
+SET name = $2, cron_expr = $3, enabled = $4, definition = $5, destination_ids = $6, timezone = $7, next_run_at = $8, last_run_at = $9, updated_at = NOW()
 WHERE id = $1
 RETURNING *;
 

@@ -17,7 +17,13 @@ import {
 import { useEffect, useId, useState } from "react";
 import UpgradeNotificationIcon from "../components/UpgradeNotificationIcon";
 import { useUpdateNotification } from "../contexts/UpdateNotificationContext";
-import { agentFileAPI, settingsAPI, versionAPI } from "../utils/api";
+import {
+	agentFileAPI,
+	formatDate,
+	formatDateOnly,
+	settingsAPI,
+	versionAPI,
+} from "../utils/api";
 import { isLegacyDefaultPath, resolveLogoPath } from "../utils/logoPaths";
 
 const Settings = () => {
@@ -1391,9 +1397,7 @@ const Settings = () => {
 													Modified:
 												</span>
 												<span className="text-sm text-secondary-900 dark:text-white">
-													{new Date(
-														agentFileInfo.lastModified,
-													).toLocaleDateString()}
+													{formatDateOnly(agentFileInfo.lastModified)}
 												</span>
 											</div>
 										</div>
@@ -1777,9 +1781,7 @@ const Settings = () => {
 												</span>
 											</div>
 											<span className="text-sm text-secondary-600 dark:text-white">
-												{new Date(
-													versionInfo.last_update_check,
-												).toLocaleString()}
+												{formatDate(versionInfo.last_update_check)}
 											</span>
 											<p className="text-xs text-secondary-500 dark:text-white mt-1">
 												Updates are checked automatically every 24 hours

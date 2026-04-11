@@ -59,7 +59,7 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 		return err
 	}
 
-	// Resolve per-tenant DB when Host is in payload (multi-host mode).
+	// Resolve per-context DB when Host is in payload (multi-host mode).
 	d := resolveDBFromPayload(ctx, t.Payload(), h.db, h.poolCache)
 	taskID, _ := asynq.GetTaskID(ctx)
 	retryCount, _ := asynq.GetRetryCount(ctx)

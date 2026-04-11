@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { Link } from "react-router-dom";
-import api, { dashboardAPI, settingsAPI } from "../../utils/api";
+import api, { dashboardAPI, formatDate, settingsAPI } from "../../utils/api";
 
 // Checkmk CSV export: format per https://docs.checkmk.com/latest/en/hosts_setup.html#import
 const CHECKMK_CSV_DELIMITER = ";";
@@ -463,11 +463,6 @@ const Integrations = () => {
 			console.error("Fallback copy failed:", fallbackError);
 			alert("Failed to copy to clipboard. Please copy manually.");
 		}
-	};
-
-	const formatDate = (date_string) => {
-		if (!date_string) return "Never";
-		return new Date(date_string).toLocaleString();
 	};
 
 	return (

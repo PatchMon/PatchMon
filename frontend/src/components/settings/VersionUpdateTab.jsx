@@ -8,7 +8,7 @@ import {
 	ExternalLink,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { settingsAPI, versionAPI } from "../../utils/api";
+import { formatDate, settingsAPI, versionAPI } from "../../utils/api";
 
 const VersionUpdateTab = () => {
 	const queryClient = useQueryClient();
@@ -273,7 +273,7 @@ const VersionUpdateTab = () => {
 							</span>
 						</div>
 						<span className="text-sm text-secondary-600 dark:text-white">
-							{new Date(versionInfo.last_update_check).toLocaleString()}
+							{formatDate(versionInfo.last_update_check)}
 						</span>
 						<p className="text-xs text-secondary-500 dark:text-white mt-1">
 							Updates are checked automatically every 24 hours

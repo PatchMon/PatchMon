@@ -95,7 +95,7 @@ func EntryFromContext(ctx stdctx.Context) *Entry {
 	return e
 }
 
-// TenantHostKey returns the canonical per-tenant identifier (the domain/host) for jobs and Redis.
+// TenantHostKey returns the canonical per-context identifier (the domain/host) for jobs and Redis.
 // Empty when not in multi-host context.
 func TenantHostKey(ctx stdctx.Context) string {
 	e := EntryFromContext(ctx)
@@ -105,9 +105,9 @@ func TenantHostKey(ctx stdctx.Context) string {
 	return e.Host
 }
 
-// TenantKey prefixes a Redis key with the tenant domain from context for multi-host isolation.
-// In single-tenant mode (no entry in context), returns the key unchanged.
-// Example: TenantKey(ctx, "ssh:ticket:abc") -> "t:tenant1.patchmon.cloud:ssh:ticket:abc"
+// TenantKey prefixes a Redis key with the context domain for multi-host isolation.
+// In single-context mode (no entry in context), returns the key unchanged.
+// Example: TenantKey(ctx, "ssh:ticket:abc") -> "t:ctx1.patchmon.cloud:ssh:ticket:abc"
 func TenantKey(ctx stdctx.Context, key string) string {
 	if e := EntryFromContext(ctx); e != nil && e.Host != "" {
 		return "t:" + e.Host + ":" + key
@@ -115,13 +115,13 @@ func TenantKey(ctx stdctx.Context, key string) string {
 	return key
 }
 
-// HasModule checks whether the tenant entry in context includes the given module.
-// Returns true if: no entry in context (single-tenant mode), or entry.Modules is nil (all allowed),
+// HasModule checks whether the context entry includes the given module.
+// Returns true if: no entry in context (single-context mode), or entry.Modules is nil (all allowed),
 // or the module is present in the comma-separated Modules list.
 func HasModule(ctx stdctx.Context, module string) bool {
 	entry := EntryFromContext(ctx)
 	if entry == nil {
-		return true // single-tenant mode - no restrictions
+		return true // single-context mode - no restrictions
 	}
 	if entry.Modules == nil {
 		return true // nil = all modules allowed
@@ -134,9 +134,9 @@ func HasModule(ctx stdctx.Context, module string) bool {
 	return false
 }
 
-// RequireModule returns middleware that checks if the tenant's package includes
+// RequireModule returns middleware that checks if the context's package includes
 // the given module. Returns 403 if the module is not enabled.
-// In single-tenant mode (no entry in context), the request is always allowed.
+// In single-context mode (no entry in context), the request is always allowed.
 func RequireModule(module string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

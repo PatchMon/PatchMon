@@ -7,7 +7,7 @@ import {
 	RefreshCw,
 	Server,
 } from "lucide-react";
-import { dashboardAPI } from "../../utils/api";
+import { dashboardAPI, formatDate } from "../../utils/api";
 
 const AgentQueueTab = ({ hostId }) => {
 	const {
@@ -223,7 +223,7 @@ const AgentQueueTab = ({ hostId }) => {
 									<div className="space-y-0.5">
 										<div className="flex items-center gap-1.5 text-xs text-secondary-600 dark:text-white">
 											<Clock className="h-3.5 w-3.5 text-secondary-500 dark:text-white" />
-											{new Date(job.created_at).toLocaleString()}
+											{formatDate(job.created_at)}
 										</div>
 										{(job.error_message || job.output) && (
 											<div className="text-xs mt-1 pt-1 border-t border-secondary-200 dark:border-secondary-600">
@@ -295,7 +295,7 @@ const AgentQueueTab = ({ hostId }) => {
 												{job.attempt_number}
 											</td>
 											<td className="px-4 py-2 whitespace-nowrap text-xs text-secondary-900 dark:text-white">
-												{new Date(job.created_at).toLocaleString()}
+												{formatDate(job.created_at)}
 											</td>
 											<td className="px-4 py-2 text-xs">
 												{job.error_message ? (

@@ -8,6 +8,7 @@ import {
 	XAxis,
 	YAxis,
 } from "recharts";
+import { formatDateOnly } from "../../utils/api";
 import { complianceAPI } from "../../utils/complianceApi";
 
 const ComplianceTrend = ({ hostId, days = 30 }) => {
@@ -33,7 +34,7 @@ const ComplianceTrend = ({ hostId, days = 30 }) => {
 	// Group data by date and profile type
 	const dateMap = new Map();
 	trends.forEach((t) => {
-		const date = new Date(t.completed_at).toLocaleDateString();
+		const date = formatDateOnly(t.completed_at);
 		const type = t.compliance_profiles?.type || "unknown";
 
 		if (!dateMap.has(date)) {

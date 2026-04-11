@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { formatDate } from "../../utils/api";
 import { complianceAPI } from "../../utils/complianceApi";
 
 const SEVERITY_COLORS = {
@@ -231,7 +232,7 @@ const HostComplianceDetail = ({ hostId }) => {
 							</p>
 							{completed_at && (
 								<p className="mt-0.5 text-xs text-secondary-500 dark:text-white font-normal">
-									{completed_at.toLocaleString()}
+									{formatDate(completed_at)}
 								</p>
 							)}
 						</div>

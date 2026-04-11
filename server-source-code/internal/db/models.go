@@ -530,6 +530,7 @@ type ScheduledReport struct {
 	Enabled        bool             `json:"enabled"`
 	Definition     []byte           `json:"definition"`
 	DestinationIds []byte           `json:"destination_ids"`
+	Timezone       string           `json:"timezone"`
 	NextRunAt      pgtype.Timestamp `json:"next_run_at"`
 	LastRunAt      pgtype.Timestamp `json:"last_run_at"`
 	CreatedAt      pgtype.Timestamp `json:"created_at"`

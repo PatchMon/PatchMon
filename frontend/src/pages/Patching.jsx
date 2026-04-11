@@ -30,8 +30,9 @@ import {
 	PatchRunStatusBoxes,
 	PatchRunsByType,
 } from "../components/patching/widgets";
+import { TimezoneSelect } from "../components/TimezoneSelect";
 import { useToast } from "../contexts/ToastContext";
-import { adminHostsAPI, hostGroupsAPI } from "../utils/api";
+import { adminHostsAPI, formatDate, hostGroupsAPI } from "../utils/api";
 import { patchingAPI } from "../utils/patchingApi";
 
 const PATCHING_TABS = [
@@ -500,12 +501,10 @@ const Patching = () => {
 												)}
 											</td>
 											<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-600 dark:text-secondary-400">
-												{new Date(run.created_at).toLocaleString()}
+												{formatDate(run.created_at)}
 											</td>
 											<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-600 dark:text-secondary-400">
-												{run.completed_at
-													? new Date(run.completed_at).toLocaleString()
-													: " -"}
+												{run.completed_at ? formatDate(run.completed_at) : " -"}
 											</td>
 											<td className="px-4 py-2 whitespace-nowrap text-right">
 												<div className="flex items-center justify-end gap-2">
@@ -985,9 +984,7 @@ function PoliciesTab() {
 										<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
 											Timezone
 										</label>
-										<input
-											type="text"
-											placeholder="UTC"
+										<TimezoneSelect
 											value={form.timezone}
 											onChange={(e) =>
 												setForm((f) => ({
@@ -995,7 +992,6 @@ function PoliciesTab() {
 													timezone: e.target.value,
 												}))
 											}
-											className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
 										/>
 									</div>
 								</>

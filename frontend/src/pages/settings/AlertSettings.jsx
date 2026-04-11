@@ -12,7 +12,12 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useToast } from "../../contexts/ToastContext";
-import { adminUsersAPI, alertsAPI, settingsAPI } from "../../utils/api";
+import {
+	adminUsersAPI,
+	alertsAPI,
+	formatDateOnly,
+	settingsAPI,
+} from "../../utils/api";
 
 const TH =
 	"px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider";
@@ -843,7 +848,7 @@ const CleanupSection = () => {
 						{previewData.slice(0, 10).map((a) => (
 							<li key={a.id ?? a.ID}>
 								{formatAlertType(a.type ?? a.Type)} -{" "}
-								{new Date(a.created_at ?? a.CreatedAt).toLocaleDateString()}
+								{formatDateOnly(a.created_at ?? a.CreatedAt)}
 							</li>
 						))}
 						{previewData.length > 10 && (

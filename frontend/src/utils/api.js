@@ -414,18 +414,34 @@ export const formatError = (error) => {
 };
 
 /**
+ * Module-level timezone used by all date formatting helpers.
+ * Set once via setGlobalTimezone() when settings load.
+ */
+let _globalTimezone = null;
+
+/** Set the global IANA timezone (e.g. "Europe/London"). */
+export const setGlobalTimezone = (tz) => {
+	_globalTimezone = tz;
+};
+
+/** Get the current global timezone (or null). */
+export const getGlobalTimezone = () => _globalTimezone;
+
+/**
  * Format a date for display. When timezone is provided (e.g. from settings.timezone),
- * formats in that IANA timezone; otherwise uses browser locale.
+ * formats in that IANA timezone; otherwise falls back to the global timezone,
+ * then browser locale.
  * @param {string|Date|number} date - ISO string, Date, or timestamp
  * @param {string} [timezone] - Optional IANA timezone (e.g. America/New_York)
  */
 export const formatDate = (date, timezone) => {
 	const d = new Date(date);
 	if (Number.isNaN(d.getTime())) return " -";
-	if (timezone) {
+	const tz = timezone || _globalTimezone;
+	if (tz) {
 		try {
 			return new Intl.DateTimeFormat(undefined, {
-				timeZone: timezone,
+				timeZone: tz,
 				dateStyle: "short",
 				timeStyle: "medium",
 			}).format(d);
@@ -434,6 +450,29 @@ export const formatDate = (date, timezone) => {
 		}
 	}
 	return d.toLocaleString();
+};
+
+/**
+ * Format a date for display (date only, no time).
+ * Uses the global timezone when no explicit timezone is passed.
+ * @param {string|Date|number} date - ISO string, Date, or timestamp
+ * @param {string} [timezone] - Optional IANA timezone
+ */
+export const formatDateOnly = (date, timezone) => {
+	const d = new Date(date);
+	if (Number.isNaN(d.getTime())) return " -";
+	const tz = timezone || _globalTimezone;
+	if (tz) {
+		try {
+			return new Intl.DateTimeFormat(undefined, {
+				timeZone: tz,
+				dateStyle: "short",
+			}).format(d);
+		} catch {
+			return d.toLocaleDateString();
+		}
+	}
+	return d.toLocaleDateString();
 };
 
 // Version API

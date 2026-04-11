@@ -10,6 +10,7 @@ import {
 	X,
 } from "lucide-react";
 import { useState } from "react";
+import { TimezoneSelect } from "../../components/TimezoneSelect";
 import { useToast } from "../../contexts/ToastContext";
 import { adminHostsAPI, hostGroupsAPI } from "../../utils/api";
 import { patchingAPI } from "../../utils/patchingApi";
@@ -345,14 +346,11 @@ const PatchManagement = () => {
 										<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
 											Timezone
 										</label>
-										<input
-											type="text"
-											placeholder="UTC"
+										<TimezoneSelect
 											value={form.timezone}
 											onChange={(e) =>
 												setForm((f) => ({ ...f, timezone: e.target.value }))
 											}
-											className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
 										/>
 									</div>
 								</>

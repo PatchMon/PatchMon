@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { useToast } from "../contexts/ToastContext";
-import api from "../utils/api";
+import api, { getGlobalTimezone } from "../utils/api";
 
 const Automation = () => {
 	const toast = useToast();
@@ -145,6 +145,7 @@ const Automation = () => {
 				day: "numeric",
 				month: "numeric",
 				year: "numeric",
+				timeZone: getGlobalTimezone() || undefined,
 			});
 		}
 		if (schedule === "Daily at 12:30 AM") {
@@ -159,6 +160,7 @@ const Automation = () => {
 				day: "numeric",
 				month: "numeric",
 				year: "numeric",
+				timeZone: getGlobalTimezone() || undefined,
 			});
 		}
 		if (schedule === "Daily at 1 AM") {
@@ -173,6 +175,7 @@ const Automation = () => {
 				day: "numeric",
 				month: "numeric",
 				year: "numeric",
+				timeZone: getGlobalTimezone() || undefined,
 			});
 		}
 		if (schedule === "Daily at 2 AM") {
@@ -187,6 +190,7 @@ const Automation = () => {
 				day: "numeric",
 				month: "numeric",
 				year: "numeric",
+				timeZone: getGlobalTimezone() || undefined,
 			});
 		}
 		if (schedule === "Daily at 3 AM") {
@@ -201,6 +205,7 @@ const Automation = () => {
 				day: "numeric",
 				month: "numeric",
 				year: "numeric",
+				timeZone: getGlobalTimezone() || undefined,
 			});
 		}
 		if (schedule === "Daily at 4 AM") {
@@ -215,6 +220,7 @@ const Automation = () => {
 				day: "numeric",
 				month: "numeric",
 				year: "numeric",
+				timeZone: getGlobalTimezone() || undefined,
 			});
 		}
 		if (schedule === "Daily at 5 AM") {
@@ -229,6 +235,7 @@ const Automation = () => {
 				day: "numeric",
 				month: "numeric",
 				year: "numeric",
+				timeZone: getGlobalTimezone() || undefined,
 			});
 		}
 		if (schedule === "Every hour") {
@@ -242,6 +249,7 @@ const Automation = () => {
 				day: "numeric",
 				month: "numeric",
 				year: "numeric",
+				timeZone: getGlobalTimezone() || undefined,
 			});
 		}
 		if (schedule === "Every 30 minutes") {
@@ -261,6 +269,7 @@ const Automation = () => {
 				day: "numeric",
 				month: "numeric",
 				year: "numeric",
+				timeZone: getGlobalTimezone() || undefined,
 			});
 		}
 		if (schedule === "Every 5 minutes") {
@@ -281,6 +290,7 @@ const Automation = () => {
 				day: "numeric",
 				month: "numeric",
 				year: "numeric",
+				timeZone: getGlobalTimezone() || undefined,
 			});
 		}
 		return "Unknown";

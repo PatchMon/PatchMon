@@ -350,32 +350,19 @@ const Layout = ({ children }) => {
 				});
 			}
 
+			const sidebarLinkIds = ["roadmap", "docs", "email", "website", "billing"];
+			const linkChildren = communityLinks
+				.filter((l) => sidebarLinkIds.includes(l.id))
+				.map((l) => ({
+					name: l.label,
+					href: l.url,
+					external: true,
+				}));
 			systemItems.push({
 				name: "Links",
 				href: "#links",
 				icon: BookOpen,
-				children: [
-					{
-						name: "Roadmap",
-						href: "https://github.com/orgs/PatchMon/projects/2/views/1",
-						external: true,
-					},
-					{
-						name: "Documentation",
-						href: "https://docs.patchmon.net",
-						external: true,
-					},
-					{
-						name: "Email Support",
-						href: "mailto:support@patchmon.net",
-						external: true,
-					},
-					{
-						name: "Website",
-						href: "https://patchmon.net",
-						external: true,
-					},
-				],
+				children: linkChildren,
 			});
 
 			if (systemItems.length > 0) {
@@ -1813,20 +1800,22 @@ const Layout = ({ children }) => {
 									)}
 								</div>
 
-								{/* Donate Button */}
-								<button
-									type="button"
-									onClick={() => setShowDonateModal(true)}
-									className="hidden md:flex items-center justify-center gap-1.5 px-2.5 h-10 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm"
-									style={{
-										backgroundColor: "var(--button-bg, rgb(249, 250, 251))",
-										backdropFilter: "var(--button-blur, none)",
-										WebkitBackdropFilter: "var(--button-blur, none)",
-									}}
-									title="Donate a coffee"
-								>
-									<BuyMeACoffeeIcon className="h-5 w-5 text-yellow-500 flex-shrink-0" />
-								</button>
+								{/* Donate Button — hidden when buymeacoffee link is absent (e.g. AdminMode) */}
+								{communityLinks.some((l) => l.id === "buymeacoffee") && (
+									<button
+										type="button"
+										onClick={() => setShowDonateModal(true)}
+										className="hidden md:flex items-center justify-center gap-1.5 px-2.5 h-10 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm"
+										style={{
+											backgroundColor: "var(--button-bg, rgb(249, 250, 251))",
+											backdropFilter: "var(--button-blur, none)",
+											WebkitBackdropFilter: "var(--button-blur, none)",
+										}}
+										title="Donate a coffee"
+									>
+										<BuyMeACoffeeIcon className="h-5 w-5 text-yellow-500 flex-shrink-0" />
+									</button>
+								)}
 
 								{/* Desktop External Links */}
 								<div className="hidden md:flex items-center gap-1">

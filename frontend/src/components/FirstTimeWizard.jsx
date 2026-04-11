@@ -45,13 +45,18 @@ const password_strength = (password, policy = DEFAULT_PASSWORD_POLICY) => {
 	return requirements.length;
 };
 
-const STEP_LABELS = [
+const ALL_STEP_LABELS = [
 	"Create Admin Account",
 	"Multi-Factor Authentication",
 	"Confirm URL",
 	"Stay Updated",
 	"Contact & Follow",
 ];
+
+const getStepLabels = (showNewsletter) =>
+	showNewsletter
+		? ALL_STEP_LABELS
+		: ALL_STEP_LABELS.filter((l) => l !== "Stay Updated");
 
 // Parse URL into protocol, host, port
 const parseServerUrl = (url) => {
@@ -101,6 +106,7 @@ const FirstTimeWizard = () => {
 	const [_touched, setTouched] = useState({});
 	const [fieldErrors, setFieldErrors] = useState({});
 	const [passwordPolicy, setPasswordPolicy] = useState(DEFAULT_PASSWORD_POLICY);
+	const [showNewsletter, setShowNewsletter] = useState(true);
 	const [mfaChoice, setMfaChoice] = useState(null); // 'setup_now' | 'skip'
 	const [userCreatedEarly, setUserCreatedEarly] = useState(false); // true when we created user for MFA path
 	const [tfaSetupComplete, setTfaSetupComplete] = useState(false); // true when user finished TFA setup (allows Back from step 3)
@@ -134,6 +140,9 @@ const FirstTimeWizard = () => {
 						require_number: data.password_policy.require_number !== false,
 						require_special: data.password_policy.require_special !== false,
 					});
+				}
+				if (data.show_newsletter === false) {
+					setShowNewsletter(false);
 				}
 			})
 			.catch(() => {});
@@ -294,12 +303,25 @@ const FirstTimeWizard = () => {
 		passwordPolicy,
 	);
 
+	const stepLabels = getStepLabels(showNewsletter);
+	const totalSteps = stepLabels.length;
+	// displayStep maps internal step (1-5) to the visual position shown to the user
+	const displayStep = !showNewsletter && step === 5 ? 4 : step;
+	// When newsletter is hidden, skip from step 3 straight to step 5 (Contact & Follow)
 	const handleNext = () => {
 		if (step === 1 && !validateStep1()) return;
+		if (!showNewsletter && step === 3) {
+			setStep(5);
+			return;
+		}
 		if (step < 5) setStep((s) => s + 1);
 	};
 
 	const handleBack = () => {
+		if (!showNewsletter && step === 5) {
+			setStep(3);
+			return;
+		}
 		if (step > 1) setStep((s) => s - 1);
 	};
 
@@ -504,11 +526,11 @@ const FirstTimeWizard = () => {
 					{/* Step indicator */}
 					<div className="mb-8">
 						<div className="flex justify-between mb-2">
-							{[1, 2, 3, 4, 5].map((s) => (
+							{stepLabels.map((label, i) => (
 								<div
-									key={s}
+									key={label}
 									className={`flex-1 h-1.5 rounded-full mx-0.5 first:ml-0 last:mr-0 ${
-										s <= step
+										i < displayStep
 											? "bg-primary-500"
 											: "bg-secondary-200 dark:bg-secondary-600"
 									}`}
@@ -516,7 +538,7 @@ const FirstTimeWizard = () => {
 							))}
 						</div>
 						<p className="text-sm text-secondary-600 dark:text-secondary-400">
-							Step {step} of 5: {STEP_LABELS[step - 1]}
+							Step {displayStep} of {totalSteps}: {stepLabels[displayStep - 1]}
 						</p>
 					</div>
 

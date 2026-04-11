@@ -123,7 +123,7 @@ func NewSSGUpgradeTask(p SSGUpgradePayload) (*asynq.Task, error) {
 // RunPatchPayload is the payload for run_patch job.
 type RunPatchPayload struct {
 	HostID       string   `json:"hostId"`
-	Host         string   `json:"host,omitempty"` // tenant host (e.g. iby1.dev.local) for per-tenant DB resolution
+	Host         string   `json:"host,omitempty"` // context host (e.g. iby1.dev.local) for per-context DB resolution
 	ApiID        string   `json:"api_id"`
 	PatchRunID   string   `json:"patch_run_id"`
 	PatchType    string   `json:"patch_type"`
@@ -603,7 +603,7 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 		return err
 	}
 
-	// Resolve per-tenant DB when Host is in payload (multi-host mode).
+	// Resolve per-context DB when Host is in payload (multi-host mode).
 	if h.poolCache != nil && strings.TrimSpace(p.Host) != "" {
 		if db, err := h.poolCache.GetOrCreate(ctx, p.Host); err == nil && db != nil {
 			ctx = hostctx.WithDB(ctx, db)

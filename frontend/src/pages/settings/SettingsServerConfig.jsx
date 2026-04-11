@@ -1,58 +1,73 @@
 import { Code, Image, Server } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import BrandingTab from "../../components/settings/BrandingTab";
 import ProtocolUrlTab from "../../components/settings/ProtocolUrlTab";
 import VersionUpdateTab from "../../components/settings/VersionUpdateTab";
+import { useSettings } from "../../contexts/SettingsContext";
 
 const SettingsServerConfig = () => {
 	const location = useLocation();
 	const navigate = useNavigate();
-	const [activeTab, setActiveTab] = useState(() => {
-		// Set initial tab based on current route
-		if (location.pathname === "/settings/server-version") return "version";
-		if (location.pathname === "/settings/server-url") return "protocol";
-		if (location.pathname === "/settings/branding") return "branding";
-		if (location.pathname === "/settings/server-config/version")
-			return "version";
-		return "protocol";
-	});
+	const { settings: publicSettings } = useSettings();
+	const isAdminMode = publicSettings?.admin_mode;
 
-	// Update active tab when route changes
-	useEffect(() => {
-		if (location.pathname === "/settings/server-version") {
-			setActiveTab("version");
-		} else if (location.pathname === "/settings/server-url") {
-			setActiveTab("protocol");
-		} else if (location.pathname === "/settings/branding") {
-			setActiveTab("branding");
-		} else if (location.pathname === "/settings/server-config/version") {
-			setActiveTab("version");
-		} else if (location.pathname === "/settings/server-config") {
-			setActiveTab("protocol");
+	const allTabs = useMemo(() => {
+		const tabs = [];
+		if (!isAdminMode) {
+			tabs.push({
+				id: "protocol",
+				name: "Server URL",
+				icon: Server,
+				href: "/settings/server-url",
+			});
 		}
-	}, [location.pathname]);
-
-	const tabs = [
-		{
-			id: "protocol",
-			name: "Server URL",
-			icon: Server,
-			href: "/settings/server-url",
-		},
-		{
+		tabs.push({
 			id: "branding",
 			name: "Branding",
 			icon: Image,
 			href: "/settings/branding",
+		});
+		if (!isAdminMode) {
+			tabs.push({
+				id: "version",
+				name: "Server Version",
+				icon: Code,
+				href: "/settings/server-version",
+			});
+		}
+		return tabs;
+	}, [isAdminMode]);
+
+	// Determine initial tab from route, falling back to first available tab.
+	const resolveTab = useCallback(
+		(pathname) => {
+			if (!isAdminMode) {
+				if (
+					pathname === "/settings/server-version" ||
+					pathname === "/settings/server-config/version"
+				)
+					return "version";
+				if (
+					pathname === "/settings/server-url" ||
+					pathname === "/settings/server-config"
+				)
+					return "protocol";
+			}
+			if (pathname === "/settings/branding") return "branding";
+			return allTabs[0]?.id ?? "branding";
 		},
-		{
-			id: "version",
-			name: "Server Version",
-			icon: Code,
-			href: "/settings/server-version",
-		},
-	];
+		[isAdminMode, allTabs],
+	);
+
+	const [activeTab, setActiveTab] = useState(() =>
+		resolveTab(location.pathname),
+	);
+
+	// Update active tab when route changes
+	useEffect(() => {
+		setActiveTab(resolveTab(location.pathname));
+	}, [location.pathname, resolveTab]);
 
 	const renderTabContent = () => {
 		switch (activeTab) {
@@ -63,7 +78,7 @@ const SettingsServerConfig = () => {
 			case "version":
 				return <VersionUpdateTab />;
 			default:
-				return <ProtocolUrlTab />;
+				return <BrandingTab />;
 		}
 	};
 
@@ -72,7 +87,7 @@ const SettingsServerConfig = () => {
 			{/* Tab Navigation */}
 			<div className="border-b border-secondary-200 dark:border-secondary-600">
 				<nav className="-mb-px flex space-x-8">
-					{tabs.map((tab) => {
+					{allTabs.map((tab) => {
 						const Icon = tab.icon;
 						return (
 							<button

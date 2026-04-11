@@ -30,7 +30,7 @@ import { FORM_INPUT_CLASS } from "../components/FormInput";
 import { useAuth } from "../contexts/AuthContext";
 import { THEME_PRESETS, useColorTheme } from "../contexts/ColorThemeContext";
 import { useTheme } from "../contexts/ThemeContext";
-import { discordAPI, isCorsError, tfaAPI } from "../utils/api";
+import { discordAPI, formatDate, isCorsError, tfaAPI } from "../utils/api";
 
 const Profile = () => {
 	const usernameId = useId();
@@ -1522,10 +1522,6 @@ const SessionsTab = () => {
 			setMessage({ type: "error", text: error.message });
 		},
 	});
-
-	const formatDate = (dateString) => {
-		return new Date(dateString).toLocaleString();
-	};
 
 	const formatRelativeTime = (dateString) => {
 		const now = new Date();

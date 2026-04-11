@@ -747,6 +747,7 @@ CREATE TABLE IF NOT EXISTS scheduled_reports (
     enabled BOOLEAN NOT NULL DEFAULT true,
     definition JSONB NOT NULL DEFAULT '{}'::jsonb,
     destination_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    timezone TEXT NOT NULL DEFAULT 'UTC',
     next_run_at TIMESTAMP(3),
     last_run_at TIMESTAMP(3),
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,

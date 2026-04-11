@@ -44,6 +44,7 @@ import {
 	XAxis,
 	YAxis,
 } from "recharts";
+import { formatDate, formatDateOnly } from "../../utils/api";
 import { complianceAPI } from "../../utils/complianceApi";
 import ComplianceScore from "./ComplianceScore";
 
@@ -1099,10 +1100,7 @@ const ComplianceTab = ({
 									)}
 
 									<p className="text-xs text-secondary-500 dark:text-white mb-3">
-										Last scan:{" "}
-										{new Date(
-											scansByType.openscap.completed_at,
-										).toLocaleString()}
+										Last scan: {formatDate(scansByType.openscap.completed_at)}
 									</p>
 									<button
 										onClick={() => {
@@ -1274,9 +1272,7 @@ const ComplianceTab = ({
 
 									<p className="text-xs text-secondary-500 dark:text-white mb-3">
 										Last scan:{" "}
-										{new Date(
-											scansByType["docker-bench"].completed_at,
-										).toLocaleString()}
+										{formatDate(scansByType["docker-bench"].completed_at)}
 									</p>
 									<button
 										onClick={() => {
@@ -1962,7 +1958,7 @@ const ComplianceTab = ({
 							<div>
 								<p className="text-sm text-white">Last Scan Result</p>
 								<p className="text-xs text-secondary-400 dark:text-white">
-									{new Date(latestScan.completed_at).toLocaleString()}
+									{formatDate(latestScan.completed_at)}
 								</p>
 							</div>
 						</div>
@@ -2380,7 +2376,7 @@ const ComplianceTab = ({
 										)}
 										{tab.date && (
 											<p className="text-xs text-secondary-500 dark:text-white mt-1">
-												{new Date(tab.date).toLocaleDateString()}
+												{formatDateOnly(tab.date)}
 											</p>
 										)}
 									</button>
@@ -2408,7 +2404,7 @@ const ComplianceTab = ({
 													(isDockerBenchResults ? "Docker Bench" : "OpenSCAP")}
 											</p>
 											<p className="text-xs text-secondary-400 dark:text-white">
-												{new Date(latestScan.completed_at).toLocaleString()} •{" "}
+												{formatDate(latestScan.completed_at)} •{" "}
 												{latestScan.total_rules} rules evaluated
 											</p>
 										</div>
@@ -3537,9 +3533,7 @@ const ComplianceTab = ({
 													)}
 												</div>
 												<p className="text-xs text-secondary-500 dark:text-white">
-													{new Date(
-														latestScan.completed_at,
-													).toLocaleDateString()}
+													{formatDateOnly(latestScan.completed_at)}
 												</p>
 											</div>
 										</div>
@@ -3586,7 +3580,7 @@ const ComplianceTab = ({
 													)}
 												</div>
 												<p className="text-sm text-secondary-400 dark:text-white">
-													{new Date(scan.completed_at).toLocaleString()}
+													{formatDate(scan.completed_at)}
 												</p>
 											</div>
 										</div>
@@ -4217,7 +4211,7 @@ const ComplianceTab = ({
 							{/* Last Updated */}
 							{status.timestamp && (
 								<p className="text-xs text-secondary-500 dark:text-white text-right">
-									Last updated: {new Date(status.timestamp).toLocaleString()}
+									Last updated: {formatDate(status.timestamp)}
 								</p>
 							)}
 						</div>

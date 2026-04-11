@@ -5138,18 +5138,14 @@ const HostDetail = () => {
 																</td>
 																<td className="px-4 py-2 text-sm text-secondary-600 dark:text-secondary-400">
 																	{run.started_at
-																		? new Date(run.started_at).toLocaleString()
+																		? formatDate(run.started_at)
 																		: run.created_at
-																			? new Date(
-																					run.created_at,
-																				).toLocaleString()
+																			? formatDate(run.created_at)
 																			: " -"}
 																</td>
 																<td className="px-4 py-2 text-sm text-secondary-600 dark:text-secondary-400">
 																	{run.completed_at
-																		? new Date(
-																				run.completed_at,
-																			).toLocaleString()
+																		? formatDate(run.completed_at)
 																		: " -"}
 																</td>
 																<td className="px-4 py-2">
@@ -5345,9 +5341,7 @@ const HostDetail = () => {
 													</p>
 													<p className="text-xl font-semibold text-secondary-900 dark:text-white">
 														{complianceLatest.completed_at
-															? new Date(
-																	complianceLatest.completed_at,
-																).toLocaleString()
+															? formatDate(complianceLatest.completed_at)
 															: " -"}
 													</p>
 												</div>

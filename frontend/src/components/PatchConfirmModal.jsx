@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Check, Eye, RefreshCw, Wrench, X } from "lucide-react";
 import { useState } from "react";
+import { getGlobalTimezone } from "../utils/api";
 import { patchingAPI, pollDryRunUntilDone } from "../utils/patchingApi";
 
 const DRY_RUN_PACKAGE_LIMIT = 5;
@@ -143,6 +144,7 @@ export default function PatchConfirmModal({
 											{new Date(preview.run_at_iso).toLocaleString(undefined, {
 												dateStyle: "medium",
 												timeStyle: "short",
+												timeZone: getGlobalTimezone() || undefined,
 											})}
 										</td>
 										<td className="px-3 py-2 text-sm text-secondary-700 dark:text-secondary-300">

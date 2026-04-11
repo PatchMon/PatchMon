@@ -213,6 +213,16 @@ func validateLogLevel(level string) string {
 	}
 }
 
+// ResolveTimezone resolves timezone from TZ env, TIMEZONE env, DB setting, or config default.
+// Exported so handlers can re-resolve per-request for multi-context isolation.
+func ResolveTimezone(dbVal *string, cfg *Config) string {
+	defaultVal := "UTC"
+	if cfg != nil {
+		defaultVal = cfg.Timezone
+	}
+	return resolveTimezone(dbVal, defaultVal)
+}
+
 // resolveTimezone resolves from TZ env, TIMEZONE env, DB, or default. Validates via time.LoadLocation.
 func resolveTimezone(dbVal *string, defaultVal string) string {
 	if v := os.Getenv("TZ"); v != "" {

@@ -14,7 +14,13 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
-import { adminUsersAPI, permissionsAPI, settingsAPI } from "../../utils/api";
+import { useSettings } from "../../contexts/SettingsContext";
+import {
+	adminUsersAPI,
+	formatDateOnly,
+	permissionsAPI,
+	settingsAPI,
+} from "../../utils/api";
 
 const UsersTab = () => {
 	const [showAddModal, setShowAddModal] = useState(false);
@@ -22,6 +28,8 @@ const UsersTab = () => {
 	const [resetPasswordUser, setResetPasswordUser] = useState(null);
 	const queryClient = useQueryClient();
 	const { user: currentUser } = useAuth();
+	const { settings: publicSettings } = useSettings();
+	const isAdminMode = publicSettings?.admin_mode;
 	const signupEnabledId = useId();
 	const defaultRoleId = useId();
 	const [signupFormData, setSignupFormData] = useState({
@@ -288,7 +296,7 @@ const UsersTab = () => {
 												Created:&nbsp;
 											</span>
 											<span className="text-secondary-900 dark:text-white">
-												{new Date(user.created_at).toLocaleDateString()}
+												{formatDateOnly(user.created_at)}
 											</span>
 										</div>
 										<div className="text-sm">
@@ -297,7 +305,7 @@ const UsersTab = () => {
 											</span>
 											<span className="text-secondary-900 dark:text-white">
 												{user.last_login
-													? new Date(user.last_login).toLocaleDateString()
+													? formatDateOnly(user.last_login)
 													: "Never"}
 											</span>
 										</div>
@@ -461,12 +469,12 @@ const UsersTab = () => {
 											<td className="px-6 py-4 whitespace-nowrap">
 												<div className="flex items-center text-sm text-secondary-500 dark:text-white">
 													<Calendar className="h-4 w-4 mr-2" />
-													{new Date(user.created_at).toLocaleDateString()}
+													{formatDateOnly(user.created_at)}
 												</div>
 											</td>
 											<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500 dark:text-white">
 												{user.last_login ? (
-													new Date(user.last_login).toLocaleDateString()
+													formatDateOnly(user.last_login)
 												) : (
 													<span className="text-secondary-400">Never</span>
 												)}
@@ -590,8 +598,8 @@ const UsersTab = () => {
 				</div>
 			)}
 
-			{/* User Registration Settings - hidden when OIDC sync roles is active (IdP manages users) */}
-			{!isOIDCSyncRoles && (
+			{/* User Registration Settings - hidden in managed/multi-context mode or when OIDC sync roles is active */}
+			{!isAdminMode && !isOIDCSyncRoles && (
 				<div className="bg-white dark:bg-secondary-800 shadow overflow-hidden sm:rounded-lg">
 					<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white">

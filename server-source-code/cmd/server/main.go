@@ -83,7 +83,7 @@ func main() {
 	if cfg.RegistryDatabaseURL != "" {
 		// Poll interval is a failsafe - the primary path for registry updates is the
 		// immediate reload webhook (POST /api/v1/internal/reload-registry-map) triggered
-		// by the provisioner after every tenant create/update/delete.
+		// by the provisioner after every context create/update/delete.
 		ctxRegistry, err = hostctx.NewRegistry(ctx, cfg.RegistryDatabaseURL, 60*time.Second, slog)
 		if err != nil {
 			slog.Error("context registry", "error", err)
@@ -124,7 +124,6 @@ func main() {
 		Log:           slog,
 		Emit:          notifyEmit,
 		Enc:           enc,
-		Timezone:      resolved.Timezone,
 	})
 	go func() {
 		if err := queueSrv.Run(queueMux); err != nil {

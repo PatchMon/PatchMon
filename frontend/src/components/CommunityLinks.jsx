@@ -5,7 +5,15 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, Github, Globe, Mail, Route, Star } from "lucide-react";
+import {
+	BookOpen,
+	CreditCard,
+	Github,
+	Globe,
+	Mail,
+	Route,
+	Star,
+} from "lucide-react";
 import { FaLinkedin, FaYoutube } from "react-icons/fa";
 import { communityAPI } from "../utils/api";
 import BuyMeACoffeeIcon from "./BuyMeACoffeeIcon";
@@ -22,6 +30,7 @@ const ICON_MAP = {
 	roadmap: Route,
 	docs: BookOpen,
 	website: Globe,
+	billing: CreditCard,
 };
 
 const ICON_COLORS = {
@@ -35,6 +44,7 @@ const ICON_COLORS = {
 	roadmap: "",
 	docs: "",
 	website: "",
+	billing: "",
 };
 
 const CommunityLinksGrid = ({

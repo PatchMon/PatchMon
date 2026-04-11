@@ -22,7 +22,7 @@ import {
 	Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { packagesAPI } from "../utils/api";
+import { formatDate, packagesAPI } from "../utils/api";
 import { patchingAPI, pollDryRunUntilDone } from "../utils/patchingApi";
 
 const DRY_RUN_PACKAGE_LIMIT = 5;
@@ -654,7 +654,7 @@ export default function PatchPackageMultiHostModal({
 									override === "immediate"
 										? "Now"
 										: preview?.run_at_iso
-											? new Date(preview.run_at_iso).toLocaleString()
+											? formatDate(preview.run_at_iso)
 											: " -";
 
 								const hostLabel =

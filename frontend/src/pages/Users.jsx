@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useId, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { adminUsersAPI, permissionsAPI } from "../utils/api";
+import { adminUsersAPI, formatDateOnly, permissionsAPI } from "../utils/api";
 
 const Users = () => {
 	const [showAddModal, setShowAddModal] = useState(false);
@@ -183,13 +183,11 @@ const Users = () => {
 											</div>
 											<div className="flex items-center mt-1 text-sm text-secondary-500 dark:text-white">
 												<Calendar className="h-4 w-4 mr-1" />
-												Created:{" "}
-												{new Date(user.created_at).toLocaleDateString()}
+												Created: {formatDateOnly(user.created_at)}
 												{user.last_login && (
 													<>
 														<span className="mx-2">•</span>
-														Last login:{" "}
-														{new Date(user.last_login).toLocaleDateString()}
+														Last login: {formatDateOnly(user.last_login)}
 													</>
 												)}
 											</div>

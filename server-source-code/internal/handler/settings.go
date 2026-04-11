@@ -249,10 +249,17 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 		if h.cfg != nil {
 			currentVersion = h.cfg.Version
 		}
+		// In admin/multi-context mode, always hide GitHub version info on login.
+		showGithubVersionFallback := true
+		if h.cfg != nil && (h.cfg.AdminMode || h.cfg.RegistryDatabaseURL != "") {
+			showGithubVersionFallback = false
+		}
+		showNewsletter := h.cfg == nil || !h.cfg.AdminMode
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"signup_enabled":               false,
-			"show_github_version_on_login": true,
+			"show_github_version_on_login": showGithubVersionFallback,
 			"current_version":              currentVersion,
+			"show_newsletter":              showNewsletter,
 			"discord": map[string]interface{}{
 				"enabled":    false,
 				"buttonText": "Login with Discord",
@@ -286,10 +293,23 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 		currentVersion = h.cfg.Version
 	}
 
+	// In admin/multi-context mode, always hide GitHub version info on the login page —
+	// managed contexts should not see the upstream repo's release panel.
+	showGithubVersion := s.ShowGithubVersionOnLogin
+	if h.cfg != nil && (h.cfg.AdminMode || h.cfg.RegistryDatabaseURL != "") {
+		showGithubVersion = false
+	}
+
+	showNewsletter := h.cfg == nil || !h.cfg.AdminMode
+	signupEnabled := s.SignupEnabled
+	if h.cfg != nil && h.cfg.AdminMode {
+		signupEnabled = false
+	}
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"signup_enabled":               s.SignupEnabled,
-		"show_github_version_on_login": s.ShowGithubVersionOnLogin,
+		"signup_enabled":               signupEnabled,
+		"show_github_version_on_login": showGithubVersion,
 		"current_version":              currentVersion,
+		"show_newsletter":              showNewsletter,
 		"discord": map[string]interface{}{
 			"enabled":    h.isDiscordProperlyConfigured(s),
 			"buttonText": discordButtonText,
@@ -378,6 +398,15 @@ func (h *SettingsHandler) GetEnvironmentConfig(w http.ResponseWriter, r *http.Re
 	}
 	slog.Debug("env config get timezone", "db_raw", dbTz, "resolved", resolved.Timezone, "env_TZ", os.Getenv("TZ"), "env_TIMEZONE", os.Getenv("TIMEZONE"))
 	variables := buildEnvironmentVariables(h.cfg, resolved, s)
+	if h.cfg.AdminMode {
+		filtered := make([]envVarMeta, 0, 1)
+		for _, v := range variables {
+			if v.Key == "TIMEZONE" {
+				filtered = append(filtered, v)
+			}
+		}
+		variables = filtered
+	}
 	JSON(w, http.StatusOK, map[string]interface{}{"variables": variables})
 }
 
@@ -536,6 +565,10 @@ func (h *SettingsHandler) UpdateEnvironmentConfig(w http.ResponseWriter, r *http
 		Error(w, http.StatusBadRequest, "Key required")
 		return
 	}
+	if h.cfg != nil && h.cfg.AdminMode && key != "TIMEZONE" {
+		Error(w, http.StatusForbidden, "Setting not available")
+		return
+	}
 	var req struct {
 		Value interface{} `json:"value"`
 	}
@@ -571,19 +604,24 @@ func orEmpty(s, fallback string) string {
 
 // GetPublic handles GET /settings/public (read-only settings for all authenticated users).
 func (h *SettingsHandler) GetPublic(w http.ResponseWriter, r *http.Request) {
-	timezone := "UTC"
-	if h.resolved != nil {
-		timezone = h.resolved.Timezone
-	}
 	s, err := h.settings.GetFirst(r.Context())
 	if err != nil {
+		// No settings row — resolve timezone from env/config defaults (no DB value).
+		adminMode := h.cfg != nil && h.cfg.AdminMode
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"auto_update":    false,
 			"alerts_enabled": true,
-			"timezone":       timezone,
+			"timezone":       config.ResolveTimezone(nil, h.cfg),
+			"admin_mode":     adminMode,
 		})
 		return
 	}
+
+	// Re-resolve timezone from this context's DB settings (not the startup-frozen h.resolved).
+	// This ensures each context gets its own timezone in multi-context mode.
+	timezone := config.ResolveTimezone(s.Timezone, h.cfg)
+
+	adminMode := h.cfg != nil && h.cfg.AdminMode
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"auto_update":    s.AutoUpdate,
 		"alerts_enabled": s.AlertsEnabled,
@@ -592,6 +630,7 @@ func (h *SettingsHandler) GetPublic(w http.ResponseWriter, r *http.Request) {
 		"favicon":        s.Favicon,
 		"updated_at":     s.UpdatedAt,
 		"timezone":       timezone,
+		"admin_mode":     adminMode,
 	})
 }
 
@@ -607,6 +646,12 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(r, &req); err != nil {
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
+	}
+
+	// In managed/multi-context mode, prevent self-registration from being enabled.
+	if h.cfg != nil && h.cfg.AdminMode {
+		delete(req, "signupEnabled")
+		delete(req, "signup_enabled")
 	}
 
 	oldInterval := s.UpdateInterval

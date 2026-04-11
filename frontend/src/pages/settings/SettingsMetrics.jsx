@@ -13,6 +13,7 @@ import {
 	Shield,
 } from "lucide-react";
 import { useState } from "react";
+import { formatDate } from "../../utils/api";
 
 // API functions - use httpOnly cookies for auth
 const metricsAPI = {
@@ -315,8 +316,7 @@ const SettingsMetrics = () => {
 
 					{metricsSettings?.metrics_last_sent && (
 						<p className="text-xs text-secondary-500 dark:text-white">
-							Last sent:{" "}
-							{new Date(metricsSettings.metrics_last_sent).toLocaleString()}
+							Last sent: {formatDate(metricsSettings.metrics_last_sent)}
 						</p>
 					)}
 				</div>

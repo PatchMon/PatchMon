@@ -142,6 +142,13 @@ type Config struct {
 
 	// SSG (SCAP Security Guide) content directory for compliance scanning
 	SSGContentDir string
+
+	// AdminMode restricts context-facing features (env var page, newsletter opt-in).
+	// Set ADMIN_MODE=on in .env for managed/multi-context deployments.
+	AdminMode bool
+
+	// BillingPortalURL is the Stripe customer portal URL shown to tenants when AdminMode is on.
+	BillingPortalURL string
 }
 
 // Load reads configuration from environment.
@@ -215,7 +222,9 @@ func Load() (*Config, error) {
 		OidcUserGroup:        getEnv("OIDC_USER_GROUP", ""),
 		OidcEnforceHTTPS:     getEnv("OIDC_ENFORCE_HTTPS", "true") != "false",
 
-		SSGContentDir: getEnv("SSG_CONTENT_DIR", "./ssg-content"),
+		SSGContentDir:    getEnv("SSG_CONTENT_DIR", "./ssg-content"),
+		AdminMode:        getEnv("ADMIN_MODE", "") == "on",
+		BillingPortalURL: getEnv("BILLING_PORTAL_URL", ""),
 
 		MaxLoginAttempts:            getEnvInt("MAX_LOGIN_ATTEMPTS", 5),
 		LockoutDurationMin:          getEnvInt("LOCKOUT_DURATION_MINUTES", 15),

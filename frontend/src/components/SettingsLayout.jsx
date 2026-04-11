@@ -19,12 +19,14 @@ import {
 import { useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { useSettings } from "../contexts/SettingsContext";
 import DiscordIcon from "./DiscordIcon";
 
 const SettingsLayout = ({ children }) => {
 	const content = children ?? <Outlet />;
 	const location = useLocation();
 	const { canManageSettings, canViewUsers, canManageUsers } = useAuth();
+	const { settings: publicSettings } = useSettings();
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
 	// Build secondary navigation based on permissions
@@ -117,35 +119,46 @@ const SettingsLayout = ({ children }) => {
 				],
 			});
 
+			const isAdminMode = publicSettings?.admin_mode;
+			const serverItems = [];
+			// Server URL and Server Version are hidden in managed/multi-context deployments.
+			if (!isAdminMode) {
+				serverItems.push({
+					name: "Server URL",
+					href: "/settings/server-url",
+					icon: Wrench,
+				});
+			}
+			serverItems.push(
+				{
+					name: "Environment",
+					href: "/settings/environment",
+					icon: Variable,
+				},
+				{
+					name: "Branding",
+					href: "/settings/branding",
+					icon: Image,
+				},
+			);
+			if (!isAdminMode) {
+				serverItems.push({
+					name: "Server Version",
+					href: "/settings/server-version",
+					icon: Code,
+				});
+			}
+			// Metrics is hidden in managed/multi-context deployments.
+			if (!isAdminMode) {
+				serverItems.push({
+					name: "Metrics",
+					href: "/settings/metrics",
+					icon: BarChart3,
+				});
+			}
 			nav.push({
 				section: "Server",
-				items: [
-					{
-						name: "Server URL",
-						href: "/settings/server-url",
-						icon: Wrench,
-					},
-					{
-						name: "Environment",
-						href: "/settings/environment",
-						icon: Variable,
-					},
-					{
-						name: "Branding",
-						href: "/settings/branding",
-						icon: Image,
-					},
-					{
-						name: "Server Version",
-						href: "/settings/server-version",
-						icon: Code,
-					},
-					{
-						name: "Metrics",
-						href: "/settings/metrics",
-						icon: BarChart3,
-					},
-				],
+				items: serverItems,
 			});
 		}
 

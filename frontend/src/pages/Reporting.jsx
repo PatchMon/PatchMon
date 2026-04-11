@@ -31,7 +31,12 @@ import {
 } from "../components/alerting/widgets";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
-import { adminUsersAPI, alertsAPI, formatRelativeTime } from "../utils/api";
+import {
+	adminUsersAPI,
+	alertsAPI,
+	formatDate,
+	formatRelativeTime,
+} from "../utils/api";
 import { NotificationPanel } from "./settings/AlertChannels";
 import { AlertSettings } from "./settings/AlertSettings";
 
@@ -1324,7 +1329,7 @@ const Reporting = () => {
 										Created
 									</label>
 									<div className="mt-1 text-sm text-secondary-900 dark:text-white">
-										{new Date(selectedAlert.created_at).toLocaleString()}
+										{formatDate(selectedAlert.created_at)}
 									</div>
 								</div>
 								<div>
@@ -1450,7 +1455,7 @@ const Reporting = () => {
 															"System"}
 													</div>
 													<div className="text-xs text-secondary-400">
-														{new Date(historyItem.created_at).toLocaleString()}
+														{formatDate(historyItem.created_at)}
 													</div>
 												</div>
 											</div>

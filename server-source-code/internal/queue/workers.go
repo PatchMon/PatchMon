@@ -45,7 +45,7 @@ func resolveDBFromPayload(ctx context.Context, payload []byte, defaultDB *databa
 	return db
 }
 
-// workerTenantKey prefixes a Redis key with the tenant domain for multi-tenant isolation.
+// workerTenantKey prefixes a Redis key with the context domain for multi-context isolation.
 // Mirrors hostctx.TenantKey but works in worker context where only the host string
 // (from payload) is available, not a full registry Entry in context.
 func workerTenantKey(tenantHost, key string) string {
@@ -63,8 +63,8 @@ func tenantHostFromPayload(payload []byte) string {
 	return ""
 }
 
-// forEachDB calls fn for the defaultDB and then for every tenant DB in the poolCache.
-// When there is no poolCache (single-tenant), only defaultDB is processed.
+// forEachDB calls fn for the defaultDB and then for every context DB in the poolCache.
+// When there is no poolCache (single-context), only defaultDB is processed.
 // The tenantHost passed to fn is the domain (Entry.Host), matching TenantKey's prefix.
 func forEachDB(ctx context.Context, defaultDB *database.DB, poolCache *hostctx.PoolCache, fn func(context.Context, *database.DB, string)) {
 	fn(ctx, defaultDB, "")
@@ -643,7 +643,7 @@ func (h *MetricsSendHandler) sendMetrics(ctx context.Context, d *database.DB, te
 	settingsStore := store.NewSettingsStore(dbResolver)
 	hostsStore := store.NewHostsStore(dbResolver)
 
-	// Use WithDB so the store resolves to the correct tenant DB.
+	// Use WithDB so the store resolves to the correct context DB.
 	ctx = hostctx.WithDB(ctx, d)
 
 	s, err := settingsStore.GetFirst(ctx)

@@ -89,7 +89,6 @@ type MuxOpts struct {
 	Log           *slog.Logger
 	Emit          *notifications.Emitter
 	Enc           *util.Encryption
-	Timezone      string // IANA timezone from resolved config; used for scheduled report cron
 }
 
 // Mux returns a ServeMux with all handlers registered.
@@ -107,7 +106,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeUpdateThresholdMonitor, wrap(TypeUpdateThresholdMonitor, NewUpdateThresholdMonitorHandler(db, opts.PoolCache, opts.Emit, log)))
 	mux.Handle(notifications.TypeNotificationDeliver, wrap(notifications.TypeNotificationDeliver, NewNotificationDeliverHandler(db, opts.PoolCache, opts.Enc, opts.RDB, log)))
 	mux.Handle(TypeScheduledReportsDispatch, wrap(TypeScheduledReportsDispatch, NewScheduledReportsDispatchHandler(db, opts.PoolCache, opts.QueueClient, log)))
-	mux.Handle(TypeScheduledReportRun, wrap(TypeScheduledReportRun, NewScheduledReportRunHandler(db, opts.PoolCache, opts.QueueClient, opts.Enc, opts.Timezone, log)))
+	mux.Handle(TypeScheduledReportRun, wrap(TypeScheduledReportRun, NewScheduledReportRunHandler(db, opts.PoolCache, opts.QueueClient, opts.Enc, log)))
 	mux.Handle(TypeAlertCleanup, wrap(TypeAlertCleanup, NewAlertCleanupHandler(db, opts.PoolCache, store.NewAlertConfigStore(dbResolver), log)))
 	mux.Handle(TypeSessionCleanup, wrap(TypeSessionCleanup, NewSessionCleanupHandler(db, opts.PoolCache, log)))
 	mux.Handle(TypeOrphanedRepoCleanup, wrap(TypeOrphanedRepoCleanup, NewOrphanedRepoCleanupHandler(db, opts.PoolCache, log)))
@@ -281,7 +280,11 @@ func RehydrateScheduledReports(qc *asynq.Client, defaultDB *database.DB, poolCac
 			if !r.NextRunAt.Valid || runAt.Before(now) {
 				// Compute actual next cron time instead of running immediately,
 				// to avoid spurious duplicate runs on every restart.
-				if next, nerr := notifications.NextCronRun(r.CronExpr, "UTC", now); nerr == nil {
+				tz := r.Timezone
+				if tz == "" {
+					tz = "UTC"
+				}
+				if next, nerr := notifications.NextCronRun(r.CronExpr, tz, now); nerr == nil {
 					runAt = next
 				} else {
 					runAt = now

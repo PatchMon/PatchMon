@@ -14,6 +14,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -27,19 +28,29 @@ type NotificationsHandler struct {
 	enc      *util.Encryption
 	emit     *notifications.Emitter
 	resolved *config.ResolvedConfig
+	cfg      *config.Config
+	settings *store.SettingsStore
 	qc       *asynq.Client
 }
 
 // NewNotificationsHandler creates the handler.
-func NewNotificationsHandler(db database.DBProvider, enc *util.Encryption, emit *notifications.Emitter, resolved *config.ResolvedConfig, qc *asynq.Client) *NotificationsHandler {
-	return &NotificationsHandler{db: db, enc: enc, emit: emit, resolved: resolved, qc: qc}
+func NewNotificationsHandler(db database.DBProvider, enc *util.Encryption, emit *notifications.Emitter, resolved *config.ResolvedConfig, cfg *config.Config, settings *store.SettingsStore, qc *asynq.Client) *NotificationsHandler {
+	return &NotificationsHandler{db: db, enc: enc, emit: emit, resolved: resolved, cfg: cfg, settings: settings, qc: qc}
 }
 
 func (h *NotificationsHandler) q(ctx context.Context) *db.Queries {
 	return h.db.DB(ctx).Queries
 }
 
-func (h *NotificationsHandler) timezone() string {
+// timezoneForRequest resolves the timezone from the context's DB settings per-request,
+// so each context gets its own timezone in multi-context mode. Falls back to the
+// startup-resolved value (single-context) or "UTC".
+func (h *NotificationsHandler) timezoneForRequest(ctx context.Context) string {
+	if h.settings != nil {
+		if s, err := h.settings.GetFirst(ctx); err == nil {
+			return config.ResolveTimezone(s.Timezone, h.cfg)
+		}
+	}
 	if h.resolved != nil && h.resolved.Timezone != "" {
 		return h.resolved.Timezone
 	}
@@ -477,6 +488,7 @@ func (h *NotificationsHandler) scheduledReportToMap(row db.ScheduledReport) map[
 		"enabled":         row.Enabled,
 		"definition":      def,
 		"destination_ids": destIDs,
+		"timezone":        row.Timezone,
 		"next_run_at":     pgTime(row.NextRunAt),
 		"last_run_at":     pgTime(row.LastRunAt),
 		"created_at":      pgTime(row.CreatedAt),
@@ -515,7 +527,7 @@ func (h *NotificationsHandler) CreateScheduledReport(w http.ResponseWriter, r *h
 	if cron == "" {
 		cron = "0 8 * * *"
 	}
-	tz := h.timezone()
+	tz := h.timezoneForRequest(r.Context())
 	def, _ := json.Marshal(req.Definition)
 	if len(def) == 0 || string(def) == "null" {
 		def = []byte("{}")
@@ -538,6 +550,7 @@ func (h *NotificationsHandler) CreateScheduledReport(w http.ResponseWriter, r *h
 		Enabled:        en,
 		Definition:     def,
 		DestinationIds: dest,
+		Timezone:       tz,
 		NextRunAt:      pgtype.Timestamp{Time: next, Valid: true},
 		LastRunAt:      pgtype.Timestamp{Valid: false},
 	})
@@ -579,7 +592,12 @@ func (h *NotificationsHandler) UpdateScheduledReport(w http.ResponseWriter, r *h
 	if req.CronExpr != "" {
 		cron = req.CronExpr
 	}
-	tz := h.timezone()
+	// Preserve the stored timezone; refresh from current tenant settings
+	// only when the cron expression changes.
+	tz := ex.Timezone
+	if tz == "" {
+		tz = h.timezoneForRequest(r.Context())
+	}
 	en := ex.Enabled
 	if req.Enabled != nil {
 		en = *req.Enabled
@@ -605,6 +623,7 @@ func (h *NotificationsHandler) UpdateScheduledReport(w http.ResponseWriter, r *h
 		Enabled:        en,
 		Definition:     def,
 		DestinationIds: dest,
+		Timezone:       tz,
 		NextRunAt:      nextAt,
 		LastRunAt:      ex.LastRunAt,
 	})

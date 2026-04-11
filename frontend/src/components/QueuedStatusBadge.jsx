@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { formatDate } from "../utils/api";
 
 /**
  * Formats remaining time until a target date as human-readable text.
@@ -51,11 +52,7 @@ export function QueuedStatusBadge({ scheduledAt, className = "" }) {
 	return (
 		<span
 			className={`${baseClass} ${className}`}
-			title={
-				scheduledAt
-					? `Runs at ${new Date(scheduledAt).toLocaleString()}`
-					: "Queued"
-			}
+			title={scheduledAt ? `Runs at ${formatDate(scheduledAt)}` : "Queued"}
 		>
 			Queued
 			{scheduledAt && countdown && (

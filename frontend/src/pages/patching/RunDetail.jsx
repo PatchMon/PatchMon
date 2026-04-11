@@ -16,6 +16,7 @@ import {
 	PackageNameList,
 } from "../../components/PackageListDisplay";
 import { PatchRunStatusBadge } from "../../components/PatchRunStatusBadge";
+import { formatDate } from "../../utils/api";
 import { patchingAPI } from "../../utils/patchingApi";
 
 const RunDetail = () => {
@@ -237,9 +238,9 @@ const RunDetail = () => {
 						</span>
 						<span className="text-secondary-900 dark:text-white">
 							{run.started_at
-								? new Date(run.started_at).toLocaleString()
+								? formatDate(run.started_at)
 								: run.created_at
-									? new Date(run.created_at).toLocaleString()
+									? formatDate(run.created_at)
 									: " -"}
 						</span>
 					</div>
@@ -249,7 +250,7 @@ const RunDetail = () => {
 								Scheduled for{" "}
 							</span>
 							<span className="text-secondary-900 dark:text-white">
-								{new Date(run.scheduled_at).toLocaleString()}
+								{formatDate(run.scheduled_at)}
 							</span>
 						</div>
 					)}
@@ -258,9 +259,7 @@ const RunDetail = () => {
 							Completed{" "}
 						</span>
 						<span className="text-secondary-900 dark:text-white">
-							{run.completed_at
-								? new Date(run.completed_at).toLocaleString()
-								: " -"}
+							{run.completed_at ? formatDate(run.completed_at) : " -"}
 						</span>
 					</div>
 					{/* Link to related run (validation ↔ patch) */}

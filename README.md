@@ -2,7 +2,7 @@
 
 # PatchMon
 
-### Enterprise-Grade Linux Patch Monitoring & Server Management
+### Enterprise-Grade Linux Patch & Server Management Platform
 
 [![Website](https://img.shields.io/badge/Website-patchmon.net-blue?style=for-the-badge)](https://patchmon.net)
 [![Cloud](https://img.shields.io/badge/Cloud-patchmon.net%2Fcloud-purple?style=for-the-badge)](https://patchmon.net)

@@ -1,6 +1,10 @@
 package handler
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
+)
 
 // CommunityLink represents a single community/social link with optional stat.
 type CommunityLink struct {
@@ -18,8 +22,8 @@ type CommunityLinksResponse struct {
 
 // Default community links and stats. Override via env or config if needed.
 var defaultCommunityLinks = []CommunityLink{
-	{ID: "discord", URL: "https://patchmon.net/discord", Label: "Discord", Stat: "500", StatLabel: "members"},
-	{ID: "github", URL: "https://github.com/PatchMon/PatchMon", Label: "GitHub", Stat: "2.1K", StatLabel: "stars"},
+	{ID: "discord", URL: "https://patchmon.net/discord", Label: "Discord", Stat: "600", StatLabel: "members"},
+	{ID: "github", URL: "https://github.com/PatchMon/PatchMon", Label: "GitHub", Stat: "2.5K", StatLabel: "stars"},
 	{ID: "github_issues", URL: "https://github.com/PatchMon/PatchMon/issues", Label: "GitHub Issues"},
 	{ID: "email", URL: "mailto:support@patchmon.net", Label: "Email", Stat: "support@patchmon.net"},
 	{ID: "linkedin", URL: "https://linkedin.com/company/patchmon", Label: "LinkedIn", Stat: "400"},
@@ -31,11 +35,13 @@ var defaultCommunityLinks = []CommunityLink{
 }
 
 // CommunityHandler handles community/social links (public).
-type CommunityHandler struct{}
+type CommunityHandler struct {
+	cfg *config.Config
+}
 
 // NewCommunityHandler creates a new community handler.
-func NewCommunityHandler() *CommunityHandler {
-	return &CommunityHandler{}
+func NewCommunityHandler(cfg *config.Config) *CommunityHandler {
+	return &CommunityHandler{cfg: cfg}
 }
 
 // GetLinks returns community links and stats for nav bar, login UI, and wizard.
@@ -45,5 +51,20 @@ func (h *CommunityHandler) GetLinks(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-	JSON(w, http.StatusOK, CommunityLinksResponse{Links: defaultCommunityLinks})
+	links := make([]CommunityLink, 0, len(defaultCommunityLinks))
+	for _, l := range defaultCommunityLinks {
+		// Hide donate link in managed/multi-context deployments.
+		if h.cfg != nil && h.cfg.AdminMode && l.ID == "buymeacoffee" {
+			continue
+		}
+		links = append(links, l)
+	}
+	if h.cfg != nil && h.cfg.AdminMode && h.cfg.BillingPortalURL != "" {
+		links = append(links, CommunityLink{
+			ID:    "billing",
+			URL:   h.cfg.BillingPortalURL,
+			Label: "Manage membership",
+		})
+	}
+	JSON(w, http.StatusOK, CommunityLinksResponse{Links: links})
 }
