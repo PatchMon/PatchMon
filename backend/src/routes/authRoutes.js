@@ -1,4 +1,5 @@
 const express = require("express");
+const path = require("node:path");
 const logger = require("../utils/logger");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -299,24 +300,133 @@ function parse_user_agent(user_agent) {
 }
 
 /**
- * Get basic location info from IP (simplified - in production you'd use a service)
+ * GeoIP location lookup using MaxMind MMDB database.
+ *
+ * Provide MMDB files via volume mount and set GEOIP_DB_PATH env var.
+ * The database is loaded lazily on first lookup and automatically reloaded
+ * when the file changes (e.g., updated by geoipupdate container).
+ *
+ * Supported databases (checked in order):
+ *   - GeoLite2-City.mmdb  (free, city + country)
+ *   - GeoIP2-City.mmdb    (commercial, city + country)
+ *   - GeoLite2-Country.mmdb (free, country only)
+ *
+ * If no database is found, falls back to { country: "Unknown", city: "Unknown" }.
  */
-function get_location_from_ip(ip) {
+const maxmind = require("maxmind");
+const fs = require("node:fs");
+
+let geoipReader = null;
+let geoipMtime = 0;
+let geoipType = null; // "city" or "country"
+let geoipLoadPromise = null; // Prevents parallel maxmind.open() calls
+let geoipLastCheck = 0; // Throttle mtime checks to once per 60s
+const GEOIP_CHECK_INTERVAL = 60000; // 60 seconds between mtime checks
+const GEOIP_DB_PATH = process.env.GEOIP_DB_PATH || "";
+const GEOIP_DB_NAMES = [
+	{ file: "GeoLite2-City.mmdb", type: "city" },
+	{ file: "GeoIP2-City.mmdb", type: "city" },
+	{ file: "GeoLite2-Country.mmdb", type: "country" },
+];
+
+function findGeoIPDB() {
+	if (!GEOIP_DB_PATH) return null;
+	for (const db of GEOIP_DB_NAMES) {
+		const dbPath = path.join(GEOIP_DB_PATH, db.file);
+		try {
+			fs.accessSync(dbPath, fs.constants.R_OK);
+			return { path: dbPath, type: db.type };
+		} catch {
+			continue;
+		}
+	}
+	return null;
+}
+
+async function loadGeoIPReader() {
+	// Return cached reader if mtime check interval not reached
+	const now = Date.now();
+	if (geoipReader && (now - geoipLastCheck) < GEOIP_CHECK_INTERVAL) {
+		return geoipReader;
+	}
+
+	// Prevent parallel loads (race condition)
+	if (geoipLoadPromise) return geoipLoadPromise;
+
+	geoipLoadPromise = (async () => {
+		const db = findGeoIPDB();
+		if (!db) return geoipReader; // Keep existing reader if DB disappeared
+
+		try {
+			const stat = await fs.promises.stat(db.path);
+			const mtime = stat.mtimeMs;
+			geoipLastCheck = now;
+
+			if (!geoipReader || mtime !== geoipMtime) {
+				geoipReader = await maxmind.open(db.path);
+				geoipMtime = mtime;
+				geoipType = db.type;
+				logger.info(
+					`GeoIP database loaded: ${path.basename(db.path)} (${new Date(mtime).toISOString()})`,
+				);
+			}
+			return geoipReader;
+		} catch (err) {
+			logger.warn(`GeoIP database error: ${err.message}`);
+			geoipLastCheck = now; // Don't retry immediately on error
+			return geoipReader; // Return existing reader if available
+		} finally {
+			geoipLoadPromise = null;
+		}
+	})();
+
+	return geoipLoadPromise;
+}
+
+function isPrivateIP(ip) {
+	if (!ip) return false;
+	// IPv6 loopback
+	if (ip === "::1") return true;
+	// Strip IPv6 prefix for mapped IPv4, normalize case for IPv6
+	const cleanIP = ip.replace(/^::ffff:/, "").toLowerCase();
+	return (
+		cleanIP === "127.0.0.1" ||
+		cleanIP.startsWith("10.") ||
+		cleanIP.startsWith("192.168.") ||
+		/^172\.(1[6-9]|2\d|3[01])\./.test(cleanIP) ||
+		/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(cleanIP) ||
+		cleanIP.startsWith("fd") // IPv6 ULA (fc00::/7)
+	);
+}
+
+async function get_location_from_ip(ip) {
 	if (!ip) return { country: "Unknown", city: "Unknown" };
 
-	// For localhost/private IPs
-	if (
-		ip === "127.0.0.1" ||
-		ip === "::1" ||
-		ip.startsWith("192.168.") ||
-		ip.startsWith("10.")
-	) {
+	// Private/local IPs
+	if (isPrivateIP(ip)) {
 		return { country: "Local", city: "Local Network" };
 	}
 
-	// In a real implementation, you'd use a service like MaxMind GeoIP2
-	// For now, return unknown for external IPs
-	return { country: "Unknown", city: "Unknown" };
+	// GeoIP lookup
+	const reader = await loadGeoIPReader();
+	if (!reader) return { country: "Unknown", city: "Unknown" };
+
+	try {
+		const result = reader.get(ip);
+		if (!result) return { country: "Unknown", city: "Unknown" };
+
+		const country =
+			result.country?.names?.en ||
+			result.registered_country?.names?.en ||
+			"Unknown";
+
+		const city =
+			geoipType === "city" ? result.city?.names?.en || "Unknown" : "Unknown";
+
+		return { country, city };
+	} catch {
+		return { country: "Unknown", city: "Unknown" };
+	}
 }
 
 // Check if any admin users exist (for first-time setup)
@@ -2208,18 +2318,20 @@ router.get("/sessions", authenticateToken, async (req, res) => {
 			orderBy: { last_activity: "desc" },
 		});
 
-		// Enhance sessions with device info
-		const enhanced_sessions = sessions.map((session) => {
-			const is_current_session = session.id === req.session_id;
-			const device_info = parse_user_agent(session.user_agent);
+		// Enhance sessions with device info and location
+		const enhanced_sessions = await Promise.all(
+			sessions.map(async (session) => {
+				const is_current_session = session.id === req.session_id;
+				const device_info = parse_user_agent(session.user_agent);
 
-			return {
-				...session,
-				is_current_session,
-				device_info,
-				location_info: get_location_from_ip(session.ip_address),
-			};
-		});
+				return {
+					...session,
+					is_current_session,
+					device_info,
+					location_info: await get_location_from_ip(session.ip_address),
+				};
+			}),
+		);
 
 		res.json({
 			sessions: enhanced_sessions,
