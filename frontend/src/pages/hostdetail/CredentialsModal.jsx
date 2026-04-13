@@ -15,6 +15,7 @@ import WaitingForConnection from "./WaitingForConnection";
 const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 	const [showApiKey, setShowApiKey] = useState(false);
 	const [activeTab, setActiveTab] = useState("quick-install");
+	const [installOs, setInstallOs] = useState("linux");
 	const [forceInstall, setForceInstall] = useState(false);
 	const [regeneratedCredentials, setRegeneratedCredentials] = useState(null);
 	const [isRegenerating, setIsRegenerating] = useState(false);
@@ -72,12 +73,13 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 		return settings?.ignore_ssl_self_signed ? "-sk" : "-s";
 	};
 
-	// Helper function to get the install URL (OS-specific for FreeBSD)
-	const getInstallUrl = () => {
+	// Helper function to get the install URL (os=windows for PowerShell, os=freebsd for FreeBSD, force for Linux/FreeBSD)
+	const getInstallUrl = (os) => {
 		const base = `${serverUrl}/api/v1/hosts/install`;
 		const params = new URLSearchParams();
-		if (host?.expected_platform === "freebsd") params.set("os", "freebsd");
-		if (forceInstall) params.set("force", "true");
+		if (os === "windows") params.set("os", "windows");
+		else if (host?.expected_platform === "freebsd") params.set("os", "freebsd");
+		if (forceInstall && os !== "windows") params.set("force", "true");
 		const qs = params.toString();
 		return qs ? `${base}?${qs}` : base;
 	};
@@ -137,8 +139,9 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 				plaintextApiKey={effectiveApiKey}
 				serverUrl={serverUrl}
 				curlFlags={getCurlFlags()}
-				installUrl={getInstallUrl()}
+				installUrl={getInstallUrl(installOs)}
 				shellCommand={getShellCommand()}
+				installOs={installOs}
 			/>
 		);
 	}
@@ -227,28 +230,57 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 								One-Line Installation
 							</h4>
 							<p className="text-xs md:text-sm text-primary-700 dark:text-primary-300 mb-3">
-								Copy and run this command on the target host to securely install
-								and configure the PatchMon agent:
+								Copy and run the appropriate command for your target host's
+								operating system. The server automatically detects the OS and
+								serves the correct installation script:
 							</p>
 
-							{/* Force Install Toggle */}
-							<div className="mb-3">
-								<label className="flex items-center gap-2 text-xs md:text-sm">
-									<input
-										type="checkbox"
-										checked={forceInstall}
-										onChange={(e) => setForceInstall(e.target.checked)}
-										className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400 dark:bg-secondary-700"
-									/>
-									<span className="text-primary-800 dark:text-primary-200">
-										Force install (bypass broken packages)
-									</span>
-								</label>
-								<p className="text-xs text-primary-600 dark:text-primary-400 mt-1">
-									Enable this if the target host has broken packages
-									(CloudPanel, WHM, etc.) that block apt-get operations
-								</p>
+							{/* OS Selector - Linux | Windows */}
+							<div className="mb-3 flex gap-2">
+								<button
+									type="button"
+									onClick={() => setInstallOs("linux")}
+									className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+										installOs === "linux"
+											? "bg-primary-500 text-white"
+											: "bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-300 hover:bg-secondary-300 dark:hover:bg-secondary-500"
+									}`}
+								>
+									Linux / Unix
+								</button>
+								<button
+									type="button"
+									onClick={() => setInstallOs("windows")}
+									className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+										installOs === "windows"
+											? "bg-primary-500 text-white"
+											: "bg-secondary-200 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-300 hover:bg-secondary-300 dark:hover:bg-secondary-500"
+									}`}
+								>
+									Windows
+								</button>
 							</div>
+
+							{/* Force Install Toggle - Linux only */}
+							{installOs === "linux" && (
+								<div className="mb-3">
+									<label className="flex items-center gap-2 text-xs md:text-sm">
+										<input
+											type="checkbox"
+											checked={forceInstall}
+											onChange={(e) => setForceInstall(e.target.checked)}
+											className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400 dark:bg-secondary-700"
+										/>
+										<span className="text-primary-800 dark:text-primary-200">
+											Force install (bypass broken packages)
+										</span>
+									</label>
+									<p className="text-xs text-primary-600 dark:text-primary-400 mt-1">
+										Enable this if the target host has broken packages
+										(CloudPanel, WHM, etc.) that block apt-get operations
+									</p>
+								</div>
+							)}
 
 							{isApiKeyHash && (
 								<div className="mb-3 p-3 bg-warning-50 dark:bg-warning-900/20 border border-warning-200 dark:border-warning-700 rounded-lg">
@@ -280,35 +312,83 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 								</div>
 							)}
 
-							<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-								<input
-									type="text"
-									value={
-										isApiKeyHash
-											? "API key not available - click Regenerate above"
-											: `curl ${getCurlFlags()} "${getInstallUrl()}" -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`
-									}
-									readOnly
-									disabled={isApiKeyHash}
-									className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-primary-300 dark:border-primary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
-								/>
-								<button
-									type="button"
-									onClick={async () => {
-										const command = `curl ${getCurlFlags()} "${getInstallUrl()}" -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`;
-										await copyToClipboard(command);
-										// Show waiting screen after copying
-										if (!isApiKeyHash) {
-											setShowWaitingScreen(true);
-										}
-									}}
-									disabled={isApiKeyHash}
-									className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
-								>
-									<Copy className="h-4 w-4" />
-									Copy
-								</button>
-							</div>
+							{/* Linux/Unix Installation Command - shown when Linux selected */}
+							{installOs === "linux" && (
+								<div className="mb-4">
+									<label className="block text-xs md:text-sm font-medium text-primary-900 dark:text-primary-200 mb-2">
+										For Linux/Unix (run with bash or sh):
+									</label>
+									<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+										<input
+											type="text"
+											value={
+												isApiKeyHash
+													? "API key not available - click Regenerate above"
+													: `curl ${getCurlFlags()} "${getInstallUrl("linux")}" -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`
+											}
+											readOnly
+											disabled={isApiKeyHash}
+											className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-primary-300 dark:border-primary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
+										/>
+										<button
+											type="button"
+											onClick={async () => {
+												const command = `curl ${getCurlFlags()} "${getInstallUrl("linux")}" -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" | ${getShellCommand()}`;
+												await copyToClipboard(command);
+												if (!isApiKeyHash) {
+													setShowWaitingScreen(true);
+												}
+											}}
+											disabled={isApiKeyHash}
+											className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+										>
+											<Copy className="h-4 w-4" />
+											Copy
+										</button>
+									</div>
+								</div>
+							)}
+
+							{/* Windows Installation Command - shown when Windows selected */}
+							{installOs === "windows" && (
+								<div>
+									<label className="block text-xs md:text-sm font-medium text-primary-900 dark:text-primary-200 mb-2">
+										For Windows (run PowerShell as Administrator):
+									</label>
+									<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+										<input
+											type="text"
+											value={
+												isApiKeyHash
+													? "API key not available - click Regenerate above"
+													: `$script = Invoke-WebRequest -Uri "${getInstallUrl("windows")}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-install.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-install.ps1"`
+											}
+											readOnly
+											disabled={isApiKeyHash}
+											className={`flex-1 px-3 py-2 border rounded-md text-xs md:text-sm font-mono break-all ${isApiKeyHash ? "border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-300" : "border-primary-300 dark:border-primary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"}`}
+										/>
+										<button
+											type="button"
+											onClick={async () => {
+												const command = `$script = Invoke-WebRequest -Uri "${getInstallUrl("windows")}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-install.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-install.ps1"`;
+												await copyToClipboard(command);
+												if (!isApiKeyHash) {
+													setShowWaitingScreen(true);
+												}
+											}}
+											disabled={isApiKeyHash}
+											className="btn-outline flex items-center justify-center gap-1 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+										>
+											<Copy className="h-4 w-4" />
+											Copy
+										</button>
+									</div>
+									<p className="text-xs text-primary-600 dark:text-primary-400 mt-2">
+										Downloads the script, saves to a temp file, then executes.
+										Run PowerShell as Administrator.
+									</p>
+								</div>
+							)}
 						</div>
 					</div>
 				)}

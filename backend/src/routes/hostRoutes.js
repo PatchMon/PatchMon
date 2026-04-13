@@ -170,7 +170,7 @@ router.get("/agent/download", async (req, res) => {
 		const fs = require("node:fs");
 		const path = require("node:path");
 
-		// Serve Go agent binary (OS-aware: linux or freebsd). When os is missing (old agents), infer from host.os_type.
+		// Serve Go agent binary (OS-aware: linux, freebsd, or windows)
 		const architecture = req.query.arch || "amd64";
 		let os = req.query.os;
 		if (!os && host?.os_type) {
@@ -178,33 +178,43 @@ router.get("/agent/download", async (req, res) => {
 			os =
 				reported.includes("freebsd") || reported.includes("pfsense")
 					? "freebsd"
-					: "linux";
+					: reported.includes("windows")
+						? "windows"
+						: "linux";
 		}
 		os = os || "linux";
 
-		const validOss = ["linux", "freebsd"];
+		const validOss = ["linux", "freebsd", "windows"];
 		if (!validOss.includes(os)) {
 			return res.status(400).json({
-				error: "Invalid os. Must be one of: linux, freebsd",
+				error: "Invalid os. Must be one of: linux, freebsd, windows",
 			});
 		}
 
 		const validArchitecturesLinux = ["amd64", "386", "arm64", "arm"];
 		const validArchitecturesFreebsd = ["amd64", "arm64"];
+		const validArchitecturesWindows = ["amd64", "386"];
 		const validArchitectures =
-			os === "freebsd" ? validArchitecturesFreebsd : validArchitecturesLinux;
+			os === "freebsd"
+				? validArchitecturesFreebsd
+				: os === "windows"
+					? validArchitecturesWindows
+					: validArchitecturesLinux;
 		if (!validArchitectures.includes(architecture)) {
 			return res.status(400).json({
 				error: `Invalid architecture for ${os}. Must be one of: ${validArchitectures.join(", ")}`,
 			});
 		}
 
-		const binaryName = `patchmon-agent-${os}-${architecture}`;
+		const binaryName =
+			os === "windows"
+				? `patchmon-agent-windows-${architecture}.exe`
+				: `patchmon-agent-${os}-${architecture}`;
 		const binaryPath = path.join(__dirname, "../../../agents", binaryName);
 
 		if (!fs.existsSync(binaryPath)) {
 			return res.status(404).json({
-				error: `Agent binary not found for architecture: ${architecture}`,
+				error: `Agent binary not found for ${os} architecture: ${architecture}`,
 			});
 		}
 
@@ -260,49 +270,61 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 
 		// Get architecture parameter (default to amd64 for Go agents)
 		const architecture = req.query.arch || "amd64";
-
-		// Go agent version check: prefer agent-reported os (query param), else infer from host.os_type (agent-reported), else expected_platform, else linux
-		const { execFile } = require("node:child_process");
-		const { promisify } = require("node:util");
-		const execFileAsync = promisify(execFile);
-
 		const query_os = req.query.os;
-		const valid_os = ["linux", "freebsd"];
+		const valid_os = ["linux", "freebsd", "windows"];
 		let os = query_os && valid_os.includes(query_os) ? query_os : null;
 		if (!os && host?.os_type) {
 			const reported = String(host.os_type).toLowerCase();
 			os =
 				reported.includes("freebsd") || reported.includes("pfsense")
 					? "freebsd"
-					: "linux";
+					: reported.includes("windows")
+						? "windows"
+						: "linux";
 		}
 		if (!os) {
-			os = host?.expected_platform === "freebsd" ? "freebsd" : "linux";
+			os =
+				host?.expected_platform === "freebsd"
+					? "freebsd"
+					: host?.expected_platform === "windows"
+						? "windows"
+						: "linux";
 		}
 		const validArchitecturesLinux = ["amd64", "386", "arm64", "arm"];
 		const validArchitecturesFreebsd = ["amd64", "arm64"];
+		const validArchitecturesWindows = ["amd64", "386"];
 		const validArchitectures =
-			os === "freebsd" ? validArchitecturesFreebsd : validArchitecturesLinux;
+			os === "freebsd"
+				? validArchitecturesFreebsd
+				: os === "windows"
+					? validArchitecturesWindows
+					: validArchitecturesLinux;
 		if (!validArchitectures.includes(architecture)) {
 			return res.status(400).json({
 				error: `Invalid architecture for ${os}. Must be one of: ${validArchitectures.join(", ")}`,
 			});
 		}
-		const binaryName = `patchmon-agent-${os}-${architecture}`;
+		const binaryName =
+			os === "windows"
+				? `patchmon-agent-windows-${architecture}.exe`
+				: `patchmon-agent-${os}-${architecture}`;
+
+		// Go agent version check: server's agents folder is the source of truth
+		const { execFile } = require("node:child_process");
+		const { promisify } = require("node:util");
+		const execFileAsync = promisify(execFile);
 		if (binaryName.includes("..")) {
 			return res.status(400).json({ error: "Invalid architecture specified" });
 		}
 		const binaryPath = path.join(__dirname, "../../../agents", binaryName);
 
 		if (fs.existsSync(binaryPath)) {
-			// Binary exists in server's agents folder - use its version
 			let serverVersion = null;
-
-			// Only execute the binary if it matches the server's platform (don't run FreeBSD binary on Linux)
 			const server_platform = process.platform;
 			const binary_matches_server =
 				(os === "linux" && server_platform === "linux") ||
-				(os === "freebsd" && server_platform === "freebsd");
+				(os === "freebsd" && server_platform === "freebsd") ||
+				(os === "windows" && server_platform === "win32");
 
 			if (binary_matches_server) {
 				try {
@@ -319,7 +341,6 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 					);
 				}
 			}
-
 			if (!serverVersion) {
 				try {
 					const { stdout: stringsOutput } = await execFileAsync(
@@ -446,8 +467,8 @@ router.post(
 			.withMessage("Compliance enabled must be a boolean"),
 		body("expected_platform")
 			.optional()
-			.isIn(["linux", "freebsd"])
-			.withMessage("expected_platform must be linux or freebsd"),
+			.isIn(["linux", "freebsd", "windows"])
+			.withMessage("expected_platform must be linux, freebsd, or windows"),
 	],
 	async (req, res) => {
 		try {
@@ -2359,22 +2380,23 @@ router.get("/install", async (req, res) => {
 		const fs = require("node:fs");
 		const path = require("node:path");
 
-		const scriptPath = path.join(
-			__dirname,
-			"../../../agents/patchmon_install.sh",
-		);
-
-		if (!fs.existsSync(scriptPath)) {
-			return res.status(404).json({ error: "Installation script not found" });
-		}
-
-		let script = fs.readFileSync(scriptPath, "utf8");
-
-		// Convert Windows line endings to Unix line endings
-		script = script.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+		// Detect OS: explicit ?os=windows query param takes precedence, else User-Agent
+		const osParam = req.query.os?.toLowerCase();
+		const userAgent = (req.headers["user-agent"] || "").toLowerCase();
+		const isWindows =
+			osParam === "windows"
+				? true
+				: osParam === "linux"
+					? false
+					: userAgent.includes("windows") || userAgent.includes("powershell");
 
 		// Get the configured server URL from settings
-		let serverUrl = "http://localhost:3001";
+		// Use SERVER_HOST and SERVER_PORT from environment, or fall back to settings
+		let serverUrl =
+			process.env.SERVER_HOST && process.env.SERVER_PORT
+				? `${process.env.SERVER_PROTOCOL || "http"}://${process.env.SERVER_HOST}:${process.env.SERVER_PORT}`
+				: "http://localhost:3001";
+
 		try {
 			const settings = await prisma.settings.findFirst();
 			if (settings?.server_url) {
@@ -2387,43 +2409,105 @@ router.get("/install", async (req, res) => {
 			);
 		}
 
-		// Determine curl flags dynamically from settings (ignore self-signed)
-		let curlFlags = "-s";
-		let skipSSLVerify = "false";
-		try {
-			const settings = await prisma.settings.findFirst();
-			if (settings && settings.ignore_ssl_self_signed === true) {
-				curlFlags = "-sk";
-				skipSSLVerify = "true";
+		if (isWindows) {
+			// Serve PowerShell script for Windows
+			const scriptPath = path.join(
+				__dirname,
+				"../../../agents/patchmon_install_windows.ps1",
+			);
+
+			if (!fs.existsSync(scriptPath)) {
+				return res
+					.status(404)
+					.json({ error: "Windows installation script not found" });
 			}
-		} catch (sslSettingsError) {
-			logger.warn("Could not fetch SSL settings:", sslSettingsError.message);
-		}
 
-		// Check for --force parameter
-		const forceInstall = req.query.force === "true" || req.query.force === "1";
+			// Generate bootstrap token (same secure flow as Linux - no embedding of API key)
+			const bootstrapToken = await generateBootstrapToken(host.api_id, apiKey);
 
-		// Get architecture parameter (only set if explicitly provided, otherwise let script auto-detect)
-		const architecture = req.query.arch;
+			let script = fs.readFileSync(scriptPath, "utf8");
 
-		// Get OS parameter for script (linux | freebsd); default linux for backward compatibility
-		let os = req.query.os || "linux";
-		const validOss = ["linux", "freebsd"];
-		if (!validOss.includes(os)) {
-			os = "linux";
-		}
+			// Inject bootstrap token and server URL into param() block
+			// PowerShell param() must be first - we replace defaults with actual values
+			const lines = script.split("\n");
+			for (let i = 0; i < lines.length; i++) {
+				const line = lines[i].trim();
+				if (line.startsWith("param(")) {
+					let paramEnd = i;
+					for (let j = i; j < lines.length; j++) {
+						if (lines[j].trim() === ")") {
+							paramEnd = j;
+							break;
+						}
+					}
+					const newParamBlock = `param(
+    [string]$ServerURL = "${serverUrl}",
+    [string]$BootstrapToken = "${bootstrapToken}",
+    [string]$APIID = "",
+    [string]$APIKey = "",
+    [string]$Version = "latest",
+    [string]$InstallPath = "C:\\Program Files\\PatchMon",
+    [string]$ConfigPath = "C:\\ProgramData\\PatchMon"
+)`;
+					lines.splice(i, paramEnd - i + 1, ...newParamBlock.split("\n"));
+					break;
+				}
+			}
+			script = lines.join("\n");
 
-		// Generate a secure bootstrap token instead of embedding the API key directly
-		// The agent will exchange this token for actual credentials via a secure API call
-		// IMPORTANT: Use the plaintext apiKey from the request headers, NOT host.api_key (which is the hash)
-		const bootstrapToken = await generateBootstrapToken(host.api_id, apiKey);
+			res.setHeader("Content-Type", "text/plain; charset=utf-8");
+			res.setHeader(
+				"Content-Disposition",
+				'inline; filename="patchmon_install.ps1"',
+			);
+			res.send(script);
+		} else {
+			// Serve bash script for Linux/FreeBSD
+			const scriptPath = path.join(
+				__dirname,
+				"../../../agents/patchmon_install.sh",
+			);
 
-		// Inject bootstrap token, server URL, and PATCHMON_OS into the script
-		// The actual API credentials are NOT embedded - they will be fetched securely
-		const archExport = architecture
-			? `export ARCHITECTURE="${architecture}"\n`
-			: "";
-		const envVars = `#!/bin/sh
+			if (!fs.existsSync(scriptPath)) {
+				return res.status(404).json({ error: "Installation script not found" });
+			}
+
+			let script = fs.readFileSync(scriptPath, "utf8");
+
+			// Convert Windows line endings to Unix line endings
+			script = script.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+			// OS for script (linux | freebsd); default linux for backward compatibility
+			let os = req.query.os || "linux";
+			const validOss = ["linux", "freebsd"];
+			if (!validOss.includes(os)) {
+				os = "linux";
+			}
+
+			// Determine curl flags dynamically from settings (ignore self-signed)
+			let curlFlags = "-s";
+			let skipSSLVerify = "false";
+			try {
+				const settings = await prisma.settings.findFirst();
+				if (settings && settings.ignore_ssl_self_signed === true) {
+					curlFlags = "-sk";
+					skipSSLVerify = "true";
+				}
+			} catch (_) {}
+
+			// Check for --force parameter
+			const forceInstall =
+				req.query.force === "true" || req.query.force === "1";
+
+			// Get architecture parameter (only set if explicitly provided, otherwise let script auto-detect)
+			const architecture = req.query.arch;
+
+			const bootstrapToken = await generateBootstrapToken(host.api_id, apiKey);
+
+			const archExport = architecture
+				? `export ARCHITECTURE="${architecture}"\n`
+				: "";
+			const envVars = `#!/bin/sh
 export PATCHMON_URL="${serverUrl}"
 export PATCHMON_OS="${os}"
 export BOOTSTRAP_TOKEN="${bootstrapToken}"
@@ -2454,16 +2538,17 @@ fetch_credentials() {
 fetch_credentials
 `;
 
-		// Remove the shebang from the original script and prepend our env vars
-		script = script.replace(/^#!/, "#");
-		script = envVars + script;
+			// Remove the shebang from the original script and prepend our env vars
+			script = script.replace(/^#!/, "#");
+			script = envVars + script;
 
-		res.setHeader("Content-Type", "text/plain");
-		res.setHeader(
-			"Content-Disposition",
-			'inline; filename="patchmon_install.sh"',
-		);
-		res.send(script);
+			res.setHeader("Content-Type", "text/plain");
+			res.setHeader(
+				"Content-Disposition",
+				'inline; filename="patchmon_install.sh"',
+			);
+			res.send(script);
+		}
 	} catch (error) {
 		logger.error("Installation script error:", error);
 		res.status(500).json({ error: "Failed to serve installation script" });
@@ -2503,49 +2588,82 @@ router.post("/bootstrap/exchange", async (req, res) => {
 
 // Serve the removal script (public - no authentication required)
 // The script is static and only removes PatchMon files from the system
-router.get("/remove", async (_req, res) => {
+router.get("/remove", async (req, res) => {
 	try {
 		const fs = require("node:fs");
 		const path = require("node:path");
 
-		const scriptPath = path.join(
-			__dirname,
-			"../../../agents/patchmon_remove.sh",
-		);
+		// Detect OS: explicit ?os=windows takes precedence, else User-Agent
+		const osParam = req.query.os?.toLowerCase();
+		const userAgent = (req.headers["user-agent"] || "").toLowerCase();
+		const isWindows =
+			osParam === "windows"
+				? true
+				: osParam === "linux"
+					? false
+					: userAgent.includes("windows") || userAgent.includes("powershell");
 
-		if (!fs.existsSync(scriptPath)) {
-			return res.status(404).json({ error: "Removal script not found" });
-		}
+		if (isWindows) {
+			// Serve PowerShell script for Windows
+			const scriptPath = path.join(
+				__dirname,
+				"../../../agents/patchmon_remove_windows.ps1",
+			);
 
-		// Read the script content
-		let script = fs.readFileSync(scriptPath, "utf8");
-
-		// Convert line endings
-		script = script.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-
-		// Determine curl flags dynamically from settings for consistency
-		let curlFlags = "-s";
-		try {
-			const settings = await prisma.settings.findFirst();
-			if (settings && settings.ignore_ssl_self_signed === true) {
-				curlFlags = "-sk";
+			if (!fs.existsSync(scriptPath)) {
+				return res
+					.status(404)
+					.json({ error: "Windows removal script not found" });
 			}
-		} catch (settingsError) {
-			logger.warn("Could not fetch settings:", settingsError.message);
+
+			const script = fs.readFileSync(scriptPath, "utf8");
+
+			// Set appropriate headers for PowerShell script
+			res.setHeader("Content-Type", "text/plain; charset=utf-8");
+			res.setHeader(
+				"Content-Disposition",
+				'inline; filename="patchmon_remove_windows.ps1"',
+			);
+			res.send(script);
+		} else {
+			// Serve bash script for Linux/Unix
+			const scriptPath = path.join(
+				__dirname,
+				"../../../agents/patchmon_remove.sh",
+			);
+
+			if (!fs.existsSync(scriptPath)) {
+				return res.status(404).json({ error: "Removal script not found" });
+			}
+
+			// Read the script content
+			let script = fs.readFileSync(scriptPath, "utf8");
+
+			// Convert line endings
+			script = script.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+			// Determine curl flags dynamically from settings for consistency
+			let curlFlags = "-s";
+			try {
+				const settings = await prisma.settings.findFirst();
+				if (settings && settings.ignore_ssl_self_signed === true) {
+					curlFlags = "-sk";
+				}
+			} catch (_) {}
+
+			// Prepend environment for CURL_FLAGS so script can use it if needed
+			const envPrefix = `#!/bin/sh\nexport CURL_FLAGS="${curlFlags}"\n\n`;
+			script = script.replace(/^#!/, "#");
+			script = envPrefix + script;
+
+			// Set appropriate headers for script download
+			res.setHeader("Content-Type", "text/plain");
+			res.setHeader(
+				"Content-Disposition",
+				'inline; filename="patchmon_remove.sh"',
+			);
+			res.send(script);
 		}
-
-		// Prepend environment for CURL_FLAGS so script can use it if needed
-		const envPrefix = `#!/bin/sh\nexport CURL_FLAGS="${curlFlags}"\n\n`;
-		script = script.replace(/^#!/, "#");
-		script = envPrefix + script;
-
-		// Set appropriate headers for script download
-		res.setHeader("Content-Type", "text/plain");
-		res.setHeader(
-			"Content-Disposition",
-			'inline; filename="patchmon_remove.sh"',
-		);
-		res.send(script);
 	} catch (error) {
 		logger.error("Removal script error:", error.message);
 		res.status(500).json({ error: "Failed to serve removal script" });

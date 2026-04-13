@@ -7,26 +7,67 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"patchmon-agent/pkg/models"
 
 	"github.com/spf13/viper"
 )
 
-const (
+var (
 	// DefaultAPIVersion is the default API version to use
 	DefaultAPIVersion = "v1"
-	// DefaultConfigFile is the default path to the configuration file
-	DefaultConfigFile = "/etc/patchmon/config.yml"
-	// DefaultCredentialsFile is the default path to the credentials file
-	DefaultCredentialsFile = "/etc/patchmon/credentials.yml"
-	// DefaultLogFile is the default path to the log file
-	DefaultLogFile = "/etc/patchmon/logs/patchmon-agent.log"
+	// DefaultConfigFile is the default path to the configuration file (OS-specific)
+	DefaultConfigFile = getDefaultConfigFile()
+	// DefaultCredentialsFile is the default path to the credentials file (OS-specific)
+	DefaultCredentialsFile = getDefaultCredentialsFile()
+	// DefaultLogFile is the default path to the log file (OS-specific)
+	DefaultLogFile = getDefaultLogFile()
 	// DefaultLogLevel is the default logging level
 	DefaultLogLevel = "info"
-	// CronFilePath is the path to the cron configuration file
-	CronFilePath = "/etc/cron.d/patchmon-agent"
+	// CronFilePath is the path to the cron configuration file (Linux only)
+	CronFilePath = getDefaultCronFile()
 )
+
+func getDefaultConfigFile() string {
+	if runtime.GOOS == "windows" {
+		programData := os.Getenv("ProgramData")
+		if programData == "" {
+			programData = "C:\\ProgramData"
+		}
+		return filepath.Join(programData, "PatchMon", "config.yml")
+	}
+	return "/etc/patchmon/config.yml"
+}
+
+func getDefaultCredentialsFile() string {
+	if runtime.GOOS == "windows" {
+		programData := os.Getenv("ProgramData")
+		if programData == "" {
+			programData = "C:\\ProgramData"
+		}
+		return filepath.Join(programData, "PatchMon", "credentials.yml")
+	}
+	return "/etc/patchmon/credentials.yml"
+}
+
+func getDefaultLogFile() string {
+	if runtime.GOOS == "windows" {
+		programData := os.Getenv("ProgramData")
+		if programData == "" {
+			programData = "C:\\ProgramData"
+		}
+		return filepath.Join(programData, "PatchMon", "patchmon-agent.log")
+	}
+	return "/etc/patchmon/logs/patchmon-agent.log"
+}
+
+func getDefaultCronFile() string {
+	if runtime.GOOS == "windows" {
+		return ""
+	}
+	return "/etc/cron.d/patchmon-agent"
+}
 
 // AvailableIntegrations lists all integrations that can be enabled/disabled
 // Add new integrations here as they are implemented

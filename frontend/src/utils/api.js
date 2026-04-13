@@ -393,6 +393,14 @@ export const authAPI = {
 		api.post("/auth/login", { username, password }),
 	verifyTfa: (username, token, remember_me = false) =>
 		api.post("/auth/verify-tfa", { username, token, remember_me }),
+	sshTicket: (hostId) => api.post("/auth/ssh-ticket", { hostId }),
+	rdpTicket: (hostId, username, password, domain = "") =>
+		api.post("/auth/rdp-ticket", {
+			hostId,
+			username,
+			password,
+			domain,
+		}),
 	signup: (username, email, password, firstName, lastName) =>
 		api.post("/auth/signup", {
 			username,

@@ -9,7 +9,9 @@ const { authenticateToken } = require("../middleware/auth");
 const {
 	requireViewUsers,
 	requireManageUsers,
+	requireManageHosts,
 } = require("../middleware/permissions");
+const axios = require("axios");
 const { v4: uuidv4 } = require("uuid");
 const {
 	createDefaultDashboardPreferences,
@@ -23,6 +25,12 @@ const {
 } = require("../utils/session_manager");
 const { redis } = require("../services/automation/shared/redis");
 const { AUDIT_EVENTS, logAuditEvent } = require("../utils/auditLogger");
+const {
+	signAndEncrypt,
+	createRdpAuthJson,
+	JSON_DATASOURCE,
+	RDP_CONNECTION_NAME,
+} = require("../utils/guacamoleAuth");
 
 const router = express.Router();
 const prisma = getPrismaClient();
@@ -1828,6 +1836,115 @@ async function consumeSshTicket(ticket, expectedHostId) {
 
 // Export for use in other modules
 router.consumeSshTicket = consumeSshTicket;
+
+// RDP Ticket - short-lived token for Guacamole connection
+router.post(
+	"/rdp-ticket",
+	authenticateToken,
+	requireManageHosts,
+	[
+		body("hostId").notEmpty().withMessage("Host ID is required"),
+		body("username").notEmpty().withMessage("Username is required"),
+		body("password").notEmpty().withMessage("Password is required"),
+		body("domain").optional().isString(),
+	],
+	async (req, res) => {
+		try {
+			const errors = validationResult(req);
+			if (!errors.isEmpty()) {
+				return res.status(400).json({
+					error: "Validation failed",
+					errors: errors.array(),
+				});
+			}
+
+			const { hostId, username, password, domain = "" } = req.body;
+
+			const host = await prisma.hosts.findUnique({
+				where: { id: hostId },
+				select: { id: true, ip: true, hostname: true, os_type: true },
+			});
+
+			if (!host) {
+				return res.status(404).json({ error: "Host not found" });
+			}
+
+			const osType = (host.os_type || "").toLowerCase();
+			if (!osType.includes("windows")) {
+				return res.status(400).json({
+					error: "RDP is only available for Windows hosts",
+				});
+			}
+
+			const hostname = host.ip || host.hostname;
+			if (!hostname) {
+				return res.status(400).json({
+					error: "Host has no IP address or hostname configured",
+				});
+			}
+
+			const secretKey = process.env.GUACAMOLE_JSON_SECRET_KEY;
+			if (!secretKey || secretKey.length !== 32) {
+				logger.error(
+					"[rdp-ticket] GUACAMOLE_JSON_SECRET_KEY must be 32 hex chars",
+				);
+				return res.status(503).json({ error: "RDP service not configured" });
+			}
+
+			const guacamoleInternalUrl =
+				process.env.GUACAMOLE_URL || "http://guacamole:8080";
+			const tokensUrl = `${guacamoleInternalUrl.replace(/\/$/, "")}/guacamole/api/tokens`;
+
+			// Always prefer same-origin reverse-proxied path from the frontend.
+			// This avoids host/port mismatches and keeps tunnel traffic on one origin.
+			const guacamoleBaseUrl = "/guacamole";
+
+			const authJson = createRdpAuthJson({
+				hostname,
+				username: username.trim(),
+				password,
+				domain: (domain || "").trim(),
+				port: 3389,
+			});
+			const data = signAndEncrypt(authJson, secretKey);
+
+			let authToken;
+			try {
+				const tokenResponse = await axios.post(
+					tokensUrl,
+					new URLSearchParams({ data }).toString(),
+					{
+						headers: { "Content-Type": "application/x-www-form-urlencoded" },
+						timeout: 10000,
+					},
+				);
+				authToken = tokenResponse.data?.authToken;
+			} catch (tokenError) {
+				logger.error(
+					"[rdp-ticket] Guacamole /api/tokens failed:",
+					tokenError.response?.status,
+					tokenError.message,
+				);
+				return res.status(503).json({ error: "RDP service unavailable" });
+			}
+
+			if (!authToken) {
+				logger.error("[rdp-ticket] Guacamole /api/tokens missing authToken");
+				return res.status(503).json({ error: "RDP service unavailable" });
+			}
+
+			res.json({
+				authToken,
+				guacamoleBaseUrl,
+				connectionId: RDP_CONNECTION_NAME,
+				dataSource: JSON_DATASOURCE,
+			});
+		} catch (error) {
+			logger.error("RDP ticket generation error:", error);
+			res.status(500).json({ error: "Failed to generate RDP ticket" });
+		}
+	},
+);
 
 // Get current user profile
 router.get("/profile", authenticateToken, async (req, res) => {

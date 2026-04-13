@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"patchmon-agent/internal/config"
@@ -672,7 +671,7 @@ rm -f "$0"
 		}
 		cmd.Stdout = nil
 		cmd.Stderr = nil
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		cmd.SysProcAttr = sysProcAttrForDetach()
 		if err := cmd.Start(); err != nil {
 			_ = os.Remove(helperPath)
 			logger.WithError(err).Warn("Failed to start restart helper, exiting to let daemon -r respawn")
@@ -770,12 +769,8 @@ rm -f "$0"
 				}
 				cmd.Stdout = nil
 				cmd.Stderr = nil
-				// Create a new session to fully detach the child process
-				// Setsid ensures the helper script is not killed when systemd cleans up
-				// the service's cgroup, as the new session may escape cgroup tracking
-				cmd.SysProcAttr = &syscall.SysProcAttr{
-					Setsid: true,
-				}
+				// Create a new session to fully detach the child process (Linux only)
+				cmd.SysProcAttr = sysProcAttrForDetach()
 				if err := cmd.Start(); err != nil {
 					logger.WithError(err).Warn("Failed to start restart helper script, will exit and rely on systemd auto-restart")
 					// Clean up script
@@ -888,12 +883,8 @@ rm -f "$0"
 				}
 				cmd.Stdout = nil
 				cmd.Stderr = nil
-				// Create a new session to fully detach the child process
-				// Setsid is stronger than Setpgid — it creates a new session,
-				// ensuring the helper script survives even if the parent's cgroup is cleaned up
-				cmd.SysProcAttr = &syscall.SysProcAttr{
-					Setsid: true,
-				}
+				// Create a new session to fully detach the child process (Linux only)
+				cmd.SysProcAttr = sysProcAttrForDetach()
 				if err := cmd.Start(); err != nil {
 					logger.WithError(err).Warn("Failed to start restart helper script, supervise-daemon will handle restart")
 					// Clean up script
@@ -1004,11 +995,8 @@ rm -f "$0"
 	}
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	// Create a new session to fully detach the child process from the current process
-	// This ensures the helper script survives even after the parent exits
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true,
-	}
+	// Create a new session to fully detach the child process (Linux only)
+	cmd.SysProcAttr = sysProcAttrForDetach()
 
 	if err := cmd.Start(); err != nil {
 		logger.WithError(err).Error("Failed to start restart helper script")

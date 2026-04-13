@@ -3,6 +3,9 @@
 # Build variables
 BINARY_NAME=patchmon-agent
 BUILD_DIR=build
+# Where backend serves agents from (both must stay in sync)
+AGENTS_REPO=../agents
+AGENTS_DOCKER=../docker/compose_dev_data/agents
 # Strip debug info (version comes from internal/version/version.go)
 LDFLAGS=-ldflags "-s -w"
 # Disable VCS stamping
@@ -36,6 +39,13 @@ build-linux:
 	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-linux-arm64 ./cmd/patchmon-agent
 	@GOOS=linux GOARCH=arm GOARM=6 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-linux-arm ./cmd/patchmon-agent
 
+# Build Windows binaries only (amd64, 386)
+.PHONY: build-windows
+build-windows:
+	@mkdir -p $(BUILD_DIR)
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-windows-amd64.exe ./cmd/patchmon-agent
+	@GOOS=windows GOARCH=386 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-windows-386.exe ./cmd/patchmon-agent
+
 # Build FreeBSD binaries only (amd64, arm64)
 .PHONY: build-freebsd
 build-freebsd:
@@ -43,9 +53,14 @@ build-freebsd:
 	@GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-freebsd-amd64 ./cmd/patchmon-agent
 	@GOOS=freebsd GOARCH=arm64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-freebsd-arm64 ./cmd/patchmon-agent
 
-# Build for multiple architectures (Linux + FreeBSD)
+# Build all (Linux + FreeBSD + Windows) and copy to backend serve dirs
 .PHONY: build-all
-build-all: build-linux build-freebsd
+build-all: build-linux build-freebsd build-windows
+	@mkdir -p $(AGENTS_REPO) $(AGENTS_DOCKER)
+	@for f in $(GOBIN)/$(BINARY_NAME)-linux-* $(GOBIN)/$(BINARY_NAME)-freebsd-* $(GOBIN)/$(BINARY_NAME)-windows-*.exe; do \
+		[ -f "$$f" ] && cp "$$f" $(AGENTS_REPO)/ && cp "$$f" $(AGENTS_DOCKER)/; \
+	done
+	@echo "Done. agents/ and docker/compose_dev_data/agents/ updated."
 
 # Install dependencies
 .PHONY: deps
@@ -100,7 +115,8 @@ help:
 	@echo "  build         Build the application"
 	@echo "  build-linux   Build Linux binaries (amd64, 386, arm64, arm)"
 	@echo "  build-freebsd Build FreeBSD binaries (amd64, arm64)"
-	@echo "  build-all     Build Linux + FreeBSD (all architectures)"
+	@echo "  build-windows Build Windows binaries (amd64, 386)"
+	@echo "  build-all     Build Linux + FreeBSD + Windows and copy to agents/"
 	@echo "  deps          Install dependencies"
 	@echo "  test          Run tests"
 	@echo "  test-coverage Run tests with coverage"
