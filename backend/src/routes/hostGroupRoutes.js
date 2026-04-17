@@ -3,14 +3,14 @@ const logger = require("../utils/logger");
 const { body, validationResult } = require("express-validator");
 const { getPrismaClient } = require("../config/prisma");
 const { randomUUID } = require("node:crypto");
-const { authenticateToken } = require("../middleware/auth");
+const { authenticateTokenOrApiToken } = require("../middleware/auth");
 const { requireManageHosts } = require("../middleware/permissions");
 
 const router = express.Router();
 const prisma = getPrismaClient();
 
 // Get all host groups
-router.get("/", authenticateToken, async (_req, res) => {
+router.get("/", authenticateTokenOrApiToken, async (_req, res) => {
 	try {
 		const hostGroups = await prisma.host_groups.findMany({
 			include: {
@@ -41,7 +41,7 @@ router.get("/", authenticateToken, async (_req, res) => {
 });
 
 // Get a specific host group by ID
-router.get("/:id", authenticateToken, async (req, res) => {
+router.get("/:id", authenticateTokenOrApiToken, async (req, res) => {
 	try {
 		const { id } = req.params;
 
@@ -82,7 +82,7 @@ router.get("/:id", authenticateToken, async (req, res) => {
 // Create a new host group
 router.post(
 	"/",
-	authenticateToken,
+	authenticateTokenOrApiToken,
 	requireManageHosts,
 	[
 		body("name").trim().isLength({ min: 1 }).withMessage("Name is required"),
@@ -133,7 +133,7 @@ router.post(
 // Update a host group
 router.put(
 	"/:id",
-	authenticateToken,
+	authenticateTokenOrApiToken,
 	requireManageHosts,
 	[
 		body("name").trim().isLength({ min: 1 }).withMessage("Name is required"),
@@ -197,7 +197,7 @@ router.put(
 // Delete a host group
 router.delete(
 	"/:id",
-	authenticateToken,
+	authenticateTokenOrApiToken,
 	requireManageHosts,
 	async (req, res) => {
 		try {
@@ -239,7 +239,7 @@ router.delete(
 );
 
 // Get hosts in a specific group
-router.get("/:id/hosts", authenticateToken, async (req, res) => {
+router.get("/:id/hosts", authenticateTokenOrApiToken, async (req, res) => {
 	try {
 		const { id } = req.params;
 

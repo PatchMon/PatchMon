@@ -8,6 +8,7 @@ import {
 	Code,
 	Folder,
 	Image,
+	Key,
 	RefreshCw,
 	Settings,
 	Shield,
@@ -164,6 +165,11 @@ const SettingsLayout = ({ children }) => {
 						name: "Metrics",
 						href: "/settings/metrics",
 						icon: BarChart3,
+					},
+					{
+						name: "API Tokens",
+						href: "/settings/api-tokens",
+						icon: Key,
 					},
 				],
 			});

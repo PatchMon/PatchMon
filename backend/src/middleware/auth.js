@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const crypto = require("node:crypto");
 const logger = require("../utils/logger");
 const { getPrismaClient } = require("../config/prisma");
 const {
@@ -160,8 +161,81 @@ const requireTfaIfEnabled = async (req, res, next) => {
 	}
 };
 
+// Middleware to verify a long-lived API token (Authorization: Bearer patchmon_at_*)
+const authenticateApiToken = async (req, res, next) => {
+	try {
+		const authHeader = req.headers.authorization;
+		const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+
+		if (!token || !token.startsWith("patchmon_at_")) {
+			return res.status(401).json({ error: "Valid API token required" });
+		}
+
+		const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+
+		const record = await prisma.api_tokens.findUnique({
+			where: { token_hash: tokenHash },
+			include: {
+				users: {
+					select: {
+						id: true,
+						username: true,
+						email: true,
+						role: true,
+						is_active: true,
+						last_login: true,
+						created_at: true,
+						updated_at: true,
+						avatar_url: true,
+					},
+				},
+			},
+		});
+
+		if (!record) {
+			return res.status(401).json({ error: "Invalid API token" });
+		}
+
+		if (!record.users.is_active) {
+			return res.status(401).json({ error: "User account is inactive" });
+		}
+
+		if (record.expires_at && new Date() > new Date(record.expires_at)) {
+			return res.status(401).json({ error: "API token expired" });
+		}
+
+		// Update last_used_at asynchronously (don't await to avoid latency)
+		prisma.api_tokens
+			.update({ where: { id: record.id }, data: { last_used_at: new Date() } })
+			.catch((err) => logger.warn("Failed to update api_token last_used_at:", err));
+
+		req.user = record.users;
+		req.api_token_id = record.id;
+		next();
+	} catch (error) {
+		logger.error("API token middleware error:", error);
+		return res.status(500).json({ error: "Authentication failed" });
+	}
+};
+
+// Middleware that accepts either a session JWT or a long-lived API token
+const authenticateTokenOrApiToken = async (req, res, next) => {
+	const authHeader = req.headers.authorization;
+	const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+
+	// If the bearer token looks like an API token, use the API token path
+	if (bearerToken?.startsWith("patchmon_at_")) {
+		return authenticateApiToken(req, res, next);
+	}
+
+	// Otherwise fall through to normal session JWT
+	return authenticateToken(req, res, next);
+};
+
 module.exports = {
 	authenticateToken,
+	authenticateApiToken,
+	authenticateTokenOrApiToken,
 	requireAdmin,
 	optionalAuth,
 	requireTfaIfEnabled,
