@@ -157,15 +157,20 @@ func stringMapToPackageMap(m map[string]string) map[string]models.Package {
 
 // CombinePackageData combines and deduplicates installed and upgradable package lists.
 // installedPackages must contain full package info (including Description from dpkg-query).
-// Descriptions are preserved from installed packages for both upgradable and non-upgradable.
+// Descriptions and SourceRepository are preserved from installed packages for both upgradable and non-upgradable.
 func CombinePackageData(installedPackages map[string]models.Package, upgradablePackages []models.Package) []models.Package {
 	packages := make([]models.Package, 0)
 	upgradableMap := make(map[string]bool)
 
-	// First, add upgradable packages, merging in description from installed if available
+	// First, add upgradable packages, merging in description and repo from installed if available
 	for _, pkg := range upgradablePackages {
-		if installed, ok := installedPackages[pkg.Name]; ok && installed.Description != "" {
-			pkg.Description = installed.Description
+		if installed, ok := installedPackages[pkg.Name]; ok {
+			if installed.Description != "" {
+				pkg.Description = installed.Description
+			}
+			if pkg.SourceRepository == "" && installed.SourceRepository != "" {
+				pkg.SourceRepository = installed.SourceRepository
+			}
 		}
 		packages = append(packages, pkg)
 		upgradableMap[pkg.Name] = true
@@ -178,6 +183,7 @@ func CombinePackageData(installedPackages map[string]models.Package, upgradableP
 				Name:             packageName,
 				Description:      installed.Description,
 				CurrentVersion:   installed.CurrentVersion,
+				SourceRepository: installed.SourceRepository,
 				NeedsUpdate:      false,
 				IsSecurityUpdate: false,
 			})

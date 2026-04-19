@@ -93,7 +93,7 @@ const HostDetail = () => {
 	const location = useLocation();
 	const queryClient = useQueryClient();
 	const toast = useToast();
-	const { canManageHosts } = useAuth();
+	const { canManageHosts, hasModule } = useAuth();
 	const [showCredentialsModal, setShowCredentialsModal] = useState(false);
 
 	// Get plaintext API key from navigation state (only available immediately after host creation)
@@ -312,6 +312,16 @@ const HostDetail = () => {
 	const isWindowsHost = (host?.os_type || host?.expected_platform || "")
 		.toLowerCase()
 		.includes("windows");
+	const isFreeBSDHost =
+		(host?.package_manager || "").toLowerCase() === "pkg" ||
+		(host?.os_type || host?.expected_platform || "")
+			.toLowerCase()
+			.includes("freebsd");
+	const patchAllTitle = !wsStatus?.connected
+		? "Agent must be connected to patch"
+		: isFreeBSDHost
+			? "Run FreeBSD base-system and pkg updates on this host"
+			: "Run system package updates on this host";
 
 	const deleteHostMutation = useMutation({
 		mutationFn: (hostId) => adminHostsAPI.delete(hostId),
@@ -411,13 +421,23 @@ const HostDetail = () => {
 		},
 	});
 
-	// Patch all mutation
+	// Patch all mutation — for a single-host, single-run trigger we try to
+	// deep-link into the run detail page so the user can immediately watch
+	// the live terminal. We treat the run as "immediate" when the server
+	// reports a run_at within a short window of now; otherwise we stay on
+	// the host page and surface a toast with a link to the runs list.
 	const triggerPatchAllMutation = useMutation({
 		mutationFn: () => patchingAPI.trigger(hostId, "patch_all"),
 		onSuccess: (data) => {
 			setShowPatchConfirmModal(false);
 			queryClient.invalidateQueries(["patching-dashboard"]);
 			queryClient.invalidateQueries(["patching-runs"]);
+			const runAt = data?.run_at ? Date.parse(data.run_at) : NaN;
+			const isImmediate = Number.isFinite(runAt) && runAt - Date.now() < 5_000;
+			if (data?.patch_run_id && isImmediate) {
+				navigate(`/patching/runs/${data.patch_run_id}`);
+				return;
+			}
 			toast.success(
 				data?.patch_run_id
 					? "Patch queued. View progress in Patching."
@@ -602,7 +622,10 @@ const HostDetail = () => {
 				.catch(() => null),
 		staleTime: 2 * 60 * 1000, // 2 minutes
 		refetchOnWindowFocus: false,
-		enabled: !!hostId && !!integrationsData?.data?.integrations?.compliance,
+		enabled:
+			!!hostId &&
+			!!integrationsData?.data?.integrations?.compliance &&
+			hasModule("compliance"),
 		retry: false, // Don't retry if compliance not enabled
 	});
 
@@ -1290,11 +1313,7 @@ const HostDetail = () => {
 								onClick={() => setShowPatchConfirmModal(true)}
 								disabled={!wsStatus?.connected}
 								className="btn-outline flex items-center gap-2 text-sm whitespace-nowrap"
-								title={
-									!wsStatus?.connected
-										? "Agent must be connected to patch"
-										: "Run apt update and upgrade on this host"
-								}
+								title={patchAllTitle}
 							>
 								<Wrench className="h-4 w-4" />
 								<span className="hidden sm:inline">Patch all</span>
@@ -2558,55 +2577,61 @@ const HostDetail = () => {
 								Reporting
 							</button>
 						)}
-						{integrationsData?.data?.integrations?.docker && (
+						{integrationsData?.data?.integrations?.docker &&
+							hasModule("docker") && (
+								<button
+									type="button"
+									onClick={() => handleTabChange("docker")}
+									className={`px-4 py-2 text-sm font-medium ${
+										activeTab === "docker"
+											? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+											: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
+									}`}
+								>
+									Docker
+								</button>
+							)}
+						{hasModule("patching") && (
 							<button
 								type="button"
-								onClick={() => handleTabChange("docker")}
+								onClick={() => handleTabChange("patching")}
 								className={`px-4 py-2 text-sm font-medium ${
-									activeTab === "docker"
+									activeTab === "patching"
 										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
 										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 								}`}
 							>
-								Docker
+								Patching
 							</button>
 						)}
-						<button
-							type="button"
-							onClick={() => handleTabChange("patching")}
-							className={`px-4 py-2 text-sm font-medium ${
-								activeTab === "patching"
-									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
-							}`}
-						>
-							Patching
-						</button>
-						{integrationsData?.data?.integrations?.compliance && (
+						{integrationsData?.data?.integrations?.compliance &&
+							hasModule("compliance") && (
+								<button
+									type="button"
+									onClick={() => handleTabChange("compliance")}
+									className={`px-4 py-2 text-sm font-medium ${
+										activeTab === "compliance"
+											? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+											: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
+									}`}
+								>
+									Compliance
+								</button>
+							)}
+						{hasModule("ssh_terminal") && (
 							<button
 								type="button"
-								onClick={() => handleTabChange("compliance")}
+								onClick={() => handleTabChange("terminal")}
 								className={`px-4 py-2 text-sm font-medium ${
-									activeTab === "compliance"
+									activeTab === "terminal"
 										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
 										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 								}`}
 							>
-								Compliance
+								Terminal
 							</button>
 						)}
-						<button
-							type="button"
-							onClick={() => handleTabChange("terminal")}
-							className={`px-4 py-2 text-sm font-medium ${
-								activeTab === "terminal"
-									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
-							}`}
-						>
-							Terminal
-						</button>
-						{isWindowsHost && (
+						{isWindowsHost && hasModule("rdp") && (
 							<button
 								type="button"
 								onClick={() => handleTabChange("rdp")}
@@ -3589,8 +3614,9 @@ const HostDetail = () => {
 							</div>
 						)}
 
-						{/* Terminal - Always mounted and open to preserve connection, hidden when not active */}
-						{host && (
+						{/* Terminal - Always mounted and open to preserve connection, hidden when not active.
+						    Gated by the ssh_terminal module (Max tier). */}
+						{host && hasModule("ssh_terminal") && (
 							<div className={activeTab === "terminal" ? "" : "hidden"}>
 								<SshTerminal
 									host={host}
@@ -3601,8 +3627,8 @@ const HostDetail = () => {
 							</div>
 						)}
 
-						{/* RDP - Windows hosts only */}
-						{host && isWindowsHost && (
+						{/* RDP - Windows hosts only. Gated by the rdp module (Max tier). */}
+						{host && isWindowsHost && hasModule("rdp") && (
 							<div className={activeTab === "rdp" ? "" : "hidden"}>
 								<RdpViewer host={host} isOpen={activeTab === "rdp"} />
 							</div>

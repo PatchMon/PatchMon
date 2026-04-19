@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -479,6 +480,16 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					logger.Info("Compliance scan cancel requested and sent to running scan")
 				} else {
 					logger.Debug("Compliance scan cancel requested but no scan is running")
+				}
+			case "patch_run_stop":
+				if v, ok := patchRunCancels.Load(m.patchRunID); ok {
+					if cancelFn, ok := v.(context.CancelFunc); ok && cancelFn != nil {
+						patchRunStopped.Store(m.patchRunID, true)
+						cancelFn()
+						logger.WithField("patch_run_id", logutil.Sanitize(m.patchRunID)).Info("Patch run stop honored; interrupt sent")
+					}
+				} else {
+					logger.WithField("patch_run_id", logutil.Sanitize(m.patchRunID)).Debug("Patch run stop requested but no matching run is active")
 				}
 			case "upgrade_ssg":
 				targetVersion := m.version
@@ -1258,6 +1269,14 @@ var complianceScanCancel context.CancelFunc
 var complianceScanCancelMu sync.Mutex
 var complianceScanSource string
 
+// patchRunCancels maps patchRunID -> context.CancelFunc for in-flight patch runs.
+// Allows the server to request an interrupt via the "patch_run_stop" WS message.
+var patchRunCancels sync.Map
+
+// patchRunStopped records patchRunIDs that were explicitly stopped by the server so
+// the runner can report stage="cancelled" instead of "failed" after the process exits.
+var patchRunStopped sync.Map
+
 type complianceScheduler struct {
 	interval time.Duration
 	stopCh   chan struct{}
@@ -1686,6 +1705,13 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		case "compliance_scan_cancel":
 			logger.Info("compliance_scan_cancel received")
 			out <- wsMsg{kind: "compliance_scan_cancel"}
+		case "patch_run_stop":
+			if payload.PatchRunID == "" {
+				logger.Warn("patch_run_stop missing patch_run_id")
+				continue
+			}
+			logger.WithField("patch_run_id", logutil.Sanitize(payload.PatchRunID)).Info("patch_run_stop received")
+			out <- wsMsg{kind: "patch_run_stop", patchRunID: payload.PatchRunID}
 		case "upgrade_ssg":
 			logger.WithField("version", payload.Version).Info("upgrade_ssg received from WebSocket")
 			out <- wsMsg{kind: "upgrade_ssg", version: payload.Version}
@@ -1958,6 +1984,43 @@ func isDryRunExit1Success(err error, output string) bool {
 	return errors.As(err, &exitErr) && exitErr.ExitCode() == 1
 }
 
+const freeBSDBasePackageName = "freebsd-base"
+
+func getFreeBSDUpdateBinaryPath() (string, error) {
+	if path, err := exec.LookPath("freebsd-update"); err == nil {
+		return path, nil
+	}
+	for _, p := range []string{"/usr/sbin/freebsd-update"} {
+		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() && (info.Mode()&0111) != 0 {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("freebsd-update not found")
+}
+
+func freeBSDUpdateOutputHasPendingUpdates(output string) bool {
+	if output == "" {
+		return false
+	}
+	if strings.Contains(output, "No updates needed") || strings.Contains(output, "No updates are available") {
+		return false
+	}
+	return strings.Contains(output, "will be updated") || strings.Contains(output, "will be installed")
+}
+
+func splitFreeBSDPatchTargets(packageNames []string) ([]string, bool) {
+	filtered := make([]string, 0, len(packageNames))
+	includeBase := false
+	for _, name := range packageNames {
+		if strings.EqualFold(strings.TrimSpace(name), freeBSDBasePackageName) {
+			includeBase = true
+			continue
+		}
+		filtered = append(filtered, name)
+	}
+	return filtered, includeBase
+}
+
 // runPatch runs package manager update and upgrade (patch_all) or install (patch_package).
 // Supports apt-get (Debian/Ubuntu), dnf, yum (RHEL-based), pkg (FreeBSD), pacman (Arch),
 // and windows (WinGet for applications + WUA COM API for OS updates).
@@ -1967,10 +2030,157 @@ func formatCmd(name string, args ...string) string {
 	return "$ " + strings.Join(parts, " ") + "\n"
 }
 
+// streamSink accumulates stdout+stderr bytes from streaming patch-run commands,
+// appends them to a fullOutput builder, and periodically POSTs stage="progress"
+// chunks to the server so the UI can render live output.
+//
+// Flushes happen on: (a) buffer reaching 1 KiB, (b) 250ms since last flush,
+// (c) explicit Flush() call (e.g. at command boundaries).
+type streamSink struct {
+	client     *client.Client
+	patchRunID string
+
+	mu         sync.Mutex
+	full       *strings.Builder
+	pending    strings.Builder
+	lastFlush  time.Time
+	flushEvery time.Duration
+	flushBytes int
+}
+
+func newStreamSink(httpClient *client.Client, patchRunID string, full *strings.Builder) *streamSink {
+	return &streamSink{
+		client:     httpClient,
+		patchRunID: patchRunID,
+		full:       full,
+		lastFlush:  time.Now(),
+		flushEvery: 250 * time.Millisecond,
+		flushBytes: 1024,
+	}
+}
+
+// Write records bytes into both the fullOutput builder and the pending flush
+// buffer. It triggers a flush when thresholds are reached.
+func (s *streamSink) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	s.full.Write(p)
+	s.pending.Write(p)
+	shouldFlush := s.pending.Len() >= s.flushBytes || time.Since(s.lastFlush) >= s.flushEvery
+	s.mu.Unlock()
+	if shouldFlush {
+		s.Flush()
+	}
+	return len(p), nil
+}
+
+// WriteString is a convenience wrapper for appending a string.
+func (s *streamSink) WriteString(str string) {
+	_, _ = s.Write([]byte(str))
+}
+
+// Flush sends any buffered bytes to the server as a stage="progress" chunk.
+// Uses a background context so a cancelled parent ctx does not prevent the
+// final chunk from being sent.
+func (s *streamSink) Flush() {
+	s.mu.Lock()
+	if s.pending.Len() == 0 {
+		s.lastFlush = time.Now()
+		s.mu.Unlock()
+		return
+	}
+	chunk := s.pending.String()
+	s.pending.Reset()
+	s.lastFlush = time.Now()
+	s.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := s.client.SendPatchOutput(ctx, s.patchRunID, "progress", chunk, ""); err != nil {
+		logger.WithError(err).WithField("patch_run_id", logutil.Sanitize(s.patchRunID)).Debug("Failed to send patch progress chunk")
+	}
+}
+
+// runStreamingPatchStep executes a command, streaming its stdout+stderr into
+// the provided sink. On context cancellation it sends SIGINT and allows
+// WaitDelay for the process to clean up (rollbacks etc.) before forcing a kill.
+func runStreamingPatchStep(ctx context.Context, sink *streamSink, env []string, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = env
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		// os.Interrupt maps to SIGINT on Unix; on Windows the runtime emulates
+		// a best-effort interrupt. Subsequent WaitDelay will SIGKILL if needed.
+		return cmd.Process.Signal(os.Interrupt)
+	}
+	cmd.WaitDelay = 30 * time.Second
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("stderr pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start: %w", err)
+	}
+
+	var wg sync.WaitGroup
+	copyPipe := func(rc io.ReadCloser) {
+		defer wg.Done()
+		br := bufio.NewReader(rc)
+		buf := make([]byte, 4096)
+		for {
+			n, readErr := br.Read(buf)
+			if n > 0 {
+				_, _ = sink.Write(buf[:n])
+			}
+			if readErr != nil {
+				return
+			}
+		}
+	}
+	wg.Add(2)
+	go copyPipe(stdout)
+	go copyPipe(stderr)
+	wg.Wait()
+
+	waitErr := cmd.Wait()
+	sink.Flush()
+	return waitErr
+}
+
+// patchRunTrailer returns a short human-readable trailer the agent appends to
+// the tail of a patch run's shell output so the live terminal view has a
+// clear "this is the end" marker regardless of what the underlying package
+// manager printed last. The same text is included in the authoritative
+// fullOutput sent with the terminal stage, so users see the trailer whether
+// they're reading the live WebSocket buffer or the persisted shell_output.
+func patchRunTrailer(wasStopped bool, stepErr error, dryRun bool) string {
+	ts := time.Now().UTC().Format(time.RFC3339)
+	switch {
+	case wasStopped:
+		return fmt.Sprintf("\n--- Patch run stopped by user at %s ---\n", ts)
+	case stepErr != nil:
+		return fmt.Sprintf("\n--- Patch run failed at %s ---\n", ts)
+	case dryRun:
+		return fmt.Sprintf("\n--- Dry run completed at %s ---\n", ts)
+	default:
+		return fmt.Sprintf("\n--- Patch run completed at %s ---\n", ts)
+	}
+}
+
 // When dryRun is true, simulates and sends dry_run_completed instead of completed.
 func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
+
+	// Register cancel fn so the server can request an interrupt via "patch_run_stop".
+	patchRunCancels.Store(patchRunID, cancel)
+	defer patchRunCancels.Delete(patchRunID)
 
 	httpClient := client.New(cfgManager, logger)
 	packageMgr := packages.New(logger, packages.CacheRefreshConfig{
@@ -1991,6 +2201,9 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 
 	var env []string
 	var upgradeBin string
+	var freeBSDUpdateBin string
+	freeBSDPkgTargets := packageNames
+	includeFreeBSDBase := pkgManager == "pkg" && patchType == "patch_all"
 	switch pkgManager {
 	case "apt":
 		if _, err := exec.LookPath("apt-get"); err != nil {
@@ -2000,8 +2213,17 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 		upgradeBin = "apt-get"
 	case "pkg":
+		freeBSDPkgTargets, includeFreeBSDBase = splitFreeBSDPatchTargets(packageNames)
 		upgradeBin = packages.GetPkgBinaryPath()
 		env = append(os.Environ(), "ASSUME_ALWAYS_YES=YES", "PAGER=cat")
+		if includeFreeBSDBase {
+			var err error
+			freeBSDUpdateBin, err = getFreeBSDUpdateBinaryPath()
+			if err != nil {
+				_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "freebsd-update not found: cannot patch FreeBSD base system")
+				return fmt.Errorf("freebsd-update not found: %w", err)
+			}
+		}
 	case "pacman":
 		if _, err := exec.LookPath("pacman"); err != nil {
 			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "pacman not found: Arch Linux package manager not installed")
@@ -2022,288 +2244,219 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 	}
 
 	var fullOutput strings.Builder
-	fullOutput.Grow(8192) // Pre-allocate for typical patch output to reduce allocations
+	fullOutput.Grow(8192)
+	sink := newStreamSink(httpClient, patchRunID, &fullOutput)
 
-	// Update package cache
-	switch pkgManager {
-	case "apt":
-		fullOutput.WriteString(formatCmd("apt-get", "update", "-qq"))
-		updateCmd := exec.CommandContext(ctx, "apt-get", "update", "-qq")
-		updateCmd.Env = env
-		updateOut, updateErr := updateCmd.CombinedOutput()
-		fullOutput.Write(updateOut)
-		if updateErr != nil {
-			logger.WithError(updateErr).Warn("apt-get update failed")
-			fullOutput.WriteString("\n[apt-get update error] " + updateErr.Error() + "\n")
-			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), updateErr.Error())
-			return fmt.Errorf("apt-get update failed: %w", updateErr)
+	// runStep streams a single package-manager command's output and returns
+	// (terminalError, shouldAbort). If isDryRunStep is true, exit-1 from tools
+	// that use it to signal "changes pending" is accepted as success.
+	runStep := func(isDryRunStep bool, errTag, errFmt, name string, args ...string) (error, bool) {
+		sink.WriteString(formatCmd(name, args...))
+		sink.Flush()
+		err := runStreamingPatchStep(ctx, sink, env, name, args...)
+		if err == nil {
+			return nil, false
 		}
-	case "pkg":
-		fullOutput.WriteString(formatCmd(upgradeBin, "update"))
-		updateCmd := exec.CommandContext(ctx, upgradeBin, "update")
-		updateCmd.Env = env
-		updateOut, updateErr := updateCmd.CombinedOutput()
-		fullOutput.Write(updateOut)
-		if updateErr != nil {
-			logger.WithError(updateErr).Warn("pkg update failed")
-			fullOutput.WriteString("\n[pkg update error] " + updateErr.Error() + "\n")
-			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), updateErr.Error())
-			return fmt.Errorf("pkg update failed: %w", updateErr)
+		if isDryRunStep && isDryRunExit1Success(err, fullOutput.String()) {
+			return nil, false
 		}
-	case "pacman":
-		fullOutput.WriteString(formatCmd("pacman", "-Sy", "--noconfirm"))
-		refreshCmd := exec.CommandContext(ctx, "pacman", "-Sy", "--noconfirm")
-		refreshOut, refreshErr := refreshCmd.CombinedOutput()
-		fullOutput.Write(refreshOut)
-		if refreshErr != nil {
-			logger.WithError(refreshErr).Warn("pacman -Sy failed")
-			fullOutput.WriteString("\n[pacman refresh error] " + refreshErr.Error() + "\n")
-			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), refreshErr.Error())
-			return fmt.Errorf("pacman -Sy failed: %w", refreshErr)
+		logger.WithError(err).Warn(errTag + " failed")
+		sink.WriteString(fmt.Sprintf("\n[%s error] %s\n", errTag, err.Error()))
+		sink.Flush()
+		return fmt.Errorf(errFmt, err), true
+	}
+
+	var stepErr error
+
+	if includeFreeBSDBase {
+		fetchStart := fullOutput.Len()
+		if err, abort := runStep(false, "freebsd-update fetch", "freebsd-update fetch failed: %w", freeBSDUpdateBin, "fetch", "--not-running-from-cron"); abort {
+			stepErr = err
 		}
+		fetchOutput := ""
+		if fullOutput.Len() > fetchStart {
+			fetchOutput = fullOutput.String()[fetchStart:]
+		}
+		if stepErr == nil && !dryRun && freeBSDUpdateOutputHasPendingUpdates(fetchOutput) {
+			if err, abort := runStep(false, "freebsd-update install", "freebsd-update install failed: %w", freeBSDUpdateBin, "install"); abort {
+				stepErr = err
+			}
+		}
+	}
+
+	needsPkgTransaction := pkgManager != "pkg" || patchType == "patch_all" || len(freeBSDPkgTargets) > 0
+	if stepErr == nil && needsPkgTransaction {
+		// Update package cache
+		switch pkgManager {
+		case "apt":
+			if err, abort := runStep(false, "apt-get update", "apt-get update failed: %w", "apt-get", "update", "-qq"); abort {
+				stepErr = err
+			}
+		case "pkg":
+			if err, abort := runStep(false, "pkg update", "pkg update failed: %w", upgradeBin, "update"); abort {
+				stepErr = err
+			}
+		case "pacman":
+			if err, abort := runStep(false, "pacman refresh", "pacman -Sy failed: %w", "pacman", "-Sy", "--noconfirm"); abort {
+				stepErr = err
+			}
+		default:
+			if err, abort := runStep(false, upgradeBin+" makecache", upgradeBin+" makecache failed: %w", upgradeBin, "makecache", "-q"); abort {
+				stepErr = err
+			}
+		}
+	}
+
+	if stepErr == nil {
+		if patchType == "patch_all" {
+			switch pkgManager {
+			case "apt":
+				if dryRun {
+					if err, abort := runStep(false, "apt-get -s upgrade", "apt-get -s upgrade failed: %w", "apt-get", "-s", "upgrade"); abort {
+						stepErr = err
+					}
+				} else {
+					if err, abort := runStep(false, "apt-get upgrade", "apt-get upgrade failed: %w", "apt-get", "upgrade", "-y"); abort {
+						stepErr = err
+					}
+				}
+			case "pkg":
+				if dryRun {
+					if err, abort := runStep(true, "pkg upgrade -n", "pkg upgrade -n failed: %w", upgradeBin, "upgrade", "-n"); abort {
+						stepErr = err
+					}
+				} else {
+					if err, abort := runStep(false, "pkg upgrade", "pkg upgrade failed: %w", upgradeBin, "upgrade", "-y"); abort {
+						stepErr = err
+					}
+				}
+			case "pacman":
+				if dryRun {
+					if err, abort := runStep(true, "pacman -Syu -p", "pacman -Syu -p failed: %w", "pacman", "-Syu", "-p"); abort {
+						stepErr = err
+					}
+				} else {
+					if err, abort := runStep(false, "pacman -Syu", "pacman -Syu failed: %w", "pacman", "-Syu", "--noconfirm"); abort {
+						stepErr = err
+					}
+				}
+			default: // dnf, yum
+				if dryRun {
+					if err, abort := runStep(true, upgradeBin+" upgrade --assumeno", upgradeBin+" upgrade --assumeno failed: %w", upgradeBin, "upgrade", "--assumeno"); abort {
+						stepErr = err
+					}
+				} else {
+					if err, abort := runStep(false, upgradeBin+" upgrade", upgradeBin+" upgrade failed: %w", upgradeBin, "upgrade", "-y"); abort {
+						stepErr = err
+					}
+				}
+			}
+		} else {
+			if len(packageNames) == 0 {
+				sink.Flush()
+				_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), "package_names required for patch_package")
+				return fmt.Errorf("package_names required for patch_package")
+			}
+			switch pkgManager {
+			case "apt":
+				if dryRun {
+					args := append([]string{"-s", "install"}, packageNames...)
+					if err, abort := runStep(false, "apt-get -s install", "apt-get -s install failed: %w", "apt-get", args...); abort {
+						stepErr = err
+					}
+				} else {
+					args := append([]string{"install", "-y"}, packageNames...)
+					if err, abort := runStep(false, "apt-get install", "apt-get install failed: %w", "apt-get", args...); abort {
+						stepErr = err
+					}
+				}
+			case "pkg":
+				if len(freeBSDPkgTargets) > 0 {
+					if dryRun {
+						args := append([]string{"install", "-n"}, freeBSDPkgTargets...)
+						if err, abort := runStep(true, "pkg install -n", "pkg install -n failed: %w", upgradeBin, args...); abort {
+							stepErr = err
+						}
+					} else {
+						args := append([]string{"install", "-y"}, freeBSDPkgTargets...)
+						if err, abort := runStep(false, "pkg install", "pkg install failed: %w", upgradeBin, args...); abort {
+							stepErr = err
+						}
+					}
+				}
+			case "pacman":
+				if dryRun {
+					args := append([]string{"-S", "-p"}, packageNames...)
+					if err, abort := runStep(true, "pacman -S -p", "pacman -S -p failed: %w", "pacman", args...); abort {
+						stepErr = err
+					}
+				} else {
+					args := append([]string{"-S", "--noconfirm"}, packageNames...)
+					if err, abort := runStep(false, "pacman -S", "pacman -S failed: %w", "pacman", args...); abort {
+						stepErr = err
+					}
+				}
+			default: // dnf, yum
+				if dryRun {
+					args := append([]string{"install", "--assumeno"}, packageNames...)
+					if err, abort := runStep(true, upgradeBin+" install --assumeno", upgradeBin+" install --assumeno failed: %w", upgradeBin, args...); abort {
+						stepErr = err
+					}
+				} else {
+					args := append([]string{"install", "-y"}, packageNames...)
+					if err, abort := runStep(false, upgradeBin+" install", upgradeBin+" install failed: %w", upgradeBin, args...); abort {
+						stepErr = err
+					}
+				}
+			}
+		}
+	}
+
+	// Drain any remaining buffered output before deciding the final stage.
+	sink.Flush()
+
+	_, wasStopped := patchRunStopped.LoadAndDelete(patchRunID)
+
+	// Append a short human-readable trailer so users watching the live
+	// terminal can tell at a glance that the run has finished instead of
+	// guessing whether the last package-manager line is really the end.
+	// The trailer is streamed as a final progress chunk AND included in the
+	// authoritative shell_output blob we send with the terminal stage, so
+	// the same text is present whether the frontend is showing the live
+	// buffer or the persisted one.
+	trailer := patchRunTrailer(wasStopped, stepErr, dryRun)
+	sink.WriteString(trailer)
+	sink.Flush()
+
+	// Use a background context for the final status send so a cancelled
+	// ctx (from stop) still allows the cancellation record to reach the server.
+	finalCtx, finalCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer finalCancel()
+
+	switch {
+	case wasStopped:
+		if err := httpClient.SendPatchOutput(finalCtx, patchRunID, "cancelled", fullOutput.String(), "stopped by user"); err != nil {
+			logger.WithError(err).Warn("Failed to send patch cancelled output to server")
+		}
+	case stepErr != nil:
+		if err := httpClient.SendPatchOutput(finalCtx, patchRunID, "failed", fullOutput.String(), stepErr.Error()); err != nil {
+			logger.WithError(err).Warn("Failed to send patch failed output to server")
+		}
+		return stepErr
 	default:
-		fullOutput.WriteString(formatCmd(upgradeBin, "makecache", "-q"))
-		makecacheCmd := exec.CommandContext(ctx, upgradeBin, "makecache", "-q")
-		makecacheOut, makecacheErr := makecacheCmd.CombinedOutput()
-		fullOutput.Write(makecacheOut)
-		if makecacheErr != nil {
-			logger.WithError(makecacheErr).Warn(upgradeBin + " makecache failed")
-			fullOutput.WriteString("\n[" + upgradeBin + " makecache error] " + makecacheErr.Error() + "\n")
-			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), makecacheErr.Error())
-			return fmt.Errorf("%s makecache failed: %w", upgradeBin, makecacheErr)
+		stage := "completed"
+		if dryRun {
+			stage = "dry_run_completed"
+		}
+		if err := httpClient.SendPatchOutput(finalCtx, patchRunID, stage, fullOutput.String(), ""); err != nil {
+			logger.WithError(err).Warn("Failed to send patch output to server")
+			return err
 		}
 	}
 
-	if patchType == "patch_all" {
-		switch pkgManager {
-		case "apt":
-			if dryRun {
-				fullOutput.WriteString(formatCmd("apt-get", "-s", "upgrade"))
-				upgradeCmd := exec.CommandContext(ctx, "apt-get", "-s", "upgrade")
-				upgradeCmd.Env = env
-				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
-				fullOutput.Write(upgradeOut)
-				if upgradeErr != nil {
-					logger.WithError(upgradeErr).Warn("apt-get -s upgrade failed")
-					fullOutput.WriteString("\n[apt-get upgrade error] " + upgradeErr.Error() + "\n")
-					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), upgradeErr.Error())
-					return fmt.Errorf("apt-get -s upgrade failed: %w", upgradeErr)
-				}
-			} else {
-				fullOutput.WriteString(formatCmd("apt-get", "upgrade", "-y"))
-				upgradeCmd := exec.CommandContext(ctx, "apt-get", "upgrade", "-y")
-				upgradeCmd.Env = env
-				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
-				fullOutput.Write(upgradeOut)
-				if upgradeErr != nil {
-					logger.WithError(upgradeErr).Warn("apt-get upgrade failed")
-					fullOutput.WriteString("\n[apt-get upgrade error] " + upgradeErr.Error() + "\n")
-					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), upgradeErr.Error())
-					return fmt.Errorf("apt-get upgrade failed: %w", upgradeErr)
-				}
-			}
-		case "pkg":
-			if dryRun {
-				fullOutput.WriteString(formatCmd(upgradeBin, "upgrade", "-n"))
-				upgradeCmd := exec.CommandContext(ctx, upgradeBin, "upgrade", "-n")
-				upgradeCmd.Env = env
-				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
-				fullOutput.Write(upgradeOut)
-				if upgradeErr != nil && !isDryRunExit1Success(upgradeErr, string(upgradeOut)) {
-					logger.WithError(upgradeErr).Warn("pkg upgrade -n failed")
-					fullOutput.WriteString("\n[pkg upgrade error] " + upgradeErr.Error() + "\n")
-					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), upgradeErr.Error())
-					return fmt.Errorf("pkg upgrade -n failed: %w", upgradeErr)
-				}
-			} else {
-				fullOutput.WriteString(formatCmd(upgradeBin, "upgrade", "-y"))
-				upgradeCmd := exec.CommandContext(ctx, upgradeBin, "upgrade", "-y")
-				upgradeCmd.Env = env
-				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
-				fullOutput.Write(upgradeOut)
-				if upgradeErr != nil {
-					logger.WithError(upgradeErr).Warn("pkg upgrade failed")
-					fullOutput.WriteString("\n[pkg upgrade error] " + upgradeErr.Error() + "\n")
-					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), upgradeErr.Error())
-					return fmt.Errorf("pkg upgrade failed: %w", upgradeErr)
-				}
-			}
-		case "pacman":
-			if dryRun {
-				fullOutput.WriteString(formatCmd("pacman", "-Syu", "-p"))
-				upgradeCmd := exec.CommandContext(ctx, "pacman", "-Syu", "-p")
-				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
-				fullOutput.Write(upgradeOut)
-				if upgradeErr != nil && !isDryRunExit1Success(upgradeErr, string(upgradeOut)) {
-					logger.WithError(upgradeErr).Warn("pacman -Syu -p failed")
-					fullOutput.WriteString("\n[pacman upgrade error] " + upgradeErr.Error() + "\n")
-					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), upgradeErr.Error())
-					return fmt.Errorf("pacman -Syu -p failed: %w", upgradeErr)
-				}
-			} else {
-				fullOutput.WriteString(formatCmd("pacman", "-Syu", "--noconfirm"))
-				upgradeCmd := exec.CommandContext(ctx, "pacman", "-Syu", "--noconfirm")
-				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
-				fullOutput.Write(upgradeOut)
-				if upgradeErr != nil {
-					logger.WithError(upgradeErr).Warn("pacman -Syu failed")
-					fullOutput.WriteString("\n[pacman upgrade error] " + upgradeErr.Error() + "\n")
-					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), upgradeErr.Error())
-					return fmt.Errorf("pacman -Syu failed: %w", upgradeErr)
-				}
-			}
-		default: // dnf, yum
-			if dryRun {
-				fullOutput.WriteString(formatCmd(upgradeBin, "upgrade", "--assumeno"))
-				upgradeCmd := exec.CommandContext(ctx, upgradeBin, "upgrade", "--assumeno")
-				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
-				fullOutput.Write(upgradeOut)
-				if upgradeErr != nil && !isDryRunExit1Success(upgradeErr, string(upgradeOut)) {
-					logger.WithError(upgradeErr).Warn(upgradeBin + " upgrade --assumeno failed")
-					fullOutput.WriteString("\n[" + upgradeBin + " upgrade error] " + upgradeErr.Error() + "\n")
-					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), upgradeErr.Error())
-					return fmt.Errorf("%s upgrade --assumeno failed: %w", upgradeBin, upgradeErr)
-				}
-			} else {
-				fullOutput.WriteString(formatCmd(upgradeBin, "upgrade", "-y"))
-				upgradeCmd := exec.CommandContext(ctx, upgradeBin, "upgrade", "-y")
-				upgradeOut, upgradeErr := upgradeCmd.CombinedOutput()
-				fullOutput.Write(upgradeOut)
-				if upgradeErr != nil {
-					logger.WithError(upgradeErr).Warn(upgradeBin + " upgrade failed")
-					fullOutput.WriteString("\n[" + upgradeBin + " upgrade error] " + upgradeErr.Error() + "\n")
-					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), upgradeErr.Error())
-					return fmt.Errorf("%s upgrade failed: %w", upgradeBin, upgradeErr)
-				}
-			}
-		}
-	} else {
-		if len(packageNames) == 0 {
-			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), "package_names required for patch_package")
-			return fmt.Errorf("package_names required for patch_package")
-		}
-		switch pkgManager {
-		case "apt":
-			if dryRun {
-				installArgs := append([]string{"-s", "install"}, packageNames...)
-				fullOutput.WriteString(formatCmd("apt-get", installArgs...))
-				installCmd := exec.CommandContext(ctx, "apt-get", installArgs...)
-				installCmd.Env = env
-				installOut, installErr := installCmd.CombinedOutput()
-				fullOutput.Write(installOut)
-				if installErr != nil {
-					logger.WithError(installErr).Warn("apt-get -s install failed")
-					fullOutput.WriteString("\n[apt-get install error] " + installErr.Error() + "\n")
-					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), installErr.Error())
-					return fmt.Errorf("apt-get -s install %v failed: %w", packageNames, installErr)
-				}
-			} else {
-				installArgs := append([]string{"install", "-y"}, packageNames...)
-				fullOutput.WriteString(formatCmd("apt-get", installArgs...))
-				installCmd := exec.CommandContext(ctx, "apt-get", installArgs...)
-				installCmd.Env = env
-				installOut, installErr := installCmd.CombinedOutput()
-				fullOutput.Write(installOut)
-				if installErr != nil {
-					logger.WithError(installErr).Warn("apt-get install failed")
-					fullOutput.WriteString("\n[apt-get install error] " + installErr.Error() + "\n")
-					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), installErr.Error())
-					return fmt.Errorf("apt-get install %v failed: %w", packageNames, installErr)
-				}
-			}
-		case "pkg":
-			if dryRun {
-				installArgs := append([]string{"install", "-n"}, packageNames...)
-				fullOutput.WriteString(formatCmd(upgradeBin, installArgs...))
-				installCmd := exec.CommandContext(ctx, upgradeBin, installArgs...)
-				installCmd.Env = env
-				installOut, installErr := installCmd.CombinedOutput()
-				fullOutput.Write(installOut)
-				if installErr != nil && !isDryRunExit1Success(installErr, string(installOut)) {
-					logger.WithError(installErr).Warn("pkg install -n failed")
-					fullOutput.WriteString("\n[pkg install error] " + installErr.Error() + "\n")
-					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), installErr.Error())
-					return fmt.Errorf("pkg install -n %v failed: %w", packageNames, installErr)
-				}
-			} else {
-				installArgs := append([]string{"install", "-y"}, packageNames...)
-				fullOutput.WriteString(formatCmd(upgradeBin, installArgs...))
-				installCmd := exec.CommandContext(ctx, upgradeBin, installArgs...)
-				installCmd.Env = env
-				installOut, installErr := installCmd.CombinedOutput()
-				fullOutput.Write(installOut)
-				if installErr != nil {
-					logger.WithError(installErr).Warn("pkg install failed")
-					fullOutput.WriteString("\n[pkg install error] " + installErr.Error() + "\n")
-					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), installErr.Error())
-					return fmt.Errorf("pkg install %v failed: %w", packageNames, installErr)
-				}
-			}
-		case "pacman":
-			if dryRun {
-				installArgs := append([]string{"-S", "-p"}, packageNames...)
-				fullOutput.WriteString(formatCmd("pacman", installArgs...))
-				installCmd := exec.CommandContext(ctx, "pacman", installArgs...)
-				installOut, installErr := installCmd.CombinedOutput()
-				fullOutput.Write(installOut)
-				if installErr != nil && !isDryRunExit1Success(installErr, string(installOut)) {
-					logger.WithError(installErr).Warn("pacman -S -p failed")
-					fullOutput.WriteString("\n[pacman install error] " + installErr.Error() + "\n")
-					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), installErr.Error())
-					return fmt.Errorf("pacman -S -p %v failed: %w", packageNames, installErr)
-				}
-			} else {
-				installArgs := append([]string{"-S", "--noconfirm"}, packageNames...)
-				fullOutput.WriteString(formatCmd("pacman", installArgs...))
-				installCmd := exec.CommandContext(ctx, "pacman", installArgs...)
-				installOut, installErr := installCmd.CombinedOutput()
-				fullOutput.Write(installOut)
-				if installErr != nil {
-					logger.WithError(installErr).Warn("pacman -S failed")
-					fullOutput.WriteString("\n[pacman install error] " + installErr.Error() + "\n")
-					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), installErr.Error())
-					return fmt.Errorf("pacman -S %v failed: %w", packageNames, installErr)
-				}
-			}
-		default: // dnf, yum
-			if dryRun {
-				installArgs := append([]string{"install", "--assumeno"}, packageNames...)
-				fullOutput.WriteString(formatCmd(upgradeBin, installArgs...))
-				installCmd := exec.CommandContext(ctx, upgradeBin, installArgs...)
-				installOut, installErr := installCmd.CombinedOutput()
-				fullOutput.Write(installOut)
-				if installErr != nil && !isDryRunExit1Success(installErr, string(installOut)) {
-					logger.WithError(installErr).Warn(upgradeBin + " install --assumeno failed")
-					fullOutput.WriteString("\n[" + upgradeBin + " install error] " + installErr.Error() + "\n")
-					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), installErr.Error())
-					return fmt.Errorf("%s install --assumeno %v failed: %w", upgradeBin, packageNames, installErr)
-				}
-			} else {
-				installArgs := append([]string{"install", "-y"}, packageNames...)
-				fullOutput.WriteString(formatCmd(upgradeBin, installArgs...))
-				installCmd := exec.CommandContext(ctx, upgradeBin, installArgs...)
-				installOut, installErr := installCmd.CombinedOutput()
-				fullOutput.Write(installOut)
-				if installErr != nil {
-					logger.WithError(installErr).Warn(upgradeBin + " install failed")
-					fullOutput.WriteString("\n[" + upgradeBin + " install error] " + installErr.Error() + "\n")
-					_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), installErr.Error())
-					return fmt.Errorf("%s install %v failed: %w", upgradeBin, packageNames, installErr)
-				}
-			}
-		}
-	}
-
-	stage := "completed"
-	if dryRun {
-		stage = "dry_run_completed"
-	}
-	if err := httpClient.SendPatchOutput(ctx, patchRunID, stage, fullOutput.String(), ""); err != nil {
-		logger.WithError(err).Warn("Failed to send patch output to server")
-		return err
-	}
-
-	if !dryRun {
+	// Post-patch inventory report: runs after success AND after user-triggered
+	// stop (a cancelled run may leave packages in a partially-changed state).
+	if !dryRun && (wasStopped || stepErr == nil) {
 		logger.Info("Sending post-patch report to refresh package lists...")
 		reportDone := make(chan error, 1)
 		go func() { reportDone <- sendReport(false) }()
@@ -2319,6 +2472,9 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		}
 	}
 
+	if wasStopped {
+		return fmt.Errorf("patch run stopped by user")
+	}
 	return nil
 }
 
@@ -2412,11 +2568,32 @@ func runPatchWindows(ctx context.Context, httpClient *client.Client, patchRunID,
 		}
 	}
 
+	_, wasStopped := patchRunStopped.LoadAndDelete(patchRunID)
+
+	// Use a background context for the final status send so a cancelled
+	// ctx still allows the final record to reach the server.
+	finalCtx, finalCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer finalCancel()
+
 	stage := "completed"
-	if dryRun {
+	if wasStopped {
+		stage = "cancelled"
+	} else if dryRun {
 		stage = "dry_run_completed"
 	}
-	if err := httpClient.SendPatchOutput(ctx, patchRunID, stage, fullOutput.String(), ""); err != nil {
+	errMsg := ""
+	if wasStopped {
+		errMsg = "stopped by user"
+	}
+
+	// Human-readable trailer so the browser's live terminal has a clear
+	// "this is the end" marker. Streamed as a progress chunk first so it
+	// reaches the WS hub, then folded into the authoritative terminal blob.
+	trailer := patchRunTrailer(wasStopped, nil, dryRun)
+	fullOutput.WriteString(trailer)
+	_ = httpClient.SendPatchOutput(ctx, patchRunID, "progress", trailer, "")
+
+	if err := httpClient.SendPatchOutput(finalCtx, patchRunID, stage, fullOutput.String(), errMsg); err != nil {
 		logger.WithError(err).Warn("Failed to send Windows patch output to server")
 		return err
 	}
@@ -2437,6 +2614,9 @@ func runPatchWindows(ctx context.Context, httpClient *client.Client, patchRunID,
 		}
 	}
 
+	if wasStopped {
+		return fmt.Errorf("patch run stopped by user")
+	}
 	return nil
 }
 

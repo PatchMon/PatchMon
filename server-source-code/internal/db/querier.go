@@ -63,6 +63,7 @@ type Querier interface {
 	CreatePatchRun(ctx context.Context, arg CreatePatchRunParams) error
 	CreateScheduledReport(ctx context.Context, arg CreateScheduledReportParams) (ScheduledReport, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
+	CreateTrustedDevice(ctx context.Context, arg CreateTrustedDeviceParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) error
 	DeleteAlert(ctx context.Context, id string) error
 	DeleteAlertsByIDs(ctx context.Context, dollar_1 []string) error
@@ -72,6 +73,7 @@ type Querier interface {
 	DeleteContainersByIDs(ctx context.Context, dollar_1 []string) error
 	DeleteDashboardPreferencesByUserID(ctx context.Context, userID string) error
 	DeleteExpiredSessions(ctx context.Context) error
+	DeleteExpiredTrustedDevices(ctx context.Context) error
 	DeleteHost(ctx context.Context, id string) error
 	DeleteHostGroup(ctx context.Context, id string) error
 	DeleteHostGroupMemberships(ctx context.Context, hostID string) error
@@ -109,6 +111,7 @@ type Querier interface {
 	FindSessionByUserAndDevice(ctx context.Context, arg FindSessionByUserAndDeviceParams) (UserSession, error)
 	FindSessionByUserAndDeviceID(ctx context.Context, arg FindSessionByUserAndDeviceIDParams) (UserSession, error)
 	FindSessionWithTfaBypass(ctx context.Context, arg FindSessionWithTfaBypassParams) (FindSessionWithTfaBypassRow, error)
+	FindValidTrustedDevice(ctx context.Context, arg FindValidTrustedDeviceParams) (UserTrustedDevice, error)
 	GetAcceptedVersionsByUserID(ctx context.Context, userID string) ([]string, error)
 	GetAlertActionByName(ctx context.Context, name string) (AlertAction, error)
 	GetAlertByID(ctx context.Context, id string) (GetAlertByIDRow, error)
@@ -218,6 +221,7 @@ type Querier interface {
 	GetSecurityCountByPackageIDs(ctx context.Context, arg GetSecurityCountByPackageIDsParams) ([]GetSecurityCountByPackageIDsRow, error)
 	GetSessionByID(ctx context.Context, arg GetSessionByIDParams) (UserSession, error)
 	GetSessionByRefreshToken(ctx context.Context, refreshToken string) (UserSession, error)
+	GetSourceReposByPackageIDs(ctx context.Context, arg GetSourceReposByPackageIDsParams) ([]GetSourceReposByPackageIDsRow, error)
 	GetSystemStatisticsDaily(ctx context.Context, arg GetSystemStatisticsDailyParams) ([]GetSystemStatisticsDailyRow, error)
 	GetSystemStatsForInsert(ctx context.Context) (GetSystemStatsForInsertRow, error)
 	GetTopFailingRulesFromScans(ctx context.Context, dollar_1 []string) ([]GetTopFailingRulesFromScansRow, error)
@@ -317,16 +321,20 @@ type Querier interface {
 	ListStalledComplianceScans(ctx context.Context, startedAt pgtype.Timestamp) ([]ListStalledComplianceScansRow, error)
 	ListStalledComplianceScansWithDetails(ctx context.Context, startedAt pgtype.Timestamp) ([]ListStalledComplianceScansWithDetailsRow, error)
 	ListSystemStatisticsByDateRange(ctx context.Context, arg ListSystemStatisticsByDateRangeParams) ([]SystemStatistic, error)
+	ListTrustedDevicesForUser(ctx context.Context, userID string) ([]UserTrustedDevice, error)
 	ListUpdateHistoryByDateRange(ctx context.Context, arg ListUpdateHistoryByDateRangeParams) ([]UpdateHistory, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error)
 	ListVolumes(ctx context.Context, arg ListVolumesParams) ([]DockerVolume, error)
 	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) error
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error
 	RevokeAllSessionsForUserExcept(ctx context.Context, arg RevokeAllSessionsForUserExceptParams) error
+	RevokeAllTrustedDevicesForUser(ctx context.Context, userID string) error
 	RevokeSessionByID(ctx context.Context, arg RevokeSessionByIDParams) error
+	RevokeTrustedDeviceByID(ctx context.Context, arg RevokeTrustedDeviceByIDParams) error
 	SetHostAwaitingPostPatchReport(ctx context.Context, arg SetHostAwaitingPostPatchReportParams) error
 	SetPatchRunPolicySnapshot(ctx context.Context, arg SetPatchRunPolicySnapshotParams) error
 	ToggleHostRepository(ctx context.Context, arg ToggleHostRepositoryParams) error
+	TouchTrustedDeviceLastUsed(ctx context.Context, arg TouchTrustedDeviceLastUsedParams) error
 	UpdateAlert(ctx context.Context, id string) error
 	UpdateAlertAssignment(ctx context.Context, arg UpdateAlertAssignmentParams) error
 	UpdateAlertResolved(ctx context.Context, arg UpdateAlertResolvedParams) error
@@ -362,7 +370,12 @@ type Querier interface {
 	UpdateNotificationRoute(ctx context.Context, arg UpdateNotificationRouteParams) (NotificationRoute, error)
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error
 	UpdatePatchPolicy(ctx context.Context, arg UpdatePatchPolicyParams) error
+	// Terminal cancelled state when a running patch is stopped via patch_run_stop.
+	// Replaces shell_output with the full captured output so rollback/cleanup text is preserved.
+	UpdatePatchRunCancelled(ctx context.Context, arg UpdatePatchRunCancelledParams) error
+	// REPLACE (not append) - agent streams progress chunks then sends final full output.
 	UpdatePatchRunCompleted(ctx context.Context, arg UpdatePatchRunCompletedParams) error
+	// REPLACE (not append) - agent streams progress chunks then sends final full output.
 	UpdatePatchRunFailed(ctx context.Context, arg UpdatePatchRunFailedParams) error
 	UpdatePatchRunPackagesAffected(ctx context.Context, arg UpdatePatchRunPackagesAffectedParams) error
 	UpdatePatchRunProgress(ctx context.Context, arg UpdatePatchRunProgressParams) error
@@ -370,6 +383,9 @@ type Querier interface {
 	// Clear dry-run output fields so real-run output starts fresh.
 	UpdatePatchRunStarted(ctx context.Context, id string) error
 	UpdatePatchRunStatus(ctx context.Context, arg UpdatePatchRunStatusParams) error
+	// Agent streams progress chunks during the run, then sends the final authoritative
+	// output on the terminal stage; REPLACE (not append) so the final record is never
+	// a duplicate of the streamed progress.
 	UpdatePatchRunValidated(ctx context.Context, arg UpdatePatchRunValidatedParams) error
 	UpdateRepository(ctx context.Context, arg UpdateRepositoryParams) error
 	UpdateScheduledReport(ctx context.Context, arg UpdateScheduledReportParams) (ScheduledReport, error)

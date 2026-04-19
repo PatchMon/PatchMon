@@ -12,7 +12,7 @@ import (
 )
 
 const countHosts = `-- name: CountHosts :one
-SELECT COUNT(*) FROM hosts
+SELECT COUNT(*) FROM hosts WHERE status = 'active'
 `
 
 func (q *Queries) CountHosts(ctx context.Context) (int64, error) {

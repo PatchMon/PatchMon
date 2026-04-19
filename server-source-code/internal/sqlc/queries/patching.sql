@@ -4,7 +4,10 @@ INSERT INTO patch_runs (id, host_id, job_id, patch_type, package_name, package_n
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW());
 
 -- name: UpdatePatchRunValidated :exec
-UPDATE patch_runs SET status = 'validated', shell_output = shell_output || $2, packages_affected = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1;
+-- Agent streams progress chunks during the run, then sends the final authoritative
+-- output on the terminal stage; REPLACE (not append) so the final record is never
+-- a duplicate of the streamed progress.
+UPDATE patch_runs SET status = 'validated', shell_output = $2, packages_affected = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1;
 
 -- name: MarkValidationApproved :exec
 UPDATE patch_runs SET status = 'approved', approved_by_user_id = $2, updated_at = NOW() WHERE id = $1 AND status IN ('validated', 'pending_validation');
@@ -44,10 +47,17 @@ UPDATE patch_runs SET scheduled_at = NULL, updated_at = NOW() WHERE id = $1;
 UPDATE patch_runs SET shell_output = shell_output || $2, updated_at = NOW() WHERE id = $1;
 
 -- name: UpdatePatchRunCompleted :exec
-UPDATE patch_runs SET status = 'completed', shell_output = shell_output || $2, completed_at = NOW(), updated_at = NOW() WHERE id = $1;
+-- REPLACE (not append) - agent streams progress chunks then sends final full output.
+UPDATE patch_runs SET status = 'completed', shell_output = $2, completed_at = NOW(), updated_at = NOW() WHERE id = $1;
 
 -- name: UpdatePatchRunFailed :exec
-UPDATE patch_runs SET status = 'failed', shell_output = shell_output || $2, error_message = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1;
+-- REPLACE (not append) - agent streams progress chunks then sends final full output.
+UPDATE patch_runs SET status = 'failed', shell_output = $2, error_message = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1;
+
+-- name: UpdatePatchRunCancelled :exec
+-- Terminal cancelled state when a running patch is stopped via patch_run_stop.
+-- Replaces shell_output with the full captured output so rollback/cleanup text is preserved.
+UPDATE patch_runs SET status = 'cancelled', shell_output = $2, error_message = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1;
 
 -- name: UpdatePatchRunStatus :exec
 UPDATE patch_runs SET status = $2, updated_at = NOW() WHERE id = $1;

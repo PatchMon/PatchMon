@@ -3,6 +3,7 @@ package packages
 
 import (
 	"bufio"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -63,9 +64,136 @@ func (m *APKManager) GetPackages() []models.Package {
 
 	// Merge and deduplicate packages (pass full installed packages to preserve descriptions)
 	packages := CombinePackageData(installedPackages, upgradablePackages)
+
+	// Enrich packages with repository attribution
+	m.enrichWithRepoAttribution(packages)
+
 	m.logger.WithField("total", len(packages)).Debug("Total packages collected")
 
 	return packages
+}
+
+// enrichWithRepoAttribution populates SourceRepository for each package by running
+// apk policy in batches and extracting the logical repo name from the URL.
+func (m *APKManager) enrichWithRepoAttribution(packages []models.Package) {
+	if len(packages) == 0 {
+		return
+	}
+
+	names := make([]string, len(packages))
+	for i := range packages {
+		names[i] = packages[i].Name
+	}
+
+	pkgIdx := make(map[string][]int, len(packages))
+	for i, p := range packages {
+		pkgIdx[p.Name] = append(pkgIdx[p.Name], i)
+	}
+
+	const batchSize = 200
+	repoMap := make(map[string]string, len(packages))
+
+	for start := 0; start < len(names); start += batchSize {
+		end := start + batchSize
+		if end > len(names) {
+			end = len(names)
+		}
+		batch := names[start:end]
+
+		args := append([]string{"policy"}, batch...)
+		cmd := exec.Command("apk", args...)
+		cmd.Env = append(os.Environ(), "LANG=C")
+		output, err := cmd.Output()
+		if err != nil {
+			m.logger.WithError(err).Warn("apk policy failed, skipping repo attribution for batch")
+			continue
+		}
+
+		m.parseApkPolicy(string(output), repoMap)
+	}
+
+	// Apply results
+	for name, repo := range repoMap {
+		for _, idx := range pkgIdx[name] {
+			packages[idx].SourceRepository = repo
+		}
+	}
+
+	m.logger.WithField("attributed", len(repoMap)).Debug("Enriched packages with repository attribution")
+}
+
+// parseApkPolicy parses apk policy output and populates repoMap.
+// Output format per package:
+//
+//	curl policy:
+//	  8.12.1-r0:
+//	    lib/apk/db/installed
+//	    https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/APKINDEX.tar.gz
+//
+// Extracts the logical repo name (e.g. "main", "community") from the URL path.
+func (m *APKManager) parseApkPolicy(output string, repoMap map[string]string) {
+	lines := strings.Split(output, "\n")
+
+	var currentPkg string
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+
+		// Package header: "packagename policy:"
+		if strings.HasSuffix(trimmed, " policy:") {
+			currentPkg = strings.TrimSuffix(trimmed, " policy:")
+			continue
+		}
+
+		if currentPkg == "" {
+			continue
+		}
+
+		// Already resolved this package
+		if _, ok := repoMap[currentPkg]; ok {
+			continue
+		}
+
+		// Skip version lines (end with ":")
+		if strings.HasSuffix(trimmed, ":") {
+			continue
+		}
+
+		// Skip local install marker
+		if strings.Contains(trimmed, "lib/apk/db/installed") {
+			continue
+		}
+
+		// URL line: extract logical repo name from path
+		// e.g. https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/APKINDEX.tar.gz -> "main"
+		repo := m.extractRepoNameFromURL(trimmed)
+		if repo != "" {
+			repoMap[currentPkg] = repo
+		}
+	}
+}
+
+// extractRepoNameFromURL extracts the logical repository name from an APK repository URL.
+// The repo name is the path segment before the architecture directory.
+// e.g. .../v3.22/main/x86_64/APKINDEX.tar.gz -> "main"
+// e.g. .../v3.22/community/aarch64/APKINDEX.tar.gz -> "community"
+func (m *APKManager) extractRepoNameFromURL(url string) string {
+	// Known architectures to look for
+	archTokens := map[string]bool{
+		"x86_64": true, "x86": true, "aarch64": true, "armhf": true,
+		"armv7": true, "ppc64le": true, "s390x": true, "riscv64": true,
+	}
+
+	parts := strings.Split(url, "/")
+	for i, part := range parts {
+		if archTokens[part] && i > 0 {
+			return parts[i-1]
+		}
+	}
+	return ""
 }
 
 // parseInstalledPackages parses apk list --installed output

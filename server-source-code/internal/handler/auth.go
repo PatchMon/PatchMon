@@ -30,6 +30,7 @@ type AuthHandler struct {
 	resolved               *config.ResolvedConfig
 	users                  *store.UsersStore
 	sessions               *store.SessionsStore
+	trustedDevices         *store.TrustedDevicesStore
 	settings               *store.SettingsStore
 	tfaLockout             *store.TfaLockoutStore
 	loginLockout           *store.LoginLockoutStore
@@ -37,11 +38,83 @@ type AuthHandler struct {
 	db                     database.DBProvider
 	notify                 *notifications.Emitter
 	log                    *slog.Logger
+	// permissions is optional - used by MeContext to surface role permission flags
+	// (such as can_manage_billing) alongside the user response. Wired via
+	// WithPermissions to avoid threading it through the constructor signature.
+	permissions *store.PermissionsStore
+}
+
+// WithPermissions attaches a PermissionsStore to the handler. Returns the handler
+// so it can be chained from NewAuthHandler. Safe to call with nil.
+func (h *AuthHandler) WithPermissions(p *store.PermissionsStore) *AuthHandler {
+	h.permissions = p
+	return h
 }
 
 // NewAuthHandler creates a new auth handler.
-func NewAuthHandler(cfg *config.Config, resolved *config.ResolvedConfig, users *store.UsersStore, sessions *store.SessionsStore, settings *store.SettingsStore, tfaLockout *store.TfaLockoutStore, loginLockout *store.LoginLockoutStore, releaseNotesAcceptance *store.ReleaseNotesAcceptanceStore, db database.DBProvider, notify *notifications.Emitter, log *slog.Logger) *AuthHandler {
-	return &AuthHandler{cfg: cfg, resolved: resolved, users: users, sessions: sessions, settings: settings, tfaLockout: tfaLockout, loginLockout: loginLockout, releaseNotesAcceptance: releaseNotesAcceptance, db: db, notify: notify, log: log}
+func NewAuthHandler(cfg *config.Config, resolved *config.ResolvedConfig, users *store.UsersStore, sessions *store.SessionsStore, trustedDevices *store.TrustedDevicesStore, settings *store.SettingsStore, tfaLockout *store.TfaLockoutStore, loginLockout *store.LoginLockoutStore, releaseNotesAcceptance *store.ReleaseNotesAcceptanceStore, db database.DBProvider, notify *notifications.Emitter, log *slog.Logger) *AuthHandler {
+	return &AuthHandler{cfg: cfg, resolved: resolved, users: users, sessions: sessions, trustedDevices: trustedDevices, settings: settings, tfaLockout: tfaLockout, loginLockout: loginLockout, releaseNotesAcceptance: releaseNotesAcceptance, db: db, notify: notify, log: log}
+}
+
+// DeviceTrustCookieName is the HttpOnly cookie carrying the raw trust token.
+// Decoupled from the session cookies: survives logout, dies only on revoke or expiry.
+const DeviceTrustCookieName = "patchmon_device_trust"
+
+// hasValidDeviceTrust looks up a trust record for the given user based on the
+// inbound patchmon_device_trust cookie. Returns the matched record or nil.
+// The match is keyed exclusively on (user_id, sha256(cookie_value)) — no IP,
+// user-agent, or fingerprint is involved, so the trust survives network changes
+// and browser updates.
+func (h *AuthHandler) hasValidDeviceTrust(r *http.Request, userID string) *models.TrustedDevice {
+	if h.trustedDevices == nil {
+		return nil
+	}
+	c, err := r.Cookie(DeviceTrustCookieName)
+	if err != nil || c.Value == "" {
+		return nil
+	}
+	hash := store.HashTrustToken(c.Value)
+	if hash == "" {
+		return nil
+	}
+	td, err := h.trustedDevices.FindValid(r.Context(), userID, hash)
+	if err != nil {
+		if h.log != nil {
+			h.log.Debug("trusted device lookup failed", "user_id", userID, "error", err)
+		}
+		return nil
+	}
+	return td
+}
+
+// setDeviceTrustCookie writes the raw trust token to the response as an
+// HttpOnly cookie with a lifetime matching the trust record's expiry.
+func (h *AuthHandler) setDeviceTrustCookie(w http.ResponseWriter, r *http.Request, rawToken string, expiresAt time.Time) {
+	secure := isSecureRequest(r) && h.cfg.Env == "production"
+	http.SetCookie(w, &http.Cookie{
+		Name:     DeviceTrustCookieName,
+		Value:    rawToken,
+		Path:     "/",
+		MaxAge:   int(time.Until(expiresAt).Seconds()),
+		Expires:  expiresAt,
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// clearDeviceTrustCookie expires the trust cookie on the client. Called only
+// on explicit revocation paths, never on ordinary logout.
+func clearDeviceTrustCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     DeviceTrustCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   isSecureRequest(r),
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
 // LoginRequest is the request body for login.
@@ -222,12 +295,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		h.log.Debug("auth login success", "user_id", user.ID, "username", user.Username)
 	}
 
-	// TFA check: if enabled, require TFA verification unless valid remember-me bypass exists
+	// TFA check: if enabled, require TFA verification unless a valid device-trust
+	// cookie is present. Trust is keyed on (user_id, sha256(cookie_value)) only;
+	// it is independent from the user_sessions table, network, and user-agent.
 	if user.TfaEnabled {
-		fingerprint := util.GenerateDeviceFingerprint(r)
-		bypassSession, _ := h.sessions.FindSessionWithTfaBypass(r.Context(), user.ID, fingerprint)
-		if bypassSession == nil {
-			// No valid bypass - require TFA
+		td := h.hasValidDeviceTrust(r, user.ID)
+		if td == nil {
 			JSON(w, http.StatusOK, map[string]interface{}{
 				"message":     "TFA verification required",
 				"requiresTfa": true,
@@ -235,7 +308,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		// Valid bypass - continue to full login
+		// Best-effort touch of last_used_at for the audit trail.
+		if err := h.trustedDevices.TouchLastUsed(r.Context(), td.ID); err != nil && h.log != nil {
+			h.log.Debug("trusted device touch failed", "id", td.ID, "error", err)
+		}
 	}
 
 	h.completeLogin(w, r, user, false)
@@ -375,26 +451,51 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, user
 	refreshToken, _ := h.createToken(user.ID, user.Role, refreshExpSec, "")
 
 	// Always create/reuse a session so it shows in the active sessions list.
-	// Device info (fingerprint, deviceID) enables deduplication; sessions are tracked even without it.
+	// Session reuse is keyed on X-Device-ID (stable across IP/UA changes).
 	var sessionID string
 	fingerprint := util.GenerateDeviceFingerprint(r)
 	deviceID := r.Header.Get("X-Device-ID")
 	expiresAtSession := time.Now().Add(time.Duration(refreshExpSec) * time.Second)
-	var tfaBypassUntil *time.Time
-	if rememberMe {
-		t := time.Now().Add(parseTfaRememberDuration(h.getTfaRememberMeExpiresIn()))
-		tfaBypassUntil = &t
-		if h.resolved != nil && h.resolved.TfaMaxRememberSessions > 0 {
-			_ = h.sessions.EnforceTfaRememberLimit(r.Context(), user.ID, h.resolved.TfaMaxRememberSessions)
-		}
-	}
-	sess, sessErr := h.sessions.CreateOrReuseSession(r.Context(), user.ID, refreshToken, "", h.clientIP(r), r.UserAgent(), fingerprint, deviceID, expiresAtSession, rememberMe, tfaBypassUntil)
+	// Session rows no longer drive the TFA bypass decision — pass false/nil so the
+	// legacy tfa_remember_me / tfa_bypass_until columns stay at their defaults.
+	// Device trust lives in user_trusted_devices instead.
+	sess, sessErr := h.sessions.CreateOrReuseSession(r.Context(), user.ID, refreshToken, "", h.clientIP(r), r.UserAgent(), fingerprint, deviceID, expiresAtSession, false, nil)
 	if sessErr != nil {
 		if h.log != nil {
 			h.log.Error("session creation failed", "user_id", user.ID, "error", sessErr)
 		}
 	} else if sess != nil {
 		sessionID = sess.ID
+	}
+
+	// Mint a device-trust token when the user asked to skip MFA on this device.
+	var trustExpiresAt time.Time
+	if rememberMe && user.TfaEnabled && h.trustedDevices != nil {
+		trustDuration := parseTfaRememberDuration(h.getTfaRememberMeExpiresIn())
+		trustExpiresAt = time.Now().Add(trustDuration)
+		rawToken, tokenHash, genErr := store.GenerateTrustToken()
+		if genErr != nil {
+			if h.log != nil {
+				h.log.Error("trust token generation failed", "user_id", user.ID, "error", genErr)
+			}
+		} else {
+			label := buildDeviceLabel(r.UserAgent())
+			if _, err := h.trustedDevices.Create(r.Context(), store.CreateTrustedDeviceParams{
+				UserID:    user.ID,
+				TokenHash: tokenHash,
+				DeviceID:  deviceID,
+				UserAgent: r.UserAgent(),
+				IPAddress: h.clientIP(r),
+				Label:     label,
+				ExpiresAt: trustExpiresAt,
+			}); err != nil {
+				if h.log != nil {
+					h.log.Error("trusted device create failed", "user_id", user.ID, "error", err)
+				}
+			} else {
+				h.setDeviceTrustCookie(w, r, rawToken, trustExpiresAt)
+			}
+		}
 	}
 
 	accessToken, err := h.createToken(user.ID, user.Role, expiresIn, sessionID)
@@ -439,10 +540,25 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, user
 		"expires_at":    expiresAt,
 		"user":          h.buildUserResponse(r.Context(), user),
 	}
-	if rememberMe {
-		resp["tfa_bypass_until"] = time.Now().Add(parseTfaRememberDuration(h.getTfaRememberMeExpiresIn())).Format(time.RFC3339)
+	if rememberMe && !trustExpiresAt.IsZero() {
+		resp["tfa_bypass_until"] = trustExpiresAt.Format(time.RFC3339)
 	}
 	JSON(w, http.StatusOK, resp)
+}
+
+// buildDeviceLabel produces a short "Browser on OS" string from a User-Agent.
+// Used for display in the Trusted Devices list; never used for trust decisions.
+func buildDeviceLabel(ua string) string {
+	p := parseUserAgent(ua)
+	browser := p["browser"]
+	os := p["os"]
+	if browser == "" {
+		browser = "Unknown browser"
+	}
+	if os == "" {
+		os = "Unknown OS"
+	}
+	return browser + " on " + os
 }
 
 func (h *AuthHandler) clientIP(r *http.Request) string {
@@ -680,6 +796,84 @@ func (h *AuthHandler) Profile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// MeContext handles GET /me/context.
+// Returns the authenticated user plus the current multi-context ("tenant") info,
+// including the enabled modules list. The frontend uses this to feature-flag
+// navigation items, settings panels, and buttons so that disabled features are
+// hidden rather than clicking through to a 403.
+//
+// Response shape:
+//
+//	{
+//	  "user":   { ...buildUserResponse... },
+//	  "tenant": {
+//	    "modules":  "core,patching,..."  |  "*"  (string; "*" means all modules),
+//	    "host":     "customer.patchmon.cloud" | "" (empty in single-context mode),
+//	    "slug":     "customer" | "" (empty in single-context mode),
+//	    "multi_context": true|false
+//	  }
+//	}
+//
+// In single-context (self-hosted) mode, "modules" is "*" so every feature is allowed.
+func (h *AuthHandler) MeContext(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+	if userID == "" {
+		Error(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	user, err := h.users.GetByID(r.Context(), userID)
+	if err != nil {
+		Error(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	// Resolve the multi-context entry (if any). Nil entry = single-context mode.
+	entry := hostctx.EntryFromContext(r.Context())
+	tenant := map[string]interface{}{
+		"multi_context": entry != nil,
+		"host":          "",
+		"slug":          "",
+		"modules":       "*", // default: single-context mode allows everything
+	}
+	if entry != nil {
+		tenant["host"] = entry.Host
+		tenant["slug"] = entry.Slug
+		if entry.Modules != nil {
+			mods := strings.TrimSpace(*entry.Modules)
+			if mods == "" {
+				mods = "*"
+			}
+			tenant["modules"] = mods
+		}
+	}
+
+	// Surface the role permission flags that the frontend needs to feature-flag
+	// nav items and buttons. Currently only can_manage_billing is exposed this way;
+	// the broader permissions list is available at /permissions/user-permissions.
+	// Keeping this a small, fixed set avoids accidentally leaking sensitive flags.
+	resp := map[string]interface{}{
+		"user":   h.buildUserResponse(r.Context(), user),
+		"tenant": tenant,
+	}
+	if h.permissions != nil {
+		canManageBilling := false
+		if p, err := h.permissions.GetByRole(r.Context(), user.Role); err == nil && p != nil {
+			canManageBilling = p.CanManageBilling
+		} else if user.Role == "admin" || user.Role == "superadmin" {
+			// Built-in admin roles default to full access even if the row is missing.
+			canManageBilling = true
+		}
+		resp["permissions"] = map[string]bool{
+			"can_manage_billing": canManageBilling,
+		}
+	}
+	// Surface admin_mode so the frontend can double-gate the Billing nav item
+	// alongside the can_manage_billing permission flag.
+	resp["admin_mode"] = h.cfg != nil && h.cfg.AdminMode
+
+	JSON(w, http.StatusOK, resp)
+}
+
 // UpdateProfile handles PUT /auth/profile (update own profile: username, email, first_name, last_name).
 func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(middleware.UserIDKey).(string)
@@ -835,14 +1029,42 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to change password")
 		return
 	}
+	// Security baseline: invalidate everything that grants access without
+	// re-entering the new password on another browser.
+	//   * Trusted-device rows → attacker with a trust cookie cannot skip MFA.
+	//   * Other sessions     → attacker with a refresh_token cannot keep a live session.
+	// We keep the caller's own session alive so the UI doesn't log them out
+	// mid-action after a successful password change.
+	if h.trustedDevices != nil {
+		if err := h.trustedDevices.RevokeAllForUser(r.Context(), userID); err != nil && h.log != nil {
+			h.log.Error("change password revoke trusted devices failed", "user_id", userID, "error", err)
+		}
+	}
+	currentSessionID, _ := r.Context().Value(middleware.SessionIDKey).(string)
+	if h.sessions != nil {
+		if err := h.sessions.RevokeAllForUser(r.Context(), userID, currentSessionID); err != nil && h.log != nil {
+			h.log.Error("change password revoke sessions failed", "user_id", userID, "error", err)
+		}
+	}
+	clearDeviceTrustCookie(w, r)
 	JSON(w, http.StatusOK, map[string]string{"message": "Password changed successfully"})
 }
 
 // Logout handles POST /auth/logout.
+// Revokes the current session server-side and clears auth cookies on the client.
+// The patchmon_device_trust cookie is intentionally preserved — "remember this device"
+// must survive logout (that is the whole point of the feature). Trust is killed only
+// by explicit revocation, password change, TFA disable, or natural expiry.
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+	sessionID, _ := r.Context().Value(middleware.SessionIDKey).(string)
 	if h.log != nil {
-		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
-		h.log.Debug("auth request", "method", r.Method, "path", r.URL.Path, "user_id", userID)
+		h.log.Debug("auth request", "method", r.Method, "path", r.URL.Path, "user_id", userID, "session_id", sessionID)
+	}
+	if sessionID != "" && userID != "" && h.sessions != nil {
+		if err := h.sessions.RevokeByID(r.Context(), sessionID, userID); err != nil && h.log != nil {
+			h.log.Error("logout revoke session failed", "user_id", userID, "session_id", sessionID, "error", err)
+		}
 	}
 	clearAuthCookies(w, r)
 	JSON(w, http.StatusOK, map[string]string{"message": "Logged out"})

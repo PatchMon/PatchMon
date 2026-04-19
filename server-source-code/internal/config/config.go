@@ -12,7 +12,7 @@ import (
 )
 
 // DefaultVersion is the default server version. Bump this when releasing; config_test.go uses it.
-const DefaultVersion = "1.4.100"
+const DefaultVersion = "1.4.105"
 
 // Config holds application configuration loaded from environment.
 // Uses same variable names as PatchMon/server for compatibility.
@@ -149,6 +149,23 @@ type Config struct {
 
 	// BillingPortalURL is the Stripe customer portal URL shown to tenants when AdminMode is on.
 	BillingPortalURL string
+
+	// BillingServiceURL is the base URL of the internal billing service (e.g. http://billing:8082).
+	// Used by the PatchMon-native Billing page to proxy subscription and portal requests.
+	// Only meaningful when AdminMode is on.
+	BillingServiceURL string
+
+	// BillingInternalSecret is the shared secret sent as X-Billing-Secret to authenticate
+	// the server to the internal billing service.
+	BillingInternalSecret string
+
+	// ProvisionerURL is the base URL of the regional provisioner service
+	// (e.g. http://provisioner:8083). Used by the tenant-facing Billing page
+	// to proxy the "Sync host count" action: the server forwards to the
+	// provisioner, which does a live count on the tenant DB and pushes the
+	// new usage through to the manager / Stripe. Only meaningful when
+	// AdminMode is on. Auth uses X-Registry-Reload-Secret.
+	ProvisionerURL string
 }
 
 // Load reads configuration from environment.
@@ -222,9 +239,12 @@ func Load() (*Config, error) {
 		OidcUserGroup:        getEnv("OIDC_USER_GROUP", ""),
 		OidcEnforceHTTPS:     getEnv("OIDC_ENFORCE_HTTPS", "true") != "false",
 
-		SSGContentDir:    getEnv("SSG_CONTENT_DIR", "./ssg-content"),
-		AdminMode:        getEnv("ADMIN_MODE", "") == "on",
-		BillingPortalURL: getEnv("BILLING_PORTAL_URL", ""),
+		SSGContentDir:         getEnv("SSG_CONTENT_DIR", "./ssg-content"),
+		AdminMode:             getEnv("ADMIN_MODE", "") == "on",
+		BillingPortalURL:      getEnv("BILLING_PORTAL_URL", ""),
+		BillingServiceURL:     getEnv("BILLING_SERVICE_URL", ""),
+		BillingInternalSecret: getEnv("BILLING_INTERNAL_SECRET", ""),
+		ProvisionerURL:        getEnv("PROVISIONER_URL", ""),
 
 		MaxLoginAttempts:            getEnvInt("MAX_LOGIN_ATTEMPTS", 5),
 		LockoutDurationMin:          getEnvInt("LOCKOUT_DURATION_MINUTES", 15),

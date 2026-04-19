@@ -149,3 +149,6 @@ test-*.sh
 
 # Git backup (moved from old repo)
 .git-moved/
+
+# autoresearch working directory (experimental agent optimization workspace)
+agent-autoresearch/

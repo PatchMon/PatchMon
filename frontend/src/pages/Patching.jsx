@@ -19,7 +19,12 @@ import {
 	XCircle,
 } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
-import { Link, useLocation, useSearchParams } from "react-router-dom";
+import {
+	Link,
+	useLocation,
+	useNavigate,
+	useSearchParams,
+} from "react-router-dom";
 import { PackageListDisplay } from "../components/PackageListDisplay";
 import { PatchRunStatusBadge } from "../components/PatchRunStatusBadge";
 import {
@@ -51,6 +56,7 @@ const ValidatedBadge = () => (
 const Patching = () => {
 	const [searchParams] = useSearchParams();
 	const location = useLocation();
+	const navigate = useNavigate();
 	const urlTab = searchParams.get("tab");
 	const initialTab = ["runs", "policies"].includes(urlTab)
 		? urlTab
@@ -123,6 +129,9 @@ const Patching = () => {
 	const [approvingId, setApprovingId] = useState(null);
 	const [retryingId, setRetryingId] = useState(null);
 	const [selectedRunIds, setSelectedRunIds] = useState(new Set());
+	const [selectedApproveIds, setSelectedApproveIds] = useState(new Set());
+	const [bulkApproving, setBulkApproving] = useState(false);
+	const [bulkApproveResult, setBulkApproveResult] = useState(null);
 
 	const deletableStatuses = new Set([
 		"queued",
@@ -135,6 +144,12 @@ const Patching = () => {
 	const allDeletableSelected =
 		deletableRuns.length > 0 &&
 		deletableRuns.every((r) => selectedRunIds.has(r.id));
+
+	const approvableStatuses = new Set(["validated", "pending_validation"]);
+	const approvableRuns = runs.filter((r) => approvableStatuses.has(r.status));
+	const allApprovableSelected =
+		approvableRuns.length > 0 &&
+		approvableRuns.every((r) => selectedApproveIds.has(r.id));
 
 	const deleteRunMutation = useMutation({
 		mutationFn: (runId) => patchingAPI.deleteRun(runId),
@@ -175,10 +190,53 @@ const Patching = () => {
 		}
 	};
 
+	const handleToggleApproveSelect = (runId) => {
+		setSelectedApproveIds((prev) => {
+			const next = new Set(prev);
+			if (next.has(runId)) next.delete(runId);
+			else next.add(runId);
+			return next;
+		});
+	};
+
+	const handleToggleApproveSelectAll = () => {
+		if (allApprovableSelected) {
+			setSelectedApproveIds(new Set());
+		} else {
+			setSelectedApproveIds(new Set(approvableRuns.map((r) => r.id)));
+		}
+	};
+
+	const handleApproveSelected = async () => {
+		const ids = [...selectedApproveIds];
+		if (ids.length === 0) return;
+		setBulkApproving(true);
+		setBulkApproveResult(null);
+		// Use allSettled — approvals are independent writes, so a single
+		// failing row should not cancel the remaining approvals.
+		const results = await Promise.allSettled(
+			ids.map((id) => approveMutation.mutateAsync(id)),
+		);
+		const failed = results.filter((r) => r.status === "rejected").length;
+		setBulkApproveResult({ ok: ids.length - failed, failed });
+		setSelectedApproveIds(new Set());
+		setBulkApproving(false);
+	};
+
 	const handleApprove = async (runId) => {
 		setApprovingId(runId);
 		try {
-			await approveMutation.mutateAsync(runId);
+			// Approval creates a NEW execution run linked to this validation
+			// run. When that new run is going to start immediately we deep-link
+			// the user into its detail page so they can watch the live
+			// terminal output instead of having to hunt for it in the list.
+			const res = await approveMutation.mutateAsync(runId);
+			const newRunId = res?.patch_run_id;
+			const runAt = res?.run_at ? Date.parse(res.run_at) : NaN;
+			const isImmediate = Number.isFinite(runAt) && runAt - Date.now() < 5_000;
+			if (newRunId && isImmediate) {
+				navigate(`/patching/runs/${newRunId}`);
+			}
 		} finally {
 			setApprovingId(null);
 		}
@@ -393,7 +451,61 @@ const Patching = () => {
 								</button>
 							</>
 						)}
+						{selectedApproveIds.size > 0 && (
+							<>
+								<button
+									type="button"
+									onClick={handleApproveSelected}
+									disabled={bulkApproving}
+									className="btn-primary flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 min-h-[44px] text-xs sm:text-sm"
+								>
+									{bulkApproving ? (
+										<RefreshCw className="h-4 w-4 flex-shrink-0 animate-spin" />
+									) : (
+										<CheckCircle className="h-4 w-4 flex-shrink-0" />
+									)}
+									<span>
+										{bulkApproving ? "Approving…" : "Approve"}{" "}
+										{selectedApproveIds.size} selected
+									</span>
+								</button>
+								<button
+									type="button"
+									onClick={() => setSelectedApproveIds(new Set())}
+									disabled={bulkApproving}
+									className="text-xs sm:text-sm text-secondary-500 dark:text-white/70 hover:text-secondary-700 dark:hover:text-white/90 min-h-[44px] px-2"
+								>
+									<span className="hidden sm:inline">Clear approve</span>
+									<span className="sm:hidden">Clear</span>
+								</button>
+							</>
+						)}
 					</div>
+					{bulkApproveResult && (
+						<div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-secondary-200 dark:border-secondary-600 bg-secondary-50 dark:bg-secondary-800 text-sm">
+							<div className="flex items-center gap-2 flex-wrap">
+								{bulkApproveResult.failed === 0 ? (
+									<CheckCircle className="h-4 w-4 text-green-600 flex-shrink-0" />
+								) : (
+									<AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0" />
+								)}
+								<span className="text-secondary-800 dark:text-secondary-200">
+									Approved {bulkApproveResult.ok}
+									{bulkApproveResult.failed > 0
+										? `, ${bulkApproveResult.failed} failed`
+										: ""}
+								</span>
+							</div>
+							<button
+								type="button"
+								onClick={() => setBulkApproveResult(null)}
+								className="text-secondary-500 hover:text-secondary-700 dark:text-white/70 dark:hover:text-white/90"
+								aria-label="Dismiss"
+							>
+								<X className="h-4 w-4" />
+							</button>
+						</div>
+					)}
 					<div className="card p-4 md:p-6">
 						<div className="overflow-x-auto">
 							<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
@@ -402,6 +514,7 @@ const Patching = () => {
 										<th
 											scope="col"
 											className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider w-10"
+											title="Select for delete"
 										>
 											{deletableRuns.length > 0 ? (
 												<input
@@ -409,6 +522,24 @@ const Patching = () => {
 													checked={allDeletableSelected}
 													onChange={handleToggleSelectAll}
 													className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 dark:border-secondary-600 rounded cursor-pointer"
+													title="Select all deletable runs"
+													aria-label="Select all deletable runs"
+												/>
+											) : null}
+										</th>
+										<th
+											scope="col"
+											className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider w-10"
+											title="Select for approve"
+										>
+											{approvableRuns.length > 0 ? (
+												<input
+													type="checkbox"
+													checked={allApprovableSelected}
+													onChange={handleToggleApproveSelectAll}
+													className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 dark:border-secondary-600 rounded cursor-pointer"
+													title="Select all approvable runs"
+													aria-label="Select all approvable runs"
 												/>
 											) : null}
 										</th>
@@ -469,6 +600,20 @@ const Patching = () => {
 														checked={selectedRunIds.has(run.id)}
 														onChange={() => handleToggleSelect(run.id)}
 														className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 dark:border-secondary-600 rounded cursor-pointer"
+														title="Select for delete"
+														aria-label="Select for delete"
+													/>
+												) : null}
+											</td>
+											<td className="px-4 py-2 whitespace-nowrap w-10">
+												{approvableStatuses.has(run.status) ? (
+													<input
+														type="checkbox"
+														checked={selectedApproveIds.has(run.id)}
+														onChange={() => handleToggleApproveSelect(run.id)}
+														className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 dark:border-secondary-600 rounded cursor-pointer"
+														title="Select for approve"
+														aria-label="Select for approve"
 													/>
 												) : null}
 											</td>

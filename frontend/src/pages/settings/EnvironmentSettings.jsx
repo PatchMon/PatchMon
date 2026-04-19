@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Edit2, HelpCircle, Variable } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
+import { TimezoneSelect } from "../../components/TimezoneSelect";
 import { useToast } from "../../contexts/ToastContext";
 import { settingsAPI } from "../../utils/api";
 
@@ -357,6 +358,12 @@ const EnvironmentSettings = () => {
 																		</option>
 																	)}
 															</select>
+														) : v.key === "TIMEZONE" ? (
+															<TimezoneSelect
+																value={editValue}
+																onChange={(e) => setEditValue(e.target.value)}
+																className="block w-48 rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-800 px-2 py-1 text-sm"
+															/>
 														) : isBooleanVar(v) ? (
 															<select
 																value={editValue}

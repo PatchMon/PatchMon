@@ -103,7 +103,7 @@
 	}
 
 	.badge-secondary {
-		@apply badge bg-secondary-100 text-secondary-800;
+		@apply badge bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200;
 	}
 
 	.badge-success {
@@ -197,3 +197,51 @@
 		background-color: #94a3b8;
 	}
 }
+
+/*
+ * Static triangle mesh background. Ported from patchmon.net marketing site.
+ * The root app uses a `.dark` class on <html>; base rules target dark mode, and
+ * `html:not(.dark)` overrides swap in the light-variant SVG.
+ */
+.patchmon-mesh-bg {
+	pointer-events: none;
+	background-color: transparent;
+	background-image:
+		url("/assets/hero-triangle-mesh.svg"),
+		radial-gradient(
+			ellipse 100% 55% at 50% -15%,
+			rgba(59, 130, 246, 0.07) 0%,
+			transparent 58%
+		),
+		radial-gradient(
+			ellipse 70% 45% at 85% 25%,
+			rgba(34, 197, 94, 0.04) 0%,
+			transparent 50%
+		);
+	background-repeat: repeat, no-repeat, no-repeat;
+	/* Integer tile size: forces the tiler to snap every row/column to device pixels.
+	   Fractional sizes accumulated sub-pixel drift that the cursor glow amplified
+	   into visibly broken lines at 100% zoom. The 0.72px stretch over a 70px tile
+	   is imperceptible. */
+	background-size: 40px 70px, 100% 100%, 100% 100%;
+	background-position: 0 0, center center, center center;
+}
+
+html:not(.dark) .patchmon-mesh-bg {
+	background-image:
+		url("/assets/hero-triangle-mesh-light.svg"),
+		radial-gradient(
+			ellipse 100% 55% at 50% -15%,
+			rgba(59, 130, 246, 0.06) 0%,
+			transparent 58%
+		),
+		radial-gradient(
+			ellipse 70% 45% at 85% 25%,
+			rgba(34, 197, 94, 0.035) 0%,
+			transparent 50%
+		);
+	background-repeat: repeat, no-repeat, no-repeat;
+	background-size: 40px 70px, 100% 100%, 100% 100%;
+	background-position: 0 0, center center, center center;
+}
+

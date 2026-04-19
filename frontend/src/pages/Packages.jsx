@@ -30,6 +30,13 @@ import { useToast } from "../contexts/ToastContext";
 import { dashboardAPI, packagesAPI } from "../utils/api";
 import { patchingAPI } from "../utils/patchingApi";
 
+function formatRepoName(name) {
+	if (!name) return "\u2014";
+	if (name.startsWith("deb-src-")) return name.slice(8);
+	if (name.startsWith("deb-")) return name.slice(4);
+	return name;
+}
+
 const Packages = () => {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
@@ -89,6 +96,7 @@ const Packages = () => {
 			{ id: "packageHosts", label: "Installed On", visible: true, order: 1 },
 			{ id: "status", label: "Status", visible: true, order: 2 },
 			{ id: "latestVersion", label: "Latest Version", visible: true, order: 3 },
+			{ id: "sourceRepos", label: "Source Repos", visible: true, order: 4 },
 		];
 
 		const saved = localStorage.getItem("packages-column-config");
@@ -210,7 +218,7 @@ const Packages = () => {
 			...pkg,
 			// Normalise field names to match the frontend expectations
 			packageHostsCount: pkg.packageHostsCount || pkg.stats?.totalInstalls || 0,
-			latestVersion: pkg.latest_version || pkg.latestVersion || "Unknown",
+			latestVersion: pkg.latest_version || pkg.latestVersion || "N/A",
 			isUpdatable: (pkg.stats?.updatesNeeded || 0) > 0,
 			isSecurityUpdate: (pkg.stats?.securityUpdates || 0) > 0,
 			// Ensure we have hosts array (for packages, this contains all hosts where the package is installed)
@@ -233,10 +241,19 @@ const Packages = () => {
 
 	const triggerPatchAllMutation = useMutation({
 		mutationFn: () => patchingAPI.trigger(hostFilter, "patch_all"),
-		onSuccess: () => {
+		onSuccess: (data) => {
 			setShowPatchConfirmModal(false);
 			queryClient.invalidateQueries(["patching-dashboard"]);
 			queryClient.invalidateQueries(["patching-runs"]);
+			// Jump straight into the run detail when we can tell the run is
+			// going to execute right now — the user asked for this so they
+			// can watch the live terminal output.
+			const runAt = data?.run_at ? Date.parse(data.run_at) : NaN;
+			const isImmediate = Number.isFinite(runAt) && runAt - Date.now() < 5_000;
+			if (data?.patch_run_id && isImmediate) {
+				navigate(`/patching/runs/${data.patch_run_id}`);
+				return;
+			}
 			toast.success("Patch all queued. View progress in Patching.");
 		},
 		onError: (err) => {
@@ -441,6 +458,7 @@ const Packages = () => {
 			{ id: "packageHosts", label: "Installed On", visible: true, order: 1 },
 			{ id: "status", label: "Status", visible: true, order: 2 },
 			{ id: "latestVersion", label: "Latest Version", visible: true, order: 3 },
+			{ id: "sourceRepos", label: "Source Repos", visible: true, order: 4 },
 		];
 		updateColumnConfig(defaultConfig);
 	};
@@ -540,11 +558,38 @@ const Packages = () => {
 				return (
 					<div
 						className="text-sm text-secondary-900 dark:text-white max-w-xs truncate"
-						title={pkg.latestVersion || "Unknown"}
+						title={pkg.latestVersion || "N/A"}
 					>
-						{pkg.latestVersion || "Unknown"}
+						{pkg.latestVersion || "N/A"}
 					</div>
 				);
+			case "sourceRepos": {
+				const repos = pkg.sourceRepos || [];
+				if (repos.length === 0)
+					return (
+						<span className="text-xs text-secondary-400 dark:text-secondary-500">
+							&mdash;
+						</span>
+					);
+				return (
+					<div className="flex flex-wrap gap-1">
+						{repos.slice(0, 3).map((repo) => (
+							<span
+								key={repo.repoId}
+								className="badge-secondary text-xs"
+								title={repo.repoUrl || repo.repoName}
+							>
+								{formatRepoName(repo.repoName)}
+							</span>
+						))}
+						{repos.length > 3 && (
+							<span className="text-xs text-secondary-400 dark:text-secondary-500">
+								+{repos.length - 3}
+							</span>
+						)}
+					</div>
+				);
+			}
 			default:
 				return null;
 		}
@@ -1034,10 +1079,33 @@ const Packages = () => {
 															Latest:&nbsp;
 														</span>
 														<span className="text-secondary-900 dark:text-white font-mono text-sm">
-															{pkg.latestVersion || "Unknown"}
+															{pkg.latestVersion || "N/A"}
 														</span>
 													</div>
 												</div>
+
+												{/* Source Repos */}
+												{pkg.sourceRepos?.length > 0 && (
+													<div className="flex items-center gap-2 flex-wrap">
+														<span className="text-xs text-secondary-500 dark:text-white">
+															Repos:
+														</span>
+														{pkg.sourceRepos.slice(0, 3).map((repo) => (
+															<span
+																key={repo.repoId}
+																className="badge-secondary text-xs"
+																title={repo.repoUrl || repo.repoName}
+															>
+																{formatRepoName(repo.repoName)}
+															</span>
+														))}
+														{pkg.sourceRepos.length > 3 && (
+															<span className="text-xs text-secondary-400 dark:text-secondary-500">
+																+{pkg.sourceRepos.length - 3}
+															</span>
+														)}
+													</div>
+												)}
 											</div>
 										);
 									})}
@@ -1243,13 +1311,18 @@ const Packages = () => {
 					isOpen={showPatchPackageMultiHostModal}
 					onClose={() => setShowPatchPackageMultiHostModal(false)}
 					packageNames={selectedPackages}
-					onSuccess={(mode) => {
+					onSuccess={(mode, info) => {
 						setSelectedPackages([]);
 						setShowPatchPackageMultiHostModal(false);
 						queryClient.invalidateQueries(["patching-dashboard"]);
 						queryClient.invalidateQueries(["patching-runs"]);
-						if (mode === "approval") {
-							navigate("/patching?tab=runs");
+						// If the wizard kicked off a single immediate run, jump
+						// straight into that run's detail page so the user can
+						// watch the live terminal output. Otherwise fall back
+						// to the runs list.
+						const immediate = info?.runs?.filter((r) => r.immediate) || [];
+						if (mode === "patch" && immediate.length === 1) {
+							navigate(`/patching/runs/${immediate[0].runId}`);
 						} else {
 							navigate("/patching?tab=runs");
 						}

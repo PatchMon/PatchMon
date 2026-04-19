@@ -66,6 +66,16 @@ func (m *WindowsManager) GetPackages() []models.Package {
 	winUpdates := m.getWindowsUpdates()
 	m.logger.WithField("count", len(winUpdates)).Info("Collected Windows OS updates")
 
+	// 5. Set SourceRepository for Windows Update entries based on WSUS config
+	wsusActive := m.isWSUSActive()
+	wuRepo := "Microsoft Update"
+	if wsusActive {
+		wuRepo = "WSUS"
+	}
+	for i := range winUpdates {
+		winUpdates[i].SourceRepository = wuRepo
+	}
+
 	all := make([]models.Package, 0, len(appPackages)+len(winUpdates))
 	all = append(all, appPackages...)
 	all = append(all, winUpdates...)
@@ -79,8 +89,13 @@ func (m *WindowsManager) GetPackages() []models.Package {
 // mergeRegistryAndWinget merges registry-discovered packages with WinGet data.
 // Registry provides the reliable baseline; WinGet enriches with update availability.
 // Any WinGet-only entries (not in registry) are also included.
+// SourceRepository is set to the WinGet source for matched packages, or "local" for registry-only.
 func (m *WindowsManager) mergeRegistryAndWinget(regPkgs, wingetPkgs []models.Package) []models.Package {
 	if len(wingetPkgs) == 0 {
+		// No WinGet data: all registry packages are local
+		for i := range regPkgs {
+			regPkgs[i].SourceRepository = "local"
+		}
 		return regPkgs
 	}
 
@@ -88,6 +103,7 @@ func (m *WindowsManager) mergeRegistryAndWinget(regPkgs, wingetPkgs []models.Pac
 	type wingetInfo struct {
 		AvailableVersion string
 		NeedsUpdate      bool
+		SourceRepository string
 		matched          bool
 	}
 	wingetByName := make(map[string]*wingetInfo, len(wingetPkgs))
@@ -96,10 +112,11 @@ func (m *WindowsManager) mergeRegistryAndWinget(regPkgs, wingetPkgs []models.Pac
 		wingetByName[key] = &wingetInfo{
 			AvailableVersion: wingetPkgs[i].AvailableVersion,
 			NeedsUpdate:      wingetPkgs[i].NeedsUpdate,
+			SourceRepository: wingetPkgs[i].SourceRepository,
 		}
 	}
 
-	// Enrich registry entries with WinGet update info
+	// Enrich registry entries with WinGet update info and source repo
 	for i := range regPkgs {
 		key := normalizePackageName(regPkgs[i].Name)
 		if winfo, ok := wingetByName[key]; ok {
@@ -109,7 +126,11 @@ func (m *WindowsManager) mergeRegistryAndWinget(regPkgs, wingetPkgs []models.Pac
 					regPkgs[i].AvailableVersion = winfo.AvailableVersion
 				}
 			}
+			regPkgs[i].SourceRepository = winfo.SourceRepository
 			winfo.matched = true
+		} else {
+			// Not found in WinGet: local/registry-only install
+			regPkgs[i].SourceRepository = "local"
 		}
 	}
 
@@ -347,12 +368,19 @@ if ($out) { $out | Out-String }
 		} else if avail != "" && avail != version {
 			needsUpdate = true
 		}
+		// Forward WinGet source as SourceRepository
+		source := strings.TrimSpace(e.Source)
+		if source == "" {
+			source = "winget" // Default for WinGet-discovered packages
+		}
+
 		packages = append(packages, models.Package{
 			Name:             name,
 			Category:         "Application",
 			CurrentVersion:   version,
 			AvailableVersion: avail,
 			NeedsUpdate:      needsUpdate,
+			SourceRepository: source,
 		})
 	}
 	return packages
@@ -541,6 +569,29 @@ func stripEllipsis(s string) string {
 		return strings.TrimSuffix(s, "\u00d4\u00c2\u00c9")
 	}
 	return s
+}
+
+// isWSUSActive checks if WSUS is configured and active by reading the Windows registry.
+func (m *WindowsManager) isWSUSActive() bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+
+	psScript := `
+$ErrorActionPreference = "SilentlyContinue"
+$wuKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
+$server = (Get-ItemProperty -Path $wuKey -Name WUServer -ErrorAction SilentlyContinue).WUServer
+$useWU = (Get-ItemProperty -Path "$wuKey\AU" -Name UseWUServer -ErrorAction SilentlyContinue).UseWUServer
+if ($server -and $useWU -eq 1) { "WSUS_ACTIVE" } else { "WSUS_INACTIVE" }
+`
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	output, err := cmd.Output()
+	if err != nil {
+		m.logger.WithError(err).Debug("Failed to check WSUS status")
+		return false
+	}
+
+	return strings.Contains(strings.TrimSpace(string(output)), "WSUS_ACTIVE")
 }
 
 // wuaErrorHint returns a human-readable hint for common WUA HRESULTs (per UsoClient/WUA docs)

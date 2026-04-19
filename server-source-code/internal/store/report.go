@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
@@ -69,6 +70,7 @@ type ReportPackage struct {
 	AvailableVersion *string `json:"availableVersion"`
 	NeedsUpdate      bool    `json:"needsUpdate"`
 	IsSecurityUpdate bool    `json:"isSecurityUpdate"`
+	SourceRepository string  `json:"sourceRepository,omitempty"`
 	// WUA fields - only set for Category="Windows Update" entries
 	WUAGuid           string   `json:"wuaGuid,omitempty"`
 	WUAKb             string   `json:"wuaKb,omitempty"`
@@ -271,77 +273,11 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 		payloadSizeKb = float64(len(raw)) / 1024
 	}
 
-	for _, pkg := range payload.Packages {
-		av := pkg.AvailableVersion
-		desc := &pkg.Description
-		if pkg.Description == "" {
-			desc = nil
-		}
-		cat := (*string)(nil)
-		if pkg.Category != "" {
-			cat = &pkg.Category
-		}
+	// Process repositories BEFORE packages so we can build lookup maps for source repo attribution.
+	reposByName := make(map[string]string)        // repo.Name -> repo ID
+	reposByURLDistComp := make(map[string]string) // "url|dist|comp" -> repo ID
+	reposByComponent := make(map[string]string)   // components -> repo ID
 
-		pkgID, err := q.InsertPackage(ctx, db.InsertPackageParams{
-			ID:            uuid.New().String(),
-			Name:          pkg.Name,
-			Description:   desc,
-			Category:      cat,
-			LatestVersion: av,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("InsertPackage %q: %w", pkg.Name, err)
-		}
-
-		if pkg.WUAGuid != "" {
-			// Windows Update entry - persist WUA-specific metadata
-			var wuaCats []byte
-			if len(pkg.WUACategories) > 0 {
-				wuaCats, _ = json.Marshal(pkg.WUACategories)
-			}
-			optStr := func(s string) *string {
-				if s == "" {
-					return nil
-				}
-				return &s
-			}
-			var revNum *int32
-			if pkg.WUARevisionNumber != 0 {
-				n := pkg.WUARevisionNumber
-				revNum = &n
-			}
-			if err := q.InsertHostPackageWithWUA(ctx, db.InsertHostPackageWithWUAParams{
-				ID:                uuid.New().String(),
-				HostID:            hostID,
-				PackageID:         pkgID,
-				CurrentVersion:    pkg.CurrentVersion,
-				AvailableVersion:  pkg.AvailableVersion,
-				NeedsUpdate:       pkg.NeedsUpdate,
-				IsSecurityUpdate:  pkg.IsSecurityUpdate,
-				WuaGuid:           optStr(pkg.WUAGuid),
-				WuaKb:             optStr(pkg.WUAKb),
-				WuaSeverity:       optStr(pkg.WUASeverity),
-				WuaCategories:     wuaCats,
-				WuaDescription:    optStr(pkg.Description),
-				WuaSupportUrl:     optStr(pkg.WUASupportURL),
-				WuaRevisionNumber: revNum,
-			}); err != nil {
-				return nil, fmt.Errorf("InsertHostPackageWithWUA %q: %w", pkg.Name, err)
-			}
-		} else if err := q.InsertHostPackage(ctx, db.InsertHostPackageParams{
-			ID:               uuid.New().String(),
-			HostID:           hostID,
-			PackageID:        pkgID,
-			CurrentVersion:   pkg.CurrentVersion,
-			AvailableVersion: pkg.AvailableVersion,
-			NeedsUpdate:      pkg.NeedsUpdate,
-			IsSecurityUpdate: pkg.IsSecurityUpdate,
-		}); err != nil {
-			return nil, fmt.Errorf("InsertHostPackage %q: %w", pkg.Name, err)
-		}
-	}
-
-	// Process repositories if provided (same flow as Node backend)
 	if len(payload.Repositories) > 0 {
 		if err := q.DeleteHostRepositoriesByHostID(ctx, hostID); err != nil {
 			return nil, fmt.Errorf("DeleteHostRepositoriesByHostID: %w", err)
@@ -391,6 +327,23 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 				repoID = existing.ID
 			}
 
+			// Build lookup maps for package -> repo resolution
+			reposByName[repoData.Name] = repoID
+			key := repoData.URL + "|" + repoData.Distribution + "|" + repoData.Components
+			reposByURLDistComp[key] = repoID
+			// Also index by url|distribution with each individual component for APT.
+			// APT sources.list stores multi-component entries like "main restricted universe multiverse"
+			// but apt-cache policy returns a single component per source line.
+			for _, comp := range strings.Fields(repoData.Components) {
+				singleKey := repoData.URL + "|" + repoData.Distribution + "|" + comp
+				if _, exists := reposByURLDistComp[singleKey]; !exists {
+					reposByURLDistComp[singleKey] = repoID
+				}
+			}
+			if repoData.Components != "" {
+				reposByComponent[repoData.Components] = repoID
+			}
+
 			isEnabled := repoData.IsEnabled
 			if err := q.InsertHostRepository(ctx, db.InsertHostRepositoryParams{
 				ID:           uuid.New().String(),
@@ -400,6 +353,81 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 			}); err != nil {
 				return nil, fmt.Errorf("InsertHostRepository %s: %w", repoData.URL, err)
 			}
+		}
+	}
+
+	// Process packages with source repo attribution
+	for _, pkg := range payload.Packages {
+		av := pkg.AvailableVersion
+		desc := &pkg.Description
+		if pkg.Description == "" {
+			desc = nil
+		}
+		cat := (*string)(nil)
+		if pkg.Category != "" {
+			cat = &pkg.Category
+		}
+
+		pkgID, err := q.InsertPackage(ctx, db.InsertPackageParams{
+			ID:            uuid.New().String(),
+			Name:          pkg.Name,
+			Description:   desc,
+			Category:      cat,
+			LatestVersion: av,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("InsertPackage %q: %w", pkg.Name, err)
+		}
+
+		sourceRepoID := resolveSourceRepoID(pkg.SourceRepository, reposByName, reposByURLDistComp, reposByComponent)
+
+		if pkg.WUAGuid != "" {
+			// Windows Update entry - persist WUA-specific metadata
+			var wuaCats []byte
+			if len(pkg.WUACategories) > 0 {
+				wuaCats, _ = json.Marshal(pkg.WUACategories)
+			}
+			optStr := func(s string) *string {
+				if s == "" {
+					return nil
+				}
+				return &s
+			}
+			var revNum *int32
+			if pkg.WUARevisionNumber != 0 {
+				n := pkg.WUARevisionNumber
+				revNum = &n
+			}
+			if err := q.InsertHostPackageWithWUA(ctx, db.InsertHostPackageWithWUAParams{
+				ID:                 uuid.New().String(),
+				HostID:             hostID,
+				PackageID:          pkgID,
+				CurrentVersion:     pkg.CurrentVersion,
+				AvailableVersion:   pkg.AvailableVersion,
+				NeedsUpdate:        pkg.NeedsUpdate,
+				IsSecurityUpdate:   pkg.IsSecurityUpdate,
+				WuaGuid:            optStr(pkg.WUAGuid),
+				WuaKb:              optStr(pkg.WUAKb),
+				WuaSeverity:        optStr(pkg.WUASeverity),
+				WuaCategories:      wuaCats,
+				WuaDescription:     optStr(pkg.Description),
+				WuaSupportUrl:      optStr(pkg.WUASupportURL),
+				WuaRevisionNumber:  revNum,
+				SourceRepositoryID: sourceRepoID,
+			}); err != nil {
+				return nil, fmt.Errorf("InsertHostPackageWithWUA %q: %w", pkg.Name, err)
+			}
+		} else if err := q.InsertHostPackage(ctx, db.InsertHostPackageParams{
+			ID:                 uuid.New().String(),
+			HostID:             hostID,
+			PackageID:          pkgID,
+			CurrentVersion:     pkg.CurrentVersion,
+			AvailableVersion:   pkg.AvailableVersion,
+			NeedsUpdate:        pkg.NeedsUpdate,
+			IsSecurityUpdate:   pkg.IsSecurityUpdate,
+			SourceRepositoryID: sourceRepoID,
+		}); err != nil {
+			return nil, fmt.Errorf("InsertHostPackage %q: %w", pkg.Name, err)
 		}
 	}
 
@@ -428,4 +456,42 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 		UpdatesAvailable:  updatesCount,
 		SecurityUpdates:   securityCount,
 	}, nil
+}
+
+// resolveSourceRepoID matches an agent's sourceRepository string to a repository ID
+// using the lookup maps built during repo processing.
+func resolveSourceRepoID(sourceRepo string, reposByName, reposByURLDistComp, reposByComponent map[string]string) *string {
+	if sourceRepo == "" || sourceRepo == "local" || sourceRepo == "unknown" || sourceRepo == "foreign" || sourceRepo == "@System" {
+		return nil
+	}
+
+	// Try exact name match first (DNF: "baseos", Pacman: "core", FreeBSD: "FreeBSD")
+	if id, ok := reposByName[sourceRepo]; ok {
+		return &id
+	}
+
+	// Try APT format: "http://deb.debian.org/debian bookworm/main"
+	// Parse into URL + suite/component, reconstruct key
+	if strings.Contains(sourceRepo, " ") {
+		parts := strings.SplitN(sourceRepo, " ", 2)
+		if len(parts) == 2 {
+			url := parts[0]
+			suiteComp := parts[1]
+			// suiteComp format: "bookworm/main" or "bookworm-security/main"
+			scParts := strings.SplitN(suiteComp, "/", 2)
+			if len(scParts) == 2 {
+				key := url + "|" + scParts[0] + "|" + scParts[1]
+				if id, ok := reposByURLDistComp[key]; ok {
+					return &id
+				}
+			}
+		}
+	}
+
+	// Try component match (APK: "main", "community")
+	if id, ok := reposByComponent[sourceRepo]; ok {
+		return &id
+	}
+
+	return nil
 }

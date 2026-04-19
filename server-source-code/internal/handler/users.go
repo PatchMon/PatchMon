@@ -20,19 +20,20 @@ import (
 
 // UsersHandler handles user admin routes.
 type UsersHandler struct {
-	users       *store.UsersStore
-	sessions    *store.SessionsStore
-	permissions *store.PermissionsStore
-	settings    *store.SettingsStore
-	resolved    *config.ResolvedConfig
-	db          database.DBProvider
-	notify      *notifications.Emitter
-	log         *slog.Logger
+	users          *store.UsersStore
+	sessions       *store.SessionsStore
+	trustedDevices *store.TrustedDevicesStore
+	permissions    *store.PermissionsStore
+	settings       *store.SettingsStore
+	resolved       *config.ResolvedConfig
+	db             database.DBProvider
+	notify         *notifications.Emitter
+	log            *slog.Logger
 }
 
 // NewUsersHandler creates a new users handler.
-func NewUsersHandler(users *store.UsersStore, sessions *store.SessionsStore, permissions *store.PermissionsStore, settings *store.SettingsStore, resolved *config.ResolvedConfig, db database.DBProvider, notify *notifications.Emitter, log *slog.Logger) *UsersHandler {
-	return &UsersHandler{users: users, sessions: sessions, permissions: permissions, settings: settings, resolved: resolved, db: db, notify: notify, log: log}
+func NewUsersHandler(users *store.UsersStore, sessions *store.SessionsStore, trustedDevices *store.TrustedDevicesStore, permissions *store.PermissionsStore, settings *store.SettingsStore, resolved *config.ResolvedConfig, db database.DBProvider, notify *notifications.Emitter, log *slog.Logger) *UsersHandler {
+	return &UsersHandler{users: users, sessions: sessions, trustedDevices: trustedDevices, permissions: permissions, settings: settings, resolved: resolved, db: db, notify: notify, log: log}
 }
 
 // roleRank returns a numeric rank for role hierarchy (higher = more privileged).
@@ -380,10 +381,17 @@ func (h *UsersHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Revoke all sessions when role changes or account is deactivated,
 	// so the old JWT privileges are immediately invalidated.
+	// Deactivation also revokes MFA trust so that re-activation can't bypass MFA
+	// using a trust row that predates the deactivation window.
 	deactivated := req.IsActive != nil && !*req.IsActive && existing.IsActive
 	if roleChanged || deactivated {
 		if err := h.sessions.RevokeAllForUser(r.Context(), userID, ""); err != nil && h.log != nil {
 			h.log.Error("failed to revoke sessions after user update", "user_id", userID, "error", err)
+		}
+	}
+	if deactivated && h.trustedDevices != nil {
+		if err := h.trustedDevices.RevokeAllForUser(r.Context(), userID); err != nil && h.log != nil {
+			h.log.Error("failed to revoke trusted devices after deactivation", "user_id", userID, "error", err)
 		}
 	}
 
@@ -505,9 +513,16 @@ func (h *UsersHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Revoke all sessions for the target user after password reset.
+	// Revoke all sessions and trusted devices for the target user after password
+	// reset. An admin reset is the canonical post-compromise action; leaving
+	// either surface alive would let an attacker retain access despite the reset.
 	if err := h.sessions.RevokeAllForUser(r.Context(), userID, ""); err != nil && h.log != nil {
 		h.log.Error("failed to revoke sessions after password reset", "user_id", userID, "error", err)
+	}
+	if h.trustedDevices != nil {
+		if err := h.trustedDevices.RevokeAllForUser(r.Context(), userID); err != nil && h.log != nil {
+			h.log.Error("failed to revoke trusted devices after password reset", "user_id", userID, "error", err)
+		}
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{

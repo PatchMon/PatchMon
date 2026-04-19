@@ -3,6 +3,7 @@ import {
 	AlertTriangle,
 	ArrowLeft,
 	Calendar,
+	CheckSquare,
 	ChevronRight,
 	Download,
 	History,
@@ -13,15 +14,30 @@ import {
 	Search,
 	Server,
 	Shield,
+	Square,
 	Wrench,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import PatchConfirmModal from "../components/PatchConfirmModal";
+import PatchPackageMultiHostModal from "../components/PatchPackageMultiHostModal";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { formatRelativeTime, packagesAPI } from "../utils/api";
 import { patchingAPI } from "../utils/patchingApi";
+
+function formatRepoName(name) {
+	if (!name) return "\u2014";
+	if (name.startsWith("deb-src-")) return name.slice(8);
+	if (name.startsWith("deb-")) return name.slice(4);
+	return name;
+}
+
+// A host is "patchable" for a specific package if it has a pending update
+// and isn't running Windows (Windows patching is not supported by the agent).
+const isHostPatchable = (host) =>
+	!!host.needsUpdate &&
+	!(host.osType || host.os_type || "").toLowerCase().includes("windows");
 
 const PackageDetail = () => {
 	const { packageId } = useParams();
@@ -34,21 +50,46 @@ const PackageDetail = () => {
 	const [searchTerm, setSearchTerm] = useState("");
 	const [currentPage, setCurrentPage] = useState(1);
 	const [pageSize, setPageSize] = useState(25);
+	const [onlyPending, setOnlyPending] = useState(true);
+	const [selectedHostIds, setSelectedHostIds] = useState(new Set());
+	const [showMultiHostModal, setShowMultiHostModal] = useState(false);
 	const [patchConfirmTarget, setPatchConfirmTarget] = useState(null); // { hostId, hostName, packageName }
+	// Tracks which single-host patch is currently in flight so only that row
+	// shows "Queuing…" / is disabled. Mutation.isPending alone is shared across
+	// every row and would disable the whole table on a single click.
+	const [patchingHostId, setPatchingHostId] = useState(null);
 
 	const patchPackageMutation = useMutation({
 		mutationFn: ({ hostId, packageName }) =>
 			patchingAPI.trigger(hostId, "patch_package", packageName),
-		onSuccess: (_, { hostName }) => {
+		onMutate: ({ hostId }) => {
+			setPatchingHostId(hostId);
+		},
+		onSuccess: (data, { hostName }) => {
 			setPatchConfirmTarget(null);
+			queryClient.invalidateQueries({
+				queryKey: ["package", decodedPackageId],
+			});
+			queryClient.invalidateQueries({
+				queryKey: ["package-hosts", decodedPackageId],
+			});
+			queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
+			// Deep-link into the run detail for an immediate run so the user
+			// can watch the live terminal output straight away.
+			const runAt = data?.run_at ? Date.parse(data.run_at) : NaN;
+			const isImmediate = Number.isFinite(runAt) && runAt - Date.now() < 5_000;
+			if (data?.patch_run_id && isImmediate) {
+				navigate(`/patching/runs/${data.patch_run_id}`);
+				return;
+			}
 			toast.success(`Patch queued for ${hostName || "host"}`);
-			queryClient.invalidateQueries(["package", decodedPackageId]);
-			queryClient.invalidateQueries(["package-hosts", decodedPackageId]);
-			queryClient.invalidateQueries(["patching-dashboard"]);
 		},
 		onError: (err, { hostName }) => {
 			const msg = err.response?.data?.error || err.message;
 			toast.error(`Patch failed for ${hostName || "host"}: ${msg}`);
+		},
+		onSettled: () => {
+			setPatchingHostId(null);
 		},
 	});
 
@@ -80,6 +121,7 @@ const PackageDetail = () => {
 			searchTerm,
 			currentPage,
 			pageSize,
+			onlyPending,
 		],
 		queryFn: () =>
 			packagesAPI
@@ -87,6 +129,7 @@ const PackageDetail = () => {
 					search: searchTerm,
 					page: currentPage,
 					limit: pageSize,
+					...(onlyPending ? { needsUpdate: true } : {}),
 				})
 				.then((res) => res.data),
 		staleTime: 5 * 60 * 1000,
@@ -105,11 +148,43 @@ const PackageDetail = () => {
 	const hosts = hostsData?.hosts || [];
 	const activities = activityData?.activities || [];
 	const pagination = hostsData?.pagination || {};
-	const _totalFromBackend = pagination.total ?? 0;
 	const totalPages = pagination.pages ?? 1;
 
-	// Backend returns paginated, filtered results - use directly (no client-side filter/paginate)
-	const filteredAndPaginatedHosts = hosts;
+	const patchableOnPage = useMemo(() => hosts.filter(isHostPatchable), [hosts]);
+
+	const allOnPageSelected =
+		patchableOnPage.length > 0 &&
+		patchableOnPage.every((h) => selectedHostIds.has(h.hostId));
+	const someOnPageSelected = patchableOnPage.some((h) =>
+		selectedHostIds.has(h.hostId),
+	);
+
+	// Reset selection when filter / search / page changes - the visible set changed
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentionally reset when these change
+	useEffect(() => {
+		setSelectedHostIds(new Set());
+	}, [searchTerm, currentPage, pageSize, onlyPending, decodedPackageId]);
+
+	const toggleHost = (hostId) => {
+		setSelectedHostIds((prev) => {
+			const next = new Set(prev);
+			if (next.has(hostId)) next.delete(hostId);
+			else next.add(hostId);
+			return next;
+		});
+	};
+
+	const toggleAllOnPage = () => {
+		setSelectedHostIds((prev) => {
+			const next = new Set(prev);
+			if (allOnPageSelected) {
+				for (const h of patchableOnPage) next.delete(h.hostId);
+			} else {
+				for (const h of patchableOnPage) next.add(h.hostId);
+			}
+			return next;
+		});
+	};
 
 	const handleHostClick = (hostId) => {
 		navigate(`/hosts/${hostId}`);
@@ -280,18 +355,40 @@ const PackageDetail = () => {
 				</div>
 			</div>
 
+			{/* Source Repositories */}
+			{pkg.sourceRepos?.length > 0 && (
+				<div className="card p-4">
+					<h3 className="text-sm font-medium text-secondary-500 dark:text-secondary-400 mb-2">
+						Source Repositories
+					</h3>
+					<div className="flex flex-wrap gap-2">
+						{pkg.sourceRepos.map((repo) => (
+							<button
+								key={repo.repoId}
+								type="button"
+								onClick={() => navigate(`/repositories/${repo.repoId}`)}
+								className="badge-secondary hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer"
+								title={repo.repoUrl}
+							>
+								{formatRepoName(repo.repoName)}
+							</button>
+						))}
+					</div>
+				</div>
+			)}
+
 			{/* Description */}
 			<div className="card p-4">
 				<h4 className="text-sm font-medium text-secondary-600 dark:text-white mb-3 flex items-center gap-2">
 					Description
 					<div className="relative group">
 						<Info className="dark:text-white" />
-						<div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block w-max max-w-xs px-2 py-1 bg-gray-900 text-white text-xs rounded shadow-lg z-[100]">
+						<div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block w-max max-w-xs px-2 py-1 bg-secondary-900 text-white text-xs rounded shadow-lg z-[100]">
 							The description was pulled directly from the host package manager.
 						</div>
 					</div>
 				</h4>
-				<p className="text-sm text-secondary-600 dark:text-white dark:text-white">
+				<p className="text-sm text-secondary-600 dark:text-white">
 					{pkg.description || "No description available."}
 				</p>
 			</div>
@@ -329,9 +426,9 @@ const PackageDetail = () => {
 
 				{activeTab === "hosts" && (
 					<>
-						<div className="px-4 sm:px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
+						<div className="px-4 sm:px-6 py-4 border-b border-secondary-200 dark:border-secondary-600 flex flex-col sm:flex-row sm:items-center gap-3">
 							{/* Search */}
-							<div className="relative w-full">
+							<div className="relative flex-1 min-w-0">
 								<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400" />
 								<input
 									type="text"
@@ -344,6 +441,31 @@ const PackageDetail = () => {
 									className="w-full pl-10 pr-4 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white placeholder-secondary-500 dark:placeholder-secondary-400 text-sm sm:text-base"
 								/>
 							</div>
+							{/* Only pending update filter */}
+							<label className="inline-flex items-center gap-2 text-sm text-secondary-700 dark:text-white select-none whitespace-nowrap cursor-pointer">
+								<input
+									type="checkbox"
+									checked={onlyPending}
+									onChange={(e) => {
+										setOnlyPending(e.target.checked);
+										setCurrentPage(1);
+									}}
+									className="h-4 w-4 rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500"
+								/>
+								Only pending update
+							</label>
+							{/* Patch selected button */}
+							{canManageHosts() && selectedHostIds.size > 0 && (
+								<button
+									type="button"
+									onClick={() => setShowMultiHostModal(true)}
+									className="btn-primary inline-flex items-center gap-2 whitespace-nowrap"
+									title={`Patch ${selectedHostIds.size} selected host(s) with ${pkg.name}`}
+								>
+									<Wrench className="h-4 w-4" />
+									Patch selected ({selectedHostIds.size})
+								</button>
+							)}
 						</div>
 
 						<div className="overflow-x-auto">
@@ -367,20 +489,22 @@ const PackageDetail = () => {
 										</div>
 									</div>
 								</div>
-							) : filteredAndPaginatedHosts.length === 0 ? (
+							) : hosts.length === 0 ? (
 								<div className="text-center py-8">
 									<Server className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
 									<p className="text-secondary-500 dark:text-white">
 										{searchTerm
 											? "No hosts match your search"
-											: "No hosts have this package installed"}
+											: onlyPending
+												? "All hosts are up to date for this package"
+												: "No hosts have this package installed"}
 									</p>
 								</div>
 							) : (
 								<>
 									{/* Mobile Card Layout */}
 									<div className="md:hidden space-y-3 p-4">
-										{filteredAndPaginatedHosts.map((host) => (
+										{hosts.map((host) => (
 											// biome-ignore lint/a11y/useSemanticElements: Complex card layout requires div
 											<div
 												key={host.hostId}
@@ -397,6 +521,27 @@ const PackageDetail = () => {
 											>
 												{/* Host Name */}
 												<div className="flex items-center gap-3">
+													{canManageHosts() && isHostPatchable(host) && (
+														<button
+															type="button"
+															onClick={(e) => {
+																e.stopPropagation();
+																toggleHost(host.hostId);
+															}}
+															className="flex items-center justify-center p-1 -ml-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-700"
+															aria-label={
+																selectedHostIds.has(host.hostId)
+																	? "Deselect host"
+																	: "Select host"
+															}
+														>
+															{selectedHostIds.has(host.hostId) ? (
+																<CheckSquare className="h-4 w-4 text-primary-600" />
+															) : (
+																<Square className="h-4 w-4 text-secondary-400" />
+															)}
+														</button>
+													)}
 													<Server className="h-5 w-5 text-secondary-400 flex-shrink-0" />
 													<div className="flex-1 min-w-0">
 														<div className="text-base font-semibold text-secondary-900 dark:text-white truncate">
@@ -416,6 +561,16 @@ const PackageDetail = () => {
 																{host.currentVersion || "Unknown"}
 															</span>
 														</div>
+														{host.sourceRepoName && (
+															<div className="flex items-center gap-2">
+																<span className="text-xs text-secondary-500 dark:text-white">
+																	Repo:
+																</span>
+																<span className="badge-secondary text-xs">
+																	{formatRepoName(host.sourceRepoName)}
+																</span>
+															</div>
+														)}
 														<div className="flex items-center gap-2">
 															<span className="text-xs text-secondary-500 dark:text-white">
 																Status:
@@ -455,11 +610,11 @@ const PackageDetail = () => {
 																			packageName: pkg.name,
 																		});
 																	}}
-																	disabled={patchPackageMutation.isPending}
+																	disabled={patchingHostId === host.hostId}
 																	className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded bg-primary-100 text-primary-800 hover:bg-primary-200 dark:bg-primary-900 dark:text-primary-200 dark:hover:bg-primary-800 disabled:opacity-50"
 																>
 																	<Wrench className="h-3 w-3" />
-																	{patchPackageMutation.isPending
+																	{patchingHostId === host.hostId
 																		? "Queuing…"
 																		: "Patch"}
 																</button>
@@ -489,6 +644,36 @@ const PackageDetail = () => {
 										<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 											<thead className="bg-secondary-50 dark:bg-secondary-700">
 												<tr>
+													{canManageHosts() && (
+														<th className="w-10 px-3 py-3 text-left">
+															<button
+																type="button"
+																onClick={toggleAllOnPage}
+																disabled={patchableOnPage.length === 0}
+																className="flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+																aria-label={
+																	allOnPageSelected
+																		? "Deselect all patchable hosts on this page"
+																		: "Select all patchable hosts on this page"
+																}
+																title={
+																	patchableOnPage.length === 0
+																		? "No patchable hosts on this page"
+																		: allOnPageSelected
+																			? "Deselect all on page"
+																			: "Select all on page"
+																}
+															>
+																{allOnPageSelected ? (
+																	<CheckSquare className="h-4 w-4 text-primary-600" />
+																) : someOnPageSelected ? (
+																	<CheckSquare className="h-4 w-4 text-primary-400" />
+																) : (
+																	<Square className="h-4 w-4 text-secondary-400" />
+																)}
+															</button>
+														</th>
+													)}
 													<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 														Host
 													</th>
@@ -497,6 +682,9 @@ const PackageDetail = () => {
 													</th>
 													<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 														Status
+													</th>
+													<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+														Source Repo
 													</th>
 													<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 														Last Updated
@@ -512,12 +700,39 @@ const PackageDetail = () => {
 												</tr>
 											</thead>
 											<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
-												{filteredAndPaginatedHosts.map((host) => (
+												{hosts.map((host) => (
 													<tr
 														key={host.hostId}
 														className="hover:bg-secondary-50 dark:hover:bg-secondary-700 cursor-pointer transition-colors"
 														onClick={() => handleHostClick(host.hostId)}
 													>
+														{canManageHosts() && (
+															<td
+																className="w-10 px-3 py-4"
+																onClick={(e) => e.stopPropagation()}
+															>
+																{isHostPatchable(host) ? (
+																	<button
+																		type="button"
+																		onClick={() => toggleHost(host.hostId)}
+																		className="flex items-center justify-center"
+																		aria-label={
+																			selectedHostIds.has(host.hostId)
+																				? "Deselect host"
+																				: "Select host"
+																		}
+																	>
+																		{selectedHostIds.has(host.hostId) ? (
+																			<CheckSquare className="h-4 w-4 text-primary-600" />
+																		) : (
+																			<Square className="h-4 w-4 text-secondary-400" />
+																		)}
+																	</button>
+																) : (
+																	<Square className="h-4 w-4 text-secondary-200 dark:text-secondary-700" />
+																)}
+															</td>
+														)}
 														<td className="px-6 py-4 whitespace-nowrap">
 															<div className="flex items-center">
 																<Server className="h-5 w-5 text-secondary-400 mr-3" />
@@ -544,6 +759,17 @@ const PackageDetail = () => {
 															) : (
 																<span className="badge-success w-fit">
 																	Up to Date
+																</span>
+															)}
+														</td>
+														<td className="px-6 py-4 whitespace-nowrap">
+															{host.sourceRepoName ? (
+																<span className="badge-secondary text-xs">
+																	{formatRepoName(host.sourceRepoName)}
+																</span>
+															) : (
+																<span className="text-xs text-secondary-400 dark:text-secondary-400">
+																	&mdash;
 																</span>
 															)}
 														</td>
@@ -586,11 +812,11 @@ const PackageDetail = () => {
 																				packageName: pkg.name,
 																			})
 																		}
-																		disabled={patchPackageMutation.isPending}
+																		disabled={patchingHostId === host.hostId}
 																		className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded bg-primary-100 text-primary-800 hover:bg-primary-200 dark:bg-primary-900 dark:text-primary-200 dark:hover:bg-primary-800 disabled:opacity-50"
 																	>
 																		<Wrench className="h-3 w-3" />
-																		{patchPackageMutation.isPending
+																		{patchingHostId === host.hostId
 																			? "Queuing…"
 																			: "Patch"}
 																	</button>
@@ -727,6 +953,36 @@ const PackageDetail = () => {
 					patchType="patch_package"
 					packageName={patchConfirmTarget.packageName}
 					hostDisplayName={patchConfirmTarget.hostName}
+				/>
+			)}
+
+			{/* Multi-host patch wizard for selected hosts */}
+			{showMultiHostModal && (
+				<PatchPackageMultiHostModal
+					isOpen={showMultiHostModal}
+					onClose={() => setShowMultiHostModal(false)}
+					packageNames={[pkg.name]}
+					restrictHostIds={selectedHostIds}
+					onSuccess={(mode, info) => {
+						setSelectedHostIds(new Set());
+						setShowMultiHostModal(false);
+						queryClient.invalidateQueries({
+							queryKey: ["package", decodedPackageId],
+						});
+						queryClient.invalidateQueries({
+							queryKey: ["package-hosts", decodedPackageId],
+						});
+						queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
+						queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
+						// Single immediate run -> deep-link to its detail page
+						// so the user can watch the live terminal output.
+						const immediate = info?.runs?.filter((r) => r.immediate) || [];
+						if (mode === "patch" && immediate.length === 1) {
+							navigate(`/patching/runs/${immediate[0].runId}`);
+						} else {
+							navigate("/patching?tab=runs");
+						}
+					}}
 				/>
 			)}
 		</div>

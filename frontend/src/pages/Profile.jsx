@@ -17,6 +17,7 @@ import {
 	RefreshCw,
 	Save,
 	Shield,
+	ShieldCheck,
 	Smartphone,
 	Sun,
 	Trash2,
@@ -30,7 +31,13 @@ import { FORM_INPUT_CLASS } from "../components/FormInput";
 import { useAuth } from "../contexts/AuthContext";
 import { THEME_PRESETS, useColorTheme } from "../contexts/ColorThemeContext";
 import { useTheme } from "../contexts/ThemeContext";
-import { discordAPI, formatDate, isCorsError, tfaAPI } from "../utils/api";
+import {
+	discordAPI,
+	formatDate,
+	isCorsError,
+	tfaAPI,
+	trustedDevicesAPI,
+} from "../utils/api";
 
 const Profile = () => {
 	const usernameId = useId();
@@ -209,6 +216,15 @@ const Profile = () => {
 			? []
 			: [{ id: "tfa", name: "Multi-Factor Authentication", icon: Smartphone }]), // Hide TFA tab for OIDC users
 		{ id: "sessions", name: "Active Sessions", icon: Monitor },
+		...(isOIDCUser
+			? []
+			: [
+					{
+						id: "trusted-devices",
+						name: "Trusted Devices",
+						icon: ShieldCheck,
+					},
+				]),
 		{ id: "connections", name: "Connected Accounts", icon: Link2 },
 	];
 
@@ -750,6 +766,9 @@ const Profile = () => {
 
 					{/* Sessions Tab */}
 					{activeTab === "sessions" && <SessionsTab />}
+
+					{/* Trusted Devices Tab */}
+					{activeTab === "trusted-devices" && <TrustedDevicesTab />}
 
 					{/* Connected Accounts Tab */}
 					{activeTab === "connections" && (
@@ -1695,6 +1714,208 @@ const SessionsTab = () => {
 					</h3>
 					<p className="mt-1 text-sm text-secondary-600 dark:text-white">
 						You don't have any active sessions at the moment.
+					</p>
+				</div>
+			)}
+		</div>
+	);
+};
+
+// Trusted Devices Tab Component
+// Lists the user's "remember this device" records. These are separate from
+// active sessions — they persist across logouts and exist solely to skip MFA
+// on this browser until natural expiry or explicit revocation.
+const TrustedDevicesTab = () => {
+	const [message, setMessage] = useState({ type: "", text: "" });
+
+	const {
+		data: devicesData,
+		isLoading,
+		refetch,
+	} = useQuery({
+		queryKey: ["trusted-devices"],
+		queryFn: async () => {
+			const res = await trustedDevicesAPI.list();
+			return res.data;
+		},
+	});
+
+	const revokeMutation = useMutation({
+		mutationFn: (id) => trustedDevicesAPI.revoke(id),
+		onSuccess: () => {
+			setMessage({ type: "success", text: "Trusted device revoked" });
+			refetch();
+		},
+		onError: (error) => {
+			setMessage({
+				type: "error",
+				text: error.response?.data?.error || "Failed to revoke device",
+			});
+		},
+	});
+
+	const revokeAllMutation = useMutation({
+		mutationFn: () => trustedDevicesAPI.revokeAll(),
+		onSuccess: () => {
+			setMessage({ type: "success", text: "All trusted devices revoked" });
+			refetch();
+		},
+		onError: (error) => {
+			setMessage({
+				type: "error",
+				text: error.response?.data?.error || "Failed to revoke devices",
+			});
+		},
+	});
+
+	const handleRevoke = (id) => {
+		if (
+			window.confirm(
+				"Forget this device? You'll need to enter your authentication code on it next time you sign in.",
+			)
+		) {
+			revokeMutation.mutate(id);
+		}
+	};
+
+	const handleRevokeAll = () => {
+		if (
+			window.confirm(
+				"Forget all trusted devices? You'll need to enter your authentication code on every device next time you sign in.",
+			)
+		) {
+			revokeAllMutation.mutate();
+		}
+	};
+
+	const devices = devicesData?.trusted_devices || [];
+
+	return (
+		<div className="space-y-6">
+			<div>
+				<h3 className="text-lg font-medium text-secondary-900 dark:text-secondary-100">
+					Trusted Devices
+				</h3>
+				<p className="text-sm text-secondary-600 dark:text-white">
+					Browsers you've chosen to skip multi-factor authentication on.
+					Revoking a device will require a fresh authentication code on that
+					browser next time you sign in.
+				</p>
+			</div>
+
+			{message.text && (
+				<div
+					className={`rounded-md p-4 ${
+						message.type === "success"
+							? "bg-success-50 border border-success-200 text-success-700"
+							: "bg-danger-50 border border-danger-200 text-danger-700"
+					}`}
+				>
+					<div className="flex">
+						{message.type === "success" ? (
+							<CheckCircle className="h-5 w-5" />
+						) : (
+							<AlertCircle className="h-5 w-5" />
+						)}
+						<div className="ml-3">
+							<p className="text-sm">{message.text}</p>
+						</div>
+					</div>
+				</div>
+			)}
+
+			{isLoading ? (
+				<div className="flex items-center justify-center py-8">
+					<RefreshCw className="h-8 w-8 animate-spin text-primary-600" />
+				</div>
+			) : devices.length > 0 ? (
+				<div className="space-y-4">
+					{devices.length > 1 && (
+						<div className="flex justify-end">
+							<button
+								type="button"
+								onClick={handleRevokeAll}
+								disabled={revokeAllMutation.isPending}
+								className="inline-flex items-center px-4 py-2 border border-danger-300 text-sm font-medium rounded-md text-danger-700 bg-white hover:bg-danger-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-danger-500 disabled:opacity-50 w-full sm:w-auto justify-center sm:justify-end"
+							>
+								<LogOut className="h-4 w-4 mr-2" />
+								{revokeAllMutation.isPending
+									? "Revoking..."
+									: "Forget All Devices"}
+							</button>
+						</div>
+					)}
+
+					{devices.map((device) => (
+						<div
+							key={device.id}
+							className={`border rounded-lg p-3 md:p-4 ${
+								device.is_current
+									? "border-primary-200 bg-primary-50 dark:border-primary-800 dark:bg-primary-900/20"
+									: "border-secondary-200 bg-white dark:border-secondary-700 dark:bg-secondary-800"
+							}`}
+						>
+							<div className="flex items-start justify-between gap-3">
+								<div className="flex-1 min-w-0">
+									<div className="flex items-start space-x-2 md:space-x-3">
+										<ShieldCheck className="h-4 w-4 md:h-5 md:w-5 text-secondary-500 flex-shrink-0 mt-0.5" />
+										<div className="flex-1 min-w-0">
+											<div className="flex flex-wrap items-center gap-2">
+												<h4 className="text-sm font-medium text-secondary-900 dark:text-secondary-100">
+													{device.label || "Unknown device"}
+												</h4>
+												{device.is_current && (
+													<span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200 flex-shrink-0">
+														This device
+													</span>
+												)}
+											</div>
+											{device.ip_address && (
+												<p className="text-sm text-secondary-600 dark:text-white mt-1">
+													IP at trust: {device.ip_address}
+												</p>
+											)}
+										</div>
+									</div>
+
+									<div className="mt-3 space-y-2 text-sm text-secondary-600 dark:text-white">
+										<div className="flex items-center space-x-2">
+											<Clock className="h-4 w-4 flex-shrink-0" />
+											<span>Last used: {formatDate(device.last_used_at)}</span>
+										</div>
+										<div className="text-xs md:text-sm">
+											<span>
+												Trusted since: {formatDate(device.created_at)}
+											</span>
+										</div>
+										<div className="text-xs md:text-sm">
+											<span>Expires: {formatDate(device.expires_at)}</span>
+										</div>
+									</div>
+								</div>
+
+								<button
+									type="button"
+									onClick={() => handleRevoke(device.id)}
+									disabled={revokeMutation.isPending}
+									title="Forget this device"
+									className="inline-flex items-center px-3 py-2 border border-danger-300 text-sm font-medium rounded-md text-danger-700 bg-white hover:bg-danger-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-danger-500 disabled:opacity-50 flex-shrink-0"
+								>
+									<Trash2 className="h-4 w-4" />
+								</button>
+							</div>
+						</div>
+					))}
+				</div>
+			) : (
+				<div className="text-center py-8">
+					<ShieldCheck className="mx-auto h-12 w-12 text-secondary-400" />
+					<h3 className="mt-2 text-sm font-medium text-secondary-900 dark:text-secondary-100">
+						No trusted devices
+					</h3>
+					<p className="mt-1 text-sm text-secondary-600 dark:text-white">
+						When signing in, check "Remember this device" to skip MFA on
+						browsers you trust.
 					</p>
 				</div>
 			)}

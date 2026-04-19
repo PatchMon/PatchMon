@@ -277,6 +277,41 @@ export const dashboardPreferencesAPI = {
 	updateLayout: (layout) => api.put("/dashboard-preferences/layout", layout),
 };
 
+// Billing API (customer-facing; requires can_manage_billing + ADMIN_MODE on)
+export const billingAPI = {
+	getCurrent: () => api.get("/me/billing"),
+	createPortalSession: (returnUrl) =>
+		api.post("/me/billing/portal", { return_url: returnUrl }),
+	// Tier-change preview returns what {new_tier, interval, commit_hosts?}
+	// would cost today (prorated) and at next renewal without calling any
+	// mutating Stripe API. commit_hosts is annual-only (Phase 5e) and
+	// represents pre-committed capacity.
+	previewTierChange: ({ new_tier, interval, commit_hosts }) => {
+		const body = { new_tier, interval };
+		if (typeof commit_hosts === "number" && commit_hosts > 0) {
+			body.commit_hosts = commit_hosts;
+		}
+		return api.post("/me/billing/tier-change/preview", body);
+	},
+	// Apply the tier change. Upgrades charge immediately (always_invoice);
+	// downgrades are scheduled for current_period_end. commit_hosts is only
+	// honoured on annual intervals.
+	applyTierChange: ({ new_tier, interval, commit_hosts }) => {
+		const body = { new_tier, interval };
+		if (typeof commit_hosts === "number" && commit_hosts > 0) {
+			body.commit_hosts = commit_hosts;
+		}
+		return api.post("/me/billing/tier-change", body);
+	},
+	// Trigger an on-demand host-count sync. The server proxies to the
+	// regional provisioner which does a live count on the tenant DB and
+	// pushes the result through to the manager + Stripe. The response
+	// echoes the freshly-projected billing_state so the UI can render the
+	// new next-invoice estimate without waiting for the next poll.
+	// Timeout is bumped to 35s because the upstream chain can take 5-10s.
+	sync: () => api.post("/me/billing/sync", null, { timeout: 35000 }),
+};
+
 // Hosts API (for agent communication - kept for compatibility)
 export const hostsAPI = {
 	// Legacy register endpoint (now deprecated)
@@ -520,6 +555,13 @@ export const tfaAPI = {
 	status: () => api.get("/tfa/status"),
 	regenerateBackupCodes: () => api.post("/tfa/regenerate-backup-codes"),
 	verify: (data) => api.post("/tfa/verify", data),
+};
+
+// Trusted Devices API ("remember this device" for MFA)
+export const trustedDevicesAPI = {
+	list: () => api.get("/auth/trusted-devices"),
+	revoke: (id) => api.delete(`/auth/trusted-devices/${id}`),
+	revokeAll: () => api.delete("/auth/trusted-devices"),
 };
 
 export const formatRelativeTime = (date) => {

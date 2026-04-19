@@ -9,6 +9,7 @@ type Package struct {
 	AvailableVersion string `json:"availableVersion,omitempty"`
 	NeedsUpdate      bool   `json:"needsUpdate"`
 	IsSecurityUpdate bool   `json:"isSecurityUpdate"`
+	SourceRepository string `json:"sourceRepository,omitempty"`
 	// WUA fields - only populated for Category="Windows Update" entries
 	WUAGuid           string   `json:"wuaGuid,omitempty"`
 	WUAKb             string   `json:"wuaKb,omitempty"`

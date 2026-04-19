@@ -4,6 +4,19 @@ const DRY_RUN_POLL_INTERVAL_MS = 2000;
 const DRY_RUN_TIMEOUT_MS = 30000;
 
 /**
+ * Build the absolute WebSocket URL for the live patch-run output stream.
+ * The browser auto-attaches the auth cookie on same-origin upgrades, so no
+ * ticket is required — the backend uses the shared JWT middleware.
+ */
+export function buildRunStreamURL(runId) {
+	const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+	const host = window.location.host;
+	return `${protocol}//${host}/api/v1/patching/runs/${encodeURIComponent(
+		runId,
+	)}/stream`;
+}
+
+/**
  * Poll a patch run until it reaches a terminal state (validated, completed, failed) or timeout.
  * Returns { status, packages_affected, error }.
  */
@@ -75,6 +88,8 @@ export const patchingAPI = {
 			.then((res) => res.data),
 	retryValidation: (id) =>
 		api.post(`/patching/runs/${id}/retry-validation`).then((res) => res.data),
+	stopRun: (id) =>
+		api.post(`/patching/runs/${id}/stop`).then((res) => res.data),
 	deleteRun: (id) => api.delete(`/patching/runs/${id}`),
 	getPreviewRun: (host_id) =>
 		api

@@ -16,15 +16,17 @@ SELECT COUNT(*)::int FROM host_packages hp
 JOIN hosts h ON h.id = hp.host_id
 WHERE hp.package_id = $1
 AND ($2::text IS NULL OR h.friendly_name ILIKE '%' || $2 || '%' OR h.hostname ILIKE '%' || $2 || '%' OR hp.current_version ILIKE '%' || $2 || '%' OR hp.available_version ILIKE '%' || $2 || '%')
+AND ($3::bool IS NULL OR hp.needs_update = $3)
 `
 
 type CountHostsForPackageParams struct {
-	PackageID string  `json:"package_id"`
-	Search    *string `json:"search"`
+	PackageID   string  `json:"package_id"`
+	Search      *string `json:"search"`
+	NeedsUpdate *bool   `json:"needs_update"`
 }
 
 func (q *Queries) CountHostsForPackage(ctx context.Context, arg CountHostsForPackageParams) (int32, error) {
-	row := q.db.QueryRow(ctx, countHostsForPackage, arg.PackageID, arg.Search)
+	row := q.db.QueryRow(ctx, countHostsForPackage, arg.PackageID, arg.Search, arg.NeedsUpdate)
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -38,12 +40,14 @@ AND (
     $3::text IS NULL
     AND $4::text IS NULL
     AND $5::text IS NULL
+    AND $6::text IS NULL
     OR EXISTS (
         SELECT 1 FROM host_packages hp
         WHERE hp.package_id = p.id
         AND ($3::text IS NULL OR hp.host_id = $3)
         AND ($4::text IS NULL OR ($4 = 'true' AND hp.needs_update = true))
         AND ($5::text IS NULL OR ($5 = 'true' AND hp.needs_update = true AND hp.is_security_update = true))
+        AND ($6::text IS NULL OR hp.source_repository_id = $6)
     )
 )
 `
@@ -54,6 +58,7 @@ type CountPackagesParams struct {
 	HostID           *string `json:"host_id"`
 	NeedsUpdate      *string `json:"needs_update"`
 	IsSecurityUpdate *string `json:"is_security_update"`
+	RepositoryID     *string `json:"repository_id"`
 }
 
 func (q *Queries) CountPackages(ctx context.Context, arg CountPackagesParams) (int32, error) {
@@ -63,6 +68,7 @@ func (q *Queries) CountPackages(ctx context.Context, arg CountPackagesParams) (i
 		arg.HostID,
 		arg.NeedsUpdate,
 		arg.IsSecurityUpdate,
+		arg.RepositoryID,
 	)
 	var column_1 int32
 	err := row.Scan(&column_1)
@@ -184,31 +190,37 @@ func (q *Queries) GetHostPackageStatsByPackageIDs(ctx context.Context, arg GetHo
 const getHostPackagesWithHostsByPackageID = `-- name: GetHostPackagesWithHostsByPackageID :many
 SELECT hp.id, hp.host_id, hp.package_id, hp.current_version, hp.available_version,
     hp.needs_update, hp.is_security_update, hp.last_checked,
+    hp.source_repository_id,
+    r.name as source_repo_name, r.url as source_repo_url,
     h.friendly_name as host_friendly_name, h.hostname as host_hostname, h.ip as host_ip,
     h.os_type as host_os_type, h.os_version as host_os_version,
     h.last_update as host_last_update, h.needs_reboot as host_needs_reboot
 FROM host_packages hp
 JOIN hosts h ON h.id = hp.host_id
+LEFT JOIN repositories r ON r.id = hp.source_repository_id
 WHERE hp.package_id = $1
 ORDER BY hp.needs_update DESC
 `
 
 type GetHostPackagesWithHostsByPackageIDRow struct {
-	ID               string           `json:"id"`
-	HostID           string           `json:"host_id"`
-	PackageID        string           `json:"package_id"`
-	CurrentVersion   string           `json:"current_version"`
-	AvailableVersion *string          `json:"available_version"`
-	NeedsUpdate      bool             `json:"needs_update"`
-	IsSecurityUpdate bool             `json:"is_security_update"`
-	LastChecked      pgtype.Timestamp `json:"last_checked"`
-	HostFriendlyName string           `json:"host_friendly_name"`
-	HostHostname     *string          `json:"host_hostname"`
-	HostIp           *string          `json:"host_ip"`
-	HostOsType       string           `json:"host_os_type"`
-	HostOsVersion    string           `json:"host_os_version"`
-	HostLastUpdate   pgtype.Timestamp `json:"host_last_update"`
-	HostNeedsReboot  *bool            `json:"host_needs_reboot"`
+	ID                 string           `json:"id"`
+	HostID             string           `json:"host_id"`
+	PackageID          string           `json:"package_id"`
+	CurrentVersion     string           `json:"current_version"`
+	AvailableVersion   *string          `json:"available_version"`
+	NeedsUpdate        bool             `json:"needs_update"`
+	IsSecurityUpdate   bool             `json:"is_security_update"`
+	LastChecked        pgtype.Timestamp `json:"last_checked"`
+	SourceRepositoryID *string          `json:"source_repository_id"`
+	SourceRepoName     *string          `json:"source_repo_name"`
+	SourceRepoUrl      *string          `json:"source_repo_url"`
+	HostFriendlyName   string           `json:"host_friendly_name"`
+	HostHostname       *string          `json:"host_hostname"`
+	HostIp             *string          `json:"host_ip"`
+	HostOsType         string           `json:"host_os_type"`
+	HostOsVersion      string           `json:"host_os_version"`
+	HostLastUpdate     pgtype.Timestamp `json:"host_last_update"`
+	HostNeedsReboot    *bool            `json:"host_needs_reboot"`
 }
 
 func (q *Queries) GetHostPackagesWithHostsByPackageID(ctx context.Context, packageID string) ([]GetHostPackagesWithHostsByPackageIDRow, error) {
@@ -229,6 +241,9 @@ func (q *Queries) GetHostPackagesWithHostsByPackageID(ctx context.Context, packa
 			&i.NeedsUpdate,
 			&i.IsSecurityUpdate,
 			&i.LastChecked,
+			&i.SourceRepositoryID,
+			&i.SourceRepoName,
+			&i.SourceRepoUrl,
 			&i.HostFriendlyName,
 			&i.HostHostname,
 			&i.HostIp,
@@ -394,6 +409,54 @@ func (q *Queries) GetSecurityCountByPackageIDs(ctx context.Context, arg GetSecur
 	return items, nil
 }
 
+const getSourceReposByPackageIDs = `-- name: GetSourceReposByPackageIDs :many
+SELECT DISTINCT hp.package_id, r.id as repo_id, r.name as repo_name, r.url as repo_url, r.repo_type
+FROM host_packages hp
+JOIN repositories r ON r.id = hp.source_repository_id
+WHERE hp.package_id = ANY($1::text[])
+AND ($2::text IS NULL OR hp.host_id = $2)
+ORDER BY hp.package_id, r.name
+`
+
+type GetSourceReposByPackageIDsParams struct {
+	Column1 []string `json:"column_1"`
+	HostID  *string  `json:"host_id"`
+}
+
+type GetSourceReposByPackageIDsRow struct {
+	PackageID string `json:"package_id"`
+	RepoID    string `json:"repo_id"`
+	RepoName  string `json:"repo_name"`
+	RepoUrl   string `json:"repo_url"`
+	RepoType  string `json:"repo_type"`
+}
+
+func (q *Queries) GetSourceReposByPackageIDs(ctx context.Context, arg GetSourceReposByPackageIDsParams) ([]GetSourceReposByPackageIDsRow, error) {
+	rows, err := q.db.Query(ctx, getSourceReposByPackageIDs, arg.Column1, arg.HostID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSourceReposByPackageIDsRow
+	for rows.Next() {
+		var i GetSourceReposByPackageIDsRow
+		if err := rows.Scan(
+			&i.PackageID,
+			&i.RepoID,
+			&i.RepoName,
+			&i.RepoUrl,
+			&i.RepoType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getUpdatesCountByPackageIDs = `-- name: GetUpdatesCountByPackageIDs :many
 SELECT package_id, COUNT(*)::int as cnt FROM host_packages
 WHERE package_id = ANY($1::text[]) AND needs_update = true
@@ -433,41 +496,48 @@ func (q *Queries) GetUpdatesCountByPackageIDs(ctx context.Context, arg GetUpdate
 
 const listHostsForPackage = `-- name: ListHostsForPackage :many
 SELECT h.id, h.friendly_name, h.hostname, h.os_type, h.os_version, h.last_update, h.needs_reboot,
-    hp.current_version, hp.available_version, hp.needs_update, hp.is_security_update, hp.last_checked
+    hp.current_version, hp.available_version, hp.needs_update, hp.is_security_update, hp.last_checked,
+    hp.source_repository_id, r.name as source_repo_name
 FROM host_packages hp
 JOIN hosts h ON h.id = hp.host_id
+LEFT JOIN repositories r ON r.id = hp.source_repository_id
 WHERE hp.package_id = $1
 AND ($2::text IS NULL OR h.friendly_name ILIKE '%' || $2 || '%' OR h.hostname ILIKE '%' || $2 || '%' OR hp.current_version ILIKE '%' || $2 || '%' OR hp.available_version ILIKE '%' || $2 || '%')
-ORDER BY h.friendly_name ASC
-LIMIT $4 OFFSET $3
+AND ($3::bool IS NULL OR hp.needs_update = $3)
+ORDER BY hp.needs_update DESC, h.friendly_name ASC
+LIMIT $5 OFFSET $4
 `
 
 type ListHostsForPackageParams struct {
-	PackageID string  `json:"package_id"`
-	Search    *string `json:"search"`
-	Offset    int32   `json:"offset"`
-	Limit     int32   `json:"limit"`
+	PackageID   string  `json:"package_id"`
+	Search      *string `json:"search"`
+	NeedsUpdate *bool   `json:"needs_update"`
+	Offset      int32   `json:"offset"`
+	Limit       int32   `json:"limit"`
 }
 
 type ListHostsForPackageRow struct {
-	ID               string           `json:"id"`
-	FriendlyName     string           `json:"friendly_name"`
-	Hostname         *string          `json:"hostname"`
-	OsType           string           `json:"os_type"`
-	OsVersion        string           `json:"os_version"`
-	LastUpdate       pgtype.Timestamp `json:"last_update"`
-	NeedsReboot      *bool            `json:"needs_reboot"`
-	CurrentVersion   string           `json:"current_version"`
-	AvailableVersion *string          `json:"available_version"`
-	NeedsUpdate      bool             `json:"needs_update"`
-	IsSecurityUpdate bool             `json:"is_security_update"`
-	LastChecked      pgtype.Timestamp `json:"last_checked"`
+	ID                 string           `json:"id"`
+	FriendlyName       string           `json:"friendly_name"`
+	Hostname           *string          `json:"hostname"`
+	OsType             string           `json:"os_type"`
+	OsVersion          string           `json:"os_version"`
+	LastUpdate         pgtype.Timestamp `json:"last_update"`
+	NeedsReboot        *bool            `json:"needs_reboot"`
+	CurrentVersion     string           `json:"current_version"`
+	AvailableVersion   *string          `json:"available_version"`
+	NeedsUpdate        bool             `json:"needs_update"`
+	IsSecurityUpdate   bool             `json:"is_security_update"`
+	LastChecked        pgtype.Timestamp `json:"last_checked"`
+	SourceRepositoryID *string          `json:"source_repository_id"`
+	SourceRepoName     *string          `json:"source_repo_name"`
 }
 
 func (q *Queries) ListHostsForPackage(ctx context.Context, arg ListHostsForPackageParams) ([]ListHostsForPackageRow, error) {
 	rows, err := q.db.Query(ctx, listHostsForPackage,
 		arg.PackageID,
 		arg.Search,
+		arg.NeedsUpdate,
 		arg.Offset,
 		arg.Limit,
 	)
@@ -491,6 +561,8 @@ func (q *Queries) ListHostsForPackage(ctx context.Context, arg ListHostsForPacka
 			&i.NeedsUpdate,
 			&i.IsSecurityUpdate,
 			&i.LastChecked,
+			&i.SourceRepositoryID,
+			&i.SourceRepoName,
 		); err != nil {
 			return nil, err
 		}
@@ -606,16 +678,18 @@ AND (
     $3::text IS NULL
     AND $4::text IS NULL
     AND $5::text IS NULL
+    AND $6::text IS NULL
     OR EXISTS (
         SELECT 1 FROM host_packages hp
         WHERE hp.package_id = p.id
         AND ($3::text IS NULL OR hp.host_id = $3)
         AND ($4::text IS NULL OR ($4 = 'true' AND hp.needs_update = true))
         AND ($5::text IS NULL OR ($5 = 'true' AND hp.needs_update = true AND hp.is_security_update = true))
+        AND ($6::text IS NULL OR hp.source_repository_id = $6)
     )
 )
 ORDER BY p.name ASC
-LIMIT $7 OFFSET $6
+LIMIT $8 OFFSET $7
 `
 
 type ListPackagesParams struct {
@@ -624,6 +698,7 @@ type ListPackagesParams struct {
 	HostID           *string `json:"host_id"`
 	NeedsUpdate      *string `json:"needs_update"`
 	IsSecurityUpdate *string `json:"is_security_update"`
+	RepositoryID     *string `json:"repository_id"`
 	Offset           int32   `json:"offset"`
 	Limit            int32   `json:"limit"`
 }
@@ -644,6 +719,7 @@ func (q *Queries) ListPackages(ctx context.Context, arg ListPackagesParams) ([]L
 		arg.HostID,
 		arg.NeedsUpdate,
 		arg.IsSecurityUpdate,
+		arg.RepositoryID,
 		arg.Offset,
 		arg.Limit,
 	)

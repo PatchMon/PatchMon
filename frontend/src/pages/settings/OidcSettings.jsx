@@ -588,6 +588,19 @@ const OidcSettings = () => {
 							Map IdP group names to PatchMon roles. Users are assigned the
 							highest matching role. Default role is used when no group matches.
 						</p>
+						{form.oidc_sync_roles && !form.oidc_superadmin_group?.trim() && (
+							<div className="mb-4 p-3 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+								<p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+									Superadmin group is not configured
+								</p>
+								<p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
+									Role sync is enabled but no Superadmin IdP group is set. OIDC
+									will not grant superadmin to any user, and existing
+									superadmins will not be demoted on login. Set the Superadmin
+									group below to manage the superadmin role via OIDC.
+								</p>
+							</div>
+						)}
 						<div className="overflow-x-auto rounded-lg border border-secondary-200 dark:border-secondary-600">
 							<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 								<thead className="bg-secondary-50 dark:bg-secondary-700">

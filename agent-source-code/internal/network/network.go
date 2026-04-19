@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/sirupsen/logrus"
 
@@ -28,13 +29,31 @@ func New(logger *logrus.Logger) *Manager {
 	}
 }
 
-// GetNetworkInfo collects network information
+// GetNetworkInfo collects network information.
+//
+// OPTIMIZATION: Default gateway, DNS servers, and interface enumeration are
+// independent and IO-bound. Running them in parallel lets their /proc reads
+// and any subprocess spawns overlap.
 func (m *Manager) GetNetworkInfo() models.NetworkInfo {
-	info := models.NetworkInfo{
-		GatewayIP:         m.getGatewayIP(),
-		DNSServers:        m.getDNSServers(),
-		NetworkInterfaces: m.getNetworkInterfaces(),
-	}
+	var info models.NetworkInfo
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+
+	go func() {
+		defer wg.Done()
+		info.GatewayIP = m.getGatewayIP()
+	}()
+	go func() {
+		defer wg.Done()
+		info.DNSServers = m.getDNSServers()
+	}()
+	go func() {
+		defer wg.Done()
+		info.NetworkInterfaces = m.getNetworkInterfaces()
+	}()
+
+	wg.Wait()
 
 	m.logger.WithFields(logrus.Fields{
 		"gateway":     info.GatewayIP,
@@ -245,12 +264,19 @@ func (m *Manager) getDNSServers() []string {
 }
 
 // getNetworkInterfaces gets network interface information using standard library
+//
+// OPTIMIZATION: Previously this ran `ip route show dev <iface>` twice per
+// interface (once for IPv4, once for IPv6), giving 2*N serial subprocesses.
+// Now we shell out at most twice — a single `ip route` and `ip -6 route` —
+// parse once, and look up results per interface in O(1).
 func (m *Manager) getNetworkInterfaces() []models.NetworkInterface {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		m.logger.WithError(err).Warn("Failed to get network interfaces")
 		return []models.NetworkInterface{}
 	}
+
+	gw4, gw6 := m.gatewayTablesByInterface()
 
 	var result []models.NetworkInterface
 
@@ -269,9 +295,11 @@ func (m *Manager) getNetworkInterfaces() []models.NetworkInterface {
 			continue
 		}
 
-		// Get gateways for this interface (separate for IPv4 and IPv6)
-		ipv4Gateway := m.getInterfaceGateway(iface.Name, false)
-		ipv6Gateway := m.getInterfaceGateway(iface.Name, true)
+		ipv4Gateway := gw4[iface.Name]
+		ipv6Gateway := gw6[iface.Name]
+		if ipv4Gateway == "" {
+			ipv4Gateway = m.getInterfaceGatewayFromProc(iface.Name)
+		}
 
 		for _, addr := range addrs {
 			if ipnet, ok := addr.(*net.IPNet); ok {
@@ -347,60 +375,91 @@ func (m *Manager) getNetworkInterfaces() []models.NetworkInterface {
 	return result
 }
 
-// getInterfaceGateway gets the gateway IP for a specific interface
-// ipv6 specifies whether to get IPv6 gateway (true) or IPv4 gateway (false)
-func (m *Manager) getInterfaceGateway(interfaceName string, ipv6 bool) string {
-	// Try using 'ip route' command first (more reliable)
-	if _, err := exec.LookPath("ip"); err == nil {
-		var cmd *exec.Cmd
-		if ipv6 {
-			// Use ip -6 route for IPv6
-			cmd = exec.Command("ip", "-6", "route", "show", "dev", interfaceName)
-		} else {
-			// Use ip route (defaults to IPv4)
-			cmd = exec.Command("ip", "route", "show", "dev", interfaceName)
-		}
+// gatewayTablesByInterface shells out once for IPv4 and once for IPv6 (in
+// parallel) and returns two maps: interface name -> default gateway address.
+// This replaces the per-interface, per-family subprocess spawn that used to
+// dominate network collection on hosts with many interfaces.
+func (m *Manager) gatewayTablesByInterface() (ipv4, ipv6 map[string]string) {
+	ipv4 = make(map[string]string)
+	ipv6 = make(map[string]string)
 
-		output, err := cmd.Output()
-		if err == nil {
-			lines := strings.Split(string(output), "\n")
-			for _, line := range lines {
-				fields := strings.Fields(line)
-				// Look for default route: "default via <gateway> dev <interface>"
-				if len(fields) >= 3 && fields[0] == "default" && fields[1] == "via" {
-					return fields[2]
-				}
-				// Look for route with gateway: "0.0.0.0/0 via <gateway>" (IPv4) or "::/0 via <gateway>" (IPv6)
-				if len(fields) >= 4 {
-					if !ipv6 && fields[0] == "0.0.0.0/0" && fields[1] == "via" {
-						return fields[2]
-					}
-					if ipv6 && fields[0] == "::/0" && fields[1] == "via" {
-						return fields[2]
-					}
-				}
-			}
-		}
+	if _, err := exec.LookPath("ip"); err != nil {
+		return ipv4, ipv6
 	}
 
-	// Fallback: parse /proc/net/route for IPv4 (IPv6 routing is more complex)
-	if !ipv6 {
-		data, err := os.ReadFile("/proc/net/route")
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		out, err := exec.Command("ip", "route", "show").Output()
 		if err != nil {
-			return ""
+			return
 		}
+		parseIPRouteDefaults(string(out), ipv4)
+	}()
+	go func() {
+		defer wg.Done()
+		out, err := exec.Command("ip", "-6", "route", "show").Output()
+		if err != nil {
+			return
+		}
+		parseIPRouteDefaults(string(out), ipv6)
+	}()
+	wg.Wait()
 
-		for line := range strings.SplitSeq(string(data), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 && fields[0] == interfaceName && fields[1] == "00000000" {
-				// Default route for this interface
-				if gateway := m.hexToIPv4(fields[2]); gateway != "" {
-					return gateway
+	return ipv4, ipv6
+}
+
+// parseIPRouteDefaults scans `ip route show` / `ip -6 route show` output for
+// default routes and records "iface -> gateway" in out. Lines look like:
+//
+//	default via 10.0.0.1 dev eth0 proto dhcp src 10.0.0.42 metric 100
+//	0.0.0.0/0 via 10.0.0.1 dev eth0
+//	::/0 via fe80::1 dev eth0
+//
+// We only care about default routes that have an explicit "via" and "dev".
+func parseIPRouteDefaults(output string, out map[string]string) {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		if fields[0] != "default" && fields[0] != "0.0.0.0/0" && fields[0] != "::/0" {
+			continue
+		}
+		if fields[1] != "via" {
+			continue
+		}
+		gateway := fields[2]
+		// Find "dev <iface>" anywhere after the gateway token
+		for i := 3; i+1 < len(fields); i++ {
+			if fields[i] == "dev" {
+				iface := fields[i+1]
+				if _, exists := out[iface]; !exists {
+					out[iface] = gateway
 				}
+				break
 			}
 		}
 	}
+}
 
+// getInterfaceGatewayFromProc reads /proc/net/route for a per-interface IPv4
+// default route. Used as a fallback when the batched `ip route` call didn't
+// populate the interface (e.g. `ip` binary unavailable).
+func (m *Manager) getInterfaceGatewayFromProc(interfaceName string) string {
+	data, err := os.ReadFile("/proc/net/route")
+	if err != nil {
+		return ""
+	}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && fields[0] == interfaceName && fields[1] == "00000000" {
+			if gateway := m.hexToIPv4(fields[2]); gateway != "" {
+				return gateway
+			}
+		}
+	}
 	return ""
 }
 

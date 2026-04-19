@@ -21,6 +21,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/handler"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/patchstream"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/rdpproxy"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/sshproxy"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
@@ -105,7 +106,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		loginLockout = store.NewLoginLockoutStore(redisResolver, resolved.MaxLoginAttempts, resolved.LockoutDurationMin)
 	}
 	releaseNotesAcceptanceStore := store.NewReleaseNotesAcceptanceStore(dbProvider)
-	authHandler := handler.NewAuthHandler(cfg, resolved, usersStore, store.NewSessionsStore(dbProvider), settingsStore, tfaLockout, loginLockout, releaseNotesAcceptanceStore, dbProvider, notifyEmit, log)
+	trustedDevicesStore := store.NewTrustedDevicesStore(dbProvider)
+	authHandler := handler.NewAuthHandler(cfg, resolved, usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, settingsStore, tfaLockout, loginLockout, releaseNotesAcceptanceStore, dbProvider, notifyEmit, log).WithPermissions(permissionsStore)
 	var oidcHandler *handler.OidcHandler
 	if rdb != nil {
 		oidcResolved, _ := config.ResolveOidcConfig(ctx, cfg, settingsStore.GetFirst)
@@ -140,12 +142,14 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	if rdb != nil {
 		discordHandler = handler.NewDiscordHandler(cfg, resolved, settingsStore, usersStore, store.NewDiscordSessionStore(redisResolver), dashboardPrefsStore, authHandler, enc, log)
 	}
-	tfaHandler := handler.NewTfaHandler(usersStore, store.NewSessionsStore(dbProvider), dbProvider, notifyEmit, log)
+	tfaHandler := handler.NewTfaHandler(usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, dbProvider, notifyEmit, log)
+	trustedDevicesHandler := handler.NewTrustedDevicesHandler(trustedDevicesStore, log)
 	userPrefsHandler := handler.NewUserPreferencesHandler(usersStore)
 	settingsHandler := handler.NewSettingsHandlerWithConfig(settingsStore, usersStore, enc, registry, cfg.AssetsDir, cfg, resolved)
 	permissionsHandler := handler.NewPermissionsHandler(permissionsStore)
-	usersHandler := handler.NewUsersHandler(usersStore, store.NewSessionsStore(dbProvider), permissionsStore, settingsStore, resolved, dbProvider, notifyEmit, log)
+	usersHandler := handler.NewUsersHandler(usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, permissionsStore, settingsStore, resolved, dbProvider, notifyEmit, log)
 	hostsStore := store.NewHostsStore(dbProvider)
+	billingHandler := handler.NewBillingHandler(cfg, log, hostsStore)
 	metricsHandler := handler.NewMetricsHandler(settingsStore, hostsStore, cfg)
 	hostGroupsStore := store.NewHostGroupsStore(dbProvider)
 	var integrationStatusStore *store.IntegrationStatusStore
@@ -240,6 +244,10 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	patchAssignmentsStore := store.NewPatchPolicyAssignmentsStore(dbProvider)
 	patchExclusionsStore := store.NewPatchPolicyExclusionsStore(dbProvider)
 	patchingHandler := handler.NewPatchingHandler(patchRunsStore, patchPoliciesStore, patchAssignmentsStore, patchExclusionsStore, hostsStore, queueClient, queueInspector, notifyEmit, log)
+	// Wire up the live patch-run stream hub and the agent WebSocket registry
+	// for the stop-run endpoint. Kept as optional dependencies so unrelated
+	// call-sites don't need to thread them.
+	patchingHandler.SetStreamDependencies(patchstream.NewHub(), registry)
 	windowsUpdatesHandler := handler.NewWindowsUpdatesHandler(hostsStore, dbProvider, notifyEmit)
 
 	aiSvc := ai.NewService(enc)
@@ -300,13 +308,15 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		r.Get("/auto-enrollment/script", autoEnrollmentHandler.ServeScript)
 		// Agent WebSocket (GET with Upgrade: websocket)
 		r.Get("/agents/ws", agentWsHandler.ServeWS)
-		// SSH terminal WebSocket (ticket auth via query param)
+		// SSH terminal WebSocket (ticket auth via query param).
+		// Gated by the ssh_terminal module (Max tier) for multi-context deployments.
 		if sshTerminalWSHandler != nil {
-			r.Get("/ssh-terminal/{hostId}", sshTerminalWSHandler.ServeWS)
+			r.With(hostctx.RequireModule("ssh_terminal")).Get("/ssh-terminal/{hostId}", sshTerminalWSHandler.ServeWS)
 		}
-		// RDP WebSocket tunnel (ticket auth via query param)
+		// RDP WebSocket tunnel (ticket auth via query param).
+		// Gated by the rdp module (Max tier) for multi-context deployments.
 		if rdpEnabled {
-			r.Handle("/rdp/websocket-tunnel", rdpHandler.WebsocketTunnelHandler())
+			r.With(hostctx.RequireModule("rdp")).Handle("/rdp/websocket-tunnel", rdpHandler.WebsocketTunnelHandler())
 		}
 
 		r.Get("/auth/signup-enabled", authHandler.SignupEnabled)
@@ -387,11 +397,33 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.Post("/release-notes-acceptance/accept", releaseNotesAcceptanceHandler.Accept)
 			r.Get("/auth/profile", authHandler.Profile)
 			r.Put("/auth/profile", authHandler.UpdateProfile)
+			// Multi-context info: returns user + tenant (modules) for frontend feature flagging.
+			r.Get("/me/context", authHandler.MeContext)
+			// PatchMon-native Billing page (managed/cloud only). Both endpoints are
+			// double-gated: AdminMode=on AND can_manage_billing permission. When
+			// either fails we return 404 (not 403) so the surface area is invisible
+			// on self-hosted installs. Gating is enforced inside the handler rather
+			// than via middleware so both failure modes collapse to 404.
+			r.Get("/me/billing", billingHandler.GetMyBilling(permissionsStore))
+			r.Post("/me/billing/portal", billingHandler.GetMyBillingPortal(permissionsStore))
+			// Tier-change flow: preview (read-only upcoming-invoice estimate)
+			// and the mutating apply. Both inject the caller's context id
+			// server-side so one workspace cannot target another's sub.
+			r.Post("/me/billing/tier-change", billingHandler.PostMyBillingTierChange(permissionsStore))
+			r.Post("/me/billing/tier-change/preview", billingHandler.PostMyBillingTierChangePreview(permissionsStore))
+			// Pull-model host-count sync: proxied to the regional provisioner,
+			// which performs a live count on the tenant DB and pushes through
+			// to the manager + Stripe. Gated identically to the other billing
+			// endpoints (AdminMode + can_manage_billing; 404 on failure).
+			r.Post("/me/billing/sync", billingHandler.PostMyBillingSync(permissionsStore))
 			r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitPassword)).Put("/auth/change-password", authHandler.ChangePassword)
 			r.Post("/auth/logout", authHandler.Logout)
 			r.Get("/auth/sessions", authHandler.GetSessions)
 			r.Delete("/auth/sessions", authHandler.RevokeAllSessions)
 			r.Delete("/auth/sessions/{sessionId}", authHandler.RevokeSession)
+			r.Get("/auth/trusted-devices", trustedDevicesHandler.List)
+			r.Delete("/auth/trusted-devices", trustedDevicesHandler.RevokeAll)
+			r.Delete("/auth/trusted-devices/{id}", trustedDevicesHandler.Revoke)
 			if discordHandler != nil {
 				r.Post("/auth/discord/link", discordHandler.Link)
 				r.Post("/auth/discord/unlink", discordHandler.Unlink)
@@ -409,18 +441,24 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.Get("/tfa/status", tfaHandler.Status)
 			r.Post("/tfa/regenerate-backup-codes", tfaHandler.RegenerateBackupCodes)
 			if sshTicketHandler != nil {
-				r.With(middleware.RequirePermission("can_use_remote_access", permissionsStore)).Post("/auth/ssh-ticket", sshTicketHandler.ServeCreate)
+				// Gated by ssh_terminal module (Max tier).
+				r.With(middleware.RequirePermission("can_use_remote_access", permissionsStore), hostctx.RequireModule("ssh_terminal")).Post("/auth/ssh-ticket", sshTicketHandler.ServeCreate)
 			}
 			if rdpEnabled {
-				r.With(middleware.RequirePermission("can_use_remote_access", permissionsStore)).Post("/auth/rdp-ticket", rdpHandler.ServeCreateTicket)
+				// Gated by rdp module (Max tier).
+				r.With(middleware.RequirePermission("can_use_remote_access", permissionsStore), hostctx.RequireModule("rdp")).Post("/auth/rdp-ticket", rdpHandler.ServeCreateTicket)
 			}
 			r.Get("/user/preferences", userPrefsHandler.Get)
 			r.Patch("/user/preferences", userPrefsHandler.Update)
 			r.Get("/permissions/user-permissions", permissionsHandler.UserPermissions)
+			// Listing roles stays open (used for role dropdowns in Users tab).
 			r.With(middleware.RequirePermission("can_manage_users", permissionsStore)).Get("/permissions/roles", permissionsHandler.GetRoles)
-			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/permissions/roles/{role}", permissionsHandler.GetRole)
-			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Put("/permissions/roles/{role}", permissionsHandler.UpdateRole)
-			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Delete("/permissions/roles/{role}", permissionsHandler.DeleteRole)
+			// Custom role CRUD gated by rbac_custom module (Plus tier). Built-in roles
+			// (superadmin/admin/user) are handled by the Roles tab and are immutable in the
+			// handler itself, so these write paths are effectively the custom-role surface.
+			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore), hostctx.RequireModule("rbac_custom")).Get("/permissions/roles/{role}", permissionsHandler.GetRole)
+			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore), hostctx.RequireModule("rbac_custom")).Put("/permissions/roles/{role}", permissionsHandler.UpdateRole)
+			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore), hostctx.RequireModule("rbac_custom")).Delete("/permissions/roles/{role}", permissionsHandler.DeleteRole)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/settings", settingsHandler.Get)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/settings/env-config", settingsHandler.GetEnvConfig)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/settings/environment", settingsHandler.GetEnvironmentConfig)
@@ -432,14 +470,15 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Post("/metrics/send-now", metricsHandler.SendNow)
 			r.Get("/version/current", settingsHandler.VersionCurrent(cfg.Version))
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/version/check-updates", settingsHandler.VersionCheckUpdates(cfg.Version))
-			r.Get("/ai/status", settingsHandler.AIStatus)
-			r.Get("/ai/providers", aiHandler.GetProviders)
-			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/ai/settings", aiHandler.GetSettings)
-			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Put("/ai/settings", aiHandler.UpdateSettings)
-			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/ai/debug", aiHandler.GetDebug)
-			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Post("/ai/test", aiHandler.TestConnection)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Post("/ai/assist", aiHandler.Assist)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Post("/ai/complete", aiHandler.Complete)
+			// AI routes gated by the ai module (Max tier).
+			r.With(hostctx.RequireModule("ai")).Get("/ai/status", settingsHandler.AIStatus)
+			r.With(hostctx.RequireModule("ai")).Get("/ai/providers", aiHandler.GetProviders)
+			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore), hostctx.RequireModule("ai")).Get("/ai/settings", aiHandler.GetSettings)
+			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore), hostctx.RequireModule("ai")).Put("/ai/settings", aiHandler.UpdateSettings)
+			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore), hostctx.RequireModule("ai")).Get("/ai/debug", aiHandler.GetDebug)
+			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore), hostctx.RequireModule("ai")).Post("/ai/test", aiHandler.TestConnection)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("ai")).Post("/ai/assist", aiHandler.Assist)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("ai")).Post("/ai/complete", aiHandler.Complete)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/search", searchHandler.HandleGlobalSearch)
 			r.Get("/dashboard-preferences/defaults", dashboardPrefsHandler.GetDefaults)
 			r.Get("/dashboard-preferences/layout", dashboardPrefsHandler.GetLayout)
@@ -448,8 +487,11 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.Put("/dashboard-preferences", dashboardPrefsHandler.Update)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Patch("/settings", settingsHandler.Update)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Put("/settings", settingsHandler.Update)
-			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Post("/settings/logos/upload", settingsHandler.UploadLogo)
-			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Post("/settings/logos/reset", settingsHandler.ResetLogo)
+			// Logo upload/reset gated by custom_branding module (Plus tier).
+			// The read path (GET /settings/logos/{type}) stays open so non-Plus tenants
+			// still see the default branding.
+			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore), hostctx.RequireModule("custom_branding")).Post("/settings/logos/upload", settingsHandler.UploadLogo)
+			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore), hostctx.RequireModule("custom_branding")).Post("/settings/logos/reset", settingsHandler.ResetLogo)
 			r.Get("/agent/version", agentVersionHandler.GetVersionInfo)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/agent/download", agentVersionHandler.ServeAgentDownload)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Post("/agent/version/check", agentVersionHandler.CheckForUpdates)
@@ -460,10 +502,11 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Get("/hosts/admin/list", hostsHandler.AdminList)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/hosts/{hostId}/integrations", hostsHandler.GetIntegrations)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/hosts/{hostId}/integrations/{integrationName}/status", hostsHandler.GetIntegrationStatus)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Post("/hosts/{hostId}/integrations/compliance/request-status", hostsHandler.RequestComplianceStatus)
-			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/integrations/compliance/mode", hostsHandler.SetComplianceMode)
-			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/integrations/compliance/scanners", hostsHandler.SetComplianceScanners)
-			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/integrations/compliance/default-profile", hostsHandler.SetComplianceDefaultProfile)
+			// Compliance host-integration configuration is part of the compliance feature (Max).
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("compliance")).Post("/hosts/{hostId}/integrations/compliance/request-status", hostsHandler.RequestComplianceStatus)
+			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore), hostctx.RequireModule("compliance")).Post("/hosts/{hostId}/integrations/compliance/mode", hostsHandler.SetComplianceMode)
+			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore), hostctx.RequireModule("compliance")).Post("/hosts/{hostId}/integrations/compliance/scanners", hostsHandler.SetComplianceScanners)
+			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore), hostctx.RequireModule("compliance")).Post("/hosts/{hostId}/integrations/compliance/default-profile", hostsHandler.SetComplianceDefaultProfile)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/integrations/apply-pending-config", hostsHandler.ApplyPendingConfig)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/integrations/{integrationName}/toggle", hostsHandler.ToggleIntegration)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/hosts/{hostId}", hostsHandler.GetByID)
@@ -510,52 +553,60 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_view_dashboard", permissionsStore)).Get("/automation/stats", automationHandler.Stats)
 			r.With(middleware.RequirePermission("can_view_dashboard", permissionsStore)).Get("/automation/jobs/{queueName}", automationHandler.Jobs)
 			r.With(middleware.RequirePermission("can_manage_automation", permissionsStore)).Post("/automation/trigger/{jobType}", automationHandler.Trigger)
-			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/profiles", complianceHandler.ListProfiles)
-			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/dashboard", complianceHandler.GetDashboard)
-			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/scans/active", complianceHandler.GetActiveScans)
-			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/scans/history", complianceHandler.GetScanHistory)
-			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/scans/stalled", complianceHandler.GetStalledScans)
-			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/scans/{hostId}", complianceHandler.GetHostScans)
-			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/scans/{hostId}/latest", complianceHandler.GetLatestScan)
-			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/scans/{hostId}/latest-by-type", complianceHandler.GetLatestScansByType)
-			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/results/{scanId}", complianceHandler.GetScanResults)
-			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/rules", complianceHandler.GetRules)
-			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/rules/{ruleId}", complianceHandler.GetRuleDetail)
-			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/trends/{hostId}", complianceHandler.GetTrends)
-			r.With(middleware.RequirePermission("can_manage_compliance", permissionsStore)).Post("/compliance/trigger/{hostId}", complianceHandler.TriggerScan)
-			r.With(middleware.RequirePermission("can_manage_compliance", permissionsStore)).Post("/compliance/trigger/bulk", complianceHandler.TriggerBulkScan)
-			r.With(middleware.RequirePermission("can_manage_compliance", permissionsStore)).Post("/compliance/cancel/{hostId}", complianceHandler.CancelScan)
-			r.With(middleware.RequirePermission("can_manage_compliance", permissionsStore)).Post("/compliance/install-scanner/{hostId}", complianceHandler.InstallScanner)
-			r.With(middleware.RequirePermission("can_manage_compliance", permissionsStore)).Post("/compliance/install-scanner/{hostId}/cancel", complianceHandler.CancelInstall)
-			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/install-job/{hostId}", complianceHandler.GetInstallJobStatus)
-			r.With(middleware.RequirePermission("can_manage_compliance", permissionsStore)).Post("/compliance/upgrade-ssg/{hostId}", complianceHandler.UpgradeSSG)
-			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/ssg-upgrade-job/{hostId}", complianceHandler.GetSSGUpgradeJobStatus)
-			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/compliance/ssg-info", complianceHandler.SSGVersion)
-			r.With(middleware.RequirePermission("can_manage_compliance", permissionsStore)).Post("/compliance/remediate/{hostId}", complianceHandler.RemediateRule)
-			r.With(middleware.RequirePermission("can_manage_compliance", permissionsStore)).Post("/compliance/scans/cleanup", automationHandler.ComplianceScanCleanup)
+			// Compliance (OpenSCAP + CIS + Docker Bench) is a Max-only feature; all routes
+			// in this feature area are gated by the compliance module.
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore), hostctx.RequireModule("compliance")).Get("/compliance/profiles", complianceHandler.ListProfiles)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore), hostctx.RequireModule("compliance")).Get("/compliance/dashboard", complianceHandler.GetDashboard)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore), hostctx.RequireModule("compliance")).Get("/compliance/scans/active", complianceHandler.GetActiveScans)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore), hostctx.RequireModule("compliance")).Get("/compliance/scans/history", complianceHandler.GetScanHistory)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore), hostctx.RequireModule("compliance")).Get("/compliance/scans/stalled", complianceHandler.GetStalledScans)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore), hostctx.RequireModule("compliance")).Get("/compliance/scans/{hostId}", complianceHandler.GetHostScans)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore), hostctx.RequireModule("compliance")).Get("/compliance/scans/{hostId}/latest", complianceHandler.GetLatestScan)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore), hostctx.RequireModule("compliance")).Get("/compliance/scans/{hostId}/latest-by-type", complianceHandler.GetLatestScansByType)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore), hostctx.RequireModule("compliance")).Get("/compliance/results/{scanId}", complianceHandler.GetScanResults)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore), hostctx.RequireModule("compliance")).Get("/compliance/rules", complianceHandler.GetRules)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore), hostctx.RequireModule("compliance")).Get("/compliance/rules/{ruleId}", complianceHandler.GetRuleDetail)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore), hostctx.RequireModule("compliance")).Get("/compliance/trends/{hostId}", complianceHandler.GetTrends)
+			r.With(middleware.RequirePermission("can_manage_compliance", permissionsStore), hostctx.RequireModule("compliance")).Post("/compliance/trigger/{hostId}", complianceHandler.TriggerScan)
+			r.With(middleware.RequirePermission("can_manage_compliance", permissionsStore), hostctx.RequireModule("compliance")).Post("/compliance/trigger/bulk", complianceHandler.TriggerBulkScan)
+			r.With(middleware.RequirePermission("can_manage_compliance", permissionsStore), hostctx.RequireModule("compliance")).Post("/compliance/cancel/{hostId}", complianceHandler.CancelScan)
+			r.With(middleware.RequirePermission("can_manage_compliance", permissionsStore), hostctx.RequireModule("compliance")).Post("/compliance/install-scanner/{hostId}", complianceHandler.InstallScanner)
+			r.With(middleware.RequirePermission("can_manage_compliance", permissionsStore), hostctx.RequireModule("compliance")).Post("/compliance/install-scanner/{hostId}/cancel", complianceHandler.CancelInstall)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore), hostctx.RequireModule("compliance")).Get("/compliance/install-job/{hostId}", complianceHandler.GetInstallJobStatus)
+			r.With(middleware.RequirePermission("can_manage_compliance", permissionsStore), hostctx.RequireModule("compliance")).Post("/compliance/upgrade-ssg/{hostId}", complianceHandler.UpgradeSSG)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore), hostctx.RequireModule("compliance")).Get("/compliance/ssg-upgrade-job/{hostId}", complianceHandler.GetSSGUpgradeJobStatus)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore), hostctx.RequireModule("compliance")).Get("/compliance/ssg-info", complianceHandler.SSGVersion)
+			r.With(middleware.RequirePermission("can_manage_compliance", permissionsStore), hostctx.RequireModule("compliance")).Post("/compliance/remediate/{hostId}", complianceHandler.RemediateRule)
+			r.With(middleware.RequirePermission("can_manage_compliance", permissionsStore), hostctx.RequireModule("compliance")).Post("/compliance/scans/cleanup", automationHandler.ComplianceScanCleanup)
 
-			// Patching (can_view_hosts for read, can_manage_patching for write)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/patching/dashboard", patchingHandler.Dashboard)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/patching/preview-run", patchingHandler.PreviewRun)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/patching/runs/active", patchingHandler.ActiveRuns)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/patching/runs", patchingHandler.ListRuns)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/patching/runs/{id}", patchingHandler.GetRun)
-			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore)).Post("/patching/runs/{id}/approve", patchingHandler.ApproveRun)
-			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore)).Post("/patching/runs/{id}/retry-validation", patchingHandler.RetryValidation)
-			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore)).Delete("/patching/runs/{id}", patchingHandler.DeleteRun)
-			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore)).Post("/patching/trigger", patchingHandler.Trigger)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/patching/policies", patchingHandler.ListPolicies)
-			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore)).Post("/patching/policies", patchingHandler.CreatePolicy)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/patching/policies/{id}", patchingHandler.GetPolicy)
-			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore)).Put("/patching/policies/{id}", patchingHandler.UpdatePolicy)
-			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore)).Delete("/patching/policies/{id}", patchingHandler.DeletePolicy)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/patching/policies/{id}/assignments", patchingHandler.ListPolicyAssignments)
-			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore)).Post("/patching/policies/{id}/assignments", patchingHandler.AddPolicyAssignment)
-			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore)).Delete("/patching/policies/{id}/assignments/{assignmentId}", patchingHandler.RemovePolicyAssignment)
-			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore)).Post("/patching/policies/{id}/exclusions", patchingHandler.AddPolicyExclusion)
-			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore)).Delete("/patching/policies/{id}/exclusions/{hostId}", patchingHandler.RemovePolicyExclusion)
-			// Windows Update metadata for a host (UI-facing)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/patching/windows-updates/{hostId}", windowsUpdatesHandler.ListForHost)
+			// Patching (can_view_hosts for read, can_manage_patching for write).
+			// Manual patch runs are gated by the patching module (Plus tier); scheduling and
+			// policy management are gated by the patching_policies module (Plus tier).
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("patching")).Get("/patching/dashboard", patchingHandler.Dashboard)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("patching")).Get("/patching/preview-run", patchingHandler.PreviewRun)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("patching")).Get("/patching/runs/active", patchingHandler.ActiveRuns)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("patching")).Get("/patching/runs", patchingHandler.ListRuns)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("patching")).Get("/patching/runs/{id}", patchingHandler.GetRun)
+			// Live patch-run output stream (WebSocket, JWT cookie/bearer auth via outer group).
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("patching")).Get("/patching/runs/{id}/stream", patchingHandler.ServeRunStream)
+			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore), hostctx.RequireModule("patching")).Post("/patching/runs/{id}/approve", patchingHandler.ApproveRun)
+			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore), hostctx.RequireModule("patching")).Post("/patching/runs/{id}/retry-validation", patchingHandler.RetryValidation)
+			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore), hostctx.RequireModule("patching")).Post("/patching/runs/{id}/stop", patchingHandler.StopRun)
+			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore), hostctx.RequireModule("patching")).Delete("/patching/runs/{id}", patchingHandler.DeleteRun)
+			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore), hostctx.RequireModule("patching")).Post("/patching/trigger", patchingHandler.Trigger)
+			// Policies + approval workflow: patching_policies module.
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("patching_policies")).Get("/patching/policies", patchingHandler.ListPolicies)
+			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore), hostctx.RequireModule("patching_policies")).Post("/patching/policies", patchingHandler.CreatePolicy)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("patching_policies")).Get("/patching/policies/{id}", patchingHandler.GetPolicy)
+			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore), hostctx.RequireModule("patching_policies")).Put("/patching/policies/{id}", patchingHandler.UpdatePolicy)
+			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore), hostctx.RequireModule("patching_policies")).Delete("/patching/policies/{id}", patchingHandler.DeletePolicy)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("patching_policies")).Get("/patching/policies/{id}/assignments", patchingHandler.ListPolicyAssignments)
+			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore), hostctx.RequireModule("patching_policies")).Post("/patching/policies/{id}/assignments", patchingHandler.AddPolicyAssignment)
+			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore), hostctx.RequireModule("patching_policies")).Delete("/patching/policies/{id}/assignments/{assignmentId}", patchingHandler.RemovePolicyAssignment)
+			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore), hostctx.RequireModule("patching_policies")).Post("/patching/policies/{id}/exclusions", patchingHandler.AddPolicyExclusion)
+			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore), hostctx.RequireModule("patching_policies")).Delete("/patching/policies/{id}/exclusions/{hostId}", patchingHandler.RemovePolicyExclusion)
+			// Windows Update metadata for a host (UI-facing). Part of the patching feature set.
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("patching")).Get("/patching/windows-updates/{hostId}", windowsUpdatesHandler.ListForHost)
 
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/host-groups", hostGroupsHandler.List)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/host-groups/{id}", hostGroupsHandler.GetByID)
@@ -570,12 +621,15 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/alerts/actions", alertsHandler.GetAvailableActions)
 			r.With(middleware.RequirePermission("can_manage_alerts", permissionsStore)).Post("/alerts/bulk-delete", alertsHandler.BulkDelete)
 			r.With(middleware.RequirePermission("can_manage_alerts", permissionsStore)).Post("/alerts/bulk-action", alertsHandler.BulkAction)
-			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/alerts/config", alertConfigHandler.GetAll)
-			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/alerts/config/{alertType}", alertConfigHandler.GetByType)
-			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Put("/alerts/config/{alertType}", alertConfigHandler.Update)
-			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Post("/alerts/config/bulk-update", alertConfigHandler.BulkUpdate)
-			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/alerts/cleanup/preview", alertConfigHandler.PreviewCleanup)
-			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Post("/alerts/cleanup", alertConfigHandler.TriggerCleanup)
+			// Advanced alert configuration (gated by alerts_advanced module, Plus tier).
+			// Basic alerting (host-down, threshold) remains in every tier — the dedicated
+			// alerts_advanced module covers tuning and custom rules.
+			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore), hostctx.RequireModule("alerts_advanced")).Get("/alerts/config", alertConfigHandler.GetAll)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore), hostctx.RequireModule("alerts_advanced")).Get("/alerts/config/{alertType}", alertConfigHandler.GetByType)
+			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore), hostctx.RequireModule("alerts_advanced")).Put("/alerts/config/{alertType}", alertConfigHandler.Update)
+			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore), hostctx.RequireModule("alerts_advanced")).Post("/alerts/config/bulk-update", alertConfigHandler.BulkUpdate)
+			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore), hostctx.RequireModule("alerts_advanced")).Get("/alerts/cleanup/preview", alertConfigHandler.PreviewCleanup)
+			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore), hostctx.RequireModule("alerts_advanced")).Post("/alerts/cleanup", alertConfigHandler.TriggerCleanup)
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/alerts/{id}", alertsHandler.GetByID)
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/alerts/{id}/history", alertsHandler.GetHistory)
 			r.With(middleware.RequirePermission("can_manage_alerts", permissionsStore)).Post("/alerts/{id}/action", alertsHandler.PerformAction)
@@ -607,22 +661,23 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_users", permissionsStore)).Delete("/auth/admin/users/{userId}", usersHandler.Delete)
 			r.With(middleware.RequirePermission("can_manage_users", permissionsStore)).Post("/auth/admin/users/{userId}/reset-password", usersHandler.ResetPassword)
 
-			// Docker inventory (can_view_hosts for read, can_manage_docker for delete)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/docker/dashboard", dockerHandler.Dashboard)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/docker/containers", dockerHandler.ListContainers)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/docker/containers/{id}", dockerHandler.GetContainer)
-			r.With(middleware.RequirePermission("can_manage_docker", permissionsStore)).Delete("/docker/containers/{id}", dockerHandler.DeleteContainer)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/docker/images", dockerHandler.ListImages)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/docker/images/{id}", dockerHandler.GetImage)
-			r.With(middleware.RequirePermission("can_manage_docker", permissionsStore)).Delete("/docker/images/{id}", dockerHandler.DeleteImage)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/docker/hosts", dockerHandler.ListHosts)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/docker/hosts/{id}", dockerHandler.GetHostDockerDetail)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/docker/volumes", dockerHandler.ListVolumes)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/docker/volumes/{id}", dockerHandler.GetVolume)
-			r.With(middleware.RequirePermission("can_manage_docker", permissionsStore)).Delete("/docker/volumes/{id}", dockerHandler.DeleteVolume)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/docker/networks", dockerHandler.ListNetworks)
-			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/docker/networks/{id}", dockerHandler.GetNetwork)
-			r.With(middleware.RequirePermission("can_manage_docker", permissionsStore)).Delete("/docker/networks/{id}", dockerHandler.DeleteNetwork)
+			// Docker inventory (can_view_hosts for read, can_manage_docker for delete).
+			// Gated by the docker module (Plus tier).
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("docker")).Get("/docker/dashboard", dockerHandler.Dashboard)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("docker")).Get("/docker/containers", dockerHandler.ListContainers)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("docker")).Get("/docker/containers/{id}", dockerHandler.GetContainer)
+			r.With(middleware.RequirePermission("can_manage_docker", permissionsStore), hostctx.RequireModule("docker")).Delete("/docker/containers/{id}", dockerHandler.DeleteContainer)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("docker")).Get("/docker/images", dockerHandler.ListImages)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("docker")).Get("/docker/images/{id}", dockerHandler.GetImage)
+			r.With(middleware.RequirePermission("can_manage_docker", permissionsStore), hostctx.RequireModule("docker")).Delete("/docker/images/{id}", dockerHandler.DeleteImage)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("docker")).Get("/docker/hosts", dockerHandler.ListHosts)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("docker")).Get("/docker/hosts/{id}", dockerHandler.GetHostDockerDetail)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("docker")).Get("/docker/volumes", dockerHandler.ListVolumes)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("docker")).Get("/docker/volumes/{id}", dockerHandler.GetVolume)
+			r.With(middleware.RequirePermission("can_manage_docker", permissionsStore), hostctx.RequireModule("docker")).Delete("/docker/volumes/{id}", dockerHandler.DeleteVolume)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("docker")).Get("/docker/networks", dockerHandler.ListNetworks)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("docker")).Get("/docker/networks/{id}", dockerHandler.GetNetwork)
+			r.With(middleware.RequirePermission("can_manage_docker", permissionsStore), hostctx.RequireModule("docker")).Delete("/docker/networks/{id}", dockerHandler.DeleteNetwork)
 
 			// Auto-enrollment tokens
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/auto-enrollment/tokens", autoEnrollmentHandler.List)

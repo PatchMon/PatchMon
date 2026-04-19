@@ -50,6 +50,7 @@ func (h *PermissionsHandler) GetRoles(w http.ResponseWriter, r *http.Request) {
 			"can_manage_alerts":          p.CanManageAlerts,
 			"can_manage_automation":      p.CanManageAutomation,
 			"can_use_remote_access":      p.CanUseRemoteAccess,
+			"can_manage_billing":         p.CanManageBilling,
 			"created_at":                 p.CreatedAt,
 			"updated_at":                 p.UpdatedAt,
 		}
@@ -106,6 +107,7 @@ func (h *PermissionsHandler) UpdateRole(w http.ResponseWriter, r *http.Request) 
 		CanManageAlerts         *bool `json:"can_manage_alerts"`
 		CanManageAutomation     *bool `json:"can_manage_automation"`
 		CanUseRemoteAccess      *bool `json:"can_use_remote_access"`
+		CanManageBilling        *bool `json:"can_manage_billing"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		Error(w, http.StatusBadRequest, "Invalid request body")
@@ -138,6 +140,7 @@ func (h *PermissionsHandler) UpdateRole(w http.ResponseWriter, r *http.Request) 
 		CanManageAlerts:         boolVal(req.CanManageAlerts),
 		CanManageAutomation:     boolVal(req.CanManageAutomation),
 		CanUseRemoteAccess:      boolVal(req.CanUseRemoteAccess),
+		CanManageBilling:        boolVal(req.CanManageBilling),
 	}
 	if err := h.permissions.UpsertRole(r.Context(), p); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to update role permissions")
@@ -197,6 +200,7 @@ func roleToResponse(p *models.RolePermission) map[string]interface{} {
 		"can_manage_alerts":          p.CanManageAlerts,
 		"can_manage_automation":      p.CanManageAutomation,
 		"can_use_remote_access":      p.CanUseRemoteAccess,
+		"can_manage_billing":         p.CanManageBilling,
 		"created_at":                 p.CreatedAt, "updated_at": p.UpdatedAt,
 	}
 }
@@ -238,6 +242,7 @@ func (h *PermissionsHandler) UserPermissions(w http.ResponseWriter, r *http.Requ
 		"can_manage_alerts":          p.CanManageAlerts,
 		"can_manage_automation":      p.CanManageAutomation,
 		"can_use_remote_access":      p.CanUseRemoteAccess,
+		"can_manage_billing":         p.CanManageBilling,
 	})
 }
 
@@ -251,5 +256,6 @@ func fullPermissions() map[string]bool {
 		"can_manage_patching": true, "can_manage_compliance": true,
 		"can_manage_docker": true, "can_manage_alerts": true,
 		"can_manage_automation": true, "can_use_remote_access": true,
+		"can_manage_billing": true,
 	}
 }

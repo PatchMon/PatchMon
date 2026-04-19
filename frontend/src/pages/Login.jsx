@@ -7,13 +7,12 @@ import {
 	Mail,
 	User,
 } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { useNavigate } from "react-router-dom";
 import { LoginCommunityLinks } from "../components/CommunityLinks";
 import DiscordIcon from "../components/DiscordIcon";
 import { useAuth } from "../contexts/AuthContext";
-import { useColorTheme } from "../contexts/ColorThemeContext";
 import { authAPI, getGlobalTimezone, isCorsError } from "../utils/api";
 import { resolveLogoPath } from "../utils/logoPaths";
 
@@ -59,108 +58,11 @@ const Login = () => {
 		buttonText: "Login with Discord",
 	});
 	const [oidcProcessed, setOidcProcessed] = useState(false); // Track if OIDC callback was processed
-	const canvasRef = useRef(null);
-	const { themeConfig } = useColorTheme();
 
 	const navigate = useNavigate();
 
 	// Logo/favicon settings from login-settings (public, no auth needed)
 	const [settings, setSettings] = useState(null);
-
-	// Generate clean radial gradient background with subtle triangular accents
-	useEffect(() => {
-		const generateBackground = () => {
-			if (!canvasRef.current || !themeConfig?.login) return;
-
-			const canvas = canvasRef.current;
-			canvas.width = canvas.offsetWidth;
-			canvas.height = canvas.offsetHeight;
-			const ctx = canvas.getContext("2d");
-
-			// Get theme colors - pick first color from each palette
-			const xColors = themeConfig.login.xColors || [
-				"#667eea",
-				"#764ba2",
-				"#f093fb",
-				"#4facfe",
-			];
-			const yColors = themeConfig.login.yColors || [
-				"#667eea",
-				"#764ba2",
-				"#f093fb",
-				"#4facfe",
-			];
-
-			// Use date for daily color rotation
-			const today = new Date();
-			const seed =
-				today.getFullYear() * 10000 + today.getMonth() * 100 + today.getDate();
-			const random = (s) => {
-				const x = Math.sin(s) * 10000;
-				return x - Math.floor(x);
-			};
-
-			const color1 = xColors[Math.floor(random(seed) * xColors.length)];
-			const color2 = yColors[Math.floor(random(seed + 1000) * yColors.length)];
-
-			// Create clean radial gradient from center to bottom-right corner
-			const gradient = ctx.createRadialGradient(
-				canvas.width * 0.3, // Center slightly left
-				canvas.height * 0.3, // Center slightly up
-				0,
-				canvas.width * 0.5, // Expand to cover screen
-				canvas.height * 0.5,
-				Math.max(canvas.width, canvas.height) * 1.2,
-			);
-
-			// Subtle gradient with darker corners
-			gradient.addColorStop(0, color1);
-			gradient.addColorStop(0.6, color2);
-			gradient.addColorStop(1, "#0a0a0a"); // Very dark edges
-
-			ctx.fillStyle = gradient;
-			ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-			// Add subtle triangular shapes as accents across entire background
-			const cellSize = 180;
-			const cols = Math.ceil(canvas.width / cellSize) + 1;
-			const rows = Math.ceil(canvas.height / cellSize) + 1;
-
-			for (let y = 0; y < rows; y++) {
-				for (let x = 0; x < cols; x++) {
-					const idx = y * cols + x;
-					// Draw more triangles (less sparse)
-					if (random(seed + idx + 5000) > 0.4) {
-						const baseX =
-							x * cellSize + random(seed + idx * 3) * cellSize * 0.8;
-						const baseY =
-							y * cellSize + random(seed + idx * 3 + 100) * cellSize * 0.8;
-						const size = 50 + random(seed + idx * 4) * 100;
-
-						ctx.beginPath();
-						ctx.moveTo(baseX, baseY);
-						ctx.lineTo(baseX + size, baseY);
-						ctx.lineTo(baseX + size / 2, baseY - size * 0.866);
-						ctx.closePath();
-
-						// More visible white with slightly higher opacity
-						ctx.fillStyle = `rgba(255, 255, 255, ${0.05 + random(seed + idx * 5) * 0.08})`;
-						ctx.fill();
-					}
-				}
-			}
-		};
-
-		generateBackground();
-
-		// Regenerate on window resize
-		const handleResize = () => {
-			generateBackground();
-		};
-
-		window.addEventListener("resize", handleResize);
-		return () => window.removeEventListener("resize", handleResize);
-	}, [themeConfig]);
 
 	// Check login settings (signup enabled and show github version)
 	useEffect(() => {
@@ -562,10 +464,16 @@ const Login = () => {
 	};
 
 	return (
-		<div className="min-h-screen relative flex">
-			{/* Full-screen Trianglify Background */}
-			<canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
-			<div className="absolute inset-0 bg-gradient-to-br from-black/40 to-black/60" />
+		<div className="min-h-screen relative flex bg-secondary-900 overflow-hidden">
+			{/* Static triangle mesh background */}
+			<div
+				aria-hidden="true"
+				className="patchmon-mesh-bg absolute inset-0 w-full h-full"
+			/>
+			<div
+				aria-hidden="true"
+				className="absolute inset-0 bg-gradient-to-br from-black/30 to-black/50 pointer-events-none"
+			/>
 
 			{/* Left side - Info Panel (hidden on mobile or when GitHub version is disabled) */}
 			{showGithubVersionOnLogin && (

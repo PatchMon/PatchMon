@@ -1725,8 +1725,25 @@ func (q *Queries) UpdatePatchPolicy(ctx context.Context, arg UpdatePatchPolicyPa
 	return err
 }
 
+const updatePatchRunCancelled = `-- name: UpdatePatchRunCancelled :exec
+UPDATE patch_runs SET status = 'cancelled', shell_output = $2, error_message = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1
+`
+
+type UpdatePatchRunCancelledParams struct {
+	ID           string  `json:"id"`
+	ShellOutput  string  `json:"shell_output"`
+	ErrorMessage *string `json:"error_message"`
+}
+
+// Terminal cancelled state when a running patch is stopped via patch_run_stop.
+// Replaces shell_output with the full captured output so rollback/cleanup text is preserved.
+func (q *Queries) UpdatePatchRunCancelled(ctx context.Context, arg UpdatePatchRunCancelledParams) error {
+	_, err := q.db.Exec(ctx, updatePatchRunCancelled, arg.ID, arg.ShellOutput, arg.ErrorMessage)
+	return err
+}
+
 const updatePatchRunCompleted = `-- name: UpdatePatchRunCompleted :exec
-UPDATE patch_runs SET status = 'completed', shell_output = shell_output || $2, completed_at = NOW(), updated_at = NOW() WHERE id = $1
+UPDATE patch_runs SET status = 'completed', shell_output = $2, completed_at = NOW(), updated_at = NOW() WHERE id = $1
 `
 
 type UpdatePatchRunCompletedParams struct {
@@ -1734,13 +1751,14 @@ type UpdatePatchRunCompletedParams struct {
 	ShellOutput string `json:"shell_output"`
 }
 
+// REPLACE (not append) - agent streams progress chunks then sends final full output.
 func (q *Queries) UpdatePatchRunCompleted(ctx context.Context, arg UpdatePatchRunCompletedParams) error {
 	_, err := q.db.Exec(ctx, updatePatchRunCompleted, arg.ID, arg.ShellOutput)
 	return err
 }
 
 const updatePatchRunFailed = `-- name: UpdatePatchRunFailed :exec
-UPDATE patch_runs SET status = 'failed', shell_output = shell_output || $2, error_message = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1
+UPDATE patch_runs SET status = 'failed', shell_output = $2, error_message = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1
 `
 
 type UpdatePatchRunFailedParams struct {
@@ -1749,6 +1767,7 @@ type UpdatePatchRunFailedParams struct {
 	ErrorMessage *string `json:"error_message"`
 }
 
+// REPLACE (not append) - agent streams progress chunks then sends final full output.
 func (q *Queries) UpdatePatchRunFailed(ctx context.Context, arg UpdatePatchRunFailedParams) error {
 	_, err := q.db.Exec(ctx, updatePatchRunFailed, arg.ID, arg.ShellOutput, arg.ErrorMessage)
 	return err
@@ -1822,7 +1841,7 @@ func (q *Queries) UpdatePatchRunStatus(ctx context.Context, arg UpdatePatchRunSt
 }
 
 const updatePatchRunValidated = `-- name: UpdatePatchRunValidated :exec
-UPDATE patch_runs SET status = 'validated', shell_output = shell_output || $2, packages_affected = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1
+UPDATE patch_runs SET status = 'validated', shell_output = $2, packages_affected = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1
 `
 
 type UpdatePatchRunValidatedParams struct {
@@ -1831,6 +1850,9 @@ type UpdatePatchRunValidatedParams struct {
 	PackagesAffected []byte `json:"packages_affected"`
 }
 
+// Agent streams progress chunks during the run, then sends the final authoritative
+// output on the terminal stage; REPLACE (not append) so the final record is never
+// a duplicate of the streamed progress.
 func (q *Queries) UpdatePatchRunValidated(ctx context.Context, arg UpdatePatchRunValidatedParams) error {
 	_, err := q.db.Exec(ctx, updatePatchRunValidated, arg.ID, arg.ShellOutput, arg.PackagesAffected)
 	return err

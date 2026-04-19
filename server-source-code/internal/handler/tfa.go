@@ -19,16 +19,17 @@ import (
 
 // TfaHandler handles TFA management routes (setup, verify-setup, disable, status, regenerate).
 type TfaHandler struct {
-	users    *store.UsersStore
-	sessions *store.SessionsStore
-	db       database.DBProvider
-	notify   *notifications.Emitter
-	log      *slog.Logger
+	users          *store.UsersStore
+	sessions       *store.SessionsStore
+	trustedDevices *store.TrustedDevicesStore
+	db             database.DBProvider
+	notify         *notifications.Emitter
+	log            *slog.Logger
 }
 
 // NewTfaHandler creates a new TFA handler.
-func NewTfaHandler(users *store.UsersStore, sessions *store.SessionsStore, db database.DBProvider, notify *notifications.Emitter, log *slog.Logger) *TfaHandler {
-	return &TfaHandler{users: users, sessions: sessions, db: db, notify: notify, log: log}
+func NewTfaHandler(users *store.UsersStore, sessions *store.SessionsStore, trustedDevices *store.TrustedDevicesStore, db database.DBProvider, notify *notifications.Emitter, log *slog.Logger) *TfaHandler {
+	return &TfaHandler{users: users, sessions: sessions, trustedDevices: trustedDevices, db: db, notify: notify, log: log}
 }
 
 // Setup handles GET /tfa/setup.
@@ -197,6 +198,14 @@ func (h *TfaHandler) Disable(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to disable two-factor authentication")
 		return
 	}
+	// All trusted-device records exist solely to skip MFA. With MFA disabled they
+	// have no purpose and should not linger if the user re-enables MFA later.
+	if h.trustedDevices != nil {
+		if err := h.trustedDevices.RevokeAllForUser(r.Context(), userID); err != nil && h.log != nil {
+			h.log.Error("tfa disable revoke trusted devices failed", "user_id", userID, "error", err)
+		}
+	}
+	clearDeviceTrustCookie(w, r)
 
 	// Emit user_tfa_disabled event
 	if h.notify != nil {

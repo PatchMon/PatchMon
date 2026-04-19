@@ -28,6 +28,17 @@ export const AuthProvider = ({ children }) => {
 	const [user, setUser] = useState(null);
 	const [token, setToken] = useState(null);
 	const [permissions, setPermissions] = useState(null);
+	// Multi-context (tenant) info from GET /api/v1/me/context. Drives per-module feature flags
+	// so the UI hides nav entries, settings panels, and buttons for disabled modules instead
+	// of letting users click into 403 responses.
+	// Shape: { modules: "core,patching,..." | "*", host: string, slug: string, multi_context: bool }
+	// Default to wildcard so single-context (self-hosted) deployments show every feature.
+	const [tenant, setTenant] = useState({
+		modules: "*",
+		host: "",
+		slug: "",
+		multi_context: false,
+	});
 	const [needsFirstTimeSetup, setNeedsFirstTimeSetup] = useState(false);
 	const [firstTimeWizardActive, setFirstTimeWizardActive] = useState(false);
 	// When non-null, setup check failed (backend/DB down or rate limited) - do not show first-time setup
@@ -77,6 +88,37 @@ export const AuthProvider = ({ children }) => {
 		return updatedPermissions;
 	}, [token, fetchPermissions]);
 
+	// Fetch the multi-context info (user + tenant.modules) from /me/context.
+	// Called on session validation and after login so module feature flags are
+	// available before any navigation renders.
+	const fetchTenantContext = useCallback(async (authToken) => {
+		try {
+			const fetchOptions = { credentials: "include" };
+			if (authToken) {
+				fetchOptions.headers = { Authorization: `Bearer ${authToken}` };
+			}
+			const response = await fetch("/api/v1/me/context", fetchOptions);
+			if (response.ok) {
+				const data = await response.json();
+				if (data?.tenant) {
+					setTenant({
+						modules:
+							typeof data.tenant.modules === "string" && data.tenant.modules
+								? data.tenant.modules
+								: "*",
+						host: data.tenant.host || "",
+						slug: data.tenant.slug || "",
+						multi_context: !!data.tenant.multi_context,
+					});
+				}
+				return data;
+			}
+		} catch (error) {
+			devLog("fetchTenantContext failed:", error);
+		}
+		return null;
+	}, []);
+
 	// Listen for 401 session-expired from API interceptor - clear auth state so React Router navigates to login
 	// (avoids hard redirect race that could trigger ErrorBoundary "Something went wrong")
 	useEffect(() => {
@@ -84,6 +126,7 @@ export const AuthProvider = ({ children }) => {
 			setToken(null);
 			setUser(null);
 			setPermissions(null);
+			setTenant({ modules: "*", host: "", slug: "", multi_context: false });
 			localStorage.removeItem("token");
 			localStorage.removeItem("user");
 		};
@@ -119,8 +162,9 @@ export const AuthProvider = ({ children }) => {
 					const data = await response.json();
 					if (!abortController.signal.aborted) {
 						setUser(data.user);
-						// Fetch permissions
-						await fetchPermissions();
+						// Fetch permissions and multi-context (tenant modules) in parallel
+						// so module-gated nav items have their data before rendering.
+						await Promise.all([fetchPermissions(), fetchTenantContext()]);
 						setAuthPhase(AUTH_PHASES.READY);
 					}
 					return;
@@ -147,7 +191,7 @@ export const AuthProvider = ({ children }) => {
 		validateSession();
 
 		return () => abortController.abort();
-	}, [fetchPermissions]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [fetchPermissions, fetchTenantContext]); // eslint-disable-line react-hooks/exhaustive-deps
 
 	const refetchUser = useCallback(async () => {
 		try {
@@ -157,14 +201,14 @@ export const AuthProvider = ({ children }) => {
 			if (response.ok) {
 				const data = await response.json();
 				setUser(data.user);
-				await fetchPermissions();
+				await Promise.all([fetchPermissions(), fetchTenantContext()]);
 				return data.user;
 			}
 		} catch (error) {
 			devLog("refetchUser failed:", error);
 		}
 		return null;
-	}, [fetchPermissions]);
+	}, [fetchPermissions, fetchTenantContext]);
 
 	const login = async (username, password) => {
 		try {
@@ -225,8 +269,11 @@ export const AuthProvider = ({ children }) => {
 					}),
 				);
 
-				// Fetch user permissions after successful login
-				const userPermissions = await fetchPermissions(data.token);
+				// Fetch user permissions and multi-context info after successful login.
+				const [userPermissions] = await Promise.all([
+					fetchPermissions(data.token),
+					fetchTenantContext(data.token),
+				]);
 				if (userPermissions) {
 					setPermissions(userPermissions);
 				}
@@ -302,6 +349,7 @@ export const AuthProvider = ({ children }) => {
 			setToken(null);
 			setUser(null);
 			setPermissions(null);
+			setTenant({ modules: "*", host: "", slug: "", multi_context: false });
 			localStorage.removeItem("token");
 			localStorage.removeItem("user");
 		}
@@ -546,6 +594,20 @@ export const AuthProvider = ({ children }) => {
 	const canManageAutomation = () => hasPermission("can_manage_automation");
 	const canUseRemoteAccess = () => hasPermission("can_use_remote_access");
 
+	// Module feature flagging (multi-context). `tenant.modules` is a comma-separated
+	// string, or "*" for wildcard (all modules). In single-context (self-hosted)
+	// deployments the backend always returns "*", so every feature is enabled.
+	const hasModule = (moduleKey) => {
+		if (!moduleKey) return true;
+		const modules = tenant?.modules;
+		if (!modules) return true; // safety: empty/unknown -> treat as allowed
+		if (modules === "*") return true;
+		return modules
+			.split(",")
+			.map((m) => m.trim())
+			.includes(moduleKey);
+	};
+
 	const SETUP_COMPLETE_CACHE_KEY = "patchmon_setup_complete";
 
 	// Check if any admin users exist (for first-time setup)
@@ -684,8 +746,9 @@ export const AuthProvider = ({ children }) => {
 		// Remove any stale token from localStorage
 		localStorage.removeItem("token");
 
-		// Fetch permissions - works with cookies if token is null
+		// Fetch permissions and multi-context - works with cookies if token is null
 		fetchPermissions(authToken);
+		fetchTenantContext(authToken);
 	};
 
 	const completeFirstTimeWizard = () => {
@@ -744,6 +807,9 @@ export const AuthProvider = ({ children }) => {
 		canManageAutomation,
 		canUseRemoteAccess,
 		acceptReleaseNotes,
+		// Multi-context module feature flags
+		tenant,
+		hasModule,
 	};
 
 	return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

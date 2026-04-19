@@ -319,23 +319,24 @@ type HostGroupMembership struct {
 }
 
 type HostPackage struct {
-	ID                string           `json:"id"`
-	HostID            string           `json:"host_id"`
-	PackageID         string           `json:"package_id"`
-	CurrentVersion    string           `json:"current_version"`
-	AvailableVersion  *string          `json:"available_version"`
-	NeedsUpdate       bool             `json:"needs_update"`
-	IsSecurityUpdate  bool             `json:"is_security_update"`
-	LastChecked       pgtype.Timestamp `json:"last_checked"`
-	WuaGuid           *string          `json:"wua_guid"`
-	WuaKb             *string          `json:"wua_kb"`
-	WuaSeverity       *string          `json:"wua_severity"`
-	WuaCategories     []byte           `json:"wua_categories"`
-	WuaDescription    *string          `json:"wua_description"`
-	WuaSupportUrl     *string          `json:"wua_support_url"`
-	WuaRevisionNumber *int32           `json:"wua_revision_number"`
-	WuaDateInstalled  pgtype.Timestamp `json:"wua_date_installed"`
-	WuaInstallResult  *string          `json:"wua_install_result"`
+	ID                 string           `json:"id"`
+	HostID             string           `json:"host_id"`
+	PackageID          string           `json:"package_id"`
+	CurrentVersion     string           `json:"current_version"`
+	AvailableVersion   *string          `json:"available_version"`
+	NeedsUpdate        bool             `json:"needs_update"`
+	IsSecurityUpdate   bool             `json:"is_security_update"`
+	LastChecked        pgtype.Timestamp `json:"last_checked"`
+	WuaGuid            *string          `json:"wua_guid"`
+	WuaKb              *string          `json:"wua_kb"`
+	WuaSeverity        *string          `json:"wua_severity"`
+	WuaCategories      []byte           `json:"wua_categories"`
+	WuaDescription     *string          `json:"wua_description"`
+	WuaSupportUrl      *string          `json:"wua_support_url"`
+	WuaRevisionNumber  *int32           `json:"wua_revision_number"`
+	WuaDateInstalled   pgtype.Timestamp `json:"wua_date_installed"`
+	WuaInstallResult   *string          `json:"wua_install_result"`
+	SourceRepositoryID *string          `json:"source_repository_id"`
 }
 
 type HostPendingConfig struct {
@@ -519,6 +520,7 @@ type RolePermission struct {
 	CanManageAlerts         bool             `json:"can_manage_alerts"`
 	CanManageAutomation     bool             `json:"can_manage_automation"`
 	CanUseRemoteAccess      bool             `json:"can_use_remote_access"`
+	CanManageBilling        bool             `json:"can_manage_billing"`
 	CreatedAt               pgtype.Timestamp `json:"created_at"`
 	UpdatedAt               pgtype.Timestamp `json:"updated_at"`
 }
@@ -710,4 +712,18 @@ type UserSession struct {
 	TfaBypassUntil    pgtype.Timestamp `json:"tfa_bypass_until"`
 	LoginCount        int32            `json:"login_count"`
 	LastLoginIp       *string          `json:"last_login_ip"`
+}
+
+type UserTrustedDevice struct {
+	ID         string           `json:"id"`
+	UserID     string           `json:"user_id"`
+	TokenHash  string           `json:"token_hash"`
+	DeviceID   *string          `json:"device_id"`
+	UserAgent  *string          `json:"user_agent"`
+	IpAddress  *string          `json:"ip_address"`
+	Label      *string          `json:"label"`
+	CreatedAt  pgtype.Timestamp `json:"created_at"`
+	LastUsedAt pgtype.Timestamp `json:"last_used_at"`
+	ExpiresAt  pgtype.Timestamp `json:"expires_at"`
+	IsRevoked  bool             `json:"is_revoked"`
 }

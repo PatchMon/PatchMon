@@ -117,7 +117,8 @@ func TenantKey(ctx stdctx.Context, key string) string {
 
 // HasModule checks whether the context entry includes the given module.
 // Returns true if: no entry in context (single-context mode), or entry.Modules is nil (all allowed),
-// or the module is present in the comma-separated Modules list.
+// or entry.Modules is "*" (wildcard = all modules), or the module is present in the comma-separated
+// Modules list.
 func HasModule(ctx stdctx.Context, module string) bool {
 	entry := EntryFromContext(ctx)
 	if entry == nil {
@@ -126,7 +127,11 @@ func HasModule(ctx stdctx.Context, module string) bool {
 	if entry.Modules == nil {
 		return true // nil = all modules allowed
 	}
-	for _, m := range strings.Split(*entry.Modules, ",") {
+	modules := strings.TrimSpace(*entry.Modules)
+	if modules == "" || modules == "*" {
+		return true // wildcard or empty string = all modules allowed
+	}
+	for _, m := range strings.Split(modules, ",") {
 		if strings.TrimSpace(m) == module {
 			return true
 		}

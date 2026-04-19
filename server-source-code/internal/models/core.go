@@ -49,6 +49,23 @@ type UserSession struct {
 	LastLoginIP       *string    `db:"last_login_ip"`
 }
 
+// TrustedDevice matches user_trusted_devices table.
+// Represents a browser/device the user has opted to skip MFA on.
+// Decoupled from UserSession: lives across logouts, its own expiry, independently revocable.
+type TrustedDevice struct {
+	ID         string    `db:"id"`
+	UserID     string    `db:"user_id"`
+	TokenHash  string    `db:"token_hash"`
+	DeviceID   *string   `db:"device_id"`
+	UserAgent  *string   `db:"user_agent"`
+	IPAddress  *string   `db:"ip_address"`
+	Label      *string   `db:"label"`
+	CreatedAt  time.Time `db:"created_at"`
+	LastUsedAt time.Time `db:"last_used_at"`
+	ExpiresAt  time.Time `db:"expires_at"`
+	IsRevoked  bool      `db:"is_revoked"`
+}
+
 // RolePermission matches role_permissions table.
 type RolePermission struct {
 	ID                      string    `db:"id"`
@@ -72,6 +89,7 @@ type RolePermission struct {
 	CanManageAlerts         bool      `db:"can_manage_alerts"`
 	CanManageAutomation     bool      `db:"can_manage_automation"`
 	CanUseRemoteAccess      bool      `db:"can_use_remote_access"`
+	CanManageBilling        bool      `db:"can_manage_billing"`
 	CreatedAt               time.Time `db:"created_at"`
 	UpdatedAt               time.Time `db:"updated_at"`
 }

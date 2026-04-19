@@ -44,6 +44,7 @@ func (h *PackagesHandler) List(w http.ResponseWriter, r *http.Request) {
 		NeedsUpdate:      q.Get("needsUpdate"),
 		IsSecurityUpdate: q.Get("isSecurityUpdate"),
 		Host:             q.Get("host"),
+		Repository:       q.Get("repository"),
 	}
 	pkgs, total, err := h.packages.List(r.Context(), params)
 	if err != nil {
@@ -108,17 +109,14 @@ func (h *PackagesHandler) GetHosts(w http.ResponseWriter, r *http.Request) {
 		search = search[:200]
 	}
 	params := store.GetHostsParams{
-		Page:      page,
-		Limit:     limit,
-		Search:    search,
-		SortBy:    q.Get("sortBy"),
-		SortOrder: q.Get("sortOrder"),
+		Page:   page,
+		Limit:  limit,
+		Search: search,
 	}
-	if params.SortBy == "" {
-		params.SortBy = "friendly_name"
-	}
-	if params.SortOrder == "" {
-		params.SortOrder = "asc"
+	if v := q.Get("needsUpdate"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			params.NeedsUpdate = &b
+		}
 	}
 	hosts, total, err := h.packages.GetHosts(r.Context(), packageID, params)
 	if err != nil {

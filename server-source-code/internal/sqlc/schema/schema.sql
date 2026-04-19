@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS role_permissions (
     can_manage_alerts BOOLEAN NOT NULL DEFAULT false,
     can_manage_automation BOOLEAN NOT NULL DEFAULT false,
     can_use_remote_access BOOLEAN NOT NULL DEFAULT false,
+    can_manage_billing BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP(3) NOT NULL
 );
@@ -301,6 +302,7 @@ CREATE TABLE IF NOT EXISTS host_packages (
     wua_revision_number INTEGER,
     wua_date_installed  TIMESTAMP(3),
     wua_install_result  TEXT,
+    source_repository_id TEXT REFERENCES repositories(id) ON DELETE SET NULL,
     UNIQUE(host_id, package_id)
 );
 
@@ -357,6 +359,23 @@ CREATE TABLE IF NOT EXISTS user_sessions (
     tfa_bypass_until TIMESTAMP(3),
     login_count INTEGER NOT NULL DEFAULT 1,
     last_login_ip TEXT
+);
+
+-- user_trusted_devices: MFA "remember this device" trust tokens.
+-- Decoupled from user_sessions. Server stores SHA-256(raw_token); raw token lives
+-- only in the HttpOnly patchmon_device_trust cookie.
+CREATE TABLE IF NOT EXISTS user_trusted_devices (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    device_id TEXT,
+    user_agent TEXT,
+    ip_address TEXT,
+    label TEXT,
+    created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP(3) NOT NULL,
+    is_revoked BOOLEAN NOT NULL DEFAULT false
 );
 
 -- auto_enrollment_tokens

@@ -81,7 +81,7 @@ export default function PatchConfirmModal({
 				: packageName
 					? "1 package"
 					: "packages"
-			: "all packages (apt update + upgrade)";
+			: "all system packages";
 
 	return (
 		<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">

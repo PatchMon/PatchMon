@@ -7,6 +7,7 @@ import {
 	ChevronRight,
 	Clock,
 	Container,
+	CreditCard,
 	GitBranch,
 	Github,
 	Globe,
@@ -29,6 +30,7 @@ import { FaLinkedin, FaYoutube } from "react-icons/fa";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useColorTheme } from "../contexts/ColorThemeContext";
+import { useSettings } from "../contexts/SettingsContext";
 import SidebarContext from "../contexts/SidebarContext";
 import { useUpdateNotification } from "../contexts/UpdateNotificationContext";
 import { alertsAPI, dashboardAPI, settingsAPI, versionAPI } from "../utils/api";
@@ -47,11 +49,19 @@ const Layout = ({ children }) => {
 	// When used as a layout route, render Outlet; otherwise render children (backwards compat)
 	const content = children ?? <Outlet />;
 	const [sidebarOpen, setSidebarOpen] = useState(false);
-	const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-		// Load sidebar state from localStorage, default to false
+	// Pinned collapsed state — the user's explicit choice via the toggle button.
+	// Persisted to localStorage. Hover behavior only applies when pinned-collapsed.
+	const [pinnedCollapsed, setPinnedCollapsed] = useState(() => {
 		const saved = localStorage.getItem("sidebarCollapsed");
 		return saved ? JSON.parse(saved) : false;
 	});
+	// Ephemeral hover state that temporarily expands the sidebar when pinned-collapsed.
+	const [isSidebarHovered, setIsSidebarHovered] = useState(false);
+	// Effective collapsed state: only collapsed when pinned AND not currently hovered.
+	const sidebarCollapsed = pinnedCollapsed && !isSidebarHovered;
+	// Keep the external API stable for context consumers (SshTerminal, etc.): the
+	// setter always mutates the pinned state, not the ephemeral hover state.
+	const setSidebarCollapsed = setPinnedCollapsed;
 	const { links: communityLinks } = useCommunityLinks();
 	const [_userMenuOpen, setUserMenuOpen] = useState(false);
 	const [mobileLinksOpen, setMobileLinksOpen] = useState(false);
@@ -72,10 +82,14 @@ const Layout = ({ children }) => {
 		canViewReports,
 		canExportData,
 		canManageSettings,
+		hasModule,
+		hasPermission,
 	} = useAuth();
+	const { settings: publicSettings } = useSettings();
+	const canManageBilling =
+		publicSettings?.admin_mode === true && hasPermission("can_manage_billing");
 	const { updateAvailable } = useUpdateNotification();
 	const { themeConfig } = useColorTheme();
-	const bgCanvasRef = useRef(null);
 	const userMenuRef = useRef(null);
 
 	// Fetch dashboard stats for the "Last updated" info
@@ -255,52 +269,74 @@ const Layout = ({ children }) => {
 		if (canViewHosts() || canViewReports()) {
 			const opsItems = [];
 
-			if (canViewHosts()) {
+			// Patching is a Plus-tier feature (module key: "patching"). Sub-tab
+			// "Policies" additionally requires the patching_policies module.
+			if (canViewHosts() && hasModule("patching")) {
+				const patchingChildren = [
+					{ name: "Overview", href: "/patching?tab=overview" },
+					{ name: "Runs & History", href: "/patching?tab=runs" },
+				];
+				if (hasModule("patching_policies")) {
+					patchingChildren.push({
+						name: "Policies",
+						href: "/patching?tab=policies",
+					});
+				}
 				opsItems.push({
 					name: "Patching",
 					href: "/patching",
 					icon: Wrench,
 					new: true,
+					children: patchingChildren,
+				});
+			}
+
+			// Compliance is a Max-tier feature (module key: "compliance").
+			if (hasModule("compliance")) {
+				opsItems.push({
+					name: "Compliance",
+					href: "/compliance",
+					icon: Shield,
 					children: [
-						{ name: "Overview", href: "/patching?tab=overview" },
-						{ name: "Runs & History", href: "/patching?tab=runs" },
-						{ name: "Policies", href: "/patching?tab=policies" },
+						{ name: "Overview", href: "/compliance?tab=overview" },
+						{ name: "Hosts", href: "/compliance?tab=hosts" },
+						{ name: "Scan Results", href: "/compliance?tab=scan-results" },
+						{ name: "History", href: "/compliance?tab=history" },
+						{ name: "Settings", href: "/compliance?tab=settings" },
 					],
 				});
 			}
 
-			opsItems.push({
-				name: "Compliance",
-				href: "/compliance",
-				icon: Shield,
-				children: [
-					{ name: "Overview", href: "/compliance?tab=overview" },
-					{ name: "Hosts", href: "/compliance?tab=hosts" },
-					{ name: "Scan Results", href: "/compliance?tab=scan-results" },
-					{ name: "History", href: "/compliance?tab=history" },
-					{ name: "Settings", href: "/compliance?tab=settings" },
-				],
-			});
-
 			if (canViewReports() && settings?.alerts_enabled !== false) {
+				// "Alert Lifecycle" uses /alerts/config endpoints (advanced alert tuning),
+				// which require the alerts_advanced module (Plus tier).
+				const reportingChildren = [
+					{ name: "Overview", href: "/reporting?tab=overview" },
+					{ name: "Alerts", href: "/reporting?tab=alerts" },
+				];
+				if (hasModule("alerts_advanced")) {
+					reportingChildren.push({
+						name: "Alert Lifecycle",
+						href: "/reporting?tab=alert-settings",
+					});
+				}
+				reportingChildren.push(
+					{ name: "Destinations", href: "/reporting?tab=destinations" },
+					{ name: "Event Rules", href: "/reporting?tab=rules" },
+					{ name: "Scheduled Reports", href: "/reporting?tab=reports" },
+					{ name: "Delivery Log", href: "/reporting?tab=log" },
+				);
 				opsItems.push({
 					name: "Reporting",
 					href: "/reporting",
 					icon: AlertTriangle,
 					new: true,
-					children: [
-						{ name: "Overview", href: "/reporting?tab=overview" },
-						{ name: "Alerts", href: "/reporting?tab=alerts" },
-						{ name: "Alert Lifecycle", href: "/reporting?tab=alert-settings" },
-						{ name: "Destinations", href: "/reporting?tab=destinations" },
-						{ name: "Event Rules", href: "/reporting?tab=rules" },
-						{ name: "Scheduled Reports", href: "/reporting?tab=reports" },
-						{ name: "Delivery Log", href: "/reporting?tab=log" },
-					],
+					children: reportingChildren,
 				});
 			}
 
-			if (canViewReports()) {
+			// Docker container monitoring is a Plus-tier feature (module key: "docker").
+			if (canViewReports() && hasModule("docker")) {
 				opsItems.push({
 					name: "Docker",
 					href: "/docker",
@@ -334,6 +370,17 @@ const Layout = ({ children }) => {
 				href: "/automation",
 				icon: RefreshCw,
 			});
+
+			// Billing — double-gated: only on cloud installs (admin_mode === true)
+			// AND only for users with can_manage_billing permission. On self-hosted
+			// installs (admin_mode === false) this item stays hidden entirely.
+			if (canManageBilling) {
+				systemItems.push({
+					name: "Billing",
+					href: "/billing",
+					icon: CreditCard,
+				});
+			}
 
 			if (
 				canManageSettings() ||
@@ -456,125 +503,6 @@ const Layout = ({ children }) => {
 		navigate("/hosts?action=add");
 	};
 
-	// Generate clean radial gradient background with subtle triangular accents for dark mode
-	useEffect(() => {
-		const generateBackground = () => {
-			if (
-				!bgCanvasRef.current ||
-				!themeConfig?.login ||
-				!document.documentElement.classList.contains("dark")
-			) {
-				return;
-			}
-
-			const canvas = bgCanvasRef.current;
-			canvas.width = window.innerWidth;
-			canvas.height = window.innerHeight;
-			const ctx = canvas.getContext("2d");
-
-			// Get theme colors - pick first color from each palette
-			const xColors = themeConfig.login.xColors || [
-				"#667eea",
-				"#764ba2",
-				"#f093fb",
-				"#4facfe",
-			];
-			const yColors = themeConfig.login.yColors || [
-				"#667eea",
-				"#764ba2",
-				"#f093fb",
-				"#4facfe",
-			];
-
-			// Use date for daily color rotation
-			const today = new Date();
-			const seed =
-				today.getFullYear() * 10000 + today.getMonth() * 100 + today.getDate();
-			const random = (s) => {
-				const x = Math.sin(s) * 10000;
-				return x - Math.floor(x);
-			};
-
-			const color1 = xColors[Math.floor(random(seed) * xColors.length)];
-			const color2 = yColors[Math.floor(random(seed + 1000) * yColors.length)];
-
-			// Create clean radial gradient from center to bottom-right corner
-			const gradient = ctx.createRadialGradient(
-				canvas.width * 0.3, // Center slightly left
-				canvas.height * 0.3, // Center slightly up
-				0,
-				canvas.width * 0.5, // Expand to cover screen
-				canvas.height * 0.5,
-				Math.max(canvas.width, canvas.height) * 1.2,
-			);
-
-			// Subtle gradient with darker corners
-			gradient.addColorStop(0, color1);
-			gradient.addColorStop(0.6, color2);
-			gradient.addColorStop(1, "#0a0a0a"); // Very dark edges
-
-			ctx.fillStyle = gradient;
-			ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-			// Add subtle triangular shapes as accents across entire background
-			const cellSize = 180;
-			const cols = Math.ceil(canvas.width / cellSize) + 1;
-			const rows = Math.ceil(canvas.height / cellSize) + 1;
-
-			for (let y = 0; y < rows; y++) {
-				for (let x = 0; x < cols; x++) {
-					const idx = y * cols + x;
-					// Draw more triangles (less sparse)
-					if (random(seed + idx + 5000) > 0.4) {
-						const baseX =
-							x * cellSize + random(seed + idx * 3) * cellSize * 0.8;
-						const baseY =
-							y * cellSize + random(seed + idx * 3 + 100) * cellSize * 0.8;
-						const size = 50 + random(seed + idx * 4) * 100;
-
-						ctx.beginPath();
-						ctx.moveTo(baseX, baseY);
-						ctx.lineTo(baseX + size, baseY);
-						ctx.lineTo(baseX + size / 2, baseY - size * 0.866);
-						ctx.closePath();
-
-						// More visible white with slightly higher opacity
-						ctx.fillStyle = `rgba(255, 255, 255, ${0.05 + random(seed + idx * 5) * 0.08})`;
-						ctx.fill();
-					}
-				}
-			}
-		};
-
-		generateBackground();
-
-		// Regenerate on window resize or theme change
-		const handleResize = () => {
-			generateBackground();
-		};
-
-		window.addEventListener("resize", handleResize);
-
-		// Watch for dark mode changes
-		const observer = new MutationObserver((mutations) => {
-			mutations.forEach((mutation) => {
-				if (mutation.attributeName === "class") {
-					generateBackground();
-				}
-			});
-		});
-
-		observer.observe(document.documentElement, {
-			attributes: true,
-			attributeFilter: ["class"],
-		});
-
-		return () => {
-			window.removeEventListener("resize", handleResize);
-			observer.disconnect();
-		};
-	}, [themeConfig]);
-
 	// Short format for navigation area
 	const formatRelativeTimeShort = (date) => {
 		if (!date) return "Never";
@@ -608,28 +536,26 @@ const Layout = ({ children }) => {
 
 		if (isSettingsPage && !wasSettings) {
 			// Entering settings — remember current state and collapse
-			sidebarStateBeforeSettings.current = sidebarCollapsed;
-			setSidebarCollapsed(true);
+			sidebarStateBeforeSettings.current = pinnedCollapsed;
+			setPinnedCollapsed(true);
 		} else if (
 			!isSettingsPage &&
 			wasSettings &&
 			sidebarStateBeforeSettings.current !== null
 		) {
 			// Leaving settings — restore previous state
-			setSidebarCollapsed(sidebarStateBeforeSettings.current);
+			setPinnedCollapsed(sidebarStateBeforeSettings.current);
 			sidebarStateBeforeSettings.current = null;
 		}
-	}, [isSettingsPage, sidebarCollapsed]);
+	}, [isSettingsPage, pinnedCollapsed]);
 
-	// Save sidebar collapsed state to localStorage (skip when auto-collapsed for settings)
+	// Persist only the pinned state (not the ephemeral hover state) to localStorage,
+	// and skip while auto-collapsed for settings.
 	useEffect(() => {
 		if (!isSettingsPage) {
-			localStorage.setItem(
-				"sidebarCollapsed",
-				JSON.stringify(sidebarCollapsed),
-			);
+			localStorage.setItem("sidebarCollapsed", JSON.stringify(pinnedCollapsed));
 		}
-	}, [sidebarCollapsed, isSettingsPage]);
+	}, [pinnedCollapsed, isSettingsPage]);
 
 	// Close user menu when clicking outside
 	useEffect(() => {
@@ -652,6 +578,9 @@ const Layout = ({ children }) => {
 			const root = document.documentElement;
 
 			if (isDark && themeConfig?.app) {
+				// App background tracks the active dark theme preset.
+				root.style.setProperty("--app-bg-primary", themeConfig.app.bgPrimary);
+
 				// Glass navigation bars - very light for pattern visibility
 				root.style.setProperty("--sidebar-bg", "rgba(0, 0, 0, 0.15)");
 				root.style.setProperty("--sidebar-blur", "blur(12px)");
@@ -671,6 +600,7 @@ const Layout = ({ children }) => {
 				);
 			} else {
 				// Light mode - standard colors
+				root.style.setProperty("--app-bg-primary", "#f8fafc");
 				root.style.setProperty("--sidebar-bg", "white");
 				root.style.setProperty("--sidebar-blur", "none");
 				root.style.setProperty("--topbar-bg", "white");
@@ -707,16 +637,21 @@ const Layout = ({ children }) => {
 				sidebarCollapsed,
 			}}
 		>
-			<div className="min-h-screen bg-secondary-50 dark:bg-black relative overflow-hidden">
-				{/* Full-screen Trianglify Background (Dark Mode Only) */}
-				<canvas
-					ref={bgCanvasRef}
-					className="fixed inset-0 w-full h-full hidden dark:block"
+			<div
+				className="min-h-screen relative overflow-hidden"
+				style={{ backgroundColor: "var(--app-bg-primary)" }}
+			>
+				{/* Static triangle mesh background. Dark mode only on the authenticated app. */}
+				<div
+					aria-hidden="true"
+					className="patchmon-mesh-bg fixed inset-0 w-full h-full pointer-events-none hidden dark:block"
 					style={{ zIndex: 0 }}
 				/>
+				{/* Subtle dark vignette — only in dark mode, where the base bg is black. */}
 				<div
+					aria-hidden="true"
 					className="fixed inset-0 bg-gradient-to-br from-black/10 to-black/20 hidden dark:block pointer-events-none"
-					style={{ zIndex: 1 }}
+					style={{ zIndex: 2 }}
 				/>
 				{/* Mobile sidebar */}
 				<div
@@ -1050,20 +985,27 @@ const Layout = ({ children }) => {
 					className={`hidden lg:fixed lg:inset-y-0 z-[100] lg:flex lg:flex-col transition-all duration-300 relative ${
 						sidebarCollapsed ? "lg:w-16" : "lg:w-64"
 					} bg-white dark:bg-transparent`}
+					onMouseEnter={() => setIsSidebarHovered(true)}
+					onMouseLeave={() => setIsSidebarHovered(false)}
 				>
-					{/* Collapse/Expand button on border */}
+					{/* Pin/unpin button: toggles the persisted pinned state. When pinned-expanded
+					    the sidebar stays static; when pinned-collapsed, hover temporarily expands it. */}
 					<button
 						type="button"
-						onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+						onClick={() => setPinnedCollapsed(!pinnedCollapsed)}
 						className="absolute top-5 -right-3 z-[200] flex items-center justify-center w-6 h-6 rounded-full bg-white border border-secondary-300 dark:border-white/20 shadow-md hover:bg-secondary-50 transition-colors"
 						style={{
 							backgroundColor: "var(--button-bg, white)",
 							backdropFilter: "var(--button-blur, none)",
 							WebkitBackdropFilter: "var(--button-blur, none)",
 						}}
-						title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+						title={
+							pinnedCollapsed
+								? "Pin sidebar expanded"
+								: "Collapse sidebar (hover to peek)"
+						}
 					>
-						{sidebarCollapsed ? (
+						{pinnedCollapsed ? (
 							<ChevronRight className="h-4 w-4 text-secondary-700 dark:text-white" />
 						) : (
 							<ChevronLeft className="h-4 w-4 text-secondary-700 dark:text-white" />
@@ -1643,16 +1585,17 @@ const Layout = ({ children }) => {
 					</div>
 				</div>
 
-				{/* Main content */}
+				{/* Main content — anchored to the pinned state so hover-expansion of the
+				    sidebar floats over content without causing layout reflow. */}
 				<div
 					className={`flex flex-col min-h-screen transition-all duration-300 relative z-10 ${
-						sidebarCollapsed ? "lg:pl-16" : "lg:pl-64"
+						pinnedCollapsed ? "lg:pl-16" : "lg:pl-64"
 					}`}
 				>
 					{/* Top bar */}
 					<div
 						className={`fixed top-0 z-[90] flex h-16 shrink-0 items-center gap-x-2 sm:gap-x-4 border-b border-secondary-200 dark:border-white/10 bg-white px-3 sm:px-4 sm:px-6 lg:px-8 shadow-sm transition-all duration-300 ${
-							sidebarCollapsed
+							pinnedCollapsed
 								? "lg:left-16 lg:right-0"
 								: "lg:left-64 lg:right-0"
 						} left-0 right-0`}

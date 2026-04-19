@@ -8,7 +8,7 @@ ORDER BY created_at DESC
 LIMIT $1 OFFSET $2;
 
 -- name: CountHosts :one
-SELECT COUNT(*) FROM hosts;
+SELECT COUNT(*) FROM hosts WHERE status = 'active';
 
 -- name: GetHostByID :one
 SELECT * FROM hosts WHERE id = $1;

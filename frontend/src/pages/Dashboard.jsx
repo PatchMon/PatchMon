@@ -235,7 +235,7 @@ const Dashboard = () => {
 	const query_client = useQueryClient();
 	const toast = useToast();
 	const { isDark } = useTheme();
-	const { user, permissions } = useAuth();
+	const { user, permissions, hasModule } = useAuth();
 
 	// First-time setup celebration
 	useEffect(() => {
@@ -468,7 +468,10 @@ const Dashboard = () => {
 		queryFn: () => complianceAPI.getDashboard().then((res) => res.data),
 		staleTime: 60 * 1000,
 		refetchOnWindowFocus: false,
-		enabled: has_view_hosts && is_any_compliance_card_enabled,
+		enabled:
+			has_view_hosts &&
+			is_any_compliance_card_enabled &&
+			hasModule("compliance"),
 	});
 
 	// Fetch patching dashboard only when at least one patching card is enabled
@@ -480,7 +483,8 @@ const Dashboard = () => {
 		queryFn: () => patchingAPI.getDashboard(),
 		staleTime: 30 * 1000,
 		refetchInterval: 30 * 1000,
-		enabled: has_view_hosts && is_any_patching_card_enabled,
+		enabled:
+			has_view_hosts && is_any_patching_card_enabled && hasModule("patching"),
 	});
 
 	// Fetch alerting data only when at least one alerting card is enabled

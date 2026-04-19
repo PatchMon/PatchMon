@@ -254,7 +254,21 @@ func (h *OidcHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		if h.log != nil && len(userInfo.Groups) == 0 {
 			h.log.Warn("oidc no groups in token", "email", userInfo.Email, "hint", "Create a Scope Mapping in Authentik to add 'groups' claim")
 		}
-		effectiveRole = mappedRole
+		// Lockout guardrail: if the user is already a superadmin in the DB and
+		// no OIDC superadmin group is configured, there is no OIDC path that
+		// can grant superadmin. Silently demoting them here would lock the
+		// instance out of superadmin management. Preserve the existing role
+		// and log a warning so operators notice the misconfiguration.
+		if user.Role == "superadmin" && mappedRole != "superadmin" && h.oidcSuperadminGroup() == "" {
+			if h.log != nil {
+				h.log.Warn("oidc sync skip demote superadmin",
+					"email", userInfo.Email,
+					"mapped_role", mappedRole,
+					"hint", "set oidc_superadmin_group to manage superadmin role via OIDC")
+			}
+		} else {
+			effectiveRole = mappedRole
+		}
 	}
 	now := time.Now()
 	_ = h.users.UpdateOidcProfile(r.Context(), user.ID, now, strPtr(userInfo.Picture), strPtr(userInfo.GivenName), strPtr(userInfo.FamilyName), effectiveRole)
@@ -676,6 +690,15 @@ func (h *OidcHandler) oidcSyncRoles() bool {
 		return h.resolved.SyncRoles
 	}
 	return h.cfg.OidcSyncRoles
+}
+
+// oidcSuperadminGroup returns the effective OIDC superadmin group mapping.
+// Empty string means no group is configured (superadmin cannot be granted via OIDC).
+func (h *OidcHandler) oidcSuperadminGroup() string {
+	if h.resolved != nil {
+		return strings.TrimSpace(h.resolved.SuperadminGroup)
+	}
+	return strings.TrimSpace(h.cfg.OidcSuperadminGroup)
 }
 
 func (h *OidcHandler) mapGroupsToRole(groups []string) string {

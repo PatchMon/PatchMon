@@ -98,6 +98,10 @@ func (m *DNFManager) GetPackages() []models.Package {
 
 	// Merge and deduplicate packages (pass full installed packages to preserve descriptions)
 	packages := CombinePackageData(installedPackages, upgradablePackages)
+
+	// Enrich packages with repository attribution
+	m.enrichWithRepoAttribution(packages)
+
 	m.logger.WithFields(logrus.Fields{
 		"total":             len(packages),
 		"installed":         len(installedPackages),
@@ -110,6 +114,82 @@ func (m *DNFManager) GetPackages() []models.Package {
 	}
 
 	return packages
+}
+
+// enrichWithRepoAttribution populates SourceRepository for each package by running
+// repoquery to get the from_repo field for installed packages.
+func (m *DNFManager) enrichWithRepoAttribution(packages []models.Package) {
+	if len(packages) == 0 {
+		return
+	}
+
+	packageManager := m.detectPackageManager()
+
+	var cmd *exec.Cmd
+	if packageManager == "dnf" {
+		cmd = exec.Command("dnf", "repoquery", "--installed", "--cacheonly", "--qf", "%{name}\t%{from_repo}")
+	} else {
+		// yum: try repoquery from yum-utils
+		if _, err := exec.LookPath("repoquery"); err == nil {
+			cmd = exec.Command("repoquery", "--installed", "--qf", "%{name}\t%{ui_from_repo}")
+		} else {
+			// Try yum repoquery (available on some systems)
+			cmd = exec.Command("yum", "repoquery", "--installed", "--qf", "%{name}\t%{ui_from_repo}")
+		}
+	}
+	cmd.Env = append(os.Environ(), "LANG=C")
+
+	output, err := cmd.Output()
+	if err != nil {
+		m.logger.WithError(err).Warn("repoquery failed, skipping repo attribution")
+		return
+	}
+
+	// Parse tab-separated output: name -> from_repo
+	repoByName := make(map[string]string)
+	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		name := parts[0]
+		repo := parts[1]
+
+		// Normalise unknown values
+		repo = strings.TrimPrefix(repo, "@") // yum sometimes prefixes with @
+		if repo == "" || repo == "<unknown>" || repo == "@@commandline" || repo == "commandline" {
+			repo = "unknown"
+		}
+
+		repoByName[name] = repo
+	}
+
+	// Apply to packages
+	attributed := 0
+	for i := range packages {
+		// Try exact match, then try stripping arch suffix from package name
+		name := packages[i].Name
+		if repo, ok := repoByName[name]; ok {
+			packages[i].SourceRepository = repo
+			attributed++
+			continue
+		}
+		// Strip arch suffix (e.g. "glibc.x86_64" -> "glibc")
+		if idx := strings.LastIndex(name, "."); idx > 0 {
+			baseName := name[:idx]
+			if repo, ok := repoByName[baseName]; ok {
+				packages[i].SourceRepository = repo
+				attributed++
+			}
+		}
+	}
+
+	m.logger.WithField("attributed", attributed).Debug("Enriched packages with repository attribution")
 }
 
 // getSecurityPackages gets the list of security packages from dnf/yum updateinfo

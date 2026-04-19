@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,26 +17,63 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// parsePackagesAffectedFromAptOutput extracts package names from apt/apt-get -s output.
-// Looks for lines starting with "Inst " (e.g. "Inst cpp-13 [13.3.0-6ubuntu2~24.04] (13.3.0-6ubuntu2~24.04.1 ...)").
-func parsePackagesAffectedFromAptOutput(output string) []string {
+const freeBSDBasePackageName = "freebsd-base"
+
+var freeBSDPkgSummaryLinePattern = regexp.MustCompile(`^\s+(\S+):\s+`)
+var freeBSDPkgActionLinePattern = regexp.MustCompile(`^\[\d+/\d+\]\s+(?:Installing|Upgrading|Reinstalling)\s+(\S+)`)
+
+func parsePackagesAffectedFromDryRunOutput(output string) []string {
 	var pkgs []string
 	seen := make(map[string]bool)
+	addPkg := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		pkgs = append(pkgs, name)
+	}
+
+	if freeBSDUpdateOutputHasPendingUpdates(output) {
+		addPkg(freeBSDBasePackageName)
+	}
+
+	inFreeBSDPkgSection := false
 	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "Inst ") {
+		trimmed := strings.TrimSpace(line)
+
+		// apt-get simulate: "Inst pkgname ..."
+		if strings.HasPrefix(trimmed, "Inst ") {
+			fields := strings.Fields(trimmed)
+			if len(fields) >= 2 {
+				addPkg(fields[1])
+			}
 			continue
 		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
+
+		upper := strings.ToUpper(trimmed)
+		switch {
+		case strings.Contains(upper, "TO BE UPGRADED"),
+			strings.Contains(upper, "TO BE INSTALLED"),
+			strings.Contains(upper, "TO BE REINSTALLED"):
+			inFreeBSDPkgSection = true
+			continue
+		case strings.HasPrefix(trimmed, "Number of "),
+			strings.Contains(upper, "TO BE REMOVED"),
+			strings.Contains(upper, "TO BE DOWNGRADED"):
+			inFreeBSDPkgSection = false
+		}
+
+		if !inFreeBSDPkgSection || trimmed == "" {
 			continue
 		}
-		name := fields[1]
-		if name != "" && !seen[name] {
-			seen[name] = true
-			pkgs = append(pkgs, name)
+
+		matches := freeBSDPkgSummaryLinePattern.FindStringSubmatch(line)
+		if len(matches) == 2 {
+			addPkg(matches[1])
 		}
 	}
+
 	return pkgs
 }
 
@@ -44,6 +82,8 @@ func parsePackagesAffectedFromAptOutput(output string) []string {
 //   - apt-get (real): "Unpacking pkgname" / "Setting up pkgname" lines
 //   - apt-get (simulate): "Inst pkgname" lines (fallback, same as dry-run parser)
 //   - dnf/yum: "Upgrading  : pkgname.arch" / "Installing : pkgname.arch" or transaction summary sections
+//   - FreeBSD pkg: transaction summary lines and "[1/3] Upgrading pkgname ..." execution lines
+//   - freebsd-update: base-system updates are recorded as the synthetic "freebsd-base" package
 func parsePackagesAffectedFromRealOutput(output string) []string {
 	seen := make(map[string]bool)
 	var pkgs []string
@@ -58,6 +98,11 @@ func parsePackagesAffectedFromRealOutput(output string) []string {
 		}
 	}
 
+	if freeBSDUpdateOutputHasPendingUpdates(output) {
+		addPkg(freeBSDBasePackageName)
+	}
+
+	inFreeBSDPkgSection := false
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimSpace(line)
 		// apt-get simulate: "Inst pkgname ..."
@@ -112,8 +157,57 @@ func parsePackagesAffectedFromRealOutput(output string) []string {
 				}
 			}
 		}
+
+		upper := strings.ToUpper(trimmed)
+		switch {
+		case strings.Contains(upper, "TO BE UPGRADED"),
+			strings.Contains(upper, "TO BE INSTALLED"),
+			strings.Contains(upper, "TO BE REINSTALLED"):
+			inFreeBSDPkgSection = true
+			continue
+		case strings.HasPrefix(trimmed, "Number of "),
+			strings.Contains(upper, "TO BE REMOVED"),
+			strings.Contains(upper, "TO BE DOWNGRADED"):
+			inFreeBSDPkgSection = false
+		}
+
+		if inFreeBSDPkgSection && trimmed != "" {
+			matches := freeBSDPkgSummaryLinePattern.FindStringSubmatch(line)
+			if len(matches) == 2 {
+				addPkg(matches[1])
+				continue
+			}
+		}
+
+		if matches := freeBSDPkgActionLinePattern.FindStringSubmatch(trimmed); len(matches) == 2 {
+			addPkg(normalizeFreeBSDPkgActionTarget(matches[1]))
+		}
 	}
 	return pkgs
+}
+
+func normalizeFreeBSDPkgActionTarget(name string) string {
+	name = strings.TrimSpace(strings.TrimRight(name, ".,:;)]}"))
+	if name == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(name, "-"); idx > 0 && idx+1 < len(name) {
+		next := name[idx+1]
+		if next >= '0' && next <= '9' {
+			return name[:idx]
+		}
+	}
+	return name
+}
+
+func freeBSDUpdateOutputHasPendingUpdates(output string) bool {
+	if output == "" {
+		return false
+	}
+	if strings.Contains(output, "No updates needed") || strings.Contains(output, "No updates are available") {
+		return false
+	}
+	return strings.Contains(output, "will be updated") || strings.Contains(output, "will be installed")
 }
 
 // PatchRunsStore provides patch run access.
@@ -199,7 +293,15 @@ func (s *PatchRunsStore) GetByID(ctx context.Context, id string) (*db.GetPatchRu
 	return &row, nil
 }
 
-// UpdateOutput updates patch run based on agent stage (started, progress, completed, failed, dry_run_completed).
+// UpdateOutput updates patch run based on agent stage.
+// Valid stages: started, progress, completed, failed, dry_run_completed, cancelled.
+//
+// Semantics:
+//   - "started" clears any prior output and flips status=running
+//   - "progress" APPENDS the chunk to shell_output (live streaming)
+//   - Terminal stages (completed, failed, cancelled, dry_run_completed) REPLACE
+//     shell_output with the authoritative full output from the agent. This
+//     avoids duplication of progress chunks already appended during the run.
 func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, stage, output, errorMessage string) error {
 	d := s.db.DB(ctx)
 	switch stage {
@@ -223,7 +325,7 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, stage, output, er
 		}
 		return nil
 	case "dry_run_completed":
-		pkgs := parsePackagesAffectedFromAptOutput(output)
+		pkgs := parsePackagesAffectedFromDryRunOutput(output)
 		var b []byte
 		if len(pkgs) > 0 {
 			b, _ = json.Marshal(pkgs)
@@ -235,6 +337,25 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, stage, output, er
 			ShellOutput:  output,
 			ErrorMessage: &errorMessage,
 		})
+	case "cancelled":
+		errPtr := &errorMessage
+		if errorMessage == "" {
+			errPtr = nil
+		}
+		if err := d.Queries.UpdatePatchRunCancelled(ctx, db.UpdatePatchRunCancelledParams{
+			ID:           id,
+			ShellOutput:  output,
+			ErrorMessage: errPtr,
+		}); err != nil {
+			return err
+		}
+		// Record packages that were actually applied before the stop so the
+		// UI can still show partial state on a cancelled run.
+		if pkgs := parsePackagesAffectedFromRealOutput(output); len(pkgs) > 0 {
+			b, _ := json.Marshal(pkgs)
+			_ = d.Queries.UpdatePatchRunPackagesAffected(ctx, db.UpdatePatchRunPackagesAffectedParams{ID: id, PackagesAffected: b})
+		}
+		return nil
 	default:
 		return nil
 	}

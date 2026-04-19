@@ -31,6 +31,7 @@ func dbRolePermissionToModel(r db.RolePermission) models.RolePermission {
 		CanManageAlerts:         r.CanManageAlerts,
 		CanManageAutomation:     r.CanManageAutomation,
 		CanUseRemoteAccess:      r.CanUseRemoteAccess,
+		CanManageBilling:        r.CanManageBilling,
 		CreatedAt:               pgTime(r.CreatedAt),
 		UpdatedAt:               pgTime(r.UpdatedAt),
 	}

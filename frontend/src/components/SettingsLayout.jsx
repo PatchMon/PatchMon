@@ -25,7 +25,8 @@ import DiscordIcon from "./DiscordIcon";
 const SettingsLayout = ({ children }) => {
 	const content = children ?? <Outlet />;
 	const location = useLocation();
-	const { canManageSettings, canViewUsers, canManageUsers } = useAuth();
+	const { canManageSettings, canViewUsers, canManageUsers, hasModule } =
+		useAuth();
 	const { settings: publicSettings } = useSettings();
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -41,17 +42,22 @@ const SettingsLayout = ({ children }) => {
 					href: "/settings/users",
 					icon: Users,
 				},
-				{
+			];
+			// Custom RBAC roles management is a Plus-tier feature (rbac_custom).
+			// Built-in admin/viewer roles stay available in every tier, but the
+			// dedicated "Roles" editor manages custom role CRUD.
+			if (hasModule("rbac_custom")) {
+				userItems.push({
 					name: "Roles",
 					href: "/settings/roles",
 					icon: Shield,
-				},
-				{
-					name: "My Profile",
-					href: "/settings/profile",
-					icon: UserCircle,
-				},
-			];
+				});
+			}
+			userItems.push({
+				name: "My Profile",
+				href: "/settings/profile",
+				icon: UserCircle,
+			});
 			if (canManageSettings()) {
 				userItems.push(
 					{
@@ -102,21 +108,24 @@ const SettingsLayout = ({ children }) => {
 
 		// Server Config
 		if (canManageSettings()) {
-			// Integrations section
+			// Integrations section. AI Terminal is a Max-tier feature (module key "ai").
+			const integrationsItems = [
+				{
+					name: "API integrations",
+					href: "/settings/integrations",
+					icon: Wrench,
+				},
+			];
+			if (hasModule("ai")) {
+				integrationsItems.push({
+					name: "AI Terminal",
+					href: "/settings/ai-terminal",
+					icon: Bot,
+				});
+			}
 			nav.push({
 				section: "Integrations",
-				items: [
-					{
-						name: "API integrations",
-						href: "/settings/integrations",
-						icon: Wrench,
-					},
-					{
-						name: "AI Terminal",
-						href: "/settings/ai-terminal",
-						icon: Bot,
-					},
-				],
+				items: integrationsItems,
 			});
 
 			const isAdminMode = publicSettings?.admin_mode;
@@ -129,18 +138,20 @@ const SettingsLayout = ({ children }) => {
 					icon: Wrench,
 				});
 			}
-			serverItems.push(
-				{
-					name: "Environment",
-					href: "/settings/environment",
-					icon: Variable,
-				},
-				{
+			serverItems.push({
+				name: "Environment",
+				href: "/settings/environment",
+				icon: Variable,
+			});
+			// Custom branding (logo/favicon upload) is a Plus-tier feature
+			// (module key "custom_branding").
+			if (hasModule("custom_branding")) {
+				serverItems.push({
 					name: "Branding",
 					href: "/settings/branding",
 					icon: Image,
-				},
-			);
+				});
+			}
 			if (!isAdminMode) {
 				serverItems.push({
 					name: "Server Version",

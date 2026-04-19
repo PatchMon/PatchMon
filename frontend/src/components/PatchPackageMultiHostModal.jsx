@@ -26,12 +26,29 @@ import { formatDate, packagesAPI } from "../utils/api";
 import { patchingAPI, pollDryRunUntilDone } from "../utils/patchingApi";
 
 const DRY_RUN_PACKAGE_LIMIT = 5;
+const VALIDATION_CONCURRENCY = 5;
 
 const STEPS = [
 	{ id: "hosts", label: "Select Hosts" },
 	{ id: "validate", label: "Validate" },
 	{ id: "confirm", label: "Confirm" },
 ];
+
+// Run an async worker over items with a bounded concurrency pool so large
+// batches don't serialize (one-at-a-time) or fan out uncapped (stampede).
+async function runWithConcurrency(items, limit, worker) {
+	const queue = [...items];
+	const workers = Array.from(
+		{ length: Math.min(limit, queue.length) },
+		async () => {
+			while (queue.length) {
+				const item = queue.shift();
+				await worker(item);
+			}
+		},
+	);
+	await Promise.all(workers);
+}
 
 /**
  * Wizard modal for patching selected packages across multiple hosts.
@@ -44,23 +61,42 @@ export default function PatchPackageMultiHostModal({
 	onClose,
 	packageNames,
 	onSuccess,
+	restrictHostIds,
 }) {
 	const [step, setStep] = useState(0);
 	const [selectedHostIds, setSelectedHostIds] = useState(new Set());
 
-	// Fetch hosts for each package in parallel
+	// Fetch hosts for each package in parallel.
+	// Always filter to hosts that need this update - patching an up-to-date host
+	// for a specific package has no effect and just clutters the wizard.
 	const hostQueries = useQueries({
 		queries: (packageNames || []).map((pkgName) => ({
 			queryKey: ["package-hosts-for-patch", pkgName],
 			queryFn: () =>
 				packagesAPI
-					.getHosts(encodeURIComponent(pkgName), { limit: 500 })
+					.getHosts(encodeURIComponent(pkgName), {
+						limit: 500,
+						needsUpdate: true,
+					})
 					.then((res) => res.data?.hosts || []),
 			enabled: isOpen && !!pkgName,
 		})),
 	});
 
-	// Union of unique hosts across all packages, excluding Windows (patching not supported)
+	// Normalise restrictHostIds to a Set we can consult cheaply in the memo below.
+	const restrictSet = useMemo(() => {
+		if (!restrictHostIds) return null;
+		if (restrictHostIds instanceof Set) {
+			return restrictHostIds.size > 0 ? restrictHostIds : null;
+		}
+		if (Array.isArray(restrictHostIds)) {
+			return restrictHostIds.length > 0 ? new Set(restrictHostIds) : null;
+		}
+		return null;
+	}, [restrictHostIds]);
+
+	// Union of unique hosts across all packages, excluding Windows (patching not supported).
+	// When restrictHostIds is provided, further filter down to just those hosts.
 	const hosts = useMemo(() => {
 		const byId = new Map();
 		for (const q of hostQueries) {
@@ -69,7 +105,9 @@ export default function PatchPackageMultiHostModal({
 				const osType = (h.os_type || h.osType || "").toLowerCase();
 				if (osType.includes("windows")) continue; // Skip Windows hosts
 				const id = h.hostId || h.host_id || h.id;
-				if (id && !byId.has(id)) {
+				if (!id) continue;
+				if (restrictSet && !restrictSet.has(id)) continue;
+				if (!byId.has(id)) {
 					byId.set(id, {
 						id,
 						friendly_name: h.friendly_name || h.friendlyName,
@@ -83,7 +121,7 @@ export default function PatchPackageMultiHostModal({
 				b.friendly_name || b.hostname || b.id || "",
 			),
 		);
-	}, [hostQueries]);
+	}, [hostQueries, restrictSet]);
 
 	const isLoading = hostQueries.some((q) => q.isLoading);
 	const hasInitialized = useRef(false);
@@ -185,9 +223,26 @@ export default function PatchPackageMultiHostModal({
 		const ids = Array.from(selectedHostIds);
 		if (ids.length === 0) return;
 		setIsValidating(true);
-		setValidationByHost({});
-		const results = {};
+		// Seed every selected host as "pending" so the UI can render a live
+		// per-host list immediately, instead of a single batch-wide spinner.
+		const seeded = {};
 		for (const hostId of ids) {
+			seeded[hostId] = {
+				status: "pending",
+				packages_affected: [],
+				shell_output: "",
+			};
+		}
+		setValidationByHost(seeded);
+
+		await runWithConcurrency(ids, VALIDATION_CONCURRENCY, async (hostId) => {
+			setValidationByHost((prev) => ({
+				...prev,
+				[hostId]: {
+					...(prev[hostId] || {}),
+					status: "validating",
+				},
+			}));
 			try {
 				const res = await patchingAPI.trigger(
 					hostId,
@@ -198,26 +253,35 @@ export default function PatchPackageMultiHostModal({
 				);
 				const runId = res?.patch_run_id;
 				if (!runId) {
-					results[hostId] = {
+					setValidationByHost((prev) => ({
+						...prev,
+						[hostId]: {
+							status: "failed",
+							packages_affected: [],
+							shell_output: "",
+							error: "No run ID returned",
+						},
+					}));
+					return;
+				}
+				const result = await pollDryRunUntilDone(runId);
+				setValidationByHost((prev) => ({
+					...prev,
+					[hostId]: { ...result, patch_run_id: runId },
+				}));
+			} catch (err) {
+				setValidationByHost((prev) => ({
+					...prev,
+					[hostId]: {
 						status: "failed",
 						packages_affected: [],
 						shell_output: "",
-						error: "No run ID returned",
-					};
-					continue;
-				}
-				const result = await pollDryRunUntilDone(runId);
-				results[hostId] = { ...result, patch_run_id: runId };
-			} catch (err) {
-				results[hostId] = {
-					status: "failed",
-					packages_affected: [],
-					shell_output: "",
-					error: err.response?.data?.error || err.message,
-				};
+						error: err.response?.data?.error || err.message,
+					},
+				}));
 			}
-		}
-		setValidationByHost(results);
+		});
+
 		setIsValidating(false);
 	};
 
@@ -230,25 +294,31 @@ export default function PatchPackageMultiHostModal({
 		setError(null);
 		setIsPatching(true);
 		try {
+			// Collect every run we triggered so the caller can decide whether
+			// to deep-link into the live terminal for an immediate run. We
+			// only populate these for "immediate" runs because for delayed
+			// runs there's nothing to watch live yet.
+			const triggeredRuns = [];
 			for (const hostId of ids) {
 				const override = policyOverrides[hostId];
 				const validation = validationByHost[hostId];
 				const validationRunId = validation?.patch_run_id;
-				// If we have a validation run (validated or pending_validation), approve it
-				// instead of creating a brand new run. This marks the validation entry as
-				// "approved" and creates a linked execution run on the backend.
+				// If the host has a validation run (validated or pending_validation)
+				// we approve it — this marks the validation entry as "approved"
+				// and creates a linked execution run on the backend. Otherwise
+				// we trigger a fresh run directly.
+				let response;
 				if (
 					validationRunId &&
 					(validation.status === "validated" ||
 						validation.status === "pending_validation")
 				) {
-					await patchingAPI.approveRun(
+					response = await patchingAPI.approveRun(
 						validationRunId,
 						override ? { schedule_override: override } : {},
 					);
 				} else {
-					// No usable validation run: trigger a fresh run directly.
-					await patchingAPI.trigger(
+					response = await patchingAPI.trigger(
 						hostId,
 						"patch_package",
 						null,
@@ -256,8 +326,28 @@ export default function PatchPackageMultiHostModal({
 						override ? { schedule_override: override } : {},
 					);
 				}
+
+				const runId = response?.patch_run_id;
+				if (!runId) continue;
+
+				// "Immediate" when either the user explicitly overrode to
+				// immediate, or the effective policy is immediate and no
+				// override has been set to something else.
+				const previewDelayType =
+					previewByHost[hostId]?.patch_delay_type || "immediate";
+				const effectiveDelay =
+					override === "immediate"
+						? "immediate"
+						: override && override !== "default"
+							? "scheduled" // a specific policy id — treat as scheduled
+							: previewDelayType;
+				triggeredRuns.push({
+					hostId,
+					runId,
+					immediate: effectiveDelay === "immediate",
+				});
 			}
-			onSuccess?.("patch");
+			onSuccess?.("patch", { runs: triggeredRuns });
 			onClose();
 		} catch (err) {
 			setError(err.response?.data?.error || err.message);
@@ -278,7 +368,50 @@ export default function PatchPackageMultiHostModal({
 		});
 	}, [validationByHost, hosts, selectedPkgs]);
 
-	const validationDone = Object.keys(validationByHost).length > 0;
+	const TERMINAL_VALIDATION_STATUSES = ["validated", "failed", "timeout"];
+	const validationDone =
+		selectedHostIds.size > 0 &&
+		Array.from(selectedHostIds).every((id) =>
+			TERMINAL_VALIDATION_STATUSES.includes(validationByHost[id]?.status),
+		);
+
+	// Aggregate counts for the live progress summary in the Validate step.
+	const validationProgress = useMemo(() => {
+		const counts = {
+			total: selectedHostIds.size,
+			clean: 0,
+			extraDeps: 0,
+			failed: 0,
+			offline: 0,
+			pending: 0,
+			validating: 0,
+			done: 0,
+		};
+		const requestedSet = new Set(selectedPkgs.map((n) => n.toLowerCase()));
+		for (const id of selectedHostIds) {
+			const v = validationByHost[id];
+			const status = v?.status;
+			if (status === "validated") {
+				counts.done += 1;
+				const hasExtra = v.packages_affected?.some(
+					(p) => !requestedSet.has(p.toLowerCase()),
+				);
+				if (hasExtra) counts.extraDeps += 1;
+				else counts.clean += 1;
+			} else if (status === "failed") {
+				counts.done += 1;
+				counts.failed += 1;
+			} else if (status === "timeout") {
+				counts.done += 1;
+				counts.offline += 1;
+			} else if (status === "validating") {
+				counts.validating += 1;
+			} else {
+				counts.pending += 1;
+			}
+		}
+		return counts;
+	}, [selectedHostIds, validationByHost, selectedPkgs]);
 
 	if (!isOpen) return null;
 
@@ -347,9 +480,11 @@ export default function PatchPackageMultiHostModal({
 							</div>
 						) : hosts.length === 0 ? (
 							<p className="text-sm text-secondary-600 dark:text-secondary-400 py-4">
-								{hostQueries.some((q) => (q.data || []).length > 0)
-									? "These packages are only installed on Windows hosts. Patching is not supported for Windows."
-									: "No hosts found with these packages installed."}
+								{restrictSet
+									? "None of the selected hosts have a pending update for these packages."
+									: hostQueries.some((q) => (q.data || []).length > 0)
+										? "These packages are only pending on Windows hosts. Patching is not supported for Windows."
+										: "No hosts have a pending update for these packages."}
 							</p>
 						) : (
 							<>
@@ -438,7 +573,7 @@ export default function PatchPackageMultiHostModal({
 								Run a dry-run validation to see exactly which packages will be
 								updated on each host before committing.
 							</p>
-							{!validationDone && !isValidating && (
+							{!isValidating && Object.keys(validationByHost).length === 0 && (
 								<div className="flex items-center justify-center py-8">
 									<button
 										type="button"
@@ -451,16 +586,80 @@ export default function PatchPackageMultiHostModal({
 									</button>
 								</div>
 							)}
-							{isValidating && (
-								<div className="flex items-center gap-2 text-secondary-600 dark:text-secondary-400 py-8 justify-center">
-									<RefreshCw className="h-4 w-4 animate-spin shrink-0" />
-									Validating on {selectedHostIds.size} host
-									{selectedHostIds.size !== 1 ? "s" : ""}…
-								</div>
-							)}
-							{validationDone && !isValidating && (
+							{(isValidating || Object.keys(validationByHost).length > 0) && (
 								<div className="space-y-3">
-									{hostsWithExtraDeps.length > 0 && (
+									{/* Live progress summary */}
+									<div className="rounded-lg border border-secondary-200 dark:border-secondary-700 bg-secondary-50 dark:bg-secondary-900/40 px-3 py-2 text-sm">
+										<div className="flex items-center gap-2 flex-wrap">
+											{isValidating ? (
+												<RefreshCw className="h-4 w-4 animate-spin text-primary-600 shrink-0" />
+											) : (
+												<Check className="h-4 w-4 text-green-600 shrink-0" />
+											)}
+											<span className="font-medium text-secondary-800 dark:text-secondary-200">
+												Validated {validationProgress.done} /{" "}
+												{validationProgress.total}
+											</span>
+											<span className="text-secondary-500 dark:text-secondary-400">
+												·
+											</span>
+											<span className="text-green-700 dark:text-green-400">
+												{validationProgress.clean} clean
+											</span>
+											{validationProgress.extraDeps > 0 && (
+												<>
+													<span className="text-secondary-500 dark:text-secondary-400">
+														·
+													</span>
+													<span className="text-amber-700 dark:text-amber-400">
+														{validationProgress.extraDeps} extra deps
+													</span>
+												</>
+											)}
+											{validationProgress.failed > 0 && (
+												<>
+													<span className="text-secondary-500 dark:text-secondary-400">
+														·
+													</span>
+													<span className="text-red-700 dark:text-red-400">
+														{validationProgress.failed} failed
+													</span>
+												</>
+											)}
+											{validationProgress.offline > 0 && (
+												<>
+													<span className="text-secondary-500 dark:text-secondary-400">
+														·
+													</span>
+													<span className="text-secondary-600 dark:text-secondary-400">
+														{validationProgress.offline} offline
+													</span>
+												</>
+											)}
+											{validationProgress.validating > 0 && (
+												<>
+													<span className="text-secondary-500 dark:text-secondary-400">
+														·
+													</span>
+													<span className="text-primary-700 dark:text-primary-400">
+														{validationProgress.validating} validating
+													</span>
+												</>
+											)}
+											{validationProgress.pending > 0 && (
+												<>
+													<span className="text-secondary-500 dark:text-secondary-400">
+														·
+													</span>
+													<span className="text-secondary-600 dark:text-secondary-400">
+														{validationProgress.pending} pending
+													</span>
+												</>
+											)}
+										</div>
+									</div>
+
+									{validationDone && hostsWithExtraDeps.length > 0 && (
 										<div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700">
 											<AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
 											<p className="text-sm text-amber-700 dark:text-amber-300">
@@ -473,11 +672,13 @@ export default function PatchPackageMultiHostModal({
 											</p>
 										</div>
 									)}
+
 									{hosts
 										.filter((h) => selectedHostIds.has(h.id))
 										.map((host) => {
-											const v = validationByHost[host.id];
-											if (!v) return null;
+											const v = validationByHost[host.id] || {
+												status: "pending",
+											};
 											const hostLabel =
 												host.friendly_name || host.hostname || host.id;
 											const requestedSet = new Set(
@@ -488,38 +689,67 @@ export default function PatchPackageMultiHostModal({
 													(p) => !requestedSet.has(p.toLowerCase()),
 												) || [];
 											const isExpanded = expandedOutput === host.id;
+											const isTerminal = TERMINAL_VALIDATION_STATUSES.includes(
+												v.status,
+											);
+
+											const borderClass =
+												v.status === "pending"
+													? "border-secondary-200 dark:border-secondary-700"
+													: v.status === "validating"
+														? "border-primary-200 dark:border-primary-700"
+														: extraDeps.length > 0
+															? "border-amber-300 dark:border-amber-600"
+															: v.status === "validated"
+																? "border-green-200 dark:border-green-700"
+																: v.status === "timeout"
+																	? "border-secondary-200 dark:border-secondary-700"
+																	: "border-red-200 dark:border-red-700";
+											const headerBgClass =
+												v.status === "pending"
+													? "bg-secondary-50 dark:bg-secondary-900/40"
+													: v.status === "validating"
+														? "bg-primary-50 dark:bg-primary-900/20"
+														: extraDeps.length > 0
+															? "bg-amber-50 dark:bg-amber-900/30"
+															: v.status === "validated"
+																? "bg-green-50 dark:bg-green-900/20"
+																: v.status === "timeout"
+																	? "bg-secondary-100 dark:bg-secondary-800/60"
+																	: "bg-red-50 dark:bg-red-900/20";
 
 											return (
 												<div
 													key={host.id}
-													className={`rounded-lg border text-sm overflow-hidden ${
-														extraDeps.length > 0
-															? "border-amber-300 dark:border-amber-600"
-															: v.status === "validated"
-																? "border-green-200 dark:border-green-700"
-																: "border-red-200 dark:border-red-700"
-													}`}
+													className={`rounded-lg border text-sm overflow-hidden ${borderClass}`}
 												>
 													<div
-														className={`px-3 py-2 flex items-center gap-2 ${
-															extraDeps.length > 0
-																? "bg-amber-50 dark:bg-amber-900/30"
-																: v.status === "validated"
-																	? "bg-green-50 dark:bg-green-900/20"
-																	: "bg-red-50 dark:bg-red-900/20"
-														}`}
+														className={`px-3 py-2 flex items-center gap-2 ${headerBgClass}`}
 													>
 														<Server className="h-4 w-4 text-secondary-400 shrink-0" />
 														<span className="font-medium text-secondary-800 dark:text-secondary-200 flex-1">
 															{hostLabel}
 														</span>
-														{extraDeps.length > 0 && (
-															<span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-800 dark:text-amber-200">
-																<AlertTriangle className="h-3 w-3" />
-																{extraDeps.length} extra dep
-																{extraDeps.length !== 1 ? "s" : ""}
+														{v.status === "pending" && (
+															<span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-300">
+																<Clock className="h-3 w-3" />
+																Pending
 															</span>
 														)}
+														{v.status === "validating" && (
+															<span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-800 dark:text-primary-200">
+																<RefreshCw className="h-3 w-3 animate-spin" />
+																Validating…
+															</span>
+														)}
+														{v.status === "validated" &&
+															extraDeps.length > 0 && (
+																<span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-800 dark:text-amber-200">
+																	<AlertTriangle className="h-3 w-3" />
+																	{extraDeps.length} extra dep
+																	{extraDeps.length !== 1 ? "s" : ""}
+																</span>
+															)}
 														{v.status === "validated" &&
 															extraDeps.length === 0 && (
 																<span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-800 dark:text-green-200">
@@ -538,72 +768,82 @@ export default function PatchPackageMultiHostModal({
 															</span>
 														)}
 													</div>
-													<div className="px-3 py-2 bg-white dark:bg-secondary-800">
-														{v.error ? (
-															<p className="text-amber-600 dark:text-amber-400 text-xs">
-																{v.error}
-															</p>
-														) : v.packages_affected?.length > 0 ? (
-															<>
-																<p className="text-secondary-600 dark:text-secondary-300 text-xs mb-1">
-																	{v.packages_affected.length} package
-																	{v.packages_affected.length !== 1 ? "s" : ""}{" "}
-																	will be updated:
+													{isTerminal && (
+														<div className="px-3 py-2 bg-white dark:bg-secondary-800">
+															{v.error ? (
+																<p className="text-amber-600 dark:text-amber-400 text-xs">
+																	{v.error}
 																</p>
-																<ul className="text-xs text-secondary-600 dark:text-secondary-400 list-disc list-inside space-y-0.5 max-h-20 overflow-y-auto">
-																	{v.packages_affected.map((p) => (
-																		<li
-																			key={p}
-																			className={
-																				!requestedSet.has(p.toLowerCase())
-																					? "text-amber-600 dark:text-amber-400 font-medium"
-																					: ""
-																			}
-																		>
-																			{p}
-																			{!requestedSet.has(p.toLowerCase()) && (
-																				<span className="ml-1 text-amber-500 dark:text-amber-400">
-																					(dependency)
-																				</span>
-																			)}
-																		</li>
-																	))}
-																</ul>
-															</>
-														) : (
-															<p className="text-xs text-secondary-500 dark:text-secondary-400">
-																No additional packages.
-															</p>
-														)}
-														{v.shell_output && (
-															<button
-																type="button"
-																onClick={() =>
-																	setExpandedOutput(isExpanded ? null : host.id)
-																}
-																className="mt-2 text-xs text-primary-600 dark:text-primary-400 hover:underline inline-flex items-center gap-1"
-															>
-																<Terminal className="h-3 w-3" />
-																{isExpanded ? "Hide" : "Show"} validation output
-															</button>
-														)}
-														{isExpanded && v.shell_output && (
-															<pre className="mt-2 p-2 rounded bg-[#0d1117] text-[#e6edf3] text-[11px] font-mono max-h-48 overflow-auto whitespace-pre-wrap break-words">
-																{v.shell_output}
-															</pre>
-														)}
-													</div>
+															) : v.packages_affected?.length > 0 ? (
+																<>
+																	<p className="text-secondary-600 dark:text-secondary-300 text-xs mb-1">
+																		{v.packages_affected.length} package
+																		{v.packages_affected.length !== 1
+																			? "s"
+																			: ""}{" "}
+																		will be updated:
+																	</p>
+																	<ul className="text-xs text-secondary-600 dark:text-secondary-400 list-disc list-inside space-y-0.5 max-h-20 overflow-y-auto">
+																		{v.packages_affected.map((p) => (
+																			<li
+																				key={p}
+																				className={
+																					!requestedSet.has(p.toLowerCase())
+																						? "text-amber-600 dark:text-amber-400 font-medium"
+																						: ""
+																				}
+																			>
+																				{p}
+																				{!requestedSet.has(p.toLowerCase()) && (
+																					<span className="ml-1 text-amber-500 dark:text-amber-400">
+																						(dependency)
+																					</span>
+																				)}
+																			</li>
+																		))}
+																	</ul>
+																</>
+															) : (
+																<p className="text-xs text-secondary-500 dark:text-secondary-400">
+																	No additional packages.
+																</p>
+															)}
+															{v.shell_output && (
+																<button
+																	type="button"
+																	onClick={() =>
+																		setExpandedOutput(
+																			isExpanded ? null : host.id,
+																		)
+																	}
+																	className="mt-2 text-xs text-primary-600 dark:text-primary-400 hover:underline inline-flex items-center gap-1"
+																>
+																	<Terminal className="h-3 w-3" />
+																	{isExpanded ? "Hide" : "Show"} validation
+																	output
+																</button>
+															)}
+															{isExpanded && v.shell_output && (
+																<pre className="mt-2 p-2 rounded bg-[#0d1117] text-[#e6edf3] text-[11px] font-mono max-h-48 overflow-auto whitespace-pre-wrap break-words">
+																	{v.shell_output}
+																</pre>
+															)}
+														</div>
+													)}
 												</div>
 											);
 										})}
-									<button
-										type="button"
-										onClick={handleValidate}
-										className="text-xs text-primary-600 dark:text-primary-400 hover:underline inline-flex items-center gap-1"
-									>
-										<RefreshCw className="h-3 w-3" />
-										Re-run validation
-									</button>
+
+									{validationDone && !isValidating && (
+										<button
+											type="button"
+											onClick={handleValidate}
+											className="text-xs text-primary-600 dark:text-primary-400 hover:underline inline-flex items-center gap-1"
+										>
+											<RefreshCw className="h-3 w-3" />
+											Re-run validation
+										</button>
+									)}
 								</div>
 							)}
 						</>

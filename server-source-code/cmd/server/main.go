@@ -44,12 +44,14 @@ func main() {
 	ctx := context.Background()
 
 	if err := migrate.Run(cfg.DatabaseURL, bootstrapSlog); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "[fatal] migrations failed: %v\n", err)
 		bootstrapSlog.Error("migrations failed", "error", err)
 		os.Exit(1)
 	}
 
 	db, err := database.NewDB(ctx, cfg)
 	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "[fatal] database: %v\n", err)
 		bootstrapSlog.Error("database", "error", err)
 		os.Exit(1)
 	}
@@ -68,6 +70,8 @@ func main() {
 	slog := log.With("version", cfg.Version, "port", cfg.Port)
 
 	slog.Info("database connected")
+
+	warnOidcSuperadminLockoutRisk(ctx, cfg, settingsStore, store.NewUsersStore(db), slog)
 
 	rdb := redis.NewClient()
 	if err := redis.Ping(ctx, rdb); err != nil {

@@ -223,7 +223,12 @@ func (s *SessionsStore) UpdateActivity(ctx context.Context, id string) error {
 }
 
 // FindSessionWithTfaBypass returns a valid remember-me session for the user+device, if any.
-// Returns nil when deviceFingerprint is empty (no bypass possible without device ID).
+// Returns nil when deviceFingerprint is empty.
+//
+// Deprecated: the fingerprint-based TFA bypass is replaced by the cookie-backed
+// user_trusted_devices table. Use TrustedDevicesStore.FindValid instead.
+// Scheduled for removal with migration 000037 alongside the
+// tfa_remember_me / tfa_bypass_until / device_fingerprint columns.
 func (s *SessionsStore) FindSessionWithTfaBypass(ctx context.Context, userID, deviceFingerprint string) (*models.UserSession, error) {
 	d := s.db.DB(ctx)
 	if deviceFingerprint == "" {

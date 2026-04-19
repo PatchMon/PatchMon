@@ -9,11 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/alerts"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/patchstream"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
@@ -47,6 +49,12 @@ type PatchingHandler struct {
 	queueInspector *asynq.Inspector
 	notify         *notifications.Emitter
 	log            *slog.Logger
+
+	// Optional collaborators for live patch-run streaming.
+	// Populated via SetStreamDependencies after construction so existing
+	// call-sites don't need to thread these values immediately.
+	hub      *patchstream.Hub
+	registry *agentregistry.Registry
 }
 
 // NewPatchingHandler creates a new patching handler.
@@ -135,6 +143,45 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 		h.log.Error("patching: failed to update output", "patch_run_id", patchRunID, "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to save patch output"})
 		return
+	}
+
+	// Fan-out to any live subscribers on the in-process hub. Agent-facing
+	// stages translate into three kinds of events for the browser:
+	//   running       -> started   (run has begun on the agent)
+	//   progress      -> chunk     (line-buffered live stdout/stderr)
+	//   completed /   -> done      (terminal state; client closes the WS)
+	//   failed /
+	//   cancelled /
+	//   validated /
+	//   dry_run_completed
+	//
+	// Everything else (e.g. scheduled / queued / pending_validation) is
+	// written by the server itself, not by the agent, so we don't emit here.
+	if h.hub != nil {
+		switch body.Stage {
+		case "running":
+			h.hub.Publish(patchstream.Event{
+				Type:       patchstream.EventStarted,
+				PatchRunID: patchRunID,
+				Stage:      body.Stage,
+			})
+		case "progress":
+			if body.Output != "" {
+				h.hub.Publish(patchstream.Event{
+					Type:       patchstream.EventChunk,
+					PatchRunID: patchRunID,
+					Stage:      body.Stage,
+					Chunk:      body.Output,
+				})
+			}
+		case "completed", "failed", "cancelled", "validated", "dry_run_completed":
+			h.hub.Publish(patchstream.Event{
+				Type:         patchstream.EventDone,
+				PatchRunID:   patchRunID,
+				Stage:        body.Stage,
+				ErrorMessage: body.ErrorMessage,
+			})
+		}
 	}
 	if body.Stage == "completed" && !run.DryRun {
 		if err := h.hosts.SetAwaitingPostPatchReport(r.Context(), run.HostID, &patchRunID); err != nil {
@@ -421,6 +468,12 @@ func (h *PatchingHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 	if host, err := h.hosts.GetByID(r.Context(), run.HostID); err == nil && host != nil {
 		if hosts, ok := resp["hosts"].(map[string]interface{}); ok {
 			hosts["awaiting_post_patch_report_run_id"] = host.AwaitingPostPatchReportRunID
+			// Expose the host's last inventory report timestamp so the
+			// frontend can tell when a post-patch report has arrived and
+			// swap the "awaiting" pill for a "received" pill.
+			if !host.LastUpdate.IsZero() {
+				hosts["last_update"] = host.LastUpdate.UTC().Format(time.RFC3339)
+			}
 		}
 	}
 	JSON(w, http.StatusOK, resp)

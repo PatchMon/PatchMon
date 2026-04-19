@@ -588,6 +588,7 @@ func (h *ApiHostsHandler) DeleteHost(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to delete host")
 		return
 	}
+
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Host deleted successfully",
 		"deleted": map[string]interface{}{

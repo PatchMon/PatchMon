@@ -77,6 +77,8 @@ func hasPermission(p *models.RolePermission, perm string) bool {
 		return p.CanManageAutomation
 	case "can_use_remote_access":
 		return p.CanUseRemoteAccess
+	case "can_manage_billing":
+		return p.CanManageBilling
 	default:
 		return false
 	}

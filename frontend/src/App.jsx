@@ -67,6 +67,7 @@ const EnvironmentSettings = lazy(
 const AiSettings = lazy(() => import("./pages/settings/AiSettings"));
 const DiscordSettings = lazy(() => import("./pages/settings/DiscordSettings"));
 const OidcSettings = lazy(() => import("./pages/settings/OidcSettings"));
+const Billing = lazy(() => import("./pages/Billing"));
 
 // Full-screen loading fallback (for initial app load / auth check)
 const LoadingFallback = () => (
@@ -296,6 +297,14 @@ function AppRoutes() {
 						element={
 							<ProtectedRoute requirePermission="can_view_users">
 								<SettingsUsers />
+							</ProtectedRoute>
+						}
+					/>
+					<Route
+						path="/billing"
+						element={
+							<ProtectedRoute requirePermission="can_manage_billing">
+								<Billing />
 							</ProtectedRoute>
 						}
 					/>

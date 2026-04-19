@@ -29,7 +29,8 @@ SELECT id, user_id, refresh_token, access_token_hash, ip_address, user_agent,
     device_fingerprint, device_id, last_activity, expires_at, created_at, is_revoked,
     tfa_remember_me, tfa_bypass_until, login_count, last_login_ip
 FROM user_sessions
-WHERE user_id = $1 AND device_id = $2 AND is_revoked = false AND expires_at > NOW()
+WHERE user_id = $1 AND device_id = $2 AND device_id IS NOT NULL
+  AND is_revoked = false AND expires_at > NOW()
 ORDER BY last_activity DESC
 LIMIT 1;
 

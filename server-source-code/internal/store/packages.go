@@ -31,6 +31,15 @@ type ListParams struct {
 	NeedsUpdate      string
 	IsSecurityUpdate string
 	Host             string
+	Repository       string
+}
+
+// PackageRepoRef is a source repository reference for a package.
+type PackageRepoRef struct {
+	RepoID   string `json:"repoId"`
+	RepoName string `json:"repoName"`
+	RepoURL  string `json:"repoUrl"`
+	RepoType string `json:"repoType"`
 }
 
 // PackageWithStats is a package with host counts and stats.
@@ -44,6 +53,15 @@ type PackageWithStats struct {
 	PackageHostsCount int              `json:"packageHostsCount"`
 	PackageHosts      []PackageHostRef `json:"packageHosts"`
 	Stats             PackageStats     `json:"stats"`
+	SourceRepos       []PackageRepoRef `json:"sourceRepos"`
+}
+
+// orEmptyRepos returns an empty slice instead of nil so JSON serialises as [] not null.
+func orEmptyRepos(r []PackageRepoRef) []PackageRepoRef {
+	if r == nil {
+		return []PackageRepoRef{}
+	}
+	return r
 }
 
 // PackageHostRef is a host reference in package list.
@@ -97,6 +115,9 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 	if p.IsSecurityUpdate == "true" {
 		listArg.IsSecurityUpdate = &p.IsSecurityUpdate
 	}
+	if p.Repository != "" {
+		listArg.RepositoryID = &p.Repository
+	}
 
 	countArg := db.CountPackagesParams{}
 	if p.Search != "" {
@@ -113,6 +134,9 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 	}
 	if p.IsSecurityUpdate == "true" {
 		countArg.IsSecurityUpdate = &p.IsSecurityUpdate
+	}
+	if p.Repository != "" {
+		countArg.RepositoryID = &p.Repository
 	}
 
 	total, err := d.Queries.CountPackages(ctx, countArg)
@@ -155,6 +179,22 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 	updatesRows, _ := d.Queries.GetUpdatesCountByPackageIDs(ctx, updatesArg)
 	securityRows, _ := d.Queries.GetSecurityCountByPackageIDs(ctx, securityArg)
 	hostRefs, _ := d.Queries.GetHostRefsForPackageIDs(ctx, hostRefsArg)
+
+	sourceRepoArg := db.GetSourceReposByPackageIDsParams{Column1: ids}
+	if p.Host != "" {
+		sourceRepoArg.HostID = &p.Host
+	}
+	sourceRepoRows, _ := d.Queries.GetSourceReposByPackageIDs(ctx, sourceRepoArg)
+	reposByPkg := make(map[string][]PackageRepoRef)
+	for _, r := range sourceRepoRows {
+		ref := PackageRepoRef{
+			RepoID:   r.RepoID,
+			RepoName: r.RepoName,
+			RepoURL:  r.RepoUrl,
+			RepoType: r.RepoType,
+		}
+		reposByPkg[r.PackageID] = append(reposByPkg[r.PackageID], ref)
+	}
 
 	totalMap := make(map[string]int)
 	for _, r := range totalRows {
@@ -205,6 +245,7 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 				UpdatesNeeded:   updatesNeeded,
 				SecurityUpdates: securityUpdates,
 			},
+			SourceRepos: orEmptyRepos(reposByPkg[p.ID]),
 		}
 	}
 	return out, int(total), nil
@@ -237,6 +278,8 @@ func (s *PackagesStore) GetByID(ctx context.Context, id string) (*PackageDetail,
 	}
 
 	hostPackages := make([]HostPackageWithHost, len(rows))
+	seenRepos := make(map[string]struct{})
+	var sourceRepos []PackageRepoRef
 	for i, r := range rows {
 		hostPackages[i] = HostPackageWithHost{
 			ID:               r.ID,
@@ -247,6 +290,8 @@ func (s *PackagesStore) GetByID(ctx context.Context, id string) (*PackageDetail,
 			NeedsUpdate:      r.NeedsUpdate,
 			IsSecurityUpdate: r.IsSecurityUpdate,
 			LastChecked:      pgTime(r.LastChecked),
+			SourceRepoID:     r.SourceRepositoryID,
+			SourceRepoName:   r.SourceRepoName,
 			Hosts: HostPackageHostRef{
 				ID:           r.HostID,
 				FriendlyName: r.HostFriendlyName,
@@ -257,6 +302,25 @@ func (s *PackagesStore) GetByID(ctx context.Context, id string) (*PackageDetail,
 				LastUpdate:   pgTime(r.HostLastUpdate),
 				NeedsReboot:  r.HostNeedsReboot,
 			},
+		}
+		// Deduplicate source repos across host_packages rows
+		if r.SourceRepositoryID != nil {
+			if _, seen := seenRepos[*r.SourceRepositoryID]; !seen {
+				seenRepos[*r.SourceRepositoryID] = struct{}{}
+				name := ""
+				if r.SourceRepoName != nil {
+					name = *r.SourceRepoName
+				}
+				url := ""
+				if r.SourceRepoUrl != nil {
+					url = *r.SourceRepoUrl
+				}
+				sourceRepos = append(sourceRepos, PackageRepoRef{
+					RepoID:   *r.SourceRepositoryID,
+					RepoName: name,
+					RepoURL:  url,
+				})
+			}
 		}
 	}
 
@@ -299,6 +363,7 @@ func (s *PackagesStore) GetByID(ctx context.Context, id string) (*PackageDetail,
 			Versions: versions,
 			OSTypes:  osTypes,
 		},
+		SourceRepos: orEmptyRepos(sourceRepos),
 	}, nil
 }
 
@@ -308,6 +373,7 @@ type PackageDetail struct {
 	HostPackages  []HostPackageWithHost `json:"host_packages"`
 	Stats         PackageDetailStats    `json:"stats"`
 	Distributions PackageDistributions  `json:"distributions"`
+	SourceRepos   []PackageRepoRef      `json:"sourceRepos"`
 }
 
 // HostPackageWithHost is host_package with nested host.
@@ -320,6 +386,8 @@ type HostPackageWithHost struct {
 	NeedsUpdate      bool               `json:"needs_update"`
 	IsSecurityUpdate bool               `json:"is_security_update"`
 	LastChecked      time.Time          `json:"last_checked"`
+	SourceRepoID     *string            `json:"source_repo_id"`
+	SourceRepoName   *string            `json:"source_repo_name"`
 	Hosts            HostPackageHostRef `json:"hosts"`
 }
 
@@ -363,11 +431,10 @@ type OSTypeCount struct {
 
 // GetHostsParams for GetHosts.
 type GetHostsParams struct {
-	Page      int
-	Limit     int
-	Search    string
-	SortBy    string
-	SortOrder string
+	Page        int
+	Limit       int
+	Search      string
+	NeedsUpdate *bool
 }
 
 // PackageHostEntry is a host where package is installed.
@@ -384,6 +451,7 @@ type PackageHostEntry struct {
 	IsSecurityUpdate bool      `json:"isSecurityUpdate"`
 	LastChecked      time.Time `json:"lastChecked"`
 	NeedsReboot      *bool     `json:"needsReboot"`
+	SourceRepoName   *string   `json:"sourceRepoName"`
 }
 
 // GetHosts returns hosts where a package is installed.
@@ -410,6 +478,9 @@ func (s *PackagesStore) GetHosts(ctx context.Context, packageIDOrName string, p 
 	if p.Search != "" {
 		countArg.Search = &p.Search
 	}
+	if p.NeedsUpdate != nil {
+		countArg.NeedsUpdate = p.NeedsUpdate
+	}
 	total, err := d.Queries.CountHostsForPackage(ctx, countArg)
 	if err != nil {
 		return nil, 0, err
@@ -422,6 +493,9 @@ func (s *PackagesStore) GetHosts(ctx context.Context, packageIDOrName string, p 
 	}
 	if p.Search != "" {
 		listArg.Search = &p.Search
+	}
+	if p.NeedsUpdate != nil {
+		listArg.NeedsUpdate = p.NeedsUpdate
 	}
 
 	rows, err := d.Queries.ListHostsForPackage(ctx, listArg)
@@ -444,6 +518,7 @@ func (s *PackagesStore) GetHosts(ctx context.Context, packageIDOrName string, p 
 			IsSecurityUpdate: r.IsSecurityUpdate,
 			LastChecked:      pgTime(r.LastChecked),
 			NeedsReboot:      r.NeedsReboot,
+			SourceRepoName:   r.SourceRepoName,
 		}
 	}
 	return out, int(total), nil
