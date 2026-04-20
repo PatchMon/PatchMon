@@ -170,29 +170,32 @@ router.get("/agent/download", async (req, res) => {
 		const fs = require("node:fs");
 		const path = require("node:path");
 
-		// Serve Go agent binary (OS-aware: linux or freebsd). When os is missing (old agents), infer from host.os_type.
+		// Serve Go agent binary (OS-aware: linux, freebsd, or openbsd). When os is missing (old agents), infer from host.os_type.
 		const architecture = req.query.arch || "amd64";
 		let os = req.query.os;
 		if (!os && host?.os_type) {
 			const reported = String(host.os_type).toLowerCase();
-			os =
-				reported.includes("freebsd") || reported.includes("pfsense")
-					? "freebsd"
-					: "linux";
+			if (reported.includes("freebsd") || reported.includes("pfsense")) {
+				os = "freebsd";
+			} else if (reported.includes("openbsd")) {
+				os = "openbsd";
+			} else {
+				os = "linux";
+			}
 		}
 		os = os || "linux";
 
-		const validOss = ["linux", "freebsd"];
+		const validOss = ["linux", "freebsd", "openbsd"];
 		if (!validOss.includes(os)) {
 			return res.status(400).json({
-				error: "Invalid os. Must be one of: linux, freebsd",
+				error: "Invalid os. Must be one of: linux, freebsd, openbsd",
 			});
 		}
 
 		const validArchitecturesLinux = ["amd64", "386", "arm64", "arm"];
-		const validArchitecturesFreebsd = ["amd64", "arm64"];
+		const validArchitecturesBsd = ["amd64", "arm64"];
 		const validArchitectures =
-			os === "freebsd" ? validArchitecturesFreebsd : validArchitecturesLinux;
+			os === "linux" ? validArchitecturesLinux : validArchitecturesBsd;
 		if (!validArchitectures.includes(architecture)) {
 			return res.status(400).json({
 				error: `Invalid architecture for ${os}. Must be one of: ${validArchitectures.join(", ")}`,
@@ -267,22 +270,27 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 		const execFileAsync = promisify(execFile);
 
 		const query_os = req.query.os;
-		const valid_os = ["linux", "freebsd"];
+		const valid_os = ["linux", "freebsd", "openbsd"];
 		let os = query_os && valid_os.includes(query_os) ? query_os : null;
 		if (!os && host?.os_type) {
 			const reported = String(host.os_type).toLowerCase();
-			os =
-				reported.includes("freebsd") || reported.includes("pfsense")
-					? "freebsd"
-					: "linux";
+			if (reported.includes("freebsd") || reported.includes("pfsense")) {
+				os = "freebsd";
+			} else if (reported.includes("openbsd")) {
+				os = "openbsd";
+			} else {
+				os = "linux";
+			}
 		}
 		if (!os) {
-			os = host?.expected_platform === "freebsd" ? "freebsd" : "linux";
+			if (host?.expected_platform === "freebsd") os = "freebsd";
+			else if (host?.expected_platform === "openbsd") os = "openbsd";
+			else os = "linux";
 		}
 		const validArchitecturesLinux = ["amd64", "386", "arm64", "arm"];
-		const validArchitecturesFreebsd = ["amd64", "arm64"];
+		const validArchitecturesBsd = ["amd64", "arm64"];
 		const validArchitectures =
-			os === "freebsd" ? validArchitecturesFreebsd : validArchitecturesLinux;
+			os === "linux" ? validArchitecturesLinux : validArchitecturesBsd;
 		if (!validArchitectures.includes(architecture)) {
 			return res.status(400).json({
 				error: `Invalid architecture for ${os}. Must be one of: ${validArchitectures.join(", ")}`,
@@ -298,11 +306,12 @@ router.get("/agent/version", validateApiCredentials, async (req, res) => {
 			// Binary exists in server's agents folder - use its version
 			let serverVersion = null;
 
-			// Only execute the binary if it matches the server's platform (don't run FreeBSD binary on Linux)
+			// Only execute the binary if it matches the server's platform (don't run BSD binary on Linux)
 			const server_platform = process.platform;
 			const binary_matches_server =
 				(os === "linux" && server_platform === "linux") ||
-				(os === "freebsd" && server_platform === "freebsd");
+				(os === "freebsd" && server_platform === "freebsd") ||
+				(os === "openbsd" && server_platform === "openbsd");
 
 			if (binary_matches_server) {
 				try {
@@ -446,8 +455,8 @@ router.post(
 			.withMessage("Compliance enabled must be a boolean"),
 		body("expected_platform")
 			.optional()
-			.isIn(["linux", "freebsd"])
-			.withMessage("expected_platform must be linux or freebsd"),
+			.isIn(["linux", "freebsd", "openbsd"])
+			.withMessage("expected_platform must be linux, freebsd, or openbsd"),
 	],
 	async (req, res) => {
 		try {
@@ -2406,9 +2415,9 @@ router.get("/install", async (req, res) => {
 		// Get architecture parameter (only set if explicitly provided, otherwise let script auto-detect)
 		const architecture = req.query.arch;
 
-		// Get OS parameter for script (linux | freebsd); default linux for backward compatibility
+		// Get OS parameter for script (linux | freebsd | openbsd); default linux for backward compatibility
 		let os = req.query.os || "linux";
-		const validOss = ["linux", "freebsd"];
+		const validOss = ["linux", "freebsd", "openbsd"];
 		if (!validOss.includes(os)) {
 			os = "linux";
 		}

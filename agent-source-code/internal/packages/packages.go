@@ -20,6 +20,7 @@ type Manager struct {
 	apkManager     *APKManager
 	pacmanManager  *PacmanManager
 	freebsdManager *FreeBSDManager
+	openbsdManager *OpenBSDManager
 }
 
 // New creates a new package manager
@@ -29,6 +30,7 @@ func New(logger *logrus.Logger) *Manager {
 	apkManager := NewAPKManager(logger)
 	pacmanManager := NewPacmanManager(logger)
 	freebsdManager := NewFreeBSDManager(logger)
+	openbsdManager := NewOpenBSDManager(logger)
 
 	return &Manager{
 		logger:         logger,
@@ -37,6 +39,7 @@ func New(logger *logrus.Logger) *Manager {
 		apkManager:     apkManager,
 		pacmanManager:  pacmanManager,
 		freebsdManager: freebsdManager,
+		openbsdManager: openbsdManager,
 	}
 }
 
@@ -57,6 +60,8 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 		return m.pacmanManager.GetPackages()
 	case "pkg":
 		return m.freebsdManager.GetPackages()
+	case "pkg_info":
+		return m.openbsdManager.GetPackages()
 	default:
 		return nil, fmt.Errorf("unsupported package manager: %s", packageManager)
 	}
@@ -67,6 +72,19 @@ func (m *Manager) detectPackageManager() string {
 	// Check for FreeBSD pkg first (avoid confusion with other 'pkg' tools).
 	// When the agent runs as an rc.d service, PATH may be minimal, so also check
 	// standard FreeBSD paths explicitly so package reports still work on pfSense/FreeBSD.
+	// OpenBSD: pkg_info is the package tool
+	if runtime.GOOS == "openbsd" {
+		if _, err := exec.LookPath("pkg_info"); err == nil {
+			return "pkg_info"
+		}
+	}
+	if _, err := exec.LookPath("pkg_info"); err == nil {
+		if output, err := exec.Command("uname", "-s").Output(); err == nil {
+			if strings.TrimSpace(string(output)) == "OpenBSD" {
+				return "pkg_info"
+			}
+		}
+	}
 	if runtime.GOOS == "freebsd" {
 		for _, pkgPath := range []string{"/usr/sbin/pkg", "/usr/local/sbin/pkg"} {
 			if info, err := os.Stat(pkgPath); err == nil && info.Mode().IsRegular() && (info.Mode()&0111) != 0 {

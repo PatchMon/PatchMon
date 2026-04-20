@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, Copy, Download, RefreshCw, Wifi, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DiWindows } from "react-icons/di";
-import { SiFreebsd, SiLinux } from "react-icons/si";
+import { SiFreebsd, SiLinux, SiOpenbsd } from "react-icons/si";
 import { useNavigate } from "react-router-dom";
 import {
 	adminHostsAPI,
@@ -37,7 +37,7 @@ const hasInitialReport = (hostData) => {
 
 const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 	const [step, setStep] = useState(1);
-	const [platform, setPlatform] = useState("linux"); // linux | freebsd
+	const [platform, setPlatform] = useState("linux"); // linux | freebsd | openbsd
 	const [formData, setFormData] = useState({
 		friendly_name: "",
 		hostGroupIds: [],
@@ -83,13 +83,15 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 		const base = `${serverUrl}/api/v1/hosts/install`;
 		const params = new URLSearchParams();
 		if (platform === "freebsd") params.set("os", "freebsd");
+		else if (platform === "openbsd") params.set("os", "openbsd");
 		if (force) params.set("force", "true");
 		const qs = params.toString();
 		return qs ? `${base}?${qs}` : base;
 	};
 
 	const getShellCommand = (force) => {
-		const use_sudo = platform !== "freebsd";
+		// BSDs don't ship with sudo by default
+		const use_sudo = platform !== "freebsd" && platform !== "openbsd";
 		const base = use_sudo ? "sudo sh" : "sh";
 		return force ? `${base} -s -- --force` : base;
 	};
@@ -311,36 +313,48 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 							Select the operating system of the host you want to add. The
 							install command will match this choice.
 						</p>
-						<div className="grid grid-cols-3 gap-4">
+						<div className="grid grid-cols-4 gap-3">
 							<button
 								type="button"
 								onClick={() => setPlatform("linux")}
-								className={`flex flex-col items-center justify-center p-6 rounded-lg border-2 transition-all ${
+								className={`flex flex-col items-center justify-center p-4 rounded-lg border-2 transition-all ${
 									platform === "linux"
 										? "border-primary-500 bg-primary-50 dark:bg-primary-900/30"
 										: "border-secondary-300 dark:border-secondary-600 hover:border-primary-400"
 								}`}
 							>
-								<SiLinux className="h-12 w-12 text-secondary-700 dark:text-secondary-200 mb-2" />
+								<SiLinux className="h-10 w-10 text-secondary-700 dark:text-secondary-200 mb-2" />
 								<span className="text-sm font-medium">Linux</span>
 							</button>
 							<button
 								type="button"
 								onClick={() => setPlatform("freebsd")}
-								className={`flex flex-col items-center justify-center p-6 rounded-lg border-2 transition-all ${
+								className={`flex flex-col items-center justify-center p-4 rounded-lg border-2 transition-all ${
 									platform === "freebsd"
 										? "border-primary-500 bg-primary-50 dark:bg-primary-900/30"
 										: "border-secondary-300 dark:border-secondary-600 hover:border-primary-400"
 								}`}
 							>
-								<SiFreebsd className="h-12 w-12 text-secondary-700 dark:text-secondary-200 mb-2" />
+								<SiFreebsd className="h-10 w-10 text-secondary-700 dark:text-secondary-200 mb-2" />
 								<span className="text-sm font-medium">FreeBSD</span>
 							</button>
+							<button
+								type="button"
+								onClick={() => setPlatform("openbsd")}
+								className={`flex flex-col items-center justify-center p-4 rounded-lg border-2 transition-all ${
+									platform === "openbsd"
+										? "border-primary-500 bg-primary-50 dark:bg-primary-900/30"
+										: "border-secondary-300 dark:border-secondary-600 hover:border-primary-400"
+								}`}
+							>
+								<SiOpenbsd className="h-10 w-10 text-secondary-700 dark:text-secondary-200 mb-2" />
+								<span className="text-sm font-medium">OpenBSD</span>
+							</button>
 							<div
-								className="flex flex-col items-center justify-center p-6 rounded-lg border-2 border-secondary-200 dark:border-secondary-700 bg-secondary-50 dark:bg-secondary-800/50 opacity-60 cursor-not-allowed"
+								className="flex flex-col items-center justify-center p-4 rounded-lg border-2 border-secondary-200 dark:border-secondary-700 bg-secondary-50 dark:bg-secondary-800/50 opacity-60 cursor-not-allowed"
 								title="Coming soon"
 							>
-								<DiWindows className="h-12 w-12 text-secondary-500 mb-2" />
+								<DiWindows className="h-10 w-10 text-secondary-500 mb-2" />
 								<span className="text-sm font-medium">Windows</span>
 								<span className="text-xs text-secondary-500 mt-1">
 									Coming soon

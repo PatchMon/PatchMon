@@ -42,6 +42,7 @@ const (
 	RepoTypeAPK     = "apk"
 	RepoTypePacman  = "pacman"
 	RepoTypeFreeBSD = "freebsd"
+	RepoTypeOpenBSD = "openbsd"
 )
 
 // Log level constants

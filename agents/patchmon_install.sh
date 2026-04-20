@@ -124,6 +124,16 @@ cleanup_old_files
 
 # Generate or retrieve machine ID
 get_machine_id() {
+    # OpenBSD: use hw.uuid sysctl
+    if [ "$(uname -s 2>/dev/null)" = "OpenBSD" ]; then
+        _uuid=$(sysctl -n hw.uuid 2>/dev/null)
+        if [ -n "$_uuid" ]; then
+            echo "$_uuid"
+            return
+        fi
+        echo "patchmon-openbsd-$(hostname 2>/dev/null)-$(date +%s 2>/dev/null)"
+        return
+    fi
     # FreeBSD: use hostid or kern.hostuuid
     if [ "$(uname -s 2>/dev/null)" = "FreeBSD" ]; then
         if [ -f /etc/hostid ]; then
@@ -163,7 +173,7 @@ if [ -z "$ARCHITECTURE" ]; then
     
     # Map architecture to supported values
     case "$arch_raw" in
-        "x86_64")
+        "x86_64"|"amd64")
             ARCHITECTURE="amd64"
             ;;
         "i386"|"i686")
@@ -182,10 +192,10 @@ if [ -z "$ARCHITECTURE" ]; then
     esac
 fi
 
-# Validate architecture (FreeBSD supports amd64 and arm64 only)
-if [ "$PATCHMON_OS" = "freebsd" ]; then
+# Validate architecture (FreeBSD/OpenBSD support amd64 and arm64 only)
+if [ "$PATCHMON_OS" = "freebsd" ] || [ "$PATCHMON_OS" = "openbsd" ]; then
     if [ "$ARCHITECTURE" != "amd64" ] && [ "$ARCHITECTURE" != "arm64" ]; then
-        error "Invalid architecture '$ARCHITECTURE' for FreeBSD. Must be one of: amd64, arm64"
+        error "Invalid architecture '$ARCHITECTURE' for $PATCHMON_OS. Must be one of: amd64, arm64"
     fi
 else
     if [ "$ARCHITECTURE" != "amd64" ] && [ "$ARCHITECTURE" != "386" ] && [ "$ARCHITECTURE" != "arm64" ] && [ "$ARCHITECTURE" != "arm" ]; then
@@ -471,6 +481,17 @@ elif command -v apk >/dev/null 2>&1; then
     echo ""
     info "Installing jq, curl, and bc..."
     install_apk_packages jq curl bc
+elif [ "$(uname -s 2>/dev/null)" = "OpenBSD" ] || [ "$PATCHMON_OS" = "openbsd" ]; then
+    # OpenBSD: only curl is required
+    info "Detected OpenBSD (pkg_add)"
+    echo ""
+    if ! command -v curl >/dev/null 2>&1; then
+        info "Ensuring curl is installed..."
+        pkg_add -I curl >/dev/null 2>&1 || true
+        if ! command -v curl >/dev/null 2>&1; then
+            warning "curl not found. Install manually: pkg_add curl"
+        fi
+    fi
 elif [ "$(uname -s 2>/dev/null)" = "FreeBSD" ] || [ "$PATCHMON_OS" = "freebsd" ]; then
     # FreeBSD/pfSense: only curl is required; agent does not use jq/bc. Skip pkg if curl already present
     # (on pfSense, pkg repos may be unconfigured and "pkg install curl" can fail with "no match")
@@ -794,6 +815,38 @@ EOF
     fi
     
     SERVICE_TYPE="openrc"
+elif [ "$(uname -s 2>/dev/null)" = "OpenBSD" ] || [ "$PATCHMON_OS" = "openbsd" ]; then
+    # OpenBSD: use rcctl / rc.d
+    info "Setting up OpenBSD rc.d service..."
+    RCD_SCRIPT="/etc/rc.d/patchmon_agent"
+    cat > "$RCD_SCRIPT" << 'EOF'
+#!/bin/ksh
+#
+# PatchMon Agent rc.d script for OpenBSD
+#
+daemon="/usr/local/bin/patchmon-agent"
+daemon_flags="serve"
+daemon_user="root"
+
+. /etc/rc.d/rc.subr
+rc_cmd $1
+EOF
+    chmod +x "$RCD_SCRIPT"
+    if command -v rcctl >/dev/null 2>&1; then
+        rcctl enable patchmon_agent 2>/dev/null || true
+        rcctl start patchmon_agent
+        sleep 1
+        if rcctl check patchmon_agent 2>/dev/null | grep -q "ok"; then
+            success "PatchMon Agent service started successfully"
+            info "WebSocket connection established"
+        else
+            warning "Service may have failed to start. Check: rcctl check patchmon_agent"
+        fi
+    else
+        "$RCD_SCRIPT" start
+        success "PatchMon Agent service configured"
+    fi
+    SERVICE_TYPE="rc.d"
 elif [ "$(uname -s 2>/dev/null)" = "FreeBSD" ] || [ "$PATCHMON_OS" = "freebsd" ]; then
     # FreeBSD: use rc.d
     info "Setting up FreeBSD rc.d service..."
@@ -892,7 +945,8 @@ printf "%b\n" "${GREEN}Installation Summary:${NC}"
 echo "   • Configuration directory: /etc/patchmon"
 echo "   • Agent binary installed: /usr/local/bin/patchmon-agent"
 echo "   • Architecture: $ARCHITECTURE"
-if [ "$(uname -s 2>/dev/null)" = "FreeBSD" ] || [ "$PATCHMON_OS" = "freebsd" ]; then
+if [ "$(uname -s 2>/dev/null)" = "FreeBSD" ] || [ "$PATCHMON_OS" = "freebsd" ] || \
+   [ "$(uname -s 2>/dev/null)" = "OpenBSD" ] || [ "$PATCHMON_OS" = "openbsd" ]; then
     echo "   • Dependencies installed: curl"
 else
     echo "   • Dependencies installed: jq, curl, bc"
@@ -902,7 +956,11 @@ if [ "$SERVICE_TYPE" = "systemd" ]; then
 elif [ "$SERVICE_TYPE" = "openrc" ]; then
     echo "   • OpenRC service configured and running"
 elif [ "$SERVICE_TYPE" = "rc.d" ]; then
-    echo "   • FreeBSD rc.d service configured and running"
+    if [ "$(uname -s 2>/dev/null)" = "OpenBSD" ] || [ "$PATCHMON_OS" = "openbsd" ]; then
+        echo "   • OpenBSD rc.d service configured and running"
+    else
+        echo "   • FreeBSD rc.d service configured and running"
+    fi
 else
     echo "   • Service configured via crontab"
 fi
@@ -936,9 +994,15 @@ elif [ "$SERVICE_TYPE" = "openrc" ]; then
     echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.log"
     echo "   • Restart service: rc-service patchmon-agent restart"
 elif [ "$SERVICE_TYPE" = "rc.d" ]; then
-    echo "   • Service status: service patchmon_agent status"
-    echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.log"
-    echo "   • Restart service: service patchmon_agent restart"
+    if [ "$(uname -s 2>/dev/null)" = "OpenBSD" ] || [ "$PATCHMON_OS" = "openbsd" ]; then
+        echo "   • Service status: rcctl check patchmon_agent"
+        echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.log"
+        echo "   • Restart service: rcctl restart patchmon_agent"
+    else
+        echo "   • Service status: service patchmon_agent status"
+        echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.log"
+        echo "   • Restart service: service patchmon_agent restart"
+    fi
 else
     echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.log"
     echo "   • Restart service: pkill -f 'patchmon-agent serve' && /usr/local/bin/patchmon-agent serve &"
