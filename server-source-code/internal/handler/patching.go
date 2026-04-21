@@ -33,6 +33,7 @@ var packageNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+-_]*$`)
 var deletablePatchRunStatuses = map[string]bool{
 	"queued":             true,
 	"pending_validation": true,
+	"pending_approval":   true,
 	"validated":          true,
 	"approved":           true,
 	"scheduled":          true,
@@ -324,7 +325,7 @@ func (h *PatchingHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	statusCounts := map[string]int{
 		"queued": 0, "running": 0, "completed": 0, "failed": 0, "cancelled": 0,
-		"pending_validation": 0, "validated": 0,
+		"pending_validation": 0, "pending_approval": 0, "validated": 0,
 	}
 	for k, v := range byStatus {
 		statusCounts[k] = v
@@ -337,6 +338,7 @@ func (h *PatchingHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		"failed":             statusCounts["failed"],
 		"cancelled":          statusCounts["cancelled"],
 		"pending_validation": statusCounts["pending_validation"],
+		"pending_approval":   statusCounts["pending_approval"],
 		"validated":          statusCounts["validated"],
 	}
 	recentResp := patchRunsToResponse(recent)
@@ -494,8 +496,8 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 		JSON(w, http.StatusNotFound, map[string]string{"error": "Patch run not found"})
 		return
 	}
-	if valRun.Status != "validated" && valRun.Status != "pending_validation" {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Only validated or pending-validation runs can be approved"})
+	if valRun.Status != "validated" && valRun.Status != "pending_validation" && valRun.Status != "pending_approval" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Only validated, pending-validation, or pending-approval runs can be approved"})
 		return
 	}
 
@@ -669,6 +671,14 @@ func (h *PatchingHandler) RetryValidation(w http.ResponseWriter, r *http.Request
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Only pending-validation runs can be retried"})
 		return
 	}
+	// patch_all runs cannot be dry-run on the agent (no --dry-run support for
+	// the bulk upgrade path). Re-validation only makes sense for patch_package
+	// pending runs that stalled mid dry-run (e.g. host was offline). Pending
+	// approval patch_all runs are just waiting for approval, not validation.
+	if run.PatchType != "patch_package" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Validation retry is only supported for patch_package runs"})
+		return
+	}
 
 	host, err := h.hosts.GetByID(r.Context(), run.HostID)
 	if err != nil || host == nil {
@@ -780,12 +790,17 @@ func (h *PatchingHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 
 func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		HostID           string   `json:"host_id"`
-		PatchType        string   `json:"patch_type"`
-		PackageName      string   `json:"package_name"`
-		PackageNames     []string `json:"package_names"`
-		DryRun           bool     `json:"dry_run"`
-		ScheduleOverride string   `json:"schedule_override"` // "immediate" to bypass policy delay
+		HostID       string   `json:"host_id"`
+		PatchType    string   `json:"patch_type"`
+		PackageName  string   `json:"package_name"`
+		PackageNames []string `json:"package_names"`
+		DryRun       bool     `json:"dry_run"`
+		// PendingApproval creates the run in pending_validation status WITHOUT
+		// enqueuing any work to the host. It's the "submit for approval" path:
+		// a second approver later calls ApproveRun to actually execute. Works
+		// for any patch_type (including patch_all, which cannot dry-run).
+		PendingApproval  bool   `json:"pending_approval"`
+		ScheduleOverride string `json:"schedule_override"` // "immediate" to bypass policy delay
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
@@ -801,6 +816,10 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.DryRun && body.PatchType != "patch_package" {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "dry_run is only supported for patch_package"})
+		return
+	}
+	if body.DryRun && body.PendingApproval {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "dry_run and pending_approval are mutually exclusive"})
 		return
 	}
 
@@ -839,8 +858,10 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	if delayMs < 0 {
 		delayMs = 0
 	}
-	// Dry runs run immediately (no policy delay)
-	if body.DryRun {
+	// Dry runs and "submit for approval" runs never delay — dry runs fire
+	// immediately on the host, and pending-approval runs don't fire at all
+	// until someone approves them (delay is computed fresh at approve time).
+	if body.DryRun || body.PendingApproval {
 		delayMs = 0
 	}
 	// Manual schedule override: "immediate" bypasses policy delay
@@ -879,10 +900,33 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 			"patch_delay_type": "immediate",
 		})
 	}
-	_, err = h.patchRuns.CreateRun(r.Context(), patchRunID, body.HostID, jobID, body.PatchType, pkgName, pkgNames, triggeredBy, body.DryRun, scheduledAt, policyID, policyNamePtr, policySnapshot, nil)
+	// Pending-approval runs land in their own "pending_approval" status: they
+	// never executed anything on the host (so they're not pending_validation,
+	// which implies an in-flight dry-run), they're just waiting for an
+	// approver to call ApproveRun, which builds the real execution run
+	// (same code path the approve wizard already uses).
+	var createOpts *store.CreateRunOpts
+	if body.PendingApproval {
+		createOpts = &store.CreateRunOpts{InitialStatus: "pending_approval"}
+	}
+	_, err = h.patchRuns.CreateRun(r.Context(), patchRunID, body.HostID, jobID, body.PatchType, pkgName, pkgNames, triggeredBy, body.DryRun, scheduledAt, policyID, policyNamePtr, policySnapshot, createOpts)
 	if err != nil {
 		h.log.Error("patching: create run error", "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create patch run"})
+		return
+	}
+
+	// Pending-approval runs don't enqueue any work — they sit in the DB
+	// until someone approves them. Short-circuit here.
+	if body.PendingApproval {
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"message":          "Submitted for approval",
+			"patch_run_id":     patchRunID,
+			"job_id":           jobID,
+			"run_at":           runAt.UTC().Format(time.RFC3339),
+			"queued":           false,
+			"pending_approval": true,
+		})
 		return
 	}
 

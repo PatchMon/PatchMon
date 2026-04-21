@@ -7,8 +7,8 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // HostGroupsStore provides host group access.
@@ -66,8 +66,8 @@ func (s *HostGroupsStore) Create(ctx context.Context, g *models.HostGroup) error
 		Name:        g.Name,
 		Description: g.Description,
 		Color:       g.Color,
-		CreatedAt:   pgtype.Timestamp{Time: now, Valid: true},
-		UpdatedAt:   pgtype.Timestamp{Time: now, Valid: true},
+		CreatedAt:   pgtime.From(now),
+		UpdatedAt:   pgtime.From(now),
 	}
 	return d.Queries.CreateHostGroup(ctx, arg)
 }
@@ -80,7 +80,7 @@ func (s *HostGroupsStore) Update(ctx context.Context, g *models.HostGroup) error
 		Name:        g.Name,
 		Description: g.Description,
 		Color:       g.Color,
-		UpdatedAt:   pgtype.Timestamp{Time: g.UpdatedAt, Valid: true},
+		UpdatedAt:   pgtime.From(g.UpdatedAt),
 		ID:          g.ID,
 	}
 	return d.Queries.UpdateHostGroup(ctx, arg)

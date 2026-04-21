@@ -2,6 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	CheckCircle,
+	CheckSquare,
+	ChevronDown,
+	ChevronLeft,
+	ChevronRight,
 	Clock,
 	Edit,
 	History,
@@ -10,8 +14,10 @@ import {
 	PlayCircle,
 	Plus,
 	RefreshCw,
+	Search,
 	Server,
 	Shield,
+	Square,
 	Trash2,
 	User,
 	Users,
@@ -25,8 +31,9 @@ import {
 	useNavigate,
 	useSearchParams,
 } from "react-router-dom";
-import { PackageListDisplay } from "../components/PackageListDisplay";
+import { CompactPackageSummary } from "../components/PackageListDisplay";
 import { PatchRunStatusBadge } from "../components/PatchRunStatusBadge";
+import PatchWizard from "../components/PatchWizard";
 import {
 	PatchingActivePolicies,
 	PatchingPendingApproval,
@@ -82,8 +89,17 @@ const Patching = () => {
 	const [runsFilterStatus, setRunsFilterStatus] = useState(initialStatus);
 	const [runsFilterType, setRunsFilterType] = useState(initialType);
 	const [runsPage, setRunsPage] = useState(1);
-	const runsLimit = 25;
+	const [runsLimit, setRunsLimit] = useState(() => {
+		if (typeof window === "undefined") return 25;
+		const stored = Number(window.localStorage.getItem("patching-runs-limit"));
+		return [25, 50, 100, 200].includes(stored) ? stored : 25;
+	});
 	const queryClient = useQueryClient();
+
+	useEffect(() => {
+		if (typeof window === "undefined") return;
+		window.localStorage.setItem("patching-runs-limit", String(runsLimit));
+	}, [runsLimit]);
 
 	const {
 		data: dashboard,
@@ -112,13 +128,6 @@ const Patching = () => {
 	const runs = runsData?.runs || [];
 	const runsPagination = runsData?.pagination || { total: 0, pages: 0 };
 
-	const approveMutation = useMutation({
-		mutationFn: (runId) => patchingAPI.approveRun(runId),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
-			queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
-		},
-	});
 	const retryValidationMutation = useMutation({
 		mutationFn: (runId) => patchingAPI.retryValidation(runId),
 		onSuccess: () => {
@@ -126,16 +135,28 @@ const Patching = () => {
 			queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
 		},
 	});
-	const [approvingId, setApprovingId] = useState(null);
 	const [retryingId, setRetryingId] = useState(null);
 	const [selectedRunIds, setSelectedRunIds] = useState(new Set());
 	const [selectedApproveIds, setSelectedApproveIds] = useState(new Set());
-	const [bulkApproving, setBulkApproving] = useState(false);
 	const [bulkApproveResult, setBulkApproveResult] = useState(null);
+
+	// State for the approve wizard. Holds an array of run summaries that the
+	// wizard will display in its Confirm step. Setting this to a non-empty
+	// array opens the wizard; clearing it closes. One wizard for both single-
+	// row and bulk approvals keeps the UI consistent.
+	// Each entry shape: { runId, host, patchType, packageNames }
+	const [approveWizardRuns, setApproveWizardRuns] = useState(null);
+	// Approvals now happen inside the wizard, so the old per-row "Approving…"
+	// spinner state is gone. We keep these as constants so the existing
+	// button JSX (disabled/label branches) still compiles without being
+	// touched in this refactor.
+	const bulkApproving = false;
+	const approvingId = null;
 
 	const deletableStatuses = new Set([
 		"queued",
 		"pending_validation",
+		"pending_approval",
 		"validated",
 		"approved",
 		"scheduled",
@@ -145,7 +166,11 @@ const Patching = () => {
 		deletableRuns.length > 0 &&
 		deletableRuns.every((r) => selectedRunIds.has(r.id));
 
-	const approvableStatuses = new Set(["validated", "pending_validation"]);
+	const approvableStatuses = new Set([
+		"validated",
+		"pending_validation",
+		"pending_approval",
+	]);
 	const approvableRuns = runs.filter((r) => approvableStatuses.has(r.status));
 	const allApprovableSelected =
 		approvableRuns.length > 0 &&
@@ -207,38 +232,69 @@ const Patching = () => {
 		}
 	};
 
-	const handleApproveSelected = async () => {
-		const ids = [...selectedApproveIds];
-		if (ids.length === 0) return;
-		setBulkApproving(true);
-		setBulkApproveResult(null);
-		// Use allSettled — approvals are independent writes, so a single
-		// failing row should not cancel the remaining approvals.
-		const results = await Promise.allSettled(
-			ids.map((id) => approveMutation.mutateAsync(id)),
-		);
-		const failed = results.filter((r) => r.status === "rejected").length;
-		setBulkApproveResult({ ok: ids.length - failed, failed });
-		setSelectedApproveIds(new Set());
-		setBulkApproving(false);
+	// Build a single wizard-row descriptor from a raw run object. The wizard
+	// needs just enough context to show host name, patch type, and any
+	// requested package names for confirmation.
+	const buildApproveRow = (run) => ({
+		runId: run.id,
+		host: {
+			id: run.host_id,
+			friendly_name: run.hosts?.friendly_name,
+			hostname: run.hosts?.hostname,
+		},
+		patchType: run.patch_type,
+		packageNames:
+			Array.isArray(run.package_names) && run.package_names.length > 0
+				? run.package_names
+				: run.package_name
+					? [run.package_name]
+					: [],
+	});
+
+	// Single-row Approve / Skip & Patch: open the wizard preloaded with one
+	// row. The wizard handles the actual approveRun call so the user can
+	// override the policy first if they want.
+	const handleApprove = (runId) => {
+		const run = runs.find((r) => r.id === runId);
+		if (!run) return;
+		setApproveWizardRuns([buildApproveRow(run)]);
 	};
 
-	const handleApprove = async (runId) => {
-		setApprovingId(runId);
-		try {
-			// Approval creates a NEW execution run linked to this validation
-			// run. When that new run is going to start immediately we deep-link
-			// the user into its detail page so they can watch the live
-			// terminal output instead of having to hunt for it in the list.
-			const res = await approveMutation.mutateAsync(runId);
-			const newRunId = res?.patch_run_id;
-			const runAt = res?.run_at ? Date.parse(res.run_at) : NaN;
-			const isImmediate = Number.isFinite(runAt) && runAt - Date.now() < 5_000;
-			if (newRunId && isImmediate) {
-				navigate(`/patching/runs/${newRunId}`);
-			}
-		} finally {
-			setApprovingId(null);
+	// Bulk Approve selected: open the wizard with N rows. The Confirm step
+	// lets the user set a per-run policy override before approving, then
+	// fires approveRun once per row.
+	const handleApproveSelected = () => {
+		const ids = [...selectedApproveIds];
+		if (ids.length === 0) return;
+		const byId = new Map(runs.map((r) => [r.id, r]));
+		const rows = ids
+			.map((id) => byId.get(id))
+			.filter(Boolean)
+			.map(buildApproveRow);
+		if (rows.length === 0) return;
+		setBulkApproveResult(null);
+		setApproveWizardRuns(rows);
+	};
+
+	// Called by the wizard on successful approval(s). Deep-links into a
+	// single immediate run; otherwise shows a short summary the user can
+	// dismiss.
+	const handleApproveWizardSuccess = (_mode, info) => {
+		const runsOut = info?.runs || [];
+		const approved = runsOut.length;
+		const sourceCount = approveWizardRuns?.length || 0;
+		setApproveWizardRuns(null);
+		setSelectedApproveIds(new Set());
+		queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
+		queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
+		const immediate = runsOut.filter((r) => r.immediate);
+		if (immediate.length === 1 && sourceCount === 1) {
+			navigate(`/patching/runs/${immediate[0].runId}`);
+			return;
+		}
+		if (sourceCount > 1) {
+			const failed = Math.max(sourceCount - approved, 0);
+			setBulkApproveResult({ ok: approved, failed });
 		}
 	};
 
@@ -281,7 +337,12 @@ const Patching = () => {
 			</div>
 
 			<div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-				<div className="card p-4">
+				<button
+					type="button"
+					onClick={() => navigate("/patching?tab=runs")}
+					className="card p-4 hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow text-left"
+					title="View all runs"
+				>
 					<div className="flex items-center">
 						<ListChecks className="h-5 w-5 text-primary-600 mr-2" />
 						<div>
@@ -293,8 +354,13 @@ const Patching = () => {
 							</p>
 						</div>
 					</div>
-				</div>
-				<div className="card p-4">
+				</button>
+				<button
+					type="button"
+					onClick={() => navigate("/patching?tab=runs&status=active")}
+					className="card p-4 hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow text-left"
+					title="View queued and running runs"
+				>
 					<div className="flex items-center">
 						<Clock className="h-5 w-5 text-blue-600 mr-2" />
 						<div>
@@ -306,8 +372,13 @@ const Patching = () => {
 							</p>
 						</div>
 					</div>
-				</div>
-				<div className="card p-4">
+				</button>
+				<button
+					type="button"
+					onClick={() => navigate("/patching?tab=runs&status=completed")}
+					className="card p-4 hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow text-left"
+					title="View completed runs"
+				>
 					<div className="flex items-center">
 						<CheckCircle className="h-5 w-5 text-green-600 mr-2" />
 						<div>
@@ -319,8 +390,13 @@ const Patching = () => {
 							</p>
 						</div>
 					</div>
-				</div>
-				<div className="card p-4">
+				</button>
+				<button
+					type="button"
+					onClick={() => navigate("/patching?tab=runs&status=failed")}
+					className="card p-4 hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow text-left"
+					title="View failed runs"
+				>
 					<div className="flex items-center">
 						<XCircle className="h-5 w-5 text-red-600 mr-2" />
 						<div>
@@ -332,7 +408,7 @@ const Patching = () => {
 							</p>
 						</div>
 					</div>
-				</div>
+				</button>
 				<button
 					type="button"
 					onClick={() => setActiveTab("policies")}
@@ -391,47 +467,247 @@ const Patching = () => {
 			)}
 
 			{activeTab === "runs" && (
-				<div className="mt-4">
-					<div className="flex flex-wrap items-center gap-3 mb-4">
-						<span className="text-sm text-secondary-600 dark:text-secondary-400">
-							Filter by status:
-						</span>
-						<select
-							value={runsFilterStatus}
-							onChange={(e) => {
-								setRunsFilterStatus(e.target.value);
-								setRunsPage(1);
-							}}
-							className="rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
-						>
-							<option value="">All</option>
-							<option value="queued">Queued</option>
-							<option value="pending_validation">Pending validation</option>
-							<option value="validated">Validated (awaiting approval)</option>
-							<option value="approved">Approved</option>
-							<option value="scheduled">Scheduled</option>
-							<option value="running">Running</option>
-							<option value="completed">Completed</option>
-							<option value="failed">Failed</option>
-							<option value="cancelled">Cancelled</option>
-						</select>
-						<span className="text-sm text-secondary-600 dark:text-secondary-400">
-							Type:
-						</span>
-						<select
-							value={runsFilterType}
-							onChange={(e) => {
-								setRunsFilterType(e.target.value);
-								setRunsPage(1);
-							}}
-							className="rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
-						>
-							<option value="">All</option>
-							<option value="patch_all">Patch All</option>
-							<option value="patch_package">Patch Package</option>
-						</select>
+				<RunsTab
+					runs={runs}
+					runsPage={runsPage}
+					setRunsPage={setRunsPage}
+					runsLimit={runsLimit}
+					setRunsLimit={setRunsLimit}
+					runsPagination={runsPagination}
+					runsFilterStatus={runsFilterStatus}
+					setRunsFilterStatus={setRunsFilterStatus}
+					runsFilterType={runsFilterType}
+					setRunsFilterType={setRunsFilterType}
+					selectedRunIds={selectedRunIds}
+					setSelectedRunIds={setSelectedRunIds}
+					selectedApproveIds={selectedApproveIds}
+					setSelectedApproveIds={setSelectedApproveIds}
+					deletableStatuses={deletableStatuses}
+					deletableRuns={deletableRuns}
+					allDeletableSelected={allDeletableSelected}
+					approvableStatuses={approvableStatuses}
+					approvableRuns={approvableRuns}
+					allApprovableSelected={allApprovableSelected}
+					handleToggleSelect={handleToggleSelect}
+					handleToggleSelectAll={handleToggleSelectAll}
+					handleToggleApproveSelect={handleToggleApproveSelect}
+					handleToggleApproveSelectAll={handleToggleApproveSelectAll}
+					handleDeleteSelected={handleDeleteSelected}
+					handleApproveSelected={handleApproveSelected}
+					handleApprove={handleApprove}
+					handleRetryValidation={handleRetryValidation}
+					retryingId={retryingId}
+					approvingId={approvingId}
+					deletingIds={deletingIds}
+					bulkApproving={bulkApproving}
+					bulkApproveResult={bulkApproveResult}
+					setBulkApproveResult={setBulkApproveResult}
+				/>
+			)}
+			{activeTab === "policies" && <PoliciesTab />}
+
+			{/* Flow 7: Approve wizard - single-row Approve/Skip & Patch and
+			    bulk Approve selected both route through here. Step 3 only
+			    (no host selection, no validation) so the user can just set
+			    a policy override per row and confirm. */}
+			{approveWizardRuns && approveWizardRuns.length > 0 && (
+				<PatchWizard
+					isOpen
+					onClose={() => setApproveWizardRuns(null)}
+					mode="approve"
+					patchType="patch_package"
+					packageNames={[]}
+					lockHosts
+					lockPackages
+					presetHosts={approveWizardRuns.map((r) => r.host)}
+					validationRunIds={approveWizardRuns.map((r) => r.runId)}
+					packagesByHost={Object.fromEntries(
+						approveWizardRuns.map((r) => [r.host.id, r.packageNames]),
+					)}
+					patchTypeByHost={Object.fromEntries(
+						approveWizardRuns.map((r) => [r.host.id, r.patchType]),
+					)}
+					onSuccess={handleApproveWizardSuccess}
+				/>
+			)}
+		</div>
+	);
+};
+
+/* ───────────────────── Runs & History Tab ───────────────────── */
+
+const STATUS_OPTIONS = [
+	{ value: "", label: "All statuses" },
+	{ value: "active", label: "Active (queued + running)" },
+	{ value: "queued", label: "Queued" },
+	{ value: "pending_validation", label: "Pending validation" },
+	{ value: "pending_approval", label: "Pending approval" },
+	{ value: "validated", label: "Validated (awaiting approval)" },
+	{ value: "approved", label: "Approved" },
+	{ value: "scheduled", label: "Scheduled" },
+	{ value: "running", label: "Running" },
+	{ value: "completed", label: "Completed" },
+	{ value: "failed", label: "Failed" },
+	{ value: "cancelled", label: "Cancelled" },
+];
+
+const TYPE_OPTIONS = [
+	{ value: "", label: "All types" },
+	{ value: "patch_all", label: "Patch all" },
+	{ value: "patch_package", label: "Patch package" },
+];
+
+/**
+ * Inline row-action buttons shared between mobile cards and desktop rows.
+ * Rendered with compact size for desktop, full-width-friendly size for mobile.
+ */
+function RunRowActions({
+	run,
+	onApprove,
+	onRetry,
+	retryingId,
+	approvingId,
+	size = "sm",
+}) {
+	const isMobile = size === "md";
+	const baseBtn = isMobile
+		? "inline-flex items-center justify-center gap-1.5 text-sm px-3 py-2 rounded-md min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed"
+		: "inline-flex items-center gap-1 text-xs px-2 py-1 rounded disabled:opacity-50 disabled:cursor-not-allowed";
+	const iconSize = isMobile ? "h-4 w-4" : "h-3 w-3";
+
+	return (
+		<>
+			{run.status === "pending_validation" && (
+				<>
+					<button
+						type="button"
+						onClick={() => onRetry(run.id)}
+						disabled={retryingId === run.id}
+						className={`${baseBtn} border border-secondary-300 dark:border-secondary-600 text-secondary-700 dark:text-secondary-200 hover:bg-secondary-100 dark:hover:bg-secondary-700`}
+						title="Re-queue validation (host may have been offline)"
+					>
+						<RefreshCw
+							className={`${iconSize} ${retryingId === run.id ? "animate-spin" : ""}`}
+						/>
+						Retry
+					</button>
+					<button
+						type="button"
+						onClick={() => onApprove(run.id)}
+						disabled={approvingId === run.id}
+						className={`${baseBtn} bg-amber-600 hover:bg-amber-700 text-white`}
+						title="Skip validation and patch immediately"
+					>
+						{approvingId === run.id ? (
+							<RefreshCw className={`${iconSize} animate-spin`} />
+						) : (
+							<PlayCircle className={iconSize} />
+						)}
+						Skip & Patch
+					</button>
+				</>
+			)}
+			{run.status === "pending_approval" && (
+				<button
+					type="button"
+					onClick={() => onApprove(run.id)}
+					disabled={approvingId === run.id}
+					className={`${baseBtn} bg-primary-600 hover:bg-primary-700 text-white`}
+					title="Approve and queue this run for execution"
+				>
+					{approvingId === run.id ? (
+						<RefreshCw className={`${iconSize} animate-spin`} />
+					) : (
+						<PlayCircle className={iconSize} />
+					)}
+					Approve
+				</button>
+			)}
+			{run.status === "validated" && (
+				<button
+					type="button"
+					onClick={() => onApprove(run.id)}
+					disabled={approvingId === run.id}
+					className={`${baseBtn} bg-primary-600 hover:bg-primary-700 text-white`}
+					title="Approve this validated run to proceed with patching"
+				>
+					{approvingId === run.id ? (
+						<RefreshCw className={`${iconSize} animate-spin`} />
+					) : (
+						<PlayCircle className={iconSize} />
+					)}
+					Approve
+				</button>
+			)}
+			<Link
+				to={`/patching/runs/${run.id}`}
+				className={
+					isMobile
+						? "inline-flex items-center justify-center gap-1.5 text-sm px-3 py-2 rounded-md min-h-[44px] border border-secondary-300 dark:border-secondary-600 text-primary-600 dark:text-primary-400 hover:bg-secondary-50 dark:hover:bg-secondary-700"
+						: "text-primary-600 dark:text-primary-400 hover:underline text-sm px-2"
+				}
+			>
+				View
+			</Link>
+		</>
+	);
+}
+
+function RunsTab({
+	runs,
+	runsPage,
+	setRunsPage,
+	runsLimit,
+	setRunsLimit,
+	runsPagination,
+	runsFilterStatus,
+	setRunsFilterStatus,
+	runsFilterType,
+	setRunsFilterType,
+	selectedRunIds,
+	setSelectedRunIds,
+	selectedApproveIds,
+	setSelectedApproveIds,
+	deletableStatuses,
+	deletableRuns,
+	allDeletableSelected,
+	approvableStatuses,
+	approvableRuns,
+	allApprovableSelected,
+	handleToggleSelect,
+	handleToggleSelectAll,
+	handleToggleApproveSelect,
+	handleToggleApproveSelectAll,
+	handleDeleteSelected,
+	handleApproveSelected,
+	handleApprove,
+	handleRetryValidation,
+	retryingId,
+	approvingId,
+	deletingIds,
+	bulkApproving,
+	bulkApproveResult,
+	setBulkApproveResult,
+}) {
+	const totalRuns = runsPagination.total || 0;
+	const totalPages = Math.max(runsPagination.pages || 0, 1);
+	const rangeStart = totalRuns === 0 ? 0 : (runsPage - 1) * runsLimit + 1;
+	const rangeEnd = Math.min(runsPage * runsLimit, totalRuns);
+	const hasFilters = Boolean(runsFilterStatus || runsFilterType);
+	const hasSelection = selectedRunIds.size > 0 || selectedApproveIds.size > 0;
+
+	return (
+		<div className="mt-4 space-y-4">
+			{/* Bulk action bar (§4.5) — shown only when items are selected */}
+			{hasSelection && (
+				<div className="card p-3 sm:p-4">
+					<div className="flex flex-wrap items-center gap-2 sm:gap-3">
 						{selectedRunIds.size > 0 && (
 							<>
+								<span className="text-sm text-secondary-600 dark:text-white/80 flex-shrink-0">
+									{selectedRunIds.size} run
+									{selectedRunIds.size !== 1 ? "s" : ""} selected for delete
+								</span>
 								<button
 									type="button"
 									onClick={handleDeleteSelected}
@@ -439,20 +715,34 @@ const Patching = () => {
 									className="btn-danger flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 min-h-[44px] text-xs sm:text-sm"
 								>
 									<Trash2 className="h-4 w-4 flex-shrink-0" />
-									<span>Delete {selectedRunIds.size} selected</span>
+									<span className="hidden sm:inline">
+										Delete {selectedRunIds.size} selected
+									</span>
+									<span className="sm:hidden">Delete</span>
 								</button>
 								<button
 									type="button"
 									onClick={() => setSelectedRunIds(new Set())}
-									className="text-xs sm:text-sm text-secondary-500 dark:text-white/70 hover:text-secondary-700 dark:hover:text-white/90 min-h-[44px] px-2"
+									className="text-xs sm:text-sm text-secondary-500 hover:text-secondary-700 dark:text-white/70 dark:hover:text-white min-h-[44px] px-2"
 								>
-									<span className="hidden sm:inline">Clear selection</span>
+									<span className="hidden sm:inline">Clear delete</span>
 									<span className="sm:hidden">Clear</span>
 								</button>
 							</>
 						)}
+						{selectedRunIds.size > 0 && selectedApproveIds.size > 0 && (
+							<span
+								className="hidden sm:inline h-5 w-px bg-secondary-200 dark:bg-secondary-600"
+								aria-hidden="true"
+							/>
+						)}
 						{selectedApproveIds.size > 0 && (
 							<>
+								<span className="text-sm text-secondary-600 dark:text-white/80 flex-shrink-0">
+									{selectedApproveIds.size} run
+									{selectedApproveIds.size !== 1 ? "s" : ""} selected for
+									approve
+								</span>
 								<button
 									type="button"
 									onClick={handleApproveSelected}
@@ -464,16 +754,19 @@ const Patching = () => {
 									) : (
 										<CheckCircle className="h-4 w-4 flex-shrink-0" />
 									)}
-									<span>
+									<span className="hidden sm:inline">
 										{bulkApproving ? "Approving…" : "Approve"}{" "}
 										{selectedApproveIds.size} selected
+									</span>
+									<span className="sm:hidden">
+										{bulkApproving ? "…" : "Approve"}
 									</span>
 								</button>
 								<button
 									type="button"
 									onClick={() => setSelectedApproveIds(new Set())}
 									disabled={bulkApproving}
-									className="text-xs sm:text-sm text-secondary-500 dark:text-white/70 hover:text-secondary-700 dark:hover:text-white/90 min-h-[44px] px-2"
+									className="text-xs sm:text-sm text-secondary-500 hover:text-secondary-700 dark:text-white/70 dark:hover:text-white min-h-[44px] px-2"
 								>
 									<span className="hidden sm:inline">Clear approve</span>
 									<span className="sm:hidden">Clear</span>
@@ -481,271 +774,532 @@ const Patching = () => {
 							</>
 						)}
 					</div>
-					{bulkApproveResult && (
-						<div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-secondary-200 dark:border-secondary-600 bg-secondary-50 dark:bg-secondary-800 text-sm">
-							<div className="flex items-center gap-2 flex-wrap">
-								{bulkApproveResult.failed === 0 ? (
-									<CheckCircle className="h-4 w-4 text-green-600 flex-shrink-0" />
-								) : (
-									<AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0" />
-								)}
-								<span className="text-secondary-800 dark:text-secondary-200">
-									Approved {bulkApproveResult.ok}
-									{bulkApproveResult.failed > 0
-										? `, ${bulkApproveResult.failed} failed`
-										: ""}
-								</span>
-							</div>
-							<button
-								type="button"
-								onClick={() => setBulkApproveResult(null)}
-								className="text-secondary-500 hover:text-secondary-700 dark:text-white/70 dark:hover:text-white/90"
-								aria-label="Dismiss"
+				</div>
+			)}
+
+			{/* Bulk-approve result banner */}
+			{bulkApproveResult && (
+				<div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-secondary-200 dark:border-secondary-600 bg-secondary-50 dark:bg-secondary-800 text-sm">
+					<div className="flex items-center gap-2 flex-wrap">
+						{bulkApproveResult.failed === 0 ? (
+							<CheckCircle className="h-4 w-4 text-green-600 flex-shrink-0" />
+						) : (
+							<AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0" />
+						)}
+						<span className="text-secondary-800 dark:text-secondary-200">
+							Approved {bulkApproveResult.ok}
+							{bulkApproveResult.failed > 0
+								? `, ${bulkApproveResult.failed} failed`
+								: ""}
+						</span>
+					</div>
+					<button
+						type="button"
+						onClick={() => setBulkApproveResult(null)}
+						className="text-secondary-500 hover:text-secondary-700 dark:text-white/70 dark:hover:text-white"
+						aria-label="Dismiss"
+					>
+						<X className="h-4 w-4" />
+					</button>
+				</div>
+			)}
+
+			{/* Card containing filters + table/cards + pagination */}
+			<div className="card">
+				{/* Filter bar (§5.1) */}
+				<div className="p-3 sm:p-4 border-b border-secondary-200 dark:border-secondary-600">
+					<div className="flex flex-col sm:flex-row sm:items-center gap-3">
+						<div className="flex-1 min-w-0">
+							<label
+								htmlFor="patching-runs-filter-status"
+								className="block text-xs font-medium text-secondary-500 dark:text-white/80 mb-1 uppercase tracking-wider"
 							>
-								<X className="h-4 w-4" />
-							</button>
+								Status
+							</label>
+							<div className="relative">
+								<select
+									id="patching-runs-filter-status"
+									value={runsFilterStatus}
+									onChange={(e) => {
+										setRunsFilterStatus(e.target.value);
+										setRunsPage(1);
+									}}
+									className="appearance-none w-full pl-3 pr-8 py-2.5 sm:py-2 min-h-[44px] sm:min-h-0 border border-secondary-300 dark:border-secondary-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
+								>
+									{STATUS_OPTIONS.map((opt) => (
+										<option key={opt.value} value={opt.value}>
+											{opt.label}
+										</option>
+									))}
+								</select>
+								<ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary-400 pointer-events-none" />
+							</div>
 						</div>
-					)}
-					<div className="card p-4 md:p-6">
-						<div className="overflow-x-auto">
-							<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
-								<thead className="bg-secondary-50 dark:bg-secondary-700">
+						<div className="flex-1 min-w-0">
+							<label
+								htmlFor="patching-runs-filter-type"
+								className="block text-xs font-medium text-secondary-500 dark:text-white/80 mb-1 uppercase tracking-wider"
+							>
+								Type
+							</label>
+							<div className="relative">
+								<select
+									id="patching-runs-filter-type"
+									value={runsFilterType}
+									onChange={(e) => {
+										setRunsFilterType(e.target.value);
+										setRunsPage(1);
+									}}
+									className="appearance-none w-full pl-3 pr-8 py-2.5 sm:py-2 min-h-[44px] sm:min-h-0 border border-secondary-300 dark:border-secondary-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
+								>
+									{TYPE_OPTIONS.map((opt) => (
+										<option key={opt.value} value={opt.value}>
+											{opt.label}
+										</option>
+									))}
+								</select>
+								<ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary-400 pointer-events-none" />
+							</div>
+						</div>
+						{hasFilters && (
+							<div className="flex items-end">
+								<button
+									type="button"
+									onClick={() => {
+										setRunsFilterStatus("");
+										setRunsFilterType("");
+										setRunsPage(1);
+									}}
+									className="btn-outline min-h-[44px] sm:min-h-0 text-sm"
+								>
+									Clear filters
+								</button>
+							</div>
+						)}
+					</div>
+				</div>
+
+				{/* Empty states (§14) */}
+				{runs.length === 0 ? (
+					<div className="p-4">
+						{hasFilters ? (
+							<div className="text-center py-8">
+								<Search className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
+								<p className="text-secondary-500 dark:text-white">
+									No runs match your filters
+								</p>
+								<p className="text-sm text-secondary-400 dark:text-white mt-2">
+									Try adjusting the status or type filter to see more results
+								</p>
+							</div>
+						) : (
+							<div className="text-center py-8">
+								<History className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
+								<p className="text-secondary-500 dark:text-white">
+									No patch runs yet
+								</p>
+								<p className="text-sm text-secondary-400 dark:text-white mt-2">
+									Patch runs triggered from the Overview tab or from host detail
+									pages will appear here
+								</p>
+							</div>
+						)}
+					</div>
+				) : (
+					<>
+						{/* Mobile cards (§20.2) */}
+						<div className="md:hidden p-3 space-y-3">
+							{runs.map((run) => {
+								const isDeletable = deletableStatuses.has(run.status);
+								const isApprovable = approvableStatuses.has(run.status);
+								const isSelectedForDelete = selectedRunIds.has(run.id);
+								const isSelectedForApprove = selectedApproveIds.has(run.id);
+								const hasExtraDeps =
+									run.status === "validated" &&
+									run.packages_affected?.length >
+										(run.package_names?.length || 1);
+								const hostLabel =
+									run.hosts?.friendly_name ||
+									run.hosts?.hostname ||
+									run.host_id;
+								return (
+									<div
+										key={run.id}
+										className={`card p-4 space-y-3 ${
+											isSelectedForDelete
+												? "ring-2 ring-danger-500"
+												: isSelectedForApprove
+													? "ring-2 ring-primary-500"
+													: ""
+										}`}
+									>
+										<div className="flex items-start justify-between gap-3">
+											<div className="min-w-0 flex-1">
+												<div className="flex items-center gap-2 text-base font-semibold text-secondary-900 dark:text-white truncate">
+													<Server className="h-4 w-4 text-secondary-400 shrink-0" />
+													<span className="truncate">{hostLabel}</span>
+												</div>
+												<div className="mt-1">
+													<CompactPackageSummary run={run} />
+												</div>
+											</div>
+											<div className="flex items-center gap-1 shrink-0">
+												{isDeletable && (
+													<button
+														type="button"
+														onClick={() => handleToggleSelect(run.id)}
+														className="min-w-[44px] min-h-[44px] flex items-center justify-center"
+														title="Select for delete"
+														aria-label="Select for delete"
+													>
+														{isSelectedForDelete ? (
+															<CheckSquare className="h-5 w-5 text-danger-600" />
+														) : (
+															<Square className="h-5 w-5 text-secondary-400" />
+														)}
+													</button>
+												)}
+												{isApprovable && (
+													<button
+														type="button"
+														onClick={() => handleToggleApproveSelect(run.id)}
+														className="min-w-[44px] min-h-[44px] flex items-center justify-center"
+														title="Select for approve"
+														aria-label="Select for approve"
+													>
+														{isSelectedForApprove ? (
+															<CheckSquare className="h-5 w-5 text-primary-600" />
+														) : (
+															<Square className="h-5 w-5 text-secondary-400" />
+														)}
+													</button>
+												)}
+											</div>
+										</div>
+
+										<div className="flex items-center gap-1.5 flex-wrap">
+											<PatchRunStatusBadge run={run} />
+											{hasExtraDeps && <ValidatedBadge />}
+										</div>
+
+										<div className="grid grid-cols-2 gap-2 text-xs text-secondary-500 dark:text-secondary-400 pt-2 border-t border-secondary-200 dark:border-secondary-600">
+											<div className="min-w-0">
+												<div className="uppercase tracking-wider text-[10px] mb-0.5">
+													Initiated by
+												</div>
+												<div className="flex items-center gap-1 text-secondary-700 dark:text-white truncate">
+													{run.triggered_by_username ? (
+														<>
+															<User className="h-3.5 w-3.5 shrink-0" />
+															<span className="truncate">
+																{run.triggered_by_username}
+															</span>
+														</>
+													) : (
+														<span>—</span>
+													)}
+												</div>
+											</div>
+											<div className="min-w-0">
+												<div className="uppercase tracking-wider text-[10px] mb-0.5">
+													Started
+												</div>
+												<div className="text-secondary-700 dark:text-white truncate">
+													{formatDate(run.created_at)}
+												</div>
+											</div>
+											{run.completed_at && (
+												<div className="min-w-0 col-span-2">
+													<div className="uppercase tracking-wider text-[10px] mb-0.5">
+														Completed
+													</div>
+													<div className="text-secondary-700 dark:text-white truncate">
+														{formatDate(run.completed_at)}
+													</div>
+												</div>
+											)}
+										</div>
+
+										<div className="flex flex-wrap items-center gap-2 pt-2 border-t border-secondary-200 dark:border-secondary-600">
+											<RunRowActions
+												run={run}
+												onApprove={handleApprove}
+												onRetry={handleRetryValidation}
+												retryingId={retryingId}
+												approvingId={approvingId}
+												size="md"
+											/>
+										</div>
+									</div>
+								);
+							})}
+						</div>
+
+						{/* Desktop table (§4.1) */}
+						<div className="hidden md:block overflow-x-auto">
+							<table className="min-w-full w-full divide-y divide-secondary-200 dark:divide-secondary-600 table-auto">
+								<thead className="bg-secondary-50 dark:bg-secondary-700 sticky top-0 z-10">
 									<tr>
 										<th
 											scope="col"
-											className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider w-10"
-											title="Select for delete"
+											className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider w-10"
 										>
 											{deletableRuns.length > 0 ? (
-												<input
-													type="checkbox"
-													checked={allDeletableSelected}
-													onChange={handleToggleSelectAll}
-													className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 dark:border-secondary-600 rounded cursor-pointer"
+												<button
+													type="button"
+													onClick={handleToggleSelectAll}
+													className="flex items-center text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200"
 													title="Select all deletable runs"
 													aria-label="Select all deletable runs"
-												/>
+												>
+													{allDeletableSelected ? (
+														<CheckSquare className="h-4 w-4 text-danger-600" />
+													) : (
+														<Square className="h-4 w-4" />
+													)}
+												</button>
 											) : null}
 										</th>
 										<th
 											scope="col"
-											className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider w-10"
-											title="Select for approve"
+											className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider w-10"
 										>
 											{approvableRuns.length > 0 ? (
-												<input
-													type="checkbox"
-													checked={allApprovableSelected}
-													onChange={handleToggleApproveSelectAll}
-													className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 dark:border-secondary-600 rounded cursor-pointer"
+												<button
+													type="button"
+													onClick={handleToggleApproveSelectAll}
+													className="flex items-center text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200"
 													title="Select all approvable runs"
 													aria-label="Select all approvable runs"
-												/>
+												>
+													{allApprovableSelected ? (
+														<CheckSquare className="h-4 w-4 text-primary-600" />
+													) : (
+														<Square className="h-4 w-4" />
+													)}
+												</button>
 											) : null}
 										</th>
 										<th
 											scope="col"
-											className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+											className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 										>
 											Host
 										</th>
 										<th
 											scope="col"
-											className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+											className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 										>
 											Type
 										</th>
 										<th
 											scope="col"
-											className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+											className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap"
 										>
 											Status
 										</th>
 										<th
 											scope="col"
-											className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+											className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap"
 										>
 											Initiated by
 										</th>
 										<th
 											scope="col"
-											className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+											className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap"
 										>
 											Started
 										</th>
 										<th
 											scope="col"
-											className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+											className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap"
 										>
 											Completed
 										</th>
 										<th
 											scope="col"
-											className="px-4 py-3 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+											className="px-3 sm:px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap"
 										>
 											Actions
 										</th>
 									</tr>
 								</thead>
 								<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
-									{runs.map((run) => (
-										<tr
-											key={run.id}
-											className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
-										>
-											<td className="px-4 py-2 whitespace-nowrap w-10">
-												{deletableStatuses.has(run.status) ? (
-													<input
-														type="checkbox"
-														checked={selectedRunIds.has(run.id)}
-														onChange={() => handleToggleSelect(run.id)}
-														className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 dark:border-secondary-600 rounded cursor-pointer"
-														title="Select for delete"
-														aria-label="Select for delete"
-													/>
-												) : null}
-											</td>
-											<td className="px-4 py-2 whitespace-nowrap w-10">
-												{approvableStatuses.has(run.status) ? (
-													<input
-														type="checkbox"
-														checked={selectedApproveIds.has(run.id)}
-														onChange={() => handleToggleApproveSelect(run.id)}
-														className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 dark:border-secondary-600 rounded cursor-pointer"
-														title="Select for approve"
-														aria-label="Select for approve"
-													/>
-												) : null}
-											</td>
-											<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
-												{run.hosts?.friendly_name ||
-													run.hosts?.hostname ||
-													run.host_id}
-											</td>
-											<td className="px-4 py-2 text-sm text-secondary-900 dark:text-white">
-												<PackageListDisplay run={run} />
-											</td>
-											<td className="px-4 py-2 whitespace-nowrap">
-												<div className="flex items-center gap-1 flex-wrap">
-													<PatchRunStatusBadge run={run} />
-													{run.status === "validated" &&
-														run.packages_affected?.length >
-															(run.package_names?.length || 1) && (
-															<ValidatedBadge />
-														)}
-												</div>
-											</td>
-											<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-600 dark:text-secondary-400">
-												{run.triggered_by_username ? (
-													<span className="flex items-center gap-1">
-														<User className="h-4 w-4" />
-														{run.triggered_by_username}
-													</span>
-												) : (
-													" -"
-												)}
-											</td>
-											<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-600 dark:text-secondary-400">
-												{formatDate(run.created_at)}
-											</td>
-											<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-600 dark:text-secondary-400">
-												{run.completed_at ? formatDate(run.completed_at) : " -"}
-											</td>
-											<td className="px-4 py-2 whitespace-nowrap text-right">
-												<div className="flex items-center justify-end gap-2">
-													{run.status === "pending_validation" && (
-														<>
-															<button
-																type="button"
-																onClick={() => handleRetryValidation(run.id)}
-																disabled={retryingId === run.id}
-																className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-secondary-300 dark:border-secondary-600 text-secondary-700 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 disabled:opacity-50"
-																title="Re-queue validation (host may have been offline)"
-															>
-																{retryingId === run.id ? (
-																	<RefreshCw className="h-3 w-3 animate-spin" />
-																) : (
-																	<RefreshCw className="h-3 w-3" />
-																)}
-																Retry
-															</button>
-															<button
-																type="button"
-																onClick={() => handleApprove(run.id)}
-																disabled={approvingId === run.id}
-																className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
-																title="Skip validation and patch immediately"
-															>
-																{approvingId === run.id ? (
-																	<RefreshCw className="h-3 w-3 animate-spin" />
-																) : (
-																	<PlayCircle className="h-3 w-3" />
-																)}
-																Skip & Patch
-															</button>
-														</>
-													)}
-													{run.status === "validated" && (
+									{runs.map((run) => {
+										const isDeletable = deletableStatuses.has(run.status);
+										const isApprovable = approvableStatuses.has(run.status);
+										const isSelectedForDelete = selectedRunIds.has(run.id);
+										const isSelectedForApprove = selectedApproveIds.has(run.id);
+										const isSelected =
+											isSelectedForDelete || isSelectedForApprove;
+										const hasExtraDeps =
+											run.status === "validated" &&
+											run.packages_affected?.length >
+												(run.package_names?.length || 1);
+										const hostLabel =
+											run.hosts?.friendly_name ||
+											run.hosts?.hostname ||
+											run.host_id;
+										return (
+											<tr
+												key={run.id}
+												className={`transition-colors ${
+													isSelected
+														? "bg-primary-50 dark:bg-primary-600/20 hover:bg-primary-50 dark:hover:bg-primary-600/30"
+														: "hover:bg-secondary-50 dark:hover:bg-secondary-700"
+												}`}
+											>
+												<td className="px-3 sm:px-4 py-2 whitespace-nowrap w-10">
+													{isDeletable ? (
 														<button
 															type="button"
-															onClick={() => handleApprove(run.id)}
-															disabled={approvingId === run.id}
-															className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50"
-															title="Approve this validated run to proceed with patching"
+															onClick={() => handleToggleSelect(run.id)}
+															className="flex items-center text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200"
+															title="Select for delete"
+															aria-label="Select for delete"
 														>
-															{approvingId === run.id ? (
-																<RefreshCw className="h-3 w-3 animate-spin" />
+															{isSelectedForDelete ? (
+																<CheckSquare className="h-4 w-4 text-danger-600" />
 															) : (
-																<PlayCircle className="h-3 w-3" />
+																<Square className="h-4 w-4" />
 															)}
-															Approve
 														</button>
-													)}
-													<Link
-														to={`/patching/runs/${run.id}`}
-														className="text-primary-600 dark:text-primary-400 hover:underline text-sm"
+													) : null}
+												</td>
+												<td className="px-3 sm:px-4 py-2 whitespace-nowrap w-10">
+													{isApprovable ? (
+														<button
+															type="button"
+															onClick={() => handleToggleApproveSelect(run.id)}
+															className="flex items-center text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200"
+															title="Select for approve"
+															aria-label="Select for approve"
+														>
+															{isSelectedForApprove ? (
+																<CheckSquare className="h-4 w-4 text-primary-600" />
+															) : (
+																<Square className="h-4 w-4" />
+															)}
+														</button>
+													) : null}
+												</td>
+												<td className="px-3 sm:px-4 py-2 text-sm text-secondary-900 dark:text-white min-w-0">
+													<div
+														className="truncate max-w-[220px]"
+														title={hostLabel}
 													>
-														View
-													</Link>
-												</div>
-											</td>
-										</tr>
-									))}
+														{hostLabel}
+													</div>
+												</td>
+												<td className="px-3 sm:px-4 py-2 text-sm text-secondary-900 dark:text-white min-w-0">
+													<div className="max-w-[320px]">
+														<CompactPackageSummary run={run} />
+													</div>
+												</td>
+												<td className="px-3 sm:px-4 py-2 whitespace-nowrap">
+													<div className="flex items-center gap-1.5">
+														<PatchRunStatusBadge run={run} />
+														{hasExtraDeps && <ValidatedBadge />}
+													</div>
+												</td>
+												<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm text-secondary-600 dark:text-secondary-400">
+													{run.triggered_by_username ? (
+														<span className="inline-flex items-center gap-1">
+															<User className="h-4 w-4" />
+															{run.triggered_by_username}
+														</span>
+													) : (
+														"—"
+													)}
+												</td>
+												<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm text-secondary-600 dark:text-secondary-400">
+													{formatDate(run.created_at)}
+												</td>
+												<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm text-secondary-600 dark:text-secondary-400">
+													{run.completed_at
+														? formatDate(run.completed_at)
+														: "—"}
+												</td>
+												<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-right">
+													<div className="flex items-center justify-end gap-2">
+														<RunRowActions
+															run={run}
+															onApprove={handleApprove}
+															onRetry={handleRetryValidation}
+															retryingId={retryingId}
+															approvingId={approvingId}
+															size="sm"
+														/>
+													</div>
+												</td>
+											</tr>
+										);
+									})}
 								</tbody>
 							</table>
 						</div>
-						{runsPagination.pages > 1 && (
-							<div className="flex items-center justify-between mt-4 pt-4 border-t border-secondary-200 dark:border-secondary-600">
-								<p className="text-sm text-secondary-500">
-									Total {runsPagination.total} run(s)
-								</p>
-								<div className="flex gap-2">
-									<button
-										type="button"
-										disabled={runsPage <= 1}
-										onClick={() => setRunsPage((p) => Math.max(1, p - 1))}
-										className="px-3 py-1 rounded border border-secondary-300 dark:border-secondary-600 disabled:opacity-50 text-sm"
-									>
-										Previous
-									</button>
-									<button
-										type="button"
-										disabled={runsPage >= runsPagination.pages}
-										onClick={() => setRunsPage((p) => p + 1)}
-										className="px-3 py-1 rounded border border-secondary-300 dark:border-secondary-600 disabled:opacity-50 text-sm"
-									>
-										Next
-									</button>
-								</div>
+					</>
+				)}
+
+				{/* Pagination (§6.1) */}
+				{totalRuns > 0 && (
+					<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 px-3 sm:px-4 py-3 border-t border-secondary-200 dark:border-secondary-600">
+						<div className="flex flex-wrap items-center gap-3 sm:gap-4">
+							<div className="flex items-center gap-2">
+								<label
+									htmlFor="patching-runs-page-size"
+									className="text-sm text-secondary-700 dark:text-white"
+								>
+									Rows per page:
+								</label>
+								<select
+									id="patching-runs-page-size"
+									value={runsLimit}
+									onChange={(e) => {
+										setRunsLimit(Number(e.target.value));
+										setRunsPage(1);
+									}}
+									className="text-sm border border-secondary-300 dark:border-secondary-600 rounded px-2 py-1 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+								>
+									<option value={25}>25</option>
+									<option value={50}>50</option>
+									<option value={100}>100</option>
+									<option value={200}>200</option>
+								</select>
 							</div>
-						)}
+							<span className="text-sm text-secondary-700 dark:text-white">
+								{rangeStart}-{rangeEnd} of {totalRuns}
+							</span>
+						</div>
+						<div className="flex items-center gap-2">
+							<button
+								type="button"
+								disabled={runsPage <= 1}
+								onClick={() => setRunsPage((p) => Math.max(1, p - 1))}
+								className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-600 text-secondary-600 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+								aria-label="Previous page"
+							>
+								<ChevronLeft className="h-4 w-4" />
+							</button>
+							<span className="text-sm text-secondary-700 dark:text-white">
+								Page {runsPage} of {totalPages}
+							</span>
+							<button
+								type="button"
+								disabled={runsPage >= totalPages}
+								onClick={() => setRunsPage((p) => p + 1)}
+								className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-600 text-secondary-600 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+								aria-label="Next page"
+							>
+								<ChevronRight className="h-4 w-4" />
+							</button>
+						</div>
 					</div>
-				</div>
-			)}
-			{activeTab === "policies" && <PoliciesTab />}
+				)}
+			</div>
 		</div>
 	);
-};
+}
 
 /* ───────────────────── Policies Tab ───────────────────── */
 

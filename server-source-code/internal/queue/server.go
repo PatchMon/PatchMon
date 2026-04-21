@@ -11,10 +11,10 @@ import (
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/hibiken/asynq"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -268,7 +268,7 @@ func RehydrateScheduledReports(qc *asynq.Client, defaultDB *database.DB, poolCac
 	rehydrateDB := func(d *database.DB, host string) {
 		now := time.Now()
 		// Use a far-future cutoff to get ALL enabled reports with a next_run_at.
-		rows, err := d.Queries.ListScheduledReportsDue(ctx, pgtype.Timestamp{Time: now.Add(365 * 24 * time.Hour), Valid: true})
+		rows, err := d.Queries.ListScheduledReportsDue(ctx, pgtime.From(now.Add(365*24*time.Hour)))
 		if err != nil {
 			if log != nil {
 				log.Error("rehydrate scheduled reports: list failed", "error", err)

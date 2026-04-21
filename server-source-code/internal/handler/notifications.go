@@ -13,6 +13,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
@@ -551,7 +552,7 @@ func (h *NotificationsHandler) CreateScheduledReport(w http.ResponseWriter, r *h
 		Definition:     def,
 		DestinationIds: dest,
 		Timezone:       tz,
-		NextRunAt:      pgtype.Timestamp{Time: next, Valid: true},
+		NextRunAt:      pgtime.From(next),
 		LastRunAt:      pgtype.Timestamp{Valid: false},
 	})
 	if err != nil {
@@ -613,7 +614,7 @@ func (h *NotificationsHandler) UpdateScheduledReport(w http.ResponseWriter, r *h
 	nextAt := ex.NextRunAt
 	if req.CronExpr != "" {
 		if n, err := notifications.NextCronRun(cron, tz, time.Now()); err == nil {
-			nextAt = pgtype.Timestamp{Time: n, Valid: true}
+			nextAt = pgtime.From(n)
 		}
 	}
 	row, err := h.q(r.Context()).UpdateScheduledReport(r.Context(), db.UpdateScheduledReportParams{

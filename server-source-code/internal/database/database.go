@@ -25,6 +25,7 @@ func NewPool(ctx context.Context, cfg *config.Config) (*Pool, error) {
 
 	poolCfg.MaxConns = safeconv.ClampToInt32(cfg.DBConnectionLimit)
 	poolCfg.ConnConfig.ConnectTimeout = time.Duration(cfg.DBConnectTimeout) * time.Second
+	setUTCTimeZone(poolCfg)
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {

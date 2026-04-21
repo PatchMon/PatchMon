@@ -18,10 +18,10 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/hibiken/asynq"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
@@ -507,8 +507,7 @@ func (h *ComplianceScanCleanupHandler) ProcessTask(ctx context.Context, t *asynq
 }
 
 func (h *ComplianceScanCleanupHandler) cleanupDB(ctx context.Context, d *database.DB) error {
-	threshold := time.Now().Add(-3 * time.Hour)
-	pgThreshold := pgtype.Timestamp{Time: threshold, Valid: true}
+	pgThreshold := pgtime.From(time.Now().Add(-3 * time.Hour))
 	msg := "Scan terminated automatically after running for more than 3 hours"
 	return d.Queries.UpdateStalledComplianceScans(ctx, db.UpdateStalledComplianceScansParams{
 		StartedAt:    pgThreshold,
@@ -544,8 +543,7 @@ func (h *PatchRunCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task)
 }
 
 func (h *PatchRunCleanupHandler) cleanupDB(ctx context.Context, d *database.DB) error {
-	threshold := time.Now().Add(-30 * time.Minute)
-	pgThreshold := pgtype.Timestamp{Time: threshold, Valid: true}
+	pgThreshold := pgtime.From(time.Now().Add(-30 * time.Minute))
 	msg := "Automatically cancelled after running for more than 30 minutes"
 	cancelled, err := d.Queries.CancelStalledPatchRuns(ctx, db.CancelStalledPatchRunsParams{
 		StartedAt:    pgThreshold,

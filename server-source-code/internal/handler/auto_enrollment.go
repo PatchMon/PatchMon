@@ -17,6 +17,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -139,9 +140,9 @@ func (h *AutoEnrollmentHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.ExpiresAt != nil && *req.ExpiresAt != "" {
 		// Support both RFC3339 and datetime-local format (e.g. "2026-03-15T10:00")
 		if t, err := time.Parse(time.RFC3339, *req.ExpiresAt); err == nil {
-			expiresAt = pgtype.Timestamp{Time: t, Valid: true}
+			expiresAt = pgtime.From(t)
 		} else if t, err := time.Parse("2006-01-02T15:04", *req.ExpiresAt); err == nil {
-			expiresAt = pgtype.Timestamp{Time: t, Valid: true}
+			expiresAt = pgtime.From(t)
 		}
 	}
 
@@ -161,7 +162,7 @@ func (h *AutoEnrollmentHandler) Create(w http.ResponseWriter, r *http.Request) {
 		createdByUserID = &userID
 	}
 
-	now := pgtype.Timestamp{Time: time.Now(), Valid: true}
+	now := pgtime.Now()
 	id := uuid.New().String()
 
 	err = h.tokens.Create(r.Context(), db.CreateAutoEnrollmentTokenParams{
@@ -273,7 +274,7 @@ func (h *AutoEnrollmentHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if *req.ExpiresAt == "" {
 			expiresAt = pgtype.Timestamp{}
 		} else if t, err := time.Parse(time.RFC3339, *req.ExpiresAt); err == nil {
-			expiresAt = pgtype.Timestamp{Time: t, Valid: true}
+			expiresAt = pgtime.From(t)
 		}
 	}
 	if req.DefaultHostGroupID != nil {
@@ -309,7 +310,7 @@ func (h *AutoEnrollmentHandler) Update(w http.ResponseWriter, r *http.Request) {
 		allowedIPRanges = []string{}
 	}
 
-	now := pgtype.Timestamp{Time: time.Now(), Valid: true}
+	now := pgtime.Now()
 	err = h.tokens.Update(r.Context(), db.UpdateAutoEnrollmentTokenParams{
 		TokenName:          tokenName,
 		IsActive:           isActive,

@@ -27,6 +27,11 @@ const SettingsUsers = () => {
 	});
 
 	const isOIDCEnabled = oidcConfig?.enabled || false;
+	// Only sync_roles should hide the admin-side Add User / Add Role entry points.
+	// disable_local_auth and auto_create_users govern login/callback behavior only:
+	// admins still need to pre-create users (especially when auto_create_users is off)
+	// so SSO can link on first login.
+	const isOIDCSyncRoles = isOIDCEnabled && (oidcConfig?.syncRoles || false);
 
 	const tabs = [
 		{ id: "users", name: "Users", icon: Users, href: "/settings/users" },
@@ -81,7 +86,7 @@ const SettingsUsers = () => {
 							);
 						})}
 					</div>
-					{activeTab === "users" && !isOIDCEnabled && (
+					{activeTab === "users" && !isOIDCSyncRoles && (
 						<button
 							type="button"
 							onClick={() =>
@@ -94,7 +99,7 @@ const SettingsUsers = () => {
 							Add User
 						</button>
 					)}
-					{activeTab === "roles" && !isOIDCEnabled && (
+					{activeTab === "roles" && !isOIDCSyncRoles && (
 						<button
 							type="button"
 							onClick={() =>

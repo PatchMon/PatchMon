@@ -34,6 +34,9 @@ func NewDB(ctx context.Context, cfg *config.Config) (*DB, error) {
 	}
 	poolCfg.MaxConns = safeconv.ClampToInt32(cfg.DBConnectionLimit)
 	poolCfg.ConnConfig.ConnectTimeout = time.Duration(cfg.DBConnectTimeout) * time.Second
+	// Force UTC session time zone so NOW()/CURRENT_TIMESTAMP stored into tz-naive
+	// TIMESTAMP columns are UTC wall-clock, matching pgx's UTC assumption on read.
+	setUTCTimeZone(poolCfg)
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return nil, fmt.Errorf("create pgx pool: %w", err)
@@ -73,6 +76,7 @@ func NewFromURL(ctx context.Context, databaseURL string, maxConns, minConns int,
 	poolCfg.MinConns = safeconv.ClampToInt32(minConns)
 	poolCfg.ConnConfig.ConnectTimeout = time.Duration(cfg.DBConnectTimeout) * time.Second
 	poolCfg.HealthCheckPeriod = 30 * time.Second
+	setUTCTimeZone(poolCfg)
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return nil, fmt.Errorf("create pgx pool: %w", err)
@@ -176,4 +180,20 @@ func (d *DB) Exec(ctx context.Context, query string, args ...interface{}) (int64
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
+}
+
+// setUTCTimeZone pins the session TimeZone to UTC for every connection in the pool.
+// Our created_at/updated_at columns are TIMESTAMP (without time zone). Postgres
+// converts NOW()/CURRENT_TIMESTAMP (timestamptz) into the session's local wall
+// clock when inserting into such columns, while pgx reads them back as UTC.
+// Forcing the session to UTC keeps store and read consistent so relative-time
+// formatting on the frontend doesn't drift by the DB host's TZ offset.
+func setUTCTimeZone(poolCfg *pgxpool.Config) {
+	if poolCfg == nil || poolCfg.ConnConfig == nil {
+		return
+	}
+	if poolCfg.ConnConfig.RuntimeParams == nil {
+		poolCfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	poolCfg.ConnConfig.RuntimeParams["TimeZone"] = "UTC"
 }

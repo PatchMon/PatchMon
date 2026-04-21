@@ -3,12 +3,14 @@ import {
 	AlertTriangle,
 	ArrowLeft,
 	CheckCircle2,
+	Copy,
 	PlayCircle,
 	RefreshCw,
 	Server,
 	Shield,
 	Square,
 	User,
+	X,
 } from "lucide-react";
 
 import { useEffect, useRef, useState } from "react";
@@ -18,6 +20,7 @@ import {
 	PackageNameList,
 } from "../../components/PackageListDisplay";
 import { PatchRunStatusBadge } from "../../components/PatchRunStatusBadge";
+import { useToast } from "../../contexts/ToastContext";
 import { formatDate } from "../../utils/api";
 import { buildRunStreamURL, patchingAPI } from "../../utils/patchingApi";
 
@@ -78,10 +81,26 @@ const PostPatchReportPill = ({ run }) => {
 	return null;
 };
 
+// Compact label/value stack used inside the Run Summary sidebar. Putting the
+// label above the value keeps rows narrow and avoids the "empty gutter"
+// problem the old horizontal layout suffered from.
+const SummaryRow = ({ label, icon: Icon, children }) => (
+	<div>
+		<dt className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-secondary-500 dark:text-white/70">
+			{Icon ? <Icon className="h-3.5 w-3.5" /> : null}
+			{label}
+		</dt>
+		<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
+			{children}
+		</dd>
+	</div>
+);
+
 const RunDetail = () => {
 	const { id } = useParams();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
+	const toast = useToast();
 	const [approvingId, setApprovingId] = useState(null);
 	const [stopConfirmOpen, setStopConfirmOpen] = useState(false);
 	const [stopError, setStopError] = useState(null);
@@ -309,21 +328,32 @@ const RunDetail = () => {
 	if (isLoading) {
 		return (
 			<div className="flex items-center justify-center h-64">
-				<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500"></div>
+				<RefreshCw className="h-8 w-8 animate-spin text-primary-600" />
 			</div>
 		);
 	}
 
 	if (error || !run) {
 		return (
-			<div className="p-4 bg-red-900/50 border border-red-700 rounded-lg">
-				<p className="text-red-200">Patch run not found or failed to load</p>
-				<Link
-					to="/patching"
-					className="text-primary-400 hover:underline mt-2 inline-block"
-				>
-					Back to Patching
-				</Link>
+			<div className="bg-danger-50 border border-danger-200 rounded-md p-4 dark:bg-danger-900/30 dark:border-danger-700">
+				<div className="flex">
+					<AlertTriangle className="h-5 w-5 text-danger-400 flex-shrink-0" />
+					<div className="ml-3">
+						<h3 className="text-sm font-medium text-danger-800 dark:text-danger-200">
+							Patch run not found
+						</h3>
+						<p className="text-sm text-danger-700 dark:text-danger-300 mt-1">
+							The requested patch run either doesn't exist or failed to load.
+						</p>
+						<Link
+							to="/patching?tab=runs"
+							className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-danger-700 dark:text-danger-300 hover:underline"
+						>
+							<ArrowLeft className="h-4 w-4" />
+							Back to Patching
+						</Link>
+					</div>
+				</div>
 			</div>
 		);
 	}
@@ -367,336 +397,502 @@ const RunDetail = () => {
 		!stopRunMutation.isPending &&
 		!TERMINAL_STATUSES.has(run.status);
 
+	const hasExtraDeps =
+		run.status === "validated" &&
+		run.packages_affected?.length > (run.package_names?.length || 1);
+
+	const hasPolicy = Boolean(run.policy_name || run.policy_snapshot);
+	const showDefaultPolicy = !hasPolicy && !run.dry_run;
+
+	const handleCopyOutput = async () => {
+		try {
+			await navigator.clipboard.writeText(shellDisplay);
+			toast.success("Shell output copied to clipboard");
+		} catch {
+			toast.error("Unable to copy output");
+		}
+	};
+
+	// Subtitle line shown under the H1: a concise summary of "what this run
+	// is" (type) with the live status badge and the post-patch pill inline.
+	const headerSubtitle = (
+		<div className="flex items-center flex-wrap gap-x-2 gap-y-1 text-sm text-secondary-600 dark:text-white/80 mt-1">
+			<span className="inline-flex items-center">
+				<PackageListDisplay run={run} />
+			</span>
+			<span aria-hidden="true" className="text-secondary-400">
+				·
+			</span>
+			<PatchRunStatusBadge run={run} />
+			{hasExtraDeps && (
+				<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
+					<AlertTriangle className="h-3 w-3" />
+					Extra dependencies
+				</span>
+			)}
+			{run.status === "completed" && !run.dry_run && (
+				<PostPatchReportPill run={run} />
+			)}
+		</div>
+	);
+
+	// Primary actions that live in the Detail Page Header's right slot.
+	// These are the dominant call-to-action for the current run state so
+	// users don't have to scroll past summary content to act on them.
+	const headerActions = (
+		<>
+			{run.status === "pending_validation" && (
+				<>
+					<button
+						type="button"
+						onClick={handleRetryValidation}
+						disabled={retryingId === id}
+						className="btn-outline inline-flex items-center gap-1.5 min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed"
+					>
+						<RefreshCw
+							className={`h-4 w-4 ${retryingId === id ? "animate-spin" : ""}`}
+						/>
+						{retryingId === id ? "Retrying…" : "Retry Validation"}
+					</button>
+					<button
+						type="button"
+						onClick={handleApprove}
+						disabled={approvingId === id}
+						className="btn-warning inline-flex items-center gap-1.5 min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed"
+					>
+						{approvingId === id ? (
+							<RefreshCw className="h-4 w-4 animate-spin" />
+						) : (
+							<PlayCircle className="h-4 w-4" />
+						)}
+						{approvingId === id ? "Queuing…" : "Skip & Patch"}
+					</button>
+				</>
+			)}
+			{(run.status === "pending_approval" || run.status === "validated") && (
+				<button
+					type="button"
+					onClick={handleApprove}
+					disabled={approvingId === id}
+					className="btn-primary inline-flex items-center gap-1.5 min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed"
+				>
+					{approvingId === id ? (
+						<RefreshCw className="h-4 w-4 animate-spin" />
+					) : (
+						<PlayCircle className="h-4 w-4" />
+					)}
+					{approvingId === id
+						? run.status === "validated"
+							? "Approving…"
+							: "Queuing…"
+						: "Approve & Patch"}
+				</button>
+			)}
+			{canStop && (
+				<button
+					type="button"
+					onClick={() => {
+						setStopError(null);
+						setStopConfirmOpen(true);
+					}}
+					className="btn-danger inline-flex items-center gap-1.5 min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed"
+				>
+					<Square className="h-4 w-4" />
+					Stop Run
+				</button>
+			)}
+		</>
+	);
+
 	return (
 		<div className="space-y-6">
-			<div className="flex items-center gap-4">
-				<Link
-					to="/patching"
-					className="flex items-center gap-1 text-secondary-600 dark:text-secondary-400 hover:text-primary-600 dark:hover:text-primary-400"
-				>
-					<ArrowLeft className="h-4 w-4" />
-					Back to Patching
-				</Link>
+			{/* Detail Page Header (§2.5) */}
+			<div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-4 pb-4 border-b border-secondary-200 dark:border-secondary-600">
+				<div className="flex items-start gap-3 min-w-0">
+					<Link
+						to="/patching?tab=runs"
+						className="text-secondary-500 hover:text-secondary-700 dark:text-white dark:hover:text-secondary-200 mt-1 flex-shrink-0"
+						aria-label="Back to Patching"
+					>
+						<ArrowLeft className="h-5 w-5" />
+					</Link>
+					<div className="min-w-0">
+						<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white truncate">
+							Run on {hostName}
+						</h1>
+						{headerSubtitle}
+					</div>
+				</div>
+				<div className="flex items-center flex-wrap gap-3 md:flex-shrink-0">
+					{headerActions}
+				</div>
 			</div>
 
-			<div className="card p-4">
-				<h2 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4">
-					Patch run details
-				</h2>
-				<dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-					<div className="flex items-center gap-2">
-						<Server className="h-4 w-4 text-secondary-500" />
-						<span className="text-secondary-500 dark:text-secondary-400">
-							Host
-						</span>
-						<span className="text-secondary-900 dark:text-white">
-							{hostName}
-						</span>
-					</div>
-					<div className="flex items-center gap-2 sm:col-span-2">
-						<span className="text-secondary-500 dark:text-secondary-400">
-							Type
-						</span>
-						<span className="text-secondary-900 dark:text-white">
-							<PackageListDisplay run={run} />
-						</span>
-					</div>
-					<div className="flex items-center gap-2 flex-wrap">
-						<span className="text-secondary-500 dark:text-secondary-400">
-							Status{" "}
-						</span>
-						<PatchRunStatusBadge run={run} />
-						{run.status === "validated" &&
-							run.packages_affected?.length >
-								(run.package_names?.length || 1) && (
-								<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
-									<AlertTriangle className="h-3 w-3" />
-									Extra dependencies
-								</span>
-							)}
-						{run.status === "completed" && !run.dry_run && (
-							<PostPatchReportPill run={run} />
-						)}
-					</div>
-					<div className="flex items-center gap-2">
-						<User className="h-4 w-4 text-secondary-500" />
-						<span className="text-secondary-500 dark:text-secondary-400">
-							Initiated by{" "}
-						</span>
-						<span className="text-secondary-900 dark:text-white">
-							{run.triggered_by_username || " -"}
-						</span>
-					</div>
-					{run.approved_by_username && (
-						<div className="flex items-center gap-2">
-							<User className="h-4 w-4 text-secondary-500" />
-							<span className="text-secondary-500 dark:text-secondary-400">
-								Approved by{" "}
-							</span>
-							<span className="text-secondary-900 dark:text-white">
-								{run.approved_by_username}
-							</span>
-						</div>
-					)}
-					{(run.policy_name || run.policy_snapshot) && (
-						<div className="sm:col-span-2 flex items-start gap-2 p-3 rounded-lg bg-secondary-50 dark:bg-secondary-700/40 border border-secondary-200 dark:border-secondary-600">
-							<Shield className="h-4 w-4 text-primary-500 mt-0.5 shrink-0" />
-							<div className="space-y-1 text-sm">
-								<p className="font-medium text-secondary-800 dark:text-secondary-200">
-									{run.policy_name ?? "Patch policy"}
-								</p>
-								{policyDetail && (
-									<p className="text-secondary-500 dark:text-secondary-400 text-xs">
-										{policyDetail}
-									</p>
+			{/* Two-pane layout: summary sidebar (left) + primary content (right) */}
+			<div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+				{/* Summary sidebar */}
+				<aside className="lg:col-span-1 lg:self-start">
+					<div className="card p-4 sm:p-6 flex flex-col">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex-shrink-0">
+							Run summary
+						</h3>
+						<dl className="space-y-4">
+							<SummaryRow label="Host" icon={Server}>
+								{run.host_id ? (
+									<Link
+										to={`/hosts/${run.host_id}`}
+										className="text-primary-600 dark:text-primary-400 hover:underline break-words"
+									>
+										{hostName}
+									</Link>
+								) : (
+									<span className="break-words">{hostName}</span>
 								)}
-								{run.policy_snapshot?.patch_delay_type === "immediate" &&
-									!policyDetail &&
-									null}
+							</SummaryRow>
+
+							<SummaryRow label="Type">
+								<div className="text-sm text-secondary-900 dark:text-white">
+									<PackageListDisplay run={run} />
+								</div>
+							</SummaryRow>
+
+							{/* People: Initiated by + Approved by side-by-side. Collapses to
+							    a single full-width row when the run hasn't been approved. */}
+							<div className="grid grid-cols-2 gap-4">
+								<SummaryRow label="Initiated by" icon={User}>
+									<span className="break-words">
+										{run.triggered_by_username || "—"}
+									</span>
+								</SummaryRow>
+								<SummaryRow label="Approved by" icon={User}>
+									<span className="break-words">
+										{run.approved_by_username || "—"}
+									</span>
+								</SummaryRow>
 							</div>
-						</div>
-					)}
-					{!run.policy_name && !run.policy_snapshot && !run.dry_run && (
-						<div className="flex items-center gap-2">
-							<Shield className="h-4 w-4 text-secondary-400" />
-							<span className="text-secondary-500 dark:text-secondary-400">
-								Policy
-							</span>
-							<span className="text-secondary-500 dark:text-secondary-400 italic text-xs">
-								Default (immediate)
-							</span>
-						</div>
-					)}
-					<div>
-						<span className="text-secondary-500 dark:text-secondary-400">
-							Started{" "}
-						</span>
-						<span className="text-secondary-900 dark:text-white">
-							{run.started_at
-								? formatDate(run.started_at)
-								: run.created_at
-									? formatDate(run.created_at)
-									: " -"}
-						</span>
+
+							{/* Timing: Started + Completed side-by-side. Scheduled-for
+							    remains full width since it's mutually exclusive with a
+							    start time in practice. */}
+							<div className="grid grid-cols-2 gap-4">
+								<SummaryRow label="Started">
+									<span className="break-words">
+										{run.started_at
+											? formatDate(run.started_at)
+											: run.created_at
+												? formatDate(run.created_at)
+												: "—"}
+									</span>
+								</SummaryRow>
+								<SummaryRow label="Completed">
+									<span className="break-words">
+										{run.completed_at ? formatDate(run.completed_at) : "—"}
+									</span>
+								</SummaryRow>
+							</div>
+
+							{run.status === "queued" && run.scheduled_at && (
+								<SummaryRow label="Scheduled for">
+									{formatDate(run.scheduled_at)}
+								</SummaryRow>
+							)}
+
+							{/* Link to related run (validation ↔ patch) */}
+							{run.validation_run_id && (
+								<SummaryRow label="Validation run" icon={Shield}>
+									<Link
+										to={`/patching/runs/${run.validation_run_id}`}
+										className="text-primary-600 dark:text-primary-400 hover:underline"
+									>
+										View validation output
+									</Link>
+								</SummaryRow>
+							)}
+
+							{/* Patch policy: keep in the sidebar alongside the other
+							    run metadata so the right column stays focused on the
+							    live output. */}
+							{(hasPolicy || showDefaultPolicy) && (
+								<SummaryRow label="Patch policy" icon={Shield}>
+									<div className="flex items-start gap-2 p-3 -mx-1 rounded-md bg-secondary-50 dark:bg-secondary-700/40 border border-secondary-200 dark:border-secondary-600">
+										<div className="min-w-0 space-y-0.5">
+											{hasPolicy ? (
+												<>
+													<p className="text-sm font-medium text-secondary-900 dark:text-white break-words">
+														{run.policy_name ?? "Patch policy"}
+													</p>
+													{policyDetail && (
+														<p className="text-xs text-secondary-500 dark:text-secondary-400">
+															{policyDetail}
+														</p>
+													)}
+												</>
+											) : (
+												<>
+													<p className="text-sm font-medium text-secondary-900 dark:text-white">
+														Default policy
+													</p>
+													<p className="text-xs text-secondary-500 dark:text-secondary-400 italic">
+														Runs immediately on trigger
+													</p>
+												</>
+											)}
+										</div>
+									</div>
+								</SummaryRow>
+							)}
+
+							{/* Packages affected: belongs with the rest of the run
+							    metadata. Scrollable when the dependency list is long
+							    so the sidebar stays bounded. */}
+							{run.packages_affected?.length > 0 && (
+								<SummaryRow
+									label={`Packages affected (${run.packages_affected.length})`}
+								>
+									<div className="max-h-48 overflow-auto pr-1 text-sm text-secondary-700 dark:text-secondary-300">
+										<PackageNameList
+											packages={run.packages_affected}
+											showIcon={false}
+										/>
+									</div>
+								</SummaryRow>
+							)}
+						</dl>
 					</div>
-					{run.status === "queued" && run.scheduled_at && (
-						<div>
-							<span className="text-secondary-500 dark:text-secondary-400">
-								Scheduled for{" "}
-							</span>
-							<span className="text-secondary-900 dark:text-white">
-								{formatDate(run.scheduled_at)}
-							</span>
-						</div>
-					)}
-					<div>
-						<span className="text-secondary-500 dark:text-secondary-400">
-							Completed{" "}
-						</span>
-						<span className="text-secondary-900 dark:text-white">
-							{run.completed_at ? formatDate(run.completed_at) : " -"}
-						</span>
-					</div>
-					{/* Link to related run (validation ↔ patch) */}
-					{run.validation_run_id && (
-						<div className="flex items-center gap-2">
-							<Shield className="h-4 w-4 text-secondary-500" />
-							<span className="text-secondary-500 dark:text-secondary-400">
-								Validation run
-							</span>
-							<Link
-								to={`/patching/runs/${run.validation_run_id}`}
-								className="text-primary-600 dark:text-primary-400 hover:underline text-sm"
-							>
-								View validation output
-							</Link>
-						</div>
-					)}
+				</aside>
+
+				{/* Primary content column */}
+				<div className="lg:col-span-2 space-y-6 min-w-0">
+					{/* CTA banners: explain state + mirror the header action buttons for convenience */}
 					{run.status === "pending_validation" && (
-						<div className="sm:col-span-2 flex items-start gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-600">
-							<AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
-							<div className="flex-1">
-								<p className="text-sm font-medium text-amber-800 dark:text-amber-200">
-									Validation pending - host may be offline
-								</p>
-								<p className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">
-									The dry-run has not completed. You can retry when the host is
-									back online, or skip validation to patch immediately.
-								</p>
+						<div className="rounded-lg bg-warning-50 dark:bg-warning-900/30 border border-warning-200 dark:border-warning-600 p-4 flex flex-col lg:flex-row lg:items-start gap-4">
+							<div className="flex items-start gap-3 flex-1 min-w-0">
+								<AlertTriangle className="h-5 w-5 text-warning-600 dark:text-warning-400 mt-0.5 flex-shrink-0" />
+								<div className="min-w-0">
+									<p className="text-sm font-medium text-warning-800 dark:text-warning-200">
+										Validation pending — host may be offline
+									</p>
+									<p className="text-xs text-warning-700 dark:text-warning-300 mt-0.5">
+										The dry-run has not completed. You can retry when the host
+										is back online, or skip validation to patch immediately.
+									</p>
+								</div>
 							</div>
-							<div className="flex items-center gap-2 shrink-0">
+							<div className="flex flex-col sm:flex-row gap-2 lg:flex-shrink-0">
 								<button
 									type="button"
 									onClick={handleRetryValidation}
 									disabled={retryingId === id}
-									className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-secondary-300 dark:border-secondary-600 text-secondary-700 dark:text-secondary-300 text-sm hover:bg-secondary-100 dark:hover:bg-secondary-700 disabled:opacity-50"
+									className="btn-outline inline-flex items-center justify-center gap-1.5 min-h-[44px] w-full sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
 								>
-									{retryingId === id ? (
-										<>
-											<RefreshCw className="h-4 w-4 animate-spin" />
-											Retrying…
-										</>
-									) : (
-										<>
-											<RefreshCw className="h-4 w-4" />
-											Retry Validation
-										</>
-									)}
+									<RefreshCw
+										className={`h-4 w-4 ${retryingId === id ? "animate-spin" : ""}`}
+									/>
+									{retryingId === id ? "Retrying…" : "Retry Validation"}
 								</button>
 								<button
 									type="button"
 									onClick={handleApprove}
 									disabled={approvingId === id}
-									className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-amber-600 text-white text-sm hover:bg-amber-700 disabled:opacity-50"
+									className="btn-warning inline-flex items-center justify-center gap-1.5 min-h-[44px] w-full sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
 								>
 									{approvingId === id ? (
-										<>
-											<RefreshCw className="h-4 w-4 animate-spin" />
-											Queuing…
-										</>
+										<RefreshCw className="h-4 w-4 animate-spin" />
 									) : (
-										<>
-											<PlayCircle className="h-4 w-4" />
-											Skip & Patch
-										</>
+										<PlayCircle className="h-4 w-4" />
 									)}
+									{approvingId === id ? "Queuing…" : "Skip & Patch"}
 								</button>
 							</div>
 						</div>
 					)}
-					{run.status === "validated" && (
-						<div className="sm:col-span-2 flex items-start gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-600">
-							<AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
-							<div className="flex-1">
-								<p className="text-sm font-medium text-amber-800 dark:text-amber-200">
-									Validation complete - approval required
-								</p>
-								<p className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">
-									{run.packages_affected?.length >
-									(run.package_names?.length || 1)
-										? `This run will install ${run.packages_affected.length} packages including additional dependencies. Review the output and approve to proceed.`
-										: "Review the dry-run output and approve to proceed with patching."}
-								</p>
+
+					{run.status === "pending_approval" && (
+						<div className="rounded-lg bg-warning-50 dark:bg-warning-900/30 border border-warning-200 dark:border-warning-600 p-4 flex flex-col lg:flex-row lg:items-start gap-4">
+							<div className="flex items-start gap-3 flex-1 min-w-0">
+								<AlertTriangle className="h-5 w-5 text-warning-600 dark:text-warning-400 mt-0.5 flex-shrink-0" />
+								<div className="min-w-0">
+									<p className="text-sm font-medium text-warning-800 dark:text-warning-200">
+										Awaiting approval
+									</p>
+									<p className="text-xs text-warning-700 dark:text-warning-300 mt-0.5">
+										{run.patch_type === "patch_all"
+											? "This Patch All run was submitted for approval and hasn't been executed yet. Approve to queue it, or delete it from Runs & History."
+											: "This run was submitted for approval without a dry-run. Approve to queue it, or delete it from Runs & History."}
+									</p>
+								</div>
 							</div>
-							<button
-								type="button"
-								onClick={handleApprove}
-								disabled={approvingId === id}
-								className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-primary-600 text-white text-sm hover:bg-primary-700 disabled:opacity-50 shrink-0"
-							>
-								{approvingId === id ? (
-									<>
+							<div className="lg:flex-shrink-0">
+								<button
+									type="button"
+									onClick={handleApprove}
+									disabled={approvingId === id}
+									className="btn-primary inline-flex items-center justify-center gap-1.5 min-h-[44px] w-full sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{approvingId === id ? (
 										<RefreshCw className="h-4 w-4 animate-spin" />
-										Approving…
-									</>
-								) : (
-									<>
+									) : (
 										<PlayCircle className="h-4 w-4" />
-										Approve & Patch
-									</>
-								)}
-							</button>
-						</div>
-					)}
-					{run.error_message && (
-						<div className="sm:col-span-2">
-							<span className="text-secondary-500 dark:text-secondary-400">
-								Error{" "}
-							</span>
-							<p className="mt-1 text-red-600 dark:text-red-400 font-mono text-xs bg-red-50 dark:bg-red-900/20 p-2 rounded">
-								{run.error_message}
-							</p>
-						</div>
-					)}
-					{run.packages_affected?.length > 0 && (
-						<div className="sm:col-span-2">
-							<span className="text-secondary-500 dark:text-secondary-400">
-								Packages affected{" "}
-							</span>
-							<div className="mt-1 text-sm text-secondary-700 dark:text-secondary-300">
-								<PackageNameList
-									packages={run.packages_affected}
-									showIcon={false}
-								/>
+									)}
+									{approvingId === id ? "Queuing…" : "Approve & Patch"}
+								</button>
 							</div>
 						</div>
 					)}
-				</dl>
-			</div>
 
-			<div className="card p-4">
-				<div className="flex items-center justify-between mb-3 gap-2">
-					<div className="flex items-center gap-2">
-						<h3 className="text-md font-medium text-secondary-900 dark:text-white">
-							Shell output
-						</h3>
-						{isStreamOpen && run.status === "running" && (
-							<span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
-								<span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-								Live
-							</span>
-						)}
-					</div>
-					{canStop && (
-						<button
-							type="button"
-							onClick={() => {
-								setStopError(null);
-								setStopConfirmOpen(true);
-							}}
-							className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-red-600 text-white text-sm hover:bg-red-700 disabled:opacity-50"
-						>
-							<Square className="h-4 w-4" />
-							Stop Run
-						</button>
+					{run.status === "validated" && (
+						<div className="rounded-lg bg-warning-50 dark:bg-warning-900/30 border border-warning-200 dark:border-warning-600 p-4 flex flex-col lg:flex-row lg:items-start gap-4">
+							<div className="flex items-start gap-3 flex-1 min-w-0">
+								<AlertTriangle className="h-5 w-5 text-warning-600 dark:text-warning-400 mt-0.5 flex-shrink-0" />
+								<div className="min-w-0">
+									<p className="text-sm font-medium text-warning-800 dark:text-warning-200">
+										Validation complete — approval required
+									</p>
+									<p className="text-xs text-warning-700 dark:text-warning-300 mt-0.5">
+										{hasExtraDeps
+											? `This run will install ${run.packages_affected.length} packages including additional dependencies. Review the output and approve to proceed.`
+											: "Review the dry-run output and approve to proceed with patching."}
+									</p>
+								</div>
+							</div>
+							<div className="lg:flex-shrink-0">
+								<button
+									type="button"
+									onClick={handleApprove}
+									disabled={approvingId === id}
+									className="btn-primary inline-flex items-center justify-center gap-1.5 min-h-[44px] w-full sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{approvingId === id ? (
+										<RefreshCw className="h-4 w-4 animate-spin" />
+									) : (
+										<PlayCircle className="h-4 w-4" />
+									)}
+									{approvingId === id ? "Approving…" : "Approve & Patch"}
+								</button>
+							</div>
+						</div>
 					)}
+
+					{/* Error panel (§16.1) */}
+					{run.error_message && (
+						<div className="bg-danger-50 border border-danger-200 rounded-md p-4 dark:bg-danger-900/30 dark:border-danger-700">
+							<div className="flex">
+								<AlertTriangle className="h-5 w-5 text-danger-400 flex-shrink-0" />
+								<div className="ml-3 min-w-0 flex-1">
+									<h3 className="text-sm font-medium text-danger-800 dark:text-danger-200">
+										Run reported an error
+									</h3>
+									<pre className="mt-2 text-xs text-danger-700 dark:text-danger-300 font-mono whitespace-pre-wrap break-words">
+										{run.error_message}
+									</pre>
+								</div>
+							</div>
+						</div>
+					)}
+
+					{/* Shell output (§3.4 content card + terminal chrome) */}
+					<div className="card p-4 sm:p-6 flex flex-col">
+						<div className="flex items-center justify-between gap-2 mb-4 flex-shrink-0 flex-wrap">
+							<div className="flex items-center gap-2">
+								<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+									Shell output
+								</h3>
+								{isStreamOpen && run.status === "running" && (
+									<span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+										<span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+										Live
+									</span>
+								)}
+							</div>
+							<div className="flex items-center gap-2">
+								{run.status !== "running" && run.status !== "queued" && (
+									<button
+										type="button"
+										onClick={handleCopyOutput}
+										className="btn-outline inline-flex items-center gap-1.5 min-h-[44px]"
+										title="Copy shell output"
+									>
+										<Copy className="h-4 w-4" />
+										<span className="hidden sm:inline">Copy output</span>
+									</button>
+								)}
+							</div>
+						</div>
+						<div className="flex-1 min-h-0 rounded-lg border border-secondary-700 dark:border-secondary-600 bg-[#0d1117] dark:bg-black overflow-hidden shadow-inner">
+							<pre
+								ref={outputRef}
+								className="block w-full h-[420px] max-h-[55vh] overflow-auto p-4 text-[13px] leading-relaxed font-mono text-[#e6edf3] whitespace-pre-wrap break-words"
+								style={{
+									fontFamily:
+										"ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
+								}}
+							>
+								{shellDisplay}
+							</pre>
+						</div>
+						<p className="mt-2 text-xs text-secondary-500 dark:text-white/60">
+							Output streams (stdout/stderr) from the patch run. Scroll to see
+							full output.
+						</p>
+					</div>
 				</div>
-				<div className="rounded-lg border border-secondary-700 dark:border-secondary-600 bg-[#0d1117] dark:bg-black overflow-hidden shadow-inner">
-					<pre
-						ref={outputRef}
-						className="block w-full min-h-[240px] max-h-[75vh] overflow-auto p-4 text-[13px] leading-relaxed font-mono text-[#e6edf3] whitespace-pre-wrap break-words"
-						style={{
-							fontFamily:
-								"ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
-						}}
-					>
-						{shellDisplay}
-					</pre>
-				</div>
-				<p className="mt-2 text-xs text-secondary-500 dark:text-secondary-400">
-					Output streams (stdout/stderr) from the patch run. Scroll to see full
-					output.
-				</p>
 			</div>
 
+			{/* Stop confirm modal (§9.1 + §9.4 warning badge) */}
 			{stopConfirmOpen && (
-				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-					<div className="w-full max-w-md rounded-lg bg-white dark:bg-secondary-800 shadow-xl border border-secondary-200 dark:border-secondary-700">
-						<div className="p-5 border-b border-secondary-200 dark:border-secondary-700 flex items-start gap-3">
-							<AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 shrink-0" />
-							<div>
-								<h4 className="text-base font-semibold text-secondary-900 dark:text-white">
+				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+					<button
+						type="button"
+						onClick={() => {
+							if (!stopRunMutation.isPending) setStopConfirmOpen(false);
+						}}
+						className="fixed inset-0 cursor-default"
+						aria-label="Close"
+					/>
+					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 relative z-10">
+						<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
+							<div className="flex items-center justify-between">
+								<h3 className="text-lg font-medium text-secondary-900 dark:text-white flex items-center gap-3">
+									<span className="w-10 h-10 bg-danger-100 dark:bg-danger-900 rounded-full flex items-center justify-center flex-shrink-0">
+										<AlertTriangle className="h-5 w-5 text-danger-600 dark:text-danger-400" />
+									</span>
 									Stop this patch run?
-								</h4>
-								<p className="mt-1 text-sm text-secondary-600 dark:text-secondary-300">
-									The agent will be asked to interrupt the current command.
-									Partially-installed packages may leave the host in an
-									intermediate state; the agent will report back its final
-									output and an updated inventory when it exits.
+								</h3>
+								<button
+									type="button"
+									onClick={() => setStopConfirmOpen(false)}
+									disabled={stopRunMutation.isPending}
+									className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-700 text-secondary-400 hover:text-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+									aria-label="Close dialog"
+								>
+									<X className="h-5 w-5" />
+								</button>
+							</div>
+						</div>
+						<div className="px-6 py-4 space-y-3">
+							<p className="text-sm text-secondary-600 dark:text-white/80">
+								The agent will be asked to interrupt the current command.
+								Partially-installed packages may leave the host in an
+								intermediate state; the agent will report back its final output
+								and an updated inventory when it exits.
+							</p>
+							<div className="p-3 bg-danger-50 dark:bg-danger-900/40 border border-danger-200 dark:border-danger-700 rounded-md">
+								<p className="text-sm text-danger-700 dark:text-danger-300">
+									This action cannot be undone.
 								</p>
 							</div>
+							{stopError && (
+								<div className="p-3 bg-danger-50 dark:bg-danger-900/40 border border-danger-300 dark:border-danger-700 rounded-md text-sm text-danger-700 dark:text-danger-200">
+									{stopError}
+								</div>
+							)}
 						</div>
-						{stopError && (
-							<div className="mx-5 mt-3 rounded border border-red-300 bg-red-50 text-red-700 dark:border-red-700 dark:bg-red-900/30 dark:text-red-200 p-2 text-sm">
-								{stopError}
-							</div>
-						)}
-						<div className="p-4 flex items-center justify-end gap-2">
+						<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex justify-end gap-3">
 							<button
 								type="button"
 								onClick={() => setStopConfirmOpen(false)}
 								disabled={stopRunMutation.isPending}
-								className="px-3 py-1.5 rounded border border-secondary-300 dark:border-secondary-600 text-secondary-700 dark:text-secondary-200 text-sm hover:bg-secondary-100 dark:hover:bg-secondary-700 disabled:opacity-50"
+								className="btn-outline min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed"
 							>
 								Cancel
 							</button>
@@ -704,19 +900,14 @@ const RunDetail = () => {
 								type="button"
 								onClick={handleConfirmStop}
 								disabled={stopRunMutation.isPending}
-								className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-red-600 text-white text-sm hover:bg-red-700 disabled:opacity-50"
+								className="btn-danger inline-flex items-center gap-1.5 min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed"
 							>
 								{stopRunMutation.isPending ? (
-									<>
-										<RefreshCw className="h-4 w-4 animate-spin" />
-										Stopping…
-									</>
+									<RefreshCw className="h-4 w-4 animate-spin" />
 								) : (
-									<>
-										<Square className="h-4 w-4" />
-										Stop Run
-									</>
+									<Square className="h-4 w-4" />
 								)}
+								{stopRunMutation.isPending ? "Stopping…" : "Stop Run"}
 							</button>
 						</div>
 					</div>

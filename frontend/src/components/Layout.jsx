@@ -1585,17 +1585,17 @@ const Layout = ({ children }) => {
 					</div>
 				</div>
 
-				{/* Main content — anchored to the pinned state so hover-expansion of the
-				    sidebar floats over content without causing layout reflow. */}
+				{/* Main content — tracks the effective sidebar state (including hover
+				    expansion) so the page reflows instead of being overlapped by the sidebar. */}
 				<div
 					className={`flex flex-col min-h-screen transition-all duration-300 relative z-10 ${
-						pinnedCollapsed ? "lg:pl-16" : "lg:pl-64"
+						sidebarCollapsed ? "lg:pl-16" : "lg:pl-64"
 					}`}
 				>
 					{/* Top bar */}
 					<div
 						className={`fixed top-0 z-[90] flex h-16 shrink-0 items-center gap-x-2 sm:gap-x-4 border-b border-secondary-200 dark:border-white/10 bg-white px-3 sm:px-4 sm:px-6 lg:px-8 shadow-sm transition-all duration-300 ${
-							pinnedCollapsed
+							sidebarCollapsed
 								? "lg:left-16 lg:right-0"
 								: "lg:left-64 lg:right-0"
 						} left-0 right-0`}

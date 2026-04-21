@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	ArrowDown,
@@ -23,12 +23,10 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import PatchConfirmModal from "../components/PatchConfirmModal";
-import PatchPackageMultiHostModal from "../components/PatchPackageMultiHostModal";
+import PatchWizard from "../components/PatchWizard";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { dashboardAPI, packagesAPI } from "../utils/api";
-import { patchingAPI } from "../utils/patchingApi";
 
 function formatRepoName(name) {
 	if (!name) return "\u2014";
@@ -239,27 +237,20 @@ const Packages = () => {
 		await Promise.all([refetch(), refetchDashboardStats()]);
 	};
 
-	const triggerPatchAllMutation = useMutation({
-		mutationFn: () => patchingAPI.trigger(hostFilter, "patch_all"),
-		onSuccess: (data) => {
-			setShowPatchConfirmModal(false);
-			queryClient.invalidateQueries(["patching-dashboard"]);
-			queryClient.invalidateQueries(["patching-runs"]);
-			// Jump straight into the run detail when we can tell the run is
-			// going to execute right now — the user asked for this so they
-			// can watch the live terminal output.
-			const runAt = data?.run_at ? Date.parse(data.run_at) : NaN;
-			const isImmediate = Number.isFinite(runAt) && runAt - Date.now() < 5_000;
-			if (data?.patch_run_id && isImmediate) {
-				navigate(`/patching/runs/${data.patch_run_id}`);
-				return;
-			}
-			toast.success("Patch all queued. View progress in Patching.");
-		},
-		onError: (err) => {
-			toast.error(err.response?.data?.error || err.message);
-		},
-	});
+	// Post-submit UX for the Patch all wizard. The wizard now owns the server
+	// call; this handler only routes the user to the right place afterwards.
+	const handlePatchAllSuccess = (_mode, info) => {
+		setShowPatchConfirmModal(false);
+		queryClient.invalidateQueries(["patching-dashboard"]);
+		queryClient.invalidateQueries(["patching-runs"]);
+		const runs = info?.runs || [];
+		const immediate = runs.filter((r) => r.immediate);
+		if (immediate.length === 1) {
+			navigate(`/patching/runs/${immediate[0].runId}`);
+			return;
+		}
+		toast.success("Patch all queued. View progress in Patching.");
+	};
 
 	const handleSelectPackage = (packageName) => {
 		setSelectedPackages((prev) =>
@@ -691,7 +682,13 @@ const Packages = () => {
 								type="button"
 								onClick={() => setShowPatchPackageMultiHostModal(true)}
 								className="btn-primary flex items-center gap-2"
-								title={`Patch ${selectedPackages.length} selected package(s) on chosen hosts`}
+								title={
+									hostFilter && hostFilter !== "all"
+										? `Patch ${selectedPackages.length} selected package(s) on ${
+												patchModalHostName || "this host"
+											}`
+										: `Patch ${selectedPackages.length} selected package(s) on chosen hosts`
+								}
 							>
 								<Wrench className="h-4 w-4" />
 								Patch selected ({selectedPackages.length})
@@ -1305,22 +1302,48 @@ const Packages = () => {
 				</div>
 			)}
 
-			{/* Patch Package Multi-Host Modal (for selected packages) */}
+			{/* Flow 3: Patch selected packages across chosen hosts.
+			    When the packages list is filtered to a single host, we inherit
+			    that filter: the wizard is locked to that one host so the user
+			    isn't offered every other host that happens to have the same
+			    package installed. Without a host filter we keep the original
+			    multi-host discovery behavior. */}
 			{showPatchPackageMultiHostModal && (
-				<PatchPackageMultiHostModal
+				<PatchWizard
 					isOpen={showPatchPackageMultiHostModal}
 					onClose={() => setShowPatchPackageMultiHostModal(false)}
+					mode="trigger"
+					patchType="patch_package"
 					packageNames={selectedPackages}
+					{...(hostFilter && hostFilter !== "all"
+						? {
+								lockHosts: true,
+								presetHosts: [
+									{
+										id: hostFilter,
+										friendly_name: hosts?.find((h) => h.id === hostFilter)
+											?.friendly_name,
+										hostname: hosts?.find((h) => h.id === hostFilter)?.hostname,
+									},
+								],
+							}
+						: {})}
 					onSuccess={(mode, info) => {
 						setSelectedPackages([]);
 						setShowPatchPackageMultiHostModal(false);
 						queryClient.invalidateQueries(["patching-dashboard"]);
 						queryClient.invalidateQueries(["patching-runs"]);
-						// If the wizard kicked off a single immediate run, jump
-						// straight into that run's detail page so the user can
-						// watch the live terminal output. Otherwise fall back
-						// to the runs list.
-						const immediate = info?.runs?.filter((r) => r.immediate) || [];
+						const runs = info?.runs || [];
+						if (mode === "approval") {
+							toast.success(
+								runs.length === 1
+									? "Submitted 1 run for approval"
+									: `Submitted ${runs.length} runs for approval`,
+							);
+							navigate("/patching?tab=runs");
+							return;
+						}
+						const immediate = runs.filter((r) => r.immediate);
 						if (mode === "patch" && immediate.length === 1) {
 							navigate(`/patching/runs/${immediate[0].runId}`);
 						} else {
@@ -1330,17 +1353,16 @@ const Packages = () => {
 				/>
 			)}
 
-			{/* Patch Confirmation Modal (for Patch all on single host) */}
+			{/* Flow 2: Patch all on the currently filtered host */}
 			{showPatchConfirmModal && hostFilter && hostFilter !== "all" && (
-				<PatchConfirmModal
+				<PatchWizard
 					isOpen={showPatchConfirmModal}
 					onClose={() => setShowPatchConfirmModal(false)}
-					onConfirm={() => triggerPatchAllMutation.mutate()}
-					isPending={triggerPatchAllMutation.isPending}
-					hostId={hostFilter}
+					mode="trigger"
 					patchType="patch_all"
-					packageNames={null}
-					hostDisplayName={patchModalHostName}
+					lockHosts
+					presetHosts={[{ id: hostFilter, friendly_name: patchModalHostName }]}
+					onSuccess={handlePatchAllSuccess}
 				/>
 			)}
 		</div>

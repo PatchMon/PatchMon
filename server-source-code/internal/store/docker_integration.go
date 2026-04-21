@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -106,9 +107,9 @@ type DockerReceiveResult struct {
 
 func timeToPg(t *time.Time) pgtype.Timestamp {
 	if t == nil || t.IsZero() {
-		return pgtype.Timestamp{Time: time.Now().UTC(), Valid: true}
+		return pgtime.Now()
 	}
-	return pgtype.Timestamp{Time: *t, Valid: true}
+	return pgtime.From(*t)
 }
 
 func mapToJSON(m interface{}) []byte {
@@ -123,7 +124,7 @@ func mapToJSON(m interface{}) []byte {
 func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payload *DockerReceivePayload) (*DockerReceiveResult, error) {
 	d := s.db.DB(ctx)
 	now := time.Now().UTC()
-	nowPg := pgtype.Timestamp{Time: now, Valid: true}
+	nowPg := pgtime.From(now)
 
 	result := &DockerReceiveResult{}
 
@@ -235,10 +236,7 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 			tag = "latest"
 		}
 		createdAt := timeToPg(c.CreatedAt)
-		startedAt := pgtype.Timestamp{}
-		if c.StartedAt != nil {
-			startedAt = pgtype.Timestamp{Time: *c.StartedAt, Valid: true}
-		}
+		startedAt := pgtime.FromPtr(c.StartedAt)
 		err := d.Queries.UpsertDockerContainer(ctx, db.UpsertDockerContainerParams{
 			ID:          uuid.New().String(),
 			HostID:      hostID,
@@ -338,10 +336,7 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 			scope = "local"
 		}
 		attachable := n.Attachable
-		createdAt := pgtype.Timestamp{}
-		if n.CreatedAt != nil {
-			createdAt = pgtype.Timestamp{Time: *n.CreatedAt, Valid: true}
-		}
+		createdAt := pgtime.FromPtr(n.CreatedAt)
 		err := d.Queries.UpsertDockerNetwork(ctx, db.UpsertDockerNetworkParams{
 			ID:             uuid.New().String(),
 			HostID:         hostID,

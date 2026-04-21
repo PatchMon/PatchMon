@@ -21,10 +21,10 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // ScheduledReportsDispatchHandler enqueues run jobs for due scheduled reports.
@@ -56,7 +56,7 @@ func (h *ScheduledReportsDispatchHandler) resolveDB(ctx context.Context, payload
 
 func (h *ScheduledReportsDispatchHandler) processDB(ctx context.Context, d *database.DB, tenantHost string) {
 	now := time.Now()
-	rows, err := d.Queries.ListScheduledReportsDue(ctx, pgtype.Timestamp{Time: now, Valid: true})
+	rows, err := d.Queries.ListScheduledReportsDue(ctx, pgtime.From(now))
 	if err != nil {
 		if h.log != nil {
 			h.log.Error("scheduled_reports_dispatch: list due", "error", err)
@@ -249,8 +249,8 @@ func (h *ScheduledReportRunHandler) ProcessTask(ctx context.Context, t *asynq.Ta
 	}
 	_ = d.Queries.UpdateScheduledReportRunTimes(ctx, db.UpdateScheduledReportRunTimesParams{
 		ID:        rep.ID,
-		LastRunAt: pgtype.Timestamp{Time: now, Valid: true},
-		NextRunAt: pgtype.Timestamp{Time: next, Valid: true},
+		LastRunAt: pgtime.From(now),
+		NextRunAt: pgtime.From(next),
 	})
 	h.insertRun(ctx, d, p.ReportID, "completed", "", sumHex)
 

@@ -9,6 +9,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -281,8 +282,8 @@ func (s *ComplianceStore) SubmitScan(ctx context.Context, hostID string, opensca
 			ID:            uuid.New().String(),
 			HostID:        hostID,
 			ProfileID:     profile.ID,
-			StartedAt:     pgtype.Timestamp{Time: startedAt, Valid: true},
-			CompletedAt:   pgtype.Timestamp{Time: completedAt, Valid: true},
+			StartedAt:     pgtime.From(startedAt),
+			CompletedAt:   pgtime.From(completedAt),
 			Status:        status,
 			TotalRules:    int32(stats["total_rules"]),
 			Passed:        int32(stats["passed"]),
@@ -508,7 +509,7 @@ func (s *ComplianceStore) ListActiveScans(ctx context.Context) ([]db.ListActiveC
 // ListStalledScans returns scans running over the threshold.
 func (s *ComplianceStore) ListStalledScans(ctx context.Context, threshold time.Time) ([]db.ListStalledComplianceScansWithDetailsRow, error) {
 	d := s.db.DB(ctx)
-	return d.Queries.ListStalledComplianceScansWithDetails(ctx, pgtype.Timestamp{Time: threshold, Valid: true})
+	return d.Queries.ListStalledComplianceScansWithDetails(ctx, pgtime.From(threshold))
 }
 
 // ListResultsByScan returns paginated results for a scan with optional filters.
@@ -665,7 +666,7 @@ func (s *ComplianceStore) GetTrends(ctx context.Context, hostID string, days int
 	since := time.Now().AddDate(0, 0, -days)
 	return d.Queries.GetComplianceScansForTrends(ctx, db.GetComplianceScansForTrendsParams{
 		HostID:      hostID,
-		CompletedAt: pgtype.Timestamp{Time: since, Valid: true},
+		CompletedAt: pgtime.From(since),
 	})
 }
 
@@ -676,7 +677,7 @@ func (s *ComplianceStore) CreateRunningScan(ctx context.Context, hostID, profile
 		ID:            uuid.New().String(),
 		HostID:        hostID,
 		ProfileID:     profileID,
-		StartedAt:     pgtype.Timestamp{Time: time.Now(), Valid: true},
+		StartedAt:     pgtime.Now(),
 		CompletedAt:   pgtype.Timestamp{},
 		Status:        "running",
 		TotalRules:    0,

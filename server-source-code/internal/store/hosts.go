@@ -7,9 +7,9 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // HostsStore provides host access via sqlc.
@@ -134,7 +134,7 @@ func (s *HostsStore) Create(ctx context.Context, h *models.Host) error {
 	h.CreatedAt = now
 	h.UpdatedAt = now
 	h.LastUpdate = now
-	pgNow := pgtype.Timestamp{Time: now, Valid: true}
+	pgNow := pgtime.From(now)
 	return d.Queries.CreateHost(ctx, db.CreateHostParams{
 		ID:                     h.ID,
 		MachineID:              h.MachineID,
@@ -266,7 +266,7 @@ func (s *HostsStore) UpdateComplianceScannerStatus(ctx context.Context, id strin
 	d := s.db.DB(ctx)
 	return d.Queries.UpdateHostComplianceScannerStatus(ctx, db.UpdateHostComplianceScannerStatusParams{
 		ComplianceScannerStatus:    statusJSON,
-		ComplianceScannerUpdatedAt: pgtype.Timestamp{Time: updatedAt, Valid: true},
+		ComplianceScannerUpdatedAt: pgtime.From(updatedAt),
 		ID:                         id,
 	})
 }

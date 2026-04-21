@@ -12,9 +12,9 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // TrustedDevicesStore manages MFA "remember this device" trust tokens.
@@ -95,9 +95,9 @@ func (s *TrustedDevicesStore) Create(ctx context.Context, p CreateTrustedDeviceP
 		UserAgent:  strPtr(p.UserAgent),
 		IpAddress:  strPtr(p.IPAddress),
 		Label:      strPtr(p.Label),
-		CreatedAt:  pgtype.Timestamp{Time: now, Valid: true},
-		LastUsedAt: pgtype.Timestamp{Time: now, Valid: true},
-		ExpiresAt:  pgtype.Timestamp{Time: p.ExpiresAt, Valid: true},
+		CreatedAt:  pgtime.From(now),
+		LastUsedAt: pgtime.From(now),
+		ExpiresAt:  pgtime.From(p.ExpiresAt),
 	}
 	if err := d.Queries.CreateTrustedDevice(ctx, arg); err != nil {
 		return "", err
@@ -132,7 +132,7 @@ func (s *TrustedDevicesStore) TouchLastUsed(ctx context.Context, id string) erro
 	d := s.db.DB(ctx)
 	return d.Queries.TouchTrustedDeviceLastUsed(ctx, db.TouchTrustedDeviceLastUsedParams{
 		ID:         id,
-		LastUsedAt: pgtype.Timestamp{Time: time.Now(), Valid: true},
+		LastUsedAt: pgtime.Now(),
 	})
 }
 

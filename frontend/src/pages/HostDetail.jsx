@@ -43,8 +43,8 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import { PackageListDisplay } from "../components/PackageListDisplay";
-import PatchConfirmModal from "../components/PatchConfirmModal";
 import { PatchRunStatusBadge } from "../components/PatchRunStatusBadge";
+import PatchWizard from "../components/PatchWizard";
 import RdpViewer from "../components/RdpViewer";
 import SshTerminal from "../components/SshTerminal";
 import { useAuth } from "../contexts/AuthContext";
@@ -421,33 +421,35 @@ const HostDetail = () => {
 		},
 	});
 
-	// Patch all mutation — for a single-host, single-run trigger we try to
-	// deep-link into the run detail page so the user can immediately watch
-	// the live terminal. We treat the run as "immediate" when the server
-	// reports a run_at within a short window of now; otherwise we stay on
-	// the host page and surface a toast with a link to the runs list.
-	const triggerPatchAllMutation = useMutation({
-		mutationFn: () => patchingAPI.trigger(hostId, "patch_all"),
-		onSuccess: (data) => {
-			setShowPatchConfirmModal(false);
-			queryClient.invalidateQueries(["patching-dashboard"]);
-			queryClient.invalidateQueries(["patching-runs"]);
-			const runAt = data?.run_at ? Date.parse(data.run_at) : NaN;
-			const isImmediate = Number.isFinite(runAt) && runAt - Date.now() < 5_000;
-			if (data?.patch_run_id && isImmediate) {
-				navigate(`/patching/runs/${data.patch_run_id}`);
-				return;
-			}
+	// Handler passed to the PatchWizard. The wizard owns the actual submission;
+	// we only deal with post-submit UX: invalidate caches, deep-link into the
+	// run detail when the single run is immediate, and show a toast otherwise.
+	const handlePatchWizardSuccess = (mode, info) => {
+		setShowPatchConfirmModal(false);
+		queryClient.invalidateQueries(["patching-dashboard"]);
+		queryClient.invalidateQueries(["patching-runs"]);
+		const runs = info?.runs || [];
+		if (mode === "approval") {
+			// "Submit for approval": the runs are now sitting pending in
+			// Runs & History for a second approver. Nothing more to do here.
 			toast.success(
-				data?.patch_run_id
-					? "Patch queued. View progress in Patching."
-					: "Patch queued",
+				runs.length === 1
+					? "Submitted 1 run for approval"
+					: `Submitted ${runs.length} runs for approval`,
 			);
-		},
-		onError: (err) => {
-			toast.error(err.response?.data?.error || err.message);
-		},
-	});
+			return;
+		}
+		const immediate = runs.filter((r) => r.immediate);
+		if (immediate.length === 1) {
+			navigate(`/patching/runs/${immediate[0].runId}`);
+			return;
+		}
+		toast.success(
+			runs.length > 0
+				? "Patch queued. View progress in Patching."
+				: "Patch queued",
+		);
+	};
 
 	// Fetch report mutation
 	const fetchReportMutation = useMutation({
@@ -6022,16 +6024,24 @@ const HostDetail = () => {
 				/>
 			)}
 
-			{/* Patch Confirmation Modal */}
-			<PatchConfirmModal
-				isOpen={showPatchConfirmModal}
-				onClose={() => setShowPatchConfirmModal(false)}
-				onConfirm={() => triggerPatchAllMutation.mutate()}
-				isPending={triggerPatchAllMutation.isPending}
-				hostId={hostId}
-				patchType="patch_all"
-				hostDisplayName={host?.friendly_name || host?.hostname}
-			/>
+			{/* Patch wizard (flow 1: Patch all on this host) */}
+			{showPatchConfirmModal && (
+				<PatchWizard
+					isOpen={showPatchConfirmModal}
+					onClose={() => setShowPatchConfirmModal(false)}
+					mode="trigger"
+					patchType="patch_all"
+					lockHosts
+					presetHosts={[
+						{
+							id: hostId,
+							friendly_name: host?.friendly_name,
+							hostname: host?.hostname,
+						},
+					]}
+					onSuccess={handlePatchWizardSuccess}
+				/>
+			)}
 
 			{/* Apply Pending Config Modal */}
 			{showApplyConfigModal && integrationsData?.pending_config_exists && (

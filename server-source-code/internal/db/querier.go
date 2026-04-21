@@ -302,6 +302,9 @@ type Querier interface {
 	ListPatchPolicyAssignmentsByPolicy(ctx context.Context, patchPolicyID string) ([]PatchPolicyAssignment, error)
 	// patch_policy_exclusions
 	ListPatchPolicyExclusions(ctx context.Context, patchPolicyID string) ([]ListPatchPolicyExclusionsRow, error)
+	// The 'status' filter accepts an exact status value. The pseudo-value
+	// 'active' matches any in-flight run (queued or running) so UI widgets
+	// that aggregate those two states can link to a single filter.
 	ListPatchRuns(ctx context.Context, arg ListPatchRunsParams) ([]ListPatchRunsRow, error)
 	ListPatchRunsByPackage(ctx context.Context, arg ListPatchRunsByPackageParams) ([]ListPatchRunsByPackageRow, error)
 	ListPatchRunsByStatus(ctx context.Context) ([]ListPatchRunsByStatusRow, error)

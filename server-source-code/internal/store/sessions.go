@@ -8,9 +8,9 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // SessionsStore provides user session access.
@@ -60,11 +60,11 @@ func (s *SessionsStore) Create(ctx context.Context, userID, refreshToken, access
 		UserAgent:         strPtr(userAgent),
 		DeviceFingerprint: strPtr(deviceFingerprint),
 		DeviceID:          strPtr(deviceID),
-		LastActivity:      pgtype.Timestamp{Time: now, Valid: true},
-		ExpiresAt:         pgtype.Timestamp{Time: expiresAt, Valid: true},
-		CreatedAt:         pgtype.Timestamp{Time: now, Valid: true},
+		LastActivity:      pgtime.From(now),
+		ExpiresAt:         pgtime.From(expiresAt),
+		CreatedAt:         pgtime.From(now),
 		TfaRememberMe:     tfaRememberMe,
-		TfaBypassUntil:    timeToPgtype(tfaBypassUntil),
+		TfaBypassUntil:    pgtime.FromPtr(tfaBypassUntil),
 		LastLoginIp:       strPtr(ip),
 	}
 	if err := d.Queries.CreateSession(ctx, arg); err != nil {
@@ -125,13 +125,13 @@ func (s *SessionsStore) updateExistingSession(ctx context.Context, existing db.U
 	updateArg := db.UpdateSessionOnLoginParams{
 		ID:             existing.ID,
 		RefreshToken:   refreshToken,
-		LastActivity:   pgtype.Timestamp{Time: now, Valid: true},
-		ExpiresAt:      pgtype.Timestamp{Time: expiresAt, Valid: true},
+		LastActivity:   pgtime.From(now),
+		ExpiresAt:      pgtime.From(expiresAt),
 		IpAddress:      strPtr(ip),
 		UserAgent:      strPtr(userAgent),
 		LastLoginIp:    strPtr(ip),
 		TfaRememberMe:  tfaRememberMe,
-		TfaBypassUntil: timeToPgtype(tfaBypassUntil),
+		TfaBypassUntil: pgtime.FromPtr(tfaBypassUntil),
 		DeviceID:       devID,
 		UserID:         existing.UserID,
 	}
@@ -149,13 +149,6 @@ func (s *SessionsStore) updateExistingSession(ctx context.Context, existing db.U
 	out.TfaBypassUntil = tfaBypassUntil
 	out.LoginCount = int(existing.LoginCount) + 1
 	return &out, nil
-}
-
-func timeToPgtype(t *time.Time) pgtype.Timestamp {
-	if t == nil {
-		return pgtype.Timestamp{Valid: false}
-	}
-	return pgtype.Timestamp{Time: *t, Valid: true}
 }
 
 func strPtr(s string) *string {

@@ -73,6 +73,7 @@ export const patchingAPI = {
 					? { package_names }
 					: {}),
 				...(opts.dry_run ? { dry_run: true } : {}),
+				...(opts.pending_approval ? { pending_approval: true } : {}),
 				...(opts.schedule_override
 					? { schedule_override: opts.schedule_override }
 					: {}),

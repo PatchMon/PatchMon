@@ -7,8 +7,8 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // AlertConfigStore provides alert config access.
@@ -195,7 +195,7 @@ func (s *AlertConfigStore) GetAlertsToCleanup(ctx context.Context) ([]struct {
 		cutoff := time.Now().AddDate(0, 0, -int(*c.RetentionDays))
 		rows, err := d.Queries.GetAlertsForCleanup(ctx, db.GetAlertsForCleanupParams{
 			Type:      c.AlertType,
-			CreatedAt: pgtype.Timestamp{Time: cutoff, Valid: true},
+			CreatedAt: pgtime.From(cutoff),
 			Column3:   c.CleanupResolvedOnly,
 		})
 		if err != nil {
@@ -247,7 +247,7 @@ func (s *AlertConfigStore) AutoResolveOldAlerts(ctx context.Context) (int, error
 		cutoff := time.Now().AddDate(0, 0, -int(*c.AutoResolveAfterDays))
 		rows, err := d.Queries.GetAlertsToAutoResolve(ctx, db.GetAlertsToAutoResolveParams{
 			Type:      c.AlertType,
-			CreatedAt: pgtype.Timestamp{Time: cutoff, Valid: true},
+			CreatedAt: pgtime.From(cutoff),
 		})
 		if err != nil {
 			continue

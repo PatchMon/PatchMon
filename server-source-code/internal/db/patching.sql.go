@@ -43,7 +43,11 @@ func (q *Queries) ClearScheduledAt(ctx context.Context, id string) error {
 const countPatchRuns = `-- name: CountPatchRuns :one
 SELECT COUNT(*) FROM patch_runs
 WHERE ($1::text = '' OR host_id = $1)
-  AND ($2::text = '' OR status = $2)
+  AND (
+    $2::text = ''
+    OR ($2::text = 'active' AND status IN ('queued', 'running'))
+    OR ($2::text <> 'active' AND status = $2)
+  )
   AND ($3::text = '' OR patch_type = $3)
 `
 
@@ -466,7 +470,7 @@ SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
-WHERE pr.status IN ('queued', 'running', 'pending_validation', 'validated') AND (pr.dry_run = false OR pr.dry_run IS NULL OR pr.status IN ('pending_validation', 'validated'))
+WHERE pr.status IN ('queued', 'running', 'pending_validation', 'pending_approval', 'validated') AND (pr.dry_run = false OR pr.dry_run IS NULL OR pr.status IN ('pending_validation', 'pending_approval', 'validated'))
 ORDER BY pr.created_at ASC
 `
 
@@ -699,7 +703,11 @@ FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
-  AND ($2::text = '' OR pr.status = $2)
+  AND (
+    $2::text = ''
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text <> 'active' AND pr.status = $2)
+  )
   AND ($3::text = '' OR pr.patch_type = $3)
 ORDER BY pr.created_at DESC
 LIMIT $5 OFFSET $4
@@ -741,6 +749,9 @@ type ListPatchRunsRow struct {
 	TriggeredByUsername *string          `json:"triggered_by_username"`
 }
 
+// The 'status' filter accepts an exact status value. The pseudo-value
+// 'active' matches any in-flight run (queued or running) so UI widgets
+// that aggregate those two states can link to a single filter.
 func (q *Queries) ListPatchRuns(ctx context.Context, arg ListPatchRunsParams) ([]ListPatchRunsRow, error) {
 	rows, err := q.db.Query(ctx, listPatchRuns,
 		arg.HostID,
@@ -849,7 +860,7 @@ func (q *Queries) ListPatchRunsByPackage(ctx context.Context, arg ListPatchRunsB
 }
 
 const listPatchRunsByStatus = `-- name: ListPatchRunsByStatus :many
-SELECT status, COUNT(*)::int AS count FROM patch_runs WHERE (dry_run = false OR dry_run IS NULL) OR status IN ('pending_validation', 'validated') GROUP BY status
+SELECT status, COUNT(*)::int AS count FROM patch_runs WHERE (dry_run = false OR dry_run IS NULL) OR status IN ('pending_validation', 'pending_approval', 'validated') GROUP BY status
 `
 
 type ListPatchRunsByStatusRow struct {
@@ -883,7 +894,11 @@ FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
-  AND ($2::text = '' OR pr.status = $2)
+  AND (
+    $2::text = ''
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text <> 'active' AND pr.status = $2)
+  )
   AND ($3::text = '' OR pr.patch_type = $3)
 ORDER BY COALESCE(pr.completed_at, pr.created_at) DESC NULLS LAST, pr.created_at DESC
 LIMIT $5 OFFSET $4
@@ -983,7 +998,11 @@ FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
-  AND ($2::text = '' OR pr.status = $2)
+  AND (
+    $2::text = ''
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text <> 'active' AND pr.status = $2)
+  )
   AND ($3::text = '' OR pr.patch_type = $3)
 ORDER BY COALESCE(pr.completed_at, pr.created_at) ASC NULLS LAST, pr.created_at DESC
 LIMIT $5 OFFSET $4
@@ -1083,7 +1102,11 @@ FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
-  AND ($2::text = '' OR pr.status = $2)
+  AND (
+    $2::text = ''
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text <> 'active' AND pr.status = $2)
+  )
   AND ($3::text = '' OR pr.patch_type = $3)
 ORDER BY pr.created_at ASC
 LIMIT $5 OFFSET $4
@@ -1183,7 +1206,11 @@ FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
-  AND ($2::text = '' OR pr.status = $2)
+  AND (
+    $2::text = ''
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text <> 'active' AND pr.status = $2)
+  )
   AND ($3::text = '' OR pr.patch_type = $3)
 ORDER BY COALESCE(pr.started_at, pr.created_at) DESC NULLS LAST, pr.created_at DESC
 LIMIT $5 OFFSET $4
@@ -1283,7 +1310,11 @@ FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
-  AND ($2::text = '' OR pr.status = $2)
+  AND (
+    $2::text = ''
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text <> 'active' AND pr.status = $2)
+  )
   AND ($3::text = '' OR pr.patch_type = $3)
 ORDER BY COALESCE(pr.started_at, pr.created_at) ASC NULLS LAST, pr.created_at DESC
 LIMIT $5 OFFSET $4
@@ -1383,7 +1414,11 @@ FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
-  AND ($2::text = '' OR pr.status = $2)
+  AND (
+    $2::text = ''
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text <> 'active' AND pr.status = $2)
+  )
   AND ($3::text = '' OR pr.patch_type = $3)
 ORDER BY pr.status ASC, pr.created_at DESC
 LIMIT $5 OFFSET $4
@@ -1483,7 +1518,11 @@ FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
-  AND ($2::text = '' OR pr.status = $2)
+  AND (
+    $2::text = ''
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text <> 'active' AND pr.status = $2)
+  )
   AND ($3::text = '' OR pr.patch_type = $3)
 ORDER BY pr.status DESC, pr.created_at DESC
 LIMIT $5 OFFSET $4
@@ -1662,7 +1701,7 @@ func (q *Queries) ListRecentPatchRuns(ctx context.Context, limit int32) ([]ListR
 }
 
 const markValidationApproved = `-- name: MarkValidationApproved :exec
-UPDATE patch_runs SET status = 'approved', approved_by_user_id = $2, updated_at = NOW() WHERE id = $1 AND status IN ('validated', 'pending_validation')
+UPDATE patch_runs SET status = 'approved', approved_by_user_id = $2, updated_at = NOW() WHERE id = $1 AND status IN ('validated', 'pending_validation', 'pending_approval')
 `
 
 type MarkValidationApprovedParams struct {

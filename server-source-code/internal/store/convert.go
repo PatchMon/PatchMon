@@ -5,6 +5,7 @@ import (
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -208,11 +209,10 @@ func settingsToUpdateParams(s *models.Settings) db.UpdateSettingsParams {
 	}
 }
 
+// timeToPgTimestamp is retained as a thin alias for pgtime.FromPtr to keep
+// diffs small in model→db conversions. Prefer pgtime.FromPtr in new code.
 func timeToPgTimestamp(t *time.Time) pgtype.Timestamp {
-	if t == nil {
-		return pgtype.Timestamp{}
-	}
-	return pgtype.Timestamp{Time: *t, Valid: true}
+	return pgtime.FromPtr(t)
 }
 
 func dbUserSessionToModel(u db.UserSession) models.UserSession {

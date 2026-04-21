@@ -7,8 +7,8 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // DashboardPreferencesStore provides dashboard preferences and layout access.
@@ -50,7 +50,7 @@ func (s *DashboardPreferencesStore) ReplaceAll(ctx context.Context, userID strin
 	}
 
 	now := time.Now()
-	ts := pgtype.Timestamp{Time: now, Valid: true}
+	ts := pgtime.From(now)
 	for i := range prefs {
 		prefs[i].ID = uuid.New().String()
 		prefs[i].UserID = userID
@@ -92,7 +92,7 @@ func (s *DashboardPreferencesStore) UpsertLayout(ctx context.Context, layout *mo
 		UserID:        layout.UserID,
 		StatsColumns:  int32(layout.StatsColumns),
 		ChartsColumns: int32(layout.ChartsColumns),
-		UpdatedAt:     pgtype.Timestamp{Time: layout.UpdatedAt, Valid: true},
+		UpdatedAt:     pgtime.From(layout.UpdatedAt),
 	}
 	return d.Queries.UpsertDashboardLayout(ctx, arg)
 }

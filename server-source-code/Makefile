@@ -9,13 +9,23 @@ LDFLAGS := -ldflags "-s -w"
 BUILD_FLAGS := -buildvcs=false
 GO_CMD ?= $(shell command -v go 2>/dev/null || echo go)
 GOLANGCI_LINT_CMD ?= $(shell command -v golangci-lint 2>/dev/null || echo golangci-lint)
+# sqlc binary: prefer local install (go install), fall back to $GOPATH/bin.
+# We intentionally do NOT use 'go run github.com/sqlc-dev/sqlc/cmd/sqlc@latest'
+# because sqlc's go.mod contains replace directives, which breaks 'go run @latest'.
+SQLC_CMD ?= $(shell command -v sqlc 2>/dev/null || echo $$(go env GOPATH)/bin/sqlc)
 
 # Default target
 all: build
 
 sqlc-generate:
 	@echo "Generating sqlc code..."
-	@$(GO_CMD) run github.com/sqlc-dev/sqlc/cmd/sqlc@latest generate
+	@if [ ! -x "$(SQLC_CMD)" ]; then \
+		echo "sqlc not found. Install it with:"; \
+		echo "  go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0"; \
+		echo "Or download a prebuilt binary from https://github.com/sqlc-dev/sqlc/releases"; \
+		exit 1; \
+	fi
+	@$(SQLC_CMD) generate
 
 build:
 	@echo "Building $(BINARY)..."

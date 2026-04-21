@@ -4,11 +4,14 @@ import { Link } from "react-router-dom";
 const PatchingPendingApproval = ({ data }) => {
 	const summary = data?.summary || {};
 	const pending_validation = summary.pending_validation ?? 0;
+	const pending_approval = summary.pending_approval ?? 0;
 	const validated = summary.validated ?? 0;
-	const queued = summary.queued ?? 0;
 	const running = summary.running ?? 0;
 
-	const needs_action = pending_validation + validated;
+	// "Needs action" groups every run that's waiting for a human decision:
+	// a validated dry-run that needs sign-off, an approval submission that
+	// hasn't been acted on, and a stalled dry-run that may need retrying.
+	const needs_action = pending_validation + pending_approval + validated;
 
 	const boxes = [
 		{
@@ -20,20 +23,20 @@ const PatchingPendingApproval = ({ data }) => {
 			to: "/patching?tab=runs&status=pending_validation",
 		},
 		{
+			label: "Pending Approval",
+			value: pending_approval,
+			Icon: CheckSquare,
+			icon_class: "text-amber-500",
+			highlight: pending_approval > 0,
+			to: "/patching?tab=runs&status=pending_approval",
+		},
+		{
 			label: "Awaiting Approval",
 			value: validated,
 			Icon: AlertTriangle,
 			icon_class: "text-amber-600",
 			highlight: validated > 0,
 			to: "/patching?tab=runs&status=validated",
-		},
-		{
-			label: "Queued",
-			value: queued,
-			Icon: CheckSquare,
-			icon_class: "text-blue-500",
-			highlight: false,
-			to: "/patching?tab=runs&status=queued",
 		},
 		{
 			label: "Running",

@@ -11,10 +11,10 @@ import (
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const freeBSDBasePackageName = "freebsd-base"
@@ -225,6 +225,11 @@ func NewPatchRunsStore(db database.DBProvider) *PatchRunsStore {
 type CreateRunOpts struct {
 	ValidationRunID  *string
 	ApprovedByUserID *string
+	// InitialStatus overrides the default status derivation. When empty the
+	// status is "pending_validation" for dry runs, "queued" otherwise. Set to
+	// "pending_approval" with dryRun=false to represent a "submit for
+	// approval" run that hasn't been executed and isn't a dry-run either.
+	InitialStatus string
 }
 
 // CreateRun creates a new patch run. If id is empty, a new UUID is generated.
@@ -232,6 +237,7 @@ type CreateRunOpts struct {
 // dryRun when true creates a validation-only run with status "pending_validation".
 // scheduledAt is when the patch will run (optional; nil for immediate runs).
 // policyID, policyName, policySnapshot capture the effective policy at trigger time (all optional).
+// opts.InitialStatus, if non-empty, overrides the dry-run-derived status.
 func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patchType string, packageName *string, packageNames []string, triggeredByUserID *string, dryRun bool, scheduledAt *time.Time, policyID, policyName *string, policySnapshot []byte, opts *CreateRunOpts) (string, error) {
 	if id == "" {
 		id = uuid.New().String()
@@ -248,10 +254,10 @@ func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patch
 	if dryRun {
 		status = "pending_validation"
 	}
-	var sched pgtype.Timestamp
-	if scheduledAt != nil {
-		sched = pgtype.Timestamp{Time: *scheduledAt, Valid: true}
+	if opts != nil && opts.InitialStatus != "" {
+		status = opts.InitialStatus
 	}
+	sched := pgtime.FromPtr(scheduledAt)
 	var validationRunID *string
 	var approvedByUserID *string
 	if opts != nil {
@@ -393,7 +399,7 @@ func (s *PatchRunsStore) SetScheduledAt(ctx context.Context, id string, schedule
 	d := s.db.DB(ctx)
 	return d.Queries.UpdatePatchRunScheduledAt(ctx, db.UpdatePatchRunScheduledAtParams{
 		ID:          id,
-		ScheduledAt: pgtype.Timestamp{Time: scheduledAt, Valid: true},
+		ScheduledAt: pgtime.From(scheduledAt),
 	})
 }
 
@@ -753,8 +759,9 @@ func (s *PatchPoliciesStore) ResolveEffectivePolicy(ctx context.Context, hostID 
 }
 
 // ComputeRunAt returns when a patch should run based on policy.
+// Returns UTC; storage via pgtype.Timestamp expects UTC (see pgtime package).
 func (s *PatchPoliciesStore) ComputeRunAt(policy *db.PatchPolicy) time.Time {
-	now := time.Now()
+	now := time.Now().UTC()
 	if policy == nil || policy.PatchDelayType == "immediate" {
 		return now
 	}

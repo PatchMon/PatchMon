@@ -8,6 +8,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -279,7 +280,7 @@ func (s *AlertsStore) UpdateResolved(ctx context.Context, id string, userID *str
 	return d.Queries.UpdateAlertResolved(ctx, db.UpdateAlertResolvedParams{
 		ID:               id,
 		IsActive:         false,
-		ResolvedAt:       pgtype.Timestamp{Time: now, Valid: true},
+		ResolvedAt:       pgtime.From(now),
 		ResolvedByUserID: userID,
 	})
 }

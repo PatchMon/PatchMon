@@ -10,6 +10,10 @@ const STATUS_MAP = {
 		class: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
 		label: "Pending validation",
 	},
+	pending_approval: {
+		class: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
+		label: "Pending approval",
+	},
 	validated: {
 		class:
 			"bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200",

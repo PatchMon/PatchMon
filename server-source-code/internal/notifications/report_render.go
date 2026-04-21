@@ -572,7 +572,7 @@ func statusBadgeHTML(status string) string {
 	case "running", "warning":
 		color = "#d97706"
 		bg = "#fffbeb"
-	case "queued", "pending", "pending_validation":
+	case "queued", "pending", "pending_validation", "pending_approval":
 		color = "#6366f1"
 		bg = "#eef2ff"
 	case "inactive", "offline":

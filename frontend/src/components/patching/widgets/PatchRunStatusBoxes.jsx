@@ -21,7 +21,7 @@ const PatchRunStatusBoxes = ({ data }) => {
 			value: active,
 			Icon: Clock,
 			icon_class: "text-blue-600",
-			to: "/patching?tab=runs&status=running",
+			to: "/patching?tab=runs&status=active",
 		},
 		{
 			label: "Completed",

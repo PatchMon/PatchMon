@@ -7,9 +7,9 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // UsersStore provides user access.
@@ -136,8 +136,8 @@ func (s *UsersStore) CreateOidcUser(ctx context.Context, u *models.User, oidcSub
 		Username:     u.Username,
 		Email:        u.Email,
 		Role:         u.Role,
-		CreatedAt:    pgtype.Timestamp{Time: now, Valid: true},
-		UpdatedAt:    pgtype.Timestamp{Time: now, Valid: true},
+		CreatedAt:    pgtime.From(now),
+		UpdatedAt:    pgtime.From(now),
 		FirstName:    u.FirstName,
 		LastName:     u.LastName,
 		OidcSub:      &oidcSub,
@@ -163,7 +163,7 @@ func (s *UsersStore) UpdateOidcProfile(ctx context.Context, userID string, lastL
 	d := s.db.DB(ctx)
 	return d.Queries.UpdateUserOidcProfile(ctx, db.UpdateUserOidcProfileParams{
 		ID:        userID,
-		LastLogin: pgtype.Timestamp{Time: lastLogin, Valid: true},
+		LastLogin: pgtime.From(lastLogin),
 		AvatarUrl: avatarURL,
 		FirstName: firstName,
 		LastName:  lastName,
@@ -221,8 +221,8 @@ func (s *UsersStore) Create(ctx context.Context, u *models.User) error {
 		PasswordHash:    u.PasswordHash,
 		Role:            u.Role,
 		IsActive:        u.IsActive,
-		CreatedAt:       pgtype.Timestamp{Time: now, Valid: true},
-		UpdatedAt:       pgtype.Timestamp{Time: now, Valid: true},
+		CreatedAt:       pgtime.From(now),
+		UpdatedAt:       pgtime.From(now),
 		TfaEnabled:      u.TfaEnabled,
 		FirstName:       u.FirstName,
 		LastName:        u.LastName,
@@ -241,7 +241,7 @@ func (s *UsersStore) Update(ctx context.Context, u *models.User) error {
 		Email:           u.Email,
 		Role:            u.Role,
 		IsActive:        u.IsActive,
-		UpdatedAt:       pgtype.Timestamp{Time: u.UpdatedAt, Valid: true},
+		UpdatedAt:       pgtime.From(u.UpdatedAt),
 		FirstName:       u.FirstName,
 		LastName:        u.LastName,
 		ThemePreference: u.ThemePreference,
@@ -349,8 +349,8 @@ func (s *UsersStore) GetByDiscordIDOrEmail(ctx context.Context, discordID, email
 func (s *UsersStore) CreateDiscordUser(ctx context.Context, id, username, email, role string, discordID, discordUsername, discordAvatar *string, discordLinkedAt time.Time) error {
 	d := s.db.DB(ctx)
 	now := time.Now()
-	ts := pgtype.Timestamp{Time: now, Valid: true}
-	linkedTs := pgtype.Timestamp{Time: discordLinkedAt, Valid: true}
+	ts := pgtime.From(now)
+	linkedTs := pgtime.From(discordLinkedAt)
 	arg := db.CreateDiscordUserParams{
 		ID:              id,
 		Username:        username,
@@ -372,7 +372,7 @@ func (s *UsersStore) CreateDiscordUser(ctx context.Context, id, username, email,
 func (s *UsersStore) UpdateDiscordLink(ctx context.Context, userID, discordID, username string, avatar *string) error {
 	d := s.db.DB(ctx)
 	now := time.Now()
-	ts := pgtype.Timestamp{Time: now, Valid: true}
+	ts := pgtime.From(now)
 	return d.Queries.UpdateUserDiscordLink(ctx, db.UpdateUserDiscordLinkParams{
 		ID:              userID,
 		DiscordID:       &discordID,
@@ -393,7 +393,7 @@ func (s *UsersStore) UpdateDiscordProfile(ctx context.Context, userID string, la
 	d := s.db.DB(ctx)
 	return d.Queries.UpdateUserDiscordProfile(ctx, db.UpdateUserDiscordProfileParams{
 		ID:              userID,
-		LastLogin:       pgtype.Timestamp{Time: lastLogin, Valid: true},
+		LastLogin:       pgtime.From(lastLogin),
 		DiscordUsername: &username,
 		DiscordAvatar:   avatar,
 	})

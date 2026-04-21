@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	ArrowLeft,
@@ -19,12 +19,10 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import PatchConfirmModal from "../components/PatchConfirmModal";
-import PatchPackageMultiHostModal from "../components/PatchPackageMultiHostModal";
+import PatchWizard from "../components/PatchWizard";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { formatRelativeTime, packagesAPI } from "../utils/api";
-import { patchingAPI } from "../utils/patchingApi";
 
 function formatRepoName(name) {
 	if (!name) return "\u2014";
@@ -59,39 +57,39 @@ const PackageDetail = () => {
 	// every row and would disable the whole table on a single click.
 	const [patchingHostId, setPatchingHostId] = useState(null);
 
-	const patchPackageMutation = useMutation({
-		mutationFn: ({ hostId, packageName }) =>
-			patchingAPI.trigger(hostId, "patch_package", packageName),
-		onMutate: ({ hostId }) => {
-			setPatchingHostId(hostId);
-		},
-		onSuccess: (data, { hostName }) => {
-			setPatchConfirmTarget(null);
-			queryClient.invalidateQueries({
-				queryKey: ["package", decodedPackageId],
-			});
-			queryClient.invalidateQueries({
-				queryKey: ["package-hosts", decodedPackageId],
-			});
-			queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
-			// Deep-link into the run detail for an immediate run so the user
-			// can watch the live terminal output straight away.
-			const runAt = data?.run_at ? Date.parse(data.run_at) : NaN;
-			const isImmediate = Number.isFinite(runAt) && runAt - Date.now() < 5_000;
-			if (data?.patch_run_id && isImmediate) {
-				navigate(`/patching/runs/${data.patch_run_id}`);
-				return;
-			}
-			toast.success(`Patch queued for ${hostName || "host"}`);
-		},
-		onError: (err, { hostName }) => {
-			const msg = err.response?.data?.error || err.message;
-			toast.error(`Patch failed for ${hostName || "host"}: ${msg}`);
-		},
-		onSettled: () => {
-			setPatchingHostId(null);
-		},
-	});
+	// Shared post-submit handler for both per-host and multi-host wizards.
+	// The wizard owns the server call; we only deal with UX after.
+	const handlePatchWizardSuccess = (mode, info) => {
+		setPatchConfirmTarget(null);
+		setSelectedHostIds(new Set());
+		setShowMultiHostModal(false);
+		setPatchingHostId(null);
+		queryClient.invalidateQueries({
+			queryKey: ["package", decodedPackageId],
+		});
+		queryClient.invalidateQueries({
+			queryKey: ["package-hosts", decodedPackageId],
+		});
+		queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
+		queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
+		const runs = info?.runs || [];
+		if (mode === "approval") {
+			toast.success(
+				runs.length === 1
+					? "Submitted 1 run for approval"
+					: `Submitted ${runs.length} runs for approval`,
+			);
+			return;
+		}
+		const immediate = runs.filter((r) => r.immediate);
+		if (mode === "patch" && immediate.length === 1) {
+			navigate(`/patching/runs/${immediate[0].runId}`);
+			return;
+		}
+		if (runs.length > 0) {
+			toast.success("Patch queued. View progress in Patching.");
+		}
+	};
 
 	// Fetch package details
 	const {
@@ -936,50 +934,40 @@ const PackageDetail = () => {
 				)}
 			</div>
 
-			{/* Patch Confirmation Modal */}
+			{/* Flow 4: single-host per-package patch (host + package both locked) */}
 			{patchConfirmTarget && (
-				<PatchConfirmModal
+				<PatchWizard
 					isOpen={!!patchConfirmTarget}
 					onClose={() => setPatchConfirmTarget(null)}
-					onConfirm={() =>
-						patchPackageMutation.mutate({
-							hostId: patchConfirmTarget.hostId,
-							packageName: patchConfirmTarget.packageName,
-							hostName: patchConfirmTarget.hostName,
-						})
-					}
-					isPending={patchPackageMutation.isPending}
-					hostId={patchConfirmTarget.hostId}
+					mode="trigger"
 					patchType="patch_package"
-					packageName={patchConfirmTarget.packageName}
-					hostDisplayName={patchConfirmTarget.hostName}
+					packageNames={[patchConfirmTarget.packageName]}
+					lockHosts
+					lockPackages
+					presetHosts={[
+						{
+							id: patchConfirmTarget.hostId,
+							friendly_name: patchConfirmTarget.hostName,
+						},
+					]}
+					onSuccess={handlePatchWizardSuccess}
 				/>
 			)}
 
-			{/* Multi-host patch wizard for selected hosts */}
+			{/* Flow 5: multi-host patch for this one package */}
 			{showMultiHostModal && (
-				<PatchPackageMultiHostModal
+				<PatchWizard
 					isOpen={showMultiHostModal}
 					onClose={() => setShowMultiHostModal(false)}
+					mode="trigger"
+					patchType="patch_package"
 					packageNames={[pkg.name]}
 					restrictHostIds={selectedHostIds}
 					onSuccess={(mode, info) => {
-						setSelectedHostIds(new Set());
-						setShowMultiHostModal(false);
-						queryClient.invalidateQueries({
-							queryKey: ["package", decodedPackageId],
-						});
-						queryClient.invalidateQueries({
-							queryKey: ["package-hosts", decodedPackageId],
-						});
-						queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
-						queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
-						// Single immediate run -> deep-link to its detail page
-						// so the user can watch the live terminal output.
-						const immediate = info?.runs?.filter((r) => r.immediate) || [];
-						if (mode === "patch" && immediate.length === 1) {
-							navigate(`/patching/runs/${immediate[0].runId}`);
-						} else {
+						handlePatchWizardSuccess(mode, info);
+						if (
+							!(mode === "patch" && (info?.runs || []).some((r) => r.immediate))
+						) {
 							navigate("/patching?tab=runs");
 						}
 					}}

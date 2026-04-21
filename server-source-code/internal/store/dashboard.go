@@ -8,8 +8,8 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // DashboardStore provides dashboard stats.
@@ -38,8 +38,8 @@ func (s *DashboardStore) GetStats(ctx context.Context) (map[string]interface{}, 
 	offlineThreshold := now.Add(-time.Duration(updateIntervalMinutes*3) * time.Minute)
 
 	stats, err := d.Queries.GetDashboardStats(ctx, db.GetDashboardStatsParams{
-		LastUpdate:   pgtype.Timestamp{Time: thresholdTime, Valid: true},
-		LastUpdate_2: pgtype.Timestamp{Time: offlineThreshold, Valid: true},
+		LastUpdate:   pgtime.From(thresholdTime),
+		LastUpdate_2: pgtime.From(offlineThreshold),
 	})
 	if err != nil {
 		return nil, err
@@ -88,7 +88,7 @@ func (s *DashboardStore) GetStats(ctx context.Context) (map[string]interface{}, 
 	trends := []interface{}{}
 	if s.tableExists(ctx, "update_history") {
 		trendsSince := now.AddDate(0, 0, -7)
-		trendRows, _ := d.Queries.GetUpdateTrends(ctx, pgtype.Timestamp{Time: trendsSince, Valid: true})
+		trendRows, _ := d.Queries.GetUpdateTrends(ctx, pgtime.From(trendsSince))
 		for _, r := range trendRows {
 			tsStr := ""
 			if r.Ts.Valid {
@@ -132,7 +132,7 @@ func (s *DashboardStore) GetHomepageStats(ctx context.Context) (map[string]inter
 	now := time.Now()
 	oneDayAgo := now.Add(-24 * time.Hour)
 
-	stats, err := d.Queries.GetHomepageStats(ctx, pgtype.Timestamp{Time: oneDayAgo, Valid: true})
+	stats, err := d.Queries.GetHomepageStats(ctx, pgtime.From(oneDayAgo))
 	if err != nil {
 		return nil, err
 	}
@@ -544,8 +544,8 @@ func (s *DashboardStore) GetPackageTrends(ctx context.Context, days int, hostID 
 
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -days)
-	startPg := pgtype.Timestamp{Time: startDate, Valid: true}
-	endPg := pgtype.Timestamp{Time: endDate, Valid: true}
+	startPg := pgtime.From(startDate)
+	endPg := pgtime.From(endDate)
 
 	var aggregated []packageTrendPoint
 

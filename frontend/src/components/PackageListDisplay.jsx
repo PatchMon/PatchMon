@@ -53,6 +53,71 @@ export function PackageNameList({ packages, className = "", showIcon = true }) {
 }
 
 /**
+ * Single-line, fixed-height summary of a patch run's packages. Used in table
+ * rows and mobile cards where the full list would make rows inconsistently
+ * tall. Full package detail lives on the run detail page.
+ *
+ * - patch_all            → "Patch all"
+ * - patch_package (1)    → linked package name
+ * - patch_package (N>1)  → "<first> +N more" (full list in tooltip)
+ */
+export function CompactPackageSummary({ run, className = "" }) {
+	if (run.patch_type !== "patch_package") {
+		return (
+			<span
+				className={`inline-flex items-center gap-1.5 text-sm text-secondary-900 dark:text-white min-w-0 ${className}`}
+			>
+				<Package className="h-4 w-4 text-secondary-400 dark:text-secondary-500 shrink-0" />
+				<span className="truncate">Patch all</span>
+			</span>
+		);
+	}
+
+	const requested =
+		Array.isArray(run.package_names) && run.package_names.length > 0
+			? run.package_names
+			: run.package_name
+				? [run.package_name]
+				: [];
+
+	if (requested.length === 0) {
+		return (
+			<span
+				className={`inline-flex items-center gap-1.5 text-sm text-secondary-500 dark:text-secondary-400 min-w-0 ${className}`}
+			>
+				<Package className="h-4 w-4 shrink-0" />
+				<span className="truncate">—</span>
+			</span>
+		);
+	}
+
+	const first = requested[0];
+	const restCount = requested.length - 1;
+	const fullList = requested.join(", ");
+
+	return (
+		<span
+			className={`inline-flex items-center gap-1.5 text-sm text-secondary-900 dark:text-white min-w-0 ${className}`}
+			title={fullList}
+		>
+			<Package className="h-4 w-4 text-secondary-400 dark:text-secondary-500 shrink-0" />
+			<Link
+				to={`/packages/${encodeURIComponent(first)}`}
+				className="text-primary-600 dark:text-primary-400 hover:underline truncate"
+				onClick={(e) => e.stopPropagation()}
+			>
+				{first}
+			</Link>
+			{restCount > 0 && (
+				<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400 shrink-0">
+					+{restCount} more
+				</span>
+			)}
+		</span>
+	);
+}
+
+/**
  * Displays package list for a patch run. Shows requested packages with optional
  * expandable dependencies. Uses "first + N more" when many packages.
  */
