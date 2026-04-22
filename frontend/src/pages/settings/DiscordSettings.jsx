@@ -265,6 +265,78 @@ const DiscordSettings = () => {
 					</div>
 				</div>
 
+				{/* Registration & Access */}
+				<div className="bg-white dark:bg-secondary-800 rounded-lg p-4 border border-secondary-200 dark:border-secondary-700">
+					<h3 className="font-medium text-secondary-900 dark:text-white mb-4">
+						Registration &amp; Access
+					</h3>
+
+					<div className="space-y-4">
+						{/* Allow Discord Registration */}
+						<div className="flex items-center justify-between">
+							<div>
+								<p className="text-sm font-medium text-secondary-700 dark:text-secondary-300">
+									Allow Discord Registration
+								</p>
+								<p className="text-xs text-secondary-500 dark:text-secondary-400">
+									When enabled, new users can create accounts through Discord
+									OAuth. Requires &quot;Enable User Self-Registration&quot; to
+									also be enabled.
+								</p>
+							</div>
+							<button
+								type="button"
+								onClick={() =>
+									handleFieldChange(
+										"discord_allow_registration",
+										!settings?.discord_allow_registration,
+									)
+								}
+								disabled={updateMutation.isPending}
+								className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[#5865F2] focus:ring-offset-2 ${
+									settings?.discord_allow_registration
+										? "bg-[#5865F2]"
+										: "bg-secondary-300 dark:bg-secondary-600"
+								}`}
+							>
+								<span
+									className={`inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+										settings?.discord_allow_registration
+											? "translate-x-5"
+											: "translate-x-0"
+									}`}
+								/>
+							</button>
+						</div>
+
+						{/* Required Discord Server ID */}
+						<div>
+							<label
+								htmlFor="discord-required-guild-id"
+								className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1"
+							>
+								Required Discord Server ID
+							</label>
+							<input
+								id="discord-required-guild-id"
+								type="text"
+								value={settings?.discord_required_guild_id || ""}
+								onChange={(e) =>
+									handleFieldChange("discord_required_guild_id", e.target.value)
+								}
+								disabled={updateMutation.isPending}
+								placeholder="Enter Discord Server (Guild) ID"
+								className="w-full px-3 py-2 bg-white dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md text-secondary-900 dark:text-white focus:ring-2 focus:ring-[#5865F2] focus:border-[#5865F2] placeholder-secondary-400"
+							/>
+							<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+								If set, only members of this Discord server can log in or
+								register. Enable Developer Mode in Discord, right-click the
+								server name to copy its ID.
+							</p>
+						</div>
+					</div>
+				</div>
+
 				{/* Setup Instructions */}
 				<div className="bg-white dark:bg-secondary-800 rounded-lg border border-secondary-200 dark:border-secondary-700">
 					<button
@@ -367,8 +439,15 @@ const DiscordSettings = () => {
 									<span>
 										Set scopes to:{" "}
 										<code className="bg-secondary-100 dark:bg-secondary-700 px-1 rounded">
-											identify email
+											{settings?.discord_required_guild_id
+												? "identify email guilds"
+												: "identify email"}
 										</code>
+										{settings?.discord_required_guild_id && (
+											<span className="ml-1 text-xs text-amber-600 dark:text-amber-400">
+												(guilds scope required for server restriction)
+											</span>
+										)}
 									</span>
 								</li>
 							</ol>

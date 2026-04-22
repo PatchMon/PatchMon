@@ -244,6 +244,8 @@ model settings {
   discord_client_secret        String?   // Encrypted via encrypt()
   discord_redirect_uri         String?
   discord_button_text          String?   @default("Login with Discord")
+  discord_allow_registration   Boolean   @default(false)
+  discord_required_guild_id    String?
 }
 
 model update_history {

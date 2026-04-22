@@ -29,6 +29,7 @@ const {
 	getDiscordAuthorizationUrl,
 	exchangeCodeForToken,
 	getDiscordUser,
+	getDiscordUserGuilds,
 	getDiscordAvatarUrl,
 } = require("../auth/discord");
 
@@ -93,6 +94,7 @@ async function loadDiscordConfig() {
 		redirectUri:
 			settings.discord_redirect_uri ||
 			`${process.env.CORS_ORIGIN || "http://localhost:3000"}/api/v1/auth/discord/callback`,
+		requiredGuildId: settings.discord_required_guild_id || null,
 	};
 }
 
@@ -128,7 +130,12 @@ router.get("/login", async (_req, res) => {
 				.json({ error: "Discord authentication is not enabled" });
 		}
 
-		const { url, state, codeVerifier } = getDiscordAuthorizationUrl(config);
+		const scopes = config.requiredGuildId
+			? "identify email guilds"
+			: "identify email";
+		const { url, state, codeVerifier } = getDiscordAuthorizationUrl(config, {
+			scopes,
+		});
 
 		// Store state and code verifier in Redis
 		await storeDiscordSession(state, {
@@ -215,6 +222,53 @@ router.get("/callback", async (req, res) => {
 		const ip_address = req.ip || req.connection.remoteAddress;
 		const user_agent = req.get("user-agent");
 
+		// ─── Guild Restriction Check ────────────────────────────────────────
+		const guildSettings = await prisma.settings.findFirst();
+		const requiredGuildId = guildSettings?.discord_required_guild_id;
+		if (requiredGuildId) {
+			try {
+				const guilds = await getDiscordUserGuilds(tokenResponse.access_token);
+				const isMember = guilds.some((g) => g.id === requiredGuildId);
+				if (!isMember) {
+					logger.warn(
+						`Discord user ${discordUser.username} not in required guild ${requiredGuildId}`,
+					);
+					await logAuditEvent({
+						event: AUDIT_EVENTS.DISCORD_LOGIN_FAILED,
+						ipAddress: ip_address,
+						userAgent: user_agent,
+						requestId: req.id,
+						success: false,
+						details: {
+							reason: "guild_requirement_not_met",
+							discord_username: discordUser.username,
+							required_guild_id: requiredGuildId,
+						},
+					});
+					return res.redirect(
+						`${frontendUrl}/login?error=${encodeURIComponent("You must be a member of the required Discord server")}`,
+					);
+				}
+			} catch (guildError) {
+				logger.error("Failed to fetch Discord user guilds:", guildError);
+				await logAuditEvent({
+					event: AUDIT_EVENTS.DISCORD_LOGIN_FAILED,
+					ipAddress: ip_address,
+					userAgent: user_agent,
+					requestId: req.id,
+					success: false,
+					details: {
+						reason: "guild_check_failed",
+						discord_username: discordUser.username,
+						error: guildError.message,
+					},
+				});
+				return res.redirect(
+					`${frontendUrl}/login?error=${encodeURIComponent("Failed to verify Discord server membership")}`,
+				);
+			}
+		}
+
 		// ─── Mode: Link ────────────────────────────────────────────────────
 		if (session.mode === "link") {
 			const userId = session.userId;
@@ -283,8 +337,12 @@ router.get("/callback", async (req, res) => {
 
 		const settings = await prisma.settings.findFirst();
 
-		// Auto-create user if signup is enabled and not found
-		if (!user && settings?.signup_enabled) {
+		// Auto-create user if signup is enabled, Discord registration is allowed, and not found
+		if (
+			!user &&
+			settings?.signup_enabled &&
+			settings?.discord_allow_registration
+		) {
 			// Generate unique username from Discord username
 			const baseUsername = discordUser.username
 				.replace(/[^a-zA-Z0-9._-]/g, "")
@@ -481,7 +539,12 @@ router.post("/link", authenticateToken, async (req, res) => {
 				.json({ error: "Discord authentication is not enabled" });
 		}
 
-		const { url, state, codeVerifier } = getDiscordAuthorizationUrl(config);
+		const scopes = config.requiredGuildId
+			? "identify email guilds"
+			: "identify email";
+		const { url, state, codeVerifier } = getDiscordAuthorizationUrl(config, {
+			scopes,
+		});
 
 		// Store state with link mode and userId
 		await storeDiscordSession(state, {
@@ -580,6 +643,8 @@ router.get(
 					discord_client_secret_set: false,
 					discord_redirect_uri: null,
 					discord_button_text: "Login with Discord",
+					discord_allow_registration: false,
+					discord_required_guild_id: null,
 				});
 			}
 
@@ -597,6 +662,9 @@ router.get(
 				discord_redirect_uri: settings.discord_redirect_uri || null,
 				discord_button_text:
 					settings.discord_button_text || "Login with Discord",
+				discord_allow_registration:
+					settings.discord_allow_registration || false,
+				discord_required_guild_id: settings.discord_required_guild_id || null,
 			});
 		} catch (error) {
 			logger.error("Error fetching Discord settings:", error);
@@ -619,6 +687,8 @@ router.put(
 		body("discord_client_secret").optional().isString(),
 		body("discord_redirect_uri").optional().isString(),
 		body("discord_button_text").optional().isString(),
+		body("discord_allow_registration").optional().isBoolean(),
+		body("discord_required_guild_id").optional().isString(),
 	],
 	async (req, res) => {
 		const errors = validationResult(req);
@@ -633,6 +703,8 @@ router.put(
 				discord_client_secret,
 				discord_redirect_uri,
 				discord_button_text,
+				discord_allow_registration,
+				discord_required_guild_id,
 			} = req.body;
 
 			const updateData = {
@@ -663,6 +735,15 @@ router.put(
 			if (discord_button_text !== undefined) {
 				updateData.discord_button_text =
 					discord_button_text || "Login with Discord";
+			}
+
+			if (typeof discord_allow_registration === "boolean") {
+				updateData.discord_allow_registration = discord_allow_registration;
+			}
+
+			if (discord_required_guild_id !== undefined) {
+				updateData.discord_required_guild_id =
+					discord_required_guild_id || null;
 			}
 
 			let settings = await prisma.settings.findFirst();
@@ -697,6 +778,9 @@ router.put(
 				discord_redirect_uri: settings.discord_redirect_uri || null,
 				discord_button_text:
 					settings.discord_button_text || "Login with Discord",
+				discord_allow_registration:
+					settings.discord_allow_registration || false,
+				discord_required_guild_id: settings.discord_required_guild_id || null,
 			});
 		} catch (error) {
 			logger.error("Error updating Discord settings:", error);
