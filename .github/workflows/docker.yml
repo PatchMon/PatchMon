@@ -56,7 +56,7 @@ jobs:
           VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
           for target in "linux/amd64" "linux/arm64" "linux/386" "linux/arm" \
                         "freebsd/amd64" "freebsd/arm64" "freebsd/386" "freebsd/arm" \
-                        "windows/amd64" "windows/386"; do
+                        "windows/amd64" "windows/arm64"; do
             GOOS=${target%/*}
             GOARCH=${target#*/}
             export GOOS GOARCH

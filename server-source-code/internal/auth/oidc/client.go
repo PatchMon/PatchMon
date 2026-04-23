@@ -246,9 +246,17 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 	userInfo.GivenName = getStringClaim(userInfoClaims, idClaims, "given_name")
 	userInfo.FamilyName = getStringClaim(userInfoClaims, idClaims, "family_name")
 	userInfo.Picture = getStringClaim(userInfoClaims, idClaims, "picture")
-	if resolvedPicture, err := resolveProviderPicture(ctx, c.cfg.IssuerURL, token, userInfo.Picture); err == nil {
-		userInfo.Picture = resolvedPicture
-	}
+	// Always honour the resolved value, even on error. resolveProviderPicture is
+	// responsible for producing a browser-renderable value (data: URL, external
+	// https URL, or ""); keeping a raw claim like
+	// https://graph.microsoft.com/v1.0/me/photo/$value on failure would result in
+	// the browser trying to load an unauthenticated Graph endpoint and logging
+	// 401s in the console, which is exactly what we're trying to avoid. Errors
+	// from the Graph fetch are swallowed here — "no photo" is a normal state
+	// (user hasn't uploaded one, tenant lacks Graph scope, etc.) and should not
+	// block login.
+	resolvedPicture, _ := resolveProviderPicture(ctx, c.cfg.IssuerURL, token, userInfo.Picture)
+	userInfo.Picture = resolvedPicture
 	userInfo.Groups = extractGroups(userInfoClaims, idClaims)
 
 	return userInfo, nil
@@ -258,17 +266,51 @@ func resolveProviderPicture(ctx context.Context, issuerURL string, token *oauth2
 	if !isMicrosoftIdentityIssuer(issuerURL) {
 		return rawPicture, nil
 	}
-	if isRenderableImageSrc(rawPicture) {
+	// For Microsoft Entra, the `picture` claim is NOT directly renderable:
+	//   - Often empty (Entra doesn't include it unless configured as an optional claim).
+	//   - A bare user GUID.
+	//   - Or `https://graph.microsoft.com/v1.0/me/photo/$value` — a Graph API endpoint
+	//     that requires a bearer token; the browser can't fetch it directly.
+	// So regardless of what the claim contains, the right thing to do is call Graph
+	// with our access token and embed the returned image bytes as a data: URL.
+	// If Graph fetch succeeds, prefer it; otherwise fall back to the raw claim only
+	// if it's a renderable non-Graph URL (rare but possible for hybrid setups).
+	if token != nil && token.AccessToken != "" {
+		picture, err := fetchMicrosoftGraphPhotoDataURL(ctx, token)
+		if err == nil && picture != "" {
+			return picture, nil
+		}
+		// Graph fetch failed or returned no photo — log-by-returning-err semantics are
+		// preserved below only when the claim is unusable, so we don't surface transient
+		// Graph errors to the caller when we have a usable fallback.
+		if err != nil && (rawPicture == "" || isMicrosoftGraphURL(rawPicture)) {
+			return "", err
+		}
+	}
+	// No token or Graph failed: fall back to the claim ONLY if it's renderable AND
+	// not a Graph API URL (which the browser can never load without auth).
+	if isRenderableImageSrc(rawPicture) && !isMicrosoftGraphURL(rawPicture) {
 		return rawPicture, nil
 	}
-	if token == nil || token.AccessToken == "" {
-		return "", nil
+	return "", nil
+}
+
+// isMicrosoftGraphURL detects URLs pointing at Microsoft Graph, which require a
+// bearer token and therefore cannot be used as a browser-renderable <img src>.
+func isMicrosoftGraphURL(value string) bool {
+	if value == "" {
+		return false
 	}
-	picture, err := fetchMicrosoftGraphPhotoDataURL(ctx, token)
+	u, err := url.Parse(value)
 	if err != nil {
-		return "", err
+		return false
 	}
-	return picture, nil
+	host := strings.ToLower(u.Hostname())
+	return host == "graph.microsoft.com" ||
+		strings.HasSuffix(host, ".graph.microsoft.com") ||
+		host == "graph.microsoft.us" ||
+		host == "graph.microsoft.de" ||
+		host == "microsoftgraph.chinacloudapi.cn"
 }
 
 func isMicrosoftIdentityIssuer(issuerURL string) bool {

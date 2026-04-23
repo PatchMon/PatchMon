@@ -690,12 +690,14 @@ func (h *AuthHandler) CompleteOidcLogin(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 
-	// Use relative redirect so the browser resolves to the same origin as the callback request.
-	// This avoids ERR_INVALID_REDIRECT from malformed CORS_ORIGIN (e.g. trailing newline in .env).
-	http.Redirect(w, r, "/login?oidc=success", http.StatusFound)
+	// Redirect to root (not /login) so the SPA auth bootstrap validates the fresh cookie
+	// via /auth/profile and renders the dashboard directly. Going to /login would force the
+	// Login page to mount first and flash before a second full reload. Relative redirect
+	// avoids ERR_INVALID_REDIRECT from malformed CORS_ORIGIN.
+	http.Redirect(w, r, "/?oidc=success", http.StatusFound)
 }
 
-// CompleteDiscordLogin creates tokens, sets cookies, and redirects to /login?discord=success.
+// CompleteDiscordLogin creates tokens, sets cookies, and redirects to /?discord=success.
 // Used by Discord OAuth callback after successful authentication.
 func (h *AuthHandler) CompleteDiscordLogin(w http.ResponseWriter, r *http.Request, user *models.User) {
 	expiresIn := h.getJwtExpiresInSeconds()
@@ -744,9 +746,10 @@ func (h *AuthHandler) CompleteDiscordLogin(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Use relative redirect so the browser resolves to the same origin as the callback request.
-	// This avoids ERR_INVALID_REDIRECT from malformed CORS_ORIGIN (e.g. trailing newline in .env).
-	http.Redirect(w, r, "/login?discord=success", http.StatusFound)
+	// Redirect to root (not /login) so the SPA auth bootstrap validates the fresh cookie
+	// via /auth/profile and renders the dashboard directly. Relative redirect avoids
+	// ERR_INVALID_REDIRECT from malformed CORS_ORIGIN.
+	http.Redirect(w, r, "/?discord=success", http.StatusFound)
 }
 
 // isSecureRequest returns true if the request is over HTTPS (TLS or X-Forwarded-Proto).

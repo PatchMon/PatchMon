@@ -48,12 +48,12 @@ build-freebsd:
 	@GOOS=freebsd GOARCH=arm64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-freebsd-arm64 ./cmd/patchmon-agent
 	@GOOS=freebsd GOARCH=arm GOARM=6 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-freebsd-arm ./cmd/patchmon-agent
 
-# Build Windows binaries only (amd64, 386)
+# Build Windows binaries only (amd64, arm64 — 32-bit Windows is not supported; Win10 x86 hit EOL 2025-10-14)
 .PHONY: build-windows
 build-windows:
 	@mkdir -p $(BUILD_DIR)
 	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-windows-amd64.exe ./cmd/patchmon-agent
-	@GOOS=windows GOARCH=386 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-windows-386.exe ./cmd/patchmon-agent
+	@GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-windows-arm64.exe ./cmd/patchmon-agent
 
 # Build all (Linux + FreeBSD + Windows) and copy to backend serve dirs
 .PHONY: build-all
@@ -141,7 +141,7 @@ help:
 	@echo "  build         Build the application"
 	@echo "  build-linux   Build Linux binaries (amd64, 386, arm64, arm)"
 	@echo "  build-freebsd Build FreeBSD binaries (amd64, 386, arm64, arm)"
-	@echo "  build-windows Build Windows binaries (amd64, 386)"
+	@echo "  build-windows Build Windows binaries (amd64, arm64)"
 	@echo "  build-all     Build Linux + FreeBSD + Windows and copy to agents/"
 	@echo "  build-all-for-docker  Build all binaries into agents-prebuilt/ for local Docker build"
 	@echo "  deps          Install dependencies"

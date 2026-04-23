@@ -147,7 +147,42 @@ export const AuthProvider = ({ children }) => {
 			// Read pathname at call time (not as a dependency) to avoid re-running on navigation
 			const onLoginPage = window.location.pathname === "/login";
 			const hasStoredUser = !!localStorage.getItem("user");
-			if (onLoginPage && !hasStoredUser) {
+
+			// Detect fresh OIDC/Discord SSO return. Backend sets HttpOnly auth cookies then 302s
+			// to /?oidc=success (or /?discord=success). We want to ALWAYS validate the cookie here
+			// even on /login (the old short-circuit below) so the user goes straight to the app
+			// without a Login-mount flash or a second full-page reload.
+			const urlParams = new URLSearchParams(window.location.search);
+			const ssoReturn =
+				urlParams.get("oidc") === "success" ||
+				urlParams.get("discord") === "success";
+
+			// Strip the SSO marker from the URL IMMEDIATELY (before any fetch fires) so it
+			// cannot leak via Referer headers to cross-origin requests (avatar URLs, GitHub
+			// API on login, analytics, etc.). The flag isn't a secret, but stripping one-time
+			// flow params ASAP is the right default.
+			if (ssoReturn) {
+				try {
+					sessionStorage.removeItem("explicit_logout");
+					// Legacy callers that land on /login?oidc=success need to be forwarded
+					// to /. history.replaceState alone won't change the React Router view,
+					// so use location.replace. The primary flow lands on /?oidc=success and
+					// never hits this branch.
+					if (onLoginPage) {
+						window.location.replace("/");
+						return;
+					}
+					window.history.replaceState(
+						{},
+						document.title,
+						window.location.pathname + window.location.hash,
+					);
+				} catch (_e) {
+					// history API unavailable — no-op, continue validation.
+				}
+			}
+
+			if (onLoginPage && !hasStoredUser && !ssoReturn) {
 				localStorage.removeItem("token");
 				setSetupCheckError(null);
 				setAuthPhase(AUTH_PHASES.CHECKING_SETUP);
@@ -165,6 +200,27 @@ export const AuthProvider = ({ children }) => {
 					const data = await response.json();
 					if (!abortController.signal.aborted) {
 						setUser(data.user);
+						// UI-cache only — NEVER trust localStorage.user as an authority for
+						// auth state or permissions. The HttpOnly `token` cookie validated
+						// by /auth/profile is the single source of truth. We persist the
+						// profile here (mirroring password login) so the onLoginPage
+						// short-circuit at the top of this effect doesn't re-fire for
+						// cookie-only (OIDC/Discord) sessions on return visits, and so UI
+						// elements that read user data can hydrate before the profile fetch
+						// resolves on subsequent page loads. Token is NEVER stored here.
+						try {
+							localStorage.setItem(
+								"user",
+								JSON.stringify({
+									...data.user,
+									accepted_release_notes_versions:
+										data.user.accepted_release_notes_versions || [],
+								}),
+							);
+						} catch (_e) {
+							// localStorage can throw in private mode / quota exceeded —
+							// not fatal, auth still works via cookies + in-memory state.
+						}
 						// Fetch permissions and multi-context (tenant modules) in parallel
 						// so module-gated nav items have their data before rendering.
 						await Promise.all([fetchPermissions(), fetchTenantContext()]);
@@ -185,6 +241,22 @@ export const AuthProvider = ({ children }) => {
 
 			// Clean up any stale token from localStorage (security measure)
 			localStorage.removeItem("token");
+
+			// If we hit this after an SSO return, the cookie never made it (e.g. SameSite
+			// blocked, HTTPS mismatch, reverse-proxy stripped Set-Cookie). Surface a clear
+			// error on the login page instead of silently looping. Use location.replace so
+			// the router actually routes to /login (history.replaceState alone does not
+			// trigger a route change). No back-button trap because we replace, not push.
+			if (ssoReturn && !abortController.signal.aborted) {
+				try {
+					window.location.replace(
+						"/login?error=Session+cookie+missing+-+check+HTTPS+and+proxy+configuration",
+					);
+					return;
+				} catch (_e) {
+					// no-op, fall through to setup-check
+				}
+			}
 
 			// No valid session, check if setup is needed
 			setSetupCheckError(null);

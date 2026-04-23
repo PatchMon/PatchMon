@@ -130,10 +130,13 @@ func (h *OidcHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to initiate OIDC login")
 		return
 	}
+	// Narrow Path to the OIDC routes so this cookie isn't transmitted on every
+	// request to the app (defense-in-depth; it carries no credential, only a
+	// random 32-byte state value, but least-privilege scoping is the right default).
 	http.SetCookie(w, &http.Cookie{
 		Name:     "oidc_state",
 		Value:    state,
-		Path:     "/",
+		Path:     "/api/v1/auth/oidc",
 		MaxAge:   int(ttl.Seconds()),
 		HttpOnly: true,
 		Secure:   h.cfg.Env == "production" && (r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"),
@@ -177,8 +180,22 @@ func (h *OidcHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=Invalid+authentication+response", http.StatusFound)
 		return
 	}
+	// Double-submit cookie check: the oidc_state cookie MUST be present and match.
+	// A missing cookie used to be accepted (only mismatches were rejected), which
+	// allowed a login-CSRF / forced-login attack where an attacker who captured a
+	// valid state+code pair could trick a victim (whose browser has no oidc_state
+	// cookie for this flow) into completing the callback and getting auth cookies
+	// for the attacker's account. We now require cookie presence AND a match, in
+	// addition to the server-side state store GetAndDelete below.
 	cookieState, _ := r.Cookie("oidc_state")
-	if cookieState != nil && cookieState.Value != state {
+	if cookieState == nil {
+		if h.log != nil {
+			h.log.Error("oidc state cookie missing", "state_present", state != "")
+		}
+		http.Redirect(w, r, "/login?error=Invalid+authentication+response", http.StatusFound)
+		return
+	}
+	if cookieState.Value != state {
 		if h.log != nil {
 			h.log.Error("oidc state mismatch")
 		}
@@ -193,7 +210,8 @@ func (h *OidcHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=Session+expired", http.StatusFound)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "oidc_state", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(r)})
+	// Path must match how the cookie was set (see Login handler) for the browser to clear it.
+	http.SetCookie(w, &http.Cookie{Name: "oidc_state", Value: "", Path: "/api/v1/auth/oidc", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(r)})
 	userInfo, err := client.Exchange(r.Context(), code, sessionData.CodeVerifier, state, sessionData.Nonce, q)
 	if err != nil {
 		if h.log != nil {
@@ -608,7 +626,8 @@ func (h *OidcHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		idTokenHint, _ = h.oidcStore.GetAndDeleteIDToken(r.Context(), userID)
 	}
 	clearAuthCookies(w, r)
-	http.SetCookie(w, &http.Cookie{Name: "oidc_state", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(r)})
+	// Path must match how the cookie was set in Login handler.
+	http.SetCookie(w, &http.Cookie{Name: "oidc_state", Value: "", Path: "/api/v1/auth/oidc", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(r)})
 	logoutURL := client.LogoutURL(h.cfg.OidcPostLogoutURI, idTokenHint, h.oidcClientID())
 	if logoutURL != "" {
 		http.Redirect(w, r, logoutURL, http.StatusFound)

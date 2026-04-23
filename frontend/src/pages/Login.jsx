@@ -138,22 +138,19 @@ const Login = () => {
 		fetchOidcConfig();
 	}, []);
 
-	// Auto-redirect to OIDC if enabled and local auth is disabled
-	useEffect(() => {
-		// Don't auto-redirect if user explicitly logged out
-		const explicitLogout = sessionStorage.getItem("explicit_logout");
-		if (explicitLogout) {
-			return;
-		}
+	// NOTE: We intentionally do NOT auto-redirect to the IdP when disableLocalAuth
+	// is true. Auto-bouncing the user off the login page the moment it mounts is
+	// surprising UX: they can't see where they're about to be redirected, error
+	// states flash and disappear, and there is no way to cancel. Instead, the
+	// password form is hidden (see `!oidcConfig.disableLocalAuth` guards further
+	// down the JSX) and the SSO button is the single clear call-to-action. One
+	// explicit click → IdP. Same end result, predictable UX.
 
-		if (oidcConfig.enabled && oidcConfig.disableLocalAuth) {
-			window.location.href = "/api/v1/auth/oidc/login";
-		}
-	}, [oidcConfig]);
-
-	// Handle OIDC callback (tokens are now in httpOnly cookies)
+	// Handle OIDC/Discord callback fallback.
+	// The primary success path is now: backend redirects to /?oidc=success, AuthContext
+	// validates the cookie via /auth/profile and strips the query. This handler exists
+	// only for legacy links (/login?oidc=success) and for surfacing ?error= messages.
 	useEffect(() => {
-		// Prevent processing the same callback multiple times
 		if (oidcProcessed) {
 			return;
 		}
@@ -161,6 +158,7 @@ const Login = () => {
 		const urlParams = new URLSearchParams(window.location.search);
 		const oidcSuccess = urlParams.get("oidc");
 		const oidcError = urlParams.get("error");
+		const discordSuccess = urlParams.get("discord");
 
 		if (oidcError) {
 			setError(decodeURIComponent(oidcError));
@@ -169,20 +167,15 @@ const Login = () => {
 			return;
 		}
 
-		if (oidcSuccess === "success") {
+		if (oidcSuccess === "success" || discordSuccess === "success") {
 			setOidcProcessed(true);
 			sessionStorage.removeItem("explicit_logout");
-			window.location.href = "/";
+			// Client-side navigation preserves React state and avoids a second full
+			// bootstrap. AuthContext's validateSession will detect the query param
+			// on the next render and complete the flow.
+			navigate("/", { replace: true });
 		}
-
-		const discordSuccess = urlParams.get("discord");
-
-		if (discordSuccess === "success") {
-			setOidcProcessed(true);
-			sessionStorage.removeItem("explicit_logout");
-			window.location.href = "/";
-		}
-	}, [oidcProcessed]);
+	}, [oidcProcessed, navigate]);
 
 	// Fetch latest release and social media stats
 	useEffect(() => {

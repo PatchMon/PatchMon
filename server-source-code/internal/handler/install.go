@@ -552,7 +552,7 @@ func (h *InstallHandler) ServeAgentVersion(w http.ResponseWriter, r *http.Reques
 
 	validArchLinux := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
 	validArchFreebsd := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
-	validArchWindows := map[string]bool{"amd64": true, "386": true, "arm64": true}
+	validArchWindows := map[string]bool{"amd64": true, "arm64": true}
 	var validArch map[string]bool
 	var archList string
 	switch osParam {
@@ -736,7 +736,7 @@ func (h *InstallHandler) ServeAgentDownload(w http.ResponseWriter, r *http.Reque
 
 	validArchLinux := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
 	validArchFreebsd := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
-	validArchWindows := map[string]bool{"amd64": true, "386": true, "arm64": true}
+	validArchWindows := map[string]bool{"amd64": true, "arm64": true}
 	var validArch map[string]bool
 	var archList string
 	switch osParam {

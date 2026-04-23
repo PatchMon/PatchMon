@@ -57,10 +57,13 @@ $procArch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } els
 switch ($procArch) {
     "AMD64" { $arch = "amd64" }
     "ARM64" { $arch = "arm64" }
-    "x86"   { $arch = "386" }
+    "x86" {
+        Write-Error "32-bit Windows (x86) is not supported by PatchMon. All Microsoft-supported Windows versions as of 2026 are 64-bit only (Windows 10 32-bit reached EOL on 14 October 2025)."
+        exit 1
+    }
     default {
-        Write-Warning "Unrecognised PROCESSOR_ARCHITECTURE '$procArch' — falling back to amd64."
-        $arch = "amd64"
+        Write-Error "Unrecognised PROCESSOR_ARCHITECTURE '$procArch'. PatchMon supports amd64 (Intel/AMD 64-bit) and arm64 (Surface Pro X, Copilot+ PCs) only."
+        exit 1
     }
 }
 
