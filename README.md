@@ -2,58 +2,108 @@
 
 # PatchMon
 
-### Enterprise-Grade Linux Patch & Server Management Platform
+### Enterprise-grade Linux patch & server management platform
 
 [![Website](https://img.shields.io/badge/Website-patchmon.net-blue?style=for-the-badge)](https://patchmon.net)
-[![Cloud](https://img.shields.io/badge/Cloud-patchmon.net%2Fcloud-purple?style=for-the-badge)](https://patchmon.net)
+[![Cloud](https://img.shields.io/badge/Cloud-patchmon.net%2Fcloud-purple?style=for-the-badge)](https://patchmon.net/cloud)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-blue?style=for-the-badge&logo=discord)](https://patchmon.net/discord)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-black?style=for-the-badge&logo=github)](https://github.com/PatchMon/PatchMon)
 [![Roadmap](https://img.shields.io/badge/Roadmap-View%20Progress-green?style=for-the-badge&logo=github)](https://github.com/orgs/PatchMon/projects/2)
 [![Documentation](https://img.shields.io/badge/Docs-docs.patchmon.net-blue?style=for-the-badge)](https://docs.patchmon.net/)
 
----
-
-This project represents hundreds of hours of development work. If PatchMon has saved you time or helped secure your infrastructure, a coffee would genuinely mean the world.
-
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support%20the%20project-orange?style=for-the-badge&logo=buy-me-a-coffee)](https://buymeacoffee.com/iby___)
+[![Latest Release](https://img.shields.io/github/v/release/PatchMon/PatchMon?style=for-the-badge&color=blue)](https://github.com/PatchMon/PatchMon/releases)
+[![Stars](https://img.shields.io/github/stars/PatchMon/PatchMon?style=for-the-badge&color=yellow)](https://github.com/PatchMon/PatchMon/stargazers)
+[![License](https://img.shields.io/badge/License-AGPL%20v3-orange?style=for-the-badge)](LICENSE)
+[![AI-DECLARATION: assist](https://img.shields.io/badge/AI--DECLARATION-assist-fef9c3?style=for-the-badge&labelColor=333333)](AI-DECLARATION.md)
 
 </div>
 
 ---
 
-> **⭐ If you find PatchMon useful, please star this repo - it helps others discover the project!**
-
 ## What is PatchMon?
 
-PatchMon is an enterprise-grade platform that gives operations teams a single pane of glass to monitor, manage and secure their entire Linux fleet. Lightweight agents communicate outbound-only to the PatchMon server on your schedule - no inbound ports required on monitored hosts - delivering real-time visibility into package health, compliance posture and system status across environments of any scale.
+PatchMon is an enterprise-grade platform that gives operations teams a single pane of glass to monitor, patch and secure their Linux fleet, with FreeBSD and Windows agent support.
 
-Whether you manage ten servers or ten thousand, PatchMon provides the tooling, automation and auditability that modern infrastructure teams demand.
+A lightweight agent communicates outbound-only to the PatchMon server on your schedule - no inbound ports required on monitored hosts - delivering real-time visibility into package health, compliance posture and system status across environments of any scale.
 
 ![Dashboard Screenshot](https://raw.githubusercontent.com/PatchMon/PatchMon/main/dashboard.png)
 
 ---
 
+## Why PatchMon?
+
+- **Outbound-only agents** - no inbound firewall changes, no SSH or WinRM exposure, no VPN required.
+- **Single binary, bundled UI** - one Go binary with the React frontend embedded. One container, no Node runtime at deploy time.
+- **Open source, with a managed cloud** - AGPL v3 licensed, free to self-host. Production hosting available at [patchmon.net/cloud](https://patchmon.net/cloud).
+- **Multi-OS by design** - Linux (apt, dnf, yum, apk, pacman), FreeBSD (pkg) and Windows, handled by the same agent and control plane.
+
+---
+
+## Quick Start
+
+Docker is the fastest way to try PatchMon:
+
+```bash
+mkdir patchmon && cd patchmon
+curl -fsSL https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/setup-env.sh | bash
+docker compose up -d
+```
+
+Open `http://localhost:3000`, create an admin user, add a host in the UI and copy the generated install command onto the target server.
+
+Full deployment options (Docker manual, Proxmox LXC, PatchMon Cloud) are in the [Deployment](#deployment-options) section.
+
+---
+
 ## Features at a Glance
 
-| Category | What You Can Do |
+### Patch Management
+
+The core of PatchMon - orchestrate updates across your fleet with validation, approval and live visibility.
+
+| Capability | What It Does |
 |---|---|
-| 📊 **Dashboard** | Personalised overview cards you can reorder and customise per user. See fleet health, outdated package counts and host status at a glance. |
-| 🖥️ **Host Inventory** | Browse all enrolled servers with OS details, uptime, kernel version and last check-in time. Organise hosts into groups for easier management. |
-| 📦 **Package Management** | View every installed package across your fleet. Quickly filter to outdated packages and see exactly which hosts need attention. |
-| 🔄 **Repository Tracking** | See which APT / YUM / DNF repositories are configured on each host in one place. |
-| 🐳 **Docker Monitoring** | Automatic discovery of containers, images, volumes and networks. Real-time container status updates pushed via WebSocket. |
-| 🛡️ **Compliance Scanning** | Run OpenSCAP CIS Benchmarks and Docker Bench for Security scans. Track compliance scores over time with detailed rule-level results and remediation guidance. |
-| 💻 **Web SSH Terminal** | Open a browser-based SSH session to any host directly from the UI - no extra tools needed. Supports direct and proxy mode (route through the agent, no SSH port exposure). |
-| 🤖 **AI Terminal Assistant** | Built-in AI chat panel inside the SSH terminal. Get command suggestions, error diagnosis and context-aware help powered by OpenRouter, Anthropic, OpenAI or Google Gemini. |
-| 🔔 **Alerting & Reporting** | Alerts for host-down, pending server updates and agent updates. Filter by severity, type and status; assign alerts to team members. |
-| 👥 **Users, Roles & RBAC** | Multi-user accounts with fully customisable roles and granular permissions so every team member sees only what they need. |
-| 🔐 **OIDC Single Sign-On** | Authenticate with Authentik, Keycloak, Okta or any OIDC provider. Supports automatic user provisioning, group-to-role mapping and SSO-only enforcement. |
-| 🔑 **Two-Factor Authentication** | TOTP-based 2FA with QR-code setup and backup codes for local accounts. |
-| 🎨 **Branding & Theming** | Upload custom logos and favicon. Choose from multiple colour themes and toggle between light and dark mode - per user. |
-| ⚙️ **Automation Engine** | View and trigger scheduled background jobs (version checks, session cleanup, Docker inventory, host status monitor and more) from one page. |
-| 🔗 **Integrations** | Proxmox LXC auto-enrolment, GetHomepage dashboard widget, scoped API credentials, and an Ansible dynamic inventory library. |
-| 📡 **REST API** | Full API under `/api/v1` with JWT authentication and interactive Swagger / OpenAPI docs at `/api-docs`. |
-| 🛡️ **Security by Design** | Outbound-only agent model (no inbound ports on monitored hosts), rate limiting on all endpoints, httpOnly cookie auth, and configurable IP allow-lists for enrolment tokens. |
+| **Dry-Run Validation** | Preview the exact package transaction on a host before anything touches production. Every run captures the full plan so you know what would change. |
+| **Approve & Execute** | One-click approval turns a validated dry-run into a real patch run, with a per-host audit trail of who approved what and when. |
+| **Scheduled Patching** | Patch policies decide when updates apply - immediate, maintenance window or delayed rollout. Approve now, execute later. |
+| **Live Patch Streaming** | Watch patch execution in real time from the browser. Agent stdout/stderr is streamed over WebSocket, with the ability to stop a run mid-flight. |
+| **Selective Patching** | Target specific packages, security-only updates or a full upgrade. Works across apt, dnf, yum, apk, pacman and FreeBSD pkg. |
+| **Patch History & Audit** | Full searchable history of every run - exit code, duration, packages touched, approver and host. |
+
+### Visibility & Inventory
+
+| Capability | What It Does |
+|---|---|
+| **Personalised Dashboard** | Per-user, drag-and-reorder overview cards showing fleet health, outdated packages, host status and patching activity at a glance. |
+| **Host Inventory** | Browse every enrolled server with OS, uptime, kernel, last check-in and group membership. |
+| **Package Inventory** | View every installed package across your fleet, filter to outdated or vulnerable ones, and see exactly which hosts need attention. |
+| **Repository Tracking** | Every APT / YUM / DNF / APK / pacman repository configured on each host, in one place. |
+| **Docker Monitoring** | Automatic discovery of containers, images, volumes and networks with real-time status pushed over WebSocket. |
+
+### Security & Compliance
+
+| Capability | What It Does |
+|---|---|
+| **Compliance Scanning** | Run OpenSCAP CIS Benchmarks and Docker Bench for Security. Track compliance scores over time with rule-level results and remediation guidance. |
+| **Alerting** | Host-down, pending server updates and agent-update alerts. Filter by severity, type and status; assign to team members. |
+| **Outbound-Only Agent** | No inbound ports on monitored hosts. Agent initiates all traffic, with IP allow-lists for enrolment tokens and rate limiting on every endpoint. |
+| **RBAC** | Multi-user accounts with fully customisable roles and granular permissions - every team member sees only what they need. |
+| **OIDC Single Sign-On** | Authenticate with Authentik, Keycloak, Okta or any OIDC provider. Supports auto user provisioning, group-to-role mapping and SSO-only enforcement. |
+
+### Access & Operations
+
+| Capability | What It Does |
+|---|---|
+| **Web SSH Terminal** | Browser-based SSH to any host directly from the UI. Direct or proxy mode (route through the agent, no SSH port exposure). |
+| **AI Terminal Assistant** | Built-in AI chat panel inside the SSH terminal for command suggestions, error diagnosis and context-aware help. Works with OpenRouter, Anthropic, OpenAI or Google Gemini. |
+| **Branding & Theming** | Upload custom logos and favicon, choose colour themes and toggle light / dark mode per user. |
+
+### Platform
+
+| Capability | What It Does |
+|---|---|
+| **Integrations** | 33+ integrations including Proxmox LXC auto-enrolment, getHomepage, Ansible and more. |
+| **REST API** | Full `/api/v1` with JWT authentication and interactive Swagger / OpenAPI docs at `/api-docs`. |
 
 ---
 
@@ -61,92 +111,45 @@ Whether you manage ten servers or ten thousand, PatchMon provides the tooling, a
 
 ### PatchMon Cloud
 
-> **Hosted by PatchMon** at **[patchmon.net](https://patchmon.net)**
+> **14-day trial** at **[patchmon.net/pricing](https://patchmon.net/pricing)**
 
 Fully managed PatchMon hosting with zero infrastructure overhead. We handle provisioning, updates, backups and scaling so you can focus on your fleet instead of the tooling behind it.
 
-- Instant onboarding - sign up and start enrolling agents in minutes
-- Automatic updates with zero-downtime deployments
-- Enterprise-grade availability and security
-- Dedicated support included
+### Self-Hosted - Docker (recommended)
 
-### Self-Hosted Installation
+Docker is the preferred and supported self-hosted deployment. We use hardened images for security.
 
-Three deployment methods are available:
-
-1. **Docker** (supported and preferred)
-2. **Proxmox Community Script** – one-command LXC deployment
-3. **Bare metal scripted installation** (`setup.sh`) – Ubuntu / Debian
-
----
-
-#### 1) Docker (Supported and preferred)
-
-The quickest way to get running. See the full guide on our documentation site:
-
-👉 **[Installing PatchMon Server on Docker](https://docs.patchmon.net/books/patchmon-application-documentation/page/installing-patchmon-server-on-docker)**
-
-**Quick start:**
+**Automated setup** from an empty directory. The setup script downloads `docker-compose.yml` and `env.example`, generates all required secrets, and walks you through URL and `CORS_ORIGIN` configuration interactively:
 
 ```bash
-# Download compose file and example env
-curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/docker-compose.yml
-curl -fsSL -o env.example https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/env.example
-
-# Create .env with generated secrets
-cp env.example .env
-sed -i "s/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=$(openssl rand -hex 32)/" .env
-sed -i "s/^REDIS_PASSWORD=$/REDIS_PASSWORD=$(openssl rand -hex 32)/" .env
-sed -i "s/^JWT_SECRET=$/JWT_SECRET=$(openssl rand -hex 64)/" .env
-
-# Start PatchMon
+mkdir patchmon && cd patchmon
+curl -fsSL https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/setup-env.sh | bash
 docker compose up -d
 ```
 
-Once all containers are healthy, open your browser at `http://localhost:3000` or the configured URL you have chosen and complete the first-time admin setup.
+Access the application at the URL you configured (default: `http://localhost:3000`).
 
----
+**Manual Docker setup:** see [Installing PatchMon Server on Docker](https://docs.patchmon.net/books/patchmon-application-documentation/page/installing-patchmon-server-on-docker).
 
-#### 2) Proxmox Community Script
+### Self-Hosted - Proxmox LXC
 
-Deploy PatchMon as an LXC container on Proxmox VE using the [Proxmox VE Helper-Scripts](https://community-scripts.github.io/ProxmoxVE/scripts?id=patchmon) community script.
-
-**Quick start:**
+One-command LXC deployment via the [Proxmox VE Helper-Scripts](https://community-scripts.github.io/ProxmoxVE/scripts?id=patchmon) community script:
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/patchmon.sh)"
 ```
 
-Script details and options: **[PatchMon – Proxmox VE Helper-Scripts](https://community-scripts.github.io/ProxmoxVE/scripts?id=patchmon)**
+### Enrolling Hosts
 
----
+Once the server is running:
 
-#### 3) Bare metal scripted installation (setup.sh)
+1. Log in to the UI and add a host under **Hosts**.
+2. PatchMon generates a one-line install command with a per-host API key.
+3. Paste the command on the target server (requires root/sudo) and the agent enrols itself.
 
-For a bare-metal or VM install without Docker, see the documentation:
+Supported agent platforms: Linux (amd64, 386, arm64, arm), FreeBSD (amd64, 386, arm64, arm), Windows (amd64, 386, arm64).
 
-👉 **[Installing PatchMon Server on Ubuntu 24](https://docs.patchmon.net/books/patchmon-application-documentation/page/installing-patchmon-server-on-ubuntu-24)**
-
-**Quick start:**
-
-```bash
-# Ubuntu
-apt-get update -y && apt-get upgrade -y && apt install curl -y
-
-# Debian
-apt update -y && apt upgrade -y && apt install curl -y
-```
-
-```bash
-curl -fsSL -o setup.sh https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/setup.sh && chmod +x setup.sh && bash setup.sh
-```
-
-**Update an existing install:**
-```bash
-curl -fsSL -o setup.sh https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/setup.sh && chmod +x setup.sh && bash setup.sh --update
-```
-
-##### Minimum Specs
+### Minimum Server Specs
 
 | Resource | Requirement |
 |----------|-------------|
@@ -154,105 +157,82 @@ curl -fsSL -o setup.sh https://raw.githubusercontent.com/PatchMon/PatchMon/refs/
 | RAM | 2 GB |
 | Disk | 15 GB |
 
-After installation visit `http(s)://<your-domain>` and complete the first-time admin setup.
-
----
-
-## Communication Model
-
-- **Outbound-only agents** - your servers initiate all connections to PatchMon; no inbound ports required on monitored hosts.
-- **JWT + httpOnly cookie authentication** on every API call.
-- **Rate limiting** on general, auth and agent endpoints.
-
 ---
 
 ## Architecture
 
 | Component | Technology |
 |-----------|-----------|
-| Backend | Node.js / Express + Prisma ORM |
-| Frontend | Vite + React |
+| Backend | Go, sqlc, chi router |
+| Frontend | React + Vite, embedded in the `patchmon-server` binary |
 | Database | PostgreSQL 17 |
-| Queue | Redis 7 (BullMQ) |
-| Reverse Proxy | nginx |
+| Queue | Redis 7 (Asynq) |
+| Agent | Go binary - Linux, FreeBSD, Windows |
 
 ```mermaid
 flowchart LR
-    A[Browser / Admin UI] -- HTTPS --> B[nginx]
-    B -- HTTP --> C[Backend - Node / Express]
+    A[Browser / Admin UI] -- HTTPS --> B[Your Reverse Proxy]
+    B -- HTTP --> C[Backend - Go Binary]
     C -- TCP --> D[(PostgreSQL)]
-    C -- TCP --> R[(Redis)]
-    E[Agents on your servers] -- HTTPS --> C
+    C -- TCP --> R[(Asynq + Redis)]
+    E[Agents on your servers] -- HTTPS + WSS --> C
 ```
+
+Agents initiate all communication. HTTPS carries reports and config; WSS (WebSocket over TLS) carries real-time events such as live patch streaming and Docker status.
+Ensure that **Websockets** is supported by your proxy when passing the traffic to PatchMon container :3000 or whichever port you decide to use.
 
 ---
 
 ## Documentation
 
-Full documentation is available at **[docs.patchmon.net](https://docs.patchmon.net)** covering installation, agent management, integrations, environment variables and more.
+Full documentation at **[docs.patchmon.net](https://docs.patchmon.net)**.
+
+| Topic | Link |
+|-------|------|
+| Installing on Docker | [Docker install guide](https://docs.patchmon.net/books/patchmon-application-documentation/page/installing-patchmon-server-on-docker) |
+| Environment variables | [Env vars reference](https://docs.patchmon.net/books/patchmon-application-documentation/page/patchmon-environment-variables-reference) |
+| Integration API | [Integration API docs](https://docs.patchmon.net/books/patchmon-application-documentation/page/integration-api-documentation) |
+| Proxmox LXC auto-enrolment | [Proxmox guide](https://docs.patchmon.net/books/patchmon-application-documentation/page/proxmox-lxc-auto-enrollment-guide) |
+| getHomepage dashboard card | [getHomepage integration](https://docs.patchmon.net/books/patchmon-application-documentation/page/gethomepagedev-dashboard-card) |
+| Metrics collection | [Metrics info](https://docs.patchmon.net/books/patchmon-application-documentation/page/metrics-collection-information) |
 
 ---
 
 ## Support
 
+### Community
+
 - **Discord:** [https://patchmon.net/discord](https://patchmon.net/discord)
 - **Email:** support@patchmon.net
 
+### Professional & Enterprise
+
+- **PatchMon PRO:** [https://patchmon.net/pro](https://patchmon.net/pro)
+
+---
+
+## Contributing
+
+We welcome contributions from the community. See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the full guide: code style, commit conventions, running tests, documentation workflow and the PR process.
+
+Quick summary:
+
+- Follow existing patterns and the Biome / golangci-lint configurations.
+- Use conventional commit messages (`feat:`, `fix:`, `docs:`, etc.).
+- Add tests for new features and ensure the full suite passes.
+- Update documentation alongside code changes.
+
+Good first issues are labelled in the [issue tracker](https://github.com/PatchMon/PatchMon/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+
+---
+
 ## Roadmap
 
-Track upcoming features and progress on the roadmap board:
-
-👉 **[PatchMon Roadmap](https://github.com/orgs/PatchMon/projects/2)**
-
-## License
-
-AGPL v3 - see [LICENSE](LICENSE) for details.
+Track upcoming features and progress on the **[PatchMon Roadmap](https://github.com/orgs/PatchMon/projects/2)**.
 
 ---
 
-## 🤝 Contributing
-
-We welcome contributions from the community! Here's how you can get involved:
-
-### Development Setup
-
-1. **Fork & Clone**
-   ```bash
-   git clone https://github.com/YOUR_USERNAME/PatchMon.git
-   cd PatchMon
-   ```
-
-2. **Start the dev environment**
-   ```bash
-   docker compose -f docker/docker-compose.dev.yml up --watch --build
-   ```
-
-   This builds images locally, enables hot reload and exposes all service ports for debugging. See the [Docker install guide](https://docs.patchmon.net/books/patchmon-application-documentation/page/installing-patchmon-server-on-docker) for full development details.
-
-3. **Create a Feature Branch**
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-
-4. **Make Your Changes, Test & Push**
-   ```bash
-   git add .
-   git commit -m "feat: descriptive commit message"
-   git push origin feature/your-feature-name
-   ```
-
-5. **Open a Pull Request** on GitHub with a clear description and linked issues.
-
-### Contribution Guidelines
-
-- **Code Style:** Follow the existing patterns and Biome configuration
-- **Commits:** Use conventional commit messages (`feat:`, `fix:`, `docs:`, etc.)
-- **Testing:** Ensure all tests pass and add tests for new features
-- **Documentation:** Update docs and code comments as needed
-
----
-
-## 🏢 Enterprise & Vendor Support
+## PatchMon PRO - Enterprise & Vendor Support
 
 PatchMon is trusted by teams managing production infrastructure worldwide. We offer global vendor support and enterprise solutions tailored to your organisation's requirements.
 
@@ -262,7 +242,7 @@ PatchMon is trusted by teams managing production infrastructure worldwide. We of
 | **Global Vendor Support** | Dedicated technical support available worldwide with SLA-backed response times. |
 | **Custom Integrations** | Bespoke API endpoints, third-party connectors and tailored dashboards built to your specification. |
 | **On-Premises / Air-Gapped** | Deploy in your own data centre or isolated environment with full support. |
-| **White-Label Solutions** | Brand PatchMon as your own with custom logos, domains and theming. |
+| **White-Label Solutions** | Brand PatchMon as your own with custom logos, domains and theming, plus multi-context deployment options. |
 | **Training & Onboarding** | Comprehensive team training and onboarding programmes for your organisation. |
 | **Consulting** | Architecture review, deployment planning and migration assistance from the team that builds PatchMon. |
 
@@ -270,19 +250,9 @@ PatchMon is trusted by teams managing production infrastructure worldwide. We of
 
 ---
 
-## 🙏 Acknowledgments
+## License
 
-- **Jonathan Higson** - For inspiration, ideas and valuable feedback
-- **@Adam20054** - For working on Docker Compose deployment
-- **@tigattack** - For working on GitHub CI/CD pipelines
-- **Cloud X** and **Crazy Dead** - For moderating our Discord server and keeping the community awesome
-- **MacJediWizard** - For building the OIDC SSO and compliance module
-- **Beta Testers** - For keeping me awake at night
-- **Everyone of you who use it** - For keeping things alive
-- **Tim Hortons Coffee Shop** - For giving me space to work all day without issues
-- **My family** - For understanding my passion
-
-Thank you to all our contributors who help make PatchMon better every day!
+AGPL v3 - see [LICENSE](LICENSE) for details.
 
 ---
 
@@ -290,12 +260,14 @@ Thank you to all our contributors who help make PatchMon better every day!
 
 **Made with ❤️ by the PatchMon Team**
 
-This project has taken hundreds of hours of coding, testing and refining. If PatchMon has helped you, consider buying me a coffee to show your appreciation.
+This project represents hundreds of hours of development work. If PatchMon has saved you time or helped secure your infrastructure, a coffee would genuinely mean the world.
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support%20the%20project-orange?style=for-the-badge&logo=buy-me-a-coffee)](https://buymeacoffee.com/iby___)
 
+> **⭐ If you find PatchMon useful, please star this repo - it helps others discover the project!**
+
 [![Website](https://img.shields.io/badge/Website-patchmon.net-blue?style=for-the-badge)](https://patchmon.net)
-[![Cloud](https://img.shields.io/badge/Cloud-patchmon.net%2Fcloud-purple?style=for-the-badge)](https://patchmon.net)
+[![Cloud](https://img.shields.io/badge/Cloud-patchmon.net%2Fcloud-purple?style=for-the-badge)](https://patchmon.net/cloud)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-blue?style=for-the-badge&logo=discord)](https://patchmon.net/discord)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-black?style=for-the-badge&logo=github)](https://github.com/PatchMon/PatchMon)
 [![Documentation](https://img.shields.io/badge/Docs-docs.patchmon.net-blue?style=for-the-badge)](https://docs.patchmon.net/)
