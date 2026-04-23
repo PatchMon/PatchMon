@@ -77,6 +77,14 @@ jobs:
     name: Build server image
     needs: build-agents
     runs-on: ubuntu-latest
+    # Hoist the Harbor-secret presence check to a job-level env var.
+    # GitHub Actions does not allow the `secrets` context in step-level `if:`
+    # expressions for some trigger types (you'll see
+    #   "Unrecognized named-value: 'secrets'"
+    # at workflow parse time). Evaluating the expression here converts it into
+    # a plain string "true"/"false" which step-level `if:` CAN read via env.
+    env:
+      HAS_HARBOR: ${{ secrets.HARBOR_USERNAME != '' && secrets.HARBOR_TOKEN != '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -100,9 +108,9 @@ jobs:
       - name: Log in to Harbor
         # Skip when HARBOR_USERNAME/HARBOR_TOKEN aren't set (forks, test repos,
         # contributor PRs from forks). The Harbor push step below also guards
-        # on the same secret, so the workflow still succeeds — it just doesn't
+        # on the same env, so the workflow still succeeds — it just doesn't
         # publish to Harbor.
-        if: ${{ secrets.HARBOR_USERNAME != '' && secrets.HARBOR_TOKEN != '' }}
+        if: env.HAS_HARBOR == 'true'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ${{ env.HARBOR_REGISTRY }}
@@ -149,7 +157,7 @@ jobs:
         id: build-harbor
         # Only run when Harbor credentials are set. Forks / test repos simply
         # skip this step; GHCR push above still happens.
-        if: ${{ secrets.HARBOR_USERNAME != '' && secrets.HARBOR_TOKEN != '' }}
+        if: env.HAS_HARBOR == 'true'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
