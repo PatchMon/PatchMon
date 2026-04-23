@@ -1142,7 +1142,10 @@ const Hosts = () => {
 				return (
 					<div className="flex justify-center">
 						{host.needs_reboot ? (
-							<span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+							<span
+								className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
+								title={host.reboot_reason || "Reboot required"}
+							>
 								<RotateCcw className="h-3 w-3" />
 								Required
 							</span>

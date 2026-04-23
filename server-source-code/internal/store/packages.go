@@ -448,6 +448,7 @@ type PackageHostEntry struct {
 	IsSecurityUpdate bool      `json:"isSecurityUpdate"`
 	LastChecked      time.Time `json:"lastChecked"`
 	NeedsReboot      *bool     `json:"needsReboot"`
+	RebootReason     *string   `json:"rebootReason"`
 	SourceRepoName   *string   `json:"sourceRepoName"`
 }
 
@@ -515,6 +516,7 @@ func (s *PackagesStore) GetHosts(ctx context.Context, packageIDOrName string, p 
 			IsSecurityUpdate: r.IsSecurityUpdate,
 			LastChecked:      pgTime(r.LastChecked),
 			NeedsReboot:      r.NeedsReboot,
+			RebootReason:     r.RebootReason,
 			SourceRepoName:   r.SourceRepoName,
 		}
 	}

@@ -495,7 +495,7 @@ func (q *Queries) GetUpdatesCountByPackageIDs(ctx context.Context, arg GetUpdate
 }
 
 const listHostsForPackage = `-- name: ListHostsForPackage :many
-SELECT h.id, h.friendly_name, h.hostname, h.os_type, h.os_version, h.last_update, h.needs_reboot,
+SELECT h.id, h.friendly_name, h.hostname, h.os_type, h.os_version, h.last_update, h.needs_reboot, h.reboot_reason,
     hp.current_version, hp.available_version, hp.needs_update, hp.is_security_update, hp.last_checked,
     hp.source_repository_id, r.name as source_repo_name
 FROM host_packages hp
@@ -524,6 +524,7 @@ type ListHostsForPackageRow struct {
 	OsVersion          string           `json:"os_version"`
 	LastUpdate         pgtype.Timestamp `json:"last_update"`
 	NeedsReboot        *bool            `json:"needs_reboot"`
+	RebootReason       *string          `json:"reboot_reason"`
 	CurrentVersion     string           `json:"current_version"`
 	AvailableVersion   *string          `json:"available_version"`
 	NeedsUpdate        bool             `json:"needs_update"`
@@ -556,6 +557,7 @@ func (q *Queries) ListHostsForPackage(ctx context.Context, arg ListHostsForPacka
 			&i.OsVersion,
 			&i.LastUpdate,
 			&i.NeedsReboot,
+			&i.RebootReason,
 			&i.CurrentVersion,
 			&i.AvailableVersion,
 			&i.NeedsUpdate,
