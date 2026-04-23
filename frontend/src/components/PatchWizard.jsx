@@ -484,6 +484,50 @@ export default function PatchWizard({
 	// don't expose that step (single-package flows, patch_all, approve) it
 	// simply mirrors the packageNames prop.
 	const selectedPkgs = selectedPackageNames;
+
+	// Host-discovery inversion: hostQueries[i] is the list of hosts where
+	// packageNames[i] is installed and outdated. Invert that into a map of
+	// hostId -> [pkg names applicable to this host], intersected with the
+	// user's current selection. This lets Validate, Submit, and the actual
+	// trigger calls target only the packages each host actually needs,
+	// instead of blasting the union list at every host. When host discovery
+	// isn't active (lockHosts, patch_all, approve) we return null and
+	// downstream code falls back to selectedPkgs.
+	const discoveredPackagesByHost = useMemo(() => {
+		if (!discoverHostsEnabled) return null;
+		const selectedSet = new Set(selectedPkgs);
+		const map = {};
+		(packageNames || []).forEach((pkgName, i) => {
+			if (!selectedSet.has(pkgName)) return;
+			const list = hostQueries[i]?.data || [];
+			for (const h of list) {
+				const id = h.hostId || h.host_id || h.id;
+				if (!id) continue;
+				if (!map[id]) map[id] = [];
+				map[id].push(pkgName);
+			}
+		});
+		return map;
+	}, [discoverHostsEnabled, packageNames, hostQueries, selectedPkgs]);
+
+	// Effective packages-per-host used for display and requests:
+	//   1. Caller-provided packagesByHost wins (approve-mode bulk).
+	//   2. Otherwise use the discovered map.
+	//   3. Fall back to selectedPkgs for hosts we couldn't resolve
+	//      (e.g. lockHosts flows where host discovery didn't run).
+	const packagesForHost = useCallback(
+		(hostId) => {
+			if (packagesByHost && packagesByHost[hostId] !== undefined) {
+				return packagesByHost[hostId];
+			}
+			if (discoveredPackagesByHost?.[hostId]) {
+				return discoveredPackagesByHost[hostId];
+			}
+			return selectedPkgs;
+		},
+		[packagesByHost, discoveredPackagesByHost, selectedPkgs],
+	);
+
 	const canValidate =
 		!isApprove &&
 		!isPatchAll &&
@@ -515,11 +559,15 @@ export default function PatchWizard({
 				},
 			}));
 			try {
+				// Send only the packages this host actually has outdated —
+				// the wizard already knows from host discovery, so there's
+				// no point asking a host to dry-run packages it doesn't have.
+				const hostPkgs = packagesForHost(hostId);
 				const res = await patchingAPI.trigger(
 					hostId,
 					"patch_package",
 					null,
-					selectedPkgs,
+					hostPkgs,
 					{ dry_run: true },
 				);
 				const runId = res?.patch_run_id;
@@ -595,12 +643,13 @@ export default function PatchWizard({
 					}
 					// Fresh pending run. patch_all has no package list;
 					// patch_package needs the same package set that would
-					// have been sent on a normal trigger.
+					// have been sent on a normal trigger — scoped to the
+					// packages this specific host actually has outdated.
 					const response = await patchingAPI.trigger(
 						hostId,
 						patchType,
 						null,
-						isPatchAll ? null : selectedPkgs,
+						isPatchAll ? null : packagesForHost(hostId),
 						{ pending_approval: true },
 					);
 					if (response?.patch_run_id) {
@@ -678,7 +727,7 @@ export default function PatchWizard({
 							hostId,
 							"patch_package",
 							null,
-							selectedPkgs,
+							packagesForHost(hostId),
 							overrideBody,
 						);
 					}
@@ -710,17 +759,23 @@ export default function PatchWizard({
 		}
 	};
 
-	// Determine if any selected host has extra dependencies
+	// Determine if any selected host has extra dependencies. The requested
+	// set is per-host because in multi-host multi-package flows each host
+	// only gets sent the subset of packages it actually has outdated; using
+	// the global selectedPkgs here would hide real extra-deps and surface
+	// false ones for any host that was sent a narrower list.
 	const hostsWithExtraDeps = useMemo(() => {
-		const requestedSet = new Set(selectedPkgs.map((n) => n.toLowerCase()));
 		return hosts.filter((h) => {
 			const v = validationByHost[h.id];
 			if (!v || v.status !== "validated") return false;
+			const requestedSet = new Set(
+				packagesForHost(h.id).map((n) => n.toLowerCase()),
+			);
 			return v.packages_affected?.some(
 				(p) => !requestedSet.has(p.toLowerCase()),
 			);
 		});
-	}, [validationByHost, hosts, selectedPkgs]);
+	}, [validationByHost, hosts, packagesForHost]);
 
 	const TERMINAL_VALIDATION_STATUSES = ["validated", "failed", "timeout"];
 	const validationDone =
@@ -1672,13 +1727,14 @@ export default function PatchWizard({
 							{selectedHostArr.map((host) => {
 								const v = validationByHost[host.id];
 								const preview = previewByHost[host.id];
-								// Per-host package list and patch type. For bulk approve the
-								// caller supplies a map; otherwise we fall back to the global
-								// props which apply to every row.
-								const hostPkgs =
-									packagesByHost?.[host.id] !== undefined
-										? packagesByHost[host.id]
-										: selectedPkgs;
+								// Per-host package list and patch type. Bulk-approve
+								// callers pass packagesByHost; multi-host trigger flows
+								// derive it from host discovery; single-host / lockHosts
+								// flows fall through to the global selection. This is
+								// the same source the validation and trigger calls use,
+								// so the Submit step stays consistent with what the
+								// server will actually be asked to patch.
+								const hostPkgs = packagesForHost(host.id);
 								const hostPatchType = patchTypeByHost?.[host.id] || patchType;
 								const hostIsPatchAll = hostPatchType === "patch_all";
 								const requestedSet = new Set(
