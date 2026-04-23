@@ -173,3 +173,63 @@ export const getNextTier = (tierId) => {
 	if (idx < 0 || idx >= TIER_ORDER.length - 1) return null;
 	return TIERS[TIER_ORDER[idx + 1]];
 };
+
+// Module → required tier mapping for feature-gating UI.
+// MUST stay in sync with RequireModule(...) calls in
+// server-source-code/internal/server/router.go. When a new gated module is
+// added server-side, add it here and to MODULE_LABELS below.
+export const MODULE_TIER_MAP = {
+	patching: "plus",
+	patching_policies: "plus",
+	docker: "plus",
+	alerts_advanced: "plus",
+	rbac_custom: "plus",
+	custom_branding: "plus",
+	compliance: "max",
+	ssh_terminal: "max",
+	rdp: "max",
+	ai: "max",
+};
+
+// Human-readable feature names for upgrade screens.
+export const MODULE_LABELS = {
+	patching: "Patching",
+	patching_policies: "Patching Policies",
+	docker: "Docker Monitoring",
+	alerts_advanced: "Advanced Alerts",
+	rbac_custom: "Custom RBAC Roles",
+	custom_branding: "Custom Branding",
+	compliance: "Compliance Scanning",
+	ssh_terminal: "Browser SSH Terminal",
+	rdp: "Browser RDP",
+	ai: "AI Terminal Assistant",
+};
+
+// Rows from TIER_FEATURES that a given tier unlocks compared to the previous
+// tier. Used by the upgrade screen to show "what you get" when upgrading to
+// Plus or Max. Starter-exclusive rows are never shown as an upgrade benefit.
+const TIER_UNLOCK_LABELS = {
+	plus: [
+		"Manual patch runs",
+		"Patch scheduling policies + approval workflow",
+		"Docker container monitoring",
+		"Advanced alert config + custom rules",
+		"Custom RBAC roles",
+		"Audit log export",
+		"Custom branding (logo/favicon)",
+	],
+	max: [
+		"Browser SSH terminal",
+		"Browser RDP (Guacamole)",
+		"BYO-AI terminal assistant",
+		"Compliance (OpenSCAP + CIS + Docker Bench)",
+	],
+};
+
+export const getRequiredTier = (moduleKey) =>
+	MODULE_TIER_MAP[moduleKey] ?? null;
+
+export const getModuleLabel = (moduleKey) =>
+	MODULE_LABELS[moduleKey] ?? moduleKey;
+
+export const getTierUnlocks = (tierId) => TIER_UNLOCK_LABELS[tierId] ?? [];

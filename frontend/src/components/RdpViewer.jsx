@@ -4,16 +4,297 @@
  * Uses guacamole-common-js with WebSocket tunnel to the PatchMon server.
  * Backend runs guacd as subprocess and bridges agent RDP proxy to guacd.
  *
- * When guacd is not available, shows an informational message.
+ * Error UX: every failure maps to a stable code (server-supplied in the
+ * ticket response, or client-derived from Guacamole status codes) and renders
+ * a specific guidance block. Before connecting, a requirements checklist is
+ * shown so the user knows what RDP needs end-to-end.
  */
 
 import Guacamole from "guacamole-common-js";
-import { Maximize2, Minimize2, Monitor, Power, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	AlertCircle,
+	CheckCircle2,
+	ChevronDown,
+	ChevronRight,
+	Info,
+	Maximize2,
+	Minimize2,
+	Monitor,
+	Power,
+	RefreshCw,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { rdpAPI } from "../utils/api";
 
-const RDP_GUACD_MESSAGE =
-	"RDP requires guacd to be installed on the server. Install with: apt install guacd";
+// Guacamole Status codes we surface with bespoke guidance. See
+// https://guacamole.apache.org/doc/gug/protocol-reference.html#status-codes
+const GUAC_STATUS_CLIENT_UNAUTHORIZED = 0x0301; // 769
+const GUAC_STATUS_CLIENT_FORBIDDEN = 0x0303; // 771
+const GUAC_STATUS_UPSTREAM_NOT_FOUND = 0x0204; // 516 — host unreachable via guacd
+const GUAC_STATUS_UPSTREAM_UNAVAILABLE = 0x0207; // 519 — NLA/auth failure (Guacamole remaps)
+
+/**
+ * Guidance blocks rendered in the error panel. Keyed by code returned from the
+ * backend (server classifies agent errors into these codes) plus client-side
+ * codes derived from Guacamole status.
+ */
+const GUIDANCE = {
+	guacd_unavailable: {
+		title: "guacd is not running on the PatchMon server",
+		body: [
+			"The RDP gateway (guacd) is required to render Windows desktops in the browser.",
+			"On the PatchMon server, install and start guacd:",
+		],
+		code: `# Debian / Ubuntu
+apt install guacd
+
+# RHEL / CentOS / Rocky (EPEL)
+dnf install guacd
+
+# Docker: add the guacamole/guacd sidecar and set GUACD_ADDRESS=guacd:4822`,
+		doc: "See Internal documentation: technical/WINDOWS.md",
+	},
+	agent_disconnected: {
+		title: "The PatchMon agent on this host is not connected",
+		body: [
+			"The agent must be running and maintain a WebSocket to the PatchMon server for RDP to work.",
+			"Check the agent service status on the Windows host:",
+		],
+		code: `# PowerShell (as Administrator)
+Get-Service patchmon-agent
+Start-Service patchmon-agent
+
+# Or inspect recent logs
+Get-Content "C:\\ProgramData\\PatchMon\\agent.log" -Tail 200`,
+	},
+	agent_timeout: {
+		title: "The agent did not respond in time",
+		body: [
+			"The RDP proxy request was sent but no reply arrived within 5 seconds.",
+			"Usually this means the agent is unhealthy or the network link is saturated. Try again, and if it keeps failing, restart the agent service.",
+		],
+	},
+	agent_rdp_disabled: {
+		title: "RDP proxy is disabled in the agent config",
+		body: [
+			"The agent rejected the request because the RDP proxy integration is not enabled. This must be enabled manually on the host — it cannot be pushed from the server.",
+			"Edit the agent config and restart the service:",
+		],
+		code: `# C:\\ProgramData\\PatchMon\\config.yml
+integrations:
+    rdp-proxy-enabled: true
+
+# Then restart the agent
+Restart-Service patchmon-agent`,
+	},
+	rdp_port_unreachable: {
+		title: "The Windows host's RDP service is not reachable on port 3389",
+		body: [
+			"The agent connected to the server but could not open a TCP connection to localhost:3389 on the host.",
+			"On the Windows host, confirm Remote Desktop is enabled and listening:",
+		],
+		code: `# PowerShell (as Administrator)
+# 1. Enable Remote Desktop
+Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name fDenyTSConnections -Value 0
+Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+# 2. Confirm the service is running and listening
+Get-Service TermService
+Test-NetConnection -ComputerName localhost -Port 3389`,
+	},
+	agent_invalid_host: {
+		title: "The agent rejected the proxy host",
+		body: [
+			"The server requested a proxy target that the agent refused to dial. This is typically a version mismatch — update the PatchMon agent on the host to the latest release.",
+		],
+	},
+	agent_error: {
+		title: "The agent reported an error",
+		body: [
+			"The RDP proxy could not be established. The agent's message is shown above — follow its instructions.",
+		],
+	},
+	agent_send_failed: {
+		title: "Could not deliver the RDP proxy request to the agent",
+		body: [
+			"The agent's WebSocket was accepted but the write failed. The agent may have just disconnected. Wait a few seconds and try again.",
+		],
+	},
+	max_sessions: {
+		title: "Too many concurrent RDP sessions",
+		body: [
+			"The server is at its concurrent RDP session limit. Close unused sessions and try again.",
+		],
+	},
+	server_error: {
+		title: "An unexpected server error occurred",
+		body: [
+			"The request failed on the server. Check the PatchMon server logs for details.",
+		],
+	},
+	rdp_auth_failed: {
+		title: "Authentication to the Windows host failed",
+		body: [
+			"The Windows host accepted the connection but refused the credentials.",
+			"Confirm the username and password are correct. If the host requires Network Level Authentication (NLA), the credentials must belong to a user permitted by the host's Remote Desktop settings.",
+			"If you left credentials blank, try providing them explicitly — some hosts do not allow NLA with empty credentials.",
+		],
+	},
+	rdp_gateway_failed: {
+		title: "guacd could not complete the RDP handshake",
+		body: [
+			"The RDP gateway reached the host but the protocol handshake failed. This is often a certificate/TLS issue on the Windows side or an unsupported RDP security level.",
+			"On the host, ensure Remote Desktop security is set to 'Negotiate' or 'SSL (TLS 1.0)'. Verify the host certificate is valid.",
+		],
+	},
+	rdp_unknown: {
+		title: "RDP connection failed",
+		body: [
+			"The connection failed for an unclassified reason. The underlying message is shown above.",
+		],
+	},
+};
+
+/**
+ * Pick a guidance code from either an HTTP error response (ticket creation)
+ * or a Guacamole Status object (tunnel/client onerror).
+ */
+const deriveCodeFromHttpError = (err) => {
+	const data = err?.response?.data;
+	if (data?.code && GUIDANCE[data.code]) return data.code;
+	const msg = (data?.error || err?.message || "").toLowerCase();
+	if (msg.includes("guacd")) return "guacd_unavailable";
+	if (
+		msg.includes("agent not connected") ||
+		msg.includes("agent is not connected")
+	)
+		return "agent_disconnected";
+	if (msg.includes("rdp-proxy-enabled")) return "agent_rdp_disabled";
+	return "rdp_unknown";
+};
+
+const deriveCodeFromGuacStatus = (status) => {
+	const code = status?.code;
+	switch (code) {
+		case GUAC_STATUS_CLIENT_UNAUTHORIZED:
+		case GUAC_STATUS_CLIENT_FORBIDDEN:
+			return "rdp_auth_failed";
+		case GUAC_STATUS_UPSTREAM_NOT_FOUND:
+			return "rdp_port_unreachable";
+		case GUAC_STATUS_UPSTREAM_UNAVAILABLE:
+			return "rdp_gateway_failed";
+		default:
+			return "rdp_unknown";
+	}
+};
+
+const Requirement = ({ children }) => (
+	<li className="flex items-start gap-2 text-sm text-secondary-300">
+		<CheckCircle2 className="h-4 w-4 text-primary-500 shrink-0 mt-0.5" />
+		<span>{children}</span>
+	</li>
+);
+
+const ErrorPanel = ({ code, message, onRetry }) => {
+	const guidance = GUIDANCE[code] || GUIDANCE.rdp_unknown;
+	return (
+		<div className="w-full max-w-2xl bg-secondary-800 border border-secondary-700 rounded-lg p-5 shadow-lg">
+			<div className="flex items-start gap-3">
+				<AlertCircle className="h-6 w-6 text-danger-400 shrink-0 mt-0.5" />
+				<div className="flex-1 min-w-0">
+					<h3 className="text-base font-semibold text-white">
+						{guidance.title}
+					</h3>
+					{message && (
+						<pre className="mt-2 whitespace-pre-wrap text-xs text-danger-300 bg-secondary-900/60 border border-secondary-700 rounded p-2 font-mono">
+							{message}
+						</pre>
+					)}
+					<div className="mt-3 space-y-2">
+						{guidance.body.map((p) => (
+							<p key={p} className="text-sm text-secondary-300">
+								{p}
+							</p>
+						))}
+					</div>
+					{guidance.code && (
+						<pre className="mt-3 text-xs text-secondary-200 bg-black/40 border border-secondary-700 rounded p-3 font-mono overflow-x-auto">
+							{guidance.code}
+						</pre>
+					)}
+					{guidance.doc && (
+						<p className="mt-2 text-xs text-secondary-500">{guidance.doc}</p>
+					)}
+					{onRetry && (
+						<button
+							type="button"
+							onClick={onRetry}
+							className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium"
+						>
+							<RefreshCw className="h-4 w-4" />
+							Retry
+						</button>
+					)}
+				</div>
+			</div>
+		</div>
+	);
+};
+
+const RequirementsChecklist = ({ open, onToggle }) => (
+	<div className="w-full max-w-2xl bg-secondary-800/60 border border-secondary-700 rounded-lg">
+		<button
+			type="button"
+			onClick={onToggle}
+			className="w-full flex items-center gap-2 px-4 py-3 text-left"
+			aria-expanded={open}
+		>
+			{open ? (
+				<ChevronDown className="h-4 w-4 text-secondary-400" />
+			) : (
+				<ChevronRight className="h-4 w-4 text-secondary-400" />
+			)}
+			<Info className="h-4 w-4 text-primary-500" />
+			<span className="text-sm font-medium text-white">
+				What does RDP need to work?
+			</span>
+		</button>
+		{open && (
+			<div className="px-4 pb-4 space-y-3">
+				<p className="text-xs text-secondary-400">
+					In-browser RDP bridges your browser → PatchMon server (guacd) →
+					PatchMon agent on the host → Windows RDP service on port 3389. All
+					four pieces must be in place.
+				</p>
+				<ul className="space-y-2">
+					<Requirement>
+						<strong className="text-white">On the Windows host:</strong> Remote
+						Desktop enabled and listening on <code>3389</code>.
+					</Requirement>
+					<Requirement>
+						<strong className="text-white">PatchMon agent</strong> installed,
+						connected, and at a recent version.
+					</Requirement>
+					<Requirement>
+						<strong className="text-white">Agent config:</strong>{" "}
+						<code>integrations: rdp-proxy-enabled: true</code> in{" "}
+						<code>config.yml</code>, then restart the agent service. This is
+						opt-in per host — the server cannot enable it remotely.
+					</Requirement>
+					<Requirement>
+						<strong className="text-white">PatchMon server:</strong>{" "}
+						<code>guacd</code> running locally or as a sidecar, with{" "}
+						<code>GUACD_ADDRESS</code> pointing to it.
+					</Requirement>
+				</ul>
+				<p className="text-xs text-secondary-500">
+					Valid credentials for a user with Remote Desktop access are required.
+					Leave blank only if the host allows unauthenticated NLA prompts.
+				</p>
+			</div>
+		)}
+	</div>
+);
 
 const RdpViewer = ({ host, isOpen }) => {
 	const displayRef = useRef(null);
@@ -26,8 +307,9 @@ const RdpViewer = ({ host, isOpen }) => {
 
 	const [isConnecting, setIsConnecting] = useState(false);
 	const [isConnected, setIsConnected] = useState(false);
-	const [error, setError] = useState(null);
+	const [error, setError] = useState(null); // { code, message } | null
 	const [isFullscreen, setIsFullscreen] = useState(false);
+	const [requirementsOpen, setRequirementsOpen] = useState(false);
 	const [credentials, setCredentials] = useState({
 		username: "",
 		password: "",
@@ -96,6 +378,16 @@ const RdpViewer = ({ host, isOpen }) => {
 		return () => disconnect();
 	}, [isOpen, host, disconnect]);
 
+	// Reset transient state when the host changes so stale errors and creds
+	// from a previous host do not bleed into the new one. host?.id is the
+	// intentional trigger; setState callbacks are stable and correctly omitted.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset trigger
+	useEffect(() => {
+		setError(null);
+		setCredentials({ username: "", password: "" });
+		setRequirementsOpen(false);
+	}, [host?.id]);
+
 	const connect = useCallback(async () => {
 		if (!host?.id || !isOpen) return;
 
@@ -119,13 +411,11 @@ const RdpViewer = ({ host, isOpen }) => {
 			ticketData = res.data;
 		} catch (err) {
 			setIsConnecting(false);
-			const status = err.response?.status;
-			const msg = err.response?.data?.error || err.message;
-			if (status === 404 || msg?.toLowerCase().includes("guacd")) {
-				setError(RDP_GUACD_MESSAGE);
-			} else {
-				setError(msg || "Failed to create RDP ticket");
-			}
+			const serverMsg = err.response?.data?.error || err.message || "";
+			setError({
+				code: deriveCodeFromHttpError(err),
+				message: serverMsg,
+			});
 			return;
 		}
 
@@ -136,7 +426,7 @@ const RdpViewer = ({ host, isOpen }) => {
 			height = containerHeight,
 		} = ticketData;
 		if (!ticket || !websocketTunnelUrl) {
-			setError("Invalid ticket response");
+			setError({ code: "server_error", message: "Invalid ticket response" });
 			setIsConnecting(false);
 			return;
 		}
@@ -150,8 +440,19 @@ const RdpViewer = ({ host, isOpen }) => {
 			tunnelRef.current = tunnel;
 
 			tunnel.onerror = (status) => {
-				const msg = status?.message || status?.code || "Connection failed";
-				setError(String(msg));
+				// disconnect() teardown can fire onerror with no status; ignore
+				// that. Don't clobber an error already set by an earlier path.
+				if (!status) return;
+				setError((prev) =>
+					prev
+						? prev
+						: {
+								code: deriveCodeFromGuacStatus(status),
+								message:
+									status?.message ||
+									`Tunnel error (code ${status?.code ?? "?"})`,
+							},
+				);
 				setIsConnecting(false);
 				setIsConnected(false);
 			};
@@ -192,7 +493,16 @@ const RdpViewer = ({ host, isOpen }) => {
 			};
 
 			client.onerror = (status) => {
-				setError(status?.message || "RDP connection error");
+				if (!status) return;
+				setError((prev) =>
+					prev
+						? prev
+						: {
+								code: deriveCodeFromGuacStatus(status),
+								message:
+									status?.message || `RDP error (code ${status?.code ?? "?"})`,
+							},
+				);
 				setIsConnecting(false);
 				setIsConnected(false);
 			};
@@ -272,7 +582,10 @@ const RdpViewer = ({ host, isOpen }) => {
 
 			client.connect(connectData);
 		} catch (err) {
-			setError(err?.message || "Failed to connect");
+			setError({
+				code: "rdp_unknown",
+				message: err?.message || "Failed to connect",
+			});
 			setIsConnecting(false);
 			disconnect();
 		}
@@ -311,6 +624,14 @@ const RdpViewer = ({ host, isOpen }) => {
 		document.addEventListener("fullscreenchange", handler);
 		return () => document.removeEventListener("fullscreenchange", handler);
 	}, []);
+
+	// Show the requirements checklist by default if the user has never connected
+	// AND has no error yet — keeps the first-run experience guided without
+	// shouting at users who already know the drill.
+	const showIdleHelp = useMemo(
+		() => !isConnected && !isConnecting && !error,
+		[isConnected, isConnecting, error],
+	);
 
 	if (!host || !isOpen) return null;
 
@@ -409,15 +730,13 @@ const RdpViewer = ({ host, isOpen }) => {
 
 			<div className="flex-1 min-h-0 flex flex-col relative">
 				{error && (
-					<div className="absolute inset-0 flex items-center justify-center bg-secondary-900/90 z-10 p-4">
-						<div className="text-center max-w-md">
-							<Monitor className="h-12 w-12 text-secondary-500 mx-auto mb-3" />
-							<p className="text-sm text-secondary-300">{error}</p>
-							{error === RDP_GUACD_MESSAGE && (
-								<p className="mt-2 text-xs text-secondary-500">
-									See WINDOWS.md for RDP setup instructions.
-								</p>
-							)}
+					<div className="absolute inset-0 flex items-start justify-center bg-secondary-900/95 z-10 p-4 overflow-y-auto">
+						<div className="w-full flex justify-center pt-4">
+							<ErrorPanel
+								code={error.code}
+								message={error.message}
+								onRetry={connect}
+							/>
 						</div>
 					</div>
 				)}
@@ -429,6 +748,17 @@ const RdpViewer = ({ host, isOpen }) => {
 							<span className="text-sm text-secondary-400">
 								Connecting to RDP...
 							</span>
+						</div>
+					</div>
+				)}
+
+				{showIdleHelp && (
+					<div className="absolute inset-0 flex items-start justify-center bg-secondary-900/70 z-0 p-4 overflow-y-auto pointer-events-none">
+						<div className="w-full flex justify-center pt-8 pointer-events-auto">
+							<RequirementsChecklist
+								open={requirementsOpen}
+								onToggle={() => setRequirementsOpen((o) => !o)}
+							/>
 						</div>
 					</div>
 				)}

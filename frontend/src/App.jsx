@@ -4,6 +4,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import FirstTimeWizard from "./components/FirstTimeWizard";
 import Layout from "./components/Layout";
 import LogoProvider from "./components/LogoProvider";
+import ModuleGate from "./components/ModuleGate";
 import PageTransition from "./components/PageTransition";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SettingsLayout from "./components/SettingsLayout";
@@ -208,7 +209,9 @@ function AppRoutes() {
 						path="/patching"
 						element={
 							<ProtectedRoute requirePermission="can_view_hosts">
-								<Patching />
+								<ModuleGate module="patching">
+									<Patching />
+								</ModuleGate>
 							</ProtectedRoute>
 						}
 					/>
@@ -216,7 +219,9 @@ function AppRoutes() {
 						path="/patching/runs/:id"
 						element={
 							<ProtectedRoute requirePermission="can_view_hosts">
-								<PatchingRunDetail />
+								<ModuleGate module="patching">
+									<PatchingRunDetail />
+								</ModuleGate>
 							</ProtectedRoute>
 						}
 					/>
@@ -224,7 +229,9 @@ function AppRoutes() {
 						path="/compliance"
 						element={
 							<ProtectedRoute requirePermission="can_view_reports">
-								<Compliance />
+								<ModuleGate module="compliance">
+									<Compliance />
+								</ModuleGate>
 							</ProtectedRoute>
 						}
 					/>
@@ -232,7 +239,9 @@ function AppRoutes() {
 						path="/compliance/hosts/:id"
 						element={
 							<ProtectedRoute requirePermission="can_view_reports">
-								<ComplianceHostDetail />
+								<ModuleGate module="compliance">
+									<ComplianceHostDetail />
+								</ModuleGate>
 							</ProtectedRoute>
 						}
 					/>
@@ -240,7 +249,9 @@ function AppRoutes() {
 						path="/compliance/rules/:id"
 						element={
 							<ProtectedRoute requirePermission="can_view_reports">
-								<ComplianceRuleDetail />
+								<ModuleGate module="compliance">
+									<ComplianceRuleDetail />
+								</ModuleGate>
 							</ProtectedRoute>
 						}
 					/>
@@ -248,7 +259,9 @@ function AppRoutes() {
 						path="/docker"
 						element={
 							<ProtectedRoute requirePermission="can_view_hosts">
-								<Docker />
+								<ModuleGate module="docker">
+									<Docker />
+								</ModuleGate>
 							</ProtectedRoute>
 						}
 					/>
@@ -256,7 +269,9 @@ function AppRoutes() {
 						path="/docker/containers/:id"
 						element={
 							<ProtectedRoute requirePermission="can_view_hosts">
-								<DockerContainerDetail />
+								<ModuleGate module="docker">
+									<DockerContainerDetail />
+								</ModuleGate>
 							</ProtectedRoute>
 						}
 					/>
@@ -264,7 +279,9 @@ function AppRoutes() {
 						path="/docker/images/:id"
 						element={
 							<ProtectedRoute requirePermission="can_view_hosts">
-								<DockerImageDetail />
+								<ModuleGate module="docker">
+									<DockerImageDetail />
+								</ModuleGate>
 							</ProtectedRoute>
 						}
 					/>
@@ -272,7 +289,9 @@ function AppRoutes() {
 						path="/docker/hosts/:id"
 						element={
 							<ProtectedRoute requirePermission="can_view_hosts">
-								<DockerHostDetail />
+								<ModuleGate module="docker">
+									<DockerHostDetail />
+								</ModuleGate>
 							</ProtectedRoute>
 						}
 					/>
@@ -280,7 +299,9 @@ function AppRoutes() {
 						path="/docker/volumes/:id"
 						element={
 							<ProtectedRoute requirePermission="can_view_hosts">
-								<DockerVolumeDetail />
+								<ModuleGate module="docker">
+									<DockerVolumeDetail />
+								</ModuleGate>
 							</ProtectedRoute>
 						}
 					/>
@@ -288,7 +309,9 @@ function AppRoutes() {
 						path="/docker/networks/:id"
 						element={
 							<ProtectedRoute requirePermission="can_view_hosts">
-								<DockerNetworkDetail />
+								<ModuleGate module="docker">
+									<DockerNetworkDetail />
+								</ModuleGate>
 							</ProtectedRoute>
 						}
 					/>
@@ -356,7 +379,9 @@ function AppRoutes() {
 							path="roles"
 							element={
 								<ProtectedRoute requirePermission="can_manage_settings">
-									<SettingsUsers />
+									<ModuleGate module="rbac_custom">
+										<SettingsUsers />
+									</ModuleGate>
 								</ProtectedRoute>
 							}
 						/>
@@ -444,7 +469,9 @@ function AppRoutes() {
 							path="branding"
 							element={
 								<ProtectedRoute requirePermission="can_manage_settings">
-									<SettingsServerConfig />
+									<ModuleGate module="custom_branding">
+										<SettingsServerConfig />
+									</ModuleGate>
 								</ProtectedRoute>
 							}
 						/>
@@ -468,7 +495,9 @@ function AppRoutes() {
 							path="ai-terminal"
 							element={
 								<ProtectedRoute requirePermission="can_manage_settings">
-									<AiSettings />
+									<ModuleGate module="ai">
+										<AiSettings />
+									</ModuleGate>
 								</ProtectedRoute>
 							}
 						/>

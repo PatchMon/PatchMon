@@ -929,9 +929,8 @@ func (h *ComplianceHandler) CancelScan(w http.ResponseWriter, r *http.Request) {
 	if h.integrationStatus != nil {
 		_ = h.integrationStatus.SetComplianceScanCancel(r.Context(), hostID)
 	}
-	conn := h.registry.GetConnection(host.ApiID)
-	if conn != nil {
-		if err := conn.WriteJSON(map[string]interface{}{"type": "compliance_scan_cancel"}); err != nil {
+	if h.registry.IsConnected(host.ApiID) {
+		if err := h.registry.SendJSON(host.ApiID, map[string]interface{}{"type": "compliance_scan_cancel"}); err != nil {
 			Error(w, http.StatusServiceUnavailable, "Failed to send cancel to agent")
 			return
 		}
@@ -1248,12 +1247,11 @@ func (h *ComplianceHandler) RemediateRule(w http.ResponseWriter, r *http.Request
 		Error(w, http.StatusNotFound, "Host not found")
 		return
 	}
-	conn := h.registry.GetConnection(host.ApiID)
-	if conn == nil {
+	if !h.registry.IsConnected(host.ApiID) {
 		Error(w, http.StatusServiceUnavailable, "Agent is not connected")
 		return
 	}
-	if err := conn.WriteJSON(map[string]interface{}{"type": "remediate_rule", "rule_id": req.RuleID}); err != nil {
+	if err := h.registry.SendJSON(host.ApiID, map[string]interface{}{"type": "remediate_rule", "rule_id": req.RuleID}); err != nil {
 		Error(w, http.StatusServiceUnavailable, "Failed to send remediate command")
 		return
 	}

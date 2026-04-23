@@ -53,10 +53,12 @@ const ALL_STEP_LABELS = [
 	"Contact & Follow",
 ];
 
-const getStepLabels = (showNewsletter) =>
-	showNewsletter
-		? ALL_STEP_LABELS
-		: ALL_STEP_LABELS.filter((l) => l !== "Stay Updated");
+const getStepLabels = (showNewsletter, adminMode) => {
+	let labels = ALL_STEP_LABELS;
+	if (!showNewsletter) labels = labels.filter((l) => l !== "Stay Updated");
+	if (adminMode) labels = labels.filter((l) => l !== "Confirm URL");
+	return labels;
+};
 
 // Parse URL into protocol, host, port
 const parseServerUrl = (url) => {
@@ -107,6 +109,11 @@ const FirstTimeWizard = () => {
 	const [fieldErrors, setFieldErrors] = useState({});
 	const [passwordPolicy, setPasswordPolicy] = useState(DEFAULT_PASSWORD_POLICY);
 	const [showNewsletter, setShowNewsletter] = useState(true);
+	const [adminMode, setAdminMode] = useState(false);
+	// Guard against user clicking through to step 2's Next button before login-settings
+	// has resolved — without this, adminMode could still be false and we'd route to the
+	// Confirm URL step even in managed deployments.
+	const [loginSettingsReady, setLoginSettingsReady] = useState(false);
 	const [mfaChoice, setMfaChoice] = useState(null); // 'setup_now' | 'skip'
 	const [userCreatedEarly, setUserCreatedEarly] = useState(false); // true when we created user for MFA path
 	const [tfaSetupComplete, setTfaSetupComplete] = useState(false); // true when user finished TFA setup (allows Back from step 3)
@@ -144,8 +151,14 @@ const FirstTimeWizard = () => {
 				if (data.show_newsletter === false) {
 					setShowNewsletter(false);
 				}
+				if (data.admin_mode === true) {
+					setAdminMode(true);
+				}
 			})
-			.catch(() => {});
+			.catch(() => {})
+			.finally(() => {
+				if (!cancelled) setLoginSettingsReady(true);
+			});
 		return () => {
 			cancelled = true;
 		};
@@ -303,13 +316,24 @@ const FirstTimeWizard = () => {
 		passwordPolicy,
 	);
 
-	const stepLabels = getStepLabels(showNewsletter);
+	const stepLabels = getStepLabels(showNewsletter, adminMode);
 	const totalSteps = stepLabels.length;
-	// displayStep maps internal step (1-5) to the visual position shown to the user
-	const displayStep = !showNewsletter && step === 5 ? 4 : step;
-	// When newsletter is hidden, skip from step 3 straight to step 5 (Contact & Follow)
+	// Map internal step (1-5) to visual position, accounting for skipped steps.
+	// In admin mode, step 3 (Confirm URL) is skipped. When newsletter is hidden, step 4 is skipped.
+	let displayStep = step;
+	if (adminMode && step > 3) displayStep -= 1;
+	if (!showNewsletter && step > 4) displayStep -= 1;
+
+	// Advance from MFA step (2) to the next visible step: 3 normally, 5 in admin mode.
+	const mfaAdvanceStep = adminMode ? 5 : 3;
+
 	const handleNext = () => {
 		if (step === 1 && !validateStep1()) return;
+		if (step === 2 && adminMode) {
+			// Skip Confirm URL (3) and Stay Updated (4, always hidden in admin mode).
+			setStep(5);
+			return;
+		}
 		if (!showNewsletter && step === 3) {
 			setStep(5);
 			return;
@@ -318,6 +342,10 @@ const FirstTimeWizard = () => {
 	};
 
 	const handleBack = () => {
+		if (adminMode && step === 5) {
+			setStep(2);
+			return;
+		}
 		if (!showNewsletter && step === 5) {
 			setStep(3);
 			return;
@@ -363,20 +391,26 @@ const FirstTimeWizard = () => {
 
 	const handleMfaSkip = () => {
 		setMfaChoice("skip");
-		setStep(3); // Go to URL step
+		setStep(mfaAdvanceStep);
 	};
 
 	const handleTfaComplete = () => {
 		setTfaSetupComplete(true);
-		setStep(3); // Continue to URL step
+		setStep(mfaAdvanceStep);
 	};
 
 	const runSetup = async (skipOnError = false) => {
 		setSettingUp(true);
 		setSetupError("");
-		setSetupStatus(
-			userCreatedEarly ? "Saving server URL..." : "Creating admin account...",
-		);
+		let initialStatus;
+		if (!userCreatedEarly) {
+			initialStatus = "Creating admin account...";
+		} else if (adminMode) {
+			initialStatus = "Finishing setup...";
+		} else {
+			initialStatus = "Saving server URL...";
+		}
+		setSetupStatus(initialStatus);
 
 		let setupData = null;
 
@@ -408,22 +442,26 @@ const FirstTimeWizard = () => {
 				setupData = { token: "existing", user: {} }; // Auth already set
 			}
 
-			// 2. Save server URL (requires auth - cookies from step 1 or existing session)
-			setSetupStatus("Saving server URL...");
-			try {
-				await settingsAPI.update({
-					server_protocol: wizardData.serverProtocol,
-					server_host: wizardData.serverHost.trim(),
-					server_port: Number(wizardData.serverPort) || 3001,
-					ignore_ssl_self_signed: wizardData.ignoreSslSelfSigned,
-				});
-			} catch (err) {
-				if (skipOnError && setupData?.token && setupData?.user) {
-					// Admin created; skip URL save and continue
-					gotoDashboard(setupData);
-					return;
+			// 2. Save server URL (requires auth - cookies from step 1 or existing session).
+			// In admin mode the URL is managed externally and the user never saw the Confirm URL step,
+			// so do not overwrite settings with wizard defaults.
+			if (!adminMode) {
+				setSetupStatus("Saving server URL...");
+				try {
+					await settingsAPI.update({
+						server_protocol: wizardData.serverProtocol,
+						server_host: wizardData.serverHost.trim(),
+						server_port: Number(wizardData.serverPort) || 3001,
+						ignore_ssl_self_signed: wizardData.ignoreSslSelfSigned,
+					});
+				} catch (err) {
+					if (skipOnError && setupData?.token && setupData?.user) {
+						// Admin created; skip URL save and continue
+						gotoDashboard(setupData);
+						return;
+					}
+					throw err;
 				}
-				throw err;
 			}
 
 			// 3. Newsletter subscribe (optional, no auth)
@@ -1042,7 +1080,8 @@ const FirstTimeWizard = () => {
 								<button
 									type="button"
 									onClick={handleNext}
-									className="btn-primary flex-1 flex items-center justify-center gap-2"
+									disabled={step === 2 && !loginSettingsReady}
+									className="btn-primary flex-1 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
 								>
 									Next
 								</button>

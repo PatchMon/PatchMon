@@ -158,18 +158,15 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 		ids[i] = p.ID
 	}
 
+	// Per-package stats (total installs, updates needed, security updates) are
+	// intentionally computed globally across all hosts, even when the row-level
+	// host filter is active. The host filter restricts *which* packages appear
+	// in the list, but the "Installed On" count and update counts should reflect
+	// the true footprint of each package - otherwise the counts always collapse
+	// to 1 under a host filter and look misleading in the UI.
 	statsArg := db.GetHostPackageStatsByPackageIDsParams{Column1: ids}
-	if p.Host != "" {
-		statsArg.HostID = &p.Host
-	}
 	updatesArg := db.GetUpdatesCountByPackageIDsParams{Column1: ids}
-	if p.Host != "" {
-		updatesArg.HostID = &p.Host
-	}
 	securityArg := db.GetSecurityCountByPackageIDsParams{Column1: ids}
-	if p.Host != "" {
-		securityArg.HostID = &p.Host
-	}
 	hostRefsArg := db.GetHostRefsForPackageIDsParams{Column1: ids}
 	if p.Host != "" {
 		hostRefsArg.HostID = &p.Host

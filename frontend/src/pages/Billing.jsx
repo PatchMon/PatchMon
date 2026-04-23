@@ -25,6 +25,7 @@ import {
 	TIER_ORDER,
 	TIERS,
 } from "../constants/tiers";
+import { useAuth } from "../contexts/AuthContext";
 import { useSettings } from "../contexts/SettingsContext";
 import { useToast } from "../contexts/ToastContext";
 import { billingAPI, formatRelativeTime } from "../utils/api";
@@ -769,6 +770,12 @@ const TierChangeModal = ({
 }) => {
 	const queryClient = useQueryClient();
 	const { error: toastError } = useToast();
+	// refetchTenantContext updates AuthContext.tenant.modules after a tier
+	// change so ModuleGate and the nav's locked badges re-render without a
+	// full page reload. The backend tier-change handler updates the registry
+	// synchronously, so by the time this promise resolves /me/context
+	// reflects the new tier.
+	const { refetchTenantContext } = useAuth();
 
 	// Default target: user-supplied CTA target, or current tier if the modal
 	// was opened from "Change plan" (so the user can just flip intervals).
@@ -869,6 +876,16 @@ const TierChangeModal = ({
 		onSuccess: () => {
 			setApplied(true);
 			queryClient.invalidateQueries({ queryKey: ["billing", "me"] });
+			// Refresh AuthContext.tenant.modules so module-gated routes and
+			// nav badges (Patching, Docker, Compliance, etc.) reflect the new
+			// plan immediately. Without this the user would keep seeing
+			// UpgradeRequired screens until they reload the page, because
+			// tenant.modules is only fetched at login / session-validate.
+			// Fire-and-forget: failures here are non-fatal — next route
+			// navigation will hit the up-to-date server-side RequireModule
+			// middleware and the old cached modules string is benign until
+			// the next reload.
+			refetchTenantContext?.();
 			// Short delay so the success banner is visible before the modal
 			// unmounts. Long enough to read, short enough to feel snappy.
 			// The cleanup effect below clears this if the modal unmounts early.

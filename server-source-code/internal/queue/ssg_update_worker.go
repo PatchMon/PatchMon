@@ -13,6 +13,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 	"github.com/hibiken/asynq"
 )
 
@@ -176,8 +177,7 @@ func (h *SSGUpgradeHandler) ProcessTask(ctx context.Context, t *asynq.Task) erro
 		})
 	}
 
-	conn := h.registry.GetConnection(p.ApiID)
-	if conn == nil {
+	if !h.registry.IsConnected(p.ApiID) {
 		h.log.Warn("ssg_upgrade: agent not connected", "api_id", p.ApiID, "host_id", p.HostID)
 		if taskID != "" && d != nil {
 			msg := "Agent not connected"
@@ -190,7 +190,7 @@ func (h *SSGUpgradeHandler) ProcessTask(ctx context.Context, t *asynq.Task) erro
 		"type":    "upgrade_ssg",
 		"version": p.SSGVersion,
 	})
-	if err := conn.WriteMessage(1, msg); err != nil {
+	if err := h.registry.SendMessage(p.ApiID, websocket.TextMessage, msg); err != nil {
 		h.log.Warn("ssg_upgrade: write failed", "api_id", p.ApiID, "error", err)
 		if taskID != "" && d != nil {
 			errMsg := "Failed to send upgrade command to agent"

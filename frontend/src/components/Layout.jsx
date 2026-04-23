@@ -28,6 +28,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { FaLinkedin, FaYoutube } from "react-icons/fa";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
 import { useColorTheme } from "../contexts/ColorThemeContext";
 import { useSettings } from "../contexts/SettingsContext";
@@ -43,6 +44,7 @@ import DonateModal from "./DonateModal";
 import GlobalSearch from "./GlobalSearch";
 import Logo from "./Logo";
 import ReleaseNotesModal from "./ReleaseNotesModal";
+import TierBadge from "./TierBadge";
 import UpgradeNotificationIcon from "./UpgradeNotificationIcon";
 
 const Layout = ({ children }) => {
@@ -271,32 +273,43 @@ const Layout = ({ children }) => {
 
 			// Patching is a Plus-tier feature (module key: "patching"). Sub-tab
 			// "Policies" additionally requires the patching_policies module.
-			if (canViewHosts() && hasModule("patching")) {
+			// Locked items stay visible with a TierBadge so users can discover
+			// and upgrade; the route renders an upgrade screen via <ModuleGate>.
+			if (canViewHosts()) {
+				const patchingLocked = !hasModule("patching");
+				const policiesLocked = !hasModule("patching_policies");
 				const patchingChildren = [
 					{ name: "Overview", href: "/patching?tab=overview" },
 					{ name: "Runs & History", href: "/patching?tab=runs" },
-				];
-				if (hasModule("patching_policies")) {
-					patchingChildren.push({
+					{
 						name: "Policies",
 						href: "/patching?tab=policies",
-					});
-				}
+						lockedModule: policiesLocked ? "patching_policies" : null,
+						lockedTier: policiesLocked
+							? getRequiredTier("patching_policies")
+							: null,
+					},
+				];
 				opsItems.push({
 					name: "Patching",
 					href: "/patching",
 					icon: Wrench,
-					new: true,
+					new: !patchingLocked,
+					lockedModule: patchingLocked ? "patching" : null,
+					lockedTier: patchingLocked ? getRequiredTier("patching") : null,
 					children: patchingChildren,
 				});
 			}
 
 			// Compliance is a Max-tier feature (module key: "compliance").
-			if (hasModule("compliance")) {
+			if (canViewReports()) {
+				const complianceLocked = !hasModule("compliance");
 				opsItems.push({
 					name: "Compliance",
 					href: "/compliance",
 					icon: Shield,
+					lockedModule: complianceLocked ? "compliance" : null,
+					lockedTier: complianceLocked ? getRequiredTier("compliance") : null,
 					children: [
 						{ name: "Overview", href: "/compliance?tab=overview" },
 						{ name: "Hosts", href: "/compliance?tab=hosts" },
@@ -310,22 +323,23 @@ const Layout = ({ children }) => {
 			if (canViewReports() && settings?.alerts_enabled !== false) {
 				// "Alert Lifecycle" uses /alerts/config endpoints (advanced alert tuning),
 				// which require the alerts_advanced module (Plus tier).
+				const alertLifecycleLocked = !hasModule("alerts_advanced");
 				const reportingChildren = [
 					{ name: "Overview", href: "/reporting?tab=overview" },
 					{ name: "Alerts", href: "/reporting?tab=alerts" },
-				];
-				if (hasModule("alerts_advanced")) {
-					reportingChildren.push({
+					{
 						name: "Alert Lifecycle",
 						href: "/reporting?tab=alert-settings",
-					});
-				}
-				reportingChildren.push(
+						lockedModule: alertLifecycleLocked ? "alerts_advanced" : null,
+						lockedTier: alertLifecycleLocked
+							? getRequiredTier("alerts_advanced")
+							: null,
+					},
 					{ name: "Destinations", href: "/reporting?tab=destinations" },
 					{ name: "Event Rules", href: "/reporting?tab=rules" },
 					{ name: "Scheduled Reports", href: "/reporting?tab=reports" },
 					{ name: "Delivery Log", href: "/reporting?tab=log" },
-				);
+				];
 				opsItems.push({
 					name: "Reporting",
 					href: "/reporting",
@@ -336,12 +350,15 @@ const Layout = ({ children }) => {
 			}
 
 			// Docker container monitoring is a Plus-tier feature (module key: "docker").
-			if (canViewReports() && hasModule("docker")) {
+			if (canViewReports()) {
+				const dockerLocked = !hasModule("docker");
 				opsItems.push({
 					name: "Docker",
 					href: "/docker",
 					icon: Container,
-					beta: true,
+					beta: !dockerLocked,
+					lockedModule: dockerLocked ? "docker" : null,
+					lockedTier: dockerLocked ? getRequiredTier("docker") : null,
 					children: [
 						{ name: "Stacks", href: "/docker?tab=stacks" },
 						{ name: "Containers", href: "/docker?tab=containers" },
@@ -856,6 +873,9 @@ const Layout = ({ children }) => {
 																					New
 																				</span>
 																			)}
+																			{subItem.lockedTier && (
+																				<TierBadge tier={subItem.lockedTier} />
+																			)}
 																			{subItem.children && (
 																				<ChevronDown
 																					className={`ml-auto h-4 w-4 shrink-0 text-secondary-400 transition-transform duration-200 ${
@@ -894,7 +914,7 @@ const Layout = ({ children }) => {
 																						) : (
 																							<Link
 																								to={child.href}
-																								className={`block text-sm py-2 px-2 rounded transition-colors min-h-[44px] flex items-center ${
+																								className={`text-sm py-2 px-2 rounded transition-colors min-h-[44px] flex items-center gap-2 ${
 																									location.pathname +
 																										location.search ===
 																									child.href
@@ -905,7 +925,12 @@ const Layout = ({ children }) => {
 																									setSidebarOpen(false)
 																								}
 																							>
-																								{child.name}
+																								<span>{child.name}</span>
+																								{child.lockedTier && (
+																									<TierBadge
+																										tier={child.lockedTier}
+																									/>
+																								)}
 																							</Link>
 																						)}
 																					</li>
@@ -1376,6 +1401,11 @@ const Layout = ({ children }) => {
 																							New
 																						</span>
 																					)}
+																					{subItem.lockedTier && (
+																						<TierBadge
+																							tier={subItem.lockedTier}
+																						/>
+																					)}
 																					{subItem.showUpgradeIcon && (
 																						<UpgradeNotificationIcon className="h-3 w-3" />
 																					)}
@@ -1417,7 +1447,7 @@ const Layout = ({ children }) => {
 																							) : (
 																								<Link
 																									to={child.href}
-																									className={`block text-[13px] py-1 px-2 rounded transition-colors ${
+																									className={`text-[13px] py-1 px-2 rounded transition-colors flex items-center gap-2 ${
 																										location.pathname +
 																											location.search ===
 																										child.href
@@ -1425,7 +1455,12 @@ const Layout = ({ children }) => {
 																											: "text-secondary-500 dark:text-white hover:text-secondary-900 dark:hover:text-primary-400"
 																									}`}
 																								>
-																									{child.name}
+																									<span>{child.name}</span>
+																									{child.lockedTier && (
+																										<TierBadge
+																											tier={child.lockedTier}
+																										/>
+																									)}
 																								</Link>
 																							)}
 																						</li>

@@ -663,112 +663,52 @@ const RunDetail = () => {
 
 				{/* Primary content column */}
 				<div className="lg:col-span-2 space-y-6 min-w-0">
-					{/* CTA banners: explain state + mirror the header action buttons for convenience */}
+					{/* State banners: explain the current run state. Action buttons
+					    (Approve & Patch / Skip & Patch / Retry Validation / Stop Run)
+					    live in the page header to keep the shell output area roomy. */}
 					{run.status === "pending_validation" && (
-						<div className="rounded-lg bg-warning-50 dark:bg-warning-900/30 border border-warning-200 dark:border-warning-600 p-4 flex flex-col lg:flex-row lg:items-start gap-4">
-							<div className="flex items-start gap-3 flex-1 min-w-0">
-								<AlertTriangle className="h-5 w-5 text-warning-600 dark:text-warning-400 mt-0.5 flex-shrink-0" />
-								<div className="min-w-0">
-									<p className="text-sm font-medium text-warning-800 dark:text-warning-200">
-										Validation pending — host may be offline
-									</p>
-									<p className="text-xs text-warning-700 dark:text-warning-300 mt-0.5">
-										The dry-run has not completed. You can retry when the host
-										is back online, or skip validation to patch immediately.
-									</p>
-								</div>
-							</div>
-							<div className="flex flex-col sm:flex-row gap-2 lg:flex-shrink-0">
-								<button
-									type="button"
-									onClick={handleRetryValidation}
-									disabled={retryingId === id}
-									className="btn-outline inline-flex items-center justify-center gap-1.5 min-h-[44px] w-full sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
-								>
-									<RefreshCw
-										className={`h-4 w-4 ${retryingId === id ? "animate-spin" : ""}`}
-									/>
-									{retryingId === id ? "Retrying…" : "Retry Validation"}
-								</button>
-								<button
-									type="button"
-									onClick={handleApprove}
-									disabled={approvingId === id}
-									className="btn-warning inline-flex items-center justify-center gap-1.5 min-h-[44px] w-full sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
-								>
-									{approvingId === id ? (
-										<RefreshCw className="h-4 w-4 animate-spin" />
-									) : (
-										<PlayCircle className="h-4 w-4" />
-									)}
-									{approvingId === id ? "Queuing…" : "Skip & Patch"}
-								</button>
+						<div className="rounded-lg bg-warning-50 dark:bg-warning-900/30 border border-warning-200 dark:border-warning-600 p-4 flex items-start gap-3">
+							<AlertTriangle className="h-5 w-5 text-warning-600 dark:text-warning-400 mt-0.5 flex-shrink-0" />
+							<div className="min-w-0">
+								<p className="text-sm font-medium text-warning-800 dark:text-warning-200">
+									Validation pending — host may be offline
+								</p>
+								<p className="text-xs text-warning-700 dark:text-warning-300 mt-0.5">
+									The dry-run has not completed. You can retry when the host is
+									back online, or skip validation to patch immediately.
+								</p>
 							</div>
 						</div>
 					)}
 
 					{run.status === "pending_approval" && (
-						<div className="rounded-lg bg-warning-50 dark:bg-warning-900/30 border border-warning-200 dark:border-warning-600 p-4 flex flex-col lg:flex-row lg:items-start gap-4">
-							<div className="flex items-start gap-3 flex-1 min-w-0">
-								<AlertTriangle className="h-5 w-5 text-warning-600 dark:text-warning-400 mt-0.5 flex-shrink-0" />
-								<div className="min-w-0">
-									<p className="text-sm font-medium text-warning-800 dark:text-warning-200">
-										Awaiting approval
-									</p>
-									<p className="text-xs text-warning-700 dark:text-warning-300 mt-0.5">
-										{run.patch_type === "patch_all"
-											? "This Patch All run was submitted for approval and hasn't been executed yet. Approve to queue it, or delete it from Runs & History."
-											: "This run was submitted for approval without a dry-run. Approve to queue it, or delete it from Runs & History."}
-									</p>
-								</div>
-							</div>
-							<div className="lg:flex-shrink-0">
-								<button
-									type="button"
-									onClick={handleApprove}
-									disabled={approvingId === id}
-									className="btn-primary inline-flex items-center justify-center gap-1.5 min-h-[44px] w-full sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
-								>
-									{approvingId === id ? (
-										<RefreshCw className="h-4 w-4 animate-spin" />
-									) : (
-										<PlayCircle className="h-4 w-4" />
-									)}
-									{approvingId === id ? "Queuing…" : "Approve & Patch"}
-								</button>
+						<div className="rounded-lg bg-warning-50 dark:bg-warning-900/30 border border-warning-200 dark:border-warning-600 p-4 flex items-start gap-3">
+							<AlertTriangle className="h-5 w-5 text-warning-600 dark:text-warning-400 mt-0.5 flex-shrink-0" />
+							<div className="min-w-0">
+								<p className="text-sm font-medium text-warning-800 dark:text-warning-200">
+									Awaiting approval
+								</p>
+								<p className="text-xs text-warning-700 dark:text-warning-300 mt-0.5">
+									{run.patch_type === "patch_all"
+										? "This Patch All run was submitted for approval and hasn't been executed yet. Approve to queue it, or delete it from Runs & History."
+										: "This run was submitted for approval without a dry-run. Approve to queue it, or delete it from Runs & History."}
+								</p>
 							</div>
 						</div>
 					)}
 
 					{run.status === "validated" && (
-						<div className="rounded-lg bg-warning-50 dark:bg-warning-900/30 border border-warning-200 dark:border-warning-600 p-4 flex flex-col lg:flex-row lg:items-start gap-4">
-							<div className="flex items-start gap-3 flex-1 min-w-0">
-								<AlertTriangle className="h-5 w-5 text-warning-600 dark:text-warning-400 mt-0.5 flex-shrink-0" />
-								<div className="min-w-0">
-									<p className="text-sm font-medium text-warning-800 dark:text-warning-200">
-										Validation complete — approval required
-									</p>
-									<p className="text-xs text-warning-700 dark:text-warning-300 mt-0.5">
-										{hasExtraDeps
-											? `This run will install ${run.packages_affected.length} packages including additional dependencies. Review the output and approve to proceed.`
-											: "Review the dry-run output and approve to proceed with patching."}
-									</p>
-								</div>
-							</div>
-							<div className="lg:flex-shrink-0">
-								<button
-									type="button"
-									onClick={handleApprove}
-									disabled={approvingId === id}
-									className="btn-primary inline-flex items-center justify-center gap-1.5 min-h-[44px] w-full sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
-								>
-									{approvingId === id ? (
-										<RefreshCw className="h-4 w-4 animate-spin" />
-									) : (
-										<PlayCircle className="h-4 w-4" />
-									)}
-									{approvingId === id ? "Approving…" : "Approve & Patch"}
-								</button>
+						<div className="rounded-lg bg-warning-50 dark:bg-warning-900/30 border border-warning-200 dark:border-warning-600 p-4 flex items-start gap-3">
+							<AlertTriangle className="h-5 w-5 text-warning-600 dark:text-warning-400 mt-0.5 flex-shrink-0" />
+							<div className="min-w-0">
+								<p className="text-sm font-medium text-warning-800 dark:text-warning-200">
+									Validation complete — approval required
+								</p>
+								<p className="text-xs text-warning-700 dark:text-warning-300 mt-0.5">
+									{hasExtraDeps
+										? `This run will install ${run.packages_affected.length} packages including additional dependencies. Review the output and approve to proceed.`
+										: "Review the dry-run output and approve to proceed with patching."}
+								</p>
 							</div>
 						</div>
 					)}

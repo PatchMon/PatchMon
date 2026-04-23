@@ -140,7 +140,7 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := h.patchRuns.UpdateOutput(r.Context(), patchRunID, body.Stage, body.Output, body.ErrorMessage); err != nil {
+	if err := h.patchRuns.UpdateOutput(r.Context(), patchRunID, host.OSType, body.Stage, body.Output, body.ErrorMessage); err != nil {
 		h.log.Error("patching: failed to update output", "patch_run_id", patchRunID, "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to save patch output"})
 		return

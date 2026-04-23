@@ -90,7 +90,10 @@ export const AuthProvider = ({ children }) => {
 
 	// Fetch the multi-context info (user + tenant.modules) from /me/context.
 	// Called on session validation and after login so module feature flags are
-	// available before any navigation renders.
+	// available before any navigation renders. Also exposed as
+	// `refetchTenantContext` so flows that change the tenant's plan (e.g. the
+	// Billing tier-change modal) can refresh module gating without requiring a
+	// full page reload.
 	const fetchTenantContext = useCallback(async (authToken) => {
 		try {
 			const fetchOptions = { credentials: "include" };
@@ -810,6 +813,11 @@ export const AuthProvider = ({ children }) => {
 		// Multi-context module feature flags
 		tenant,
 		hasModule,
+		// Refetch tenant.modules (and host/slug) without a full refetchUser.
+		// Call this after any flow that can change the tenant's plan (billing
+		// tier change, admin-side package swap) so ModuleGate and the nav
+		// locked badges update without a page reload.
+		refetchTenantContext: fetchTenantContext,
 	};
 
 	return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

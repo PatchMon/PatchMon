@@ -168,8 +168,7 @@ func (h *PatchingHandler) StopRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn := h.registry.GetConnection(host.ApiID)
-	if conn == nil {
+	if !h.registry.IsConnected(host.ApiID) {
 		JSON(w, http.StatusConflict, map[string]string{"error": "Agent is not currently connected"})
 		return
 	}
@@ -182,8 +181,11 @@ func (h *PatchingHandler) StopRun(w http.ResponseWriter, r *http.Request) {
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to encode stop message"})
 		return
 	}
-	if err := sendAgentMessage(conn, msg); err != nil {
-		h.log.Warn("patching: failed to send patch_run_stop to agent", "api_id", host.ApiID, "patch_run_id", patchRunID, "error", err)
+	// Serialised write with a bounded deadline that is reset automatically
+	// so we don't poison subsequent writers on this shared agent connection.
+	sendErr := h.registry.SendMessageWithTimeout(host.ApiID, websocket.TextMessage, msg, patchStreamWriteTimeout)
+	if sendErr != nil {
+		h.log.Warn("patching: failed to send patch_run_stop to agent", "api_id", host.ApiID, "patch_run_id", patchRunID, "error", sendErr)
 		JSON(w, http.StatusBadGateway, map[string]string{"error": "Failed to reach agent"})
 		return
 	}
@@ -197,13 +199,6 @@ func (h *PatchingHandler) StopRun(w http.ResponseWriter, r *http.Request) {
 func writeJSONWithDeadline(conn *websocket.Conn, v any) error {
 	_ = conn.SetWriteDeadline(time.Now().Add(patchStreamWriteTimeout))
 	return conn.WriteJSON(v)
-}
-
-// sendAgentMessage writes a single text frame to an agent WebSocket with a
-// bounded deadline. Callers should treat any error as "agent is unreachable".
-func sendAgentMessage(conn *websocket.Conn, msg []byte) error {
-	_ = conn.SetWriteDeadline(time.Now().Add(patchStreamWriteTimeout))
-	return conn.WriteMessage(websocket.TextMessage, msg)
 }
 
 // isTerminalPatchStatus reports whether a run has already reached a final state.

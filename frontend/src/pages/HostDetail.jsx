@@ -47,6 +47,9 @@ import { PatchRunStatusBadge } from "../components/PatchRunStatusBadge";
 import PatchWizard from "../components/PatchWizard";
 import RdpViewer from "../components/RdpViewer";
 import SshTerminal from "../components/SshTerminal";
+import TierBadge from "../components/TierBadge";
+import UpgradeRequiredContent from "../components/UpgradeRequiredContent";
+import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import {
@@ -2579,71 +2582,85 @@ const HostDetail = () => {
 								Reporting
 							</button>
 						)}
-						{integrationsData?.data?.integrations?.docker &&
-							hasModule("docker") && (
-								<button
-									type="button"
-									onClick={() => handleTabChange("docker")}
-									className={`px-4 py-2 text-sm font-medium ${
-										activeTab === "docker"
-											? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-											: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
-									}`}
-								>
-									Docker
-								</button>
-							)}
-						{hasModule("patching") && (
+						{/* Docker tab — only surfaced when the host has Docker installed.
+						    Tier-locked display (PLUS badge) kicks in if the tenant's
+						    plan doesn't include the docker module. */}
+						{integrationsData?.data?.integrations?.docker && (
 							<button
 								type="button"
-								onClick={() => handleTabChange("patching")}
-								className={`px-4 py-2 text-sm font-medium ${
-									activeTab === "patching"
+								onClick={() => handleTabChange("docker")}
+								className={`px-4 py-2 text-sm font-medium inline-flex items-center gap-2 ${
+									activeTab === "docker"
 										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
 										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 								}`}
 							>
-								Patching
+								Docker
+								{!hasModule("docker") && (
+									<TierBadge tier={getRequiredTier("docker")} />
+								)}
 							</button>
 						)}
-						{integrationsData?.data?.integrations?.compliance &&
-							hasModule("compliance") && (
-								<button
-									type="button"
-									onClick={() => handleTabChange("compliance")}
-									className={`px-4 py-2 text-sm font-medium ${
-										activeTab === "compliance"
-											? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-											: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
-									}`}
-								>
-									Compliance
-								</button>
+						<button
+							type="button"
+							onClick={() => handleTabChange("patching")}
+							className={`px-4 py-2 text-sm font-medium inline-flex items-center gap-2 ${
+								activeTab === "patching"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
+							}`}
+						>
+							Patching
+							{!hasModule("patching") && (
+								<TierBadge tier={getRequiredTier("patching")} />
 							)}
-						{hasModule("ssh_terminal") && (
+						</button>
+						{/* Compliance tab — only surfaced when the host has OpenSCAP
+						    installed. MAX badge shown when module is absent. */}
+						{integrationsData?.data?.integrations?.compliance && (
 							<button
 								type="button"
-								onClick={() => handleTabChange("terminal")}
-								className={`px-4 py-2 text-sm font-medium ${
-									activeTab === "terminal"
+								onClick={() => handleTabChange("compliance")}
+								className={`px-4 py-2 text-sm font-medium inline-flex items-center gap-2 ${
+									activeTab === "compliance"
 										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
 										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 								}`}
 							>
-								Terminal
+								Compliance
+								{!hasModule("compliance") && (
+									<TierBadge tier={getRequiredTier("compliance")} />
+								)}
 							</button>
 						)}
-						{isWindowsHost && hasModule("rdp") && (
+						<button
+							type="button"
+							onClick={() => handleTabChange("terminal")}
+							className={`px-4 py-2 text-sm font-medium inline-flex items-center gap-2 ${
+								activeTab === "terminal"
+									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
+							}`}
+						>
+							Terminal
+							{!hasModule("ssh_terminal") && (
+								<TierBadge tier={getRequiredTier("ssh_terminal")} />
+							)}
+						</button>
+						{isWindowsHost && (
 							<button
 								type="button"
 								onClick={() => handleTabChange("rdp")}
-								className={`px-4 py-2 text-sm font-medium ${
+								className={`px-4 py-2 text-sm font-medium inline-flex items-center gap-2 ${
 									activeTab === "rdp"
 										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
 										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 								}`}
 							>
 								RDP
+								{!hasModule("rdp") && (
+									<TierBadge tier={getRequiredTier("rdp")} />
+								)}
 							</button>
 						)}
 					</div>
@@ -3617,7 +3634,10 @@ const HostDetail = () => {
 						)}
 
 						{/* Terminal - Always mounted and open to preserve connection, hidden when not active.
-						    Gated by the ssh_terminal module (Max tier). */}
+						    Gated by the ssh_terminal module (Max tier). When the module
+						    isn't in the tenant's plan, render the upgrade content
+						    instead so the tab is discoverable rather than silently
+						    broken. Backend ticket endpoints still return 403. */}
 						{host && hasModule("ssh_terminal") && (
 							<div className={activeTab === "terminal" ? "" : "hidden"}>
 								<SshTerminal
@@ -3628,12 +3648,18 @@ const HostDetail = () => {
 								/>
 							</div>
 						)}
+						{activeTab === "terminal" && !hasModule("ssh_terminal") && (
+							<UpgradeRequiredContent module="ssh_terminal" variant="inline" />
+						)}
 
 						{/* RDP - Windows hosts only. Gated by the rdp module (Max tier). */}
 						{host && isWindowsHost && hasModule("rdp") && (
 							<div className={activeTab === "rdp" ? "" : "hidden"}>
 								<RdpViewer host={host} isOpen={activeTab === "rdp"} />
 							</div>
+						)}
+						{activeTab === "rdp" && isWindowsHost && !hasModule("rdp") && (
+							<UpgradeRequiredContent module="rdp" variant="inline" />
 						)}
 
 						{/* Notes */}
@@ -4326,7 +4352,10 @@ const HostDetail = () => {
 						)}
 
 						{/* Docker Tab */}
-						{activeTab === "docker" && (
+						{activeTab === "docker" && !hasModule("docker") && (
+							<UpgradeRequiredContent module="docker" variant="inline" />
+						)}
+						{activeTab === "docker" && hasModule("docker") && (
 							<div className="space-y-4">
 								{isLoadingDocker ? (
 									<div className="flex items-center justify-center h-32">
@@ -5020,7 +5049,10 @@ const HostDetail = () => {
 						)}
 
 						{/* Patching Tab */}
-						{activeTab === "patching" && (
+						{activeTab === "patching" && !hasModule("patching") && (
+							<UpgradeRequiredContent module="patching" variant="inline" />
+						)}
+						{activeTab === "patching" && hasModule("patching") && (
 							<div className="space-y-4">
 								<div className="flex flex-wrap items-center gap-3 mb-4">
 									<span className="text-sm text-secondary-600 dark:text-secondary-400">
@@ -5282,7 +5314,10 @@ const HostDetail = () => {
 						)}
 
 						{/* Compliance - same card styling as Agent queue tab */}
-						{activeTab === "compliance" && (
+						{activeTab === "compliance" && !hasModule("compliance") && (
+							<UpgradeRequiredContent module="compliance" variant="inline" />
+						)}
+						{activeTab === "compliance" && hasModule("compliance") && (
 							<div className="space-y-6">
 								<div className="flex items-center justify-between">
 									<h3 className="text-lg font-medium text-secondary-900 dark:text-white">

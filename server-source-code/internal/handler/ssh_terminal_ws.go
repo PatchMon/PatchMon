@@ -166,13 +166,10 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 		mu.Lock()
 		defer mu.Unlock()
 		if proxySessionID != "" {
-			agentConn := h.registry.GetConnection(host.ApiID)
-			if agentConn != nil {
-				_ = agentConn.WriteJSON(map[string]interface{}{
-					"type":       "ssh_proxy_disconnect",
-					"session_id": proxySessionID,
-				})
-			}
+			_ = h.registry.SendJSON(host.ApiID, map[string]interface{}{
+				"type":       "ssh_proxy_disconnect",
+				"session_id": proxySessionID,
+			})
 			h.proxySess.Delete(proxySessionID)
 			proxySessionID = ""
 		}
@@ -236,8 +233,7 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 					send(map[string]string{"type": "error", "message": "Agent not connected. Please ensure the agent is running and connected."})
 					continue
 				}
-				agentConn := h.registry.GetConnection(host.ApiID)
-				if agentConn == nil {
+				if !h.registry.IsConnected(host.ApiID) {
 					send(map[string]string{"type": "error", "message": "Agent WebSocket connection lost"})
 					continue
 				}
@@ -289,7 +285,7 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 						req["passphrase"] = msg.Passphrase
 					}
 				}
-				if err := agentConn.WriteJSON(req); err != nil {
+				if err := h.registry.SendJSON(host.ApiID, req); err != nil {
 					h.proxySess.Delete(proxySessionID)
 					proxySessionID = ""
 					send(map[string]string{"type": "error", "message": "Failed to send proxy request to agent"})
@@ -452,14 +448,11 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 			sid := sshStdin
 			mu.Unlock()
 			if pid != "" {
-				agentConn := h.registry.GetConnection(host.ApiID)
-				if agentConn != nil {
-					_ = agentConn.WriteJSON(map[string]interface{}{
-						"type":       "ssh_proxy_input",
-						"session_id": pid,
-						"data":       msg.Data,
-					})
-				}
+				_ = h.registry.SendJSON(host.ApiID, map[string]interface{}{
+					"type":       "ssh_proxy_input",
+					"session_id": pid,
+					"data":       msg.Data,
+				})
 			} else if sid != nil {
 				_, _ = sid.Write([]byte(msg.Data))
 			}
@@ -469,15 +462,12 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 			pid := proxySessionID
 			mu.Unlock()
 			if pid != "" {
-				agentConn := h.registry.GetConnection(host.ApiID)
-				if agentConn != nil {
-					_ = agentConn.WriteJSON(map[string]interface{}{
-						"type":       "ssh_proxy_resize",
-						"session_id": pid,
-						"cols":       orInt(msg.Cols, 80),
-						"rows":       orInt(msg.Rows, 24),
-					})
-				}
+				_ = h.registry.SendJSON(host.ApiID, map[string]interface{}{
+					"type":       "ssh_proxy_resize",
+					"session_id": pid,
+					"cols":       orInt(msg.Cols, 80),
+					"rows":       orInt(msg.Rows, 24),
+				})
 			}
 			// Direct mode: ssh session doesn't support resize after start easily; skip
 

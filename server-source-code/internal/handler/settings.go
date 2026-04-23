@@ -255,11 +255,13 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 			showGithubVersionFallback = false
 		}
 		showNewsletter := h.cfg == nil || !h.cfg.AdminMode
+		adminMode := h.cfg != nil && h.cfg.AdminMode
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"signup_enabled":               false,
 			"show_github_version_on_login": showGithubVersionFallback,
 			"current_version":              currentVersion,
 			"show_newsletter":              showNewsletter,
+			"admin_mode":                   adminMode,
 			"discord": map[string]interface{}{
 				"enabled":    false,
 				"buttonText": "Login with Discord",
@@ -301,6 +303,7 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 	}
 
 	showNewsletter := h.cfg == nil || !h.cfg.AdminMode
+	adminMode := h.cfg != nil && h.cfg.AdminMode
 	signupEnabled := s.SignupEnabled
 	if h.cfg != nil && h.cfg.AdminMode {
 		signupEnabled = false
@@ -310,6 +313,7 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 		"show_github_version_on_login": showGithubVersion,
 		"current_version":              currentVersion,
 		"show_newsletter":              showNewsletter,
+		"admin_mode":                   adminMode,
 		"discord": map[string]interface{}{
 			"enabled":    h.isDiscordProperlyConfigured(s),
 			"buttonText": discordButtonText,
@@ -678,13 +682,10 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		pushed := 0
 		for _, apiID := range h.registry.GetConnectedApiIDs() {
-			conn := h.registry.GetConnection(apiID)
-			if conn != nil {
-				if err := conn.WriteJSON(msg); err != nil {
-					slog.Warn("failed to push settings_update to agent", "api_id", apiID, "error", err)
-				} else {
-					pushed++
-				}
+			if err := h.registry.SendJSON(apiID, msg); err != nil {
+				slog.Warn("failed to push settings_update to agent", "api_id", apiID, "error", err)
+			} else {
+				pushed++
 			}
 		}
 		if pushed > 0 {

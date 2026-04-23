@@ -84,8 +84,7 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 		})
 	}
 
-	conn := h.registry.GetConnection(p.ApiID)
-	if conn == nil {
+	if !h.registry.IsConnected(p.ApiID) {
 		if h.integrationStatus != nil && h.integrationStatus.IsComplianceScanCancelled(ctx, p.HostID) {
 			h.log.Info("run_scan: cancelled, not re-queuing", "api_id", p.ApiID, "host_id", p.HostID)
 			if taskID != "" && d != nil {
@@ -161,7 +160,7 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if profileID != "" {
 		msg["profile_id"] = profileID
 	}
-	if err := conn.WriteJSON(msg); err != nil {
+	if err := h.registry.SendJSON(p.ApiID, msg); err != nil {
 		if h.integrationStatus != nil && h.integrationStatus.IsComplianceScanCancelled(ctx, p.HostID) {
 			h.log.Info("run_scan: cancelled after write failed", "api_id", p.ApiID, "host_id", p.HostID)
 			if taskID != "" && d != nil {
@@ -271,8 +270,7 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 		})
 	}
 
-	conn := h.registry.GetConnection(p.ApiID)
-	if conn == nil {
+	if !h.registry.IsConnected(p.ApiID) {
 		msg := "Agent is not connected. Cannot run install."
 		if taskID != "" && h.db != nil {
 			_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
@@ -282,7 +280,7 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	}
 
 	msg := map[string]interface{}{"type": "install_scanner"}
-	if err := conn.WriteJSON(msg); err != nil {
+	if err := h.registry.SendJSON(p.ApiID, msg); err != nil {
 		errMsg := "Failed to send install_scanner command to agent"
 		if taskID != "" && h.db != nil {
 			_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})

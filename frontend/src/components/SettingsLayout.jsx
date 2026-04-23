@@ -18,9 +18,11 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
 import { useSettings } from "../contexts/SettingsContext";
 import DiscordIcon from "./DiscordIcon";
+import TierBadge from "./TierBadge";
 
 const SettingsLayout = ({ children }) => {
 	const content = children ?? <Outlet />;
@@ -45,12 +47,17 @@ const SettingsLayout = ({ children }) => {
 			];
 			// Custom RBAC roles management is a Plus-tier feature (rbac_custom).
 			// Built-in admin/viewer roles stay available in every tier, but the
-			// dedicated "Roles" editor manages custom role CRUD.
-			if (hasModule("rbac_custom")) {
+			// dedicated "Roles" editor manages custom role CRUD. Locked items
+			// stay visible with a TierBadge for discovery; the route renders
+			// an upgrade screen via <ModuleGate>.
+			{
+				const locked = !hasModule("rbac_custom");
 				userItems.push({
 					name: "Roles",
 					href: "/settings/roles",
 					icon: Shield,
+					lockedModule: locked ? "rbac_custom" : null,
+					lockedTier: locked ? getRequiredTier("rbac_custom") : null,
 				});
 			}
 			userItems.push({
@@ -116,11 +123,14 @@ const SettingsLayout = ({ children }) => {
 					icon: Wrench,
 				},
 			];
-			if (hasModule("ai")) {
+			{
+				const locked = !hasModule("ai");
 				integrationsItems.push({
 					name: "AI Terminal",
 					href: "/settings/ai-terminal",
 					icon: Bot,
+					lockedModule: locked ? "ai" : null,
+					lockedTier: locked ? getRequiredTier("ai") : null,
 				});
 			}
 			nav.push({
@@ -145,11 +155,14 @@ const SettingsLayout = ({ children }) => {
 			});
 			// Custom branding (logo/favicon upload) is a Plus-tier feature
 			// (module key "custom_branding").
-			if (hasModule("custom_branding")) {
+			{
+				const locked = !hasModule("custom_branding");
 				serverItems.push({
 					name: "Branding",
 					href: "/settings/branding",
 					icon: Image,
+					lockedModule: locked ? "custom_branding" : null,
+					lockedTier: locked ? getRequiredTier("custom_branding") : null,
 				});
 			}
 			if (!isAdminMode) {
@@ -228,6 +241,7 @@ const SettingsLayout = ({ children }) => {
 							{allNavItems.map((item) => (
 								<option key={item.href} value={item.href}>
 									{item.section} - {item.name}
+									{item.lockedTier ? ` (${item.lockedTier.toUpperCase()})` : ""}
 								</option>
 							))}
 						</select>
@@ -297,6 +311,9 @@ const SettingsLayout = ({ children }) => {
 																			<span className="text-xs bg-secondary-100 text-secondary-600 px-1.5 py-0.5 rounded">
 																				Soon
 																			</span>
+																		)}
+																		{subItem.lockedTier && (
+																			<TierBadge tier={subItem.lockedTier} />
 																		)}
 																	</span>
 																)}

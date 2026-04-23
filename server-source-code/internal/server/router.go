@@ -196,7 +196,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	var rdpHandler *handler.RDPHandler
 	if rdb != nil && cfg.GuacdAddress != "" {
 		rdpTicketStore := store.NewRDPTicketStore(redisResolver, enc)
-		rdpSessions := rdpproxy.NewSessions(log)
+		rdpSessions := rdpproxy.NewSessions(log, registry)
 		rdpHandler = handler.NewRDPHandler(
 			rdpTicketStore, rdpSessions, hostsStore, usersStore, permissionsStore,
 			registry, cfg.GuacdAddress, resolved.CORSOrigin, log, dbProvider, notifyEmit,
@@ -279,6 +279,10 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		if ctxRegistry != nil && cfg.RegistryReloadSecret != "" {
 			r.Post("/internal/reload-registry-map", hostctx.RegistryReloadHandler(ctxRegistry, cfg.RegistryReloadSecret))
 		}
+		// Note: /api/v1/internal/migrate-tenant is intentionally registered
+		// at the router root (above) rather than inside this /api/v1 group,
+		// because the group's 30s chimw.Timeout would defeat the handler's
+		// 10-minute migration bound.
 		// OpenAPI spec (public, for Swagger UI and tooling)
 		r.Get("/openapi.json", swagger.ServeSpec)
 

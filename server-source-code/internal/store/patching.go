@@ -22,7 +22,15 @@ const freeBSDBasePackageName = "freebsd-base"
 var freeBSDPkgSummaryLinePattern = regexp.MustCompile(`^\s+(\S+):\s+`)
 var freeBSDPkgActionLinePattern = regexp.MustCompile(`^\[\d+/\d+\]\s+(?:Installing|Upgrading|Reinstalling)\s+(\S+)`)
 
-func parsePackagesAffectedFromDryRunOutput(output string) []string {
+// isFreeBSD reports whether the host OS type represents FreeBSD. The synthetic
+// "freebsd-base" package must only be emitted for FreeBSD hosts; otherwise
+// generic phrases like "will be installed" from apt/dnf/yum/pkg output would
+// trigger false positives on Linux.
+func isFreeBSD(osType string) bool {
+	return strings.EqualFold(strings.TrimSpace(osType), "freebsd")
+}
+
+func parsePackagesAffectedFromDryRunOutput(osType, output string) []string {
 	var pkgs []string
 	seen := make(map[string]bool)
 	addPkg := func(name string) {
@@ -34,7 +42,7 @@ func parsePackagesAffectedFromDryRunOutput(output string) []string {
 		pkgs = append(pkgs, name)
 	}
 
-	if freeBSDUpdateOutputHasPendingUpdates(output) {
+	if isFreeBSD(osType) && freeBSDUpdateOutputHasPendingUpdates(output) {
 		addPkg(freeBSDBasePackageName)
 	}
 
@@ -83,8 +91,8 @@ func parsePackagesAffectedFromDryRunOutput(output string) []string {
 //   - apt-get (simulate): "Inst pkgname" lines (fallback, same as dry-run parser)
 //   - dnf/yum: "Upgrading  : pkgname.arch" / "Installing : pkgname.arch" or transaction summary sections
 //   - FreeBSD pkg: transaction summary lines and "[1/3] Upgrading pkgname ..." execution lines
-//   - freebsd-update: base-system updates are recorded as the synthetic "freebsd-base" package
-func parsePackagesAffectedFromRealOutput(output string) []string {
+//   - freebsd-update: base-system updates are recorded as the synthetic "freebsd-base" package (FreeBSD hosts only)
+func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 	seen := make(map[string]bool)
 	var pkgs []string
 	addPkg := func(name string) {
@@ -98,7 +106,7 @@ func parsePackagesAffectedFromRealOutput(output string) []string {
 		}
 	}
 
-	if freeBSDUpdateOutputHasPendingUpdates(output) {
+	if isFreeBSD(osType) && freeBSDUpdateOutputHasPendingUpdates(output) {
 		addPkg(freeBSDBasePackageName)
 	}
 
@@ -302,13 +310,17 @@ func (s *PatchRunsStore) GetByID(ctx context.Context, id string) (*db.GetPatchRu
 // UpdateOutput updates patch run based on agent stage.
 // Valid stages: started, progress, completed, failed, dry_run_completed, cancelled.
 //
+// osType is the host's OS type (e.g. "ubuntu", "freebsd"). It gates the
+// synthetic "freebsd-base" package emission so that only FreeBSD hosts can
+// ever produce a "freebsd-base" entry in packages_affected.
+//
 // Semantics:
 //   - "started" clears any prior output and flips status=running
 //   - "progress" APPENDS the chunk to shell_output (live streaming)
 //   - Terminal stages (completed, failed, cancelled, dry_run_completed) REPLACE
 //     shell_output with the authoritative full output from the agent. This
 //     avoids duplication of progress chunks already appended during the run.
-func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, stage, output, errorMessage string) error {
+func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, osType, stage, output, errorMessage string) error {
 	d := s.db.DB(ctx)
 	switch stage {
 	case "started":
@@ -325,13 +337,13 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, stage, output, er
 		// Parse packages_affected from real run output for visibility.
 		// Uses a multi-format parser covering apt "Unpacking"/"Setting up" lines
 		// and dnf/yum "Upgrading:"/"Installing:" lines.
-		if pkgs := parsePackagesAffectedFromRealOutput(output); len(pkgs) > 0 {
+		if pkgs := parsePackagesAffectedFromRealOutput(osType, output); len(pkgs) > 0 {
 			b, _ := json.Marshal(pkgs)
 			_ = d.Queries.UpdatePatchRunPackagesAffected(ctx, db.UpdatePatchRunPackagesAffectedParams{ID: id, PackagesAffected: b})
 		}
 		return nil
 	case "dry_run_completed":
-		pkgs := parsePackagesAffectedFromDryRunOutput(output)
+		pkgs := parsePackagesAffectedFromDryRunOutput(osType, output)
 		var b []byte
 		if len(pkgs) > 0 {
 			b, _ = json.Marshal(pkgs)
@@ -357,7 +369,7 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, stage, output, er
 		}
 		// Record packages that were actually applied before the stop so the
 		// UI can still show partial state on a cancelled run.
-		if pkgs := parsePackagesAffectedFromRealOutput(output); len(pkgs) > 0 {
+		if pkgs := parsePackagesAffectedFromRealOutput(osType, output); len(pkgs) > 0 {
 			b, _ := json.Marshal(pkgs)
 			_ = d.Queries.UpdatePatchRunPackagesAffected(ctx, db.UpdatePatchRunPackagesAffectedParams{ID: id, PackagesAffected: b})
 		}

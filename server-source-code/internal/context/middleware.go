@@ -138,3 +138,27 @@ func ReloadHandler(poolCache *PoolCache, redisCache *RedisCache, reloadSecret st
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}
 }
+
+// Historical note: a /api/v1/internal/migrate-tenant handler lived here
+// until the legacy-import control plane was redrawn. It let the manager
+// force a tenant DB through migrate.Run synchronously after a pg_restore
+// so schema failures would surface in the import wizard instead of on
+// first-user-login.
+//
+// That endpoint has been removed deliberately:
+//
+//   - Schema migrations are already run lazily by the per-host mutex in
+//     PoolCache.GetOrCreate (see pool_cache.go) on the first real
+//     request to a tenant. For a legacy import that means the
+//     provisioner finishes pg_restore, flips the tenant to `active`,
+//     and the first HTTP request to the tenant host lazy-migrates via
+//     the normal middleware path.
+//   - The old synchronous handler existed *only* for wizard-UI visibility
+//     and had no business logic of its own. Its removal lets the manager
+//     stop talking to this server directly — the manager now only
+//     speaks to each region's provisioner, which is the architectural
+//     boundary we actually want.
+//
+// If synchronous visibility ever becomes a product need again, the
+// right place for it is a passthrough on the provisioner, not a second
+// internal route on this server.

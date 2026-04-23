@@ -29,6 +29,9 @@ import {
 	DeliveryByDestination,
 	RecentAlerts,
 } from "../components/alerting/widgets";
+import TierBadge from "../components/TierBadge";
+import UpgradeRequiredContent from "../components/UpgradeRequiredContent";
+import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import {
@@ -54,7 +57,8 @@ const VALID_TABS = new Set([
 ]);
 
 const Reporting = () => {
-	const { user: _user } = useAuth();
+	const { user: _user, hasModule } = useAuth();
+	const alertLifecycleLocked = !hasModule("alerts_advanced");
 	const queryClient = useQueryClient();
 	const toast = useToast();
 	const [searchParams] = useSearchParams();
@@ -792,21 +796,28 @@ const Reporting = () => {
 					className="-mb-px flex space-x-4 sm:space-x-8 px-4"
 					aria-label="Tabs"
 				>
-					{tabs.map((tab) => (
-						<button
-							type="button"
-							key={tab.id}
-							onClick={() => setActiveTab(tab.id)}
-							className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${
-								activeTab === tab.id
-									? "border-blue-500 text-blue-600 dark:text-blue-400"
-									: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-primary-400"
-							}`}
-						>
-							<tab.icon className="h-4 w-4" />
-							{tab.name}
-						</button>
-					))}
+					{tabs.map((tab) => {
+						const isAlertLifecycleLocked =
+							tab.id === "alert-settings" && alertLifecycleLocked;
+						return (
+							<button
+								type="button"
+								key={tab.id}
+								onClick={() => setActiveTab(tab.id)}
+								className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${
+									activeTab === tab.id
+										? "border-blue-500 text-blue-600 dark:text-blue-400"
+										: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-primary-400"
+								}`}
+							>
+								<tab.icon className="h-4 w-4" />
+								<span>{tab.name}</span>
+								{isAlertLifecycleLocked && (
+									<TierBadge tier={getRequiredTier("alerts_advanced")} />
+								)}
+							</button>
+						);
+					})}
 				</nav>
 			</div>
 
@@ -1255,7 +1266,12 @@ const Reporting = () => {
 			)}
 
 			{/* Alert Settings Tab */}
-			{activeTab === "alert-settings" && <AlertSettings />}
+			{activeTab === "alert-settings" &&
+				(alertLifecycleLocked ? (
+					<UpgradeRequiredContent module="alerts_advanced" variant="inline" />
+				) : (
+					<AlertSettings />
+				))}
 
 			{/* Destinations Tab */}
 			{activeTab === "destinations" && (

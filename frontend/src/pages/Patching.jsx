@@ -42,7 +42,11 @@ import {
 	PatchRunStatusBoxes,
 	PatchRunsByType,
 } from "../components/patching/widgets";
+import TierBadge from "../components/TierBadge";
 import { TimezoneSelect } from "../components/TimezoneSelect";
+import UpgradeRequiredContent from "../components/UpgradeRequiredContent";
+import { getRequiredTier } from "../constants/tiers";
+import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { adminHostsAPI, formatDate, hostGroupsAPI } from "../utils/api";
 import { patchingAPI } from "../utils/patchingApi";
@@ -64,6 +68,8 @@ const Patching = () => {
 	const [searchParams] = useSearchParams();
 	const location = useLocation();
 	const navigate = useNavigate();
+	const { hasModule } = useAuth();
+	const policiesLocked = !hasModule("patching_policies");
 	const urlTab = searchParams.get("tab");
 	const initialTab = ["runs", "policies"].includes(urlTab)
 		? urlTab
@@ -436,6 +442,7 @@ const Patching = () => {
 				>
 					{PATCHING_TABS.map((tab) => {
 						const Icon = tab.icon;
+						const isPoliciesLocked = tab.id === "policies" && policiesLocked;
 						return (
 							<button
 								key={tab.id}
@@ -445,10 +452,13 @@ const Patching = () => {
 									activeTab === tab.id
 										? "border-primary-500 text-primary-600 dark:text-primary-400"
 										: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-primary-400"
-								} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
+								} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
 							>
-								<Icon className="h-4 w-4 mr-2" />
-								{tab.label}
+								<Icon className="h-4 w-4" />
+								<span>{tab.label}</span>
+								{isPoliciesLocked && (
+									<TierBadge tier={getRequiredTier("patching_policies")} />
+								)}
 							</button>
 						);
 					})}
@@ -504,7 +514,12 @@ const Patching = () => {
 					setBulkApproveResult={setBulkApproveResult}
 				/>
 			)}
-			{activeTab === "policies" && <PoliciesTab />}
+			{activeTab === "policies" &&
+				(policiesLocked ? (
+					<UpgradeRequiredContent module="patching_policies" variant="inline" />
+				) : (
+					<PoliciesTab />
+				))}
 
 			{/* Flow 7: Approve wizard - single-row Approve/Skip & Patch and
 			    bulk Approve selected both route through here. Step 3 only

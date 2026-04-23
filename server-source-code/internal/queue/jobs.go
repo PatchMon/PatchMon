@@ -13,6 +13,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 	"github.com/hibiken/asynq"
 )
 
@@ -379,8 +380,7 @@ func (h *ReportNowHandler) ProcessTask(ctx context.Context, t *asynq.Task) error
 		})
 	}
 
-	conn := h.registry.GetConnection(p.ApiID)
-	if conn == nil {
+	if !h.registry.IsConnected(p.ApiID) {
 		h.log.Warn("report_now: agent not connected", "api_id", p.ApiID)
 		if taskID != "" && h.db != nil {
 			msg := "Agent not connected"
@@ -389,7 +389,7 @@ func (h *ReportNowHandler) ProcessTask(ctx context.Context, t *asynq.Task) error
 		return nil // Don't retry - agent may connect later, user can retry
 	}
 	msg := []byte(`{"type":"report_now"}`)
-	if err := conn.WriteMessage(1, msg); err != nil {
+	if err := h.registry.SendMessage(p.ApiID, websocket.TextMessage, msg); err != nil {
 		h.log.Warn("report_now: write failed", "api_id", p.ApiID, "error", err)
 		return err // Retry on write failure - don't update job_history yet
 	}
@@ -428,8 +428,7 @@ func sendAgentCommand(ctx context.Context, h *ReportNowHandler, p ReportNowPaylo
 		})
 	}
 
-	conn := h.registry.GetConnection(p.ApiID)
-	if conn == nil {
+	if !h.registry.IsConnected(p.ApiID) {
 		h.log.Warn(msgType+": agent not connected", "api_id", p.ApiID)
 		if taskID != "" && h.db != nil {
 			msg := "Agent not connected"
@@ -438,7 +437,7 @@ func sendAgentCommand(ctx context.Context, h *ReportNowHandler, p ReportNowPaylo
 		return nil
 	}
 	msg := []byte(`{"type":"` + msgType + `"}`)
-	if err := conn.WriteMessage(1, msg); err != nil {
+	if err := h.registry.SendMessage(p.ApiID, websocket.TextMessage, msg); err != nil {
 		h.log.Warn(msgType+": write failed", "api_id", p.ApiID, "error", err)
 		return err
 	}
@@ -560,8 +559,7 @@ func (h *UpdateAgentHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 		}
 	}
 
-	conn := h.registry.GetConnection(p.ApiID)
-	if conn == nil {
+	if !h.registry.IsConnected(p.ApiID) {
 		h.log.Warn("update_agent: agent not connected", "api_id", p.ApiID)
 		if taskID != "" && h.db != nil {
 			msg := "Agent not connected"
@@ -570,7 +568,7 @@ func (h *UpdateAgentHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 		return nil
 	}
 	msg := []byte(`{"type":"update_agent"}`)
-	if err := conn.WriteMessage(1, msg); err != nil {
+	if err := h.registry.SendMessage(p.ApiID, websocket.TextMessage, msg); err != nil {
 		h.log.Warn("update_agent: write failed", "api_id", p.ApiID, "error", err)
 		return err
 	}
@@ -610,8 +608,7 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 		}
 	}
 
-	conn := h.registry.GetConnection(p.ApiID)
-	if conn == nil {
+	if !h.registry.IsConnected(p.ApiID) {
 		// Check if the patch run still exists in the DB (user may have deleted it).
 		run, runErr := h.patchRuns.GetByID(ctx, p.PatchRunID)
 		if runErr != nil || run == nil {
@@ -667,7 +664,7 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 	if err != nil {
 		return err
 	}
-	if err := conn.WriteMessage(1, msg); err != nil {
+	if err := h.registry.SendMessage(p.ApiID, websocket.TextMessage, msg); err != nil {
 		h.log.Warn("run_patch: write failed", "api_id", p.ApiID, "error", err)
 		return err
 	}

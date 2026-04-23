@@ -12,8 +12,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 const (
@@ -26,22 +24,48 @@ const (
 // ErrMaxSessionsReached is returned when the concurrent session limit is exceeded.
 var ErrMaxSessionsReached = errors.New("maximum concurrent RDP sessions reached")
 
+// ErrAgentTimeout is returned when the agent does not respond to the RDP proxy
+// request in time (neither rdp_proxy_connected nor rdp_proxy_error arrives).
+var ErrAgentTimeout = errors.New("agent did not respond to RDP proxy request in time")
+
+// ErrSessionNotFound is returned when a session ID does not resolve to a live session.
+var ErrSessionNotFound = errors.New("rdp proxy session not found")
+
+// AgentSender is the subset of the agent registry used for writes. The registry
+// serialises writes per-agent behind a mutex so concurrent sessions sharing the
+// same WebSocket do not corrupt frames. Injected via NewSessions so rdpproxy
+// stays decoupled from the concrete registry type.
+type AgentSender interface {
+	SendJSON(apiID string, v any) error
+}
+
+// AgentResult carries the outcome of the initial agent handshake.
+// On success Connected=true. On failure Connected=false and ErrorMsg holds the
+// agent-supplied message (e.g. "rdp-proxy-enabled: true" hint, dial failure).
+type AgentResult struct {
+	Connected bool
+	ErrorMsg  string
+}
+
 // Session holds an RDP proxy session: TCP listener bridged to agent WebSocket stream.
 type Session struct {
 	SessionID     string
 	Port          int
 	Listener      net.Listener
-	agentConn     *websocket.Conn
 	ApiID         string
 	HostID        string
 	guacdConn     net.Conn
 	mu            sync.Mutex
-	writeMu       sync.Mutex
 	lastActivity  atomic.Int64 // unix nano timestamp of last data activity
 	cancel        context.CancelFunc
 	log           *slog.Logger
+	sender        AgentSender
 	removeFromMap func()
 	cleanupOnce   sync.Once
+	// agentReady delivers the initial agent handshake result exactly once.
+	// Buffer of 1 so a signal never blocks even if nobody is waiting yet.
+	agentReady chan AgentResult
+	readyOnce  sync.Once
 }
 
 // Sessions manages RDP proxy sessions.
@@ -49,14 +73,16 @@ type Sessions struct {
 	mu          sync.RWMutex
 	sessions    map[string]*Session
 	log         *slog.Logger
+	sender      AgentSender
 	maxSessions int
 }
 
-// NewSessions creates a new session store.
-func NewSessions(log *slog.Logger) *Sessions {
+// NewSessions creates a new session store. sender must not be nil.
+func NewSessions(log *slog.Logger, sender AgentSender) *Sessions {
 	return &Sessions{
 		sessions:    make(map[string]*Session),
 		log:         log,
+		sender:      sender,
 		maxSessions: DefaultMaxSessions,
 	}
 }
@@ -68,10 +94,10 @@ func (s *Sessions) SetMaxSessions(max int) {
 	s.mu.Unlock()
 }
 
-// Create creates a new RDP proxy session. It starts a TCP listener and returns the session ID and port.
-// The caller must send rdp_proxy to the agent via SendToAgentConn. Session is ready when guacd connects.
-// Returns ErrMaxSessionsReached if the concurrent session limit is exceeded.
-func (s *Sessions) Create(ctx context.Context, agentConn *websocket.Conn, apiID, hostID string) (sessionID string, port int, err error) {
+// Create creates a new RDP proxy session. It starts a TCP listener and returns
+// the session ID and port. Callers send rdp_proxy to the agent via SendToAgent.
+// Session is ready once the agent confirms (WaitAgentReady).
+func (s *Sessions) Create(ctx context.Context, apiID, hostID string) (sessionID string, port int, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -95,14 +121,15 @@ func (s *Sessions) Create(ctx context.Context, agentConn *websocket.Conn, apiID,
 	sessCtx, cancel := context.WithCancel(context.Background())
 	sid := sessionID // capture for closure
 	sess := &Session{
-		SessionID: sessionID,
-		Port:      port,
-		Listener:  listener,
-		agentConn: agentConn,
-		ApiID:     apiID,
-		HostID:    hostID,
-		cancel:    cancel,
-		log:       s.log,
+		SessionID:  sessionID,
+		Port:       port,
+		Listener:   listener,
+		ApiID:      apiID,
+		HostID:     hostID,
+		cancel:     cancel,
+		log:        s.log,
+		sender:     s.sender,
+		agentReady: make(chan AgentResult, 1),
 		removeFromMap: func() {
 			s.mu.Lock()
 			delete(s.sessions, sid)
@@ -123,18 +150,16 @@ func (s *Sessions) Create(ctx context.Context, agentConn *websocket.Conn, apiID,
 	return sessionID, port, nil
 }
 
-// SendToAgentConn sends a message to the agent connection for the given session,
-// using the session's write mutex to prevent concurrent WebSocket writes.
-func (s *Sessions) SendToAgentConn(sessionID string, msg any) error {
+// SendToAgent sends a message to the agent owning the named session. Writes
+// are serialised by the registry's per-agent write mutex.
+func (s *Sessions) SendToAgent(sessionID string, msg any) error {
 	s.mu.RLock()
 	sess, ok := s.sessions[sessionID]
 	s.mu.RUnlock()
 	if !ok {
 		return errors.New("session not found")
 	}
-	sess.writeMu.Lock()
-	defer sess.writeMu.Unlock()
-	return sess.agentConn.WriteJSON(msg)
+	return sess.sender.SendJSON(sess.ApiID, msg)
 }
 
 func (s *Session) acceptLoop(ctx context.Context) {
@@ -213,12 +238,6 @@ func (s *Session) bridgeAgentToGuacd(data string) {
 }
 
 func (s *Session) sendToAgent(msgType string, data string) error {
-	s.mu.Lock()
-	conn := s.agentConn
-	s.mu.Unlock()
-	if conn == nil {
-		return errors.New("agent connection is nil")
-	}
 	msg := map[string]interface{}{
 		"type":       msgType,
 		"session_id": s.SessionID,
@@ -226,10 +245,7 @@ func (s *Session) sendToAgent(msgType string, data string) error {
 	if data != "" {
 		msg["data"] = data
 	}
-	s.writeMu.Lock()
-	err := conn.WriteJSON(msg)
-	s.writeMu.Unlock()
-	return err
+	return s.sender.SendJSON(s.ApiID, msg)
 }
 
 // touchActivity updates the last activity timestamp.
@@ -292,21 +308,91 @@ func (s *Sessions) OnAgentData(apiID string, sessionID string, data string) {
 	sess.bridgeAgentToGuacd(data)
 }
 
-// OnAgentConnected is called when the agent sends rdp_proxy_connected. No-op for now; session is ready.
+// signalAgentReady records the first handshake result. Subsequent calls are
+// ignored — agent messages after the initial handshake are part of the stream,
+// not the readiness signal.
+func (s *Session) signalAgentReady(r AgentResult) {
+	s.readyOnce.Do(func() {
+		select {
+		case s.agentReady <- r:
+		default:
+		}
+	})
+}
+
+// WaitReady blocks up to timeout for the initial agent handshake. Returns
+// ErrAgentTimeout if nothing arrives, or the request context error if cancelled.
+func (s *Session) WaitReady(ctx context.Context, timeout time.Duration) (AgentResult, error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case r := <-s.agentReady:
+		return r, nil
+	case <-timer.C:
+		return AgentResult{}, ErrAgentTimeout
+	case <-ctx.Done():
+		return AgentResult{}, ctx.Err()
+	}
+}
+
+// OnAgentConnected is called when the agent sends rdp_proxy_connected.
+// Signals the handshake channel so ServeCreateTicket can proceed.
 func (s *Sessions) OnAgentConnected(apiID string, sessionID string) {
+	s.mu.RLock()
+	sess, ok := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if !ok || sess.ApiID != apiID {
+		return
+	}
+	sess.signalAgentReady(AgentResult{Connected: true})
 	if s.log != nil {
 		s.log.Debug("rdp proxy agent connected", "session_id", sessionID, "api_id", apiID)
 	}
 }
 
-// OnAgentClosed is called when the agent sends rdp_proxy_closed or rdp_proxy_error.
+// OnAgentError is called when the agent sends rdp_proxy_error. The agent's
+// human-readable message is preserved so the API layer can surface it to the
+// client (e.g. "enable rdp-proxy-enabled: true", "Failed to connect to 3389").
+func (s *Sessions) OnAgentError(apiID string, sessionID string, message string) {
+	s.mu.RLock()
+	sess, ok := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if !ok || sess.ApiID != apiID {
+		return
+	}
+	sess.signalAgentReady(AgentResult{Connected: false, ErrorMsg: message})
+	if s.log != nil {
+		s.log.Info("rdp proxy agent error", "session_id", sessionID, "api_id", apiID, "message", message)
+	}
+	sess.cleanup()
+}
+
+// OnAgentClosed is called when the agent sends rdp_proxy_closed. Two cases:
+//   - Handshake never completed: the signal unblocks ServeCreateTicket with a
+//     failure. The "Agent closed..." text is only ever surfaced here.
+//   - Handshake already completed: readyOnce drops the failure signal (the
+//     stored result stays Connected=true); cleanup still runs to close the
+//     TCP bridge. This is the normal end-of-session path.
 func (s *Sessions) OnAgentClosed(apiID string, sessionID string) {
 	s.mu.RLock()
 	sess, ok := s.sessions[sessionID]
 	s.mu.RUnlock()
-	if ok && sess.ApiID == apiID {
-		sess.cleanup()
+	if !ok || sess.ApiID != apiID {
+		return
 	}
+	sess.signalAgentReady(AgentResult{Connected: false, ErrorMsg: "Agent closed the RDP proxy connection"})
+	sess.cleanup()
+}
+
+// WaitAgentReady waits for the initial handshake on the named session.
+func (s *Sessions) WaitAgentReady(ctx context.Context, sessionID string, timeout time.Duration) (AgentResult, error) {
+	s.mu.RLock()
+	sess, ok := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if !ok {
+		return AgentResult{}, ErrSessionNotFound
+	}
+	return sess.WaitReady(ctx, timeout)
 }
 
 // Get returns the session and port for a session ID. Used by DoConnect to get proxy port.
@@ -330,22 +416,18 @@ func (s *Sessions) Delete(sessionID string) {
 	}
 }
 
-// SendDisconnect tells the agent to disconnect the RDP proxy.
-// If the session is already removed, the write is skipped; the agent will
-// clean up via its own timeout.
-func (s *Sessions) SendDisconnect(agentConn *websocket.Conn, sessionID string) {
+// SendDisconnect tells the agent to disconnect the RDP proxy. Writes go
+// through the registry's per-agent mutex. If the session is already gone
+// the call becomes a no-op.
+func (s *Sessions) SendDisconnect(sessionID string) {
 	s.mu.RLock()
 	sess, ok := s.sessions[sessionID]
 	s.mu.RUnlock()
 	if !ok {
 		return
 	}
-
-	msg := map[string]interface{}{
+	_ = sess.sender.SendJSON(sess.ApiID, map[string]interface{}{
 		"type":       "rdp_proxy_disconnect",
 		"session_id": sessionID,
-	}
-	sess.writeMu.Lock()
-	_ = agentConn.WriteJSON(msg)
-	sess.writeMu.Unlock()
+	})
 }

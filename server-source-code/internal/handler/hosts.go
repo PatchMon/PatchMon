@@ -789,7 +789,7 @@ func (h *HostsHandler) GetIntegrations(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusNotFound, "Host not found")
 		return
 	}
-	connected := h.registry != nil && h.registry.GetConnection(host.ApiID) != nil
+	connected := h.registry != nil && h.registry.IsConnected(host.ApiID)
 
 	// Merge pending config with host for effective display values
 	dockerEnabled := host.DockerEnabled
@@ -1138,8 +1138,7 @@ func (h *HostsHandler) ApplyPendingConfig(w http.ResponseWriter, r *http.Request
 		Error(w, http.StatusNotFound, "Host not found")
 		return
 	}
-	conn := h.registry.GetConnection(host.ApiID)
-	if conn == nil {
+	if !h.registry.IsConnected(host.ApiID) {
 		slog.Info("apply-pending-config: agent not connected", "host_id", hostID, "api_id", host.ApiID)
 		Error(w, http.StatusServiceUnavailable, "Agent is not connected. Ensure the agent's server_url in config.yml points to this server.")
 		return
@@ -1197,7 +1196,7 @@ func (h *HostsHandler) ApplyPendingConfig(w http.ResponseWriter, r *http.Request
 			},
 		},
 	}
-	if err := conn.WriteJSON(msg); err != nil {
+	if err := h.registry.SendJSON(host.ApiID, msg); err != nil {
 		slog.Error("apply-pending-config: failed to send to agent", "host_id", hostID, "api_id", host.ApiID, "error", err)
 		Error(w, http.StatusServiceUnavailable, "Failed to send config to agent")
 		return
