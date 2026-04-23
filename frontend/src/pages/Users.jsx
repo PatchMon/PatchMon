@@ -14,6 +14,7 @@ import {
 import { useId, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { adminUsersAPI, formatDateOnly, permissionsAPI } from "../utils/api";
+import { isRenderableAvatarSrc } from "../utils/avatar";
 
 const Users = () => {
 	const [showAddModal, setShowAddModal] = useState(false);
@@ -130,7 +131,7 @@ const Users = () => {
 								<div className="px-4 py-4 flex items-center justify-between">
 									<div className="flex items-center">
 										<div className="flex-shrink-0">
-											{user.avatar_url ? (
+											{isRenderableAvatarSrc(user.avatar_url) ? (
 												<img
 													src={user.avatar_url}
 													alt={user.username}

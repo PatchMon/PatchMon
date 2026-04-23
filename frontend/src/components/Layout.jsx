@@ -35,6 +35,7 @@ import { useSettings } from "../contexts/SettingsContext";
 import SidebarContext from "../contexts/SidebarContext";
 import { useUpdateNotification } from "../contexts/UpdateNotificationContext";
 import { alertsAPI, dashboardAPI, settingsAPI, versionAPI } from "../utils/api";
+import { isRenderableAvatarSrc } from "../utils/avatar";
 import { resolveLogoPath } from "../utils/logoPaths";
 import { prefetchRoute } from "../utils/routePrefetch";
 import BuyMeACoffeeIcon from "./BuyMeACoffeeIcon";
@@ -960,7 +961,7 @@ const Layout = ({ children }) => {
 										}`}
 										onClick={() => setSidebarOpen(false)}
 									>
-										{user?.avatar_url ? (
+										{isRenderableAvatarSrc(user?.avatar_url) ? (
 											<img
 												src={user.avatar_url}
 												alt={user.username}
@@ -1495,7 +1496,7 @@ const Layout = ({ children }) => {
 											}`}
 										>
 											<div className="flex items-center gap-x-3">
-												{user?.avatar_url ? (
+												{isRenderableAvatarSrc(user?.avatar_url) ? (
 													<img
 														src={user.avatar_url}
 														alt={user.username}
@@ -1580,7 +1581,7 @@ const Layout = ({ children }) => {
 										}`}
 										title={`My Profile (${user?.username})`}
 									>
-										{user?.avatar_url ? (
+										{isRenderableAvatarSrc(user?.avatar_url) ? (
 											<img
 												src={user.avatar_url}
 												alt={user.username}

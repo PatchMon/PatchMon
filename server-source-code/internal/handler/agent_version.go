@@ -168,7 +168,7 @@ func (h *AgentVersionHandler) GetVersionInfo(w http.ResponseWriter, r *http.Requ
 		"supportedArchitectures": []string{
 			"linux-amd64", "linux-arm64", "linux-386", "linux-arm",
 			"freebsd-amd64", "freebsd-arm64", "freebsd-386", "freebsd-arm",
-			"windows-amd64", "windows-386",
+			"windows-amd64", "windows-arm64", "windows-386",
 		},
 		"status": "ready",
 	}
@@ -214,7 +214,7 @@ func (h *AgentVersionHandler) ServeAgentDownload(w http.ResponseWriter, r *http.
 	}
 	validArchLinux := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
 	validArchFreebsd := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
-	validArchWindows := map[string]bool{"amd64": true, "386": true}
+	validArchWindows := map[string]bool{"amd64": true, "386": true, "arm64": true}
 	var validArch map[string]bool
 	switch osParam {
 	case "freebsd":

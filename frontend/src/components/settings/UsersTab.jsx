@@ -21,6 +21,7 @@ import {
 	permissionsAPI,
 	settingsAPI,
 } from "../../utils/api";
+import { isRenderableAvatarSrc } from "../../utils/avatar";
 
 const UsersTab = () => {
 	const [showAddModal, setShowAddModal] = useState(false);
@@ -220,7 +221,7 @@ const UsersTab = () => {
 									{/* User Name and Avatar */}
 									<div className="flex items-center gap-3">
 										<div className="flex-shrink-0 h-10 w-10">
-											{user.avatar_url ? (
+											{isRenderableAvatarSrc(user.avatar_url) ? (
 												<img
 													src={user.avatar_url}
 													alt={user.username}
@@ -400,7 +401,7 @@ const UsersTab = () => {
 											<td className="px-6 py-4 whitespace-nowrap">
 												<div className="flex items-center">
 													<div className="flex-shrink-0 h-10 w-10">
-														{user.avatar_url ? (
+														{isRenderableAvatarSrc(user.avatar_url) ? (
 															<img
 																src={user.avatar_url}
 																alt={user.username}

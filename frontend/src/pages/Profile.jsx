@@ -38,6 +38,7 @@ import {
 	tfaAPI,
 	trustedDevicesAPI,
 } from "../utils/api";
+import { isRenderableAvatarSrc } from "../utils/avatar";
 
 const Profile = () => {
 	const usernameId = useId();
@@ -241,7 +242,7 @@ const Profile = () => {
 			<div className="bg-white dark:bg-secondary-800 shadow rounded-lg p-4 md:p-6">
 				<div className="flex items-center space-x-3 md:space-x-4">
 					<div className="flex-shrink-0">
-						{user?.avatar_url ? (
+						{isRenderableAvatarSrc(user?.avatar_url) ? (
 							<img
 								src={user.avatar_url}
 								alt={user.username}

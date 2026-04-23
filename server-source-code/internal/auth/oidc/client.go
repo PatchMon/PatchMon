@@ -7,6 +7,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
+	"mime"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -14,6 +17,10 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 )
+
+const maxMicrosoftGraphPhotoBytes = 1 << 20
+
+var microsoftGraphPhotoURL = "https://graph.microsoft.com/v1.0/me/photo/$value"
 
 // SessionData holds PKCE and state data for the OIDC flow.
 type SessionData struct {
@@ -200,19 +207,22 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 	if token.AccessToken != "" {
 		oidcUserInfo, err := c.provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
 		if err != nil {
-			return nil, fmt.Errorf("oidc: fetch userinfo: %w", err)
-		}
-		if oidcUserInfo.Subject != "" && oidcUserInfo.Subject != idToken.Subject {
-			return nil, errors.New("oidc: UserInfo sub does not match id_token sub")
-		}
-		userInfoClaims["sub"] = oidcUserInfo.Subject
-		userInfoClaims["email"] = oidcUserInfo.Email
-		userInfoClaims["email_verified"] = oidcUserInfo.EmailVerified
-		userInfoClaims["profile"] = oidcUserInfo.Profile
-		var extraClaims map[string]interface{}
-		if err := oidcUserInfo.Claims(&extraClaims); err == nil {
-			for k, v := range extraClaims {
-				userInfoClaims[k] = v
+			if !isMicrosoftIdentityIssuer(c.cfg.IssuerURL) {
+				return nil, fmt.Errorf("oidc: fetch userinfo: %w", err)
+			}
+		} else {
+			if oidcUserInfo.Subject != "" && oidcUserInfo.Subject != idToken.Subject {
+				return nil, errors.New("oidc: UserInfo sub does not match id_token sub")
+			}
+			userInfoClaims["sub"] = oidcUserInfo.Subject
+			userInfoClaims["email"] = oidcUserInfo.Email
+			userInfoClaims["email_verified"] = oidcUserInfo.EmailVerified
+			userInfoClaims["profile"] = oidcUserInfo.Profile
+			var extraClaims map[string]interface{}
+			if err := oidcUserInfo.Claims(&extraClaims); err == nil {
+				for k, v := range extraClaims {
+					userInfoClaims[k] = v
+				}
 			}
 		}
 	}
@@ -236,9 +246,103 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 	userInfo.GivenName = getStringClaim(userInfoClaims, idClaims, "given_name")
 	userInfo.FamilyName = getStringClaim(userInfoClaims, idClaims, "family_name")
 	userInfo.Picture = getStringClaim(userInfoClaims, idClaims, "picture")
+	if resolvedPicture, err := resolveProviderPicture(ctx, c.cfg.IssuerURL, token, userInfo.Picture); err == nil {
+		userInfo.Picture = resolvedPicture
+	}
 	userInfo.Groups = extractGroups(userInfoClaims, idClaims)
 
 	return userInfo, nil
+}
+
+func resolveProviderPicture(ctx context.Context, issuerURL string, token *oauth2.Token, rawPicture string) (string, error) {
+	if !isMicrosoftIdentityIssuer(issuerURL) {
+		return rawPicture, nil
+	}
+	if isRenderableImageSrc(rawPicture) {
+		return rawPicture, nil
+	}
+	if token == nil || token.AccessToken == "" {
+		return "", nil
+	}
+	picture, err := fetchMicrosoftGraphPhotoDataURL(ctx, token)
+	if err != nil {
+		return "", err
+	}
+	return picture, nil
+}
+
+func isMicrosoftIdentityIssuer(issuerURL string) bool {
+	u, err := url.Parse(issuerURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "login.microsoftonline.com" ||
+		strings.HasSuffix(host, ".microsoftonline.com") ||
+		strings.HasSuffix(host, ".microsoftonline.us") ||
+		strings.HasSuffix(host, ".microsoftonline.de") ||
+		strings.HasSuffix(host, ".chinacloudapi.cn") ||
+		host == "sts.windows.net"
+}
+
+func isRenderableImageSrc(value string) bool {
+	if value == "" {
+		return false
+	}
+	if strings.HasPrefix(strings.ToLower(value), "data:image/") {
+		return true
+	}
+	u, err := url.Parse(value)
+	if err != nil {
+		return false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	return (scheme == "http" || scheme == "https") && u.Host != ""
+}
+
+func fetchMicrosoftGraphPhotoDataURL(ctx context.Context, token *oauth2.Token) (picture string, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, microsoftGraphPhotoURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("oidc: create microsoft graph photo request: %w", err)
+	}
+	client := oauth2.NewClient(ctx, oauth2.StaticTokenSource(token))
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("oidc: fetch microsoft graph photo: %w", err)
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("oidc: close microsoft graph photo response body: %w", closeErr)
+		}
+	}()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return "", nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("oidc: fetch microsoft graph photo: unexpected status %d", resp.StatusCode)
+	}
+
+	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil {
+		return "", fmt.Errorf("oidc: parse microsoft graph photo content type: %w", err)
+	}
+	if !strings.HasPrefix(strings.ToLower(mediaType), "image/") {
+		return "", fmt.Errorf("oidc: unexpected microsoft graph photo content type %q", mediaType)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxMicrosoftGraphPhotoBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("oidc: read microsoft graph photo: %w", err)
+	}
+	if len(body) == 0 {
+		return "", nil
+	}
+	if len(body) > maxMicrosoftGraphPhotoBytes {
+		return "", errors.New("oidc: microsoft graph photo exceeds max size")
+	}
+
+	return "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(body), nil
 }
 
 func getStringClaim(primary, fallback map[string]interface{}, key string) string {

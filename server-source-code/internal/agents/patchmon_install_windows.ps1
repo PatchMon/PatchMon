@@ -49,12 +49,19 @@ if (-not $isAdmin) {
 Write-Host "PatchMon Agent Installation for Windows" -ForegroundColor Green
 Write-Host "=======================================" -ForegroundColor Green
 
-# Determine architecture
-$arch = "amd64"
-if ([Environment]::Is64BitOperatingSystem) {
-    $arch = "amd64"
-} else {
-    $arch = "386"
+# Determine architecture. PROCESSOR_ARCHITECTURE reports the current process's
+# arch; PROCESSOR_ARCHITEW6432 is set when a 32-bit process runs on a 64-bit OS
+# and holds the real OS arch. Prefer the latter when present so 32-bit
+# PowerShell launched on 64-bit (or ARM64) Windows still picks the native binary.
+$procArch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+switch ($procArch) {
+    "AMD64" { $arch = "amd64" }
+    "ARM64" { $arch = "arm64" }
+    "x86"   { $arch = "386" }
+    default {
+        Write-Warning "Unrecognised PROCESSOR_ARCHITECTURE '$procArch' — falling back to amd64."
+        $arch = "amd64"
+    }
 }
 
 # Download URL - always from the PatchMon server
