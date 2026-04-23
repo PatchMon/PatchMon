@@ -98,6 +98,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Harbor
+        # Skip when HARBOR_USERNAME/HARBOR_TOKEN aren't set (forks, test repos,
+        # contributor PRs from forks). The Harbor push step below also guards
+        # on the same secret, so the workflow still succeeds — it just doesn't
+        # publish to Harbor.
+        if: ${{ secrets.HARBOR_USERNAME != '' && secrets.HARBOR_TOKEN != '' }}
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ${{ env.HARBOR_REGISTRY }}
@@ -142,6 +147,9 @@ jobs:
 
       - name: Build and push server image to Harbor (PRs and main)
         id: build-harbor
+        # Only run when Harbor credentials are set. Forks / test repos simply
+        # skip this step; GHCR push above still happens.
+        if: ${{ secrets.HARBOR_USERNAME != '' && secrets.HARBOR_TOKEN != '' }}
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
@@ -161,7 +169,7 @@ jobs:
           provenance: false
 
       - name: Comment on PR with image URL
-        if: github.event_name == 'pull_request_target' && steps.build-harbor.outputs.digest != ''
+        if: github.event_name == 'pull_request_target' && steps.build-harbor.outcome == 'success' && steps.build-harbor.outputs.digest != ''
         uses: peter-evans/create-or-update-comment@71345be0265236311c031f5c7866368bd1eff043
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
