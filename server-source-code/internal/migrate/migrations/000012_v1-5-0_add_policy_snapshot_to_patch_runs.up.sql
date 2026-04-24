@@ -1,0 +1,3 @@
+ALTER TABLE patch_runs ADD COLUMN IF NOT EXISTS policy_id TEXT REFERENCES patch_policies(id) ON DELETE SET NULL;
+ALTER TABLE patch_runs ADD COLUMN IF NOT EXISTS policy_name TEXT;
+ALTER TABLE patch_runs ADD COLUMN IF NOT EXISTS policy_snapshot JSONB;

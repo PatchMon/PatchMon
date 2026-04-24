@@ -1,9 +1,11 @@
 package commands
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,10 +17,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
+	"sync/atomic"
 	"time"
 
 	"patchmon-agent/internal/client"
@@ -26,6 +29,8 @@ import (
 	"patchmon-agent/internal/integrations"
 	"patchmon-agent/internal/integrations/compliance"
 	"patchmon-agent/internal/integrations/docker"
+	"patchmon-agent/internal/logutil"
+	"patchmon-agent/internal/packages"
 	"patchmon-agent/internal/pkgversion"
 	"patchmon-agent/internal/system"
 	"patchmon-agent/internal/utils"
@@ -34,6 +39,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // serveCmd runs the agent as a long-lived service
@@ -44,7 +50,7 @@ var serveCmd = &cobra.Command{
 		if err := checkRoot(); err != nil {
 			return err
 		}
-		return runService()
+		return runAsService()
 	},
 }
 
@@ -52,9 +58,46 @@ func init() {
 	rootCmd.AddCommand(serveCmd)
 }
 
-func runService() error {
-	if err := cfgManager.LoadCredentials(); err != nil {
-		return err
+// agentHostKeyCallback returns a HostKeyCallback that validates against ~/.ssh/known_hosts
+// when available, otherwise falls back to InsecureIgnoreHostKey. Used for SSH proxy connections.
+func agentHostKeyCallback() ssh.HostKeyCallback {
+	home, _ := os.UserHomeDir()
+	knownHostsPath := filepath.Join(home, ".ssh", "known_hosts")
+	if _, err := os.Stat(knownHostsPath); err == nil {
+		cb, err := knownhosts.New(knownHostsPath)
+		if err == nil {
+			return cb
+		}
+	}
+	return ssh.InsecureIgnoreHostKey()
+}
+
+// runServiceLoop is the main service loop. stopCh signals shutdown (nil = run forever on Unix)
+func runServiceLoop(stopCh <-chan struct{}) error {
+	// When running as Windows service, allow a brief delay for system initialization
+	// (network, filesystem) to be ready after SCM starts the process. This addresses
+	// first-start issues where the report task would not run.
+	if runtime.GOOS == "windows" && isWindowsService() {
+		logger.Info("Windows service detected, waiting briefly for system initialization...")
+		time.Sleep(5 * time.Second)
+	}
+
+	// Load credentials with retry on Windows service (first start may race with installer)
+	var loadErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		loadErr = cfgManager.LoadCredentials()
+		if loadErr == nil {
+			break
+		}
+		if runtime.GOOS == "windows" && isWindowsService() && attempt < 2 {
+			logger.WithError(loadErr).Warn("Failed to load credentials, retrying in 2s...")
+			time.Sleep(2 * time.Second)
+		} else {
+			return loadErr
+		}
+	}
+	if loadErr != nil {
+		return loadErr
 	}
 
 	httpClient := client.New(cfgManager, logger)
@@ -76,10 +119,10 @@ func runService() error {
 	// Fetch interval from server and update config if different
 	if resp, err := httpClient.GetUpdateInterval(ctx); err == nil && resp.UpdateInterval > 0 {
 		if resp.UpdateInterval != intervalMinutes {
-			logger.WithFields(map[string]interface{}{
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 				"config_interval": intervalMinutes,
 				"server_interval": resp.UpdateInterval,
-			}).Info("Server interval differs from config, updating config.yml")
+			})).Info("Server interval differs from config, updating config.yml")
 
 			if err := cfgManager.SetUpdateInterval(resp.UpdateInterval); err != nil {
 				logger.WithError(err).Warn("Failed to save interval to config.yml")
@@ -99,20 +142,46 @@ func runService() error {
 		for integrationName, serverEnabled := range integrationResp.Integrations {
 			configEnabled := cfgManager.IsIntegrationEnabled(integrationName)
 			if serverEnabled != configEnabled {
-				logger.WithFields(map[string]interface{}{
+				logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 					"integration":  integrationName,
 					"config_value": configEnabled,
 					"server_value": serverEnabled,
-				}).Info("Integration status differs, updating config.yml")
+				})).Info("Integration status differs, updating config.yml")
 
 				if err := cfgManager.SetIntegrationEnabled(integrationName, serverEnabled); err != nil {
 					logger.WithError(err).Warn("Failed to save integration status to config.yml")
 				} else {
 					configUpdated = true
-					logger.WithFields(map[string]interface{}{
+					logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 						"integration": integrationName,
 						"enabled":     serverEnabled,
-					}).Info("Updated integration status in config.yml")
+					})).Info("Updated integration status in config.yml")
+				}
+			}
+		}
+
+		// Sync compliance scanner toggles from server (when server sends them)
+		if integrationResp.ComplianceOpenscapEnabled != nil || integrationResp.ComplianceDockerBenchEnabled != nil {
+			configOpenscap := cfgManager.GetComplianceOpenscapEnabled()
+			configDockerBench := cfgManager.GetComplianceDockerBenchEnabled()
+			serverOpenscap := configOpenscap
+			serverDockerBench := configDockerBench
+			if integrationResp.ComplianceOpenscapEnabled != nil {
+				serverOpenscap = *integrationResp.ComplianceOpenscapEnabled
+			}
+			if integrationResp.ComplianceDockerBenchEnabled != nil {
+				serverDockerBench = *integrationResp.ComplianceDockerBenchEnabled
+			}
+			if serverOpenscap != configOpenscap || serverDockerBench != configDockerBench {
+				logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+					"config_openscap": configOpenscap, "server_openscap": serverOpenscap,
+					"config_docker_bench": configDockerBench, "server_docker_bench": serverDockerBench,
+				})).Info("Compliance scanner toggles differ, updating config.yml")
+				if err := cfgManager.SetComplianceScanners(serverOpenscap, serverDockerBench); err != nil {
+					logger.WithError(err).Warn("Failed to save compliance scanner toggles to config.yml")
+				} else {
+					configUpdated = true
+					logger.Info("Updated compliance scanner toggles in config.yml")
 				}
 			}
 		}
@@ -142,22 +211,22 @@ func runService() error {
 	// Use config offset if it exists and matches calculated value, otherwise recalculate and save
 	if configOffsetSeconds > 0 && configOffsetSeconds == calculatedOffsetSeconds {
 		offset = time.Duration(configOffsetSeconds) * time.Second
-		logger.WithFields(map[string]interface{}{
+		logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 			"api_id":           apiID,
 			"interval_minutes": intervalMinutes,
 			"offset_seconds":   offset.Seconds(),
-		}).Info("Loaded report offset from config.yml")
+		})).Info("Loaded report offset from config.yml")
 	} else {
 		// Offset not in config or doesn't match, calculate and save it
 		offset = calculatedOffset
 		if err := cfgManager.SetReportOffset(calculatedOffsetSeconds); err != nil {
 			logger.WithError(err).Warn("Failed to save offset to config.yml")
 		} else {
-			logger.WithFields(map[string]interface{}{
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 				"api_id":           apiID,
 				"interval_minutes": intervalMinutes,
 				"offset_seconds":   offset.Seconds(),
-			}).Info("Calculated and saved report offset to config.yml")
+			})).Info("Calculated and saved report offset to config.yml")
 		}
 	}
 
@@ -185,7 +254,6 @@ func runService() error {
 	}()
 
 	// Run initial report in background so it doesn't block WebSocket
-	// Compliance scans can take 5-10 minutes, we don't want agent to appear offline
 	go func() {
 		logger.Info("Sending initial report on startup (background)...")
 		if err := sendReport(false); err != nil {
@@ -194,6 +262,13 @@ func runService() error {
 			logger.Info("✅ Initial report sent successfully")
 		}
 	}()
+
+	var compScheduler *complianceScheduler
+	if cfgManager.IsIntegrationEnabled("compliance") && !cfgManager.IsComplianceOnDemandOnly() {
+		compScheduler = newComplianceScheduler(cfgManager.GetComplianceScanInterval())
+		compScheduler.Start()
+		defer compScheduler.Stop()
+	}
 
 	// Create ticker with initial interval for package reports
 	ticker := time.NewTicker(time.Duration(intervalMinutes) * time.Minute)
@@ -210,8 +285,18 @@ func runService() error {
 	// Track current interval for offset recalculation on updates
 	currentInterval := intervalMinutes
 
+	// Create a stop channel that never closes if none provided (for Unix systems)
+	effectiveStopCh := stopCh
+	if effectiveStopCh == nil {
+		effectiveStopCh = make(chan struct{}) // never closed
+	}
+
 	for {
 		select {
+		case <-effectiveStopCh:
+			// Shutdown requested
+			logger.Info("Shutdown signal received, stopping service...")
+			return nil
 		case <-offsetTimer.C:
 			// Offset period completed, start consuming from ticker normally
 			offsetPassed = true
@@ -241,11 +326,11 @@ func runService() error {
 						logger.WithError(err).Warn("Failed to save offset to config.yml")
 					}
 
-					logger.WithFields(map[string]interface{}{
+					logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 						"old_interval":       currentInterval,
 						"new_interval":       m.interval,
 						"new_offset_seconds": newOffset.Seconds(),
-					}).Info("Recalculated and saved offset for new interval")
+					})).Info("Recalculated and saved offset for new interval")
 
 					// Stop old ticker
 					ticker.Stop()
@@ -261,6 +346,24 @@ func runService() error {
 
 					logger.WithField("new_interval", m.interval).Info("interval updated, no report sent")
 				}
+				if m.complianceScanInterval > 0 && compScheduler != nil {
+					if err := cfgManager.SetComplianceScanInterval(m.complianceScanInterval); err != nil {
+						logger.WithError(err).Warn("Failed to save compliance scan interval to config.yml")
+					} else {
+						compScheduler.Reset(m.complianceScanInterval)
+						logger.WithField("compliance_scan_interval", m.complianceScanInterval).Info("Compliance scan interval updated")
+					}
+				}
+				if m.packageCacheRefreshMode != "" {
+					if err := cfgManager.SetPackageCacheRefresh(m.packageCacheRefreshMode, m.packageCacheRefreshMaxAge); err != nil {
+						logger.WithError(err).Warn("Failed to save package cache refresh settings to config.yml")
+					} else {
+						logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+							"mode":    m.packageCacheRefreshMode,
+							"max_age": m.packageCacheRefreshMaxAge,
+						})).Info("Package cache refresh settings updated")
+					}
+				}
 			case "report_now":
 				if err := sendReport(false); err != nil {
 					logger.WithError(err).Warn("report_now failed")
@@ -275,6 +378,14 @@ func runService() error {
 			case "docker_inventory_refresh":
 				logger.Info("Refreshing Docker inventory on server request...")
 				go refreshDockerInventory(ctx)
+			case "run_patch":
+				go func(msg wsMsg) {
+					if err := runPatch(msg.patchRunID, msg.patchType, msg.packageNames, msg.dryRun); err != nil {
+						logger.WithError(err).Warn("run_patch failed")
+					} else {
+						logger.Info("run_patch completed successfully")
+					}
+				}(m)
 			case "update_notification":
 				logger.WithField("version", m.version).Info("Update notification received from server")
 				if m.force {
@@ -289,18 +400,46 @@ func runService() error {
 				if err := toggleIntegration(m.integrationName, m.integrationEnabled); err != nil {
 					logger.WithError(err).Warn("integration_toggle failed")
 				} else {
-					logger.WithFields(map[string]interface{}{
+					logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 						"integration": m.integrationName,
 						"enabled":     m.integrationEnabled,
-					}).Info("Integration toggled successfully, service will restart")
+					})).Info("Integration toggled successfully, service will restart")
 				}
 			case "compliance_scan":
-				logger.WithFields(map[string]interface{}{
+				logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 					"profile_type":       m.profileType,
 					"profile_id":         m.profileID,
 					"enable_remediation": m.enableRemediation,
-				}).Info("Running on-demand compliance scan...")
+				})).Info("Running on-demand compliance scan...")
 				go func(msg wsMsg) {
+					complianceScanCancelMu.Lock()
+					if complianceScanSource == "scheduled" && complianceScanCancel != nil {
+						complianceScanCancel()
+						logger.Info("Cancelled running scheduled scan to run on-demand scan")
+					}
+					complianceScanCancelMu.Unlock()
+
+					for i := 0; i < 10; i++ {
+						if complianceScanRunning.CompareAndSwap(false, true) {
+							break
+						}
+						time.Sleep(500 * time.Millisecond)
+					}
+					if !complianceScanRunning.Load() {
+						complianceScanRunning.Store(true)
+					}
+
+					complianceScanCancelMu.Lock()
+					complianceScanSource = "on-demand"
+					complianceScanCancelMu.Unlock()
+
+					defer func() {
+						complianceScanCancelMu.Lock()
+						complianceScanSource = ""
+						complianceScanCancelMu.Unlock()
+						complianceScanRunning.Store(false)
+					}()
+
 					ctx, cancel := context.WithCancel(context.Background())
 					complianceScanCancelMu.Lock()
 					complianceScanCancel = cancel
@@ -342,10 +481,21 @@ func runService() error {
 				} else {
 					logger.Debug("Compliance scan cancel requested but no scan is running")
 				}
+			case "patch_run_stop":
+				if v, ok := patchRunCancels.Load(m.patchRunID); ok {
+					if cancelFn, ok := v.(context.CancelFunc); ok && cancelFn != nil {
+						patchRunStopped.Store(m.patchRunID, true)
+						cancelFn()
+						logger.WithField("patch_run_id", logutil.Sanitize(m.patchRunID)).Info("Patch run stop honored; interrupt sent")
+					}
+				} else {
+					logger.WithField("patch_run_id", logutil.Sanitize(m.patchRunID)).Debug("Patch run stop requested but no matching run is active")
+				}
 			case "upgrade_ssg":
-				logger.Info("Upgrading SSG content packages...")
+				targetVersion := m.version
+				logger.WithField("target_version", targetVersion).Info("Upgrading SSG content packages...")
 				go func() {
-					if err := upgradeSSGContent(); err != nil {
+					if err := upgradeSSGContent(targetVersion); err != nil {
 						logger.WithError(err).Warn("upgrade_ssg failed")
 					} else {
 						logger.Info("SSG content packages upgraded successfully")
@@ -361,20 +511,20 @@ func runService() error {
 					}
 				}()
 			case "remediate_rule":
-				logger.WithField("rule_id", m.ruleID).Info("Remediating single rule...")
+				logger.WithField("rule_id", logutil.Sanitize(m.ruleID)).Info("Remediating single rule...")
 				go func(ruleID string) {
 					if err := remediateSingleRule(ruleID); err != nil {
-						logger.WithError(err).WithField("rule_id", ruleID).Warn("remediate_rule failed")
+						logger.WithError(err).WithField("rule_id", logutil.Sanitize(ruleID)).Warn("remediate_rule failed")
 					} else {
-						logger.WithField("rule_id", ruleID).Info("Single rule remediation completed")
+						logger.WithField("rule_id", logutil.Sanitize(ruleID)).Info("Single rule remediation completed")
 					}
 				}(m.ruleID)
 			case "docker_image_scan":
-				logger.WithFields(map[string]interface{}{
+				logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 					"image_name":      m.imageName,
 					"container_name":  m.containerName,
 					"scan_all_images": m.scanAllImages,
-				}).Info("Running Docker image CVE scan...")
+				})).Info("Running Docker image CVE scan...")
 				go func(msg wsMsg) {
 					if err := runDockerImageScan(msg.imageName, msg.containerName, msg.scanAllImages); err != nil {
 						logger.WithError(err).Warn("docker_image_scan failed")
@@ -383,7 +533,7 @@ func runService() error {
 					}
 				}(m)
 			case "set_compliance_mode":
-				logger.WithField("mode", m.complianceMode).Info("Setting compliance mode...")
+				logger.WithField("mode", logutil.Sanitize(m.complianceMode)).Info("Setting compliance mode...")
 				// Convert string mode to ComplianceMode type
 				var mode config.ComplianceMode
 				switch m.complianceMode {
@@ -394,13 +544,19 @@ func runService() error {
 				case "enabled":
 					mode = config.ComplianceEnabled
 				default:
-					logger.WithField("mode", m.complianceMode).Warn("Invalid compliance mode, ignoring")
+					logger.WithField("mode", logutil.Sanitize(m.complianceMode)).Warn("Invalid compliance mode, ignoring")
 					continue
 				}
 				if err := cfgManager.SetComplianceMode(mode); err != nil {
 					logger.WithError(err).Warn("Failed to set compliance mode")
 				} else {
-					logger.WithField("mode", m.complianceMode).Info("Compliance mode updated in config.yml")
+					logger.WithField("mode", logutil.Sanitize(m.complianceMode)).Info("Compliance mode updated in config.yml")
+				}
+			case "apply_config":
+				if err := applyConfig(m.applyConfig); err != nil {
+					logger.WithError(err).Warn("apply_config failed")
+				} else {
+					logger.Info("apply_config completed, service will restart")
 				}
 			case "set_compliance_on_demand_only":
 				// Legacy handler - convert to mode and use new handler
@@ -417,7 +573,7 @@ func runService() error {
 					logger.WithField("mode", string(mode)).Info("Compliance mode updated in config.yml (from legacy on-demand-only)")
 				}
 			case "ssh_proxy":
-				logger.WithField("session_id", m.sshProxySessionID).Info("Handling SSH proxy connection request")
+				logger.WithField("session_id", logutil.Sanitize(m.sshProxySessionID)).Info("Handling SSH proxy connection request")
 				globalWsConnMu.RLock()
 				wsConn := globalWsConn
 				globalWsConnMu.RUnlock()
@@ -445,22 +601,65 @@ func runService() error {
 				if wsConn != nil {
 					handleSSHProxyDisconnect(m, wsConn)
 				}
+			case "rdp_proxy":
+				logger.WithField("session_id", logutil.Sanitize(m.rdpProxySessionID)).Info("Handling RDP proxy connection request")
+				globalWsConnMu.RLock()
+				wsConn := globalWsConn
+				globalWsConnMu.RUnlock()
+				if wsConn != nil {
+					go handleRDPProxy(m, wsConn)
+				}
+			case "rdp_proxy_input":
+				globalWsConnMu.RLock()
+				wsConn := globalWsConn
+				globalWsConnMu.RUnlock()
+				if wsConn != nil {
+					handleRDPProxyInput(m, wsConn)
+				}
+			case "rdp_proxy_disconnect":
+				globalWsConnMu.RLock()
+				wsConn := globalWsConn
+				globalWsConnMu.RUnlock()
+				if wsConn != nil {
+					handleRDPProxyDisconnect(m, wsConn)
+				}
 			}
 		}
 	}
 }
 
-// upgradeSSGContent upgrades the SCAP Security Guide content packages
-func upgradeSSGContent() error {
-	// Create compliance integration to access the OpenSCAP scanner
+// ssgClientAdapter adapts the agent HTTP client to the SSGContentDownloader interface.
+type ssgClientAdapter struct {
+	c *client.Client
+}
+
+func (a *ssgClientAdapter) GetSSGVersion(ctx context.Context) (string, []string, error) {
+	resp, err := a.c.GetSSGVersion(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	return resp.Version, resp.Files, nil
+}
+
+func (a *ssgClientAdapter) DownloadSSGContent(ctx context.Context, filename, destPath string) error {
+	return a.c.DownloadSSGContent(ctx, filename, destPath)
+}
+
+// upgradeSSGContent upgrades the SCAP Security Guide content packages.
+// Prefers downloading from PatchMon server; falls back to GitHub if server has no content.
+func upgradeSSGContent(targetVersion string) error {
+	httpClient := client.New(cfgManager, logger)
 	complianceInteg := compliance.New(logger)
-	if err := complianceInteg.UpgradeSSGContent(); err != nil {
-		return err
+
+	downloader := &ssgClientAdapter{c: httpClient}
+	if err := complianceInteg.UpgradeSSGContentFromServer(downloader, targetVersion); err != nil {
+		logger.WithError(err).Warn("Server-based SSG upgrade failed, falling back to GitHub...")
+		if fallbackErr := complianceInteg.UpgradeSSGContent(); fallbackErr != nil {
+			return fmt.Errorf("server upgrade: %w; github fallback: %v", err, fallbackErr)
+		}
 	}
 
-	// Send updated status to backend after successful upgrade
 	logger.Info("Sending updated compliance status to backend...")
-	httpClient := client.New(cfgManager, logger)
 	ctx := context.Background()
 
 	// Get new scanner details
@@ -585,6 +784,36 @@ func runInstallScanner() error {
 		Timestamp: events[len(events)-1].Timestamp,
 	}
 
+	// Step 3b: Sync SSG content from PatchMon server (server is single source of truth).
+	// This ensures the agent has the same SSG version the server was built with,
+	// regardless of what the OS package manager provided.
+	addEvent("sync_ssg", "in_progress", "Syncing SSG content from PatchMon server...")
+	sendStatus("installing", "Syncing SSG content from server...", nil)
+
+	downloader := &ssgClientAdapter{c: httpClient}
+	if err := openscapScanner.UpgradeSSGContentFromServer(downloader, ""); err != nil {
+		logger.WithError(err).Warn("Server-based SSG sync failed (package manager version will be used)")
+		events[len(events)-1] = models.InstallEvent{
+			Step:      "sync_ssg",
+			Status:    "skipped",
+			Message:   fmt.Sprintf("Server SSG sync skipped: %s", err.Error()),
+			Timestamp: events[len(events)-1].Timestamp,
+		}
+	} else {
+		// Re-read scanner details after server sync
+		scannerDetails = openscapScanner.GetScannerDetails()
+		syncMsg := "SSG content synced from server"
+		if scannerDetails.SSGVersion != "" {
+			syncMsg = fmt.Sprintf("SSG content synced from server (v%s)", scannerDetails.SSGVersion)
+		}
+		events[len(events)-1] = models.InstallEvent{
+			Step:      "sync_ssg",
+			Status:    "done",
+			Message:   syncMsg,
+			Timestamp: events[len(events)-1].Timestamp,
+		}
+	}
+
 	// Step 4: Docker Bench (if docker enabled)
 	dockerIntegrationEnabled := cfgManager.IsIntegrationEnabled("docker")
 	if dockerIntegrationEnabled {
@@ -638,7 +867,7 @@ func remediateSingleRule(ruleID string) error {
 		return fmt.Errorf("rule ID is required")
 	}
 
-	logger.WithField("rule_id", ruleID).Info("Starting single rule remediation")
+	logger.WithField("rule_id", logutil.Sanitize(ruleID)).Info("Starting single rule remediation")
 
 	// Create compliance integration to run remediation
 	complianceInteg := compliance.New(logger)
@@ -658,17 +887,17 @@ func remediateSingleRule(ruleID string) error {
 		EnableRemediation: true,
 	}
 
-	logger.WithFields(map[string]interface{}{
+	logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 		"profile_id": options.ProfileID,
 		"rule_id":    options.RuleID,
-	}).Info("Running single rule remediation with oscap")
+	})).Info("Running single rule remediation with oscap")
 
 	_, err := complianceInteg.CollectWithOptions(ctx, options)
 	if err != nil {
 		return fmt.Errorf("remediation failed: %w", err)
 	}
 
-	logger.WithField("rule_id", ruleID).Info("Single rule remediation completed successfully")
+	logger.WithField("rule_id", logutil.Sanitize(ruleID)).Info("Single rule remediation completed successfully")
 	return nil
 }
 
@@ -847,12 +1076,12 @@ func refreshDockerInventory(ctx context.Context) {
 		AgentVersion: pkgversion.Version,
 	}
 
-	logger.WithFields(map[string]interface{}{
+	logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 		"containers": len(data.Containers),
 		"images":     len(data.Images),
 		"volumes":    len(data.Volumes),
 		"networks":   len(data.Networks),
-	}).Info("Sending Docker inventory to server...")
+	})).Info("Sending Docker inventory to server...")
 
 	// Create HTTP client and send data
 	httpClient := client.New(cfgManager, logger)
@@ -865,12 +1094,12 @@ func refreshDockerInventory(ctx context.Context) {
 		return
 	}
 
-	logger.WithFields(map[string]interface{}{
+	logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 		"containers": response.ContainersReceived,
 		"images":     response.ImagesReceived,
 		"volumes":    response.VolumesReceived,
 		"networks":   response.NetworksReceived,
-	}).Info("Docker inventory refresh completed successfully")
+	})).Info("Docker inventory refresh completed successfully")
 }
 
 // startIntegrationMonitoring starts real-time monitoring for integrations that support it
@@ -902,24 +1131,28 @@ func startIntegrationMonitoring(ctx context.Context, eventChan chan<- interface{
 }
 
 type wsMsg struct {
-	kind                   string
-	interval               int
-	version                string
-	force                  bool
-	integrationName        string
-	integrationEnabled     bool
-	profileType            string // For compliance_scan: openscap, docker-bench, all
-	profileID              string // For compliance_scan: specific XCCDF profile ID
-	enableRemediation      bool   // For compliance_scan: enable auto-remediation
-	fetchRemoteResources   bool   // For compliance_scan: fetch remote resources
-	openscapEnabled        *bool  // For compliance_scan: per-host OpenSCAP scanner toggle
-	dockerBenchEnabled     *bool  // For compliance_scan: per-host Docker Bench scanner toggle
-	ruleID                 string // For remediate_rule: specific rule ID to remediate
-	imageName              string // For docker_image_scan: Docker image to scan
-	containerName          string // For docker_image_scan: Docker container to scan
-	scanAllImages          bool   // For docker_image_scan: scan all images on system
-	complianceOnDemandOnly bool   // For set_compliance_on_demand_only (legacy)
-	complianceMode         string // For set_compliance_mode: "disabled", "on-demand", or "enabled"
+	kind                      string
+	interval                  int
+	complianceScanInterval    int
+	packageCacheRefreshMode   string
+	packageCacheRefreshMaxAge int
+	version                   string
+	force                     bool
+	integrationName           string
+	integrationEnabled        bool
+	profileType               string                 // For compliance_scan: openscap, docker-bench, all
+	profileID                 string                 // For compliance_scan: specific XCCDF profile ID
+	enableRemediation         bool                   // For compliance_scan: enable auto-remediation
+	fetchRemoteResources      bool                   // For compliance_scan: fetch remote resources
+	openscapEnabled           *bool                  // For compliance_scan: per-host OpenSCAP scanner toggle
+	dockerBenchEnabled        *bool                  // For compliance_scan: per-host Docker Bench scanner toggle
+	ruleID                    string                 // For remediate_rule: specific rule ID to remediate
+	imageName                 string                 // For docker_image_scan: Docker image to scan
+	containerName             string                 // For docker_image_scan: Docker container to scan
+	scanAllImages             bool                   // For docker_image_scan: scan all images on system
+	complianceOnDemandOnly    bool                   // For set_compliance_on_demand_only (legacy)
+	complianceMode            string                 // For set_compliance_mode: "disabled", "on-demand", or "enabled"
+	applyConfig               map[string]interface{} // For apply_config: full config to apply
 	// SSH proxy fields
 	sshProxySessionID  string // Unique session ID for SSH proxy
 	sshProxyHost       string // SSH target host
@@ -931,7 +1164,17 @@ type wsMsg struct {
 	sshProxyTerminal   string // Terminal type
 	sshProxyCols       int    // Terminal columns
 	sshProxyRows       int    // Terminal rows
-	sshProxyData       string // SSH input data
+	// run_patch fields
+	patchRunID   string
+	patchType    string
+	packageNames []string
+	dryRun       bool
+	sshProxyData string // SSH input data
+	// RDP proxy fields
+	rdpProxySessionID string // Unique session ID for RDP proxy
+	rdpProxyHost      string // RDP target host (default localhost)
+	rdpProxyPort      int    // RDP target port (default 3389)
+	rdpProxyData      string // RDP input data (base64)
 }
 
 // Input validation patterns for WebSocket message fields
@@ -941,6 +1184,8 @@ var (
 	validProfileIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_.\-]+$`)
 	// Rule IDs: same as profile IDs (e.g., xccdf_org.ssgproject.content_rule_audit_rules_...)
 	validRuleIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_.\-]+$`)
+	// APT package names: alphanumeric, dots, plus, minus, underscores (no path/command injection)
+	validAptPackagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+-_]*$`)
 	// Docker image names: alphanumeric, slashes, colons, dots, hyphens, underscores (e.g., ubuntu:22.04, myregistry.io/app:v1)
 	validDockerImagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.\-/:@]*$`)
 	// Docker container names: alphanumeric, underscores, hyphens (e.g., my-container, container_1)
@@ -1018,28 +1263,118 @@ var complianceProgressChan = make(chan ComplianceScanProgress, 10)
 // Global WebSocket connection for SSH proxy (set in connectOnce)
 var globalWsConn *websocket.Conn
 var globalWsConnMu sync.RWMutex
+var globalWsWriteMu sync.Mutex
 
-// Cancel function for the currently running compliance scan (nil if none). Guarded by complianceScanCancelMu.
+var complianceScanRunning atomic.Bool
 var complianceScanCancel context.CancelFunc
 var complianceScanCancelMu sync.Mutex
+var complianceScanSource string
 
-func wsLoop(out chan<- wsMsg, dockerEvents <-chan interface{}) {
-	backoff := time.Second
+func writeWebSocketTextMessage(conn *websocket.Conn, payload []byte) error {
+	globalWsWriteMu.Lock()
+	defer globalWsWriteMu.Unlock()
+
+	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		logger.WithError(err).Debug("Failed to set WebSocket write deadline")
+	}
+
+	if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+		return err
+	}
+	return nil
+}
+
+// patchRunCancels maps patchRunID -> context.CancelFunc for in-flight patch runs.
+// Allows the server to request an interrupt via the "patch_run_stop" WS message.
+var patchRunCancels sync.Map
+
+// patchRunStopped records patchRunIDs that were explicitly stopped by the server so
+// the runner can report stage="cancelled" instead of "failed" after the process exits.
+var patchRunStopped sync.Map
+
+type complianceScheduler struct {
+	interval time.Duration
+	stopCh   chan struct{}
+	resetCh  chan time.Duration
+}
+
+func newComplianceScheduler(intervalMinutes int) *complianceScheduler {
+	return &complianceScheduler{
+		interval: time.Duration(intervalMinutes) * time.Minute,
+		stopCh:   make(chan struct{}),
+		resetCh:  make(chan time.Duration, 1),
+	}
+}
+
+func (cs *complianceScheduler) Start() {
+	go cs.loop()
+}
+
+func (cs *complianceScheduler) Stop() {
+	close(cs.stopCh)
+}
+
+func (cs *complianceScheduler) Reset(intervalMinutes int) {
+	newInterval := time.Duration(intervalMinutes) * time.Minute
+	select {
+	case cs.resetCh <- newInterval:
+	default:
+	}
+}
+
+func (cs *complianceScheduler) loop() {
+	logger.WithField("compliance_scan_interval_minutes", int(cs.interval.Minutes())).Info("Compliance scheduler started")
+
+	select {
+	case <-time.After(30 * time.Second):
+	case <-cs.stopCh:
+		return
+	}
+
+	runScheduledComplianceScan()
+
+	ticker := time.NewTicker(cs.interval)
+	defer ticker.Stop()
+
 	for {
-		if err := connectOnce(out, dockerEvents); err != nil {
-			logger.WithError(err).Warn("ws disconnected; retrying")
-		}
-		time.Sleep(backoff)
-		if backoff < 30*time.Second {
-			backoff *= 2
+		select {
+		case <-cs.stopCh:
+			logger.Info("Compliance scheduler stopped")
+			return
+		case newInterval := <-cs.resetCh:
+			ticker.Stop()
+			cs.interval = newInterval
+			ticker = time.NewTicker(cs.interval)
+			logger.WithField("compliance_scan_interval_minutes", int(cs.interval.Minutes())).Info("Compliance scan interval updated")
+		case <-ticker.C:
+			runScheduledComplianceScan()
 		}
 	}
 }
 
-func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
+func wsLoop(out chan<- wsMsg, dockerEvents <-chan interface{}) {
+	backoff := time.Second
+	for {
+		// connectOnce resets backoff to 1s on successful dial so a long-lived
+		// agent that drops its WS (e.g. Windows bouncing TermService/firewall
+		// when RDP settings change) reconnects fast instead of waiting out the
+		// escalated backoff from its prior drops.
+		connected, err := connectOnce(out, dockerEvents, &backoff)
+		if err != nil {
+			logger.WithError(err).Warn("ws disconnected; retrying")
+		}
+		sleepFor := backoff
+		if !connected && backoff < 30*time.Second {
+			backoff *= 2
+		}
+		time.Sleep(sleepFor)
+	}
+}
+
+func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *time.Duration) (connected bool, err error) {
 	server := cfgManager.GetConfig().PatchmonServer
 	if server == "" {
-		return nil
+		return false, nil
 	}
 	apiID := cfgManager.GetCredentials().APIID
 	apiKey := cfgManager.GetCredentials().APIKey
@@ -1055,7 +1390,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		_ = wsURL // URL is already in correct format, no action needed
 	} else {
 		// No protocol prefix - assume HTTPS and use WSS
-		logger.WithField("server", server).Warn("Server URL missing protocol prefix, assuming HTTPS")
+		logger.WithField("server", logutil.Sanitize(server)).Warn("Server URL missing protocol prefix, assuming HTTPS")
 		wsURL = "wss://" + wsURL
 	}
 	if strings.HasSuffix(wsURL, "/") {
@@ -1069,22 +1404,9 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 	// SECURITY: Configure WebSocket dialer for insecure connections if needed
 	// WARNING: This exposes the agent to man-in-the-middle attacks!
 	dialer := websocket.DefaultDialer
-	if cfgManager.GetConfig().SkipSSLVerify {
-		// SECURITY: Block skip_ssl_verify in production environments
-		if utils.IsProductionEnvironment() {
-			logger.Error("╔══════════════════════════════════════════════════════════════════╗")
-			logger.Error("║  SECURITY ERROR: skip_ssl_verify is BLOCKED in production!       ║")
-			logger.Error("║  Set PATCHMON_ENV to 'development' to enable insecure mode.      ║")
-			logger.Error("║  This setting cannot be used when PATCHMON_ENV=production        ║")
-			logger.Error("╚══════════════════════════════════════════════════════════════════╝")
-			logger.Fatal("Refusing to start with skip_ssl_verify=true in production environment")
-		}
-
-		logger.Error("╔══════════════════════════════════════════════════════════════════╗")
-		logger.Error("║  SECURITY WARNING: TLS verification DISABLED for WebSocket!      ║")
-		logger.Error("║  Commands from server could be intercepted or modified.          ║")
-		logger.Error("║  Use a valid TLS certificate in production!                      ║")
-		logger.Error("╚══════════════════════════════════════════════════════════════════╝")
+	if cfgManager.GetConfig().SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
+		logger.Warn("TLS verification disabled for WebSocket")
+		// Operator-gated insecure TLS for lab/air-gapped deployments with self-signed certs.
 		dialer = &websocket.Dialer{
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true,
@@ -1094,8 +1416,14 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 
 	conn, _, err := dialer.Dial(wsURL, header)
 	if err != nil {
-		return err
+		return false, err
 	}
+	// Reset reconnect backoff now that the session is live. Without this, a
+	// long-lived agent that has escalated backoff from earlier drops would wait
+	// the full capped interval on the next disconnect even though the link
+	// recovered immediately.
+	connected = true
+	*backoff = time.Second
 
 	// Create a done channel to signal goroutines to stop when connection closes
 	done := make(chan struct{})
@@ -1131,7 +1459,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 	// SECURITY: Limit WebSocket message size to prevent DoS attacks (64KB max)
 	conn.SetReadLimit(64 * 1024)
 
-	logger.WithField("url", wsURL).Info("WebSocket connected")
+	logger.WithField("url", logutil.Sanitize(wsURL)).Info("WebSocket connected")
 
 	// Store connection globally for SSH proxy handlers
 	globalWsConnMu.Lock()
@@ -1174,12 +1502,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 						continue
 					}
 
-					// OPTIMIZATION: Set write deadline to prevent blocking forever
-					if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
-						logger.WithError(err).Debug("Failed to set write deadline")
-					}
-
-					if err := conn.WriteMessage(websocket.TextMessage, eventJSON); err != nil {
+					if err := writeWebSocketTextMessage(conn, eventJSON); err != nil {
 						logger.WithError(err).Debug("Failed to send Docker event via WebSocket")
 						return
 					}
@@ -1219,19 +1542,14 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 					continue
 				}
 
-				// OPTIMIZATION: Set write deadline to prevent blocking forever
-				if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
-					logger.WithError(err).Debug("Failed to set write deadline")
-				}
-
-				if err := conn.WriteMessage(websocket.TextMessage, progressJSON); err != nil {
+				if err := writeWebSocketTextMessage(conn, progressJSON); err != nil {
 					logger.WithError(err).Debug("Failed to send compliance progress via WebSocket")
 					return
 				}
-				logger.WithFields(map[string]interface{}{
+				logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 					"phase":   progress.Phase,
 					"message": progress.Message,
-				}).Debug("Sent compliance progress update via WebSocket")
+				})).Debug("Sent compliance progress update via WebSocket")
 			}
 		}
 	}()
@@ -1239,29 +1557,32 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 	for {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
-			return err
+			return connected, err
 		}
-		logger.WithField("raw_message", string(data)).Debug("WebSocket message received")
 		var payload struct {
-			Type                 string `json:"type"`
-			UpdateInterval       int    `json:"update_interval"`
-			Version              string `json:"version"`
-			Force                bool   `json:"force"`
-			Message              string `json:"message"`
-			Integration          string `json:"integration"`
-			Enabled              bool   `json:"enabled"`
-			ProfileType          string `json:"profile_type"`           // For compliance_scan
-			ProfileID            string `json:"profile_id"`             // For compliance_scan: specific XCCDF profile ID
-			EnableRemediation    bool   `json:"enable_remediation"`     // For compliance_scan
-			FetchRemoteResources bool   `json:"fetch_remote_resources"` // For compliance_scan
-			OpenSCAPEnabled      *bool  `json:"openscap_enabled"`       // For compliance_scan: per-host toggle
-			DockerBenchEnabled   *bool  `json:"docker_bench_enabled"`   // For compliance_scan: per-host toggle
-			RuleID               string `json:"rule_id"`                // For remediate_rule: specific rule to remediate
-			ImageName            string `json:"image_name"`             // For docker_image_scan: Docker image to scan
-			ContainerName        string `json:"container_name"`         // For docker_image_scan: container to scan
-			ScanAllImages        bool   `json:"scan_all_images"`        // For docker_image_scan: scan all images
-			OnDemandOnly         bool   `json:"on_demand_only"`         // For set_compliance_on_demand_only (legacy)
-			Mode                 string `json:"mode"`                   // For set_compliance_mode: "disabled", "on-demand", or "enabled"
+			Type                      string                 `json:"type"`
+			UpdateInterval            int                    `json:"update_interval"`
+			ComplianceScanInterval    int                    `json:"compliance_scan_interval"`
+			PackageCacheRefreshMode   string                 `json:"package_cache_refresh_mode"`
+			PackageCacheRefreshMaxAge int                    `json:"package_cache_refresh_max_age"`
+			Version                   string                 `json:"version"`
+			Force                     bool                   `json:"force"`
+			Message                   string                 `json:"message"`
+			Integration               string                 `json:"integration"`
+			Enabled                   bool                   `json:"enabled"`
+			ProfileType               string                 `json:"profile_type"`           // For compliance_scan
+			ProfileID                 string                 `json:"profile_id"`             // For compliance_scan: specific XCCDF profile ID
+			EnableRemediation         bool                   `json:"enable_remediation"`     // For compliance_scan
+			FetchRemoteResources      bool                   `json:"fetch_remote_resources"` // For compliance_scan
+			OpenSCAPEnabled           *bool                  `json:"openscap_enabled"`       // For compliance_scan: per-host toggle
+			DockerBenchEnabled        *bool                  `json:"docker_bench_enabled"`   // For compliance_scan: per-host toggle
+			RuleID                    string                 `json:"rule_id"`                // For remediate_rule: specific rule to remediate
+			ImageName                 string                 `json:"image_name"`             // For docker_image_scan: Docker image to scan
+			ContainerName             string                 `json:"container_name"`         // For docker_image_scan: container to scan
+			ScanAllImages             bool                   `json:"scan_all_images"`        // For docker_image_scan: scan all images
+			OnDemandOnly              bool                   `json:"on_demand_only"`         // For set_compliance_on_demand_only (legacy)
+			Mode                      string                 `json:"mode"`                   // For set_compliance_mode: "disabled", "on-demand", or "enabled"
+			Config                    map[string]interface{} `json:"config"`                 // For apply_config: full config to apply
 			// SSH proxy fields
 			SessionID  string `json:"session_id"`  // SSH proxy session ID
 			Host       string `json:"host"`        // SSH proxy target host
@@ -1274,16 +1595,22 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 			Cols       int    `json:"cols"`        // Terminal columns
 			Rows       int    `json:"rows"`        // Terminal rows
 			Data       string `json:"data"`        // SSH input data
+			// run_patch fields
+			PatchRunID   string   `json:"patch_run_id"`
+			PatchType    string   `json:"patch_type"`
+			PackageName  string   `json:"package_name"`
+			PackageNames []string `json:"package_names"`
+			DryRun       bool     `json:"dry_run"`
 		}
 		if err := json.Unmarshal(data, &payload); err != nil {
-			logger.WithError(err).WithField("data", string(data)).Warn("Failed to parse WebSocket message")
+			logger.WithError(err).WithField("message_bytes", len(data)).Warn("Failed to parse WebSocket message")
 			continue
 		}
-		logger.WithField("type", payload.Type).Debug("Parsed WebSocket message type")
+		logger.WithField("type", logutil.Sanitize(payload.Type)).Debug("Parsed WebSocket message type")
 		switch payload.Type {
 		case "settings_update":
 			logger.WithField("interval", payload.UpdateInterval).Info("settings_update received")
-			out <- wsMsg{kind: "settings_update", interval: payload.UpdateInterval}
+			out <- wsMsg{kind: "settings_update", interval: payload.UpdateInterval, complianceScanInterval: payload.ComplianceScanInterval, packageCacheRefreshMode: payload.PackageCacheRefreshMode, packageCacheRefreshMaxAge: payload.PackageCacheRefreshMaxAge}
 		case "report_now":
 			logger.Info("report_now received")
 			out <- wsMsg{kind: "report_now"}
@@ -1296,22 +1623,72 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		case "docker_inventory_refresh":
 			logger.Info("docker_inventory_refresh received")
 			out <- wsMsg{kind: "docker_inventory_refresh"}
+		case "run_patch":
+			if payload.PatchRunID == "" {
+				logger.Warn("run_patch missing patch_run_id")
+				continue
+			}
+			patchType := payload.PatchType
+			if patchType == "" {
+				patchType = "patch_all"
+			}
+			if patchType != "patch_all" && patchType != "patch_package" {
+				logger.WithField("patch_type", logutil.Sanitize(patchType)).Warn("Invalid patch_type in run_patch")
+				continue
+			}
+			var packageNames []string
+			if len(payload.PackageNames) > 0 {
+				for _, n := range payload.PackageNames {
+					if validAptPackagePattern.MatchString(n) {
+						packageNames = append(packageNames, n)
+					} else {
+						logger.WithError(fmt.Errorf("invalid package name")).WithField("package_name", logutil.Sanitize(n)).Warn("Invalid package name in run_patch package_names")
+					}
+				}
+				if len(packageNames) == 0 {
+					logger.Warn("run_patch package_names had no valid names")
+					continue
+				}
+			} else if payload.PackageName != "" {
+				if validAptPackagePattern.MatchString(payload.PackageName) {
+					packageNames = []string{payload.PackageName}
+				} else {
+					logger.WithError(fmt.Errorf("invalid package name")).WithField("package_name", logutil.Sanitize(payload.PackageName)).Warn("Invalid package_name in run_patch")
+					continue
+				}
+			} else if patchType == "patch_package" {
+				logger.Warn("run_patch patch_package requires package_name or package_names")
+				continue
+			}
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+				"patch_run_id":  payload.PatchRunID,
+				"patch_type":    patchType,
+				"package_names": packageNames,
+				"dry_run":       payload.DryRun,
+			})).Info("run_patch received")
+			out <- wsMsg{
+				kind:         "run_patch",
+				patchRunID:   payload.PatchRunID,
+				patchType:    patchType,
+				packageNames: packageNames,
+				dryRun:       payload.DryRun,
+			}
 		case "update_notification":
-			logger.WithFields(map[string]interface{}{
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 				"version": payload.Version,
 				"force":   payload.Force,
 				"message": payload.Message,
-			}).Info("update_notification received")
+			})).Info("update_notification received")
 			out <- wsMsg{
 				kind:    "update_notification",
 				version: payload.Version,
 				force:   payload.Force,
 			}
 		case "integration_toggle":
-			logger.WithFields(map[string]interface{}{
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 				"integration": payload.Integration,
 				"enabled":     payload.Enabled,
-			}).Info("integration_toggle received")
+			})).Info("integration_toggle received")
 			out <- wsMsg{
 				kind:               "integration_toggle",
 				integrationName:    payload.Integration,
@@ -1320,18 +1697,18 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		case "compliance_scan":
 			// Validate profile ID to prevent command injection
 			if err := validateProfileID(payload.ProfileID); err != nil {
-				logger.WithError(err).WithField("profile_id", payload.ProfileID).Warn("Invalid profile ID in compliance_scan message")
+				logger.WithError(err).WithField("profile_id", logutil.Sanitize(payload.ProfileID)).Warn("Invalid profile ID in compliance_scan message")
 				continue
 			}
 			profileType := payload.ProfileType
 			if profileType == "" {
 				profileType = "all"
 			}
-			logger.WithFields(map[string]interface{}{
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 				"profile_type":       profileType,
 				"profile_id":         payload.ProfileID,
 				"enable_remediation": payload.EnableRemediation,
-			}).Info("compliance_scan received")
+			})).Info("compliance_scan received")
 			out <- wsMsg{
 				kind:                 "compliance_scan",
 				profileType:          profileType,
@@ -1344,9 +1721,16 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		case "compliance_scan_cancel":
 			logger.Info("compliance_scan_cancel received")
 			out <- wsMsg{kind: "compliance_scan_cancel"}
+		case "patch_run_stop":
+			if payload.PatchRunID == "" {
+				logger.Warn("patch_run_stop missing patch_run_id")
+				continue
+			}
+			logger.WithField("patch_run_id", logutil.Sanitize(payload.PatchRunID)).Info("patch_run_stop received")
+			out <- wsMsg{kind: "patch_run_stop", patchRunID: payload.PatchRunID}
 		case "upgrade_ssg":
-			logger.Info("upgrade_ssg received from WebSocket")
-			out <- wsMsg{kind: "upgrade_ssg"}
+			logger.WithField("version", payload.Version).Info("upgrade_ssg received from WebSocket")
+			out <- wsMsg{kind: "upgrade_ssg", version: payload.Version}
 			logger.Info("upgrade_ssg sent to message channel")
 		case "install_scanner":
 			logger.Info("install_scanner received from WebSocket")
@@ -1354,26 +1738,26 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		case "remediate_rule":
 			// Validate rule ID to prevent command injection
 			if err := validateRuleID(payload.RuleID); err != nil {
-				logger.WithError(err).WithField("rule_id", payload.RuleID).Warn("Invalid rule ID in remediate_rule message")
+				logger.WithError(err).WithField("rule_id", logutil.Sanitize(payload.RuleID)).Warn("Invalid rule ID in remediate_rule message")
 				continue
 			}
-			logger.WithField("rule_id", payload.RuleID).Info("remediate_rule received")
+			logger.WithField("rule_id", logutil.Sanitize(payload.RuleID)).Info("remediate_rule received")
 			out <- wsMsg{kind: "remediate_rule", ruleID: payload.RuleID}
 		case "docker_image_scan":
 			// Validate Docker image and container names to prevent command injection
 			if err := validateDockerImageName(payload.ImageName); err != nil {
-				logger.WithError(err).WithField("image_name", payload.ImageName).Warn("Invalid image name in docker_image_scan message")
+				logger.WithError(err).WithField("image_name", logutil.Sanitize(payload.ImageName)).Warn("Invalid image name in docker_image_scan message")
 				continue
 			}
 			if err := validateDockerContainerName(payload.ContainerName); err != nil {
-				logger.WithError(err).WithField("container_name", payload.ContainerName).Warn("Invalid container name in docker_image_scan message")
+				logger.WithError(err).WithField("container_name", logutil.Sanitize(payload.ContainerName)).Warn("Invalid container name in docker_image_scan message")
 				continue
 			}
-			logger.WithFields(map[string]interface{}{
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 				"image_name":      payload.ImageName,
 				"container_name":  payload.ContainerName,
 				"scan_all_images": payload.ScanAllImages,
-			}).Info("docker_image_scan received")
+			})).Info("docker_image_scan received")
 			out <- wsMsg{
 				kind:          "docker_image_scan",
 				imageName:     payload.ImageName,
@@ -1381,17 +1765,20 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				scanAllImages: payload.ScanAllImages,
 			}
 		case "set_compliance_mode":
-			logger.WithField("mode", payload.Mode).Info("set_compliance_mode received")
+			logger.WithField("mode", logutil.Sanitize(payload.Mode)).Info("set_compliance_mode received")
 			// Validate mode
 			validModes := map[string]bool{"disabled": true, "on-demand": true, "enabled": true}
 			if !validModes[payload.Mode] {
-				logger.WithField("mode", payload.Mode).Warn("Invalid compliance mode, ignoring")
+				logger.WithField("mode", logutil.Sanitize(payload.Mode)).Warn("Invalid compliance mode, ignoring")
 				continue
 			}
 			out <- wsMsg{
 				kind:           "set_compliance_mode",
 				complianceMode: payload.Mode,
 			}
+		case "apply_config":
+			logger.Info("apply_config received")
+			out <- wsMsg{kind: "apply_config", applyConfig: payload.Config}
 		case "set_compliance_on_demand_only":
 			// Legacy handler - convert to new format
 			logger.WithField("on_demand_only", payload.OnDemandOnly).Info("set_compliance_on_demand_only received (legacy)")
@@ -1412,8 +1799,10 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				wsConn := globalWsConn
 				globalWsConnMu.RUnlock()
 				if wsConn != nil {
+					// Resolve the config path per-OS so Windows hosts see
+					// C:\ProgramData\PatchMon\config.yml, not the Linux path.
 					errorMsg := "SSH proxy is not enabled.\n\n" +
-						"To enable SSH proxy, edit the file /etc/patchmon/config.yml and add the following:\n\n" +
+						"To enable SSH proxy, edit the file " + cfgManager.GetConfigFile() + " and add the following:\n\n" +
 						"integrations:\n" +
 						"    ssh-proxy-enabled: true\n\n" +
 						"Note: This cannot be pushed from the server to the agent and should require you to manually do this for security reasons."
@@ -1448,12 +1837,12 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				}
 				continue
 			}
-			logger.WithFields(map[string]interface{}{
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 				"session_id": payload.SessionID,
 				"host":       payload.Host,
 				"port":       payload.Port,
 				"username":   payload.Username,
-			}).Info("ssh_proxy received")
+			})).Info("ssh_proxy received")
 			out <- wsMsg{
 				kind:               "ssh_proxy",
 				sshProxySessionID:  payload.SessionID,
@@ -1497,20 +1886,866 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				kind:              "ssh_proxy_disconnect",
 				sshProxySessionID: payload.SessionID,
 			}
+		case "rdp_proxy":
+			if !cfgManager.IsIntegrationEnabled("rdp-proxy-enabled") {
+				logger.Warn("RDP proxy requested but not enabled in config.yml")
+				globalWsConnMu.RLock()
+				wsConn := globalWsConn
+				globalWsConnMu.RUnlock()
+				if wsConn != nil {
+					// Resolve the config path per-OS so Windows hosts see
+					// C:\ProgramData\PatchMon\config.yml, not the Linux path.
+					errorMsg := "RDP proxy is not enabled.\n\n" +
+						"To enable RDP proxy, edit the file " + cfgManager.GetConfigFile() + " and add:\n\n" +
+						"integrations:\n" +
+						"    rdp-proxy-enabled: true\n\n" +
+						"Note: This cannot be pushed from the server and requires manual configuration for security."
+					sendRDPProxyError(wsConn, payload.SessionID, errorMsg)
+				}
+				continue
+			}
+			if payload.SessionID == "" {
+				logger.Warn("rdp_proxy request missing session_id")
+				continue
+			}
+			rdpHost := payload.Host
+			if rdpHost == "" {
+				rdpHost = "localhost"
+			}
+			if err := validateSSHProxyHost(rdpHost); err != nil {
+				logger.WithError(err).WithField("host", logutil.Sanitize(payload.Host)).Warn("Invalid RDP proxy host")
+				globalWsConnMu.RLock()
+				wsConn := globalWsConn
+				globalWsConnMu.RUnlock()
+				if wsConn != nil {
+					sendRDPProxyError(wsConn, payload.SessionID, fmt.Sprintf("Invalid host: %v", err))
+				}
+				continue
+			}
+			port := payload.Port
+			if port < 1 || port > 65535 {
+				port = 3389
+			}
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+				"session_id": payload.SessionID,
+				"host":       rdpHost,
+				"port":       port,
+			})).Info("rdp_proxy received")
+			out <- wsMsg{
+				kind:              "rdp_proxy",
+				rdpProxySessionID: payload.SessionID,
+				rdpProxyHost:      rdpHost,
+				rdpProxyPort:      port,
+			}
+		case "rdp_proxy_input":
+			if payload.SessionID == "" {
+				logger.Warn("rdp_proxy_input missing session_id")
+				continue
+			}
+			out <- wsMsg{
+				kind:              "rdp_proxy_input",
+				rdpProxySessionID: payload.SessionID,
+				rdpProxyData:      payload.Data,
+			}
+		case "rdp_proxy_disconnect":
+			if payload.SessionID == "" {
+				logger.Warn("rdp_proxy_disconnect missing session_id")
+				continue
+			}
+			out <- wsMsg{
+				kind:              "rdp_proxy_disconnect",
+				rdpProxySessionID: payload.SessionID,
+			}
 		default:
 			if payload.Type != "" && payload.Type != "connected" {
-				logger.WithField("type", payload.Type).Warn("Unknown WebSocket message type")
+				logger.WithField("type", logutil.Sanitize(payload.Type)).Warn("Unknown WebSocket message type")
 			}
 		}
 	}
 }
 
+// dryRunOutputIndicatesError returns true if the output contains dependency or
+// resolution error messages. Used to distinguish "declined" (exit 1, success)
+// from actual dependency/validation failures (exit 1, failure).
+func dryRunOutputIndicatesError(output string) bool {
+	lower := strings.ToLower(output)
+	errorPatterns := []string{
+		"error:", "error ", "unable to find", "unable to resolve", "no match for",
+		"problem:", "transaction check error", "cannot install", "could not find",
+		"failed to synchronize", "dependency resolution", "conflict",
+		"no packages available to install", "pkg: no packages available",
+		"cannot find package",
+		// pacman-specific
+		"error: failed to prepare transaction", "could not satisfy dependencies",
+		"failed to commit transaction", "error: target not found",
+		"unresolvable package conflicts",
+	}
+	for _, p := range errorPatterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDryRunExit1Success returns true if err is exit code 1 with output and the
+// output does not indicate a dependency/validation error. dnf/yum --assumeno
+// and pkg -n return exit 1 when they "decline" the operation (expected for
+// dry-run); we treat that as success. But if the output contains error messages
+// (e.g. "Unable to resolve", "Problem:"), we treat it as failure.
+func isDryRunExit1Success(err error, output string) bool {
+	if output == "" {
+		return false
+	}
+	if dryRunOutputIndicatesError(output) {
+		return false
+	}
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 1
+}
+
+const freeBSDBasePackageName = "freebsd-base"
+
+func getFreeBSDUpdateBinaryPath() (string, error) {
+	if path, err := exec.LookPath("freebsd-update"); err == nil {
+		return path, nil
+	}
+	for _, p := range []string{"/usr/sbin/freebsd-update"} {
+		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() && (info.Mode()&0111) != 0 {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("freebsd-update not found")
+}
+
+func freeBSDUpdateOutputHasPendingUpdates(output string) bool {
+	if output == "" {
+		return false
+	}
+	if strings.Contains(output, "No updates needed") || strings.Contains(output, "No updates are available") {
+		return false
+	}
+	return strings.Contains(output, "will be updated") || strings.Contains(output, "will be installed")
+}
+
+func splitFreeBSDPatchTargets(packageNames []string) ([]string, bool) {
+	filtered := make([]string, 0, len(packageNames))
+	includeBase := false
+	for _, name := range packageNames {
+		if strings.EqualFold(strings.TrimSpace(name), freeBSDBasePackageName) {
+			includeBase = true
+			continue
+		}
+		filtered = append(filtered, name)
+	}
+	return filtered, includeBase
+}
+
+// runPatch runs package manager update and upgrade (patch_all) or install (patch_package).
+// Supports apt-get (Debian/Ubuntu), dnf, yum (RHEL-based), pkg (FreeBSD), pacman (Arch),
+// and windows (WinGet for applications + WUA COM API for OS updates).
+// formatCmd returns a shell-style "$ command args..." line for display in output.
+func formatCmd(name string, args ...string) string {
+	parts := append([]string{name}, args...)
+	return "$ " + strings.Join(parts, " ") + "\n"
+}
+
+// streamSink accumulates stdout+stderr bytes from streaming patch-run commands,
+// appends them to a fullOutput builder, and periodically POSTs stage="progress"
+// chunks to the server so the UI can render live output.
+//
+// Flushes happen on: (a) buffer reaching 1 KiB, (b) 250ms since last flush,
+// (c) explicit Flush() call (e.g. at command boundaries).
+type streamSink struct {
+	client     *client.Client
+	patchRunID string
+
+	mu         sync.Mutex
+	full       *strings.Builder
+	pending    strings.Builder
+	lastFlush  time.Time
+	flushEvery time.Duration
+	flushBytes int
+}
+
+func newStreamSink(httpClient *client.Client, patchRunID string, full *strings.Builder) *streamSink {
+	return &streamSink{
+		client:     httpClient,
+		patchRunID: patchRunID,
+		full:       full,
+		lastFlush:  time.Now(),
+		flushEvery: 250 * time.Millisecond,
+		flushBytes: 1024,
+	}
+}
+
+// Write records bytes into both the fullOutput builder and the pending flush
+// buffer. It triggers a flush when thresholds are reached.
+func (s *streamSink) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	s.full.Write(p)
+	s.pending.Write(p)
+	shouldFlush := s.pending.Len() >= s.flushBytes || time.Since(s.lastFlush) >= s.flushEvery
+	s.mu.Unlock()
+	if shouldFlush {
+		s.Flush()
+	}
+	return len(p), nil
+}
+
+// WriteString is a convenience wrapper for appending a string.
+func (s *streamSink) WriteString(str string) {
+	_, _ = s.Write([]byte(str))
+}
+
+// Flush sends any buffered bytes to the server as a stage="progress" chunk.
+// Uses a background context so a cancelled parent ctx does not prevent the
+// final chunk from being sent.
+func (s *streamSink) Flush() {
+	s.mu.Lock()
+	if s.pending.Len() == 0 {
+		s.lastFlush = time.Now()
+		s.mu.Unlock()
+		return
+	}
+	chunk := s.pending.String()
+	s.pending.Reset()
+	s.lastFlush = time.Now()
+	s.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := s.client.SendPatchOutput(ctx, s.patchRunID, "progress", chunk, ""); err != nil {
+		logger.WithError(err).WithField("patch_run_id", logutil.Sanitize(s.patchRunID)).Debug("Failed to send patch progress chunk")
+	}
+}
+
+// runStreamingPatchStep executes a command, streaming its stdout+stderr into
+// the provided sink. On context cancellation it sends SIGINT and allows
+// WaitDelay for the process to clean up (rollbacks etc.) before forcing a kill.
+func runStreamingPatchStep(ctx context.Context, sink *streamSink, env []string, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = env
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		// os.Interrupt maps to SIGINT on Unix; on Windows the runtime emulates
+		// a best-effort interrupt. Subsequent WaitDelay will SIGKILL if needed.
+		return cmd.Process.Signal(os.Interrupt)
+	}
+	cmd.WaitDelay = 30 * time.Second
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("stderr pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start: %w", err)
+	}
+
+	var wg sync.WaitGroup
+	copyPipe := func(rc io.ReadCloser) {
+		defer wg.Done()
+		br := bufio.NewReader(rc)
+		buf := make([]byte, 4096)
+		for {
+			n, readErr := br.Read(buf)
+			if n > 0 {
+				_, _ = sink.Write(buf[:n])
+			}
+			if readErr != nil {
+				return
+			}
+		}
+	}
+	wg.Add(2)
+	go copyPipe(stdout)
+	go copyPipe(stderr)
+	wg.Wait()
+
+	waitErr := cmd.Wait()
+	sink.Flush()
+	return waitErr
+}
+
+// patchRunTrailer returns a short human-readable trailer the agent appends to
+// the tail of a patch run's shell output so the live terminal view has a
+// clear "this is the end" marker regardless of what the underlying package
+// manager printed last. The same text is included in the authoritative
+// fullOutput sent with the terminal stage, so users see the trailer whether
+// they're reading the live WebSocket buffer or the persisted shell_output.
+func patchRunTrailer(wasStopped bool, stepErr error, dryRun bool) string {
+	ts := time.Now().UTC().Format(time.RFC3339)
+	switch {
+	case wasStopped:
+		return fmt.Sprintf("\n--- Patch run stopped by user at %s ---\n", ts)
+	case stepErr != nil:
+		return fmt.Sprintf("\n--- Patch run failed at %s ---\n", ts)
+	case dryRun:
+		return fmt.Sprintf("\n--- Dry run completed at %s ---\n", ts)
+	default:
+		return fmt.Sprintf("\n--- Patch run completed at %s ---\n", ts)
+	}
+}
+
+// When dryRun is true, simulates and sends dry_run_completed instead of completed.
+func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	// Register cancel fn so the server can request an interrupt via "patch_run_stop".
+	patchRunCancels.Store(patchRunID, cancel)
+	defer patchRunCancels.Delete(patchRunID)
+
+	httpClient := client.New(cfgManager, logger)
+	packageMgr := packages.New(logger, packages.CacheRefreshConfig{
+		Mode:   cfgManager.GetPackageCacheRefreshMode(),
+		MaxAge: cfgManager.GetPackageCacheRefreshMaxAge(),
+	})
+	pkgManager := packageMgr.DetectPackageManager()
+
+	if pkgManager == "windows" {
+		return runPatchWindows(ctx, httpClient, patchRunID, patchType, packageNames, dryRun)
+	}
+
+	if pkgManager != "apt" && pkgManager != "dnf" && pkgManager != "yum" && pkgManager != "pkg" && pkgManager != "pacman" {
+		errMsg := fmt.Sprintf("package manager %q not supported for patching (apt, dnf, yum, pkg, pacman required)", pkgManager)
+		_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", errMsg)
+		return fmt.Errorf("%s", errMsg)
+	}
+
+	var env []string
+	var upgradeBin string
+	var freeBSDUpdateBin string
+	freeBSDPkgTargets := packageNames
+	includeFreeBSDBase := pkgManager == "pkg" && patchType == "patch_all"
+	switch pkgManager {
+	case "apt":
+		if _, err := exec.LookPath("apt-get"); err != nil {
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "apt-get not found: not a Debian/Ubuntu system or apt not installed")
+			return fmt.Errorf("apt-get not found: %w", err)
+		}
+		env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+		upgradeBin = "apt-get"
+	case "pkg":
+		freeBSDPkgTargets, includeFreeBSDBase = splitFreeBSDPatchTargets(packageNames)
+		upgradeBin = packages.GetPkgBinaryPath()
+		env = append(os.Environ(), "ASSUME_ALWAYS_YES=YES", "PAGER=cat")
+		if includeFreeBSDBase {
+			var err error
+			freeBSDUpdateBin, err = getFreeBSDUpdateBinaryPath()
+			if err != nil {
+				_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "freebsd-update not found: cannot patch FreeBSD base system")
+				return fmt.Errorf("freebsd-update not found: %w", err)
+			}
+		}
+	case "pacman":
+		if _, err := exec.LookPath("pacman"); err != nil {
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "pacman not found: Arch Linux package manager not installed")
+			return fmt.Errorf("pacman not found: %w", err)
+		}
+		upgradeBin = "pacman"
+	default: // dnf, yum
+		if _, err := exec.LookPath(pkgManager); err != nil {
+			errMsg := fmt.Sprintf("%s not found: RHEL/Fedora package manager not installed", pkgManager)
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", errMsg)
+			return fmt.Errorf("%s not found: %w", pkgManager, err)
+		}
+		upgradeBin = pkgManager
+	}
+
+	if err := httpClient.SendPatchOutput(ctx, patchRunID, "started", "", ""); err != nil {
+		logger.WithError(err).Warn("Failed to send patch started to server")
+	}
+
+	var fullOutput strings.Builder
+	fullOutput.Grow(8192)
+	sink := newStreamSink(httpClient, patchRunID, &fullOutput)
+
+	// runStep streams a single package-manager command's output and returns
+	// (terminalError, shouldAbort). If isDryRunStep is true, exit-1 from tools
+	// that use it to signal "changes pending" is accepted as success.
+	runStep := func(isDryRunStep bool, errTag, errFmt, name string, args ...string) (error, bool) {
+		sink.WriteString(formatCmd(name, args...))
+		sink.Flush()
+		err := runStreamingPatchStep(ctx, sink, env, name, args...)
+		if err == nil {
+			return nil, false
+		}
+		if isDryRunStep && isDryRunExit1Success(err, fullOutput.String()) {
+			return nil, false
+		}
+		logger.WithError(err).Warn(errTag + " failed")
+		sink.WriteString(fmt.Sprintf("\n[%s error] %s\n", errTag, err.Error()))
+		sink.Flush()
+		return fmt.Errorf(errFmt, err), true
+	}
+
+	var stepErr error
+
+	if includeFreeBSDBase {
+		fetchStart := fullOutput.Len()
+		if err, abort := runStep(false, "freebsd-update fetch", "freebsd-update fetch failed: %w", freeBSDUpdateBin, "fetch", "--not-running-from-cron"); abort {
+			stepErr = err
+		}
+		fetchOutput := ""
+		if fullOutput.Len() > fetchStart {
+			fetchOutput = fullOutput.String()[fetchStart:]
+		}
+		if stepErr == nil && !dryRun && freeBSDUpdateOutputHasPendingUpdates(fetchOutput) {
+			if err, abort := runStep(false, "freebsd-update install", "freebsd-update install failed: %w", freeBSDUpdateBin, "install"); abort {
+				stepErr = err
+			}
+		}
+	}
+
+	needsPkgTransaction := pkgManager != "pkg" || patchType == "patch_all" || len(freeBSDPkgTargets) > 0
+	if stepErr == nil && needsPkgTransaction {
+		// Update package cache
+		switch pkgManager {
+		case "apt":
+			if err, abort := runStep(false, "apt-get update", "apt-get update failed: %w", "apt-get", "update", "-qq"); abort {
+				stepErr = err
+			}
+		case "pkg":
+			if err, abort := runStep(false, "pkg update", "pkg update failed: %w", upgradeBin, "update"); abort {
+				stepErr = err
+			}
+		case "pacman":
+			if err, abort := runStep(false, "pacman refresh", "pacman -Sy failed: %w", "pacman", "-Sy", "--noconfirm"); abort {
+				stepErr = err
+			}
+		default:
+			if err, abort := runStep(false, upgradeBin+" makecache", upgradeBin+" makecache failed: %w", upgradeBin, "makecache", "-q"); abort {
+				stepErr = err
+			}
+		}
+	}
+
+	if stepErr == nil {
+		if patchType == "patch_all" {
+			switch pkgManager {
+			case "apt":
+				if dryRun {
+					if err, abort := runStep(false, "apt-get -s upgrade", "apt-get -s upgrade failed: %w", "apt-get", "-s", "upgrade"); abort {
+						stepErr = err
+					}
+				} else {
+					if err, abort := runStep(false, "apt-get upgrade", "apt-get upgrade failed: %w", "apt-get", "upgrade", "-y"); abort {
+						stepErr = err
+					}
+				}
+			case "pkg":
+				if dryRun {
+					if err, abort := runStep(true, "pkg upgrade -n", "pkg upgrade -n failed: %w", upgradeBin, "upgrade", "-n"); abort {
+						stepErr = err
+					}
+				} else {
+					if err, abort := runStep(false, "pkg upgrade", "pkg upgrade failed: %w", upgradeBin, "upgrade", "-y"); abort {
+						stepErr = err
+					}
+				}
+			case "pacman":
+				if dryRun {
+					if err, abort := runStep(true, "pacman -Syu -p", "pacman -Syu -p failed: %w", "pacman", "-Syu", "-p"); abort {
+						stepErr = err
+					}
+				} else {
+					if err, abort := runStep(false, "pacman -Syu", "pacman -Syu failed: %w", "pacman", "-Syu", "--noconfirm"); abort {
+						stepErr = err
+					}
+				}
+			default: // dnf, yum
+				if dryRun {
+					if err, abort := runStep(true, upgradeBin+" upgrade --assumeno", upgradeBin+" upgrade --assumeno failed: %w", upgradeBin, "upgrade", "--assumeno"); abort {
+						stepErr = err
+					}
+				} else {
+					if err, abort := runStep(false, upgradeBin+" upgrade", upgradeBin+" upgrade failed: %w", upgradeBin, "upgrade", "-y"); abort {
+						stepErr = err
+					}
+				}
+			}
+		} else {
+			if len(packageNames) == 0 {
+				sink.Flush()
+				_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), "package_names required for patch_package")
+				return fmt.Errorf("package_names required for patch_package")
+			}
+			switch pkgManager {
+			case "apt":
+				if dryRun {
+					args := append([]string{"-s", "install"}, packageNames...)
+					if err, abort := runStep(false, "apt-get -s install", "apt-get -s install failed: %w", "apt-get", args...); abort {
+						stepErr = err
+					}
+				} else {
+					args := append([]string{"install", "-y"}, packageNames...)
+					if err, abort := runStep(false, "apt-get install", "apt-get install failed: %w", "apt-get", args...); abort {
+						stepErr = err
+					}
+				}
+			case "pkg":
+				if len(freeBSDPkgTargets) > 0 {
+					if dryRun {
+						args := append([]string{"install", "-n"}, freeBSDPkgTargets...)
+						if err, abort := runStep(true, "pkg install -n", "pkg install -n failed: %w", upgradeBin, args...); abort {
+							stepErr = err
+						}
+					} else {
+						args := append([]string{"install", "-y"}, freeBSDPkgTargets...)
+						if err, abort := runStep(false, "pkg install", "pkg install failed: %w", upgradeBin, args...); abort {
+							stepErr = err
+						}
+					}
+				}
+			case "pacman":
+				if dryRun {
+					args := append([]string{"-S", "-p"}, packageNames...)
+					if err, abort := runStep(true, "pacman -S -p", "pacman -S -p failed: %w", "pacman", args...); abort {
+						stepErr = err
+					}
+				} else {
+					args := append([]string{"-S", "--noconfirm"}, packageNames...)
+					if err, abort := runStep(false, "pacman -S", "pacman -S failed: %w", "pacman", args...); abort {
+						stepErr = err
+					}
+				}
+			default: // dnf, yum
+				if dryRun {
+					args := append([]string{"install", "--assumeno"}, packageNames...)
+					if err, abort := runStep(true, upgradeBin+" install --assumeno", upgradeBin+" install --assumeno failed: %w", upgradeBin, args...); abort {
+						stepErr = err
+					}
+				} else {
+					args := append([]string{"install", "-y"}, packageNames...)
+					if err, abort := runStep(false, upgradeBin+" install", upgradeBin+" install failed: %w", upgradeBin, args...); abort {
+						stepErr = err
+					}
+				}
+			}
+		}
+	}
+
+	// Drain any remaining buffered output before deciding the final stage.
+	sink.Flush()
+
+	_, wasStopped := patchRunStopped.LoadAndDelete(patchRunID)
+
+	// Append a short human-readable trailer so users watching the live
+	// terminal can tell at a glance that the run has finished instead of
+	// guessing whether the last package-manager line is really the end.
+	// The trailer is streamed as a final progress chunk AND included in the
+	// authoritative shell_output blob we send with the terminal stage, so
+	// the same text is present whether the frontend is showing the live
+	// buffer or the persisted one.
+	trailer := patchRunTrailer(wasStopped, stepErr, dryRun)
+	sink.WriteString(trailer)
+	sink.Flush()
+
+	// Use a background context for the final status send so a cancelled
+	// ctx (from stop) still allows the cancellation record to reach the server.
+	finalCtx, finalCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer finalCancel()
+
+	switch {
+	case wasStopped:
+		if err := httpClient.SendPatchOutput(finalCtx, patchRunID, "cancelled", fullOutput.String(), "stopped by user"); err != nil {
+			logger.WithError(err).Warn("Failed to send patch cancelled output to server")
+		}
+	case stepErr != nil:
+		if err := httpClient.SendPatchOutput(finalCtx, patchRunID, "failed", fullOutput.String(), stepErr.Error()); err != nil {
+			logger.WithError(err).Warn("Failed to send patch failed output to server")
+		}
+		return stepErr
+	default:
+		stage := "completed"
+		if dryRun {
+			stage = "dry_run_completed"
+		}
+		if err := httpClient.SendPatchOutput(finalCtx, patchRunID, stage, fullOutput.String(), ""); err != nil {
+			logger.WithError(err).Warn("Failed to send patch output to server")
+			return err
+		}
+	}
+
+	// Post-patch inventory report: runs after success AND after user-triggered
+	// stop (a cancelled run may leave packages in a partially-changed state).
+	if !dryRun && (wasStopped || stepErr == nil) {
+		logger.Info("Sending post-patch report to refresh package lists...")
+		reportDone := make(chan error, 1)
+		go func() { reportDone <- sendReport(false) }()
+		select {
+		case err := <-reportDone:
+			if err != nil {
+				logger.WithError(err).Warn("Post-patch report failed")
+			} else {
+				logger.Info("Post-patch report sent successfully")
+			}
+		case <-time.After(2 * time.Minute):
+			logger.Warn("Post-patch report timed out after 2 minutes; will retry on next scheduled report")
+		}
+	}
+
+	if wasStopped {
+		return fmt.Errorf("patch run stopped by user")
+	}
+	return nil
+}
+
+// runPatchWindows handles patching on Windows hosts.
+// For patch_all: installs all approved WUA updates (by GUID from server) + upgrades all WinGet apps.
+// For patch_package: routes by package name - "KB..." prefix -> WUA, otherwise -> WinGet upgrade.
+func runPatchWindows(ctx context.Context, httpClient *client.Client, patchRunID, patchType string, packageNames []string, dryRun bool) error {
+	patcher := packages.NewWindowsPatcher()
+	var fullOutput strings.Builder
+
+	if err := httpClient.SendPatchOutput(ctx, patchRunID, "started", "", ""); err != nil {
+		logger.WithError(err).Warn("Failed to send patch started to server")
+	}
+
+	if patchType == "patch_all" {
+		// Step 1: WUA - install approved OS/KB updates
+		guids, err := httpClient.GetApprovedWindowsUpdateGUIDs(ctx)
+		if err != nil {
+			logger.WithError(err).Warn("Could not fetch approved Windows Update GUIDs; skipping WUA step")
+		}
+		if len(guids) > 0 {
+			fmt.Fprintf(&fullOutput, "[Windows Update] Installing %d approved update(s)...\n", len(guids))
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "progress", fullOutput.String(), "")
+			for _, guid := range guids {
+				out, err := patcher.InstallWindowsUpdate(ctx, guid)
+				fmt.Fprintf(&fullOutput, "  [%s] %s\n", guid, out)
+				success := err == nil && !packages.IsSuperseded(out)
+				result := client.WindowsUpdateResult{GUID: guid, Success: success}
+				if err != nil {
+					result.Error = err.Error()
+				}
+				_ = httpClient.SendWindowsUpdateResult(ctx, patchRunID, result)
+				_ = httpClient.SendPatchOutput(ctx, patchRunID, "progress", fullOutput.String(), "")
+			}
+		}
+
+		// Step 2: WinGet - upgrade all applications
+		fullOutput.WriteString("\n[WinGet] Upgrading applications...\n")
+		_ = httpClient.SendPatchOutput(ctx, patchRunID, "progress", fullOutput.String(), "")
+		wingetOut, wingetErr := patcher.WinGetUpgradeAll(ctx, dryRun)
+		fullOutput.WriteString(wingetOut)
+		fullOutput.WriteString("\n")
+		if wingetErr != nil {
+			logger.WithError(wingetErr).Warn("winget upgrade --all had errors (non-fatal)")
+		}
+
+		// Step 3: report reboot status
+		needsReboot := packages.RebootRequired()
+		_ = httpClient.SendWindowsRebootStatus(ctx, patchRunID, needsReboot)
+		if needsReboot {
+			fullOutput.WriteString("\n[Reboot Required] A system restart is needed to complete the update installation.\n")
+		}
+	} else {
+		// patch_package: each name is either a KB/GUID (WUA) or a WinGet package ID
+		if len(packageNames) == 0 {
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "package_names required for patch_package")
+			return fmt.Errorf("package_names required for patch_package")
+		}
+		for _, name := range packageNames {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			// Treat as WUA GUID if it looks like a UUID (36 chars with dashes), or KB prefix
+			isWUA := isWindowsUpdateIdentifier(name)
+			if isWUA {
+				fmt.Fprintf(&fullOutput, "[Windows Update] Installing %s...\n", name)
+				out, err := patcher.InstallWindowsUpdate(ctx, name)
+				fullOutput.WriteString(out + "\n")
+				success := err == nil && !packages.IsSuperseded(out)
+				result := client.WindowsUpdateResult{GUID: name, Success: success}
+				if err != nil {
+					result.Error = err.Error()
+				}
+				_ = httpClient.SendWindowsUpdateResult(ctx, patchRunID, result)
+			} else {
+				fmt.Fprintf(&fullOutput, "[WinGet] Upgrading %s...\n", name)
+				out, err := patcher.WinGetUpgradePackage(ctx, name, dryRun)
+				fullOutput.WriteString(out + "\n")
+				if err != nil {
+					logger.WithError(err).WithField("package", name).Warn("winget upgrade failed (non-fatal)")
+				}
+			}
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "progress", fullOutput.String(), "")
+		}
+
+		needsReboot := packages.RebootRequired()
+		_ = httpClient.SendWindowsRebootStatus(ctx, patchRunID, needsReboot)
+		if needsReboot {
+			fullOutput.WriteString("\n[Reboot Required] A system restart is needed.\n")
+		}
+	}
+
+	_, wasStopped := patchRunStopped.LoadAndDelete(patchRunID)
+
+	// Use a background context for the final status send so a cancelled
+	// ctx still allows the final record to reach the server.
+	finalCtx, finalCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer finalCancel()
+
+	stage := "completed"
+	if wasStopped {
+		stage = "cancelled"
+	} else if dryRun {
+		stage = "dry_run_completed"
+	}
+	errMsg := ""
+	if wasStopped {
+		errMsg = "stopped by user"
+	}
+
+	// Human-readable trailer so the browser's live terminal has a clear
+	// "this is the end" marker. Streamed as a progress chunk first so it
+	// reaches the WS hub, then folded into the authoritative terminal blob.
+	trailer := patchRunTrailer(wasStopped, nil, dryRun)
+	fullOutput.WriteString(trailer)
+	_ = httpClient.SendPatchOutput(ctx, patchRunID, "progress", trailer, "")
+
+	if err := httpClient.SendPatchOutput(finalCtx, patchRunID, stage, fullOutput.String(), errMsg); err != nil {
+		logger.WithError(err).Warn("Failed to send Windows patch output to server")
+		return err
+	}
+
+	if !dryRun {
+		logger.Info("Sending post-patch report to refresh package lists...")
+		reportDone := make(chan error, 1)
+		go func() { reportDone <- sendReport(false) }()
+		select {
+		case err := <-reportDone:
+			if err != nil {
+				logger.WithError(err).Warn("Post-patch report failed")
+			} else {
+				logger.Info("Post-patch report sent successfully")
+			}
+		case <-time.After(2 * time.Minute):
+			logger.Warn("Post-patch report timed out after 2 minutes; will retry on next scheduled report")
+		}
+	}
+
+	if wasStopped {
+		return fmt.Errorf("patch run stopped by user")
+	}
+	return nil
+}
+
+// isWindowsUpdateIdentifier returns true if the name looks like a WUA GUID (UUID format) or KB article ID.
+func isWindowsUpdateIdentifier(name string) bool {
+	if strings.HasPrefix(strings.ToUpper(name), "KB") {
+		return true
+	}
+	// UUID format: 8-4-4-4-12 hex digits
+	if len(name) == 36 && name[8] == '-' && name[13] == '-' && name[18] == '-' && name[23] == '-' {
+		return true
+	}
+	return false
+}
+
+// applyConfig applies a full config update from the server and restarts the service.
+func applyConfig(cfg map[string]interface{}) error {
+	if cfg == nil {
+		return fmt.Errorf("config is nil")
+	}
+	logger.Info("Applying configuration from server...")
+
+	// Apply docker
+	if v, ok := cfg["docker"]; ok {
+		if b, ok := v.(bool); ok {
+			if err := cfgManager.SetIntegrationEnabled("docker", b); err != nil {
+				return fmt.Errorf("set docker: %w", err)
+			}
+			logger.WithField("enabled", b).Info("Docker integration updated")
+		}
+	}
+
+	// Apply compliance (can be bool, string "on-demand", or nested map)
+	complianceVal := cfg["compliance"]
+	if complianceVal != nil {
+		var mode config.ComplianceMode
+		modeVal := complianceVal
+		if nm, ok := complianceVal.(map[string]interface{}); ok {
+			modeVal = nm["enabled"]
+		}
+		switch val := modeVal.(type) {
+		case bool:
+			if val {
+				mode = config.ComplianceEnabled
+			} else {
+				mode = config.ComplianceDisabled
+			}
+		case string:
+			switch val {
+			case "on-demand", "on_demand":
+				mode = config.ComplianceOnDemand
+			case "true":
+				mode = config.ComplianceEnabled
+			case "false":
+				mode = config.ComplianceDisabled
+			default:
+				mode = config.ComplianceOnDemand
+			}
+		default:
+			logger.WithField("compliance", logutil.Sanitize(fmt.Sprintf("%v", complianceVal))).Warn("Unknown compliance value type, skipping")
+		}
+		if mode != "" {
+			if err := cfgManager.SetComplianceMode(mode); err != nil {
+				return fmt.Errorf("set compliance mode: %w", err)
+			}
+			logger.WithField("mode", logutil.Sanitize(string(mode))).Info("Compliance mode updated")
+		}
+	}
+
+	// Apply compliance scanner toggles (flat keys or nested under compliance)
+	openscap := cfgManager.GetComplianceOpenscapEnabled()
+	dockerBench := cfgManager.GetComplianceDockerBenchEnabled()
+	if v, ok := cfg["compliance_openscap_enabled"]; ok {
+		if b, ok := v.(bool); ok {
+			openscap = b
+		}
+	} else if nm, ok := cfg["compliance"].(map[string]interface{}); ok {
+		if v, ok := nm["openscap_enabled"]; ok {
+			if b, ok := v.(bool); ok {
+				openscap = b
+			}
+		}
+	}
+	if v, ok := cfg["compliance_docker_bench_enabled"]; ok {
+		if b, ok := v.(bool); ok {
+			dockerBench = b
+		}
+	} else if nm, ok := cfg["compliance"].(map[string]interface{}); ok {
+		if v, ok := nm["docker_bench_enabled"]; ok {
+			if b, ok := v.(bool); ok {
+				dockerBench = b
+			}
+		}
+	}
+	if err := cfgManager.SetComplianceScanners(openscap, dockerBench); err != nil {
+		return fmt.Errorf("set compliance scanners: %w", err)
+	}
+	logger.WithFields(logutil.SanitizeMap(map[string]interface{}{"openscap": openscap, "docker_bench": dockerBench})).Info("Compliance scanner toggles updated")
+
+	logger.Info("Config updated, restarting patchmon-agent service...")
+	return restartService("", "")
+}
+
 // toggleIntegration toggles an integration on or off and restarts the service
 func toggleIntegration(integrationName string, enabled bool) error {
-	logger.WithFields(map[string]interface{}{
+	logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 		"integration": integrationName,
 		"enabled":     enabled,
-	}).Info("Toggling integration")
+	})).Info("Toggling integration")
 
 	// Handle compliance tools installation/removal
 	if integrationName == "compliance" {
@@ -1810,8 +3045,68 @@ func toggleIntegration(integrationName string, enabled bool) error {
 			logger.WithError(err).Warn("Failed to restart service (this is not critical)")
 			return fmt.Errorf("failed to restart service: %w, output: %s", err, string(output))
 		}
-		logger.WithField("output", string(output)).Debug("Service restart command completed")
+		logger.WithField("output", logutil.Sanitize(string(output))).Debug("Service restart command completed")
 		logger.Info("Service restarted successfully")
+		return nil
+	} else if runtime.GOOS == "freebsd" {
+		// FreeBSD / pfSense: use rc.d helper script (same approach as version_update.go)
+		logger.Debug("Detected FreeBSD, scheduling service restart via helper script")
+		if err := os.MkdirAll("/etc/patchmon", 0700); err != nil {
+			logger.WithError(err).Warn("Failed to create /etc/patchmon directory, will try anyway")
+		}
+		helperScript := `#!/bin/sh
+sleep 2
+# Prefer service, fallback to rc.d script (pfSense, minimal env)
+if [ -x /usr/sbin/service ]; then
+    /usr/sbin/service patchmon_agent restart 2>/dev/null || /usr/sbin/service patchmon_agent start 2>/dev/null
+else
+    /usr/local/etc/rc.d/patchmon_agent restart 2>/dev/null || /usr/local/etc/rc.d/patchmon_agent start 2>/dev/null
+fi
+rm -f "$0"
+`
+		randomBytes := make([]byte, 8)
+		if _, err := rand.Read(randomBytes); err != nil {
+			randomBytes = []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
+		}
+		helperPath := filepath.Join("/etc/patchmon", fmt.Sprintf("restart-%s.sh", hex.EncodeToString(randomBytes)))
+		dirInfo, err := os.Lstat("/etc/patchmon")
+		if err == nil && dirInfo.Mode()&os.ModeSymlink != 0 {
+			logger.Warn("Security: /etc/patchmon is a symlink, refusing to create helper script")
+			os.Exit(0)
+		}
+		file, err := os.OpenFile(helperPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
+		if err != nil {
+			logger.WithError(err).Warn("Failed to create restart helper script, exiting to let daemon -r respawn")
+			os.Exit(0)
+		}
+		if _, err := file.WriteString(helperScript); err != nil {
+			_ = file.Close()
+			_ = os.Remove(helperPath)
+			os.Exit(0)
+		}
+		_ = file.Close()
+		fileInfo, err := os.Lstat(helperPath)
+		if err != nil || fileInfo.Mode()&os.ModeSymlink != 0 {
+			_ = os.Remove(helperPath)
+			os.Exit(0)
+		}
+		var cmd *exec.Cmd
+		if _, nohupErr := exec.LookPath("nohup"); nohupErr == nil {
+			cmd = exec.Command("nohup", helperPath)
+		} else {
+			cmd = exec.Command("/bin/sh", helperPath)
+		}
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		cmd.SysProcAttr = sysProcAttrForDetach()
+		if err := cmd.Start(); err != nil {
+			_ = os.Remove(helperPath)
+			logger.WithError(err).Warn("Failed to start restart helper, exiting to let daemon -r respawn")
+			os.Exit(0)
+		}
+		logger.Info("Scheduled service restart via helper script (FreeBSD), exiting now...")
+		time.Sleep(500 * time.Millisecond)
+		os.Exit(0)
 		return nil
 	} else if _, err := exec.LookPath("rc-service"); err == nil {
 		// OpenRC is available (Alpine Linux)
@@ -1902,12 +3197,8 @@ rm -f "$0"
 				}
 				cmd.Stdout = nil
 				cmd.Stderr = nil
-				// Create a new session to fully detach the child process
-				// Setsid is stronger than Setpgid — it creates a new session,
-				// ensuring the helper script survives even if the parent's cgroup is cleaned up
-				cmd.SysProcAttr = &syscall.SysProcAttr{
-					Setsid: true,
-				}
+				// Create a new session to fully detach the child process (Linux only)
+				cmd.SysProcAttr = sysProcAttrForDetach()
 				if err := cmd.Start(); err != nil {
 					logger.WithError(err).Warn("Failed to start restart helper script, supervise-daemon will handle restart")
 					// Clean up script
@@ -2017,9 +3308,7 @@ rm -f "$0"
 	}
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true,
-	}
+	cmd.SysProcAttr = sysProcAttrForDetach()
 
 	if err := cmd.Start(); err != nil {
 		logger.WithError(err).Error("Failed to start restart helper script")
@@ -2055,16 +3344,24 @@ func sendComplianceProgress(phase, profileName, message string, progress float64
 
 // runComplianceScanWithOptions runs an on-demand compliance scan with options and sends results to server.
 // ctx can be cancelled from the server (e.g. user clicks Cancel) to abort the scan.
+// Run scan now works for both on-demand and scheduled compliance modes.
 func runComplianceScanWithOptions(ctx context.Context, options *models.ComplianceScanOptions) error {
 	profileName := options.ProfileID
 	if profileName == "" {
 		profileName = "default"
 	}
 
-	logger.WithFields(map[string]interface{}{
+	// Run scan now works for both on-demand and scheduled compliance modes.
+	// Only reject if compliance is disabled.
+	if !cfgManager.IsIntegrationEnabled("compliance") {
+		sendComplianceProgress("failed", profileName, "Compliance scanning is disabled", 0, "compliance integration is not enabled")
+		return fmt.Errorf("compliance integration is not enabled")
+	}
+
+	logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 		"profile_id":         options.ProfileID,
 		"enable_remediation": options.EnableRemediation,
-	}).Info("Starting on-demand compliance scan")
+	})).Info("Starting on-demand compliance scan")
 
 	// Send progress: started
 	sendComplianceProgress("started", profileName, "Initializing compliance scan...", 5, "")
@@ -2126,6 +3423,7 @@ func runComplianceScanWithOptions(ctx context.Context, options *models.Complianc
 		Hostname:       hostname,
 		MachineID:      machineID,
 		AgentVersion:   pkgversion.Version,
+		ScanType:       "on-demand",
 	}
 
 	// Debug: log what we're about to send
@@ -2134,7 +3432,7 @@ func runComplianceScanWithOptions(ctx context.Context, options *models.Complianc
 		for _, r := range scan.Results {
 			statusCounts[r.Status]++
 		}
-		logger.WithFields(map[string]interface{}{
+		logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 			"scan_index":      i,
 			"profile_name":    scan.ProfileName,
 			"profile_type":    scan.ProfileType,
@@ -2144,7 +3442,7 @@ func runComplianceScanWithOptions(ctx context.Context, options *models.Complianc
 			"scan_failed":     scan.Failed,
 			"scan_warnings":   scan.Warnings,
 			"scan_skipped":    scan.Skipped,
-		}).Info("DEBUG: Compliance payload scan details before sending")
+		})).Info("DEBUG: Compliance payload scan details before sending")
 	}
 
 	// Send to server
@@ -2180,11 +3478,11 @@ func runComplianceScanWithOptions(ctx context.Context, options *models.Complianc
 
 // runDockerImageScan runs a CVE scan on Docker images using oscap-docker
 func runDockerImageScan(imageName, containerName string, scanAllImages bool) error {
-	logger.WithFields(map[string]interface{}{
+	logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 		"image_name":      imageName,
 		"container_name":  containerName,
 		"scan_all_images": scanAllImages,
-	}).Info("Starting Docker image CVE scan")
+	})).Info("Starting Docker image CVE scan")
 
 	// Check if Docker integration is enabled
 	if !cfgManager.IsIntegrationEnabled("docker") {
@@ -2297,11 +3595,11 @@ func runDockerImageScan(imageName, containerName string, scanAllImages bool) err
 	completedMsg := fmt.Sprintf("Scan completed! Found %d CVEs across %d images", totalCVEs, len(scans))
 	sendComplianceProgress("completed", "Docker Image CVE Scan", completedMsg, 100, "")
 
-	logger.WithFields(map[string]interface{}{
+	logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 		"scans_received": response.ScansReceived,
 		"images_scanned": len(scans),
 		"cves_found":     totalCVEs,
-	}).Info("Docker image CVE scan results sent to server")
+	})).Info("Docker image CVE scan results sent to server")
 
 	return nil
 }
@@ -2356,7 +3654,7 @@ func sendSSHProxyMessage(conn *websocket.Conn, msgType string, sessionID string,
 		logger.WithError(err).Error("Failed to marshal SSH proxy message")
 		return
 	}
-	if err := conn.WriteMessage(websocket.TextMessage, msgJSON); err != nil {
+	if err := writeWebSocketTextMessage(conn, msgJSON); err != nil {
 		logger.WithError(err).Error("Failed to send SSH proxy message")
 	}
 }
@@ -2393,17 +3691,17 @@ func handleSSHProxy(m wsMsg, conn *websocket.Conn) {
 		username = "root"
 	}
 
-	logger.WithFields(map[string]interface{}{
+	logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 		"session_id": sessionID,
 		"host":       host,
 		"port":       port,
 		"username":   username,
-	}).Info("Establishing SSH proxy connection")
+	})).Info("Establishing SSH proxy connection")
 
 	// Create SSH client config
 	config := &ssh.ClientConfig{
 		User:            username,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // Accept any host key
+		HostKeyCallback: agentHostKeyCallback(),
 		Timeout:         20 * time.Second,
 	}
 
@@ -2614,7 +3912,7 @@ func handleSSHProxyInput(m wsMsg, _ *websocket.Conn) {
 	sshProxySessionsMu.RUnlock()
 
 	if !exists {
-		logger.WithField("session_id", m.sshProxySessionID).Warn("SSH proxy session not found for input")
+		logger.WithField("session_id", logutil.Sanitize(m.sshProxySessionID)).Warn("SSH proxy session not found for input")
 		return
 	}
 
@@ -2635,7 +3933,7 @@ func handleSSHProxyResize(m wsMsg, _ *websocket.Conn) {
 	sshProxySessionsMu.RUnlock()
 
 	if !exists {
-		logger.WithField("session_id", m.sshProxySessionID).Warn("SSH proxy session not found for resize")
+		logger.WithField("session_id", logutil.Sanitize(m.sshProxySessionID)).Warn("SSH proxy session not found for resize")
 		return
 	}
 
@@ -2668,7 +3966,7 @@ func handleSSHProxyDisconnect(m wsMsg, conn *websocket.Conn) {
 		return
 	}
 
-	logger.WithField("session_id", m.sshProxySessionID).Info("Closing SSH proxy session")
+	logger.WithField("session_id", logutil.Sanitize(m.sshProxySessionID)).Info("Closing SSH proxy session")
 
 	// Close stdin
 	if proxySession.stdin != nil {
@@ -2693,4 +3991,180 @@ func handleSSHProxyDisconnect(m wsMsg, conn *websocket.Conn) {
 
 	// Send closed message
 	sendSSHProxyClosed(conn, m.sshProxySessionID)
+}
+
+// RDP proxy session management (raw TCP stream to localhost:3389)
+type rdpProxySession struct {
+	tcpConn   net.Conn
+	conn      *websocket.Conn
+	sessionID string
+	mu        sync.Mutex
+}
+
+var rdpProxySessions = make(map[string]*rdpProxySession)
+var rdpProxySessionsMu sync.RWMutex
+
+func sendRDPProxyMessage(conn *websocket.Conn, msgType string, sessionID string, data interface{}) {
+	msg := map[string]interface{}{
+		"type":       msgType,
+		"session_id": sessionID,
+	}
+	if data != nil {
+		msg["data"] = data
+	}
+	if msgType == "rdp_proxy_error" {
+		if errMsg, ok := data.(string); ok {
+			msg["message"] = errMsg
+		}
+	}
+	msgJSON, err := json.Marshal(msg)
+	if err != nil {
+		logger.WithError(err).Error("Failed to marshal RDP proxy message")
+		return
+	}
+	if err := writeWebSocketTextMessage(conn, msgJSON); err != nil {
+		logger.WithError(err).Error("Failed to send RDP proxy message")
+	}
+}
+
+func sendRDPProxyError(conn *websocket.Conn, sessionID string, message string) {
+	sendRDPProxyMessage(conn, "rdp_proxy_error", sessionID, message)
+}
+
+func sendRDPProxyData(conn *websocket.Conn, sessionID string, data string) {
+	sendRDPProxyMessage(conn, "rdp_proxy_data", sessionID, data)
+}
+
+func sendRDPProxyConnected(conn *websocket.Conn, sessionID string) {
+	sendRDPProxyMessage(conn, "rdp_proxy_connected", sessionID, nil)
+}
+
+func sendRDPProxyClosed(conn *websocket.Conn, sessionID string) {
+	sendRDPProxyMessage(conn, "rdp_proxy_closed", sessionID, nil)
+}
+
+func handleRDPProxy(m wsMsg, conn *websocket.Conn) {
+	sessionID := m.rdpProxySessionID
+	host := m.rdpProxyHost
+	if host == "" {
+		host = "localhost"
+	}
+	port := m.rdpProxyPort
+	if port <= 0 {
+		port = 3389
+	}
+
+	logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+		"session_id": sessionID,
+		"host":       host,
+		"port":       port,
+	})).Info("Establishing RDP proxy connection")
+
+	// Dial localhost:3389. Kept at 8s so the server's 12s handshake budget has
+	// room for the WebSocket round trip; a slow-to-accept TermService still gets
+	// through, and an actually-closed port fails fast with a specific error
+	// (rdp_port_unreachable) instead of a generic agent-timeout.
+	address := net.JoinHostPort(host, strconv.Itoa(port))
+	tcpConn, err := net.DialTimeout("tcp", address, 8*time.Second)
+	if err != nil {
+		logger.WithError(err).Error("Failed to connect to RDP server")
+		sendRDPProxyError(conn, sessionID, fmt.Sprintf("Failed to connect: %v", err))
+		return
+	}
+
+	proxySession := &rdpProxySession{
+		tcpConn:   tcpConn,
+		conn:      conn,
+		sessionID: sessionID,
+	}
+
+	rdpProxySessionsMu.Lock()
+	rdpProxySessions[sessionID] = proxySession
+	rdpProxySessionsMu.Unlock()
+
+	sendRDPProxyConnected(conn, sessionID)
+
+	// Forward TCP -> WebSocket (base64)
+	go func() {
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := tcpConn.Read(buf)
+			if n > 0 {
+				sendRDPProxyData(conn, sessionID, base64.StdEncoding.EncodeToString(buf[:n]))
+			}
+			if err != nil {
+				if err != io.EOF {
+					logger.WithError(err).Debug("RDP proxy TCP read error")
+				}
+				break
+			}
+		}
+		handleRDPProxyDisconnect(wsMsg{rdpProxySessionID: sessionID}, conn)
+	}()
+
+	// Wait for disconnect
+	go func() {
+		// Keep session alive until explicitly disconnected
+		rdpProxySessionsMu.RLock()
+		_, exists := rdpProxySessions[sessionID]
+		rdpProxySessionsMu.RUnlock()
+		for exists {
+			time.Sleep(1 * time.Second)
+			rdpProxySessionsMu.RLock()
+			_, exists = rdpProxySessions[sessionID]
+			rdpProxySessionsMu.RUnlock()
+		}
+	}()
+}
+
+func handleRDPProxyInput(m wsMsg, _ *websocket.Conn) {
+	rdpProxySessionsMu.RLock()
+	proxySession, exists := rdpProxySessions[m.rdpProxySessionID]
+	rdpProxySessionsMu.RUnlock()
+
+	if !exists {
+		logger.WithField("session_id", logutil.Sanitize(m.rdpProxySessionID)).Warn("RDP proxy session not found for input")
+		return
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(m.rdpProxyData)
+	if err != nil {
+		logger.WithError(err).Warn("Failed to decode RDP proxy input")
+		return
+	}
+
+	proxySession.mu.Lock()
+	defer proxySession.mu.Unlock()
+
+	if proxySession.tcpConn != nil {
+		if _, err := proxySession.tcpConn.Write(decoded); err != nil {
+			logger.WithError(err).Error("Failed to write to RDP TCP connection")
+		}
+	}
+}
+
+func handleRDPProxyDisconnect(m wsMsg, conn *websocket.Conn) {
+	sessionID := m.rdpProxySessionID
+
+	rdpProxySessionsMu.Lock()
+	proxySession, exists := rdpProxySessions[sessionID]
+	if exists {
+		delete(rdpProxySessions, sessionID)
+	}
+	rdpProxySessionsMu.Unlock()
+
+	if !exists {
+		logger.WithField("session_id", logutil.Sanitize(sessionID)).Debug("RDP proxy session already closed")
+		return
+	}
+
+	logger.WithField("session_id", logutil.Sanitize(sessionID)).Info("Closing RDP proxy session")
+
+	if proxySession.tcpConn != nil {
+		if err := proxySession.tcpConn.Close(); err != nil {
+			logger.WithError(err).Warn("Failed to close RDP proxy TCP connection")
+		}
+	}
+
+	sendRDPProxyClosed(conn, sessionID)
 }

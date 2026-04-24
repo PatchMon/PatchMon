@@ -48,6 +48,7 @@ const Hosts = () => {
 	const hostGroupFilterId = useId();
 	const statusFilterId = useId();
 	const osFilterId = useId();
+	const osVersionFilterId = useId();
 	const [showAddModal, setShowAddModal] = useState(false);
 	const [selectedHosts, setSelectedHosts] = useState([]);
 	const [showBulkAssignModal, setShowBulkAssignModal] = useState(false);
@@ -66,10 +67,24 @@ const Hosts = () => {
 	const [groupFilter, setGroupFilter] = useState("all");
 	const [statusFilter, setStatusFilter] = useState("all");
 	const [osFilter, setOsFilter] = useState("all");
+	const [osVersionFilter, setOsVersionFilter] = useState("all");
 	const [showFilters, setShowFilters] = useState(false);
 	const [groupBy, setGroupBy] = useState("none");
 	const [showColumnSettings, setShowColumnSettings] = useState(false);
 	const [hideStale, setHideStale] = useState(false);
+
+	// Debounce search for backend (avoid refetch on every keystroke)
+	const [debouncedSearch, setDebouncedSearch] = useState("");
+	const searchDebounceRef = useRef(null);
+	useEffect(() => {
+		if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+		searchDebounceRef.current = setTimeout(() => {
+			setDebouncedSearch(searchTerm?.trim() || "");
+		}, 400);
+		return () => {
+			if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+		};
+	}, [searchTerm]);
 
 	// Handle URL filter parameters
 	useEffect(() => {
@@ -108,6 +123,13 @@ const Hosts = () => {
 			setOsFilter(osFilterParam);
 		}
 
+		// Handle OS version filter parameter (from dashboard OS distribution chart click)
+		const osVersionFilterParam = searchParams.get("osVersionFilter");
+		if (osVersionFilterParam) {
+			setShowFilters(true);
+			setOsVersionFilter(osVersionFilterParam);
+		}
+
 		// Handle group filter parameter
 		if (groupParam) {
 			setShowFilters(true);
@@ -129,20 +151,11 @@ const Hosts = () => {
 			);
 		}
 
-		// Handle selected hosts from packages page
+		// Handle selected hosts from packages page (filter=selected)
 		const selected = searchParams.get("selected");
-		if (selected) {
+		if (selected && filter === "selected") {
 			const hostIds = selected.split(",").filter(Boolean);
 			setSelectedHosts(hostIds);
-			// Remove the selected parameter from URL without triggering a page reload
-			const newSearchParams = new URLSearchParams(searchParams);
-			newSearchParams.delete("selected");
-			navigate(
-				`/hosts${newSearchParams.toString() ? `?${newSearchParams.toString()}` : ""}`,
-				{
-					replace: true,
-				},
-			);
 		}
 	}, [searchParams, navigate]);
 
@@ -175,9 +188,10 @@ const Hosts = () => {
 				visible: true,
 				order: 15,
 			},
-			{ id: "notes", label: "Notes", visible: false, order: 16 },
-			{ id: "last_update", label: "Last Update", visible: true, order: 17 },
-			{ id: "actions", label: "Actions", visible: true, order: 18 },
+			{ id: "ssg_version", label: "SSG Version", visible: false, order: 16 },
+			{ id: "notes", label: "Notes", visible: false, order: 17 },
+			{ id: "last_update", label: "Last Update", visible: true, order: 18 },
+			{ id: "actions", label: "Actions", visible: true, order: 19 },
 		],
 		[],
 	);
@@ -267,6 +281,18 @@ const Hosts = () => {
 		queryClient,
 	]);
 
+	// Build backend filter params (search, group, status, os, osVersion)
+	const hostsQueryParams = useMemo(() => {
+		const params = {};
+		if (debouncedSearch) params.search = debouncedSearch;
+		if (groupFilter && groupFilter !== "all") params.group = groupFilter;
+		if (statusFilter && statusFilter !== "all") params.status = statusFilter;
+		if (osFilter && osFilter !== "all") params.os = osFilter;
+		if (osVersionFilter && osVersionFilter !== "all")
+			params.osVersion = osVersionFilter;
+		return params;
+	}, [debouncedSearch, groupFilter, statusFilter, osFilter, osVersionFilter]);
+
 	const {
 		data: hosts,
 		isLoading,
@@ -274,8 +300,9 @@ const Hosts = () => {
 		refetch,
 		isFetching,
 	} = useQuery({
-		queryKey: ["hosts"],
-		queryFn: () => dashboardAPI.getHosts().then((res) => res.data),
+		queryKey: ["hosts", hostsQueryParams],
+		queryFn: () =>
+			dashboardAPI.getHosts(hostsQueryParams).then((res) => res.data),
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
@@ -451,6 +478,7 @@ const Hosts = () => {
 			settingsAPI.update({ autoUpdate: true }).then((res) => res.data),
 		onSuccess: () => {
 			queryClient.invalidateQueries(["settings"]);
+			queryClient.invalidateQueries(["serverUrl"]);
 		},
 	});
 
@@ -594,42 +622,29 @@ const Hosts = () => {
 		bulkFetchReportMutation.mutate(selectedHosts);
 	};
 
+	// Resolve selected host IDs for filter=selected (from URL or state)
+	const selectedHostIdsForFilter = useMemo(() => {
+		const filter = searchParams.get("filter");
+		if (filter !== "selected") return null;
+		if (selectedHosts.length > 0) return selectedHosts;
+		const selected = searchParams.get("selected");
+		if (selected) {
+			return selected.split(",").filter(Boolean);
+		}
+		return null;
+	}, [searchParams, selectedHosts]);
+
 	// Table filtering and sorting logic
 	const filteredAndSortedHosts = useMemo(() => {
 		if (!hosts || !Array.isArray(hosts)) return [];
 
 		const filtered = hosts.filter((host) => {
-			// Search filter
-			const matchesSearch =
-				searchTerm === "" ||
-				host.friendly_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-				host.ip?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-				host.os_type?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-				host.notes?.toLowerCase().includes(searchTerm.toLowerCase());
-
-			// Group filter - handle multiple groups per host
-			const memberships = host.host_group_memberships || [];
-			const matchesGroup =
-				groupFilter === "all" ||
-				(groupFilter === "ungrouped" && memberships.length === 0) ||
-				(groupFilter !== "ungrouped" &&
-					memberships.some(
-						(membership) => membership.host_groups?.id === groupFilter,
-					));
-
-			// Status filter
-			const matchesStatus =
-				statusFilter === "all" ||
-				(host.effectiveStatus || host.status) === statusFilter;
-
-			// OS filter
-			const matchesOs =
-				osFilter === "all" ||
-				host.os_type?.toLowerCase() === osFilter.toLowerCase();
-
+			// Search, group, status, os are filtered by backend - trust the result
 			// URL filter for hosts needing updates, inactive hosts, up-to-date hosts, stale hosts, offline hosts, reboot required, or selected hosts
 			const filter = searchParams.get("filter");
 			const rebootParam = searchParams.get("reboot");
+			const selectedIds =
+				filter === "selected" ? selectedHostIdsForFilter : null;
 			const matchesUrlFilter =
 				(filter !== "needsUpdates" ||
 					(host.updatesCount && host.updatesCount > 0)) &&
@@ -639,20 +654,16 @@ const Hosts = () => {
 				(filter !== "stale" || host.isStale) &&
 				(filter !== "offline" ||
 					wsStatusMap[host.api_id]?.connected !== true) &&
-				(filter !== "selected" || selectedHosts.includes(host.id)) &&
+				(filter !== "selected" ||
+					(selectedIds &&
+						selectedIds.length > 0 &&
+						selectedIds.includes(host.id))) &&
 				(!rebootParam || host.needs_reboot === true);
 
 			// Hide stale filter
 			const matchesHideStale = !hideStale || !host.isStale;
 
-			return (
-				matchesSearch &&
-				matchesGroup &&
-				matchesStatus &&
-				matchesOs &&
-				matchesUrlFilter &&
-				matchesHideStale
-			);
+			return matchesUrlFilter && matchesHideStale;
 		});
 
 		// Sorting
@@ -759,6 +770,10 @@ const Hosts = () => {
 					aValue = new Date(a.last_update);
 					bValue = new Date(b.last_update);
 					break;
+				case "ssg_version":
+					aValue = a.ssg_version || "";
+					bValue = b.ssg_version || "";
+					break;
 				case "notes":
 					aValue = (a.notes || "").toLowerCase();
 					bValue = (b.notes || "").toLowerCase();
@@ -786,16 +801,12 @@ const Hosts = () => {
 		return filtered;
 	}, [
 		hosts,
-		searchTerm,
-		groupFilter,
-		statusFilter,
-		osFilter,
 		sortField,
 		sortDirection,
 		searchParams,
 		hideStale,
 		wsStatusMap,
-		selectedHosts,
+		selectedHostIdsForFilter,
 	]);
 
 	// Get unique OS types from hosts for dynamic dropdown
@@ -809,6 +820,23 @@ const Hosts = () => {
 		});
 		return Array.from(osTypes).sort();
 	}, [hosts]);
+
+	// Get unique OS versions for the selected OS type (for OS version filter dropdown)
+	const uniqueOsVersionsForFilter = useMemo(() => {
+		if (!hosts || !osFilter || osFilter === "all") return [];
+		const versions = new Set();
+		const filterLower = osFilter.toLowerCase();
+		hosts.forEach((host) => {
+			if (
+				host.os_type &&
+				host.os_type.toLowerCase() === filterLower &&
+				host.os_version
+			) {
+				versions.add(host.os_version);
+			}
+		});
+		return Array.from(versions).sort();
+	}, [hosts, osFilter]);
 
 	// Group hosts by selected field
 	const groupedHosts = useMemo(() => {
@@ -1034,7 +1062,7 @@ const Hosts = () => {
 						{!settings?.auto_update && host.auto_update && (
 							<span
 								className="text-amber-500 dark:text-amber-400"
-								title="Global auto-updates disabled in Settings → Agent Updates"
+								title="Global auto-updates disabled in Settings > Agent Updates"
 							>
 								<AlertTriangle className="h-4 w-4" />
 							</span>
@@ -1097,8 +1125,8 @@ const Hosts = () => {
 							</span>
 						)}
 						{!host.docker_enabled && !host.compliance_enabled && (
-							<span className="text-xs text-secondary-400 dark:text-secondary-500">
-								—
+							<span className="text-xs text-secondary-400 dark:text-white">
+								-
 							</span>
 						)}
 					</div>
@@ -1114,7 +1142,10 @@ const Hosts = () => {
 				return (
 					<div className="flex justify-center">
 						{host.needs_reboot ? (
-							<span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+							<span
+								className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
+								title={host.reboot_reason || "Reboot required"}
+							>
 								<RotateCcw className="h-3 w-3" />
 								Required
 							</span>
@@ -1160,8 +1191,14 @@ const Hosts = () => {
 				);
 			case "last_update":
 				return (
-					<div className="text-sm text-secondary-500 dark:text-secondary-300">
+					<div className="text-sm text-secondary-500 dark:text-white">
 						{formatRelativeTime(host.last_update)}
+					</div>
+				);
+			case "ssg_version":
+				return (
+					<div className="text-sm text-secondary-500 dark:text-white">
+						{host.ssg_version || " -"}
 					</div>
 				);
 			case "notes":
@@ -1172,7 +1209,7 @@ const Hosts = () => {
 								{host.notes}
 							</div>
 						) : (
-							<span className="text-secondary-400 dark:text-secondary-500 italic">
+							<span className="text-secondary-400 dark:text-white italic">
 								No notes
 							</span>
 						)}
@@ -1382,7 +1419,7 @@ const Hosts = () => {
 											<span className="text-sm font-medium text-secondary-900 dark:text-white">
 												{connectedCount}
 											</span>
-											<span className="text-xs text-secondary-500 dark:text-secondary-400 hidden sm:inline">
+											<span className="text-xs text-secondary-500 dark:text-white hidden sm:inline">
 												Connected
 											</span>
 										</div>
@@ -1391,7 +1428,7 @@ const Hosts = () => {
 											<span className="text-sm font-medium text-secondary-900 dark:text-white">
 												{offlineCount}
 											</span>
-											<span className="text-xs text-secondary-500 dark:text-secondary-400 hidden sm:inline">
+											<span className="text-xs text-secondary-500 dark:text-white hidden sm:inline">
 												Offline
 											</span>
 										</div>
@@ -1479,7 +1516,7 @@ const Hosts = () => {
 						<div className="flex flex-col sm:flex-row gap-4">
 							<div className="flex-1">
 								<div className="relative">
-									<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-secondary-500" />
+									<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-white" />
 									<input
 										type="text"
 										placeholder="Search hosts, IP addresses, or OS..."
@@ -1517,7 +1554,7 @@ const Hosts = () => {
 										<option value="status">By Status</option>
 										<option value="os">By OS</option>
 									</select>
-									<ChevronDown className="absolute right-1 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-secondary-500 pointer-events-none" />
+									<ChevronDown className="absolute right-1 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-white pointer-events-none" />
 								</div>
 								<button
 									type="button"
@@ -1586,7 +1623,10 @@ const Hosts = () => {
 										<select
 											id={osFilterId}
 											value={osFilter}
-											onChange={(e) => setOsFilter(e.target.value)}
+											onChange={(e) => {
+												setOsFilter(e.target.value);
+												setOsVersionFilter("all");
+											}}
 											className="w-full border border-secondary-300 dark:border-secondary-600 rounded-lg px-3 py-2.5 sm:py-2 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white min-h-[44px]"
 										>
 											<option value="all">All OS</option>
@@ -1597,6 +1637,37 @@ const Hosts = () => {
 											))}
 										</select>
 									</div>
+									{osFilter &&
+										osFilter !== "all" &&
+										(uniqueOsVersionsForFilter.length > 0 ||
+											(osVersionFilter && osVersionFilter !== "all")) && (
+											<div>
+												<label
+													htmlFor={osVersionFilterId}
+													className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-1"
+												>
+													OS Version
+												</label>
+												<select
+													id={osVersionFilterId}
+													value={osVersionFilter}
+													onChange={(e) => setOsVersionFilter(e.target.value)}
+													className="w-full border border-secondary-300 dark:border-secondary-600 rounded-lg px-3 py-2.5 sm:py-2 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white min-h-[44px]"
+												>
+													<option value="all">All Versions</option>
+													{(osVersionFilter &&
+													osVersionFilter !== "all" &&
+													!uniqueOsVersionsForFilter.includes(osVersionFilter)
+														? [osVersionFilter, ...uniqueOsVersionsForFilter]
+														: uniqueOsVersionsForFilter
+													).map((ver) => (
+														<option key={ver} value={ver}>
+															{ver}
+														</option>
+													))}
+												</select>
+											</div>
+										)}
 									<div className="flex items-end">
 										<button
 											type="button"
@@ -1605,6 +1676,7 @@ const Hosts = () => {
 												setGroupFilter("all");
 												setStatusFilter("all");
 												setOsFilter("all");
+												setOsVersionFilter("all");
 												setGroupBy("none");
 												setHideStale(false);
 											}}
@@ -1716,7 +1788,7 @@ const Hosts = () => {
 																				(col) => col.id === "hostname",
 																			) &&
 																				host.hostname && (
-																					<div className="text-sm text-secondary-500 dark:text-secondary-400 font-mono truncate">
+																					<div className="text-sm text-secondary-500 dark:text-white font-mono truncate">
 																						{host.hostname}
 																					</div>
 																				)}
@@ -1745,7 +1817,7 @@ const Hosts = () => {
 																				osType={host.os_type}
 																				className="h-4 w-4"
 																			/>
-																			<span className="text-secondary-700 dark:text-secondary-300">
+																			<span className="text-secondary-700 dark:text-white">
 																				{getOSDisplayName(host.os_type)}
 																			</span>
 																		</div>
@@ -1754,7 +1826,7 @@ const Hosts = () => {
 																		{visibleColumns.some(
 																			(col) => col.id === "status",
 																		) && (
-																			<span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-300">
+																			<span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-white">
 																				{(host.effectiveStatus || host.status)
 																					.charAt(0)
 																					.toUpperCase() +
@@ -1815,13 +1887,13 @@ const Hosts = () => {
 																	) &&
 																		groups.length > 0 && (
 																			<div className="flex items-center gap-1 flex-wrap">
-																				<span className="text-secondary-500 dark:text-secondary-400">
+																				<span className="text-secondary-500 dark:text-white">
 																					Groups:
 																				</span>
 																				{groups.map((g, idx) => (
 																					<span
 																						key={g.id}
-																						className="text-secondary-700 dark:text-secondary-300"
+																						className="text-secondary-700 dark:text-white"
 																					>
 																						{g.name}
 																						{idx < groups.length - 1 ? "," : ""}
@@ -1866,7 +1938,7 @@ const Hosts = () => {
 																	{visibleColumns.some(
 																		(col) => col.id === "last_update",
 																	) && (
-																		<div className="text-xs text-secondary-500 dark:text-secondary-400 ml-auto">
+																		<div className="text-xs text-secondary-500 dark:text-white ml-auto">
 																			Updated{" "}
 																			{formatRelativeTime(host.last_update)}
 																		</div>
@@ -1885,7 +1957,7 @@ const Hosts = () => {
 																{visibleColumns.map((column) => (
 																	<th
 																		key={column.id}
-																		className="px-3 sm:px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider whitespace-nowrap"
+																		className="px-3 sm:px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap"
 																	>
 																		{column.id === "select" ? (
 																			<button
@@ -1971,11 +2043,11 @@ const Hosts = () => {
 																				{getSortIcon("agent_version")}
 																			</button>
 																		) : column.id === "auto_update" ? (
-																			<div className="flex items-center gap-2 font-normal text-xs text-secondary-500 dark:text-secondary-300 normal-case tracking-wider">
+																			<div className="flex items-center gap-2 font-normal text-xs text-secondary-500 dark:text-white normal-case tracking-wider">
 																				{column.label}
 																			</div>
 																		) : column.id === "ws_status" ? (
-																			<div className="flex items-center gap-2 font-normal text-xs text-secondary-500 dark:text-secondary-300 normal-case tracking-wider">
+																			<div className="flex items-center gap-2 font-normal text-xs text-secondary-500 dark:text-white normal-case tracking-wider">
 																				<Wifi className="h-3 w-3" />
 																				{column.label}
 																			</div>
@@ -1985,7 +2057,7 @@ const Hosts = () => {
 																				onClick={() =>
 																					handleSort("integrations")
 																				}
-																				className="flex items-center gap-2 hover:text-secondary-700 font-normal text-xs text-secondary-500 dark:text-secondary-300 normal-case tracking-wider"
+																				className="flex items-center gap-2 hover:text-secondary-700 font-normal text-xs text-secondary-500 dark:text-white normal-case tracking-wider"
 																			>
 																				{column.label}
 																				{getSortIcon("integrations")}
@@ -2155,11 +2227,11 @@ const Hosts = () => {
 									<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
 										Global Auto-Updates Disabled
 									</h3>
-									<p className="mt-2 text-sm text-secondary-600 dark:text-secondary-300">
+									<p className="mt-2 text-sm text-secondary-600 dark:text-white">
 										The master auto-update setting is currently{" "}
-										<strong>disabled</strong> in Settings → Agent Updates.
+										<strong>disabled</strong> in Settings &gt; Agent Updates.
 									</p>
-									<p className="mt-2 text-sm text-secondary-600 dark:text-secondary-300">
+									<p className="mt-2 text-sm text-secondary-600 dark:text-white">
 										Enabling auto-update for{" "}
 										<strong>{autoUpdateDialog.hostName}</strong> won't take
 										effect until global auto-updates are enabled.
@@ -2251,14 +2323,14 @@ const BulkAssignModal = ({
 					<button
 						type="button"
 						onClick={onClose}
-						className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-300 dark:hover:text-secondary-100"
+						className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-100"
 					>
 						<X className="h-5 w-5" />
 					</button>
 				</div>
 
 				<div className="mb-4">
-					<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-2">
+					<p className="text-sm text-secondary-600 dark:text-white mb-2">
 						Assigning {selectedHosts.length} host
 						{selectedHosts.length !== 1 ? "s" : ""}:
 					</p>
@@ -2266,7 +2338,7 @@ const BulkAssignModal = ({
 						{selectedHostNames.map((friendlyName) => (
 							<div
 								key={friendlyName}
-								className="text-sm text-secondary-700 dark:text-secondary-300"
+								className="text-sm text-secondary-700 dark:text-white"
 							>
 								• {friendlyName}
 							</div>
@@ -2310,7 +2382,7 @@ const BulkAssignModal = ({
 								</label>
 							))}
 						</div>
-						<p className="mt-2 text-sm text-secondary-500 dark:text-secondary-400">
+						<p className="mt-2 text-sm text-secondary-500 dark:text-white">
 							Select one or more groups to assign these hosts to, or leave
 							ungrouped.
 						</p>
@@ -2363,7 +2435,7 @@ const BulkDeleteModal = ({
 						<button
 							type="button"
 							onClick={onClose}
-							className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+							className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
 							disabled={isLoading}
 						>
 							<X className="h-5 w-5" />
@@ -2379,7 +2451,7 @@ const BulkDeleteModal = ({
 								Warning: This action cannot be undone
 							</h4>
 						</div>
-						<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-4">
+						<p className="text-sm text-secondary-600 dark:text-white mb-4">
 							You are about to permanently delete {selectedHosts.length} host
 							{selectedHosts.length !== 1 ? "s" : ""}. This will remove all host
 							data, including package information, update history, and API
@@ -2388,14 +2460,14 @@ const BulkDeleteModal = ({
 					</div>
 
 					<div className="mb-4">
-						<p className="text-sm text-secondary-600 dark:text-secondary-400 mb-2">
+						<p className="text-sm text-secondary-600 dark:text-white mb-2">
 							Hosts to be deleted:
 						</p>
 						<div className="max-h-32 overflow-y-auto bg-secondary-50 dark:bg-secondary-700 rounded-md p-3">
 							{selectedHostNames.map((friendlyName) => (
 								<div
 									key={friendlyName}
-									className="text-sm text-secondary-700 dark:text-secondary-300"
+									className="text-sm text-secondary-700 dark:text-white"
 								>
 									• {friendlyName}
 								</div>
@@ -2466,12 +2538,12 @@ const ColumnSettingsModal = ({
 						<button
 							type="button"
 							onClick={onClose}
-							className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+							className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
 						>
 							<X className="h-5 w-5" />
 						</button>
 					</div>
-					<p className="text-sm text-secondary-600 dark:text-secondary-300 mt-2">
+					<p className="text-sm text-secondary-600 dark:text-white mt-2">
 						Drag to reorder columns or toggle visibility
 					</p>
 				</div>
@@ -2501,7 +2573,7 @@ const ColumnSettingsModal = ({
 								} border-secondary-200 dark:border-secondary-600`}
 							>
 								<div className="flex items-center gap-2.5">
-									<GripVertical className="h-4 w-4 text-secondary-400 dark:text-secondary-500 flex-shrink-0" />
+									<GripVertical className="h-4 w-4 text-secondary-400 dark:text-white flex-shrink-0" />
 									<span className="text-sm font-medium text-secondary-900 dark:text-white truncate">
 										{column.label}
 									</span>
@@ -2515,7 +2587,7 @@ const ColumnSettingsModal = ({
 									className={`p-1 rounded transition-colors flex-shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center ${
 										column.visible
 											? "text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
-											: "text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+											: "text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
 									}`}
 									aria-label={
 										column.visible

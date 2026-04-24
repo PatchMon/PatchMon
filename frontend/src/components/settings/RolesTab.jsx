@@ -1,21 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	AlertTriangle,
-	BarChart3,
-	CheckCircle,
-	Download,
+	Check,
 	Edit,
 	Info,
-	Package,
+	Minus,
 	Save,
-	Server,
-	Settings,
 	Shield,
 	Trash2,
-	Users,
 	X,
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
+import {
+	countPermissions,
+	PERMISSION_GROUPS,
+	ROLE_PRESETS,
+	riskBadgeClasses,
+	riskBorderColor,
+	riskGroupBg,
+	riskLabel,
+} from "../../constants/permissionGroups";
 import { useAuth } from "../../contexts/AuthContext";
 import { permissionsAPI } from "../../utils/api";
 
@@ -38,18 +42,19 @@ const RolesTab = () => {
 	});
 
 	const isOIDCEnabled = oidcConfig?.enabled || false;
+	const isOIDCSyncRoles = isOIDCEnabled && (oidcConfig?.syncRoles || false);
 
-	// Listen for the header button event to open add modal (only if OIDC is not enabled)
+	// Listen for the header button event to open add modal (only blocked when OIDC sync roles is active)
 	useEffect(() => {
 		const handleOpenAddModal = () => {
-			if (!isOIDCEnabled) {
+			if (!isOIDCSyncRoles) {
 				setShowAddModal(true);
 			}
 		};
 		window.addEventListener("openAddRoleModal", handleOpenAddModal);
 		return () =>
 			window.removeEventListener("openAddRoleModal", handleOpenAddModal);
-	}, [isOIDCEnabled]);
+	}, [isOIDCSyncRoles]);
 
 	// Fetch all role permissions
 	const {
@@ -84,7 +89,7 @@ const RolesTab = () => {
 		mutationFn: ({ role, permissions }) =>
 			permissionsAPI.updateRole(role, permissions),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["rolePermissions"]);
+			queryClient.invalidateQueries({ queryKey: ["rolePermissions"] });
 			setEditingRole(null);
 			// Refresh user permissions to apply changes immediately
 			refreshPermissions();
@@ -95,7 +100,7 @@ const RolesTab = () => {
 	const deleteRoleMutation = useMutation({
 		mutationFn: (role) => permissionsAPI.deleteRole(role),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["rolePermissions"]);
+			queryClient.invalidateQueries({ queryKey: ["rolePermissions"] });
 		},
 	});
 
@@ -124,7 +129,7 @@ const RolesTab = () => {
 	if (isLoading) {
 		return (
 			<div className="flex items-center justify-center h-64">
-				<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+				<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
 			</div>
 		);
 	}
@@ -147,8 +152,8 @@ const RolesTab = () => {
 
 	return (
 		<div className="space-y-6">
-			{/* OIDC Info Banner */}
-			{isOIDCEnabled && (
+			{/* OIDC Info Banner - only show when OIDC sync roles is active */}
+			{isOIDCSyncRoles && (
 				<div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
 					<div className="flex">
 						<Info className="h-5 w-5 text-blue-500 dark:text-blue-400 flex-shrink-0" />
@@ -170,31 +175,31 @@ const RolesTab = () => {
 									<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
 										OIDC_ADMIN_GROUP
 									</code>{" "}
-									→ Super Admin (highest)
+									maps to Super Admin (highest)
 								</li>
 								<li>
 									<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
 										OIDC_ADMIN_GROUP
 									</code>{" "}
-									→ Admin
+									maps to Admin
 								</li>
 								<li>
 									<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
 										OIDC_HOST_MANAGER_GROUP
 									</code>{" "}
-									→ Host Manager
+									maps to Host Manager
 								</li>
 								<li>
 									<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
 										OIDC_USER_GROUP
 									</code>{" "}
-									→ User (can export data)
+									maps to User (can export data)
 								</li>
 								<li>
 									<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
 										OIDC_READONLY_GROUP
 									</code>{" "}
-									→ Readonly (view only, lowest)
+									maps to Readonly (view only, lowest)
 								</li>
 							</ul>
 						</div>
@@ -208,69 +213,105 @@ const RolesTab = () => {
 					<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 						<thead className="bg-secondary-50 dark:bg-secondary-700">
 							<tr>
-								<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+								<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider sticky left-0 z-10 bg-secondary-50 dark:bg-secondary-700 border-r border-secondary-200 dark:border-secondary-700">
 									Permission
 								</th>
 								{roles &&
 									Array.isArray(roles) &&
-									roles.map((r) => (
-										<th
-											key={r.role}
-											className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider"
-										>
-											<div className="flex items-center gap-2">
-												<span className="capitalize">
-													{r.role.replace(/_/g, " ")}
-												</span>
-												<button
-													type="button"
-													onClick={() => setEditingRole(r.role)}
-													className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-400 dark:hover:text-secondary-200"
-													title="Edit role permissions"
-												>
-													<Edit className="h-4 w-4" />
-												</button>
-											</div>
-										</th>
-									))}
+									roles.map((r) => {
+										const { enabled, total } = countPermissions(r);
+										return (
+											<th
+												key={r.role}
+												className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+											>
+												<div className="flex items-center gap-2">
+													<div>
+														<span className="capitalize">
+															{r.role.replace(/_/g, " ")}
+														</span>
+														<div className="text-[10px] font-normal normal-case text-secondary-400 dark:text-secondary-300 mt-0.5">
+															{enabled}/{total}
+														</div>
+													</div>
+													<button
+														type="button"
+														onClick={() => setEditingRole(r.role)}
+														className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-200"
+														title="Edit role permissions"
+													>
+														<Edit className="h-4 w-4" />
+													</button>
+												</div>
+											</th>
+										);
+									})}
 							</tr>
 						</thead>
 						<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
 							{roles &&
 								Array.isArray(roles) &&
 								roles.length > 0 &&
-								Object.keys(roles[0])
-									.filter((k) => k.startsWith("can_"))
-									.map((permKey) => (
+								PERMISSION_GROUPS.map((group) => {
+									const GroupIcon = group.icon;
+									return [
+										/* Group header row */
 										<tr
-											key={permKey}
-											className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
+											key={`group-${group.id}`}
+											className={`border-l-4 ${riskBorderColor(group.riskLevel)} ${riskGroupBg(group.riskLevel)}`}
 										>
-											<td className="px-6 py-3 text-sm font-medium text-secondary-700 dark:text-secondary-200 whitespace-nowrap">
-												{permKey
-													.replace(/^can_/, "")
-													.split("_")
-													.map((s) => s.charAt(0).toUpperCase() + s.slice(1))
-													.join(" ")}
+											<td colSpan={1 + roles.length} className="px-6 py-2.5">
+												<div className="flex items-center gap-2">
+													<GroupIcon className="h-4 w-4 text-secondary-500 dark:text-secondary-300" />
+													<span className="text-sm font-semibold text-secondary-800 dark:text-secondary-100">
+														{group.name}
+													</span>
+													<span className="text-xs text-secondary-500 dark:text-secondary-400 hidden sm:inline">
+														{group.description}
+													</span>
+												</div>
 											</td>
-											{roles.map((r) => (
-												<td
-													key={`${r.role}-${permKey}`}
-													className="px-6 py-3 whitespace-nowrap"
+										</tr>,
+										/* Permission rows within the group */
+										...group.permissions.map((perm, permIdx) => {
+											const PermIcon = perm.icon;
+											return (
+												<tr
+													key={perm.key}
+													className={`hover:bg-secondary-50 dark:hover:bg-secondary-700 ${permIdx % 2 === 0 ? "bg-secondary-50/50 dark:bg-secondary-800/50" : ""}`}
 												>
-													{r[permKey] ? (
-														<div className="flex items-center text-green-600">
-															<CheckCircle className="h-4 w-4" />
+													<td className="px-6 py-3 text-sm text-secondary-700 dark:text-secondary-200 whitespace-nowrap sticky left-0 z-10 bg-white dark:bg-secondary-800 border-r border-secondary-200 dark:border-secondary-700">
+														<div className="flex items-center gap-2">
+															<PermIcon className="h-4 w-4 text-secondary-400 flex-shrink-0" />
+															<div>
+																<div className="font-medium">{perm.label}</div>
+																<div className="text-xs text-secondary-400 dark:text-secondary-500 hidden lg:block">
+																	{perm.description}
+																</div>
+															</div>
 														</div>
-													) : (
-														<div className="flex items-center text-red-600">
-															<X className="h-4 w-4" />
-														</div>
-													)}
-												</td>
-											))}
-										</tr>
-									))}
+													</td>
+													{roles.map((r) => (
+														<td
+															key={`${r.role}-${perm.key}`}
+															className="px-6 py-3 whitespace-nowrap"
+														>
+															{r[perm.key] ? (
+																<div className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-green-100 dark:bg-green-900/30">
+																	<Check className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
+																</div>
+															) : (
+																<div className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-secondary-100 dark:bg-secondary-700">
+																	<Minus className="h-3.5 w-3.5 text-secondary-400 dark:text-secondary-500" />
+																</div>
+															)}
+														</td>
+													))}
+												</tr>
+											);
+										}),
+									];
+								})}
 						</tbody>
 					</table>
 				</div>
@@ -286,7 +327,7 @@ const RolesTab = () => {
 								key={`editor-${r.role}`}
 								role={r}
 								isEditing={true}
-								isOIDCEnabled={isOIDCEnabled}
+								isOIDCSyncRoles={isOIDCSyncRoles}
 								onEdit={() => {}}
 								onCancel={() => setEditingRole(null)}
 								onSave={handleSavePermissions}
@@ -296,13 +337,13 @@ const RolesTab = () => {
 				</div>
 			)}
 
-			{/* Add Role Modal - only show when OIDC is not enabled */}
-			{!isOIDCEnabled && (
+			{/* Add Role Modal - only hidden when OIDC sync roles is active */}
+			{!isOIDCSyncRoles && (
 				<AddRoleModal
 					isOpen={showAddModal}
 					onClose={() => setShowAddModal(false)}
 					onSuccess={() => {
-						queryClient.invalidateQueries(["rolePermissions"]);
+						queryClient.invalidateQueries({ queryKey: ["rolePermissions"] });
 						setShowAddModal(false);
 					}}
 				/>
@@ -315,7 +356,7 @@ const RolesTab = () => {
 const RolePermissionsCard = ({
 	role,
 	isEditing,
-	isOIDCEnabled = false,
+	isOIDCSyncRoles = false,
 	onEdit,
 	onCancel,
 	onSave,
@@ -327,75 +368,6 @@ const RolePermissionsCard = ({
 	useEffect(() => {
 		setPermissions(role);
 	}, [role]);
-
-	const permissionFields = [
-		{
-			key: "can_view_dashboard",
-			label: "View Dashboard",
-			icon: BarChart3,
-			description: "Access to the main dashboard",
-		},
-		{
-			key: "can_view_hosts",
-			label: "View Hosts",
-			icon: Server,
-			description: "See host information and status",
-		},
-		{
-			key: "can_manage_hosts",
-			label: "Manage Hosts",
-			icon: Edit,
-			description: "Add, edit, and delete hosts",
-		},
-		{
-			key: "can_view_packages",
-			label: "View Packages",
-			icon: Package,
-			description: "See package information",
-		},
-		{
-			key: "can_manage_packages",
-			label: "Manage Packages",
-			icon: Settings,
-			description: "Edit package details",
-		},
-		{
-			key: "can_view_users",
-			label: "View Users",
-			icon: Users,
-			description: "See user list and details",
-		},
-		{
-			key: "can_manage_users",
-			label: "Manage Users",
-			icon: Shield,
-			description: "Add, edit, and delete users",
-		},
-		{
-			key: "can_manage_superusers",
-			label: "Manage Superusers",
-			icon: Shield,
-			description: "Modify superadmin users",
-		},
-		{
-			key: "can_view_reports",
-			label: "View Reports",
-			icon: BarChart3,
-			description: "Access to reports and analytics",
-		},
-		{
-			key: "can_export_data",
-			label: "Export Data",
-			icon: Download,
-			description: "Download data and reports",
-		},
-		{
-			key: "can_manage_settings",
-			label: "Manage Settings",
-			icon: Settings,
-			description: "System configuration access",
-		},
-	];
 
 	const handlePermissionChange = (key, value) => {
 		setPermissions((prev) => ({
@@ -410,13 +382,13 @@ const RolePermissionsCard = ({
 
 	// Standard built-in roles (always protected from deletion and permission changes)
 	const standardBuiltInRoles = ["superadmin", "admin", "user"];
-	// OIDC roles (protected from deletion when OIDC is enabled, but permissions can be edited)
+	// OIDC roles (protected from deletion when OIDC sync roles is active, but permissions can be edited)
 	const oidcRoles = ["superadmin", "admin", "host_manager", "readonly", "user"];
 
 	const isBuiltInRole = standardBuiltInRoles.includes(role.role);
 	const isOIDCRole = oidcRoles.includes(role.role);
-	// Can't delete OIDC roles or built-in roles
-	const cannotDelete = isOIDCEnabled ? isOIDCRole : isBuiltInRole;
+	// Can't delete OIDC roles when sync is active, or built-in roles ever
+	const cannotDelete = isOIDCSyncRoles ? isOIDCRole : isBuiltInRole;
 	// Can't edit permissions for built-in roles (superadmin, admin, user)
 	const cannotEditPermissions = isBuiltInRole;
 
@@ -429,12 +401,12 @@ const RolePermissionsCard = ({
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white capitalize">
 							{role.role.replace(/_/g, " ")}
 						</h3>
-						{isOIDCEnabled && isOIDCRole && (
+						{isOIDCSyncRoles && isOIDCRole && (
 							<span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-								OIDC Role
+								OIDC Synced
 							</span>
 						)}
-						{!isOIDCEnabled && isBuiltInRole && (
+						{!isOIDCSyncRoles && isBuiltInRole && (
 							<span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200">
 								Built-in Role
 							</span>
@@ -497,44 +469,63 @@ const RolePermissionsCard = ({
 				</div>
 			</div>
 
-			<div className="px-6 py-4">
-				<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-					{permissionFields.map((field) => {
-						const Icon = field.icon;
-						const isChecked = permissions[field.key];
-
-						return (
-							<div key={field.key} className="flex items-start">
-								<div className="flex items-center h-5">
-									<input
-										id={`${role.role}-${field.key}`}
-										type="checkbox"
-										checked={isChecked}
-										onChange={(e) =>
-											handlePermissionChange(field.key, e.target.checked)
-										}
-										disabled={!isEditing || cannotEditPermissions}
-										className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 rounded disabled:opacity-50"
-									/>
-								</div>
-								<div className="ml-3">
-									<div className="flex items-center">
-										<Icon className="h-4 w-4 text-secondary-400 mr-2" />
-										<label
-											htmlFor={`${role.role}-${field.key}`}
-											className="text-sm font-medium text-secondary-900 dark:text-white"
-										>
-											{field.label}
-										</label>
-									</div>
-									<p className="text-xs text-secondary-500 mt-1">
-										{field.description}
-									</p>
-								</div>
+			<div className="px-6 py-4 space-y-6">
+				{PERMISSION_GROUPS.map((group) => {
+					const GroupIcon = group.icon;
+					return (
+						<div key={group.id}>
+							{/* Group header */}
+							<div className="flex items-center gap-2 mb-3">
+								<GroupIcon className="h-4 w-4 text-secondary-500 dark:text-secondary-300" />
+								<h4 className="text-sm font-semibold text-secondary-800 dark:text-secondary-100">
+									{group.name}
+								</h4>
+								<span
+									className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${riskBadgeClasses(group.riskLevel)}`}
+								>
+									{riskLabel(group.riskLevel)}
+								</span>
 							</div>
-						);
-					})}
-				</div>
+							{/* Permissions grid */}
+							<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+								{group.permissions.map((field) => {
+									const Icon = field.icon;
+									const isChecked = permissions[field.key];
+									return (
+										<div key={field.key} className="flex items-start">
+											<div className="flex items-center h-5">
+												<input
+													id={`${role.role}-${field.key}`}
+													type="checkbox"
+													checked={isChecked}
+													onChange={(e) =>
+														handlePermissionChange(field.key, e.target.checked)
+													}
+													disabled={!isEditing || cannotEditPermissions}
+													className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 rounded disabled:opacity-50"
+												/>
+											</div>
+											<div className="ml-3">
+												<div className="flex items-center">
+													<Icon className="h-4 w-4 text-secondary-400 mr-2" />
+													<label
+														htmlFor={`${role.role}-${field.key}`}
+														className="text-sm font-medium text-secondary-900 dark:text-white"
+													>
+														{field.label}
+													</label>
+												</div>
+												<p className="text-xs text-secondary-500 mt-1">
+													{field.description}
+												</p>
+											</div>
+										</div>
+									);
+								})}
+							</div>
+						</div>
+					);
+				})}
 			</div>
 		</div>
 	);
@@ -545,17 +536,7 @@ const AddRoleModal = ({ isOpen, onClose, onSuccess }) => {
 	const roleNameInputId = useId();
 	const [formData, setFormData] = useState({
 		role: "",
-		can_view_dashboard: true,
-		can_view_hosts: true,
-		can_manage_hosts: false,
-		can_view_packages: true,
-		can_manage_packages: false,
-		can_view_users: false,
-		can_manage_users: false,
-		can_manage_superusers: false,
-		can_view_reports: true,
-		can_export_data: false,
-		can_manage_settings: false,
+		...ROLE_PRESETS.clear,
 	});
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState("");
@@ -583,6 +564,28 @@ const AddRoleModal = ({ isOpen, onClose, onSuccess }) => {
 		});
 	};
 
+	const applyPreset = (presetKey) => {
+		setFormData((prev) => ({
+			...prev,
+			...ROLE_PRESETS[presetKey],
+		}));
+	};
+
+	const toggleGroup = (group, selectAll) => {
+		setFormData((prev) => {
+			const updated = { ...prev };
+			for (const perm of group.permissions) {
+				updated[perm.key] = selectAll;
+			}
+			return updated;
+		});
+	};
+
+	const isGroupAllSelected = (group) =>
+		group.permissions.every((p) => formData[p.key]);
+
+	const { enabled, total } = countPermissions(formData);
+
 	if (!isOpen) return null;
 
 	return (
@@ -593,6 +596,7 @@ const AddRoleModal = ({ isOpen, onClose, onSuccess }) => {
 				</h3>
 
 				<form onSubmit={handleSubmit} className="space-y-4">
+					{/* Role name input */}
 					<div>
 						<label
 							htmlFor={roleNameInputId}
@@ -610,45 +614,109 @@ const AddRoleModal = ({ isOpen, onClose, onSuccess }) => {
 							className="block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
 							placeholder="e.g., host_manager, readonly"
 						/>
-						<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+						<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 							Use lowercase with underscores (e.g., host_manager)
 						</p>
 					</div>
 
-					<div className="space-y-3">
-						<h4 className="text-sm font-medium text-secondary-900 dark:text-white">
-							Permissions
-						</h4>
-						{[
-							{ key: "can_view_dashboard", label: "View Dashboard" },
-							{ key: "can_view_hosts", label: "View Hosts" },
-							{ key: "can_manage_hosts", label: "Manage Hosts" },
-							{ key: "can_view_packages", label: "View Packages" },
-							{ key: "can_manage_packages", label: "Manage Packages" },
-							{ key: "can_view_users", label: "View Users" },
-							{ key: "can_manage_users", label: "Manage Users" },
-							{ key: "can_manage_superusers", label: "Manage Superusers" },
-							{ key: "can_view_reports", label: "View Reports" },
-							{ key: "can_export_data", label: "Export Data" },
-							{ key: "can_manage_settings", label: "Manage Settings" },
-						].map((permission) => (
-							<div key={permission.key} className="flex items-center">
-								<input
-									id={`add-role-${permission.key}`}
-									type="checkbox"
-									name={permission.key}
-									checked={formData[permission.key]}
-									onChange={handleInputChange}
-									className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 rounded"
-								/>
-								<label
-									htmlFor={`add-role-${permission.key}`}
-									className="ml-2 block text-sm text-secondary-700 dark:text-secondary-200"
+					{/* Preset buttons */}
+					<div className="flex flex-wrap gap-2">
+						<button
+							type="button"
+							onClick={() => applyPreset("readonly")}
+							className="px-3 py-1.5 text-xs font-medium rounded-md border border-green-300 dark:border-green-700 text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/40"
+						>
+							Read Only
+						</button>
+						<button
+							type="button"
+							onClick={() => applyPreset("operator")}
+							className="px-3 py-1.5 text-xs font-medium rounded-md border border-yellow-300 dark:border-yellow-700 text-yellow-700 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/20 hover:bg-yellow-100 dark:hover:bg-yellow-900/40"
+						>
+							Operator
+						</button>
+						<button
+							type="button"
+							onClick={() => applyPreset("admin")}
+							className="px-3 py-1.5 text-xs font-medium rounded-md border border-red-300 dark:border-red-700 text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40"
+						>
+							Admin
+						</button>
+						<button
+							type="button"
+							onClick={() => applyPreset("clear")}
+							className="px-3 py-1.5 text-xs font-medium rounded-md border border-secondary-300 dark:border-secondary-600 text-secondary-700 dark:text-secondary-300 bg-white dark:bg-secondary-700 hover:bg-secondary-50 dark:hover:bg-secondary-600"
+						>
+							Clear All
+						</button>
+					</div>
+
+					{/* Grouped permissions */}
+					<div className="space-y-5">
+						{PERMISSION_GROUPS.map((group) => {
+							const GroupIcon = group.icon;
+							const allSelected = isGroupAllSelected(group);
+							return (
+								<div
+									key={group.id}
+									className={`rounded-lg border border-secondary-200 dark:border-secondary-700 border-l-4 ${riskBorderColor(group.riskLevel)} overflow-hidden`}
 								>
-									{permission.label}
-								</label>
-							</div>
-						))}
+									{/* Group header */}
+									<div className="flex items-center justify-between px-4 py-2.5 bg-secondary-50 dark:bg-secondary-700">
+										<div className="flex items-center gap-2">
+											<GroupIcon className="h-4 w-4 text-secondary-500 dark:text-secondary-300" />
+											<span className="text-sm font-semibold text-secondary-800 dark:text-secondary-100">
+												{group.name}
+											</span>
+											<span
+												className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${riskBadgeClasses(group.riskLevel)}`}
+											>
+												{riskLabel(group.riskLevel)}
+											</span>
+										</div>
+										<button
+											type="button"
+											onClick={() => toggleGroup(group, !allSelected)}
+											className="text-xs text-primary-600 dark:text-primary-400 hover:text-primary-800 dark:hover:text-primary-300 font-medium"
+										>
+											{allSelected ? "Deselect all" : "Select all"}
+										</button>
+									</div>
+									{/* Permission checkboxes */}
+									<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4">
+										{group.permissions.map((perm) => {
+											const PermIcon = perm.icon;
+											return (
+												<div key={perm.key} className="flex items-start gap-2">
+													<input
+														id={`add-role-${perm.key}`}
+														type="checkbox"
+														name={perm.key}
+														checked={formData[perm.key]}
+														onChange={handleInputChange}
+														className="mt-0.5 h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 rounded"
+													/>
+													<label
+														htmlFor={`add-role-${perm.key}`}
+														className="flex-1 min-w-0"
+													>
+														<div className="flex items-center gap-1.5">
+															<PermIcon className="h-3.5 w-3.5 text-secondary-400 flex-shrink-0" />
+															<span className="text-sm font-medium text-secondary-800 dark:text-secondary-100">
+																{perm.label}
+															</span>
+														</div>
+														<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-0.5">
+															{perm.description}
+														</p>
+													</label>
+												</div>
+											);
+										})}
+									</div>
+								</div>
+							);
+						})}
 					</div>
 
 					{error && (
@@ -659,21 +727,26 @@ const AddRoleModal = ({ isOpen, onClose, onSuccess }) => {
 						</div>
 					)}
 
-					<div className="flex justify-end space-x-3">
-						<button
-							type="button"
-							onClick={onClose}
-							className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-700 border border-secondary-300 dark:border-secondary-600 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-600"
-						>
-							Cancel
-						</button>
-						<button
-							type="submit"
-							disabled={isLoading}
-							className="px-4 py-2 text-sm font-medium text-white bg-primary-600 border border-transparent rounded-md hover:bg-primary-700 disabled:opacity-50"
-						>
-							{isLoading ? "Creating..." : "Create Role"}
-						</button>
+					<div className="flex items-center justify-between pt-2">
+						<span className="text-sm text-secondary-500 dark:text-secondary-400">
+							{enabled}/{total} permissions selected
+						</span>
+						<div className="flex space-x-3">
+							<button
+								type="button"
+								onClick={onClose}
+								className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-700 border border-secondary-300 dark:border-secondary-600 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-600"
+							>
+								Cancel
+							</button>
+							<button
+								type="submit"
+								disabled={isLoading}
+								className="px-4 py-2 text-sm font-medium text-white bg-primary-600 border border-transparent rounded-md hover:bg-primary-700 disabled:opacity-50"
+							>
+								{isLoading ? "Creating..." : "Create Role"}
+							</button>
+						</div>
 					</div>
 				</form>
 			</div>

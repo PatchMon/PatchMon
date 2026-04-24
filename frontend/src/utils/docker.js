@@ -89,8 +89,13 @@ export function generateRegistryLink(repository, source) {
 
 		case "google":
 		case "gcr.io": {
-			// Google Container Registry
-			if (domain.includes("gcr.io") || domain.includes("pkg.dev")) {
+			// Google Container Registry - strict host matching to avoid evil-gcr.io, gcr.io.evil.com
+			if (
+				domain === "gcr.io" ||
+				domain.endsWith(".gcr.io") ||
+				domain === "pkg.dev" ||
+				domain.endsWith(".pkg.dev")
+			) {
 				return `https://console.cloud.google.com/gcr/images/${path}`;
 			}
 			return null;
@@ -116,8 +121,8 @@ export function generateRegistryLink(repository, source) {
 
 		case "azure":
 		case "azurecr.io": {
-			// Azure Container Registry
-			if (domain.includes("azurecr.io")) {
+			// Azure Container Registry - strict host matching to avoid evil-azurecr.io
+			if (domain === "azurecr.io" || domain.endsWith(".azurecr.io")) {
 				const registryName = domain.split(".")[0];
 				return `https://portal.azure.com/#view/Microsoft_Azure_ContainerRegistries/RepositoryBlade/registryName/${registryName}/repositoryName/${path}`;
 			}
@@ -126,10 +131,10 @@ export function generateRegistryLink(repository, source) {
 
 		case "aws":
 		case "amazonaws.com": {
-			// AWS ECR
-			if (domain.includes("amazonaws.com")) {
+			// AWS ECR - strict host matching to avoid evil-amazonaws.com
+			if (domain === "amazonaws.com" || domain.endsWith(".amazonaws.com")) {
 				const domainParts = domain.split(".");
-				const region = domainParts[3]; // Extract region
+				const region = domainParts[3]; // e.g. 123456789.dkr.ecr.us-east-1.amazonaws.com
 				return `https://${region}.console.aws.amazon.com/ecr/repositories/private/${path}`;
 			}
 			return null;

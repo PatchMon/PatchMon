@@ -28,7 +28,19 @@ export const AuthProvider = ({ children }) => {
 	const [user, setUser] = useState(null);
 	const [token, setToken] = useState(null);
 	const [permissions, setPermissions] = useState(null);
+	// Multi-context (tenant) info from GET /api/v1/me/context. Drives per-module feature flags
+	// so the UI hides nav entries, settings panels, and buttons for disabled modules instead
+	// of letting users click into 403 responses.
+	// Shape: { modules: "core,patching,..." | "*", host: string, slug: string, multi_context: bool }
+	// Default to wildcard so single-context (self-hosted) deployments show every feature.
+	const [tenant, setTenant] = useState({
+		modules: "*",
+		host: "",
+		slug: "",
+		multi_context: false,
+	});
 	const [needsFirstTimeSetup, setNeedsFirstTimeSetup] = useState(false);
+	const [firstTimeWizardActive, setFirstTimeWizardActive] = useState(false);
 	// When non-null, setup check failed (backend/DB down or rate limited) - do not show first-time setup
 	const [setupCheckError, setSetupCheckError] = useState(null);
 
@@ -76,11 +88,107 @@ export const AuthProvider = ({ children }) => {
 		return updatedPermissions;
 	}, [token, fetchPermissions]);
 
-	// Initialize auth state - validate session via API (cookies) or localStorage
+	// Fetch the multi-context info (user + tenant.modules) from /me/context.
+	// Called on session validation and after login so module feature flags are
+	// available before any navigation renders. Also exposed as
+	// `refetchTenantContext` so flows that change the tenant's plan (e.g. the
+	// Billing tier-change modal) can refresh module gating without requiring a
+	// full page reload.
+	const fetchTenantContext = useCallback(async (authToken) => {
+		try {
+			const fetchOptions = { credentials: "include" };
+			if (authToken) {
+				fetchOptions.headers = { Authorization: `Bearer ${authToken}` };
+			}
+			const response = await fetch("/api/v1/me/context", fetchOptions);
+			if (response.ok) {
+				const data = await response.json();
+				if (data?.tenant) {
+					setTenant({
+						modules:
+							typeof data.tenant.modules === "string" && data.tenant.modules
+								? data.tenant.modules
+								: "*",
+						host: data.tenant.host || "",
+						slug: data.tenant.slug || "",
+						multi_context: !!data.tenant.multi_context,
+					});
+				}
+				return data;
+			}
+		} catch (error) {
+			devLog("fetchTenantContext failed:", error);
+		}
+		return null;
+	}, []);
+
+	// Listen for 401 session-expired from API interceptor - clear auth state so React Router navigates to login
+	// (avoids hard redirect race that could trigger ErrorBoundary "Something went wrong")
+	useEffect(() => {
+		const handleSessionExpired = () => {
+			setToken(null);
+			setUser(null);
+			setPermissions(null);
+			setTenant({ modules: "*", host: "", slug: "", multi_context: false });
+			localStorage.removeItem("token");
+			localStorage.removeItem("user");
+		};
+		window.addEventListener("auth:session-expired", handleSessionExpired);
+		return () =>
+			window.removeEventListener("auth:session-expired", handleSessionExpired);
+	}, []);
+
+	// Initialize auth state - validate session via API (cookies) or localStorage.
+	// Only runs once on mount to prevent re-validation (and loading flash) on every navigation.
 	useEffect(() => {
 		const abortController = new AbortController();
 
 		const validateSession = async () => {
+			// Read pathname at call time (not as a dependency) to avoid re-running on navigation
+			const onLoginPage = window.location.pathname === "/login";
+			const hasStoredUser = !!localStorage.getItem("user");
+
+			// Detect fresh OIDC/Discord SSO return. Backend sets HttpOnly auth cookies then 302s
+			// to /?oidc=success (or /?discord=success). We want to ALWAYS validate the cookie here
+			// even on /login (the old short-circuit below) so the user goes straight to the app
+			// without a Login-mount flash or a second full-page reload.
+			const urlParams = new URLSearchParams(window.location.search);
+			const ssoReturn =
+				urlParams.get("oidc") === "success" ||
+				urlParams.get("discord") === "success";
+
+			// Strip the SSO marker from the URL IMMEDIATELY (before any fetch fires) so it
+			// cannot leak via Referer headers to cross-origin requests (avatar URLs, GitHub
+			// API on login, analytics, etc.). The flag isn't a secret, but stripping one-time
+			// flow params ASAP is the right default.
+			if (ssoReturn) {
+				try {
+					sessionStorage.removeItem("explicit_logout");
+					// Legacy callers that land on /login?oidc=success need to be forwarded
+					// to /. history.replaceState alone won't change the React Router view,
+					// so use location.replace. The primary flow lands on /?oidc=success and
+					// never hits this branch.
+					if (onLoginPage) {
+						window.location.replace("/");
+						return;
+					}
+					window.history.replaceState(
+						{},
+						document.title,
+						window.location.pathname + window.location.hash,
+					);
+				} catch (_e) {
+					// history API unavailable — no-op, continue validation.
+				}
+			}
+
+			if (onLoginPage && !hasStoredUser && !ssoReturn) {
+				localStorage.removeItem("token");
+				setSetupCheckError(null);
+				setAuthPhase(AUTH_PHASES.CHECKING_SETUP);
+				return;
+			}
+
 			try {
 				// First, try to validate via API using httpOnly cookies
 				const response = await fetch("/api/v1/auth/profile", {
@@ -92,8 +200,30 @@ export const AuthProvider = ({ children }) => {
 					const data = await response.json();
 					if (!abortController.signal.aborted) {
 						setUser(data.user);
-						// Fetch permissions
-						await fetchPermissions();
+						// UI-cache only — NEVER trust localStorage.user as an authority for
+						// auth state or permissions. The HttpOnly `token` cookie validated
+						// by /auth/profile is the single source of truth. We persist the
+						// profile here (mirroring password login) so the onLoginPage
+						// short-circuit at the top of this effect doesn't re-fire for
+						// cookie-only (OIDC/Discord) sessions on return visits, and so UI
+						// elements that read user data can hydrate before the profile fetch
+						// resolves on subsequent page loads. Token is NEVER stored here.
+						try {
+							localStorage.setItem(
+								"user",
+								JSON.stringify({
+									...data.user,
+									accepted_release_notes_versions:
+										data.user.accepted_release_notes_versions || [],
+								}),
+							);
+						} catch (_e) {
+							// localStorage can throw in private mode / quota exceeded —
+							// not fatal, auth still works via cookies + in-memory state.
+						}
+						// Fetch permissions and multi-context (tenant modules) in parallel
+						// so module-gated nav items have their data before rendering.
+						await Promise.all([fetchPermissions(), fetchTenantContext()]);
 						setAuthPhase(AUTH_PHASES.READY);
 					}
 					return;
@@ -112,6 +242,22 @@ export const AuthProvider = ({ children }) => {
 			// Clean up any stale token from localStorage (security measure)
 			localStorage.removeItem("token");
 
+			// If we hit this after an SSO return, the cookie never made it (e.g. SameSite
+			// blocked, HTTPS mismatch, reverse-proxy stripped Set-Cookie). Surface a clear
+			// error on the login page instead of silently looping. Use location.replace so
+			// the router actually routes to /login (history.replaceState alone does not
+			// trigger a route change). No back-button trap because we replace, not push.
+			if (ssoReturn && !abortController.signal.aborted) {
+				try {
+					window.location.replace(
+						"/login?error=Session+cookie+missing+-+check+HTTPS+and+proxy+configuration",
+					);
+					return;
+				} catch (_e) {
+					// no-op, fall through to setup-check
+				}
+			}
+
 			// No valid session, check if setup is needed
 			setSetupCheckError(null);
 			setAuthPhase(AUTH_PHASES.CHECKING_SETUP);
@@ -120,7 +266,24 @@ export const AuthProvider = ({ children }) => {
 		validateSession();
 
 		return () => abortController.abort();
-	}, [fetchPermissions]);
+	}, [fetchPermissions, fetchTenantContext]); // eslint-disable-line react-hooks/exhaustive-deps
+
+	const refetchUser = useCallback(async () => {
+		try {
+			const response = await fetch("/api/v1/auth/profile", {
+				credentials: "include",
+			});
+			if (response.ok) {
+				const data = await response.json();
+				setUser(data.user);
+				await Promise.all([fetchPermissions(), fetchTenantContext()]);
+				return data.user;
+			}
+		} catch (error) {
+			devLog("refetchUser failed:", error);
+		}
+		return null;
+	}, [fetchPermissions, fetchTenantContext]);
 
 	const login = async (username, password) => {
 		try {
@@ -181,8 +344,11 @@ export const AuthProvider = ({ children }) => {
 					}),
 				);
 
-				// Fetch user permissions after successful login
-				const userPermissions = await fetchPermissions(data.token);
+				// Fetch user permissions and multi-context info after successful login.
+				const [userPermissions] = await Promise.all([
+					fetchPermissions(data.token),
+					fetchTenantContext(data.token),
+				]);
 				if (userPermissions) {
 					setPermissions(userPermissions);
 				}
@@ -258,6 +424,7 @@ export const AuthProvider = ({ children }) => {
 			setToken(null);
 			setUser(null);
 			setPermissions(null);
+			setTenant({ modules: "*", host: "", slug: "", multi_context: false });
 			localStorage.removeItem("token");
 			localStorage.removeItem("user");
 		}
@@ -265,20 +432,24 @@ export const AuthProvider = ({ children }) => {
 
 	const updateProfile = async (profileData) => {
 		try {
-			const response = await fetch("/api/v1/auth/profile", {
+			const fetchOptions = {
 				method: "PUT",
 				headers: {
-					Authorization: `Bearer ${token}`,
 					"Content-Type": "application/json",
 				},
 				body: JSON.stringify(profileData),
-			});
+				credentials: "include",
+			};
+			if (token) {
+				fetchOptions.headers.Authorization = `Bearer ${token}`;
+			}
+			const response = await fetch("/api/v1/auth/profile", fetchOptions);
 
 			const data = await response.json();
 
 			if (response.ok) {
 				// Validate that we received user data with expected fields
-				if (!data.user || !data.user.id) {
+				if (!data.user?.id) {
 					console.error("Invalid user data in response:", data);
 					return {
 						success: false,
@@ -349,14 +520,21 @@ export const AuthProvider = ({ children }) => {
 
 	const changePassword = async (currentPassword, newPassword) => {
 		try {
-			const response = await fetch("/api/v1/auth/change-password", {
+			const fetchOptions = {
 				method: "PUT",
 				headers: {
-					Authorization: `Bearer ${token}`,
 					"Content-Type": "application/json",
 				},
 				body: JSON.stringify({ currentPassword, newPassword }),
-			});
+				credentials: "include",
+			};
+			if (token) {
+				fetchOptions.headers.Authorization = `Bearer ${token}`;
+			}
+			const response = await fetch(
+				"/api/v1/auth/change-password",
+				fetchOptions,
+			);
 
 			const data = await response.json();
 
@@ -480,14 +658,47 @@ export const AuthProvider = ({ children }) => {
 	const canViewReports = () => hasPermission("can_view_reports");
 	const canExportData = () => hasPermission("can_export_data");
 	const canManageSettings = () => hasPermission("can_manage_settings");
+	const canManageNotifications = () =>
+		hasPermission("can_manage_notifications");
+	const canViewNotificationLogs = () =>
+		hasPermission("can_view_notification_logs");
+	const canManagePatching = () => hasPermission("can_manage_patching");
+	const canManageCompliance = () => hasPermission("can_manage_compliance");
+	const canManageDocker = () => hasPermission("can_manage_docker");
+	const canManageAlerts = () => hasPermission("can_manage_alerts");
+	const canManageAutomation = () => hasPermission("can_manage_automation");
+	const canUseRemoteAccess = () => hasPermission("can_use_remote_access");
+
+	// Module feature flagging (multi-context). `tenant.modules` is a comma-separated
+	// string, or "*" for wildcard (all modules). In single-context (self-hosted)
+	// deployments the backend always returns "*", so every feature is enabled.
+	const hasModule = (moduleKey) => {
+		if (!moduleKey) return true;
+		const modules = tenant?.modules;
+		if (!modules) return true; // safety: empty/unknown -> treat as allowed
+		if (modules === "*") return true;
+		return modules
+			.split(",")
+			.map((m) => m.trim())
+			.includes(moduleKey);
+	};
+
+	const SETUP_COMPLETE_CACHE_KEY = "patchmon_setup_complete";
 
 	// Check if any admin users exist (for first-time setup)
-	// Also checks if OIDC is configured to bypass the welcome page
-	// Only set needsFirstTimeSetup when we get a successful 200 with hasAdminUsers; otherwise show backend/rate-limit error
+	// Uses login-settings (includes hasAdminUsers) and caches result to avoid repeated public API calls
 	const checkAdminUsersExist = useCallback(async () => {
 		setSetupCheckError(null);
+
+		// Skip API call if we've already confirmed setup is complete (cached)
+		if (localStorage.getItem(SETUP_COMPLETE_CACHE_KEY) === "1") {
+			setNeedsFirstTimeSetup(false);
+			setAuthPhase(AUTH_PHASES.READY);
+			return;
+		}
+
 		try {
-			const response = await fetch("/api/v1/auth/check-admin-users", {
+			const response = await fetch("/api/v1/settings/login-settings", {
 				method: "GET",
 				headers: {
 					"Content-Type": "application/json",
@@ -506,6 +717,10 @@ export const AuthProvider = ({ children }) => {
 					setNeedsFirstTimeSetup(false);
 				} else {
 					setNeedsFirstTimeSetup(!data.hasAdminUsers);
+					// Cache setup complete to avoid repeated API calls on subsequent visits
+					if (data.hasAdminUsers) {
+						localStorage.setItem(SETUP_COMPLETE_CACHE_KEY, "1");
+					}
 				}
 
 				setSetupCheckError(null);
@@ -515,16 +730,40 @@ export const AuthProvider = ({ children }) => {
 				setSetupCheckError("rate_limited");
 				setNeedsFirstTimeSetup(false);
 				setAuthPhase(AUTH_PHASES.READY);
+			} else if (response.status === 403) {
+				// Check for CORS_ORIGIN mismatch (access from wrong URL)
+				try {
+					const data = await response.json();
+					if (
+						data?.code === "cors_mismatch" ||
+						data?.error?.includes("CORS_ORIGIN")
+					) {
+						setSetupCheckError("cors_mismatch");
+					} else {
+						setSetupCheckError("server_unavailable");
+					}
+				} catch {
+					setSetupCheckError("server_unavailable");
+				}
+				setNeedsFirstTimeSetup(false);
+				setAuthPhase(AUTH_PHASES.READY);
+			} else if (response.status === 502 || response.status === 503) {
+				// 502/503 from nginx: backend unreachable. Could be backend down,
+				// or nginx converting 403 to 502 (proxy_next_upstream). Show message
+				// that mentions CORS so user checks CORS_ORIGIN when using wrong URL.
+				setSetupCheckError("server_or_cors");
+				setNeedsFirstTimeSetup(false);
+				setAuthPhase(AUTH_PHASES.READY);
 			} else {
-				// 5xx, 4xx (e.g. 500 DB error, 503 unavailable) - backend/DB not accessible
-				setSetupCheckError("backend_unavailable");
+				// 5xx, 4xx (e.g. 500 DB error) - backend/DB not accessible
+				setSetupCheckError("server_unavailable");
 				setNeedsFirstTimeSetup(false);
 				setAuthPhase(AUTH_PHASES.READY);
 			}
 		} catch (error) {
 			console.error("Error checking admin users:", error);
-			// Network error or backend unreachable - do not show first-time setup
-			setSetupCheckError("backend_unavailable");
+			// Network error or backend unreachable - could be CORS when behind proxy
+			setSetupCheckError("server_or_cors");
 			setNeedsFirstTimeSetup(false);
 			setAuthPhase(AUTH_PHASES.READY);
 		}
@@ -542,7 +781,9 @@ export const AuthProvider = ({ children }) => {
 		setAuthPhase(AUTH_PHASES.CHECKING_SETUP);
 	}, []);
 
-	const setAuthState = (authToken, authUser) => {
+	const setAuthState = (authToken, authUser, options = {}) => {
+		const { keepWizardVisible = false } = options;
+
 		// Use flushSync to ensure all state updates are applied synchronously
 		flushSync(() => {
 			setToken(authToken);
@@ -551,9 +792,19 @@ export const AuthProvider = ({ children }) => {
 				accepted_release_notes_versions:
 					authUser.accepted_release_notes_versions || [],
 			});
-			setNeedsFirstTimeSetup(false);
+			if (!keepWizardVisible) {
+				setNeedsFirstTimeSetup(false);
+				setFirstTimeWizardActive(false);
+			} else {
+				setFirstTimeWizardActive(true);
+			}
 			setAuthPhase(AUTH_PHASES.READY);
 		});
+
+		if (!keepWizardVisible) {
+			// Cache setup complete (user just created admin account or logged in)
+			localStorage.setItem(SETUP_COMPLETE_CACHE_KEY, "1");
+		}
 
 		// Store user in localStorage (for session recovery)
 		localStorage.setItem(
@@ -570,8 +821,15 @@ export const AuthProvider = ({ children }) => {
 		// Remove any stale token from localStorage
 		localStorage.removeItem("token");
 
-		// Fetch permissions - works with cookies if token is null
+		// Fetch permissions and multi-context - works with cookies if token is null
 		fetchPermissions(authToken);
+		fetchTenantContext(authToken);
+	};
+
+	const completeFirstTimeWizard = () => {
+		setFirstTimeWizardActive(false);
+		setNeedsFirstTimeSetup(false);
+		localStorage.setItem(SETUP_COMPLETE_CACHE_KEY, "1");
 	};
 
 	// Computed loading state based on phase and permissions state
@@ -590,6 +848,7 @@ export const AuthProvider = ({ children }) => {
 		permissions,
 		isLoading,
 		needsFirstTimeSetup,
+		firstTimeWizardActive,
 		setupCheckError,
 		retrySetupCheck,
 		authPhase,
@@ -598,7 +857,9 @@ export const AuthProvider = ({ children }) => {
 		updateProfile,
 		changePassword,
 		refreshPermissions,
+		refetchUser,
 		setAuthState,
+		completeFirstTimeWizard,
 		isAuthenticated,
 		isAdmin,
 		hasPermission,
@@ -612,7 +873,23 @@ export const AuthProvider = ({ children }) => {
 		canViewReports,
 		canExportData,
 		canManageSettings,
+		canManageNotifications,
+		canViewNotificationLogs,
+		canManagePatching,
+		canManageCompliance,
+		canManageDocker,
+		canManageAlerts,
+		canManageAutomation,
+		canUseRemoteAccess,
 		acceptReleaseNotes,
+		// Multi-context module feature flags
+		tenant,
+		hasModule,
+		// Refetch tenant.modules (and host/slug) without a full refetchUser.
+		// Call this after any flow that can change the tenant's plan (billing
+		// tier change, admin-side package swap) so ModuleGate and the nav
+		// locked badges update without a page reload.
+		refetchTenantContext: fetchTenantContext,
 	};
 
 	return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -137,7 +137,7 @@ const Options = () => {
 						<h2 className="text-xl font-semibold text-secondary-900 dark:text-white">
 							Host Groups
 						</h2>
-						<p className="text-secondary-600 dark:text-secondary-300">
+						<p className="text-secondary-600 dark:text-white">
 							Organize your hosts into logical groups for better management
 						</p>
 					</div>
@@ -170,7 +170,7 @@ const Options = () => {
 												{group.name}
 											</h3>
 											{group.description && (
-												<p className="text-sm text-secondary-600 dark:text-secondary-300 mt-1">
+												<p className="text-sm text-secondary-600 dark:text-white mt-1">
 													{group.description}
 												</p>
 											)}
@@ -196,7 +196,7 @@ const Options = () => {
 									</div>
 								</div>
 
-								<div className="mt-4 flex items-center gap-4 text-sm text-secondary-600 dark:text-secondary-300">
+								<div className="mt-4 flex items-center gap-4 text-sm text-secondary-600 dark:text-white">
 									<div className="flex items-center gap-1">
 										<Server className="h-4 w-4" />
 										<span>
@@ -214,7 +214,7 @@ const Options = () => {
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-2">
 							No host groups yet
 						</h3>
-						<p className="text-secondary-600 dark:text-secondary-300 mb-6">
+						<p className="text-secondary-600 dark:text-white mb-6">
 							Create your first host group to organize your hosts
 						</p>
 						<button
@@ -237,7 +237,7 @@ const Options = () => {
 			<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-2">
 				{tabName} Coming Soon
 			</h3>
-			<p className="text-secondary-600 dark:text-secondary-300">
+			<p className="text-secondary-600 dark:text-white">
 				This feature is currently under development and will be available in a
 				future update.
 			</p>
@@ -251,14 +251,14 @@ const Options = () => {
 				<h1 className="text-2xl font-bold text-secondary-900 dark:text-white">
 					Options
 				</h1>
-				<p className="text-secondary-600 dark:text-secondary-300 mt-1">
+				<p className="text-secondary-600 dark:text-white mt-1">
 					Configure PatchMon parameters and user preferences
 				</p>
 			</div>
 
 			{/* Tabs */}
-			<div className="border-b border-secondary-200 dark:border-secondary-600">
-				<nav className="-mb-px flex space-x-8">
+			<div className="border-b border-secondary-200 dark:border-secondary-600 overflow-x-auto scrollbar-hide">
+				<nav className="-mb-px flex space-x-4 sm:space-x-8">
 					{tabs.map((tab) => {
 						const Icon = tab.icon;
 						return (
@@ -269,7 +269,7 @@ const Options = () => {
 								className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${
 									activeTab === tab.id
 										? "border-primary-500 text-primary-600 dark:text-primary-400"
-										: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-secondary-400 dark:hover:text-secondary-300"
+										: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-primary-400"
 								}`}
 							>
 								<Icon className="h-4 w-4" />
@@ -577,7 +577,7 @@ const DeleteHostGroupModal = ({ group, onClose, onConfirm, isLoading }) => {
 						<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
 							Delete Host Group
 						</h3>
-						<p className="text-sm text-secondary-600 dark:text-secondary-300">
+						<p className="text-sm text-secondary-600 dark:text-white">
 							This action cannot be undone
 						</p>
 					</div>

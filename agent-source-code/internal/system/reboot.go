@@ -5,14 +5,22 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+
+	"patchmon-agent/internal/logutil"
 )
 
 // CheckRebootRequired checks if the system requires a reboot
 // Returns (needsReboot bool, reason string)
 func (d *Detector) CheckRebootRequired() (bool, string) {
+	// Windows: check registry keys and CBS reboot-pending (per UsoClient/WUA docs)
+	if runtime.GOOS == "windows" {
+		return d.checkWindowsRebootRequired()
+	}
+
 	runningKernel := d.getRunningKernel()
 	latestKernel := d.getLatestInstalledKernel()
 
@@ -37,15 +45,56 @@ func (d *Detector) CheckRebootRequired() (bool, string) {
 
 	// Universal kernel check - compare running vs latest installed
 	if runningKernel != latestKernel && latestKernel != "" {
-		d.logger.WithFields(map[string]interface{}{
+		d.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 			"running": runningKernel,
 			"latest":  latestKernel,
-		}).Debug("Reboot required: kernel version mismatch")
+		})).Debug("Reboot required: kernel version mismatch")
 		reason := fmt.Sprintf("Kernel version mismatch | Running kernel: %s, Installed kernel: %s", runningKernel, latestKernel)
 		return true, reason
 	}
 
 	d.logger.Debug("No reboot required")
+	return false, ""
+}
+
+// checkWindowsRebootRequired checks if Windows requires a reboot (per UsoClient/WUA docs)
+// Checks: RebootRequired registry, PendingFileRenameOperations, CBS reboot-pending
+func (d *Detector) checkWindowsRebootRequired() (bool, string) {
+	psScript := `
+$ErrorActionPreference = "SilentlyContinue"
+$reasons = @()
+
+# Windows Update RebootRequired
+$wu = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired" -ErrorAction SilentlyContinue
+if ($wu) { $reasons += "Windows Update requires reboot" }
+
+# Pending file rename operations (installer pending reboot)
+$pfro = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
+if ($pfro -and $pfro.PendingFileRenameOperations) { $reasons += "Pending file rename operations" }
+
+# Component Based Servicing (CBS) reboot pending
+$cbs = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending" -ErrorAction SilentlyContinue
+if ($cbs) { $reasons += "Component Based Servicing reboot pending" }
+
+if ($reasons.Count -gt 0) {
+  Write-Output ("REBOOT_REQUIRED:" + ($reasons -join "; "))
+} else {
+  Write-Output "REBOOT_NOT_REQUIRED"
+}
+`
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	output, err := cmd.Output()
+	if err != nil {
+		d.logger.WithError(err).Debug("Windows reboot check failed")
+		return false, ""
+	}
+	out := strings.TrimSpace(string(output))
+	if strings.HasPrefix(out, "REBOOT_REQUIRED:") {
+		reason := strings.TrimPrefix(out, "REBOOT_REQUIRED:")
+		d.logger.WithField("reason", reason).Debug("Windows reboot required")
+		return true, reason
+	}
+	d.logger.Debug("Windows: no reboot required")
 	return false, ""
 }
 

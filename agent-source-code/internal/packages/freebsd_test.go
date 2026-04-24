@@ -46,7 +46,7 @@ curl-8.17.0                    Command line tool and library for transferring da
 go125-1.25.7                   Go programming language
 libX11-1.8.12,1                X11 library`
 
-	result := manager.parseInstalledPackages(input)
+	result := manager.parseInstalledPackagesLegacy(input)
 
 	expectedPackages := map[string]struct {
 		version string

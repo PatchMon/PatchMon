@@ -18,7 +18,7 @@ import {
 	Unlock,
 	X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { dashboardAPI, repositoryAPI } from "../utils/api";
 
@@ -34,6 +34,19 @@ const Repositories = () => {
 	const [sortDirection, setSortDirection] = useState("asc");
 	const [showColumnSettings, setShowColumnSettings] = useState(false);
 	const [deleteModalData, setDeleteModalData] = useState(null);
+
+	// Debounce search for backend
+	const [debouncedSearch, setDebouncedSearch] = useState("");
+	const searchDebounceRef = useRef(null);
+	useEffect(() => {
+		if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+		searchDebounceRef.current = setTimeout(() => {
+			setDebouncedSearch(searchTerm?.trim() || "");
+		}, 400);
+		return () => {
+			if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+		};
+	}, [searchTerm]);
 
 	// Handle host filter from URL parameter
 	useEffect(() => {
@@ -74,6 +87,16 @@ const Repositories = () => {
 		);
 	};
 
+	// Build backend filter params
+	const repoQueryParams = useMemo(() => {
+		const params = {};
+		if (hostFilter && hostFilter !== "all") params.host = hostFilter;
+		if (debouncedSearch) params.search = debouncedSearch;
+		if (filterStatus && filterStatus !== "all") params.status = filterStatus;
+		if (filterType && filterType !== "all") params.type = filterType;
+		return params;
+	}, [hostFilter, debouncedSearch, filterStatus, filterType]);
+
 	// Fetch repositories
 	const {
 		data: repositories = [],
@@ -82,8 +105,8 @@ const Repositories = () => {
 		refetch,
 		isFetching,
 	} = useQuery({
-		queryKey: ["repositories"],
-		queryFn: () => repositoryAPI.list().then((res) => res.data),
+		queryKey: ["repositories", repoQueryParams],
+		queryFn: () => repositoryAPI.list(repoQueryParams).then((res) => res.data),
 	});
 
 	// Fetch repository statistics
@@ -196,42 +219,13 @@ const Repositories = () => {
 		setDeleteModalData(null);
 	};
 
-	// Filter and sort repositories
+	// Sort repositories (search, type, status filtered by backend)
 	const filteredAndSortedRepositories = useMemo(() => {
 		if (!repositories) return [];
-
-		// Filter repositories
-		const filtered = repositories.filter((repo) => {
-			const matchesSearch =
-				repo.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-				repo.url.toLowerCase().includes(searchTerm.toLowerCase()) ||
-				repo.distribution.toLowerCase().includes(searchTerm.toLowerCase());
-
-			// Check security based on URL if isSecure property doesn't exist
-			const isSecure =
-				repo.isSecure !== undefined
-					? repo.isSecure
-					: repo.url.startsWith("https://");
-
-			const matchesType =
-				filterType === "all" ||
-				(filterType === "secure" && isSecure) ||
-				(filterType === "insecure" && !isSecure);
-
-			const matchesStatus =
-				filterStatus === "all" ||
-				(filterStatus === "active" && repo.is_active === true) ||
-				(filterStatus === "inactive" && repo.is_active === false);
-
-			// Filter by host if hostFilter is set
-			const matchesHost =
-				!hostFilter || repo.hosts?.some((host) => host.id === hostFilter);
-
-			return matchesSearch && matchesType && matchesStatus && matchesHost;
-		});
+		const sorted = [...repositories];
 
 		// Sort repositories
-		const sorted = filtered.sort((a, b) => {
+		sorted.sort((a, b) => {
 			let aValue = a[sortField];
 			let bValue = b[sortField];
 
@@ -261,15 +255,7 @@ const Repositories = () => {
 		});
 
 		return sorted;
-	}, [
-		repositories,
-		searchTerm,
-		filterType,
-		filterStatus,
-		sortField,
-		sortDirection,
-		hostFilter,
-	]);
+	}, [repositories, sortField, sortDirection]);
 
 	if (isLoading) {
 		return (
@@ -305,7 +291,7 @@ const Repositories = () => {
 							</h3>
 						</div>
 						<div className="mb-6">
-							<p className="text-secondary-700 dark:text-secondary-300 mb-2">
+							<p className="text-secondary-700 dark:text-white mb-2">
 								Are you sure you want to delete{" "}
 								<strong>"{deleteModalData.name}"</strong>?
 							</p>
@@ -324,7 +310,7 @@ const Repositories = () => {
 							<button
 								type="button"
 								onClick={cancelDelete}
-								className="px-4 py-2 text-secondary-600 dark:text-secondary-400 hover:text-secondary-800 dark:hover:text-secondary-200 transition-colors"
+								className="px-4 py-2 text-secondary-600 dark:text-white hover:text-secondary-800 dark:hover:text-secondary-200 transition-colors"
 								disabled={deleteRepositoryMutation.isPending}
 							>
 								Cancel
@@ -350,7 +336,7 @@ const Repositories = () => {
 					<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
 						Repositories
 					</h1>
-					<p className="text-sm text-secondary-600 dark:text-secondary-400 mt-1">
+					<p className="text-sm text-secondary-600 dark:text-white mt-1">
 						Manage and monitor your package repositories
 					</p>
 				</div>
@@ -442,7 +428,7 @@ const Repositories = () => {
 							{/* Search */}
 							<div className="flex-1">
 								<div className="relative">
-									<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-secondary-500" />
+									<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-white" />
 									<input
 										type="text"
 										placeholder="Search repositories..."
@@ -509,7 +495,7 @@ const Repositories = () => {
 								<button
 									type="button"
 									onClick={() => setShowColumnSettings(true)}
-									className="flex items-center gap-2 px-3 py-2 text-sm text-secondary-700 dark:text-secondary-300 bg-white dark:bg-secondary-700 border border-secondary-300 dark:border-secondary-600 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-600 transition-colors"
+									className="flex items-center gap-2 px-3 py-2 text-sm text-secondary-700 dark:text-white bg-white dark:bg-secondary-700 border border-secondary-300 dark:border-secondary-600 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-600 transition-colors"
 								>
 									<Columns className="h-4 w-4" />
 									Columns
@@ -522,13 +508,13 @@ const Repositories = () => {
 						{filteredAndSortedRepositories.length === 0 ? (
 							<div className="text-center py-8">
 								<Database className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
-								<p className="text-secondary-500 dark:text-secondary-300">
+								<p className="text-secondary-500 dark:text-white">
 									{repositories?.length === 0
 										? "No repositories found"
 										: "No repositories match your filters"}
 								</p>
 								{repositories?.length === 0 && (
-									<p className="text-sm text-secondary-400 dark:text-secondary-400 mt-2">
+									<p className="text-sm text-secondary-400 dark:text-white mt-2">
 										No repositories have been reported by your hosts yet
 									</p>
 								)}
@@ -568,7 +554,7 @@ const Repositories = () => {
 															{visibleColumns.some(
 																(col) => col.id === "distribution",
 															) && (
-																<p className="text-sm text-secondary-500 dark:text-secondary-400 mt-0.5">
+																<p className="text-sm text-secondary-500 dark:text-white mt-0.5">
 																	{repo.distribution}
 																</p>
 															)}
@@ -578,7 +564,7 @@ const Repositories = () => {
 														(col) => col.id === "status",
 													) && (
 														<span
-															className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ${
+															className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium flex-shrink-0 ${
 																repo.is_active
 																	? "bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300"
 																	: "bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300"
@@ -592,7 +578,7 @@ const Repositories = () => {
 												{/* URL */}
 												{visibleColumns.some((col) => col.id === "url") && (
 													<div>
-														<p className="text-xs text-secondary-500 dark:text-secondary-400 mb-1">
+														<p className="text-xs text-secondary-500 dark:text-white mb-1">
 															URL
 														</p>
 														<p
@@ -632,7 +618,7 @@ const Repositories = () => {
 													) && (
 														<div className="flex items-center gap-1">
 															<Server className="h-4 w-4 text-secondary-400" />
-															<span className="text-sm text-secondary-700 dark:text-secondary-300">
+															<span className="text-sm text-secondary-700 dark:text-white">
 																{repo.hostCount} Host
 																{repo.hostCount !== 1 ? "s" : ""}
 															</span>
@@ -671,7 +657,7 @@ const Repositories = () => {
 												{visibleColumns.map((column) => (
 													<th
 														key={column.id}
-														className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider"
+														className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 													>
 														<button
 															type="button"
@@ -777,7 +763,7 @@ const Repositories = () => {
 			case "status":
 				return (
 					<span
-						className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+						className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium ${
 							repo.is_active
 								? "bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300"
 								: "bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300"
@@ -851,7 +837,7 @@ const ColumnSettingsModal = ({
 					<button
 						type="button"
 						onClick={onClose}
-						className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+						className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
 					>
 						<X className="h-5 w-5" />
 					</button>
@@ -898,7 +884,7 @@ const ColumnSettingsModal = ({
 					<button
 						type="button"
 						onClick={onReset}
-						className="px-4 py-2 text-sm text-secondary-600 dark:text-secondary-400 hover:text-secondary-800 dark:hover:text-secondary-200"
+						className="px-4 py-2 text-sm text-secondary-600 dark:text-white hover:text-secondary-800 dark:hover:text-secondary-200"
 					>
 						Reset to Default
 					</button>

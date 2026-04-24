@@ -37,7 +37,7 @@ const hasInitialReport = (hostData) => {
 
 const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 	const [step, setStep] = useState(1);
-	const [platform, setPlatform] = useState("linux"); // linux | freebsd
+	const [platform, setPlatform] = useState("linux"); // linux | freebsd | windows
 	const [formData, setFormData] = useState({
 		friendly_name: "",
 		hostGroupIds: [],
@@ -50,6 +50,8 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 	const [plaintextApiKey, setPlaintextApiKey] = useState(null);
 	const [connectionStage, setConnectionStage] = useState("waiting");
 	const [hasNavigated, setHasNavigated] = useState(false);
+	const [windowsIgnoreSsl, setWindowsIgnoreSsl] = useState(false);
+	const [windowsUseCurl, setWindowsUseCurl] = useState(false);
 	const transitionTimeoutRef = useRef(null);
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
@@ -72,6 +74,13 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 		enabled: isOpen,
 	});
 
+	// Sync Windows SSL bypass with global setting when it loads
+	useEffect(() => {
+		if (settings?.ignore_ssl_self_signed !== undefined) {
+			setWindowsIgnoreSsl(settings.ignore_ssl_self_signed);
+		}
+	}, [settings?.ignore_ssl_self_signed]);
+
 	const serverUrl =
 		serverUrlData?.server_url ||
 		(import.meta.env.PROD
@@ -83,9 +92,25 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 		const base = `${serverUrl}/api/v1/hosts/install`;
 		const params = new URLSearchParams();
 		if (platform === "freebsd") params.set("os", "freebsd");
-		if (force) params.set("force", "true");
+		if (platform === "windows") params.set("os", "windows");
+		if (force && platform !== "windows") params.set("force", "true");
 		const qs = params.toString();
 		return qs ? `${base}?${qs}` : base;
+	};
+
+	const getWindowsInstallCommand = (
+		includeSslBypass = false,
+		useCurl = false,
+	) => {
+		const installUrl = buildInstallUrl(false);
+		const sslBlock = includeSslBypass
+			? "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }; "
+			: "";
+		if (useCurl) {
+			const curlInsecure = includeSslBypass ? " -k" : "";
+			return `${sslBlock}curl.exe${curlInsecure} -s -H "X-API-ID: ${createdHost?.api_id}" -H "X-API-KEY: ${plaintextApiKey}" -o "$env:TEMP\\patchmon-install.ps1" "${installUrl}"; if ($LASTEXITCODE -eq 0) { & "$env:TEMP\\patchmon-install.ps1" } else { Write-Error "curl failed with exit code $LASTEXITCODE" }`;
+		}
+		return `${sslBlock}$r = Invoke-WebRequest -Uri "${installUrl}" -Headers @{"X-API-ID"="${createdHost?.api_id}"; "X-API-KEY"="${plaintextApiKey}"} -UseBasicParsing; $r.Content | Set-Content "$env:TEMP\\patchmon-install.ps1" -Encoding UTF8; & "$env:TEMP\\patchmon-install.ps1"`;
 	};
 
 	const getShellCommand = (force) => {
@@ -177,7 +202,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 		setTimeout(() => {
 			navigate(`/hosts/${createdHost.id}`, {
 				replace: true,
-				state: { fromWizard: true },
+				state: { fromWizard: true, apiKey: plaintextApiKey },
 			});
 			setTimeout(() => {
 				queryClient.invalidateQueries(["host", createdHost.id]);
@@ -188,6 +213,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 		connectionStage,
 		hasNavigated,
 		createdHost,
+		plaintextApiKey,
 		onClose,
 		onSuccess,
 		navigate,
@@ -226,8 +252,10 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 
 	const handleCopy = async () => {
 		const forceInstall = false;
-		const installUrl = buildInstallUrl(forceInstall);
-		const command = `curl ${curlFlags} "${installUrl}" -H "X-API-ID: ${createdHost.api_id}" -H "X-API-KEY: ${plaintextApiKey}" | ${getShellCommand(forceInstall)}`;
+		const command =
+			platform === "windows"
+				? getWindowsInstallCommand(windowsIgnoreSsl, windowsUseCurl)
+				: `curl ${curlFlags} "${buildInstallUrl(forceInstall)}" -H "X-API-ID: ${createdHost.api_id}" -H "X-API-KEY: ${plaintextApiKey}" | ${getShellCommand(forceInstall)}`;
 		try {
 			if (navigator.clipboard && window.isSecureContext) {
 				await navigator.clipboard.writeText(command);
@@ -261,6 +289,8 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 		setPlaintextApiKey(null);
 		setConnectionStage("waiting");
 		setHasNavigated(false);
+		setWindowsIgnoreSsl(false);
+		setWindowsUseCurl(false);
 		setError("");
 	};
 
@@ -297,7 +327,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 							resetWizard();
 							onClose();
 						}}
-						className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+						className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
 					>
 						<X className="h-5 w-5" />
 					</button>
@@ -307,7 +337,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 				{/* Step 1: Choose OS */}
 				{step === 1 && (
 					<div className="space-y-4">
-						<p className="text-sm text-secondary-600 dark:text-secondary-400">
+						<p className="text-sm text-secondary-600 dark:text-white">
 							Select the operating system of the host you want to add. The
 							install command will match this choice.
 						</p>
@@ -336,16 +366,18 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 								<SiFreebsd className="h-12 w-12 text-secondary-700 dark:text-secondary-200 mb-2" />
 								<span className="text-sm font-medium">FreeBSD</span>
 							</button>
-							<div
-								className="flex flex-col items-center justify-center p-6 rounded-lg border-2 border-secondary-200 dark:border-secondary-700 bg-secondary-50 dark:bg-secondary-800/50 opacity-60 cursor-not-allowed"
-								title="Coming soon"
+							<button
+								type="button"
+								onClick={() => setPlatform("windows")}
+								className={`flex flex-col items-center justify-center p-6 rounded-lg border-2 transition-all ${
+									platform === "windows"
+										? "border-primary-500 bg-primary-50 dark:bg-primary-900/30"
+										: "border-secondary-300 dark:border-secondary-600 hover:border-primary-400"
+								}`}
 							>
-								<DiWindows className="h-12 w-12 text-secondary-500 mb-2" />
+								<DiWindows className="h-12 w-12 text-secondary-700 dark:text-secondary-200 mb-2" />
 								<span className="text-sm font-medium">Windows</span>
-								<span className="text-xs text-secondary-500 mt-1">
-									Coming soon
-								</span>
-							</div>
+							</button>
 						</div>
 						<div className="flex justify-end pt-2">
 							<button
@@ -376,7 +408,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 								className="block w-full px-3 py-2.5 border-2 border-secondary-300 dark:border-secondary-600 rounded-lg bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white min-h-[44px]"
 								placeholder="server.example.com"
 							/>
-							<p className="mt-2 text-sm text-secondary-500 dark:text-secondary-400">
+							<p className="mt-2 text-sm text-secondary-500 dark:text-white">
 								System information will be detected when the agent connects.
 							</p>
 						</div>
@@ -425,7 +457,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 							</div>
 						</div>
 						<div>
-							<p className="text-xs text-secondary-500 dark:text-secondary-300 mb-1.5">
+							<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
 								Integrations (Optional)
 							</p>
 							<ul className="space-y-0 border border-secondary-200 dark:border-secondary-600 rounded-lg divide-y divide-secondary-200 dark:divide-secondary-600 overflow-hidden">
@@ -450,7 +482,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 										}`}
 									>
 										<span
-											className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+											className={`inline-block h-3 w-3 transform rounded-md bg-white transition-transform ${
 												formData.docker_enabled
 													? "translate-x-5"
 													: "translate-x-1"
@@ -479,7 +511,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 										}`}
 									>
 										<span
-											className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+											className={`inline-block h-3 w-3 transform rounded-md bg-white transition-transform ${
 												formData.compliance_enabled
 													? "translate-x-5"
 													: "translate-x-1"
@@ -518,18 +550,64 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 				{/* Step 3: Copy command */}
 				{step === 3 && createdHost && (
 					<div className="space-y-4">
-						<p className="text-sm text-secondary-600 dark:text-secondary-400">
+						<p className="text-sm text-secondary-600 dark:text-white">
 							Run this command on your{" "}
-							{platform === "freebsd" ? "FreeBSD" : "Linux"} host to install the
-							agent. After copying, the wizard will wait for the connection.
+							{platform === "windows"
+								? "Windows"
+								: platform === "freebsd"
+									? "FreeBSD"
+									: "Linux"}{" "}
+							host to install the agent
+							{platform === "windows"
+								? " (run PowerShell as Administrator)"
+								: ""}
+							. After copying, the wizard will wait for the connection.
 						</p>
+						{platform === "windows" && (
+							<div className="flex flex-wrap items-center gap-4">
+								<label className="flex items-center gap-2 cursor-pointer">
+									<input
+										type="checkbox"
+										checked={windowsIgnoreSsl}
+										onChange={(e) => setWindowsIgnoreSsl(e.target.checked)}
+										className="rounded border-secondary-400 text-primary-600 focus:ring-primary-500"
+									/>
+									<span className="text-sm text-secondary-600 dark:text-white">
+										Self-signed certificate (SSL bypass)
+									</span>
+								</label>
+								<label className="flex items-center gap-2 cursor-pointer">
+									<input
+										type="checkbox"
+										checked={windowsUseCurl}
+										onChange={(e) => setWindowsUseCurl(e.target.checked)}
+										className="rounded border-secondary-400 text-primary-600 focus:ring-primary-500"
+									/>
+									<span className="text-sm text-secondary-600 dark:text-white">
+										Use curl instead of Invoke-WebRequest (if download fails)
+									</span>
+								</label>
+							</div>
+						)}
 						<div className="flex flex-col gap-2">
-							<input
-								type="text"
-								readOnly
-								value={`curl ${curlFlags} "${buildInstallUrl()}" -H "X-API-ID: ${createdHost.api_id}" -H "X-API-KEY: ${plaintextApiKey}" | ${getShellCommand(false)}`}
-								className="w-full px-3 py-2 border-2 border-secondary-300 dark:border-secondary-600 rounded-lg bg-secondary-50 dark:bg-secondary-900 text-xs font-mono break-all"
-							/>
+							{platform === "windows" ? (
+								<textarea
+									readOnly
+									rows={windowsIgnoreSsl && !windowsUseCurl ? 6 : 2}
+									value={getWindowsInstallCommand(
+										windowsIgnoreSsl,
+										windowsUseCurl,
+									)}
+									className="w-full px-3 py-2 border-2 border-secondary-300 dark:border-secondary-600 rounded-lg bg-secondary-50 dark:bg-secondary-900 text-xs font-mono break-all resize-none"
+								/>
+							) : (
+								<input
+									type="text"
+									readOnly
+									value={`curl ${curlFlags} "${buildInstallUrl()}" -H "X-API-ID: ${createdHost.api_id}" -H "X-API-KEY: ${plaintextApiKey}" | ${getShellCommand(false)}`}
+									className="w-full px-3 py-2 border-2 border-secondary-300 dark:border-secondary-600 rounded-lg bg-secondary-50 dark:bg-secondary-900 text-xs font-mono break-all"
+								/>
+							)}
 							<button
 								type="button"
 								onClick={handleCopy}
@@ -562,7 +640,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 								<h4 className="text-lg font-semibold text-secondary-900 dark:text-white mb-2">
 									Waiting for connection
 								</h4>
-								<p className="text-sm text-secondary-600 dark:text-secondary-400 text-center">
+								<p className="text-sm text-secondary-600 dark:text-white text-center">
 									Run the installation command on your host. This will update
 									automatically when the agent connects.
 								</p>
@@ -580,7 +658,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 								<h4 className="text-lg font-semibold text-green-600 dark:text-green-400 mb-2">
 									Connected
 								</h4>
-								<p className="text-sm text-secondary-600 dark:text-secondary-400 text-center">
+								<p className="text-sm text-secondary-600 dark:text-white text-center">
 									Waiting for initial system report...
 								</p>
 								<div className="mt-4 flex items-center gap-2 text-xs text-secondary-500">
@@ -597,7 +675,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 								<h4 className="text-lg font-semibold text-blue-600 dark:text-blue-400 mb-2">
 									Receiving initial report
 								</h4>
-								<p className="text-sm text-secondary-600 dark:text-secondary-400 text-center">
+								<p className="text-sm text-secondary-600 dark:text-white text-center">
 									Collecting system information...
 								</p>
 							</div>
@@ -610,7 +688,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 								<h4 className="text-lg font-semibold text-green-600 dark:text-green-400 mb-2">
 									Done
 								</h4>
-								<p className="text-sm text-secondary-600 dark:text-secondary-400 text-center">
+								<p className="text-sm text-secondary-600 dark:text-white text-center">
 									Redirecting to host page...
 								</p>
 							</div>

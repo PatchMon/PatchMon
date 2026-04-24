@@ -49,8 +49,15 @@ func (m *DNFManager) GetPackages() []models.Package {
 	// 4. Fedora's cache issue (if any) is resolved by using proper update checks
 
 	// Get installed packages
+	// Note: yum (CentOS 7 / legacy) uses positional argument syntax: "yum list installed"
+	// while dnf uses flag syntax: "dnf list --installed"
 	m.logger.Debug("Getting installed packages...")
-	listCmd := exec.Command(packageManager, "list", "--installed")
+	var listCmd *exec.Cmd
+	if packageManager == "yum" {
+		listCmd = exec.Command(packageManager, "list", "installed")
+	} else {
+		listCmd = exec.Command(packageManager, "list", "--installed")
+	}
 	// OPTIMIZATION: Set minimal environment to reduce overhead
 	listCmd.Env = append(os.Environ(), "LANG=C")
 	installedOutput, err := listCmd.Output()
@@ -89,14 +96,12 @@ func (m *DNFManager) GetPackages() []models.Package {
 		upgradablePackages = []models.Package{}
 	}
 
-	// Convert installed packages map to simple name->version map for CombinePackageData
-	installedPackagesMap := make(map[string]string)
-	for name, pkg := range installedPackages {
-		installedPackagesMap[name] = pkg.CurrentVersion
-	}
+	// Merge and deduplicate packages (pass full installed packages to preserve descriptions)
+	packages := CombinePackageData(installedPackages, upgradablePackages)
 
-	// Merge and deduplicate packages
-	packages := CombinePackageData(installedPackagesMap, upgradablePackages)
+	// Enrich packages with repository attribution
+	m.enrichWithRepoAttribution(packages)
+
 	m.logger.WithFields(logrus.Fields{
 		"total":             len(packages),
 		"installed":         len(installedPackages),
@@ -109,6 +114,82 @@ func (m *DNFManager) GetPackages() []models.Package {
 	}
 
 	return packages
+}
+
+// enrichWithRepoAttribution populates SourceRepository for each package by running
+// repoquery to get the from_repo field for installed packages.
+func (m *DNFManager) enrichWithRepoAttribution(packages []models.Package) {
+	if len(packages) == 0 {
+		return
+	}
+
+	packageManager := m.detectPackageManager()
+
+	var cmd *exec.Cmd
+	if packageManager == "dnf" {
+		cmd = exec.Command("dnf", "repoquery", "--installed", "--cacheonly", "--qf", "%{name}\t%{from_repo}")
+	} else {
+		// yum: try repoquery from yum-utils
+		if _, err := exec.LookPath("repoquery"); err == nil {
+			cmd = exec.Command("repoquery", "--installed", "--qf", "%{name}\t%{ui_from_repo}")
+		} else {
+			// Try yum repoquery (available on some systems)
+			cmd = exec.Command("yum", "repoquery", "--installed", "--qf", "%{name}\t%{ui_from_repo}")
+		}
+	}
+	cmd.Env = append(os.Environ(), "LANG=C")
+
+	output, err := cmd.Output()
+	if err != nil {
+		m.logger.WithError(err).Warn("repoquery failed, skipping repo attribution")
+		return
+	}
+
+	// Parse tab-separated output: name -> from_repo
+	repoByName := make(map[string]string)
+	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		name := parts[0]
+		repo := parts[1]
+
+		// Normalise unknown values
+		repo = strings.TrimPrefix(repo, "@") // yum sometimes prefixes with @
+		if repo == "" || repo == "<unknown>" || repo == "@@commandline" || repo == "commandline" {
+			repo = "unknown"
+		}
+
+		repoByName[name] = repo
+	}
+
+	// Apply to packages
+	attributed := 0
+	for i := range packages {
+		// Try exact match, then try stripping arch suffix from package name
+		name := packages[i].Name
+		if repo, ok := repoByName[name]; ok {
+			packages[i].SourceRepository = repo
+			attributed++
+			continue
+		}
+		// Strip arch suffix (e.g. "glibc.x86_64" -> "glibc")
+		if idx := strings.LastIndex(name, "."); idx > 0 {
+			baseName := name[:idx]
+			if repo, ok := repoByName[baseName]; ok {
+				packages[i].SourceRepository = repo
+				attributed++
+			}
+		}
+	}
+
+	m.logger.WithField("attributed", attributed).Debug("Enriched packages with repository attribution")
 }
 
 // getSecurityPackages gets the list of security packages from dnf/yum updateinfo
@@ -284,7 +365,13 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 
 		// If still not found in installed packages, try to get it with a command as fallback
 		if currentVersion == "" {
-			getCurrentCmd := exec.Command(packageManager, "list", "--installed", packageName)
+			// yum (CentOS 7 / legacy) requires positional argument; dnf accepts --installed flag
+			var getCurrentCmd *exec.Cmd
+			if packageManager == "yum" {
+				getCurrentCmd = exec.Command(packageManager, "list", "installed", packageName)
+			} else {
+				getCurrentCmd = exec.Command(packageManager, "list", "--installed", packageName)
+			}
 			getCurrentOutput, err := getCurrentCmd.Output()
 			if err == nil {
 				for _, currentLine := range strings.Split(string(getCurrentOutput), "\n") {
@@ -325,30 +412,64 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 	return packages
 }
 
-// parseInstalledPackages parses dnf list installed output
+// parseInstalledPackages parses dnf/yum list installed output.
+// On CentOS 7 / legacy yum, long package names are wrapped: the name appears alone
+// on one line and the version + repo follow on the next indented line. We handle
+// both the single-line and wrapped formats.
 func (m *DNFManager) parseInstalledPackages(output string) map[string]models.Package {
 	installedPackages := make(map[string]models.Package)
 
 	scanner := bufio.NewScanner(strings.NewReader(output))
+	var pendingName string // holds a wrapped package name waiting for its version line
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "Installed Packages") {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+
+		if trimmed == "" || strings.HasPrefix(trimmed, "Installed Packages") ||
+			strings.HasPrefix(trimmed, "Available Packages") ||
+			strings.HasPrefix(trimmed, "Loaded plugins") {
 			continue
 		}
 
-		parts := strings.Fields(line)
-		if len(parts) < 3 {
+		parts := strings.Fields(trimmed)
+
+		// Normal single-line format: "name.arch  version  repo"
+		if len(parts) >= 3 {
+			packageName := strings.Split(parts[0], ".")[0] // strip arch suffix
+			version := parts[1]
+			installedPackages[packageName] = models.Package{
+				Name:           packageName,
+				CurrentVersion: version,
+				NeedsUpdate:    false,
+			}
+			pendingName = ""
 			continue
 		}
 
-		packageName := strings.Split(parts[0], ".")[0] // Remove architecture
-		version := parts[1]
-
-		installedPackages[packageName] = models.Package{
-			Name:           packageName,
-			CurrentVersion: version,
-			NeedsUpdate:    false,
+		// Wrapped format, line 1: just the package name (no version/repo yet).
+		// Detect by checking the original line starts without leading whitespace
+		// and the trimmed text has no spaces (single token).
+		if len(parts) == 1 && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			// Looks like a bare package name line - remember it
+			pendingName = strings.Split(parts[0], ".")[0]
+			continue
 		}
+
+		// Wrapped format, line 2: "  version  repo" (starts with whitespace)
+		if pendingName != "" && len(parts) >= 2 &&
+			(strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) {
+			version := parts[0]
+			installedPackages[pendingName] = models.Package{
+				Name:           pendingName,
+				CurrentVersion: version,
+				NeedsUpdate:    false,
+			}
+			pendingName = ""
+			continue
+		}
+
+		// Any other short line resets pending state
+		pendingName = ""
 	}
 
 	return installedPackages

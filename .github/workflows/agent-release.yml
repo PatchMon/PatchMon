@@ -1,10 +1,12 @@
 name: Release Binaries
 
+# Fires when a GitHub release is published (draft → published, or direct publish).
+# NOTE: the `tags:` filter is not a valid key under `on.release` in GitHub Actions
+# and was silently ignored. If you want to restrict by tag pattern, add
+# `if: startsWith(github.event.release.tag_name, 'v')` to each job.
 on:
   release:
     types: [published]
-    tags:
-      - 'v*'
 
 permissions:
   contents: write
@@ -60,7 +62,13 @@ jobs:
         run: |
           OUTPUT_BASE="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
           OUTPUT_NAME="${OUTPUT_BASE}${{ matrix.goos == 'windows' && '.exe' || '' }}"
-          go build -buildvcs=false -ldflags="-s -w -X patchmon-agent/internal/pkgversion.Version=${{ github.event.release.tag_name }}" -o "${OUTPUT_NAME}" ./cmd/patchmon-agent
+          # Strip leading "v" so "v2.0.0" becomes "2.0.0" — diagnostics.go prints
+          # "v%s" and would otherwise emit "vv2.0.0".
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+          go build -buildvcs=false \
+            -ldflags="-s -w -X patchmon-agent/internal/pkgversion.Version=${VERSION}" \
+            -o "${OUTPUT_NAME}" ./cmd/patchmon-agent
 
       - name: Verify binary exists and is executable
         working-directory: agent-source-code
@@ -192,6 +200,10 @@ jobs:
           cache: "npm"
 
       - name: Build frontend for embed
+        env:
+          # Inject the release tag into the Vite build so the UI reports the
+          # correct version, overriding the placeholder in frontend/env.example.
+          VITE_APP_VERSION: ${{ github.event.release.tag_name }}
         run: |
           npm ci
           npm run build --workspace=frontend
@@ -212,11 +224,17 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          GOARM: ${{ (matrix.goos == 'linux' || matrix.goos == 'freebsd') && matrix.goarch == 'arm' && '6' || '' }}
+          GOARM: ${{ matrix.goarch == 'arm' && '6' || '' }}
           CGO_ENABLED: 0
         run: |
           OUTPUT_NAME="patchmon-server-${{ matrix.goos }}-${{ matrix.goarch }}"
-          go build -buildvcs=false -ldflags="-s -w" -o "${OUTPUT_NAME}" ./cmd/server
+          # Strip leading "v" so a "v2.0.0" tag becomes "2.0.0" (matches semver
+          # in config.go and what the UI expects for version comparisons).
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+          go build -buildvcs=false \
+            -ldflags="-s -w -X 'github.com/PatchMon/PatchMon/server-source-code/internal/config.DefaultVersion=${VERSION}'" \
+            -o "${OUTPUT_NAME}" ./cmd/server
           mv "${OUTPUT_NAME}" ../
 
       - name: Upload patchmon-server to release

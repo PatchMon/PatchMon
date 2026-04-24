@@ -86,7 +86,7 @@ const VolumeDetail = () => {
 						<h1 className="text-2xl font-bold text-secondary-900 dark:text-white">
 							{volume.name}
 						</h1>
-						<p className="mt-1 text-sm text-secondary-600 dark:text-secondary-400">
+						<p className="mt-1 text-sm text-secondary-600 dark:text-white">
 							Volume ID: {volume.volume_id}
 						</p>
 					</div>
@@ -168,7 +168,7 @@ const VolumeDetail = () => {
 				<div className="px-6 py-5">
 					<dl className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2">
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Volume ID
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white font-mono">
@@ -176,7 +176,7 @@ const VolumeDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Name
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -184,27 +184,27 @@ const VolumeDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Driver
 							</dt>
 							<dd className="mt-1">
-								<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+								<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
 									{volume.driver}
 								</span>
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Scope
 							</dt>
 							<dd className="mt-1">
-								<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+								<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
 									{volume.scope}
 								</span>
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Size
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -212,7 +212,7 @@ const VolumeDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Containers Using
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -221,7 +221,7 @@ const VolumeDetail = () => {
 						</div>
 						{volume.mountpoint && (
 							<div className="sm:col-span-2">
-								<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+								<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 									Mount Point
 								</dt>
 								<dd className="mt-1 text-sm text-secondary-900 dark:text-white font-mono break-all">
@@ -231,7 +231,7 @@ const VolumeDetail = () => {
 						)}
 						{volume.renderer && (
 							<div>
-								<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+								<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 									Renderer
 								</dt>
 								<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -240,7 +240,7 @@ const VolumeDetail = () => {
 							</div>
 						)}
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Created
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -248,7 +248,7 @@ const VolumeDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Last Checked
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -271,7 +271,7 @@ const VolumeDetail = () => {
 					<div className="px-6 py-5">
 						<dl className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2">
 							<div>
-								<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+								<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 									Hostname
 								</dt>
 								<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -284,7 +284,7 @@ const VolumeDetail = () => {
 								</dd>
 							</div>
 							<div>
-								<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+								<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 									Operating System
 								</dt>
 								<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -312,7 +312,7 @@ const VolumeDetail = () => {
 									key={key}
 									className="flex items-start py-2 border-b border-secondary-100 dark:border-secondary-700 last:border-0"
 								>
-									<span className="text-sm font-medium text-secondary-500 dark:text-secondary-400 min-w-[200px]">
+									<span className="text-sm font-medium text-secondary-500 dark:text-white min-w-[200px]">
 										{key}
 									</span>
 									<span className="text-sm text-secondary-900 dark:text-white break-all">
@@ -340,7 +340,7 @@ const VolumeDetail = () => {
 									key={key}
 									className="flex items-start py-2 border-b border-secondary-100 dark:border-secondary-700 last:border-0"
 								>
-									<span className="text-sm font-medium text-secondary-500 dark:text-secondary-400 min-w-[200px]">
+									<span className="text-sm font-medium text-secondary-500 dark:text-white min-w-[200px]">
 										{key}
 									</span>
 									<span className="text-sm text-secondary-900 dark:text-white break-all">

@@ -17,17 +17,12 @@ export default defineConfig({
 		strictPort: true, // Exit if port is already in use
 		allowedHosts: true, // Allow all hosts in development
 		proxy: {
-			"/bullboard": {
-				target: `http://${process.env.BACKEND_HOST || "localhost"}:${process.env.BACKEND_PORT || "3001"}`,
-				changeOrigin: true,
-				secure: false,
-				ws: true,
-			},
 			"/api": {
-				target: `http://${process.env.BACKEND_HOST || "localhost"}:${process.env.BACKEND_PORT || "3001"}`,
-				changeOrigin: true,
+				target: `http://${process.env.SERVER_HOST || "localhost"}:${process.env.SERVER_PORT || "3001"}`,
+				changeOrigin: false,
 				secure: false,
 				ws: true, // Enable WebSocket proxy
+				xfwd: true, // Forward X-Forwarded-* headers so backend can enforce CORS_ORIGIN
 				// Configure HTTP agent to support more concurrent connections
 				// Fixes 1000ms timeout issue when using HTTP (not HTTPS) with multiple hosts
 				agent: new HttpAgent({
@@ -39,6 +34,11 @@ export default defineConfig({
 				}),
 				// Handle proxy errors so unauthenticated/invalid WS attempts don't flood the console with stack traces
 				configure: (proxy, _options) => {
+					// Forward the browser's Host so the server can enforce CORS_ORIGIN
+					proxy.on("proxyReq", (proxyReq, req) => {
+						const host = req.headers.host;
+						if (host) proxyReq.setHeader("X-Forwarded-Host", host);
+					});
 					proxy.removeAllListeners("error");
 					proxy.on("error", (err, _req, _res) => {
 						const benign =
@@ -72,7 +72,7 @@ export default defineConfig({
 				},
 			},
 			"/admin": {
-				target: `http://${process.env.BACKEND_HOST || "localhost"}:${process.env.BACKEND_PORT || "3001"}`,
+				target: `http://${process.env.SERVER_HOST || "localhost"}:${process.env.SERVER_PORT || "3001"}`,
 				changeOrigin: true,
 				secure: false,
 			},

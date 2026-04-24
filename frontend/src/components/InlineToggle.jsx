@@ -64,7 +64,7 @@ const InlineToggle = ({
 					title={`Toggle ${value ? "off" : "on"}`}
 				>
 					<span
-						className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+						className={`inline-block h-3 w-3 transform rounded-md bg-white transition-transform ${
 							value ? "translate-x-5" : "translate-x-1"
 						}`}
 					/>

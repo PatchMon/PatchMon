@@ -1,7 +1,7 @@
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal } from "@xterm/xterm";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Terminal } from "xterm";
-import { FitAddon } from "xterm-addon-fit";
-import "xterm/css/xterm.css";
+import "@xterm/xterm/css/xterm.css";
 import { useQuery } from "@tanstack/react-query";
 import {
 	Bot,
@@ -20,6 +20,14 @@ import {
 // Note: Auth is handled via httpOnly cookies - no need for useAuth token
 import { useSidebar } from "../contexts/SidebarContext";
 import { aiAPI, settingsAPI } from "../utils/api";
+
+/** Remove line breaks from values before logging to avoid log injection (CWE-117). */
+function sanitizeForLog(value) {
+	if (value === undefined || value === null) {
+		return "";
+	}
+	return String(value).replace(/\n|\r/g, "");
+}
 
 const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	const { setSidebarCollapsed, sidebarCollapsed } = useSidebar();
@@ -45,6 +53,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	const [aiMessages, setAiMessages] = useState([]);
 	const [aiInput, setAiInput] = useState("");
 	const [aiLoading, setAiLoading] = useState(false);
+	const aiMsgIdRef = useRef(0);
 	const terminalBufferRef = useRef("");
 	const aiInputRef = useRef(null);
 	const currentLineRef = useRef(""); // Track current line for AI context
@@ -139,7 +148,10 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 
 		const userMessage = aiInput.trim();
 		setAiInput("");
-		setAiMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+		setAiMessages((prev) => [
+			...prev,
+			{ id: ++aiMsgIdRef.current, role: "user", content: userMessage },
+		]);
 		setAiLoading(true);
 
 		try {
@@ -151,12 +163,17 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 
 			setAiMessages((prev) => [
 				...prev,
-				{ role: "assistant", content: response.data.response },
+				{
+					id: ++aiMsgIdRef.current,
+					role: "assistant",
+					content: response.data.response,
+				},
 			]);
 		} catch (err) {
 			setAiMessages((prev) => [
 				...prev,
 				{
+					id: ++aiMsgIdRef.current,
 					role: "assistant",
 					content: `Error: ${err.response?.data?.error || "Failed to get AI response"}`,
 					isError: true,
@@ -411,7 +428,8 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 			const data = await response.json();
 			sshTicket = data.ticket;
 		} catch (err) {
-			console.error("[SSH Terminal] Failed to get SSH ticket:", err);
+			const safeErr = String(err).replace(/[\n\r]/g, " ");
+			console.error("[SSH Terminal] Failed to get SSH ticket:", safeErr);
 			setError("Authentication required. Please log in again.");
 			if (terminalInstanceRef.current) {
 				terminalInstanceRef.current.writeln(
@@ -478,7 +496,11 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 						ws.send(JSON.stringify(connectData));
 						console.log("[SSH Terminal] Connect message sent");
 					} catch (err) {
-						console.error("[SSH Terminal] Error sending connect message:", err);
+						const safeErr = String(err).replace(/[\n\r]/g, " ");
+						console.error(
+							"[SSH Terminal] Error sending connect message:",
+							safeErr,
+						);
 						setError(`Failed to send connection request: ${err.message}`);
 					}
 				} else {
@@ -553,16 +575,18 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 						default:
 							console.warn(
 								"[SSH Terminal] Unknown message type:",
-								message.type,
+								sanitizeForLog(message.type),
 							);
 					}
 				} catch (err) {
-					console.error("[SSH Terminal] Error parsing message:", err);
+					const safeErr = String(err).replace(/[\n\r]/g, " ");
+					console.error("[SSH Terminal] Error parsing message:", safeErr);
 				}
 			};
 
 			ws.onerror = (err) => {
-				console.error("[SSH Terminal] WebSocket error:", err);
+				const safeErr = String(err).replace(/[\n\r]/g, " ");
+				console.error("[SSH Terminal] WebSocket error:", safeErr);
 				const errorMsg =
 					"Failed to connect to terminal server. Check browser console and ensure backend is running.";
 				setError(errorMsg);
@@ -582,7 +606,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 				console.log(
 					"[SSH Terminal] WebSocket closed",
 					event.code,
-					event.reason,
+					sanitizeForLog(event.reason),
 				);
 				const wasConnected = isConnected;
 				setIsConnected(false);
@@ -628,7 +652,8 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 
 			wsRef.current = ws;
 		} catch (err) {
-			console.error("[SSH Terminal] Connection error:", err);
+			const safeErr = String(err).replace(/[\n\r]/g, " ");
+			console.error("[SSH Terminal] Connection error:", safeErr);
 			const errorMsg = err.message || "Failed to establish connection";
 			setError(errorMsg);
 			if (terminalInstanceRef.current) {
@@ -1379,14 +1404,14 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 											</p>
 										</div>
 									)}
-									{aiMessages.map((msg, idx) => {
+									{aiMessages.map((msg) => {
 										const codeBlocks =
 											msg.role === "assistant" && !msg.isError
 												? extractCodeBlocks(msg.content)
 												: [];
 										return (
 											<div
-												key={`msg-${idx}-${msg.role}-${msg.content.slice(0, 10)}`}
+												key={`msg-${msg.id}`}
 												className={`text-sm ${
 													msg.role === "user"
 														? "bg-primary-900/30 border border-primary-700/30 rounded-lg p-2 ml-4"
@@ -1411,9 +1436,9 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 																<span className="text-xs text-secondary-400">
 																	Send to terminal:
 																</span>
-																{codeBlocks.map((cmd, cmdIdx) => (
+																{codeBlocks.map((cmd) => (
 																	<button
-																		key={`cmd-${cmdIdx}-${cmd.slice(0, 20)}`}
+																		key={`cmd-${cmd}`}
 																		type="button"
 																		onClick={() => sendCommandToTerminal(cmd)}
 																		className="w-full flex items-center gap-2 px-2 py-1.5 text-xs bg-secondary-600/50 hover:bg-primary-600/50 border border-secondary-500/50 hover:border-primary-500/50 rounded text-left transition-colors group"

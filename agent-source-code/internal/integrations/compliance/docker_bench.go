@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"patchmon-agent/internal/logutil"
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
@@ -197,7 +198,7 @@ func (s *DockerBenchScanner) RunScan(ctx context.Context) (*models.ComplianceSca
 	if outputLen == 0 {
 		s.logger.Warn("Docker Bench produced no output - container may have failed to start")
 	} else if outputLen < 500 {
-		s.logger.WithField("output", outputStr).Debug("Docker Bench produced short output")
+		s.logger.WithField("output", logutil.Sanitize(outputStr)).Debug("Docker Bench produced short output")
 	} else {
 		s.logger.WithField("output_length", outputLen).Debug("Docker Bench output captured")
 	}
@@ -216,7 +217,7 @@ func (s *DockerBenchScanner) RunScan(ctx context.Context) (*models.ComplianceSca
 		if len(preview) > 500 {
 			preview = preview[:500] + "..."
 		}
-		s.logger.WithField("output_preview", preview).Warn("Docker Bench output received but no rules parsed - check output format")
+		s.logger.WithField("output_preview", logutil.Sanitize(preview)).Warn("Docker Bench output received but no rules parsed - check output format")
 	}
 
 	return scan, nil

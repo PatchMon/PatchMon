@@ -113,7 +113,7 @@ const HostGroups = () => {
 			{/* Header */}
 			<div className="flex items-center justify-between">
 				<div>
-					<p className="text-secondary-600 dark:text-secondary-300">
+					<p className="text-secondary-600 dark:text-white">
 						Organize your hosts into logical groups for better management
 					</p>
 				</div>
@@ -146,7 +146,7 @@ const HostGroups = () => {
 											{group.name}
 										</h3>
 										{group.description && (
-											<p className="text-sm text-secondary-600 dark:text-secondary-300 mt-1">
+											<p className="text-sm text-secondary-600 dark:text-white mt-1">
 												{group.description}
 											</p>
 										)}
@@ -172,7 +172,7 @@ const HostGroups = () => {
 								</div>
 							</div>
 
-							<div className="mt-4 flex items-center gap-4 text-sm text-secondary-600 dark:text-secondary-300">
+							<div className="mt-4 flex items-center gap-4 text-sm text-secondary-600 dark:text-white">
 								<div className="flex items-center gap-1">
 									<Server className="h-4 w-4" />
 									<span>
@@ -190,7 +190,7 @@ const HostGroups = () => {
 					<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-2">
 						No host groups yet
 					</h3>
-					<p className="text-secondary-600 dark:text-secondary-300 mb-6">
+					<p className="text-secondary-600 dark:text-white mb-6">
 						Create your first host group to organize your hosts
 					</p>
 					<button
@@ -490,7 +490,7 @@ const DeleteHostGroupModal = ({ group, onClose, onConfirm, isLoading }) => {
 						<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
 							Delete Host Group
 						</h3>
-						<p className="text-sm text-secondary-600 dark:text-secondary-300">
+						<p className="text-sm text-secondary-600 dark:text-white">
 							This action cannot be undone
 						</p>
 					</div>

@@ -1,6 +1,5 @@
 import {
 	BarChart3,
-	Bell,
 	Bot,
 	ChevronDown,
 	ChevronLeft,
@@ -8,21 +7,29 @@ import {
 	Code,
 	Folder,
 	Image,
+	KeyRound,
 	RefreshCw,
 	Settings,
 	Shield,
 	UserCircle,
 	Users,
+	Variable,
 	Wrench,
 } from "lucide-react";
 import { useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
+import { useSettings } from "../contexts/SettingsContext";
 import DiscordIcon from "./DiscordIcon";
+import TierBadge from "./TierBadge";
 
 const SettingsLayout = ({ children }) => {
+	const content = children ?? <Outlet />;
 	const location = useLocation();
-	const { canManageSettings, canViewUsers, canManageUsers } = useAuth();
+	const { canManageSettings, canViewUsers, canManageUsers, hasModule } =
+		useAuth();
+	const { settings: publicSettings } = useSettings();
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
 	// Build secondary navigation based on permissions
@@ -31,25 +38,50 @@ const SettingsLayout = ({ children }) => {
 
 		// Users section
 		if (canViewUsers() || canManageUsers()) {
+			const userItems = [
+				{
+					name: "Users",
+					href: "/settings/users",
+					icon: Users,
+				},
+			];
+			// Custom RBAC roles management is a Plus-tier feature (rbac_custom).
+			// Built-in admin/viewer roles stay available in every tier, but the
+			// dedicated "Roles" editor manages custom role CRUD. Locked items
+			// stay visible with a TierBadge for discovery; the route renders
+			// an upgrade screen via <ModuleGate>.
+			{
+				const locked = !hasModule("rbac_custom");
+				userItems.push({
+					name: "Roles",
+					href: "/settings/roles",
+					icon: Shield,
+					lockedModule: locked ? "rbac_custom" : null,
+					lockedTier: locked ? getRequiredTier("rbac_custom") : null,
+				});
+			}
+			userItems.push({
+				name: "My Profile",
+				href: "/settings/profile",
+				icon: UserCircle,
+			});
+			if (canManageSettings()) {
+				userItems.push(
+					{
+						name: "Discord Auth",
+						href: "/settings/discord-auth",
+						icon: DiscordIcon,
+					},
+					{
+						name: "OIDC / SSO",
+						href: "/settings/oidc-auth",
+						icon: KeyRound,
+					},
+				);
+			}
 			nav.push({
 				section: "User Management",
-				items: [
-					{
-						name: "Users",
-						href: "/settings/users",
-						icon: Users,
-					},
-					{
-						name: "Roles",
-						href: "/settings/roles",
-						icon: Shield,
-					},
-					{
-						name: "My Profile",
-						href: "/settings/profile",
-						icon: UserCircle,
-					},
-				],
+				items: userItems,
 			});
 		}
 
@@ -77,95 +109,80 @@ const SettingsLayout = ({ children }) => {
 			});
 		}
 
-		// Alert Management
-		if (canManageSettings()) {
-			nav.push({
-				section: "Alert Management",
-				items: [
-					{
-						name: "Alert Settings",
-						href: "/settings/alert-settings",
-						icon: Bell,
-					},
-					{
-						name: "Alert Channels",
-						href: "/settings/alert-channels",
-						icon: Bell,
-						comingSoon: true,
-					},
-					{
-						name: "Notifications",
-						href: "/settings/notifications",
-						icon: Bell,
-						comingSoon: true,
-					},
-				],
-			});
-		}
+		// Alert Management moved to Reporting page tabs
 
-		// Patch Management
-		if (canManageSettings()) {
-			nav.push({
-				section: "Patch Management",
-				items: [
-					{
-						name: "Policies",
-						href: "/settings/patch-management",
-						icon: Settings,
-						comingSoon: true,
-					},
-				],
-			});
-		}
+		// Patch Management moved to /patching?tab=policies
 
 		// Server Config
 		if (canManageSettings()) {
-			// Integrations section
+			// Integrations section. AI Terminal is a Max-tier feature (module key "ai").
+			const integrationsItems = [
+				{
+					name: "API integrations",
+					href: "/settings/integrations",
+					icon: Wrench,
+				},
+			];
+			{
+				const locked = !hasModule("ai");
+				integrationsItems.push({
+					name: "AI Terminal",
+					href: "/settings/ai-terminal",
+					icon: Bot,
+					lockedModule: locked ? "ai" : null,
+					lockedTier: locked ? getRequiredTier("ai") : null,
+				});
+			}
 			nav.push({
 				section: "Integrations",
-				items: [
-					{
-						name: "Integrations",
-						href: "/settings/integrations",
-						icon: Wrench,
-					},
-					{
-						name: "AI Terminal",
-						href: "/settings/ai-terminal",
-						icon: Bot,
-					},
-					{
-						name: "Discord Auth",
-						href: "/settings/discord-auth",
-						icon: DiscordIcon,
-					},
-				],
+				items: integrationsItems,
 			});
 
+			const isAdminMode = publicSettings?.admin_mode;
+			const serverItems = [];
+			// Server URL and Server Version are hidden in managed/multi-context deployments.
+			if (!isAdminMode) {
+				serverItems.push({
+					name: "Server URL",
+					href: "/settings/server-url",
+					icon: Wrench,
+				});
+			}
+			serverItems.push({
+				name: "Environment",
+				href: "/settings/environment",
+				icon: Variable,
+			});
+			// Custom branding (logo/favicon upload) is a Plus-tier feature
+			// (module key "custom_branding").
+			{
+				const locked = !hasModule("custom_branding");
+				serverItems.push({
+					name: "Branding",
+					href: "/settings/branding",
+					icon: Image,
+					lockedModule: locked ? "custom_branding" : null,
+					lockedTier: locked ? getRequiredTier("custom_branding") : null,
+				});
+			}
+			if (!isAdminMode) {
+				serverItems.push({
+					name: "Server Version",
+					href: "/settings/server-version",
+					icon: Code,
+				});
+			}
+			// Metrics is hidden in managed/multi-context deployments.
+			if (!isAdminMode) {
+				serverItems.push({
+					name: "Metrics",
+					href: "/settings/metrics",
+					icon: BarChart3,
+				});
+			}
 			nav.push({
 				section: "Server",
-				items: [
-					{
-						name: "URL Config",
-						href: "/settings/server-url",
-						icon: Wrench,
-					},
-					{
-						name: "Branding",
-						href: "/settings/branding",
-						icon: Image,
-					},
-					{
-						name: "Server Version",
-						href: "/settings/server-version",
-						icon: Code,
-					},
-					{
-						name: "Metrics",
-						href: "/settings/metrics",
-						icon: BarChart3,
-					},
-				],
+				items: serverItems,
 			});
 		}
 
@@ -210,7 +227,7 @@ const SettingsLayout = ({ children }) => {
 				<div className="md:hidden mb-4">
 					<label
 						htmlFor="settings-select"
-						className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2"
+						className="block text-sm font-medium text-secondary-700 dark:text-white mb-2"
 					>
 						Settings Section
 					</label>
@@ -224,6 +241,7 @@ const SettingsLayout = ({ children }) => {
 							{allNavItems.map((item) => (
 								<option key={item.href} value={item.href}>
 									{item.section} - {item.name}
+									{item.lockedTier ? ` (${item.lockedTier.toUpperCase()})` : ""}
 								</option>
 							))}
 						</select>
@@ -242,7 +260,7 @@ const SettingsLayout = ({ children }) => {
 								<button
 									type="button"
 									onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-									className="p-1 text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300 rounded transition-colors"
+									className="p-1 text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300 rounded transition-colors"
 									title={
 										sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
 									}
@@ -263,7 +281,7 @@ const SettingsLayout = ({ children }) => {
 										{secondaryNavigation.map((item) => (
 											<li key={item.section}>
 												{!sidebarCollapsed && (
-													<h4 className="text-xs font-semibold text-secondary-500 dark:text-secondary-300 uppercase tracking-wider mb-2">
+													<h4 className="text-xs font-semibold text-secondary-500 dark:text-white uppercase tracking-wider mb-2">
 														{item.section}
 													</h4>
 												)}
@@ -294,6 +312,9 @@ const SettingsLayout = ({ children }) => {
 																				Soon
 																			</span>
 																		)}
+																		{subItem.lockedTier && (
+																			<TierBadge tier={subItem.lockedTier} />
+																		)}
 																	</span>
 																)}
 															</Link>
@@ -307,7 +328,7 @@ const SettingsLayout = ({ children }) => {
 																				className={`block px-3 py-1 text-xs font-medium rounded transition-colors ${
 																					isActive(subTab.href)
 																						? "bg-primary-100 dark:bg-primary-700 text-primary-700 dark:text-primary-200"
-																						: "text-secondary-600 dark:text-secondary-400 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
+																						: "text-secondary-600 dark:text-white hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
 																				}`}
 																			>
 																				{subTab.name}
@@ -330,7 +351,7 @@ const SettingsLayout = ({ children }) => {
 					{/* Right content */}
 					<section className="flex-1 min-w-0">
 						<div className="bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-600 rounded-lg p-4">
-							{children}
+							{content}
 						</div>
 					</section>
 				</div>

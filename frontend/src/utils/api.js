@@ -54,15 +54,17 @@ api.interceptors.response.use(
 	(response) => response,
 	(error) => {
 		if (error.response?.status === 401) {
-			// Don't redirect if we're on the login page or if it's a TFA verification error
+			// Don't redirect if we're on the login page or if it's a TFA-related error
 			const currentPath = window.location.pathname;
-			const isTfaError = error.config?.url?.includes("/verify-tfa");
+			const requestUrl = error.config?.url || "";
+			const isTfaError =
+				requestUrl.includes("/verify-tfa") || requestUrl.includes("/tfa/");
 
 			if (currentPath !== "/login" && !isTfaError) {
-				// Handle unauthorized - clear user state and redirect
-				// Note: Token is in httpOnly cookie (server clears on logout)
+				// Dispatch event for AuthContext to handle - avoids race with React updates
+				// that could trigger ErrorBoundary "Something went wrong" before redirect
 				localStorage.removeItem("user");
-				window.location.href = "/login";
+				window.dispatchEvent(new CustomEvent("auth:session-expired"));
 			}
 		}
 		return Promise.reject(error);
@@ -72,7 +74,10 @@ api.interceptors.response.use(
 // Dashboard API
 export const dashboardAPI = {
 	getStats: () => api.get("/dashboard/stats"),
-	getHosts: () => api.get("/dashboard/hosts"),
+	getHosts: (params = {}) => {
+		const queryString = new URLSearchParams(params).toString();
+		return api.get(`/dashboard/hosts${queryString ? `?${queryString}` : ""}`);
+	},
 	getPackages: () => api.get("/dashboard/packages"),
 	getHostDetail: (hostId, params = {}) => {
 		const queryString = new URLSearchParams(params).toString();
@@ -136,6 +141,10 @@ export const adminHostsAPI = {
 		}),
 	updateConnection: (hostId, connectionInfo) =>
 		api.patch(`/hosts/${hostId}/connection`, connectionInfo),
+	setPrimaryInterface: (hostId, interfaceName) =>
+		api.patch(`/hosts/${hostId}/primary-interface`, {
+			interface_name: interfaceName,
+		}),
 	updateNotes: (hostId, notes) =>
 		api.patch(`/hosts/${hostId}/notes`, {
 			notes: notes,
@@ -156,6 +165,8 @@ export const adminHostsAPI = {
 		}),
 	setComplianceScanners: (hostId, settings) =>
 		api.post(`/hosts/${hostId}/integrations/compliance/scanners`, settings),
+	applyPendingConfig: (hostId) =>
+		api.post(`/hosts/${hostId}/integrations/apply-pending-config`),
 	setComplianceOnDemandOnly: (hostId, onDemandOnly) =>
 		api.post(`/hosts/${hostId}/compliance/on-demand-only`, {
 			on_demand_only: onDemandOnly,
@@ -200,7 +211,33 @@ export const settingsAPI = {
 	getPublic: () => api.get("/settings/public"), // Public endpoint for read-only settings (auto_update, etc.)
 	update: (settings) => api.put("/settings", settings),
 	getServerUrl: () => api.get("/settings/server-url"),
+	getCurrentUrl: () => api.get("/settings/current-url"),
 	getEnvConfig: () => api.get("/settings/env-config"),
+	getEnvironmentConfig: () => api.get("/settings/environment"),
+	updateEnvironmentConfig: (key, value) =>
+		api.patch(`/settings/environment/${key}`, { value }),
+};
+
+// Community links API (public - used in nav, login, wizard)
+export const communityAPI = {
+	getLinks: () => api.get("/community/links").then((res) => res.data),
+};
+
+// Marketing API (public - used during first-time setup)
+export const marketingAPI = {
+	subscribe: (data) =>
+		fetch("/api/v1/marketing/subscribe", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(data),
+		}).then((res) => {
+			if (!res.ok) {
+				return res.json().then((d) => {
+					throw new Error(d.error || "Subscribe failed");
+				});
+			}
+			return res.json();
+		}),
 };
 
 // User Preferences API
@@ -217,7 +254,7 @@ export const agentFileAPI = {
 
 // Repository API
 export const repositoryAPI = {
-	list: () => api.get("/repositories"),
+	list: (params = {}) => api.get("/repositories", { params }),
 	getById: (repositoryId) => api.get(`/repositories/${repositoryId}`),
 	getByHost: (hostId) => api.get(`/repositories/host/${hostId}`),
 	update: (repositoryId, data) =>
@@ -238,6 +275,41 @@ export const dashboardPreferencesAPI = {
 	getDefaults: () => api.get("/dashboard-preferences/defaults"),
 	getLayout: () => api.get("/dashboard-preferences/layout"),
 	updateLayout: (layout) => api.put("/dashboard-preferences/layout", layout),
+};
+
+// Billing API (customer-facing; requires can_manage_billing + ADMIN_MODE on)
+export const billingAPI = {
+	getCurrent: () => api.get("/me/billing"),
+	createPortalSession: (returnUrl) =>
+		api.post("/me/billing/portal", { return_url: returnUrl }),
+	// Tier-change preview returns what {new_tier, interval, commit_hosts?}
+	// would cost today (prorated) and at next renewal without calling any
+	// mutating Stripe API. commit_hosts is annual-only (Phase 5e) and
+	// represents pre-committed capacity.
+	previewTierChange: ({ new_tier, interval, commit_hosts }) => {
+		const body = { new_tier, interval };
+		if (typeof commit_hosts === "number" && commit_hosts > 0) {
+			body.commit_hosts = commit_hosts;
+		}
+		return api.post("/me/billing/tier-change/preview", body);
+	},
+	// Apply the tier change. Upgrades charge immediately (always_invoice);
+	// downgrades are scheduled for current_period_end. commit_hosts is only
+	// honoured on annual intervals.
+	applyTierChange: ({ new_tier, interval, commit_hosts }) => {
+		const body = { new_tier, interval };
+		if (typeof commit_hosts === "number" && commit_hosts > 0) {
+			body.commit_hosts = commit_hosts;
+		}
+		return api.post("/me/billing/tier-change", body);
+	},
+	// Trigger an on-demand host-count sync. The server proxies to the
+	// regional provisioner which does a live count on the tenant DB and
+	// pushes the result through to the manager + Stripe. The response
+	// echoes the freshly-projected billing_state so the UI can render the
+	// new next-invoice estimate without waiting for the next poll.
+	// Timeout is bumped to 35s because the upstream chain can take 5-10s.
+	sync: () => api.post("/me/billing/sync", null, { timeout: 35000 }),
 };
 
 // Hosts API (for agent communication - kept for compatibility)
@@ -282,9 +354,9 @@ export const packagesAPI = {
 	getCategories: () => api.get("/packages/categories/list"),
 	getHosts: (packageId, params = {}) =>
 		api.get(`/packages/${packageId}/hosts`, { params }),
+	getActivity: (packageId, params = {}) =>
+		api.get(`/packages/${packageId}/activity`, { params }).then((r) => r.data),
 	update: (packageId, data) => api.put(`/packages/${packageId}`, data),
-	search: (query, params = {}) =>
-		api.get(`/packages/search/${query}`, { params }),
 };
 
 // Utility functions
@@ -302,7 +374,7 @@ export const isCorsError = (error) => {
 		return true;
 	}
 
-	// Check for backend CORS errors that get converted to 500 by proxy
+	// Check for server CORS errors that get converted to 500 by proxy
 	if (error.response?.status === 500) {
 		// Check if the error message contains CORS-related text
 		if (
@@ -324,7 +396,7 @@ export const isCorsError = (error) => {
 			return true;
 		}
 
-		// Check for specific CORS error patterns from backend logs
+		// Check for specific CORS error patterns from server logs
 		if (
 			error.message?.includes("origin") &&
 			error.message?.includes("callback")
@@ -376,8 +448,66 @@ export const formatError = (error) => {
 	return "An unexpected error occurred";
 };
 
-export const formatDate = (date) => {
-	return new Date(date).toLocaleString();
+/**
+ * Module-level timezone used by all date formatting helpers.
+ * Set once via setGlobalTimezone() when settings load.
+ */
+let _globalTimezone = null;
+
+/** Set the global IANA timezone (e.g. "Europe/London"). */
+export const setGlobalTimezone = (tz) => {
+	_globalTimezone = tz;
+};
+
+/** Get the current global timezone (or null). */
+export const getGlobalTimezone = () => _globalTimezone;
+
+/**
+ * Format a date for display. When timezone is provided (e.g. from settings.timezone),
+ * formats in that IANA timezone; otherwise falls back to the global timezone,
+ * then browser locale.
+ * @param {string|Date|number} date - ISO string, Date, or timestamp
+ * @param {string} [timezone] - Optional IANA timezone (e.g. America/New_York)
+ */
+export const formatDate = (date, timezone) => {
+	const d = new Date(date);
+	if (Number.isNaN(d.getTime())) return " -";
+	const tz = timezone || _globalTimezone;
+	if (tz) {
+		try {
+			return new Intl.DateTimeFormat(undefined, {
+				timeZone: tz,
+				dateStyle: "short",
+				timeStyle: "medium",
+			}).format(d);
+		} catch {
+			return d.toLocaleString();
+		}
+	}
+	return d.toLocaleString();
+};
+
+/**
+ * Format a date for display (date only, no time).
+ * Uses the global timezone when no explicit timezone is passed.
+ * @param {string|Date|number} date - ISO string, Date, or timestamp
+ * @param {string} [timezone] - Optional IANA timezone
+ */
+export const formatDateOnly = (date, timezone) => {
+	const d = new Date(date);
+	if (Number.isNaN(d.getTime())) return " -";
+	const tz = timezone || _globalTimezone;
+	if (tz) {
+		try {
+			return new Intl.DateTimeFormat(undefined, {
+				timeZone: tz,
+				dateStyle: "short",
+			}).format(d);
+		} catch {
+			return d.toLocaleDateString();
+		}
+	}
+	return d.toLocaleDateString();
 };
 
 // Version API
@@ -385,6 +515,20 @@ export const versionAPI = {
 	getCurrent: () => api.get("/version/current"),
 	checkUpdates: () => api.get("/version/check-updates"),
 	testSshKey: (data) => api.post("/version/test-ssh-key", data),
+};
+
+// Agent Version API (Settings > Agent Version)
+export const agentVersionAPI = {
+	getInfo: () => api.get("/agent/version"),
+	checkUpdates: () => api.post("/agent/version/check"),
+	refresh: () => api.post("/agent/version/refresh"),
+	download: (arch, os) =>
+		api.get("/agent/download", { params: { arch, os }, responseType: "blob" }),
+};
+
+// RDP API (in-browser RDP for Windows hosts via guacd)
+export const rdpAPI = {
+	createTicket: (data) => api.post("/auth/rdp-ticket", data),
 };
 
 // Auth API
@@ -413,23 +557,38 @@ export const tfaAPI = {
 	verify: (data) => api.post("/tfa/verify", data),
 };
 
+// Trusted Devices API ("remember this device" for MFA)
+export const trustedDevicesAPI = {
+	list: () => api.get("/auth/trusted-devices"),
+	revoke: (id) => api.delete(`/auth/trusted-devices/${id}`),
+	revokeAll: () => api.delete("/auth/trusted-devices"),
+};
+
 export const formatRelativeTime = (date) => {
+	if (date == null) return " -";
 	const now = new Date();
 	const diff = now - new Date(date);
-	const seconds = Math.floor(diff / 1000);
+	const abs = Math.abs(diff);
+	const future = diff < 0;
+	const seconds = Math.floor(abs / 1000);
 	const minutes = Math.floor(seconds / 60);
 	const hours = Math.floor(minutes / 60);
 	const days = Math.floor(hours / 24);
 
-	if (days > 0) return `${days} day${days > 1 ? "s" : ""} ago`;
-	if (hours > 0) return `${hours} hour${hours > 1 ? "s" : ""} ago`;
-	if (minutes > 0) return `${minutes} minute${minutes > 1 ? "s" : ""} ago`;
-	return `${seconds} second${seconds > 1 ? "s" : ""} ago`;
+	const suffix = future ? "" : " ago";
+	const prefix = future ? "in " : "";
+	if (days > 0) return `${prefix}${days} day${days > 1 ? "s" : ""}${suffix}`;
+	if (hours > 0)
+		return `${prefix}${hours} hour${hours > 1 ? "s" : ""}${suffix}`;
+	if (minutes > 0) return `${prefix}${minutes} min${suffix}`;
+	if (future) return "in a few seconds";
+	return "just now";
 };
 
 // Search API
 export const searchAPI = {
-	global: (query) => api.get("/search", { params: { q: query } }),
+	global: (query, config = {}) =>
+		api.get("/search", { params: { q: query }, ...config }),
 };
 
 // AI Terminal Assistant API
@@ -450,6 +609,13 @@ export const discordAPI = {
 	updateSettings: (data) => api.put("/auth/discord/settings", data),
 	link: () => api.post("/auth/discord/link"),
 	unlink: () => api.post("/auth/discord/unlink"),
+};
+
+// OIDC / SSO API
+export const oidcAPI = {
+	getSettings: () => api.get("/auth/oidc/settings"),
+	updateSettings: (data) => api.put("/auth/oidc/settings", data),
+	importFromEnv: () => api.post("/auth/oidc/settings/import-from-env"),
 };
 
 // Alerts API
@@ -478,6 +644,35 @@ export const alertsAPI = {
 	triggerCleanup: () => api.post("/alerts/cleanup"),
 	deleteAlert: (id) => api.delete(`/alerts/${id}`),
 	bulkDeleteAlerts: (alertIds) => api.post("/alerts/bulk-delete", { alertIds }),
+	bulkAction: (alertIds, action) =>
+		api.post("/alerts/bulk-action", { alertIds, action }),
+};
+
+// Notifications (webhooks, email, scheduled reports)
+export const notificationsAPI = {
+	listDestinations: () => api.get("/notifications/destinations"),
+	createDestination: (data) => api.post("/notifications/destinations", data),
+	updateDestination: (id, data) =>
+		api.put(`/notifications/destinations/${id}`, data),
+	getDestinationConfig: (id) =>
+		api.get(`/notifications/destinations/${id}/config`),
+	deleteDestination: (id) => api.delete(`/notifications/destinations/${id}`),
+	listRoutes: () => api.get("/notifications/routes"),
+	createRoute: (data) => api.post("/notifications/routes", data),
+	updateRoute: (id, data) => api.put(`/notifications/routes/${id}`, data),
+	deleteRoute: (id) => api.delete(`/notifications/routes/${id}`),
+	listDeliveryLog: (params = {}) =>
+		api.get("/notifications/delivery-log", { params }),
+	test: (data) => api.post("/notifications/test", data),
+	listScheduledReports: () => api.get("/notifications/scheduled-reports"),
+	createScheduledReport: (data) =>
+		api.post("/notifications/scheduled-reports", data),
+	updateScheduledReport: (id, data) =>
+		api.put(`/notifications/scheduled-reports/${id}`, data),
+	deleteScheduledReport: (id) =>
+		api.delete(`/notifications/scheduled-reports/${id}`),
+	runScheduledReportNow: (id) =>
+		api.post(`/notifications/scheduled-reports/${id}/run-now`),
 };
 
 export default api;

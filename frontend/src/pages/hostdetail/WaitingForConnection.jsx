@@ -35,6 +35,7 @@ const WaitingForConnection = ({
 	curlFlags,
 	installUrl,
 	shellCommand,
+	installCommand = null,
 }) => {
 	const [_wsStatus, setWsStatus] = useState(null);
 	const [connectionStage, setConnectionStage] = useState("waiting"); // waiting, connected, receiving, done
@@ -156,7 +157,9 @@ const WaitingForConnection = ({
 	}, [connectionStage, hasNavigated, navigate, host?.id, queryClient, onClose]);
 
 	const copyCommand = async () => {
-		const command = `curl ${curlFlags} "${installUrl}" -H "X-API-ID: ${host.api_id}" -H "X-API-KEY: ${plaintextApiKey}" | ${shellCommand}`;
+		const command =
+			installCommand ||
+			`curl ${curlFlags} "${installUrl}" -H "X-API-ID: ${host.api_id}" -H "X-API-KEY: ${plaintextApiKey}" | ${shellCommand}`;
 		try {
 			if (navigator.clipboard && window.isSecureContext) {
 				await navigator.clipboard.writeText(command);
@@ -187,7 +190,7 @@ const WaitingForConnection = ({
 					<button
 						type="button"
 						onClick={onClose}
-						className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+						className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
 					>
 						<X className="h-5 w-5" />
 					</button>
@@ -204,11 +207,11 @@ const WaitingForConnection = ({
 								<h4 className="text-lg font-semibold text-secondary-900 dark:text-white mb-2">
 									Waiting for connection
 								</h4>
-								<p className="text-sm text-secondary-600 dark:text-secondary-400 text-center">
+								<p className="text-sm text-secondary-600 dark:text-white text-center">
 									Please run the installation command on your host. This page
 									will automatically update when the connection is established.
 								</p>
-								<div className="mt-4 flex items-center gap-2 text-xs text-secondary-500 dark:text-secondary-400">
+								<div className="mt-4 flex items-center gap-2 text-xs text-secondary-500 dark:text-white">
 									<RefreshCw className="h-4 w-4 animate-spin" />
 									<span>Checking connection status...</span>
 								</div>
@@ -223,10 +226,10 @@ const WaitingForConnection = ({
 								<h4 className="text-lg font-semibold text-green-600 dark:text-green-400 mb-2">
 									Connected
 								</h4>
-								<p className="text-sm text-secondary-600 dark:text-secondary-400 text-center">
+								<p className="text-sm text-secondary-600 dark:text-white text-center">
 									Agent is connected. Waiting for initial system report...
 								</p>
-								<div className="mt-4 flex items-center gap-2 text-xs text-secondary-500 dark:text-secondary-400">
+								<div className="mt-4 flex items-center gap-2 text-xs text-secondary-500 dark:text-white">
 									<RefreshCw className="h-4 w-4 animate-spin" />
 									<span>Waiting for initial report...</span>
 								</div>
@@ -241,10 +244,10 @@ const WaitingForConnection = ({
 								<h4 className="text-lg font-semibold text-blue-600 dark:text-blue-400 mb-2">
 									Receiving initial report
 								</h4>
-								<p className="text-sm text-secondary-600 dark:text-secondary-400 text-center">
+								<p className="text-sm text-secondary-600 dark:text-white text-center">
 									Collecting system information from the agent...
 								</p>
-								<div className="mt-4 flex items-center gap-2 text-xs text-secondary-500 dark:text-secondary-400">
+								<div className="mt-4 flex items-center gap-2 text-xs text-secondary-500 dark:text-white">
 									<RefreshCw className="h-4 w-4 animate-spin" />
 									<span>Processing data...</span>
 								</div>
@@ -259,7 +262,7 @@ const WaitingForConnection = ({
 								<h4 className="text-lg font-semibold text-green-600 dark:text-green-400 mb-2">
 									Done
 								</h4>
-								<p className="text-sm text-secondary-600 dark:text-secondary-400 text-center">
+								<p className="text-sm text-secondary-600 dark:text-white text-center">
 									Initial report received. Redirecting to host page...
 								</p>
 							</>
@@ -270,7 +273,7 @@ const WaitingForConnection = ({
 					<div className="bg-secondary-50 dark:bg-secondary-700 rounded-lg p-4">
 						<div className="space-y-2">
 							<div className="flex justify-between">
-								<span className="text-sm font-medium text-secondary-700 dark:text-secondary-300">
+								<span className="text-sm font-medium text-secondary-700 dark:text-white">
 									Host:
 								</span>
 								<span className="text-sm text-secondary-900 dark:text-white">
@@ -278,7 +281,7 @@ const WaitingForConnection = ({
 								</span>
 							</div>
 							<div className="flex justify-between">
-								<span className="text-sm font-medium text-secondary-700 dark:text-secondary-300">
+								<span className="text-sm font-medium text-secondary-700 dark:text-white">
 									Status:
 								</span>
 								<span
@@ -287,7 +290,7 @@ const WaitingForConnection = ({
 										connectionStage === "receiving" ||
 										connectionStage === "done"
 											? "text-green-600 dark:text-green-400"
-											: "text-secondary-600 dark:text-secondary-400"
+											: "text-secondary-600 dark:text-white"
 									}`}
 								>
 									{connectionStage === "waiting"

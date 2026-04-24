@@ -13,7 +13,8 @@ import {
 } from "lucide-react";
 import { useId, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { adminUsersAPI, permissionsAPI } from "../utils/api";
+import { adminUsersAPI, formatDateOnly, permissionsAPI } from "../utils/api";
+import { isRenderableAvatarSrc } from "../utils/avatar";
 
 const Users = () => {
 	const [showAddModal, setShowAddModal] = useState(false);
@@ -43,15 +44,6 @@ const Users = () => {
 		mutationFn: adminUsersAPI.delete,
 		onSuccess: () => {
 			queryClient.invalidateQueries(["users"]);
-		},
-	});
-
-	// Update user mutation
-	const updateUserMutation = useMutation({
-		mutationFn: ({ id, data }) => adminUsersAPI.update(id, data),
-		onSuccess: () => {
-			queryClient.invalidateQueries(["users"]);
-			setEditingUser(null);
 		},
 	});
 
@@ -139,7 +131,7 @@ const Users = () => {
 								<div className="px-4 py-4 flex items-center justify-between">
 									<div className="flex items-center">
 										<div className="flex-shrink-0">
-											{user.avatar_url ? (
+											{isRenderableAvatarSrc(user.avatar_url) ? (
 												<img
 													src={user.avatar_url}
 													alt={user.username}
@@ -157,12 +149,12 @@ const Users = () => {
 													{user.username}
 												</p>
 												{user.id === currentUser?.id && (
-													<span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+													<span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
 														You
 													</span>
 												)}
 												<span
-													className={`ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+													className={`ml-2 inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium ${
 														user.role === "superadmin"
 															? "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
 															: user.role === "admin"
@@ -186,19 +178,17 @@ const Users = () => {
 													<XCircle className="ml-2 h-4 w-4 text-red-500" />
 												)}
 											</div>
-											<div className="flex items-center mt-1 text-sm text-secondary-500 dark:text-secondary-300">
+											<div className="flex items-center mt-1 text-sm text-secondary-500 dark:text-white">
 												<Mail className="h-4 w-4 mr-1" />
 												{user.email}
 											</div>
-											<div className="flex items-center mt-1 text-sm text-secondary-500 dark:text-secondary-300">
+											<div className="flex items-center mt-1 text-sm text-secondary-500 dark:text-white">
 												<Calendar className="h-4 w-4 mr-1" />
-												Created:{" "}
-												{new Date(user.created_at).toLocaleDateString()}
+												Created: {formatDateOnly(user.created_at)}
 												{user.last_login && (
 													<>
 														<span className="mx-2">•</span>
-														Last login:{" "}
-														{new Date(user.last_login).toLocaleDateString()}
+														Last login: {formatDateOnly(user.last_login)}
 													</>
 												)}
 											</div>
@@ -208,7 +198,7 @@ const Users = () => {
 										<button
 											type="button"
 											onClick={() => handleEditUser(user)}
-											className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+											className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
 											title="Edit user"
 										>
 											<Edit className="h-4 w-4" />
@@ -255,10 +245,10 @@ const Users = () => {
 						<li>
 							<div className="px-4 py-8 text-center">
 								<User className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
-								<p className="text-secondary-500 dark:text-secondary-300">
+								<p className="text-secondary-500 dark:text-white">
 									No users found
 								</p>
-								<p className="text-sm text-secondary-400 dark:text-secondary-400 mt-2">
+								<p className="text-sm text-secondary-400 dark:text-white mt-2">
 									Click "Add User" to create the first user
 								</p>
 							</div>
@@ -281,7 +271,10 @@ const Users = () => {
 					user={editingUser}
 					isOpen={!!editingUser}
 					onClose={() => setEditingUser(null)}
-					onUserUpdated={() => updateUserMutation.mutate()}
+					onUserUpdated={() => {
+						queryClient.invalidateQueries(["users"]);
+						setEditingUser(null);
+					}}
 					roles={roles}
 				/>
 			)}
@@ -449,7 +442,7 @@ const AddUserModal = ({ isOpen, onClose, onUserCreated, roles }) => {
 							onChange={handleInputChange}
 							className="block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
 						/>
-						<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+						<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 							Minimum 6 characters
 						</p>
 					</div>

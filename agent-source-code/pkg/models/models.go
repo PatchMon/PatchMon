@@ -4,10 +4,19 @@ package models
 type Package struct {
 	Name             string `json:"name"`
 	Description      string `json:"description,omitempty"`
+	Category         string `json:"category,omitempty"`
 	CurrentVersion   string `json:"currentVersion"`
 	AvailableVersion string `json:"availableVersion,omitempty"`
 	NeedsUpdate      bool   `json:"needsUpdate"`
 	IsSecurityUpdate bool   `json:"isSecurityUpdate"`
+	SourceRepository string `json:"sourceRepository,omitempty"`
+	// WUA fields - only populated for Category="Windows Update" entries
+	WUAGuid           string   `json:"wuaGuid,omitempty"`
+	WUAKb             string   `json:"wuaKb,omitempty"`
+	WUASeverity       string   `json:"wuaSeverity,omitempty"`
+	WUACategories     []string `json:"wuaCategories,omitempty"`
+	WUASupportURL     string   `json:"wuaSupportUrl,omitempty"`
+	WUARevisionNumber int32    `json:"wuaRevisionNumber,omitempty"`
 }
 
 // Repository represents a software repository
@@ -99,6 +108,7 @@ type ReportPayload struct {
 	ExecutionTime          float64            `json:"executionTime"` // Collection time in seconds
 	NeedsReboot            bool               `json:"needsReboot"`
 	RebootReason           string             `json:"rebootReason,omitempty"`
+	PackageManager         string             `json:"packageManager,omitempty"`
 }
 
 // PingResponse represents server ping response
@@ -163,8 +173,10 @@ type HostSettingsResponse struct {
 
 // IntegrationStatusResponse represents integration status response from server
 type IntegrationStatusResponse struct {
-	Success      bool            `json:"success"`
-	Integrations map[string]bool `json:"integrations"`
+	Success                      bool            `json:"success"`
+	Integrations                 map[string]bool `json:"integrations"`
+	ComplianceOpenscapEnabled    *bool           `json:"compliance_openscap_enabled,omitempty"`
+	ComplianceDockerBenchEnabled *bool           `json:"compliance_docker_bench_enabled,omitempty"`
 }
 
 // InstallEvent represents a single notable event during scanner installation
@@ -252,13 +264,15 @@ type Credentials struct {
 
 // Config represents agent configuration
 type Config struct {
-	PatchmonServer  string                 `yaml:"patchmon_server" mapstructure:"patchmon_server"`
-	APIVersion      string                 `yaml:"api_version" mapstructure:"api_version"`
-	CredentialsFile string                 `yaml:"credentials_file" mapstructure:"credentials_file"`
-	LogFile         string                 `yaml:"log_file" mapstructure:"log_file"`
-	LogLevel        string                 `yaml:"log_level" mapstructure:"log_level"`
-	SkipSSLVerify   bool                   `yaml:"skip_ssl_verify" mapstructure:"skip_ssl_verify"`
-	UpdateInterval  int                    `yaml:"update_interval" mapstructure:"update_interval"` // Interval in minutes
-	ReportOffset    int                    `yaml:"report_offset" mapstructure:"report_offset"`     // Offset in seconds
-	Integrations    map[string]interface{} `yaml:"integrations" mapstructure:"integrations"`       // Supports bool for simple integrations, string for compliance mode
+	PatchmonServer            string                 `yaml:"patchmon_server" mapstructure:"patchmon_server"`
+	APIVersion                string                 `yaml:"api_version" mapstructure:"api_version"`
+	CredentialsFile           string                 `yaml:"credentials_file" mapstructure:"credentials_file"`
+	LogFile                   string                 `yaml:"log_file" mapstructure:"log_file"`
+	LogLevel                  string                 `yaml:"log_level" mapstructure:"log_level"`
+	SkipSSLVerify             bool                   `yaml:"skip_ssl_verify" mapstructure:"skip_ssl_verify"`
+	UpdateInterval            int                    `yaml:"update_interval" mapstructure:"update_interval"`                             // Interval in minutes
+	ReportOffset              int                    `yaml:"report_offset" mapstructure:"report_offset"`                                 // Offset in seconds
+	PackageCacheRefreshMode   string                 `yaml:"package_cache_refresh_mode" mapstructure:"package_cache_refresh_mode"`       // always, if_stale, never
+	PackageCacheRefreshMaxAge int                    `yaml:"package_cache_refresh_max_age" mapstructure:"package_cache_refresh_max_age"` // minutes
+	Integrations              map[string]interface{} `yaml:"integrations" mapstructure:"integrations"`                                   // Supports bool for simple integrations, string for compliance mode
 }

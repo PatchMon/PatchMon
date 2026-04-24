@@ -374,7 +374,7 @@ const FirstTimeAdminSetup = () => {
 						<h1 className="text-2xl font-bold text-secondary-900 dark:text-white mb-4">
 							Admin Account Created!
 						</h1>
-						<p className="text-secondary-600 dark:text-secondary-300 mb-6">
+						<p className="text-secondary-600 dark:text-white mb-6">
 							Your admin account has been successfully created and you are now
 							logged in. Redirecting to the dashboard...
 						</p>
@@ -400,7 +400,7 @@ const FirstTimeAdminSetup = () => {
 						<h1 className="text-2xl font-bold text-secondary-900 dark:text-white mb-2">
 							Welcome to PatchMon
 						</h1>
-						<p className="text-secondary-600 dark:text-secondary-300">
+						<p className="text-secondary-600 dark:text-white">
 							Let's set up your admin account to get started
 						</p>
 					</div>
@@ -421,7 +421,7 @@ const FirstTimeAdminSetup = () => {
 							<div>
 								<label
 									htmlFor={firstNameId}
-									className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2"
+									className="block text-sm font-medium text-secondary-700 dark:text-white mb-2"
 								>
 									First Name
 								</label>
@@ -446,7 +446,7 @@ const FirstTimeAdminSetup = () => {
 							<div>
 								<label
 									htmlFor={lastNameId}
-									className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2"
+									className="block text-sm font-medium text-secondary-700 dark:text-white mb-2"
 								>
 									Last Name
 								</label>
@@ -473,7 +473,7 @@ const FirstTimeAdminSetup = () => {
 						<div>
 							<label
 								htmlFor={usernameId}
-								className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2"
+								className="block text-sm font-medium text-secondary-700 dark:text-white mb-2"
 							>
 								Username
 							</label>
@@ -499,7 +499,7 @@ const FirstTimeAdminSetup = () => {
 						<div>
 							<label
 								htmlFor={emailId}
-								className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2"
+								className="block text-sm font-medium text-secondary-700 dark:text-white mb-2"
 							>
 								Email Address
 							</label>
@@ -525,7 +525,7 @@ const FirstTimeAdminSetup = () => {
 						<div>
 							<label
 								htmlFor={passwordId}
-								className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2"
+								className="block text-sm font-medium text-secondary-700 dark:text-white mb-2"
 							>
 								Password
 							</label>
@@ -560,7 +560,7 @@ const FirstTimeAdminSetup = () => {
 									/>
 								))}
 							</div>
-							<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+							<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 								Strength:{" "}
 								{password_strength_level === 0
 									? "none"
@@ -570,7 +570,7 @@ const FirstTimeAdminSetup = () => {
 											? "good"
 											: "strong"}
 							</p>
-							<ul className="mt-1.5 space-y-0.5 text-xs text-secondary-600 dark:text-secondary-400">
+							<ul className="mt-1.5 space-y-0.5 text-xs text-secondary-600 dark:text-white">
 								<li
 									className={
 										password_checks.length
@@ -660,7 +660,7 @@ const FirstTimeAdminSetup = () => {
 						<div>
 							<label
 								htmlFor={confirmPasswordId}
-								className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2"
+								className="block text-sm font-medium text-secondary-700 dark:text-white mb-2"
 							>
 								Confirm Password
 							</label>

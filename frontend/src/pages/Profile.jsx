@@ -17,6 +17,7 @@ import {
 	RefreshCw,
 	Save,
 	Shield,
+	ShieldCheck,
 	Smartphone,
 	Sun,
 	Trash2,
@@ -26,10 +27,18 @@ import {
 
 import { useEffect, useId, useState } from "react";
 import DiscordIcon from "../components/DiscordIcon";
+import { FORM_INPUT_CLASS } from "../components/FormInput";
 import { useAuth } from "../contexts/AuthContext";
 import { THEME_PRESETS, useColorTheme } from "../contexts/ColorThemeContext";
 import { useTheme } from "../contexts/ThemeContext";
-import { discordAPI, isCorsError, tfaAPI } from "../utils/api";
+import {
+	discordAPI,
+	formatDate,
+	isCorsError,
+	tfaAPI,
+	trustedDevicesAPI,
+} from "../utils/api";
+import { isRenderableAvatarSrc } from "../utils/avatar";
 
 const Profile = () => {
 	const usernameId = useId();
@@ -39,7 +48,7 @@ const Profile = () => {
 	const currentPasswordId = useId();
 	const newPasswordId = useId();
 	const confirmPasswordId = useId();
-	const { user, updateProfile, changePassword } = useAuth();
+	const { user, updateProfile, changePassword, refetchUser } = useAuth();
 	const { toggleTheme, isDark } = useTheme();
 	const { colorTheme, setColorTheme } = useColorTheme();
 	const [activeTab, setActiveTab] = useState("profile");
@@ -78,8 +87,9 @@ const Profile = () => {
 			});
 			setActiveTab("connections");
 			window.history.replaceState({}, document.title, "/settings/profile");
+			refetchUser?.();
 		}
-	}, []);
+	}, [refetchUser]);
 
 	const [passwordData, setPasswordData] = useState({
 		currentPassword: "",
@@ -207,6 +217,15 @@ const Profile = () => {
 			? []
 			: [{ id: "tfa", name: "Multi-Factor Authentication", icon: Smartphone }]), // Hide TFA tab for OIDC users
 		{ id: "sessions", name: "Active Sessions", icon: Monitor },
+		...(isOIDCUser
+			? []
+			: [
+					{
+						id: "trusted-devices",
+						name: "Trusted Devices",
+						icon: ShieldCheck,
+					},
+				]),
 		{ id: "connections", name: "Connected Accounts", icon: Link2 },
 	];
 
@@ -214,7 +233,7 @@ const Profile = () => {
 		<div className="space-y-6">
 			{/* Header */}
 			<div>
-				<p className="text-sm text-secondary-600 dark:text-secondary-300">
+				<p className="text-sm text-secondary-600 dark:text-white">
 					Manage your account information and security settings
 				</p>
 			</div>
@@ -223,7 +242,7 @@ const Profile = () => {
 			<div className="bg-white dark:bg-secondary-800 shadow rounded-lg p-4 md:p-6">
 				<div className="flex items-center space-x-3 md:space-x-4">
 					<div className="flex-shrink-0">
-						{user?.avatar_url ? (
+						{isRenderableAvatarSrc(user?.avatar_url) ? (
 							<img
 								src={user.avatar_url}
 								alt={user.username}
@@ -241,7 +260,7 @@ const Profile = () => {
 								? `${user.first_name} ${user.last_name}`
 								: user?.first_name || user?.username}
 						</h3>
-						<p className="text-sm text-secondary-600 dark:text-secondary-300 truncate">
+						<p className="text-sm text-secondary-600 dark:text-white truncate">
 							{user?.email}
 						</p>
 						<div className="mt-2">
@@ -283,7 +302,7 @@ const Profile = () => {
 								className={`w-full flex items-center justify-between px-4 py-3 rounded-md font-medium text-sm transition-colors ${
 									activeTab === tab.id
 										? "bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800"
-										: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
+										: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-white border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
 								}`}
 							>
 								<div className="flex items-center space-x-3">
@@ -311,7 +330,7 @@ const Profile = () => {
 									className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center ${
 										activeTab === tab.id
 											? "border-primary-500 text-primary-600 dark:text-primary-400"
-											: "border-transparent text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:border-secondary-300 dark:hover:border-secondary-500"
+											: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-primary-400"
 									}`}
 								>
 									<Icon className="h-4 w-4 mr-2" />
@@ -368,7 +387,7 @@ const Profile = () => {
 										>
 											Username
 											{isOIDCUser && (
-												<span className="ml-2 text-xs text-secondary-500 dark:text-secondary-400 italic">
+												<span className="ml-2 text-xs text-secondary-500 dark:text-white italic">
 													(Managed by OIDC provider)
 												</span>
 											)}
@@ -381,14 +400,14 @@ const Profile = () => {
 												value={profileData.username}
 												onChange={handleInputChange}
 												disabled={isOIDCUser}
-												className={`block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 pl-10 ${
+												className={`${FORM_INPUT_CLASS} pl-10 ${
 													isOIDCUser
-														? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-secondary-400 cursor-not-allowed"
-														: "bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+														? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-white cursor-not-allowed"
+														: ""
 												}`}
 												required
 											/>
-											<User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-secondary-500" />
+											<User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-white" />
 										</div>
 									</div>
 
@@ -399,7 +418,7 @@ const Profile = () => {
 										>
 											Email Address
 											{isOIDCUser && (
-												<span className="ml-2 text-xs text-secondary-500 dark:text-secondary-400 italic">
+												<span className="ml-2 text-xs text-secondary-500 dark:text-white italic">
 													(Managed by OIDC provider)
 												</span>
 											)}
@@ -412,14 +431,14 @@ const Profile = () => {
 												value={profileData.email}
 												onChange={handleInputChange}
 												disabled={isOIDCUser}
-												className={`block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 pl-10 ${
+												className={`${FORM_INPUT_CLASS} pl-10 ${
 													isOIDCUser
-														? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-secondary-400 cursor-not-allowed"
-														: "bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+														? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-white cursor-not-allowed"
+														: ""
 												}`}
 												required
 											/>
-											<Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-secondary-500" />
+											<Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-white" />
 										</div>
 									</div>
 
@@ -430,7 +449,7 @@ const Profile = () => {
 										>
 											First Name
 											{isOIDCUser && (
-												<span className="ml-2 text-xs text-secondary-500 dark:text-secondary-400 italic">
+												<span className="ml-2 text-xs text-secondary-500 dark:text-white italic">
 													(Managed by OIDC provider)
 												</span>
 											)}
@@ -443,10 +462,10 @@ const Profile = () => {
 												value={profileData.first_name}
 												onChange={handleInputChange}
 												disabled={isOIDCUser}
-												className={`block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 ${
+												className={`${FORM_INPUT_CLASS} ${
 													isOIDCUser
-														? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-secondary-400 cursor-not-allowed"
-														: "bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+														? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-white cursor-not-allowed"
+														: ""
 												}`}
 											/>
 										</div>
@@ -459,7 +478,7 @@ const Profile = () => {
 										>
 											Last Name
 											{isOIDCUser && (
-												<span className="ml-2 text-xs text-secondary-500 dark:text-secondary-400 italic">
+												<span className="ml-2 text-xs text-secondary-500 dark:text-white italic">
 													(Managed by OIDC provider)
 												</span>
 											)}
@@ -472,10 +491,10 @@ const Profile = () => {
 												value={profileData.last_name}
 												onChange={handleInputChange}
 												disabled={isOIDCUser}
-												className={`block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 ${
+												className={`${FORM_INPUT_CLASS} ${
 													isOIDCUser
-														? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-secondary-400 cursor-not-allowed"
-														: "bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+														? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-white cursor-not-allowed"
+														: ""
 												}`}
 											/>
 										</div>
@@ -493,16 +512,16 @@ const Profile = () => {
 										<div className="flex items-center space-x-2 md:space-x-3 flex-1 min-w-0">
 											<div className="flex-shrink-0">
 												{isDark ? (
-													<Moon className="h-5 w-5 text-secondary-600 dark:text-secondary-400" />
+													<Moon className="h-5 w-5 text-secondary-600 dark:text-white" />
 												) : (
-													<Sun className="h-5 w-5 text-secondary-600 dark:text-secondary-400" />
+													<Sun className="h-5 w-5 text-secondary-600 dark:text-white" />
 												)}
 											</div>
 											<div className="min-w-0">
 												<p className="text-sm font-medium text-secondary-900 dark:text-white truncate">
 													{isDark ? "Dark Mode" : "Light Mode"}
 												</p>
-												<p className="text-xs text-secondary-500 dark:text-secondary-400 truncate">
+												<p className="text-xs text-secondary-500 dark:text-white truncate">
 													{isDark
 														? "Switch to light mode"
 														: "Switch to dark mode"}
@@ -520,7 +539,7 @@ const Profile = () => {
 										>
 											<span
 												aria-hidden="true"
-												className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+												className={`pointer-events-none inline-block h-5 w-5 transform rounded-md bg-white shadow ring-0 transition duration-200 ease-in-out ${
 													isDark ? "translate-x-5" : "translate-x-0"
 												}`}
 											/>
@@ -533,7 +552,7 @@ const Profile = () => {
 									<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-2">
 										Color Theme
 									</h4>
-									<p className="text-xs text-secondary-500 dark:text-secondary-400 mb-4">
+									<p className="text-xs text-secondary-500 dark:text-white mb-4">
 										Choose your preferred color scheme for the application
 									</p>
 
@@ -644,11 +663,11 @@ const Profile = () => {
 												className="block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 pl-10 pr-10 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
 												required
 											/>
-											<Key className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-secondary-500" />
+											<Key className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-white" />
 											<button
 												type="button"
 												onClick={() => togglePasswordVisibility("current")}
-												className="absolute right-3 top-1/2 transform -translate-y-1/2 text-secondary-400 dark:text-secondary-500 hover:text-secondary-600 dark:hover:text-secondary-300"
+												className="absolute right-3 top-1/2 transform -translate-y-1/2 text-secondary-400 dark:text-white hover:text-secondary-600 dark:hover:text-secondary-300"
 											>
 												{showPasswords.current ? (
 													<EyeOff className="h-4 w-4" />
@@ -677,11 +696,11 @@ const Profile = () => {
 												required
 												minLength="6"
 											/>
-											<Key className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-secondary-500" />
+											<Key className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-white" />
 											<button
 												type="button"
 												onClick={() => togglePasswordVisibility("new")}
-												className="absolute right-3 top-1/2 transform -translate-y-1/2 text-secondary-400 dark:text-secondary-500 hover:text-secondary-600 dark:hover:text-secondary-300"
+												className="absolute right-3 top-1/2 transform -translate-y-1/2 text-secondary-400 dark:text-white hover:text-secondary-600 dark:hover:text-secondary-300"
 											>
 												{showPasswords.new ? (
 													<EyeOff className="h-4 w-4" />
@@ -690,7 +709,7 @@ const Profile = () => {
 												)}
 											</button>
 										</div>
-										<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+										<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 											Must be at least 6 characters long
 										</p>
 									</div>
@@ -713,11 +732,11 @@ const Profile = () => {
 												required
 												minLength="6"
 											/>
-											<Key className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-secondary-500" />
+											<Key className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-white" />
 											<button
 												type="button"
 												onClick={() => togglePasswordVisibility("confirm")}
-												className="absolute right-3 top-1/2 transform -translate-y-1/2 text-secondary-400 dark:text-secondary-500 hover:text-secondary-600 dark:hover:text-secondary-300"
+												className="absolute right-3 top-1/2 transform -translate-y-1/2 text-secondary-400 dark:text-white hover:text-secondary-600 dark:hover:text-secondary-300"
 											>
 												{showPasswords.confirm ? (
 													<EyeOff className="h-4 w-4" />
@@ -749,6 +768,9 @@ const Profile = () => {
 					{/* Sessions Tab */}
 					{activeTab === "sessions" && <SessionsTab />}
 
+					{/* Trusted Devices Tab */}
+					{activeTab === "trusted-devices" && <TrustedDevicesTab />}
+
 					{/* Connected Accounts Tab */}
 					{activeTab === "connections" && (
 						<div className="space-y-6">
@@ -756,7 +778,7 @@ const Profile = () => {
 								<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-1">
 									Connected Accounts
 								</h3>
-								<p className="text-sm text-secondary-500 dark:text-secondary-400">
+								<p className="text-sm text-secondary-500 dark:text-white">
 									Manage your linked external accounts
 								</p>
 							</div>
@@ -776,11 +798,11 @@ const Profile = () => {
 												Discord
 											</h4>
 											{user?.discord_id ? (
-												<p className="text-sm text-secondary-500 dark:text-secondary-400">
+												<p className="text-sm text-secondary-500 dark:text-white">
 													{user.discord_username || `ID: ${user.discord_id}`}
 												</p>
 											) : (
-												<p className="text-sm text-secondary-500 dark:text-secondary-400">
+												<p className="text-sm text-secondary-500 dark:text-white">
 													Not connected
 												</p>
 											)}
@@ -794,7 +816,7 @@ const Profile = () => {
 													if (!user?.has_password && !user?.oidc_sub) {
 														setMessage({
 															type: "error",
-															text: "Cannot unlink Discord — you need at least one login method. Set a password first.",
+															text: "Cannot unlink Discord - you need at least one login method. Set a password first.",
 														});
 														return;
 													}
@@ -824,7 +846,7 @@ const Profile = () => {
 												className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-red-300 dark:border-red-700 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
 												title={
 													!user?.has_password && !user?.oidc_sub
-														? "Cannot unlink — no other login method available"
+														? "Cannot unlink - no other login method available"
 														: ""
 												}
 											>
@@ -881,12 +903,12 @@ const Profile = () => {
 												<h4 className="font-medium text-secondary-900 dark:text-white">
 													SSO / OIDC
 												</h4>
-												<p className="text-sm text-secondary-500 dark:text-secondary-400">
+												<p className="text-sm text-secondary-500 dark:text-white">
 													{user.oidc_provider || "Connected"}
 												</p>
 											</div>
 										</div>
-										<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+										<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
 											Active
 										</span>
 									</div>
@@ -1124,7 +1146,7 @@ const TfaTab = () => {
 				<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 					Multi-Factor Authentication
 				</h3>
-				<p className="text-sm text-secondary-600 dark:text-secondary-300 mb-6">
+				<p className="text-sm text-secondary-600 dark:text-white mb-6">
 					Add an extra layer of security to your account by enabling two-factor
 					authentication.
 				</p>
@@ -1176,7 +1198,7 @@ const TfaTab = () => {
 									className={`p-2 rounded-full flex-shrink-0 ${tfaStatus?.enabled ? "bg-green-100 dark:bg-green-900" : "bg-secondary-100 dark:bg-secondary-700"}`}
 								>
 									<Smartphone
-										className={`h-5 w-5 md:h-6 md:w-6 ${tfaStatus?.enabled ? "text-green-600 dark:text-green-400" : "text-secondary-600 dark:text-secondary-400"}`}
+										className={`h-5 w-5 md:h-6 md:w-6 ${tfaStatus?.enabled ? "text-green-600 dark:text-green-400" : "text-secondary-600 dark:text-white"}`}
 									/>
 								</div>
 								<div className="min-w-0">
@@ -1185,7 +1207,7 @@ const TfaTab = () => {
 											? "Two-Factor Authentication Enabled"
 											: "Two-Factor Authentication Disabled"}
 									</h4>
-									<p className="text-sm text-secondary-600 dark:text-secondary-300">
+									<p className="text-sm text-secondary-600 dark:text-white">
 										{tfaStatus?.enabled
 											? "Your account is protected with two-factor authentication."
 											: "Add an extra layer of security to your account."}
@@ -1222,7 +1244,7 @@ const TfaTab = () => {
 							<h4 className="text-base md:text-lg font-medium text-secondary-900 dark:text-white mb-3 md:mb-4">
 								Backup Codes
 							</h4>
-							<p className="text-sm text-secondary-600 dark:text-secondary-300 mb-4">
+							<p className="text-sm text-secondary-600 dark:text-white mb-4">
 								Use these backup codes to access your account if you lose your
 								authenticator device.
 							</p>
@@ -1258,7 +1280,7 @@ const TfaTab = () => {
 									alt="QR Code"
 									className="mx-auto h-40 w-40 md:h-48 md:w-48 border border-secondary-200 dark:border-secondary-600 rounded-lg"
 								/>
-								<p className="text-sm text-secondary-600 dark:text-secondary-300 mt-2">
+								<p className="text-sm text-secondary-600 dark:text-white mt-2">
 									Scan this QR code with your authenticator app
 								</p>
 							</div>
@@ -1305,7 +1327,7 @@ const TfaTab = () => {
 						<h4 className="text-base md:text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							Verify Setup
 						</h4>
-						<p className="text-sm text-secondary-600 dark:text-secondary-300 mb-4">
+						<p className="text-sm text-secondary-600 dark:text-white mb-4">
 							Enter the 6-digit code from your authenticator app to complete the
 							setup.
 						</p>
@@ -1364,7 +1386,7 @@ const TfaTab = () => {
 						<h4 className="text-base md:text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							Backup Codes
 						</h4>
-						<p className="text-sm text-secondary-600 dark:text-secondary-300 mb-4">
+						<p className="text-sm text-secondary-600 dark:text-white mb-4">
 							Save these backup codes in a safe place. Each code can only be
 							used once.
 						</p>
@@ -1375,7 +1397,7 @@ const TfaTab = () => {
 										key={code}
 										className="flex items-center justify-between py-1"
 									>
-										<span className="text-secondary-600 dark:text-secondary-400">
+										<span className="text-secondary-600 dark:text-white">
 											{index + 1}.
 										</span>
 										<span className="text-secondary-900 dark:text-white break-all ml-2">
@@ -1416,7 +1438,7 @@ const TfaTab = () => {
 						<h4 className="text-base md:text-lg font-medium text-secondary-900 dark:text-white mb-4">
 							Disable Two-Factor Authentication
 						</h4>
-						<p className="text-sm text-secondary-600 dark:text-secondary-300 mb-4">
+						<p className="text-sm text-secondary-600 dark:text-white mb-4">
 							Enter your password to disable two-factor authentication.
 						</p>
 						<form onSubmit={handleDisable} className="space-y-4">
@@ -1521,10 +1543,6 @@ const SessionsTab = () => {
 		},
 	});
 
-	const formatDate = (dateString) => {
-		return new Date(dateString).toLocaleString();
-	};
-
 	const formatRelativeTime = (dateString) => {
 		const now = new Date();
 		const date = new Date(dateString);
@@ -1562,7 +1580,7 @@ const SessionsTab = () => {
 				<h3 className="text-lg font-medium text-secondary-900 dark:text-secondary-100">
 					Active Sessions
 				</h3>
-				<p className="text-sm text-secondary-600 dark:text-secondary-300">
+				<p className="text-sm text-secondary-600 dark:text-white">
 					Manage your active sessions and devices. You can see where you're
 					logged in and revoke access for any device.
 				</p>
@@ -1646,13 +1664,13 @@ const SessionsTab = () => {
 													</span>
 												)}
 											</div>
-											<p className="text-sm text-secondary-600 dark:text-secondary-400 mt-1">
+											<p className="text-sm text-secondary-600 dark:text-white mt-1">
 												{session.device_info?.device} • {session.ip_address}
 											</p>
 										</div>
 									</div>
 
-									<div className="mt-3 space-y-2 text-sm text-secondary-600 dark:text-secondary-400">
+									<div className="mt-3 space-y-2 text-sm text-secondary-600 dark:text-white">
 										<div className="flex items-center space-x-2">
 											<MapPin className="h-4 w-4 flex-shrink-0" />
 											<span className="truncate">
@@ -1695,8 +1713,210 @@ const SessionsTab = () => {
 					<h3 className="mt-2 text-sm font-medium text-secondary-900 dark:text-secondary-100">
 						No active sessions
 					</h3>
-					<p className="mt-1 text-sm text-secondary-600 dark:text-secondary-400">
+					<p className="mt-1 text-sm text-secondary-600 dark:text-white">
 						You don't have any active sessions at the moment.
+					</p>
+				</div>
+			)}
+		</div>
+	);
+};
+
+// Trusted Devices Tab Component
+// Lists the user's "remember this device" records. These are separate from
+// active sessions — they persist across logouts and exist solely to skip MFA
+// on this browser until natural expiry or explicit revocation.
+const TrustedDevicesTab = () => {
+	const [message, setMessage] = useState({ type: "", text: "" });
+
+	const {
+		data: devicesData,
+		isLoading,
+		refetch,
+	} = useQuery({
+		queryKey: ["trusted-devices"],
+		queryFn: async () => {
+			const res = await trustedDevicesAPI.list();
+			return res.data;
+		},
+	});
+
+	const revokeMutation = useMutation({
+		mutationFn: (id) => trustedDevicesAPI.revoke(id),
+		onSuccess: () => {
+			setMessage({ type: "success", text: "Trusted device revoked" });
+			refetch();
+		},
+		onError: (error) => {
+			setMessage({
+				type: "error",
+				text: error.response?.data?.error || "Failed to revoke device",
+			});
+		},
+	});
+
+	const revokeAllMutation = useMutation({
+		mutationFn: () => trustedDevicesAPI.revokeAll(),
+		onSuccess: () => {
+			setMessage({ type: "success", text: "All trusted devices revoked" });
+			refetch();
+		},
+		onError: (error) => {
+			setMessage({
+				type: "error",
+				text: error.response?.data?.error || "Failed to revoke devices",
+			});
+		},
+	});
+
+	const handleRevoke = (id) => {
+		if (
+			window.confirm(
+				"Forget this device? You'll need to enter your authentication code on it next time you sign in.",
+			)
+		) {
+			revokeMutation.mutate(id);
+		}
+	};
+
+	const handleRevokeAll = () => {
+		if (
+			window.confirm(
+				"Forget all trusted devices? You'll need to enter your authentication code on every device next time you sign in.",
+			)
+		) {
+			revokeAllMutation.mutate();
+		}
+	};
+
+	const devices = devicesData?.trusted_devices || [];
+
+	return (
+		<div className="space-y-6">
+			<div>
+				<h3 className="text-lg font-medium text-secondary-900 dark:text-secondary-100">
+					Trusted Devices
+				</h3>
+				<p className="text-sm text-secondary-600 dark:text-white">
+					Browsers you've chosen to skip multi-factor authentication on.
+					Revoking a device will require a fresh authentication code on that
+					browser next time you sign in.
+				</p>
+			</div>
+
+			{message.text && (
+				<div
+					className={`rounded-md p-4 ${
+						message.type === "success"
+							? "bg-success-50 border border-success-200 text-success-700"
+							: "bg-danger-50 border border-danger-200 text-danger-700"
+					}`}
+				>
+					<div className="flex">
+						{message.type === "success" ? (
+							<CheckCircle className="h-5 w-5" />
+						) : (
+							<AlertCircle className="h-5 w-5" />
+						)}
+						<div className="ml-3">
+							<p className="text-sm">{message.text}</p>
+						</div>
+					</div>
+				</div>
+			)}
+
+			{isLoading ? (
+				<div className="flex items-center justify-center py-8">
+					<RefreshCw className="h-8 w-8 animate-spin text-primary-600" />
+				</div>
+			) : devices.length > 0 ? (
+				<div className="space-y-4">
+					{devices.length > 1 && (
+						<div className="flex justify-end">
+							<button
+								type="button"
+								onClick={handleRevokeAll}
+								disabled={revokeAllMutation.isPending}
+								className="inline-flex items-center px-4 py-2 border border-danger-300 text-sm font-medium rounded-md text-danger-700 bg-white hover:bg-danger-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-danger-500 disabled:opacity-50 w-full sm:w-auto justify-center sm:justify-end"
+							>
+								<LogOut className="h-4 w-4 mr-2" />
+								{revokeAllMutation.isPending
+									? "Revoking..."
+									: "Forget All Devices"}
+							</button>
+						</div>
+					)}
+
+					{devices.map((device) => (
+						<div
+							key={device.id}
+							className={`border rounded-lg p-3 md:p-4 ${
+								device.is_current
+									? "border-primary-200 bg-primary-50 dark:border-primary-800 dark:bg-primary-900/20"
+									: "border-secondary-200 bg-white dark:border-secondary-700 dark:bg-secondary-800"
+							}`}
+						>
+							<div className="flex items-start justify-between gap-3">
+								<div className="flex-1 min-w-0">
+									<div className="flex items-start space-x-2 md:space-x-3">
+										<ShieldCheck className="h-4 w-4 md:h-5 md:w-5 text-secondary-500 flex-shrink-0 mt-0.5" />
+										<div className="flex-1 min-w-0">
+											<div className="flex flex-wrap items-center gap-2">
+												<h4 className="text-sm font-medium text-secondary-900 dark:text-secondary-100">
+													{device.label || "Unknown device"}
+												</h4>
+												{device.is_current && (
+													<span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200 flex-shrink-0">
+														This device
+													</span>
+												)}
+											</div>
+											{device.ip_address && (
+												<p className="text-sm text-secondary-600 dark:text-white mt-1">
+													IP at trust: {device.ip_address}
+												</p>
+											)}
+										</div>
+									</div>
+
+									<div className="mt-3 space-y-2 text-sm text-secondary-600 dark:text-white">
+										<div className="flex items-center space-x-2">
+											<Clock className="h-4 w-4 flex-shrink-0" />
+											<span>Last used: {formatDate(device.last_used_at)}</span>
+										</div>
+										<div className="text-xs md:text-sm">
+											<span>
+												Trusted since: {formatDate(device.created_at)}
+											</span>
+										</div>
+										<div className="text-xs md:text-sm">
+											<span>Expires: {formatDate(device.expires_at)}</span>
+										</div>
+									</div>
+								</div>
+
+								<button
+									type="button"
+									onClick={() => handleRevoke(device.id)}
+									disabled={revokeMutation.isPending}
+									title="Forget this device"
+									className="inline-flex items-center px-3 py-2 border border-danger-300 text-sm font-medium rounded-md text-danger-700 bg-white hover:bg-danger-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-danger-500 disabled:opacity-50 flex-shrink-0"
+								>
+									<Trash2 className="h-4 w-4" />
+								</button>
+							</div>
+						</div>
+					))}
+				</div>
+			) : (
+				<div className="text-center py-8">
+					<ShieldCheck className="mx-auto h-12 w-12 text-secondary-400" />
+					<h3 className="mt-2 text-sm font-medium text-secondary-900 dark:text-secondary-100">
+						No trusted devices
+					</h3>
+					<p className="mt-1 text-sm text-secondary-600 dark:text-white">
+						When signing in, check "Remember this device" to skip MFA on
+						browsers you trust.
 					</p>
 				</div>
 			)}

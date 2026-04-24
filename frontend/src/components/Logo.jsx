@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useTheme } from "../contexts/ThemeContext";
 import { settingsAPI } from "../utils/api";
+import { resolveLogoPath } from "../utils/logoPaths";
 
 const Logo = ({
 	className = "h-8 w-auto",
@@ -10,8 +11,8 @@ const Logo = ({
 	const { isDark } = useTheme();
 
 	const { data: settings } = useQuery({
-		queryKey: ["settings"],
-		queryFn: () => settingsAPI.get().then((res) => res.data),
+		queryKey: ["settings", "public"],
+		queryFn: () => settingsAPI.getPublic().then((res) => res.data),
 	});
 
 	// Helper function to encode logo path for URLs (handles spaces and special characters)
@@ -27,10 +28,10 @@ const Logo = ({
 			: encodeURIComponent(filename);
 	};
 
-	// Determine which logo to use based on theme
+	// Determine which logo to use based on theme (resolveLogoPath maps legacy defaults)
 	const logoSrc = isDark
-		? settings?.logo_dark || "/assets/logo_dark.png"
-		: settings?.logo_light || "/assets/logo_light.png";
+		? resolveLogoPath(settings?.logo_dark, "logo_dark")
+		: resolveLogoPath(settings?.logo_light, "logo_light");
 
 	// Encode the path to handle spaces and special characters
 	const encodedLogoSrc = encodeLogoPath(logoSrc);
@@ -47,10 +48,8 @@ const Logo = ({
 			alt={alt}
 			className={className}
 			onError={(e) => {
-				// Fallback to default logo if custom logo fails to load
-				e.target.src = isDark
-					? "/assets/logo_dark.png"
-					: "/assets/logo_light.png";
+				// Fallback to default logo if custom logo fails to load (e.g. 404)
+				e.target.src = `${isDark ? "/assets/logo_dark_default.png" : "/assets/logo_light_default.png"}?v=${Date.now()}`;
 			}}
 			{...props}
 		/>

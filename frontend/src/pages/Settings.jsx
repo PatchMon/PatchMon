@@ -17,7 +17,14 @@ import {
 import { useEffect, useId, useState } from "react";
 import UpgradeNotificationIcon from "../components/UpgradeNotificationIcon";
 import { useUpdateNotification } from "../contexts/UpdateNotificationContext";
-import { agentFileAPI, settingsAPI, versionAPI } from "../utils/api";
+import {
+	agentFileAPI,
+	formatDate,
+	formatDateOnly,
+	settingsAPI,
+	versionAPI,
+} from "../utils/api";
+import { isLegacyDefaultPath, resolveLogoPath } from "../utils/logoPaths";
 
 const Settings = () => {
 	const repoPublicId = useId();
@@ -141,6 +148,31 @@ const Settings = () => {
 
 	const queryClient = useQueryClient();
 
+	// Helper function to encode logo path for URLs (handles spaces and special characters)
+	const encodeLogoPath = (path) => {
+		if (!path) return path;
+		const parts = path.split("/");
+		const filename = parts.pop();
+		const directory = parts.join("/");
+		return directory
+			? `${directory}/${encodeURIComponent(filename)}`
+			: encodeURIComponent(filename);
+	};
+
+	// Helper to parse JSON response or throw with a sensible error
+	const parseJsonOrThrow = async (res, fallbackError) => {
+		const text = await res.text();
+		let data;
+		try {
+			data = text ? JSON.parse(text) : {};
+		} catch {
+			throw new Error(
+				res.ok ? fallbackError : `${fallbackError} (${res.status})`,
+			);
+		}
+		return data;
+	};
+
 	// Fetch current settings
 	const {
 		data: settings,
@@ -157,6 +189,12 @@ const Settings = () => {
 		queryFn: () => settingsAPI.getEnvConfig().then((res) => res.data),
 		staleTime: 60000, // Cache for 1 minute since env vars rarely change
 	});
+
+	const { data: serverUrlData } = useQuery({
+		queryKey: ["serverUrl"],
+		queryFn: () => settingsAPI.getServerUrl().then((res) => res.data),
+	});
+	const serverUrl = serverUrlData?.server_url || window.location.origin;
 
 	// Helper function to get curl flags based on settings
 	const getCurlFlags = () => {
@@ -215,6 +253,7 @@ const Settings = () => {
 				queryClient.setQueryData(["settings"], data.settings);
 			}
 			queryClient.invalidateQueries(["settings"]);
+			queryClient.invalidateQueries(["serverUrl"]);
 			setIsDirty(false);
 			setErrors({});
 		},
@@ -247,17 +286,40 @@ const Settings = () => {
 
 	// Logo upload mutation
 	const uploadLogoMutation = useMutation({
-		mutationFn: ({ logoType, fileContent, fileName }) =>
-			fetch("/api/v1/settings/logos/upload", {
+		mutationFn: async ({ logoType, fileContent, fileName }) => {
+			const res = await fetch("/api/v1/settings/logos/upload", {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
 				},
 				credentials: "include",
 				body: JSON.stringify({ logoType, fileContent, fileName }),
-			}).then((res) => res.json()),
-		onSuccess: (_data, variables) => {
+			});
+			const data = await parseJsonOrThrow(res, "Failed to upload logo");
+			if (!res.ok) {
+				throw new Error(data.error || data.details || "Failed to upload logo");
+			}
+			return data;
+		},
+		onSuccess: (data, variables) => {
+			// Update settings cache immediately so the uploaded logo appears without waiting for refetch.
+			const logoPath =
+				data.path ||
+				`/assets/${data.fileName || `logo_${variables.logoType}.png`}`;
+			const key =
+				variables.logoType === "favicon"
+					? "favicon"
+					: `logo_${variables.logoType}`;
+			const updatedAt = new Date().toISOString();
+			const updateCache = (old) => {
+				if (!old) return old;
+				return { ...old, [key]: logoPath, updated_at: updatedAt };
+			};
+			queryClient.setQueryData(["settings"], updateCache);
+			// Also update ["settings", "public"] so LogoProvider (favicon) updates immediately
+			queryClient.setQueryData(["settings", "public"], updateCache);
 			queryClient.invalidateQueries(["settings"]);
+			queryClient.invalidateQueries(["serverUrl"]);
 			setLogoUploadState((prev) => ({
 				...prev,
 				[variables.logoType]: { uploading: false, error: null },
@@ -540,7 +602,7 @@ const Settings = () => {
 			)}
 
 			<div className="mb-8">
-				<p className="text-secondary-600 dark:text-secondary-300">
+				<p className="text-secondary-600 dark:text-white">
 					Configure your PatchMon server settings. These settings will be used
 					in installation scripts and agent communications.
 				</p>
@@ -561,8 +623,8 @@ const Settings = () => {
 
 			{/* Tab Navigation */}
 			<div className="bg-white dark:bg-secondary-800 shadow rounded-lg">
-				<div className="border-b border-secondary-200 dark:border-secondary-600">
-					<nav className="-mb-px flex space-x-8 px-6">
+				<div className="border-b border-secondary-200 dark:border-secondary-600 overflow-x-auto scrollbar-hide">
+					<nav className="-mb-px flex space-x-4 sm:space-x-8 px-6">
 						{tabs.map((tab) => {
 							const Icon = tab.icon;
 							return (
@@ -573,7 +635,7 @@ const Settings = () => {
 									className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${
 										activeTab === tab.id
 											? "border-primary-500 text-primary-600 dark:text-primary-400"
-											: "border-transparent text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:border-secondary-300 dark:hover:border-secondary-500"
+											: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-primary-400"
 									}`}
 								>
 									<Icon className="h-4 w-4" />
@@ -685,11 +747,11 @@ const Settings = () => {
 								<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-2">
 									Server URL
 								</h4>
-								<p className="text-sm text-secondary-600 dark:text-secondary-300 font-mono">
+								<p className="text-sm text-secondary-600 dark:text-white font-mono">
 									{formData.serverProtocol}://{formData.serverHost}:
 									{formData.serverPort}
 								</p>
-								<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-1">
+								<p className="text-xs text-secondary-500 dark:text-white mt-1">
 									This URL will be used in installation scripts and agent
 									communications.
 								</p>
@@ -703,7 +765,7 @@ const Settings = () => {
 										Logo & Branding
 									</h3>
 								</div>
-								<p className="text-sm text-secondary-500 dark:text-secondary-300 mb-4">
+								<p className="text-sm text-secondary-500 dark:text-white mb-4">
 									Customize your PatchMon installation with custom logos and
 									favicon.
 								</p>
@@ -714,22 +776,26 @@ const Settings = () => {
 										<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-3">
 											Dark Logo
 										</h4>
-										{settings?.logo_dark && (
-											<div className="flex items-center justify-center p-3 bg-secondary-50 dark:bg-secondary-700 rounded-lg mb-3">
-												<img
-													src={settings.logo_dark}
-													alt="Dark Logo"
-													className="max-h-12 max-w-full object-contain"
-													onError={(e) => {
-														e.target.style.display = "none";
-													}}
-												/>
-											</div>
-										)}
-										<p className="text-xs text-secondary-600 dark:text-secondary-400 mb-3 truncate">
-											{settings?.logo_dark
+										<div className="flex items-center justify-center p-3 bg-secondary-50 dark:bg-secondary-700 rounded-lg mb-3">
+											<img
+												key={`dark-${settings?.logo_dark}-${settings?.updated_at}`}
+												src={`${encodeLogoPath(resolveLogoPath(settings?.logo_dark, "logo_dark"))}?v=${
+													settings?.updated_at
+														? new Date(settings.updated_at).getTime()
+														: Date.now()
+												}`}
+												alt="Dark Logo"
+												className="max-h-12 max-w-full object-contain"
+												onError={(e) => {
+													e.target.src = `/assets/logo_dark_default.png?v=${Date.now()}`;
+												}}
+											/>
+										</div>
+										<p className="text-xs text-secondary-600 dark:text-white mb-3 truncate">
+											{settings?.logo_dark &&
+											!isLegacyDefaultPath(settings.logo_dark)
 												? settings.logo_dark.split("/").pop()
-												: "Default"}
+												: "logo_dark_default.png (Default)"}
 										</p>
 										<button
 											type="button"
@@ -764,22 +830,26 @@ const Settings = () => {
 										<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-3">
 											Light Logo
 										</h4>
-										{settings?.logo_light && (
-											<div className="flex items-center justify-center p-3 bg-secondary-50 dark:bg-secondary-700 rounded-lg mb-3">
-												<img
-													src={settings.logo_light}
-													alt="Light Logo"
-													className="max-h-12 max-w-full object-contain"
-													onError={(e) => {
-														e.target.style.display = "none";
-													}}
-												/>
-											</div>
-										)}
-										<p className="text-xs text-secondary-600 dark:text-secondary-400 mb-3 truncate">
-											{settings?.logo_light
+										<div className="flex items-center justify-center p-3 bg-secondary-50 dark:bg-secondary-700 rounded-lg mb-3">
+											<img
+												key={`light-${settings?.logo_light}-${settings?.updated_at}`}
+												src={`${encodeLogoPath(resolveLogoPath(settings?.logo_light, "logo_light"))}?v=${
+													settings?.updated_at
+														? new Date(settings.updated_at).getTime()
+														: Date.now()
+												}`}
+												alt="Light Logo"
+												className="max-h-12 max-w-full object-contain"
+												onError={(e) => {
+													e.target.src = `/assets/logo_light_default.png?v=${Date.now()}`;
+												}}
+											/>
+										</div>
+										<p className="text-xs text-secondary-600 dark:text-white mb-3 truncate">
+											{settings?.logo_light &&
+											!isLegacyDefaultPath(settings.logo_light)
 												? settings.logo_light.split("/").pop()
-												: "Default"}
+												: "logo_light_default.png (Default)"}
 										</p>
 										<button
 											type="button"
@@ -814,22 +884,26 @@ const Settings = () => {
 										<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-3">
 											Favicon
 										</h4>
-										{settings?.favicon && (
-											<div className="flex items-center justify-center p-3 bg-secondary-50 dark:bg-secondary-700 rounded-lg mb-3">
-												<img
-													src={settings.favicon}
-													alt="Favicon"
-													className="h-8 w-8 object-contain"
-													onError={(e) => {
-														e.target.style.display = "none";
-													}}
-												/>
-											</div>
-										)}
-										<p className="text-xs text-secondary-600 dark:text-secondary-400 mb-3 truncate">
-											{settings?.favicon
+										<div className="flex items-center justify-center p-3 bg-secondary-50 dark:bg-secondary-700 rounded-lg mb-3">
+											<img
+												key={`favicon-${settings?.favicon}-${settings?.updated_at}`}
+												src={`${encodeLogoPath(resolveLogoPath(settings?.favicon, "favicon"))}?v=${
+													settings?.updated_at
+														? new Date(settings.updated_at).getTime()
+														: Date.now()
+												}`}
+												alt="Favicon"
+												className="h-8 w-8 object-contain"
+												onError={(e) => {
+													e.target.src = `/assets/logo_square_default.svg?v=${Date.now()}`;
+												}}
+											/>
+										</div>
+										<p className="text-xs text-secondary-600 dark:text-white mb-3 truncate">
+											{settings?.favicon &&
+											!isLegacyDefaultPath(settings.favicon)
 												? settings.favicon.split("/").pop()
-												: "Default"}
+												: "logo_square_default.svg (Default)"}
 										</p>
 										<button
 											type="button"
@@ -956,7 +1030,7 @@ const Settings = () => {
 								)}
 
 								{/* Helper text */}
-								<div className="mt-2 text-sm text-secondary-600 dark:text-secondary-300">
+								<div className="mt-2 text-sm text-secondary-600 dark:text-white">
 									<span className="font-medium">Effective cadence:</span>{" "}
 									{(() => {
 										const mins = parseInt(formData.updateInterval, 10) || 60;
@@ -968,7 +1042,7 @@ const Settings = () => {
 									})()}
 								</div>
 
-								<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+								<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 									This affects new installations and will update existing ones
 									when they next reach out.
 								</p>
@@ -989,7 +1063,7 @@ const Settings = () => {
 										Enable Automatic Agent Updates
 									</div>
 								</label>
-								<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
+								<p className="mt-1 text-sm text-secondary-500 dark:text-white">
 									When enabled, agents will automatically update themselves when
 									a newer version is available during their regular update
 									cycle.
@@ -1004,7 +1078,7 @@ const Settings = () => {
 										Environment Configuration
 									</h3>
 								</div>
-								<p className="text-sm text-secondary-500 dark:text-secondary-300 mb-4">
+								<p className="text-sm text-secondary-500 dark:text-white mb-4">
 									Current configuration from your .env files and database. The
 									server URL above (editable form) takes precedence and is
 									stored in the database.
@@ -1012,43 +1086,43 @@ const Settings = () => {
 
 								{envConfig ? (
 									<div className="space-y-4">
-										{/* Backend Configuration */}
+										{/* Server Configuration */}
 										<div className="bg-white dark:bg-secondary-800 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
 											<h4 className="text-sm font-semibold text-secondary-900 dark:text-white mb-3 flex items-center">
 												<Server className="h-4 w-4 mr-2 text-primary-600" />
-												Backend Configuration (backend/.env)
+												Server Configuration (server/.env)
 											</h4>
 											<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
 												<div>
-													<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 block mb-1">
+													<label className="text-xs font-medium text-secondary-500 dark:text-white block mb-1">
 														CORS_ORIGIN
 													</label>
 													<p className="text-sm text-secondary-900 dark:text-white font-mono bg-secondary-50 dark:bg-secondary-700 px-2 py-1.5 rounded break-all">
-														{envConfig.backend.CORS_ORIGIN}
+														{envConfig.server.CORS_ORIGIN}
 													</p>
-													<p className="text-xs text-secondary-400 dark:text-secondary-500 mt-1">
+													<p className="text-xs text-secondary-400 dark:text-white mt-1">
 														Allowed frontend origin for CORS
 													</p>
 												</div>
 												<div>
-													<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 block mb-1">
+													<label className="text-xs font-medium text-secondary-500 dark:text-white block mb-1">
 														PORT
 													</label>
 													<p className="text-sm text-secondary-900 dark:text-white font-mono bg-secondary-50 dark:bg-secondary-700 px-2 py-1.5 rounded">
-														{envConfig.backend.PORT}
+														{envConfig.server.PORT}
 													</p>
-													<p className="text-xs text-secondary-400 dark:text-secondary-500 mt-1">
-														Backend API server port
+													<p className="text-xs text-secondary-400 dark:text-white mt-1">
+														Server API port
 													</p>
 												</div>
 												<div>
-													<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 block mb-1">
-														NODE_ENV
+													<label className="text-xs font-medium text-secondary-500 dark:text-white block mb-1">
+														APP_ENV
 													</label>
 													<p className="text-sm text-secondary-900 dark:text-white font-mono bg-secondary-50 dark:bg-secondary-700 px-2 py-1.5 rounded">
-														{envConfig.backend.NODE_ENV}
+														{envConfig.server.APP_ENV}
 													</p>
-													<p className="text-xs text-secondary-400 dark:text-secondary-500 mt-1">
+													<p className="text-xs text-secondary-400 dark:text-white mt-1">
 														Environment mode
 													</p>
 												</div>
@@ -1067,7 +1141,7 @@ const Settings = () => {
 														Protocol
 													</label>
 													<p className="text-sm text-green-900 dark:text-green-100 font-mono bg-green-100 dark:bg-green-800/30 px-2 py-1.5 rounded">
-														{envConfig.backend.DB_SERVER_PROTOCOL}
+														{envConfig.server.DB_SERVER_PROTOCOL}
 													</p>
 												</div>
 												<div>
@@ -1075,7 +1149,7 @@ const Settings = () => {
 														Host
 													</label>
 													<p className="text-sm text-green-900 dark:text-green-100 font-mono bg-green-100 dark:bg-green-800/30 px-2 py-1.5 rounded break-all">
-														{envConfig.backend.DB_SERVER_HOST}
+														{envConfig.server.DB_SERVER_HOST}
 													</p>
 												</div>
 												<div>
@@ -1083,7 +1157,7 @@ const Settings = () => {
 														Port
 													</label>
 													<p className="text-sm text-green-900 dark:text-green-100 font-mono bg-green-100 dark:bg-green-800/30 px-2 py-1.5 rounded">
-														{envConfig.backend.DB_SERVER_PORT}
+														{envConfig.server.DB_SERVER_PORT}
 													</p>
 												</div>
 												<div>
@@ -1091,7 +1165,7 @@ const Settings = () => {
 														Full URL
 													</label>
 													<p className="text-sm text-green-900 dark:text-green-100 font-mono bg-green-100 dark:bg-green-800/30 px-2 py-1.5 rounded break-all">
-														{envConfig.backend.DB_SERVER_URL}
+														{envConfig.server.DB_SERVER_URL}
 													</p>
 												</div>
 											</div>
@@ -1109,31 +1183,31 @@ const Settings = () => {
 										<div className="bg-secondary-50 dark:bg-secondary-800/50 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
 											<h4 className="text-sm font-semibold text-secondary-900 dark:text-white mb-3 flex items-center">
 												<Code className="h-4 w-4 mr-2 text-secondary-600" />
-												Environment Variable Fallbacks (backend/.env)
+												Environment Variable Fallbacks (server/.env)
 											</h4>
 											<div className="grid grid-cols-1 md:grid-cols-3 gap-3">
 												<div>
-													<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 block mb-1">
+													<label className="text-xs font-medium text-secondary-500 dark:text-white block mb-1">
 														SERVER_PROTOCOL
 													</label>
 													<p className="text-xs text-secondary-900 dark:text-white font-mono bg-secondary-100 dark:bg-secondary-700 px-2 py-1.5 rounded">
-														{envConfig.backend.ENV_SERVER_PROTOCOL}
+														{envConfig.server.ENV_SERVER_PROTOCOL}
 													</p>
 												</div>
 												<div>
-													<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 block mb-1">
+													<label className="text-xs font-medium text-secondary-500 dark:text-white block mb-1">
 														SERVER_HOST
 													</label>
 													<p className="text-xs text-secondary-900 dark:text-white font-mono bg-secondary-100 dark:bg-secondary-700 px-2 py-1.5 rounded break-all">
-														{envConfig.backend.ENV_SERVER_HOST}
+														{envConfig.server.ENV_SERVER_HOST}
 													</p>
 												</div>
 												<div>
-													<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 block mb-1">
+													<label className="text-xs font-medium text-secondary-500 dark:text-white block mb-1">
 														SERVER_PORT
 													</label>
 													<p className="text-xs text-secondary-900 dark:text-white font-mono bg-secondary-100 dark:bg-secondary-700 px-2 py-1.5 rounded">
-														{envConfig.backend.ENV_SERVER_PORT}
+														{envConfig.server.ENV_SERVER_PORT}
 													</p>
 												</div>
 											</div>
@@ -1155,13 +1229,13 @@ const Settings = () => {
 												Frontend Configuration (frontend/.env)
 											</h4>
 											<div>
-												<label className="text-xs font-medium text-secondary-500 dark:text-secondary-400 block mb-1">
+												<label className="text-xs font-medium text-secondary-500 dark:text-white block mb-1">
 													VITE_API_URL
 												</label>
 												<p className="text-sm text-secondary-900 dark:text-white font-mono bg-secondary-50 dark:bg-secondary-700 px-2 py-1.5 rounded break-all">
 													{envConfig.frontend.VITE_API_URL}
 												</p>
-												<p className="text-xs text-secondary-400 dark:text-secondary-500 mt-1">
+												<p className="text-xs text-secondary-400 dark:text-white mt-1">
 													Frontend API endpoint URL (used by browser)
 												</p>
 											</div>
@@ -1169,7 +1243,7 @@ const Settings = () => {
 									</div>
 								) : (
 									<div className="bg-secondary-50 dark:bg-secondary-800 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
-										<p className="text-sm text-secondary-500 dark:text-secondary-400">
+										<p className="text-sm text-secondary-500 dark:text-white">
 											Loading environment configuration...
 										</p>
 									</div>
@@ -1182,9 +1256,9 @@ const Settings = () => {
 										above to change protocol/host/port (saves to database)
 										<br />• <strong>CORS_ORIGIN, PORT:</strong> Edit{" "}
 										<code className="bg-blue-100 dark:bg-blue-800 px-1 py-0.5 rounded">
-											backend/.env
+											server/.env
 										</code>{" "}
-										and restart the backend
+										and restart the server
 										<br />• <strong>VITE_API_URL:</strong> Edit{" "}
 										<code className="bg-blue-100 dark:bg-blue-800 px-1 py-0.5 rounded">
 											frontend/.env
@@ -1263,7 +1337,7 @@ const Settings = () => {
 											Agent Binary
 										</h2>
 									</div>
-									<p className="text-sm text-secondary-500 dark:text-secondary-300">
+									<p className="text-sm text-secondary-500 dark:text-white">
 										Go agent binary used for installations and updates (served
 										from /api/v1/hosts/agent/download with API credentials)
 									</p>
@@ -1283,10 +1357,10 @@ const Settings = () => {
 							) : !agentFileInfo?.exists ? (
 								<div className="text-center py-8">
 									<Code className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
-									<p className="text-secondary-500 dark:text-secondary-300">
+									<p className="text-secondary-500 dark:text-white">
 										No agent binary found
 									</p>
-									<p className="text-sm text-secondary-400 dark:text-secondary-400 mt-2">
+									<p className="text-sm text-secondary-400 dark:text-white mt-2">
 										Place Go agent binaries in the server&apos;s agents/
 										directory
 									</p>
@@ -1301,7 +1375,7 @@ const Settings = () => {
 										<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
 											<div className="flex items-center gap-2">
 												<Code className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-												<span className="text-sm font-medium text-secondary-700 dark:text-secondary-300">
+												<span className="text-sm font-medium text-secondary-700 dark:text-white">
 													Version:
 												</span>
 												<span className="text-sm text-secondary-900 dark:text-white font-mono">
@@ -1310,7 +1384,7 @@ const Settings = () => {
 											</div>
 											<div className="flex items-center gap-2">
 												<Download className="h-4 w-4 text-green-600 dark:text-green-400" />
-												<span className="text-sm font-medium text-secondary-700 dark:text-secondary-300">
+												<span className="text-sm font-medium text-secondary-700 dark:text-white">
 													Size:
 												</span>
 												<span className="text-sm text-secondary-900 dark:text-white">
@@ -1319,13 +1393,11 @@ const Settings = () => {
 											</div>
 											<div className="flex items-center gap-2">
 												<Clock className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
-												<span className="text-sm font-medium text-secondary-700 dark:text-secondary-300">
+												<span className="text-sm font-medium text-secondary-700 dark:text-white">
 													Modified:
 												</span>
 												<span className="text-sm text-secondary-900 dark:text-white">
-													{new Date(
-														agentFileInfo.lastModified,
-													).toLocaleDateString()}
+													{formatDateOnly(agentFileInfo.lastModified)}
 												</span>
 											</div>
 										</div>
@@ -1377,7 +1449,7 @@ const Settings = () => {
 															</div>
 															<div className="flex items-center gap-2">
 																<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1">
-																	curl {getCurlFlags()} {window.location.origin}
+																	curl {getCurlFlags()} {serverUrl}
 																	/api/v1/hosts/remove | sudo sh
 																</div>
 																<button
@@ -1385,7 +1457,7 @@ const Settings = () => {
 																	onClick={async () => {
 																		try {
 																			await copyToClipboard(
-																				`curl ${getCurlFlags()} ${window.location.origin}/api/v1/hosts/remove | sudo sh`,
+																				`curl ${getCurlFlags()} ${serverUrl}/api/v1/hosts/remove | sudo sh`,
 																			);
 																			showToast(
 																				"Standard removal command copied!",
@@ -1415,7 +1487,7 @@ const Settings = () => {
 															</div>
 															<div className="flex items-center gap-2">
 																<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1">
-																	curl {getCurlFlags()} {window.location.origin}
+																	curl {getCurlFlags()} {serverUrl}
 																	/api/v1/hosts/remove | sudo REMOVE_BACKUPS=1
 																	sh
 																</div>
@@ -1424,7 +1496,7 @@ const Settings = () => {
 																	onClick={async () => {
 																		try {
 																			await copyToClipboard(
-																				`curl ${getCurlFlags()} ${window.location.origin}/api/v1/hosts/remove | sudo REMOVE_BACKUPS=1 sh`,
+																				`curl ${getCurlFlags()} ${serverUrl}/api/v1/hosts/remove | sudo REMOVE_BACKUPS=1 sh`,
 																			);
 																			showToast(
 																				"Complete removal command copied!",
@@ -1478,7 +1550,7 @@ const Settings = () => {
 								<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 									Version Check Configuration
 								</h3>
-								<p className="text-sm text-secondary-600 dark:text-secondary-300 mb-6">
+								<p className="text-sm text-secondary-600 dark:text-white mb-6">
 									Configure automatic version checking against your GitHub
 									repository to notify users of available updates.
 								</p>
@@ -1529,7 +1601,7 @@ const Settings = () => {
 												</label>
 											</div>
 										</div>
-										<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+										<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 											Choose whether your repository is public or private to
 											determine the appropriate access method.
 										</p>
@@ -1552,7 +1624,7 @@ const Settings = () => {
 											className="w-full border border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white font-mono text-sm"
 											placeholder="git@github.com:username/repository.git"
 										/>
-										<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+										<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 											SSH or HTTPS URL to your GitHub repository
 										</p>
 									</div>
@@ -1599,7 +1671,7 @@ const Settings = () => {
 														className="w-full border border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white font-mono text-sm"
 														placeholder="/root/.ssh/id_ed25519"
 													/>
-													<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+													<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 														Path to your SSH deploy key. If not set, will
 														auto-detect from common locations.
 													</p>
@@ -1646,7 +1718,7 @@ const Settings = () => {
 											)}
 
 											{!formData.useCustomSshKey && (
-												<p className="text-xs text-secondary-500 dark:text-secondary-400">
+												<p className="text-xs text-secondary-500 dark:text-white">
 													Using auto-detection for SSH key location
 												</p>
 											)}
@@ -1657,7 +1729,7 @@ const Settings = () => {
 										<div className="bg-white dark:bg-secondary-800 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
 											<div className="flex items-center gap-2 mb-2">
 												<CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
-												<span className="text-sm font-medium text-secondary-700 dark:text-secondary-300">
+												<span className="text-sm font-medium text-secondary-700 dark:text-white">
 													Current Version
 												</span>
 											</div>
@@ -1669,7 +1741,7 @@ const Settings = () => {
 										<div className="bg-white dark:bg-secondary-800 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
 											<div className="flex items-center gap-2 mb-2">
 												<Download className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-												<span className="text-sm font-medium text-secondary-700 dark:text-secondary-300">
+												<span className="text-sm font-medium text-secondary-700 dark:text-white">
 													Latest Version
 												</span>
 											</div>
@@ -1691,7 +1763,7 @@ const Settings = () => {
 															" (Update Available!)"}
 													</span>
 												) : (
-													<span className="text-secondary-500 dark:text-secondary-400">
+													<span className="text-secondary-500 dark:text-white">
 														Not checked
 													</span>
 												)}
@@ -1704,16 +1776,14 @@ const Settings = () => {
 										<div className="bg-white dark:bg-secondary-800 rounded-lg p-4 border border-secondary-200 dark:border-secondary-600">
 											<div className="flex items-center gap-2 mb-2">
 												<Clock className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-												<span className="text-sm font-medium text-secondary-700 dark:text-secondary-300">
+												<span className="text-sm font-medium text-secondary-700 dark:text-white">
 													Last Checked
 												</span>
 											</div>
-											<span className="text-sm text-secondary-600 dark:text-secondary-400">
-												{new Date(
-													versionInfo.last_update_check,
-												).toLocaleString()}
+											<span className="text-sm text-secondary-600 dark:text-white">
+												{formatDate(versionInfo.last_update_check)}
 											</span>
-											<p className="text-xs text-secondary-500 dark:text-secondary-400 mt-1">
+											<p className="text-xs text-secondary-500 dark:text-white mt-1">
 												Updates are checked automatically every 24 hours
 											</p>
 										</div>
@@ -1905,7 +1975,7 @@ const LogoUploadModal = ({
 						<button
 							type="button"
 							onClick={handleClose}
-							className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+							className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
 						>
 							<X className="h-5 w-5" />
 						</button>
@@ -1923,10 +1993,10 @@ const LogoUploadModal = ({
 									type="file"
 									accept="image/png,image/jpeg,image/jpg,image/svg+xml"
 									onChange={handleFileSelect}
-									className="block w-full text-sm text-secondary-500 dark:text-secondary-400 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100 dark:file:bg-primary-900 dark:file:text-primary-200"
+									className="block w-full text-sm text-secondary-500 dark:text-white file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100 dark:file:bg-primary-900 dark:file:text-primary-200"
 								/>
 							</label>
-							<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+							<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 								Supported formats: PNG, JPG, SVG. Max size: 5MB.
 								{logoType === "favicon"
 									? " Recommended: 32x32px SVG."
@@ -1934,7 +2004,7 @@ const LogoUploadModal = ({
 							</p>
 						</div>
 
-						{previewUrl && (
+						{previewUrl?.startsWith("blob:") && (
 							<div>
 								<div className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-2">
 									Preview

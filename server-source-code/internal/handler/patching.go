@@ -1,0 +1,1448 @@
+package handler
+
+import (
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/alerts"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/patchstream"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+const patchRunJobIDPrefix = "patch-run-"
+
+var packageNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+-_]*$`)
+
+// deletablePatchRunStatuses are statuses where the run can be deleted (not yet executed or cancelled).
+var deletablePatchRunStatuses = map[string]bool{
+	"queued":             true,
+	"pending_validation": true,
+	"pending_approval":   true,
+	"validated":          true,
+	"approved":           true,
+	"scheduled":          true,
+}
+
+// PatchingHandler handles patching endpoints.
+type PatchingHandler struct {
+	patchRuns      *store.PatchRunsStore
+	patchPolicies  *store.PatchPoliciesStore
+	assignments    *store.PatchPolicyAssignmentsStore
+	exclusions     *store.PatchPolicyExclusionsStore
+	hosts          *store.HostsStore
+	queueClient    *asynq.Client
+	queueInspector *asynq.Inspector
+	notify         *notifications.Emitter
+	log            *slog.Logger
+
+	// Optional collaborators for live patch-run streaming.
+	// Populated via SetStreamDependencies after construction so existing
+	// call-sites don't need to thread these values immediately.
+	hub      *patchstream.Hub
+	registry *agentregistry.Registry
+}
+
+// NewPatchingHandler creates a new patching handler.
+func NewPatchingHandler(
+	patchRuns *store.PatchRunsStore,
+	patchPolicies *store.PatchPoliciesStore,
+	assignments *store.PatchPolicyAssignmentsStore,
+	exclusions *store.PatchPolicyExclusionsStore,
+	hosts *store.HostsStore,
+	queueClient *asynq.Client,
+	queueInspector *asynq.Inspector,
+	notify *notifications.Emitter,
+	log *slog.Logger,
+) *PatchingHandler {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &PatchingHandler{
+		patchRuns:      patchRuns,
+		patchPolicies:  patchPolicies,
+		assignments:    assignments,
+		exclusions:     exclusions,
+		hosts:          hosts,
+		queueClient:    queueClient,
+		queueInspector: queueInspector,
+		notify:         notify,
+		log:            log,
+	}
+}
+
+func isValidPatchUUID(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil
+}
+
+func isValidPackageName(s string) bool {
+	return len(s) > 0 && len(s) <= 256 && packageNameRegex.MatchString(s)
+}
+
+// ServePatchOutput handles POST /patching/runs/:id/output (agent-facing, API key auth).
+func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Request) {
+	apiID := r.Header.Get("X-API-ID")
+	apiKey := r.Header.Get("X-API-KEY")
+	if apiID == "" || apiKey == "" {
+		JSON(w, http.StatusUnauthorized, map[string]string{"error": "API ID and Key required"})
+		return
+	}
+	host, err := h.hosts.GetByApiID(r.Context(), apiID)
+	if err != nil || host == nil {
+		JSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid API credentials"})
+		return
+	}
+	ok, err := util.VerifyAPIKey(apiKey, host.ApiKey)
+	if err != nil || !ok {
+		JSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid API credentials"})
+		return
+	}
+
+	patchRunID := chi.URLParam(r, "id")
+	if !isValidPatchUUID(patchRunID) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid patch run ID"})
+		return
+	}
+
+	var body struct {
+		Stage        string `json:"stage"`
+		Output       string `json:"output"`
+		ErrorMessage string `json:"error_message"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+		return
+	}
+
+	run, err := h.patchRuns.GetByID(r.Context(), patchRunID)
+	if err != nil || run == nil {
+		JSON(w, http.StatusNotFound, map[string]string{"error": "Patch run not found"})
+		return
+	}
+	if run.HostID != host.ID {
+		JSON(w, http.StatusForbidden, map[string]string{"error": "Patch run does not belong to this host"})
+		return
+	}
+
+	if err := h.patchRuns.UpdateOutput(r.Context(), patchRunID, host.OSType, body.Stage, body.Output, body.ErrorMessage); err != nil {
+		h.log.Error("patching: failed to update output", "patch_run_id", patchRunID, "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to save patch output"})
+		return
+	}
+
+	// Fan-out to any live subscribers on the in-process hub. Agent-facing
+	// stages translate into three kinds of events for the browser:
+	//   running       -> started   (run has begun on the agent)
+	//   progress      -> chunk     (line-buffered live stdout/stderr)
+	//   completed /   -> done      (terminal state; client closes the WS)
+	//   failed /
+	//   cancelled /
+	//   validated /
+	//   dry_run_completed
+	//
+	// Everything else (e.g. scheduled / queued / pending_validation) is
+	// written by the server itself, not by the agent, so we don't emit here.
+	if h.hub != nil {
+		switch body.Stage {
+		case "running":
+			h.hub.Publish(patchstream.Event{
+				Type:       patchstream.EventStarted,
+				PatchRunID: patchRunID,
+				Stage:      body.Stage,
+			})
+		case "progress":
+			if body.Output != "" {
+				h.hub.Publish(patchstream.Event{
+					Type:       patchstream.EventChunk,
+					PatchRunID: patchRunID,
+					Stage:      body.Stage,
+					Chunk:      body.Output,
+				})
+			}
+		case "completed", "failed", "cancelled", "validated", "dry_run_completed":
+			h.hub.Publish(patchstream.Event{
+				Type:         patchstream.EventDone,
+				PatchRunID:   patchRunID,
+				Stage:        body.Stage,
+				ErrorMessage: body.ErrorMessage,
+			})
+		}
+	}
+	if body.Stage == "completed" && !run.DryRun {
+		if err := h.hosts.SetAwaitingPostPatchReport(r.Context(), run.HostID, &patchRunID); err != nil {
+			h.log.Error("patching: failed to set awaiting post-patch report", "host_id", run.HostID, "patch_run_id", patchRunID, "error", err)
+		}
+	}
+	// Emit patch_run_started when the agent begins execution.
+	if h.notify != nil && body.Stage == "running" {
+		if d := hostctx.DBFromContext(r.Context()); d != nil {
+			hostName := ""
+			if run.HostFriendlyName != nil && *run.HostFriendlyName != "" {
+				hostName = *run.HostFriendlyName
+			} else if run.HostHostname != nil && *run.HostHostname != "" {
+				hostName = *run.HostHostname
+			}
+			title := fmt.Sprintf("Patch Run Started - %s", hostName)
+			if run.DryRun {
+				title = fmt.Sprintf("Dry Run Started - %s", hostName)
+			}
+			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+				Type:          "patch_run_started",
+				Severity:      alerts.ResolveSeverity(r.Context(), d, "patch_run_started", "informational"),
+				Title:         title,
+				Message:       fmt.Sprintf("Patch run started on host %s.", hostName),
+				ReferenceType: "patch_run",
+				ReferenceID:   patchRunID,
+				Metadata: map[string]interface{}{
+					"host_id":    run.HostID,
+					"host_name":  hostName,
+					"patch_type": run.PatchType,
+					"dry_run":    run.DryRun,
+				},
+			})
+		}
+	}
+	if h.notify != nil && (body.Stage == "completed" || body.Stage == "failed") {
+		if d := hostctx.DBFromContext(r.Context()); d != nil {
+			// Resolve host display name
+			hostName := ""
+			if run.HostFriendlyName != nil && *run.HostFriendlyName != "" {
+				hostName = *run.HostFriendlyName
+			} else if run.HostHostname != nil && *run.HostHostname != "" {
+				hostName = *run.HostHostname
+			}
+
+			// Resolve packages list
+			var packages []string
+			if len(run.PackageNames) > 0 {
+				_ = json.Unmarshal(run.PackageNames, &packages)
+			}
+			if len(packages) == 0 && run.PackageName != nil && *run.PackageName != "" {
+				packages = []string{*run.PackageName}
+			}
+			pkgSummary := "all packages"
+			if len(packages) == 1 {
+				pkgSummary = packages[0]
+			} else if len(packages) > 1 && len(packages) <= 5 {
+				pkgSummary = fmt.Sprintf("%d packages (%s)", len(packages), strings.Join(packages, ", "))
+			} else if len(packages) > 5 {
+				pkgSummary = fmt.Sprintf("%d packages (%s, ...)", len(packages), strings.Join(packages[:5], ", "))
+			}
+
+			policyName := ""
+			if run.PolicyName != nil {
+				policyName = *run.PolicyName
+			}
+
+			evType := "patch_run_completed"
+			fallbackSev := "informational"
+			if body.Stage == "failed" {
+				evType = "patch_run_failed"
+				fallbackSev = "error"
+			}
+			sev := alerts.ResolveSeverity(r.Context(), d, evType, fallbackSev)
+
+			title := fmt.Sprintf("Patch Run %s - %s", strings.ToUpper(body.Stage[:1])+body.Stage[1:], hostName)
+			if run.DryRun {
+				title = fmt.Sprintf("Dry Run %s - %s", strings.ToUpper(body.Stage[:1])+body.Stage[1:], hostName)
+			}
+
+			var msgParts []string
+			if body.Stage == "failed" {
+				msgParts = append(msgParts, fmt.Sprintf("Patch run failed on host %s.", hostName))
+				if body.ErrorMessage != "" {
+					errMsg := body.ErrorMessage
+					if len(errMsg) > 300 {
+						errMsg = errMsg[:300] + "…"
+					}
+					msgParts = append(msgParts, fmt.Sprintf("Error: %s", errMsg))
+				}
+			} else {
+				msgParts = append(msgParts, fmt.Sprintf("Patch run completed successfully on host %s.", hostName))
+			}
+			msgParts = append(msgParts, fmt.Sprintf("Packages: %s", pkgSummary))
+			if policyName != "" {
+				msgParts = append(msgParts, fmt.Sprintf("Policy: %s", policyName))
+			}
+			if run.DryRun {
+				msgParts = append(msgParts, "Mode: Dry Run (no changes applied)")
+			}
+
+			meta := map[string]interface{}{
+				"host_id":    run.HostID,
+				"host_name":  hostName,
+				"patch_type": run.PatchType,
+				"dry_run":    run.DryRun,
+				"stage":      body.Stage,
+			}
+			if len(packages) > 0 {
+				meta["packages"] = packages
+			}
+			if policyName != "" {
+				meta["policy_name"] = policyName
+			}
+			if body.ErrorMessage != "" {
+				meta["error_message"] = body.ErrorMessage
+			}
+
+			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+				Type:          evType,
+				Severity:      sev,
+				Title:         title,
+				Message:       strings.Join(msgParts, "\n"),
+				ReferenceType: "patch_run",
+				ReferenceID:   patchRunID,
+				Metadata:      meta,
+			})
+		}
+	}
+	JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// Dashboard returns GET /patching/dashboard.
+func (h *PatchingHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
+	total, byStatus, recent, active, err := h.patchRuns.GetDashboard(r.Context())
+	if err != nil {
+		h.log.Error("patching: dashboard error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load patching dashboard"})
+		return
+	}
+	statusCounts := map[string]int{
+		"queued": 0, "running": 0, "completed": 0, "failed": 0, "cancelled": 0,
+		"pending_validation": 0, "pending_approval": 0, "validated": 0,
+	}
+	for k, v := range byStatus {
+		statusCounts[k] = v
+	}
+	summary := map[string]interface{}{
+		"total_runs":         total,
+		"queued":             statusCounts["queued"],
+		"running":            statusCounts["running"],
+		"completed":          statusCounts["completed"],
+		"failed":             statusCounts["failed"],
+		"cancelled":          statusCounts["cancelled"],
+		"pending_validation": statusCounts["pending_validation"],
+		"pending_approval":   statusCounts["pending_approval"],
+		"validated":          statusCounts["validated"],
+	}
+	recentResp := patchRunsToResponse(recent)
+	activeResp := patchRunsActiveToResponse(active)
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"summary":     summary,
+		"recent_runs": recentResp,
+		"active_runs": activeResp,
+	})
+}
+
+// PreviewRun returns GET /patching/preview-run?host_id=.
+func (h *PatchingHandler) PreviewRun(w http.ResponseWriter, r *http.Request) {
+	hostID := r.URL.Query().Get("host_id")
+	if hostID == "" || !isValidPatchUUID(hostID) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Valid host_id is required"})
+		return
+	}
+	host, err := h.hosts.GetByID(r.Context(), hostID)
+	if err != nil || host == nil {
+		JSON(w, http.StatusNotFound, map[string]string{"error": "Host not found"})
+		return
+	}
+	policy, _ := h.patchPolicies.ResolveEffectivePolicy(r.Context(), hostID)
+	runAt := h.patchPolicies.ComputeRunAt(policy)
+	hostName := host.FriendlyName
+	if hostName == "" && host.Hostname != nil {
+		hostName = *host.Hostname
+	}
+	if hostName == "" {
+		hostName = hostID
+	}
+	policyName := "Default (immediate)"
+	policyID := ""
+	patchDelayType := "immediate"
+	if policy != nil {
+		policyName = policy.Name
+		policyID = policy.ID
+		patchDelayType = policy.PatchDelayType
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"host_id":          hostID,
+		"host_name":        hostName,
+		"run_at_iso":       runAt.UTC().Format(time.RFC3339),
+		"policy_name":      policyName,
+		"policy_id":        policyID,
+		"patch_delay_type": patchDelayType,
+	})
+}
+
+// ActiveRuns returns GET /patching/runs/active.
+func (h *PatchingHandler) ActiveRuns(w http.ResponseWriter, r *http.Request) {
+	runs, err := h.patchRuns.ListActive(r.Context())
+	if err != nil {
+		h.log.Error("patching: active runs error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load active runs"})
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{"runs": patchRunsActiveToResponse(runs)})
+}
+
+// ListRuns returns GET /patching/runs.
+func (h *PatchingHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
+	limit := parseIntQuery(r, "limit", 50)
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset := parseIntQuery(r, "offset", 0)
+	if offset < 0 {
+		offset = 0
+	}
+	hostID := r.URL.Query().Get("host_id")
+	status := r.URL.Query().Get("status")
+	patchType := r.URL.Query().Get("patch_type")
+	sortBy := r.URL.Query().Get("sort_by")
+	sortDir := r.URL.Query().Get("sort_dir")
+	if hostID != "" && !isValidPatchUUID(hostID) {
+		hostID = ""
+	}
+	if patchType != "" && patchType != "patch_all" && patchType != "patch_package" {
+		patchType = ""
+	}
+	// Validate sort params
+	validSortBy := map[string]bool{"created_at": true, "started_at": true, "completed_at": true, "status": true}
+	if !validSortBy[sortBy] {
+		sortBy = "created_at"
+	}
+	if sortDir != "asc" && sortDir != "desc" {
+		sortDir = "desc"
+	}
+
+	runs, total, err := h.patchRuns.List(r.Context(), hostID, status, patchType, sortBy, sortDir, limit, offset)
+	if err != nil {
+		h.log.Error("patching: runs list error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load patch runs"})
+		return
+	}
+	pages := int(total) / limit
+	if int(total)%limit > 0 {
+		pages++
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"runs": patchRunsListToResponse(runs),
+		"pagination": map[string]interface{}{
+			"total":  total,
+			"limit":  limit,
+			"offset": offset,
+			"pages":  pages,
+		},
+	})
+}
+
+// GetRun returns GET /patching/runs/:id.
+func (h *PatchingHandler) GetRun(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !isValidPatchUUID(id) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid run ID"})
+		return
+	}
+	run, err := h.patchRuns.GetByID(r.Context(), id)
+	if err != nil || run == nil {
+		JSON(w, http.StatusNotFound, map[string]string{"error": "Patch run not found"})
+		return
+	}
+	resp := patchRunToResponse(run)
+	if host, err := h.hosts.GetByID(r.Context(), run.HostID); err == nil && host != nil {
+		if hosts, ok := resp["hosts"].(map[string]interface{}); ok {
+			hosts["awaiting_post_patch_report_run_id"] = host.AwaitingPostPatchReportRunID
+			// Expose the host's last inventory report timestamp so the
+			// frontend can tell when a post-patch report has arrived and
+			// swap the "awaiting" pill for a "received" pill.
+			if !host.LastUpdate.IsZero() {
+				hosts["last_update"] = host.LastUpdate.UTC().Format(time.RFC3339)
+			}
+		}
+	}
+	JSON(w, http.StatusOK, resp)
+}
+
+// ApproveRun handles POST /patching/runs/:id/approve.
+// Creates a NEW patch run (dry_run=false) linked to the validation run via validation_run_id.
+// The validation run is marked as "approved" (terminal state) and preserved as-is.
+// Accepts an optional JSON body with schedule_override ("immediate" or a policy ID).
+func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
+	validationID := chi.URLParam(r, "id")
+	if !isValidPatchUUID(validationID) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid run ID"})
+		return
+	}
+	valRun, err := h.patchRuns.GetByID(r.Context(), validationID)
+	if err != nil || valRun == nil {
+		JSON(w, http.StatusNotFound, map[string]string{"error": "Patch run not found"})
+		return
+	}
+	if valRun.Status != "validated" && valRun.Status != "pending_validation" && valRun.Status != "pending_approval" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Only validated, pending-validation, or pending-approval runs can be approved"})
+		return
+	}
+
+	// Parse optional body for schedule_override.
+	var body struct {
+		ScheduleOverride string `json:"schedule_override"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+
+	host, err := h.hosts.GetByID(r.Context(), valRun.HostID)
+	if err != nil || host == nil {
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Host not found for run"})
+		return
+	}
+
+	var pkgName *string
+	if valRun.PackageName != nil {
+		pkgName = valRun.PackageName
+	}
+	var pkgNames []string
+	if len(valRun.PackageNames) > 0 {
+		if err := json.Unmarshal(valRun.PackageNames, &pkgNames); err != nil {
+			h.log.Error("patching: failed to unmarshal package_names for approval", "validation_run_id", validationID, "error", err)
+			JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to read package list for run"})
+			return
+		}
+	}
+
+	// Compute policy and delay.
+	policy, _ := h.patchPolicies.ResolveEffectivePolicy(r.Context(), valRun.HostID)
+	runAt := h.patchPolicies.ComputeRunAt(policy)
+	delayMs := time.Until(runAt).Milliseconds()
+	if delayMs < 0 {
+		delayMs = 0
+	}
+	// Manual schedule override: "immediate" bypasses policy delay.
+	if body.ScheduleOverride == "immediate" {
+		delayMs = 0
+	}
+
+	var policyID, policyNamePtr *string
+	var policySnap []byte
+	if policy != nil {
+		policyID = &policy.ID
+		n := policy.Name
+		policyNamePtr = &n
+		policySnap, _ = json.Marshal(map[string]interface{}{
+			"name":             policy.Name,
+			"patch_delay_type": policy.PatchDelayType,
+			"delay_minutes":    policy.DelayMinutes,
+			"fixed_time_utc":   policy.FixedTimeUtc,
+			"timezone":         policy.Timezone,
+		})
+	} else {
+		policySnap, _ = json.Marshal(map[string]interface{}{
+			"patch_delay_type": "immediate",
+		})
+	}
+
+	// Create the new patch run ID and job ID up-front so the task can reference it.
+	newRunID := uuid.New().String()
+	jobID := "patch-run-" + newRunID
+
+	task, err := queue.NewRunPatchTask(queue.RunPatchPayload{
+		HostID:       valRun.HostID,
+		Host:         r.Header.Get("X-Forwarded-Host"),
+		ApiID:        host.ApiID,
+		PatchRunID:   newRunID,
+		PatchType:    valRun.PatchType,
+		PackageName:  pkgName,
+		PackageNames: pkgNames,
+		DryRun:       false,
+	})
+	if err != nil {
+		h.log.Error("patching: create approve task error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create patch task"})
+		return
+	}
+
+	// --- DB mutations ---
+	var approvedBy *string
+	if userID, _ := r.Context().Value(middleware.UserIDKey).(string); userID != "" {
+		approvedBy = &userID
+	}
+
+	// 1. Mark the validation run as "approved" (terminal - preserved with its output).
+	if err := h.patchRuns.MarkValidationApproved(r.Context(), validationID, approvedBy); err != nil {
+		h.log.Error("patching: mark validation approved error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to approve validation run"})
+		return
+	}
+
+	// 2. Create the real patch run linked to the validation.
+	var schedAt *time.Time
+	if delayMs > 0 {
+		schedAt = &runAt
+	}
+	if _, err := h.patchRuns.CreateRun(r.Context(), newRunID, valRun.HostID, jobID, valRun.PatchType, pkgName, pkgNames, valRun.TriggeredByUserID, false, schedAt, policyID, policyNamePtr, policySnap, &store.CreateRunOpts{
+		ValidationRunID:  &validationID,
+		ApprovedByUserID: approvedBy,
+	}); err != nil {
+		h.log.Error("patching: create approved run error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create patch run"})
+		return
+	}
+
+	// 3. Enqueue the task.
+	enqueueOpts := []asynq.Option{}
+	if delayMs > 0 {
+		enqueueOpts = append(enqueueOpts, asynq.ProcessIn(time.Duration(delayMs)*time.Millisecond))
+	}
+	if _, err := h.queueClient.Enqueue(task, enqueueOpts...); err != nil {
+		h.log.Error("patching: enqueue approve error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to queue approved patch"})
+		return
+	}
+
+	msg := "Approved - new patch run created"
+	if delayMs > 0 {
+		msg = "Approved - patch scheduled for " + runAt.UTC().Format(time.RFC3339)
+	}
+
+	// Emit patch_run_approved event.
+	if h.notify != nil {
+		if d := hostctx.DBFromContext(r.Context()); d != nil {
+			hostName := host.FriendlyName
+			if hostName == "" && host.Hostname != nil {
+				hostName = *host.Hostname
+			}
+			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+				Type:          "patch_run_approved",
+				Severity:      alerts.ResolveSeverity(r.Context(), d, "patch_run_approved", "informational"),
+				Title:         fmt.Sprintf("Patch Run Approved - %s", hostName),
+				Message:       fmt.Sprintf("Patch run approved for host %s. %s", hostName, msg),
+				ReferenceType: "patch_run",
+				ReferenceID:   newRunID,
+				Metadata: map[string]interface{}{
+					"host_id":           valRun.HostID,
+					"host_name":         hostName,
+					"patch_type":        valRun.PatchType,
+					"validation_run_id": validationID,
+				},
+			})
+		}
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"message":           msg,
+		"patch_run_id":      newRunID,
+		"validation_run_id": validationID,
+		"run_at":            runAt.UTC().Format(time.RFC3339),
+	})
+}
+
+// RetryValidation handles POST /patching/runs/:id/retry-validation.
+// Re-enqueues the dry-run task for a run stuck in pending_validation (e.g. host was offline).
+func (h *PatchingHandler) RetryValidation(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !isValidPatchUUID(id) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid run ID"})
+		return
+	}
+	run, err := h.patchRuns.GetByID(r.Context(), id)
+	if err != nil || run == nil {
+		JSON(w, http.StatusNotFound, map[string]string{"error": "Patch run not found"})
+		return
+	}
+	if run.Status != "pending_validation" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Only pending-validation runs can be retried"})
+		return
+	}
+	// patch_all runs cannot be dry-run on the agent (no --dry-run support for
+	// the bulk upgrade path). Re-validation only makes sense for patch_package
+	// pending runs that stalled mid dry-run (e.g. host was offline). Pending
+	// approval patch_all runs are just waiting for approval, not validation.
+	if run.PatchType != "patch_package" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Validation retry is only supported for patch_package runs"})
+		return
+	}
+
+	host, err := h.hosts.GetByID(r.Context(), run.HostID)
+	if err != nil || host == nil {
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Host not found for run"})
+		return
+	}
+
+	var pkgName *string
+	if run.PackageName != nil {
+		pkgName = run.PackageName
+	}
+	var pkgNames []string
+	if len(run.PackageNames) > 0 {
+		if err := json.Unmarshal(run.PackageNames, &pkgNames); err != nil {
+			JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to read package list for run"})
+			return
+		}
+	}
+
+	task, err := queue.NewRunPatchTask(queue.RunPatchPayload{
+		HostID:       run.HostID,
+		Host:         r.Header.Get("X-Forwarded-Host"),
+		ApiID:        host.ApiID,
+		PatchRunID:   id,
+		PatchType:    run.PatchType,
+		PackageName:  pkgName,
+		PackageNames: pkgNames,
+		DryRun:       true,
+	})
+	if err != nil {
+		h.log.Error("patching: create retry-validation task error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create validation task"})
+		return
+	}
+
+	if _, err := h.queueClient.Enqueue(task); err != nil {
+		h.log.Error("patching: enqueue retry-validation error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to queue validation retry"})
+		return
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{"message": "Validation re-queued", "patch_run_id": id})
+}
+
+// DeleteRun handles DELETE /patching/runs/:id.
+// Deletes a patch run that is queued, pending_validation, validated, approved, or scheduled.
+// Removes the run_patch task from the queue if present.
+func (h *PatchingHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" || !isValidPatchUUID(id) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid patch run ID"})
+		return
+	}
+	run, err := h.patchRuns.GetByID(r.Context(), id)
+	if err != nil {
+		h.log.Error("patching: get run for delete error", "patch_run_id", id, "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load patch run"})
+		return
+	}
+	if run == nil {
+		JSON(w, http.StatusNotFound, map[string]string{"error": "Patch run not found"})
+		return
+	}
+	if !deletablePatchRunStatuses[run.Status] {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Only queued, pending validation, validated, approved, or scheduled runs can be deleted"})
+		return
+	}
+	// Remove run_patch task(s) from queue if present.
+	// Original task: patch-run-{id}, retry task: patch-run-{id}-retry
+	if h.queueInspector != nil {
+		taskID := patchRunJobIDPrefix + id
+		_ = h.queueInspector.DeleteTask(queue.QueuePatching, taskID)
+		_ = h.queueInspector.DeleteTask(queue.QueuePatching, taskID+"-retry")
+	}
+	if err := h.patchRuns.Delete(r.Context(), id); err != nil {
+		h.log.Error("patching: delete run error", "patch_run_id", id, "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete patch run"})
+		return
+	}
+
+	// Emit patch_run_cancelled event.
+	if h.notify != nil {
+		if d := hostctx.DBFromContext(r.Context()); d != nil {
+			hostName := ""
+			if run.HostFriendlyName != nil && *run.HostFriendlyName != "" {
+				hostName = *run.HostFriendlyName
+			} else if run.HostHostname != nil && *run.HostHostname != "" {
+				hostName = *run.HostHostname
+			}
+			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+				Type:          "patch_run_cancelled",
+				Severity:      alerts.ResolveSeverity(r.Context(), d, "patch_run_cancelled", "informational"),
+				Title:         fmt.Sprintf("Patch Run Cancelled - %s", hostName),
+				Message:       fmt.Sprintf("Patch run cancelled on host %s (was %s).", hostName, run.Status),
+				ReferenceType: "patch_run",
+				ReferenceID:   id,
+				Metadata: map[string]interface{}{
+					"host_id":         run.HostID,
+					"host_name":       hostName,
+					"patch_type":      run.PatchType,
+					"previous_status": run.Status,
+				},
+			})
+		}
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{"message": "Patch run deleted"})
+}
+
+func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		HostID       string   `json:"host_id"`
+		PatchType    string   `json:"patch_type"`
+		PackageName  string   `json:"package_name"`
+		PackageNames []string `json:"package_names"`
+		DryRun       bool     `json:"dry_run"`
+		// PendingApproval creates the run in pending_validation status WITHOUT
+		// enqueuing any work to the host. It's the "submit for approval" path:
+		// a second approver later calls ApproveRun to actually execute. Works
+		// for any patch_type (including patch_all, which cannot dry-run).
+		PendingApproval  bool   `json:"pending_approval"`
+		ScheduleOverride string `json:"schedule_override"` // "immediate" to bypass policy delay
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+		return
+	}
+	if body.HostID == "" || !isValidPatchUUID(body.HostID) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Valid host_id is required"})
+		return
+	}
+	if body.PatchType != "patch_all" && body.PatchType != "patch_package" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "patch_type must be patch_all or patch_package"})
+		return
+	}
+	if body.DryRun && body.PatchType != "patch_package" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "dry_run is only supported for patch_package"})
+		return
+	}
+	if body.DryRun && body.PendingApproval {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "dry_run and pending_approval are mutually exclusive"})
+		return
+	}
+
+	var pkgName *string
+	var pkgNames []string
+	if body.PatchType == "patch_package" {
+		if len(body.PackageNames) > 0 {
+			for _, n := range body.PackageNames {
+				if !isValidPackageName(n) {
+					JSON(w, http.StatusBadRequest, map[string]string{"error": "Every package_names entry must be a valid package name"})
+					return
+				}
+			}
+			if len(body.PackageNames) > 100 {
+				JSON(w, http.StatusBadRequest, map[string]string{"error": "package_names limited to 100 packages per run"})
+				return
+			}
+			pkgNames = body.PackageNames
+		} else if body.PackageName != "" && isValidPackageName(body.PackageName) {
+			pkgName = &body.PackageName
+		} else {
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "Valid package_name or non-empty package_names is required for patch_package"})
+			return
+		}
+	}
+
+	host, err := h.hosts.GetByID(r.Context(), body.HostID)
+	if err != nil || host == nil {
+		JSON(w, http.StatusNotFound, map[string]string{"error": "Host not found"})
+		return
+	}
+
+	policy, _ := h.patchPolicies.ResolveEffectivePolicy(r.Context(), body.HostID)
+	runAt := h.patchPolicies.ComputeRunAt(policy)
+	delayMs := time.Until(runAt).Milliseconds()
+	if delayMs < 0 {
+		delayMs = 0
+	}
+	// Dry runs and "submit for approval" runs never delay — dry runs fire
+	// immediately on the host, and pending-approval runs don't fire at all
+	// until someone approves them (delay is computed fresh at approve time).
+	if body.DryRun || body.PendingApproval {
+		delayMs = 0
+	}
+	// Manual schedule override: "immediate" bypasses policy delay
+	if body.ScheduleOverride == "immediate" {
+		delayMs = 0
+	}
+
+	patchRunID := uuid.New().String()
+	jobID := patchRunJobIDPrefix + patchRunID
+	var triggeredBy *string
+	if userID, _ := r.Context().Value(middleware.UserIDKey).(string); userID != "" {
+		triggeredBy = &userID
+	}
+	var scheduledAt *time.Time
+	if delayMs > 0 {
+		scheduledAt = &runAt
+	}
+	// Snapshot the effective policy at trigger time so it can be shown in run details.
+	// Always snapshot even for dry runs: this records the policy that was active at
+	// the time the dry run was triggered, which is useful context for the approver.
+	var policyID, policyNamePtr *string
+	var policySnapshot []byte
+	if policy != nil {
+		policyID = &policy.ID
+		policySnapshot, _ = json.Marshal(map[string]interface{}{
+			"name":             policy.Name,
+			"patch_delay_type": policy.PatchDelayType,
+			"delay_minutes":    policy.DelayMinutes,
+			"fixed_time_utc":   policy.FixedTimeUtc,
+			"timezone":         policy.Timezone,
+		})
+		n := policy.Name
+		policyNamePtr = &n
+	} else {
+		policySnapshot, _ = json.Marshal(map[string]interface{}{
+			"patch_delay_type": "immediate",
+		})
+	}
+	// Pending-approval runs land in their own "pending_approval" status: they
+	// never executed anything on the host (so they're not pending_validation,
+	// which implies an in-flight dry-run), they're just waiting for an
+	// approver to call ApproveRun, which builds the real execution run
+	// (same code path the approve wizard already uses).
+	var createOpts *store.CreateRunOpts
+	if body.PendingApproval {
+		createOpts = &store.CreateRunOpts{InitialStatus: "pending_approval"}
+	}
+	_, err = h.patchRuns.CreateRun(r.Context(), patchRunID, body.HostID, jobID, body.PatchType, pkgName, pkgNames, triggeredBy, body.DryRun, scheduledAt, policyID, policyNamePtr, policySnapshot, createOpts)
+	if err != nil {
+		h.log.Error("patching: create run error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create patch run"})
+		return
+	}
+
+	// Pending-approval runs don't enqueue any work — they sit in the DB
+	// until someone approves them. Short-circuit here.
+	if body.PendingApproval {
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"message":          "Submitted for approval",
+			"patch_run_id":     patchRunID,
+			"job_id":           jobID,
+			"run_at":           runAt.UTC().Format(time.RFC3339),
+			"queued":           false,
+			"pending_approval": true,
+		})
+		return
+	}
+
+	task, err := queue.NewRunPatchTask(queue.RunPatchPayload{
+		HostID:       body.HostID,
+		Host:         r.Header.Get("X-Forwarded-Host"),
+		ApiID:        host.ApiID,
+		PatchRunID:   patchRunID,
+		PatchType:    body.PatchType,
+		PackageName:  pkgName,
+		PackageNames: pkgNames,
+		DryRun:       body.DryRun,
+	})
+	if err != nil {
+		h.log.Error("patching: create task error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Patch queue is not available"})
+		return
+	}
+	opts := []asynq.Option{}
+	if delayMs > 0 {
+		opts = append(opts, asynq.ProcessIn(time.Duration(delayMs)*time.Millisecond))
+	}
+	if _, err := h.queueClient.Enqueue(task, opts...); err != nil {
+		h.log.Error("patching: enqueue error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to queue patch"})
+		return
+	}
+
+	msg := "Patch queued"
+	if body.DryRun {
+		msg = "Dry run queued"
+	} else if delayMs > 0 {
+		msg = "Patch scheduled for " + runAt.UTC().Format(time.RFC3339)
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"message":      msg,
+		"patch_run_id": patchRunID,
+		"job_id":       jobID,
+		"run_at":       runAt.UTC().Format(time.RFC3339),
+		"queued":       true,
+	})
+}
+
+// ListPolicies returns GET /patching/policies.
+func (h *PatchingHandler) ListPolicies(w http.ResponseWriter, r *http.Request) {
+	policies, err := h.patchPolicies.List(r.Context())
+	if err != nil {
+		h.log.Error("patching: policies list error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load policies"})
+		return
+	}
+	// Include counts for assignments and exclusions
+	out := make([]map[string]interface{}, len(policies))
+	for i, p := range policies {
+		assignments, _ := h.assignments.ListByPolicy(r.Context(), p.ID)
+		exclusions, _ := h.exclusions.ListByPolicy(r.Context(), p.ID)
+		out[i] = map[string]interface{}{
+			"id":               p.ID,
+			"name":             p.Name,
+			"description":      p.Description,
+			"patch_delay_type": p.PatchDelayType,
+			"delay_minutes":    p.DelayMinutes,
+			"fixed_time_utc":   p.FixedTimeUtc,
+			"timezone":         p.Timezone,
+			"created_at":       pgTimeToISO(p.CreatedAt),
+			"updated_at":       pgTimeToISO(p.UpdatedAt),
+			"_count":           map[string]int{"assignments": len(assignments), "exclusions": len(exclusions)},
+		}
+	}
+	JSON(w, http.StatusOK, out)
+}
+
+// GetPolicy returns GET /patching/policies/:id.
+func (h *PatchingHandler) GetPolicy(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !isValidPatchUUID(id) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid policy ID"})
+		return
+	}
+	policy, err := h.patchPolicies.GetByID(r.Context(), id)
+	if err != nil || policy == nil {
+		JSON(w, http.StatusNotFound, map[string]string{"error": "Policy not found"})
+		return
+	}
+	assignments, _ := h.assignments.ListByPolicy(r.Context(), id)
+	exclRows, _ := h.exclusions.ListByPolicy(r.Context(), id)
+	exclusions := make([]map[string]interface{}, len(exclRows))
+	for i, e := range exclRows {
+		exclusions[i] = map[string]interface{}{
+			"id":         e.ID,
+			"host_id":    e.HostID,
+			"created_at": pgTimeToISO(e.CreatedAt),
+			"updated_at": pgTimeToISO(e.UpdatedAt),
+			"hosts": map[string]interface{}{
+				"id":            e.HostID,
+				"friendly_name": e.HostFriendlyName,
+				"hostname":      e.HostHostname,
+			},
+		}
+	}
+	assignmentsResp := make([]map[string]interface{}, len(assignments))
+	for i, a := range assignments {
+		assignmentsResp[i] = map[string]interface{}{
+			"id":          a.ID,
+			"target_type": a.TargetType,
+			"target_id":   a.TargetID,
+			"created_at":  pgTimeToISO(a.CreatedAt),
+			"updated_at":  pgTimeToISO(a.UpdatedAt),
+		}
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"id":               policy.ID,
+		"name":             policy.Name,
+		"description":      policy.Description,
+		"patch_delay_type": policy.PatchDelayType,
+		"delay_minutes":    policy.DelayMinutes,
+		"fixed_time_utc":   policy.FixedTimeUtc,
+		"timezone":         policy.Timezone,
+		"created_at":       pgTimeToISO(policy.CreatedAt),
+		"updated_at":       pgTimeToISO(policy.UpdatedAt),
+		"assignments":      assignmentsResp,
+		"exclusions":       exclusions,
+	})
+}
+
+// CreatePolicy handles POST /patching/policies.
+func (h *PatchingHandler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name           string  `json:"name"`
+		Description    string  `json:"description"`
+		PatchDelayType string  `json:"patch_delay_type"`
+		DelayMinutes   *int32  `json:"delay_minutes"`
+		FixedTimeUtc   *string `json:"fixed_time_utc"`
+		Timezone       *string `json:"timezone"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+		return
+	}
+	if body.Name == "" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+	if body.PatchDelayType != "immediate" && body.PatchDelayType != "delayed" && body.PatchDelayType != "fixed_time" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "patch_delay_type must be immediate, delayed, or fixed_time"})
+		return
+	}
+	if body.PatchDelayType == "delayed" && (body.DelayMinutes == nil || *body.DelayMinutes < 0) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "delay_minutes is required for delayed policy"})
+		return
+	}
+	if body.PatchDelayType == "fixed_time" && (body.FixedTimeUtc == nil || *body.FixedTimeUtc == "") {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "fixed_time_utc is required for fixed_time policy"})
+		return
+	}
+
+	id, err := h.patchPolicies.Create(r.Context(), body.Name, body.Description, body.PatchDelayType, body.DelayMinutes, body.FixedTimeUtc, body.Timezone)
+	if err != nil {
+		h.log.Error("patching: create policy error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create policy"})
+		return
+	}
+	policy, _ := h.patchPolicies.GetByID(r.Context(), id)
+	resp := map[string]interface{}{
+		"id":               id,
+		"name":             body.Name,
+		"description":      body.Description,
+		"patch_delay_type": body.PatchDelayType,
+		"delay_minutes":    body.DelayMinutes,
+		"fixed_time_utc":   body.FixedTimeUtc,
+		"timezone":         body.Timezone,
+		"created_at":       time.Now().UTC().Format(time.RFC3339),
+		"updated_at":       time.Now().UTC().Format(time.RFC3339),
+	}
+	if policy != nil {
+		resp["created_at"] = pgTimeToISO(policy.CreatedAt)
+		resp["updated_at"] = pgTimeToISO(policy.UpdatedAt)
+	}
+	JSON(w, http.StatusCreated, resp)
+}
+
+// UpdatePolicy handles PUT /patching/policies/:id.
+func (h *PatchingHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !isValidPatchUUID(id) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid policy ID"})
+		return
+	}
+	var body struct {
+		Name           string  `json:"name"`
+		Description    string  `json:"description"`
+		PatchDelayType string  `json:"patch_delay_type"`
+		DelayMinutes   *int32  `json:"delay_minutes"`
+		FixedTimeUtc   *string `json:"fixed_time_utc"`
+		Timezone       *string `json:"timezone"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+		return
+	}
+	if body.Name == "" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+	if body.PatchDelayType != "immediate" && body.PatchDelayType != "delayed" && body.PatchDelayType != "fixed_time" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "patch_delay_type must be immediate, delayed, or fixed_time"})
+		return
+	}
+	if body.PatchDelayType == "delayed" && (body.DelayMinutes == nil || *body.DelayMinutes < 0) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "delay_minutes is required for delayed policy"})
+		return
+	}
+	if body.PatchDelayType == "fixed_time" && (body.FixedTimeUtc == nil || *body.FixedTimeUtc == "") {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "fixed_time_utc is required for fixed_time policy"})
+		return
+	}
+
+	if err := h.patchPolicies.Update(r.Context(), id, body.Name, body.Description, body.PatchDelayType, body.DelayMinutes, body.FixedTimeUtc, body.Timezone); err != nil {
+		h.log.Error("patching: update policy error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to update policy"})
+		return
+	}
+	policy, _ := h.patchPolicies.GetByID(r.Context(), id)
+	resp := map[string]interface{}{
+		"id":               id,
+		"name":             body.Name,
+		"description":      body.Description,
+		"patch_delay_type": body.PatchDelayType,
+		"delay_minutes":    body.DelayMinutes,
+		"fixed_time_utc":   body.FixedTimeUtc,
+		"timezone":         body.Timezone,
+	}
+	if policy != nil {
+		resp["created_at"] = pgTimeToISO(policy.CreatedAt)
+		resp["updated_at"] = pgTimeToISO(policy.UpdatedAt)
+	}
+	JSON(w, http.StatusOK, resp)
+}
+
+// DeletePolicy handles DELETE /patching/policies/:id.
+func (h *PatchingHandler) DeletePolicy(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !isValidPatchUUID(id) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid policy ID"})
+		return
+	}
+	if err := h.patchPolicies.Delete(r.Context(), id); err != nil {
+		h.log.Error("patching: delete policy error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to delete policy"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListPolicyAssignments returns GET /patching/policies/:id/assignments.
+func (h *PatchingHandler) ListPolicyAssignments(w http.ResponseWriter, r *http.Request) {
+	policyID := chi.URLParam(r, "id")
+	if !isValidPatchUUID(policyID) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid policy ID"})
+		return
+	}
+	assignments, err := h.assignments.ListByPolicy(r.Context(), policyID)
+	if err != nil {
+		h.log.Error("patching: list assignments error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load assignments"})
+		return
+	}
+	out := make([]map[string]interface{}, len(assignments))
+	for i, a := range assignments {
+		out[i] = map[string]interface{}{
+			"id":          a.ID,
+			"target_type": a.TargetType,
+			"target_id":   a.TargetID,
+			"created_at":  pgTimeToISO(a.CreatedAt),
+			"updated_at":  pgTimeToISO(a.UpdatedAt),
+		}
+	}
+	JSON(w, http.StatusOK, out)
+}
+
+// AddPolicyAssignment handles POST /patching/policies/:id/assignments.
+func (h *PatchingHandler) AddPolicyAssignment(w http.ResponseWriter, r *http.Request) {
+	policyID := chi.URLParam(r, "id")
+	if !isValidPatchUUID(policyID) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid policy ID"})
+		return
+	}
+	var body struct {
+		TargetType string `json:"target_type"`
+		TargetID   string `json:"target_id"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+		return
+	}
+	if body.TargetType != "host" && body.TargetType != "host_group" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "target_type must be host or host_group"})
+		return
+	}
+	if body.TargetID == "" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "target_id is required"})
+		return
+	}
+	id, err := h.assignments.Create(r.Context(), policyID, body.TargetType, body.TargetID)
+	if err != nil {
+		h.log.Error("patching: add assignment error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to add assignment"})
+		return
+	}
+	a, _ := h.assignments.GetByID(r.Context(), id)
+	resp := map[string]interface{}{
+		"id":          id,
+		"target_type": body.TargetType,
+		"target_id":   body.TargetID,
+	}
+	if a != nil {
+		resp["created_at"] = pgTimeToISO(a.CreatedAt)
+		resp["updated_at"] = pgTimeToISO(a.UpdatedAt)
+	}
+	JSON(w, http.StatusCreated, resp)
+}
+
+// RemovePolicyAssignment handles DELETE /patching/policies/:id/assignments/:assignmentId.
+func (h *PatchingHandler) RemovePolicyAssignment(w http.ResponseWriter, r *http.Request) {
+	policyID := chi.URLParam(r, "id")
+	assignmentID := chi.URLParam(r, "assignmentId")
+	if !isValidPatchUUID(policyID) || !isValidPatchUUID(assignmentID) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid ID"})
+		return
+	}
+	a, _ := h.assignments.GetByID(r.Context(), assignmentID)
+	if a == nil || a.PatchPolicyID != policyID {
+		JSON(w, http.StatusNotFound, map[string]string{"error": "Assignment not found"})
+		return
+	}
+	if err := h.assignments.Delete(r.Context(), assignmentID); err != nil {
+		h.log.Error("patching: remove assignment error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to remove assignment"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AddPolicyExclusion handles POST /patching/policies/:id/exclusions.
+func (h *PatchingHandler) AddPolicyExclusion(w http.ResponseWriter, r *http.Request) {
+	policyID := chi.URLParam(r, "id")
+	if !isValidPatchUUID(policyID) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid policy ID"})
+		return
+	}
+	var body struct {
+		HostID string `json:"host_id"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+		return
+	}
+	if body.HostID == "" || !isValidPatchUUID(body.HostID) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Valid host_id is required"})
+		return
+	}
+	id, err := h.exclusions.Create(r.Context(), policyID, body.HostID)
+	if err != nil {
+		h.log.Error("patching: add exclusion error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to add exclusion"})
+		return
+	}
+	JSON(w, http.StatusCreated, map[string]interface{}{
+		"id":         id,
+		"host_id":    body.HostID,
+		"created_at": time.Now().UTC().Format(time.RFC3339),
+		"updated_at": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// RemovePolicyExclusion handles DELETE /patching/policies/:id/exclusions/:hostId.
+func (h *PatchingHandler) RemovePolicyExclusion(w http.ResponseWriter, r *http.Request) {
+	policyID := chi.URLParam(r, "id")
+	hostID := chi.URLParam(r, "hostId")
+	if !isValidPatchUUID(policyID) || !isValidPatchUUID(hostID) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid ID"})
+		return
+	}
+	if err := h.exclusions.Delete(r.Context(), policyID, hostID); err != nil {
+		h.log.Error("patching: remove exclusion error", "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to remove exclusion"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func pgTimeToISO(t pgtype.Timestamp) string {
+	if t.Valid {
+		return t.Time.UTC().Format(time.RFC3339)
+	}
+	return ""
+}
+
+func patchRunToResponse(r *db.GetPatchRunByIDRow) map[string]interface{} {
+	m := map[string]interface{}{
+		"id":                    r.ID,
+		"host_id":               r.HostID,
+		"job_id":                r.JobID,
+		"patch_type":            r.PatchType,
+		"package_name":          r.PackageName,
+		"status":                r.Status,
+		"shell_output":          r.ShellOutput,
+		"error_message":         r.ErrorMessage,
+		"started_at":            pgTimeToISO(r.StartedAt),
+		"completed_at":          pgTimeToISO(r.CompletedAt),
+		"scheduled_at":          pgTimeToISO(r.ScheduledAt),
+		"created_at":            pgTimeToISO(r.CreatedAt),
+		"updated_at":            pgTimeToISO(r.UpdatedAt),
+		"triggered_by_username": r.TriggeredByUsername,
+		"approved_by_username":  r.ApprovedByUsername,
+		"dry_run":               r.DryRun,
+		"validation_run_id":     r.ValidationRunID,
+		"policy_id":             r.PolicyID,
+		"policy_name":           r.PolicyName,
+	}
+	if len(r.PolicySnapshot) > 0 {
+		var snap map[string]interface{}
+		if json.Unmarshal(r.PolicySnapshot, &snap) == nil {
+			m["policy_snapshot"] = snap
+		}
+	}
+	if len(r.PackageNames) > 0 {
+		var names []string
+		_ = json.Unmarshal(r.PackageNames, &names)
+		m["package_names"] = names
+	}
+	if len(r.PackagesAffected) > 0 {
+		var pkgs []string
+		_ = json.Unmarshal(r.PackagesAffected, &pkgs)
+		m["packages_affected"] = pkgs
+	}
+	m["hosts"] = map[string]interface{}{
+		"id":            r.HostID,
+		"friendly_name": r.HostFriendlyName,
+		"hostname":      r.HostHostname,
+	}
+	return m
+}
+
+func patchRunsToResponse(rows []db.ListRecentPatchRunsRow) []map[string]interface{} {
+	out := make([]map[string]interface{}, len(rows))
+	for i, r := range rows {
+		m := patchRunRowToMap(r.ID, r.HostID, r.JobID, r.PatchType, r.PackageName, r.PackageNames, r.Status, r.ShellOutput, r.ErrorMessage, r.StartedAt, r.CompletedAt, r.ScheduledAt, r.CreatedAt, r.UpdatedAt, r.HostFriendlyName, r.HostHostname, r.TriggeredByUsername)
+		m["dry_run"] = r.DryRun
+		if len(r.PackagesAffected) > 0 {
+			var pkgs []string
+			_ = json.Unmarshal(r.PackagesAffected, &pkgs)
+			m["packages_affected"] = pkgs
+		}
+		out[i] = m
+	}
+	return out
+}
+
+func patchRunsActiveToResponse(rows []db.ListActivePatchRunsRow) []map[string]interface{} {
+	out := make([]map[string]interface{}, len(rows))
+	for i, r := range rows {
+		m := patchRunRowToMap(r.ID, r.HostID, r.JobID, r.PatchType, r.PackageName, r.PackageNames, r.Status, r.ShellOutput, r.ErrorMessage, r.StartedAt, r.CompletedAt, r.ScheduledAt, r.CreatedAt, r.UpdatedAt, r.HostFriendlyName, r.HostHostname, r.TriggeredByUsername)
+		m["dry_run"] = r.DryRun
+		if len(r.PackagesAffected) > 0 {
+			var pkgs []string
+			_ = json.Unmarshal(r.PackagesAffected, &pkgs)
+			m["packages_affected"] = pkgs
+		}
+		out[i] = m
+	}
+	return out
+}
+
+func patchRunsListToResponse(rows []db.ListPatchRunsRow) []map[string]interface{} {
+	out := make([]map[string]interface{}, len(rows))
+	for i, r := range rows {
+		m := patchRunRowToMap(r.ID, r.HostID, r.JobID, r.PatchType, r.PackageName, r.PackageNames, r.Status, r.ShellOutput, r.ErrorMessage, r.StartedAt, r.CompletedAt, r.ScheduledAt, r.CreatedAt, r.UpdatedAt, r.HostFriendlyName, r.HostHostname, r.TriggeredByUsername)
+		m["dry_run"] = r.DryRun
+		m["validation_run_id"] = r.ValidationRunID
+		if len(r.PackagesAffected) > 0 {
+			var pkgs []string
+			_ = json.Unmarshal(r.PackagesAffected, &pkgs)
+			m["packages_affected"] = pkgs
+		}
+		out[i] = m
+	}
+	return out
+}
+
+func patchRunRowToMap(id, hostID, jobID, patchType string, pkgName *string, pkgNames []byte, status, shellOutput string, errMsg *string, startedAt, completedAt, scheduledAt pgtype.Timestamp, createdAt, updatedAt pgtype.Timestamp, hostFriendly, hostHostname, triggeredByUsername *string) map[string]interface{} {
+	m := map[string]interface{}{
+		"id":                    id,
+		"host_id":               hostID,
+		"job_id":                jobID,
+		"patch_type":            patchType,
+		"package_name":          pkgName,
+		"status":                status,
+		"shell_output":          shellOutput,
+		"error_message":         errMsg,
+		"started_at":            pgTimeToISO(startedAt),
+		"completed_at":          pgTimeToISO(completedAt),
+		"scheduled_at":          pgTimeToISO(scheduledAt),
+		"created_at":            pgTimeToISO(createdAt),
+		"updated_at":            pgTimeToISO(updatedAt),
+		"triggered_by_username": triggeredByUsername,
+		"hosts": map[string]interface{}{
+			"id":            hostID,
+			"friendly_name": hostFriendly,
+			"hostname":      hostHostname,
+		},
+	}
+	if len(pkgNames) > 0 {
+		var names []string
+		_ = json.Unmarshal(pkgNames, &names)
+		m["package_names"] = names
+	}
+	return m
+}

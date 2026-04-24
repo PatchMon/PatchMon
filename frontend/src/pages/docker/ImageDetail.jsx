@@ -78,7 +78,7 @@ const ImageDetail = () => {
 							<h1 className="text-2xl font-bold text-secondary-900 dark:text-white">
 								{image.repository}:{image.tag}
 							</h1>
-							<p className="mt-1 text-sm text-secondary-600 dark:text-secondary-400">
+							<p className="mt-1 text-sm text-secondary-600 dark:text-white">
 								Image ID: {image.image_id.substring(0, 12)}
 							</p>
 						</div>
@@ -201,7 +201,7 @@ const ImageDetail = () => {
 											{digestInfo &&
 												digestInfo.method === "digest_comparison" && (
 													<div className="mt-2 pt-2 border-t border-yellow-200 dark:border-yellow-700">
-														<p className="text-xs text-secondary-600 dark:text-secondary-400 mb-1">
+														<p className="text-xs text-secondary-600 dark:text-white mb-1">
 															Detected via digest comparison:
 														</p>
 														<div className="font-mono text-xs space-y-1">
@@ -235,7 +235,7 @@ const ImageDetail = () => {
 				<div className="px-6 py-5 space-y-6">
 					<div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Repository
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -243,7 +243,7 @@ const ImageDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Tag
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -251,7 +251,7 @@ const ImageDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Source
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -259,7 +259,7 @@ const ImageDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Created
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -269,7 +269,7 @@ const ImageDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Image ID
 							</dt>
 							<dd className="mt-1 text-sm font-mono text-secondary-900 dark:text-white">
@@ -277,7 +277,7 @@ const ImageDetail = () => {
 							</dd>
 						</div>
 						<div>
-							<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Last Checked
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -288,7 +288,7 @@ const ImageDetail = () => {
 						</div>
 						{image.digest && (
 							<div className="sm:col-span-2">
-								<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+								<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 									Digest
 								</dt>
 								<dd className="mt-1 text-sm font-mono text-secondary-900 dark:text-white break-all">
@@ -313,25 +313,25 @@ const ImageDetail = () => {
 							<tr>
 								<th
 									scope="col"
-									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 								>
 									Container Name
 								</th>
 								<th
 									scope="col"
-									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 								>
 									Status
 								</th>
 								<th
 									scope="col"
-									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 								>
 									Host
 								</th>
 								<th
 									scope="col"
-									className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+									className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 								>
 									Actions
 								</th>
@@ -349,7 +349,7 @@ const ImageDetail = () => {
 										</Link>
 									</td>
 									<td className="px-6 py-4 whitespace-nowrap">
-										<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
+										<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
 											{container.status}
 										</span>
 									</td>
@@ -385,19 +385,19 @@ const ImageDetail = () => {
 							<tr>
 								<th
 									scope="col"
-									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 								>
 									Host Name
 								</th>
 								<th
 									scope="col"
-									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 								>
 									IP Address
 								</th>
 								<th
 									scope="col"
-									className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase tracking-wider"
+									className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 								>
 									Actions
 								</th>

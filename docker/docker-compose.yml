@@ -1,9 +1,12 @@
 # =============================================================================
 # PatchMon Docker Compose - Production
 # =============================================================================
-# Before starting, copy env.example to .env and fill in your values:
+# To set up your environment, run the setup script:
 #
-#   cp env.example .env
+#   curl -fsSL https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/setup-env.sh | bash
+#
+# This will download env.example, generate secrets, and create your .env file.
+# Alternatively, copy env.example to .env and fill in the values manually.
 #
 # Then start PatchMon:
 #
@@ -15,19 +18,38 @@
 name: patchmon
 
 services:
+
+  server:
+    image: ghcr.io/patchmon/patchmon-server:latest
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3000:3000"
+    networks:
+      - patchmon-internal
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      guacd:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  
   database:
     image: postgres:17-alpine
     restart: unless-stopped
-    environment:
-      POSTGRES_DB: patchmon_db
-      POSTGRES_USER: patchmon_user
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    env_file: .env
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - patchmon-internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U patchmon_user -d patchmon_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 3s
       timeout: 5s
       retries: 7
@@ -40,10 +62,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    # Simple Redis configuration - no memory limits to prevent OOM errors
-    # If you need memory limits, set maxmemory-policy to 'allkeys-lru' instead of 'noeviction'
-    # to allow eviction rather than rejecting commands
-    # Debug logging: Use --loglevel debug for maximum verbosity, or --loglevel verbose for less output
+    env_file: .env
     command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
@@ -60,46 +79,26 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  backend:
-    image: ghcr.io/patchmon/patchmon-backend:latest
+  guacd:
+    image: guacamole/guacd:1.5.5
     restart: unless-stopped
-    env_file: .env
-    environment:
-      # Internal Docker wiring - do not change
-      DATABASE_URL: postgresql://patchmon_user:${POSTGRES_PASSWORD}@database:5432/patchmon_db
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      REDIS_DB: 0
-      ASSETS_DIR: /app/assets
-    volumes:
-      - agent_files:/app/agents
-      - branding_assets:/app/assets
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    cpus: '1.0'
     networks:
       - patchmon-internal
-    depends_on:
-      database:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  frontend:
-    image: ghcr.io/patchmon/patchmon-frontend:latest
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    volumes:
-      - branding_assets:/usr/share/nginx/html/assets
-    networks:
-      - patchmon-internal
-    depends_on:
-      backend:
-        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 4822 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     logging:
       driver: "json-file"
       options:
@@ -109,8 +108,6 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  agent_files:
-  branding_assets:
 
 networks:
   patchmon-internal:

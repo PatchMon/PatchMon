@@ -23,9 +23,12 @@ class ErrorBoundary extends Component {
 	}
 
 	componentDidCatch(error, errorInfo) {
-		// Log error to console (in production, you'd send to error tracking service)
+		// Log error to console for debugging (in production, send to error tracking service like Sentry)
 		console.error("ErrorBoundary caught an error:", error);
 		console.error("Error info:", errorInfo);
+		if (errorInfo?.componentStack) {
+			console.error("Component stack:", errorInfo.componentStack);
+		}
 
 		this.setState({ errorInfo });
 
@@ -84,7 +87,7 @@ class ErrorBoundary extends Component {
 									<h1 className="text-2xl font-bold text-secondary-900 dark:text-white mb-2">
 										Something went wrong
 									</h1>
-									<p className="text-secondary-600 dark:text-secondary-300">
+									<p className="text-secondary-600 dark:text-white">
 										An unexpected error occurred. Our team has been notified and
 										is working on a fix.
 									</p>

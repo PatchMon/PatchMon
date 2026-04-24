@@ -189,7 +189,7 @@ const InlineGroupEdit = ({
 												: ""
 										}`}
 									>
-										<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary-100 text-secondary-800">
+										<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800">
 											Ungrouped
 										</span>
 									</button>
@@ -208,7 +208,7 @@ const InlineGroupEdit = ({
 											}`}
 										>
 											<span
-												className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-white"
+												className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium text-white"
 												style={{ backgroundColor: option.color }}
 											>
 												{option.name}
@@ -250,7 +250,7 @@ const InlineGroupEdit = ({
 	return (
 		<div className={`flex items-center gap-2 group ${className}`}>
 			<span
-				className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${displayColor}`}
+				className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium ${displayColor}`}
 				style={value ? { backgroundColor: selectedOption?.color } : {}}
 			>
 				{displayValue}

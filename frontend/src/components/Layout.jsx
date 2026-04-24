@@ -2,53 +2,75 @@ import { useQuery } from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	BookOpen,
+	ChevronDown,
 	ChevronLeft,
 	ChevronRight,
 	Clock,
 	Container,
+	CreditCard,
 	GitBranch,
 	Github,
 	Globe,
-	Home,
+	LayoutDashboard,
 	LogOut,
-	Mail,
 	Menu,
 	Package,
 	Plus,
 	RefreshCw,
-	Route,
 	Server,
 	Settings,
 	Shield,
 	Star,
 	UserCircle,
+	Wrench,
 	X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { FaLinkedin, FaYoutube } from "react-icons/fa";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
 import { useColorTheme } from "../contexts/ColorThemeContext";
+import { useSettings } from "../contexts/SettingsContext";
 import SidebarContext from "../contexts/SidebarContext";
 import { useUpdateNotification } from "../contexts/UpdateNotificationContext";
 import { alertsAPI, dashboardAPI, settingsAPI, versionAPI } from "../utils/api";
+import { isRenderableAvatarSrc } from "../utils/avatar";
+import { resolveLogoPath } from "../utils/logoPaths";
+import { prefetchRoute } from "../utils/routePrefetch";
+import BuyMeACoffeeIcon from "./BuyMeACoffeeIcon";
+import { useCommunityLinks } from "./CommunityLinks";
 import DiscordIcon from "./DiscordIcon";
+import DonateModal from "./DonateModal";
 import GlobalSearch from "./GlobalSearch";
 import Logo from "./Logo";
 import ReleaseNotesModal from "./ReleaseNotesModal";
+import TierBadge from "./TierBadge";
 import UpgradeNotificationIcon from "./UpgradeNotificationIcon";
 
 const Layout = ({ children }) => {
+	// When used as a layout route, render Outlet; otherwise render children (backwards compat)
+	const content = children ?? <Outlet />;
 	const [sidebarOpen, setSidebarOpen] = useState(false);
-	const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-		// Load sidebar state from localStorage, default to false
+	// Pinned collapsed state — the user's explicit choice via the toggle button.
+	// Persisted to localStorage. Hover behavior only applies when pinned-collapsed.
+	const [pinnedCollapsed, setPinnedCollapsed] = useState(() => {
 		const saved = localStorage.getItem("sidebarCollapsed");
 		return saved ? JSON.parse(saved) : false;
 	});
-	const [_githubStars, _setGithubStars] = useState(null);
+	// Ephemeral hover state that temporarily expands the sidebar when pinned-collapsed.
+	const [isSidebarHovered, setIsSidebarHovered] = useState(false);
+	// Effective collapsed state: only collapsed when pinned AND not currently hovered.
+	const sidebarCollapsed = pinnedCollapsed && !isSidebarHovered;
+	// Keep the external API stable for context consumers (SshTerminal, etc.): the
+	// setter always mutates the pinned state, not the ephemeral hover state.
+	const setSidebarCollapsed = setPinnedCollapsed;
+	const { links: communityLinks } = useCommunityLinks();
 	const [_userMenuOpen, setUserMenuOpen] = useState(false);
 	const [mobileLinksOpen, setMobileLinksOpen] = useState(false);
 	const [showReleaseNotes, setShowReleaseNotes] = useState(false);
+	const [showDonateModal, setShowDonateModal] = useState(false);
+	const [expandedNav, setExpandedNav] = useState(null);
 	const location = useLocation();
 	const navigate = useNavigate();
 	const {
@@ -63,10 +85,14 @@ const Layout = ({ children }) => {
 		canViewReports,
 		canExportData,
 		canManageSettings,
+		hasModule,
+		hasPermission,
 	} = useAuth();
+	const { settings: publicSettings } = useSettings();
+	const canManageBilling =
+		publicSettings?.admin_mode === true && hasPermission("can_manage_billing");
 	const { updateAvailable } = useUpdateNotification();
 	const { themeConfig } = useColorTheme();
-	const bgCanvasRef = useRef(null);
 	const userMenuRef = useRef(null);
 
 	// Fetch dashboard stats for the "Last updated" info
@@ -81,10 +107,10 @@ const Layout = ({ children }) => {
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
 
-	// Fetch settings for favicon and alerts_enabled
+	// Fetch settings for favicon, logos, and alerts_enabled (public endpoint works for all users)
 	const { data: settings } = useQuery({
-		queryKey: ["settings"],
-		queryFn: () => settingsAPI.get().then((res) => res.data),
+		queryKey: ["settings", "public"],
+		queryFn: () => settingsAPI.getPublic().then((res) => res.data),
 	});
 
 	// Fetch version info
@@ -210,16 +236,16 @@ const Layout = ({ children }) => {
 
 		// Dashboard - only show if user can view dashboard
 		if (canViewDashboard()) {
-			nav.push({ name: "Dashboard", href: "/", icon: Home });
+			nav.push({ name: "Dashboard", href: "/", icon: LayoutDashboard });
 		}
 
-		// Inventory section - only show if user has any inventory permissions
-		if (canViewHosts() || canViewPackages() || canViewReports()) {
-			const inventoryItems = [];
+		// Assets section
+		if (canViewHosts() || canViewPackages()) {
+			const assetItems = [];
 
 			if (canViewHosts()) {
-				inventoryItems.push({ name: "Hosts", href: "/hosts", icon: Server });
-				inventoryItems.push({
+				assetItems.push({ name: "Hosts", href: "/hosts", icon: Server });
+				assetItems.push({
 					name: "Repos",
 					href: "/repositories",
 					icon: GitBranch,
@@ -227,68 +253,152 @@ const Layout = ({ children }) => {
 			}
 
 			if (canViewPackages()) {
-				inventoryItems.push({
+				assetItems.push({
 					name: "Packages",
 					href: "/packages",
 					icon: Package,
 				});
 			}
 
+			if (assetItems.length > 0) {
+				nav.push({
+					section: "ASSETS",
+					items: assetItems,
+				});
+			}
+		}
+
+		// Operations section
+		if (canViewHosts() || canViewReports()) {
+			const opsItems = [];
+
+			// Patching is a Plus-tier feature (module key: "patching"). Sub-tab
+			// "Policies" additionally requires the patching_policies module.
+			// Locked items stay visible with a TierBadge so users can discover
+			// and upgrade; the route renders an upgrade screen via <ModuleGate>.
+			if (canViewHosts()) {
+				const patchingLocked = !hasModule("patching");
+				const policiesLocked = !hasModule("patching_policies");
+				const patchingChildren = [
+					{ name: "Overview", href: "/patching?tab=overview" },
+					{ name: "Runs & History", href: "/patching?tab=runs" },
+					{
+						name: "Policies",
+						href: "/patching?tab=policies",
+						lockedModule: policiesLocked ? "patching_policies" : null,
+						lockedTier: policiesLocked
+							? getRequiredTier("patching_policies")
+							: null,
+					},
+				];
+				opsItems.push({
+					name: "Patching",
+					href: "/patching",
+					icon: Wrench,
+					new: !patchingLocked,
+					lockedModule: patchingLocked ? "patching" : null,
+					lockedTier: patchingLocked ? getRequiredTier("patching") : null,
+					children: patchingChildren,
+				});
+			}
+
+			// Compliance is a Max-tier feature (module key: "compliance").
+			if (canViewReports()) {
+				const complianceLocked = !hasModule("compliance");
+				opsItems.push({
+					name: "Compliance",
+					href: "/compliance",
+					icon: Shield,
+					lockedModule: complianceLocked ? "compliance" : null,
+					lockedTier: complianceLocked ? getRequiredTier("compliance") : null,
+					children: [
+						{ name: "Overview", href: "/compliance?tab=overview" },
+						{ name: "Hosts", href: "/compliance?tab=hosts" },
+						{ name: "Scan Results", href: "/compliance?tab=scan-results" },
+						{ name: "History", href: "/compliance?tab=history" },
+						{ name: "Settings", href: "/compliance?tab=settings" },
+					],
+				});
+			}
+
 			if (canViewReports() && settings?.alerts_enabled !== false) {
-				inventoryItems.push({
+				// "Alert Lifecycle" uses /alerts/config endpoints (advanced alert tuning),
+				// which require the alerts_advanced module (Plus tier).
+				const alertLifecycleLocked = !hasModule("alerts_advanced");
+				const reportingChildren = [
+					{ name: "Overview", href: "/reporting?tab=overview" },
+					{ name: "Alerts", href: "/reporting?tab=alerts" },
+					{
+						name: "Alert Lifecycle",
+						href: "/reporting?tab=alert-settings",
+						lockedModule: alertLifecycleLocked ? "alerts_advanced" : null,
+						lockedTier: alertLifecycleLocked
+							? getRequiredTier("alerts_advanced")
+							: null,
+					},
+					{ name: "Destinations", href: "/reporting?tab=destinations" },
+					{ name: "Event Rules", href: "/reporting?tab=rules" },
+					{ name: "Scheduled Reports", href: "/reporting?tab=reports" },
+					{ name: "Delivery Log", href: "/reporting?tab=log" },
+				];
+				opsItems.push({
 					name: "Reporting",
 					href: "/reporting",
 					icon: AlertTriangle,
+					new: true,
+					children: reportingChildren,
 				});
 			}
 
-			if (inventoryItems.length > 0) {
-				nav.push({
-					section: "INVENTORY",
-					items: inventoryItems,
-				});
-			}
-		}
-
-		// Integrations section
-		if (canViewHosts() || canViewPackages() || canViewReports()) {
-			const integrationsItems = [];
-
-			// Add Compliance item (available to all users with inventory access)
-			integrationsItems.push({
-				name: "Compliance",
-				href: "/compliance",
-				icon: Shield,
-				beta: true,
-			});
-
+			// Docker container monitoring is a Plus-tier feature (module key: "docker").
 			if (canViewReports()) {
-				integrationsItems.push({
+				const dockerLocked = !hasModule("docker");
+				opsItems.push({
 					name: "Docker",
 					href: "/docker",
 					icon: Container,
-					beta: true,
+					beta: !dockerLocked,
+					lockedModule: dockerLocked ? "docker" : null,
+					lockedTier: dockerLocked ? getRequiredTier("docker") : null,
+					children: [
+						{ name: "Stacks", href: "/docker?tab=stacks" },
+						{ name: "Containers", href: "/docker?tab=containers" },
+						{ name: "Images", href: "/docker?tab=images" },
+						{ name: "Volumes", href: "/docker?tab=volumes" },
+						{ name: "Networks", href: "/docker?tab=networks" },
+						{ name: "Hosts", href: "/docker?tab=hosts" },
+					],
 				});
 			}
 
-			if (integrationsItems.length > 0) {
+			if (opsItems.length > 0) {
 				nav.push({
-					section: "INTEGRATIONS",
-					items: integrationsItems,
+					section: "OPERATIONS",
+					items: opsItems,
 				});
 			}
 		}
 
-		// Server section
+		// System section
 		if (canViewHosts() || canViewPackages() || canViewReports()) {
-			const serverItems = [];
+			const systemItems = [];
 
-			// Add Automation item (available to all users with inventory access)
-			serverItems.push({
+			systemItems.push({
 				name: "Automation",
 				href: "/automation",
 				icon: RefreshCw,
 			});
+
+			// Billing — double-gated: only on cloud installs (admin_mode === true)
+			// AND only for users with can_manage_billing permission. On self-hosted
+			// installs (admin_mode === false) this item stays hidden entirely.
+			if (canManageBilling) {
+				systemItems.push({
+					name: "Billing",
+					href: "/billing",
+					icon: CreditCard,
+				});
+			}
 
 			if (
 				canManageSettings() ||
@@ -297,7 +407,7 @@ const Layout = ({ children }) => {
 				canViewReports() ||
 				canExportData()
 			) {
-				serverItems.push({
+				systemItems.push({
 					name: "Settings",
 					href: "/settings/users",
 					icon: Settings,
@@ -305,10 +415,25 @@ const Layout = ({ children }) => {
 				});
 			}
 
-			if (serverItems.length > 0) {
+			const sidebarLinkIds = ["roadmap", "docs", "email", "website", "billing"];
+			const linkChildren = communityLinks
+				.filter((l) => sidebarLinkIds.includes(l.id))
+				.map((l) => ({
+					name: l.label,
+					href: l.url,
+					external: true,
+				}));
+			systemItems.push({
+				name: "Links",
+				href: "#links",
+				icon: BookOpen,
+				children: linkChildren,
+			});
+
+			if (systemItems.length > 0) {
 				nav.push({
-					section: "SERVER",
-					items: serverItems,
+					section: "SYSTEM",
+					items: systemItems,
 				});
 			}
 		}
@@ -317,10 +442,44 @@ const Layout = ({ children }) => {
 	};
 
 	const navigation = buildNavigation();
+	// Settings sub-nav is in SettingsLayout; main Layout sidebar has no settings sub-nav
+	const settingsNavigation = [];
 
 	const isActive = (path) =>
 		location.pathname === path ||
 		(path !== "/" && location.pathname.startsWith(`${path}/`));
+
+	// Auto-expand the nav item matching the current path on navigation
+	const prevPathnameRef = useRef(location.pathname);
+	useEffect(() => {
+		const path = location.pathname;
+		const prevPath = prevPathnameRef.current;
+		prevPathnameRef.current = path;
+
+		// Only auto-expand when navigating to a different base path
+		if (path === prevPath) return;
+
+		// Find which expandable item matches the new path
+		let matched = null;
+		for (const item of navigation) {
+			if (item.items) {
+				for (const sub of item.items) {
+					if (
+						sub.children &&
+						(path === sub.href ||
+							(sub.href !== "/" && path.startsWith(`${sub.href}/`)))
+					) {
+						matched = sub.name;
+						break;
+					}
+				}
+			}
+			if (matched) break;
+		}
+
+		// Expand the matched item, or collapse if navigating to an unrelated page
+		setExpandedNav(matched);
+	}, [location.pathname, navigation]);
 
 	// Get page title based on current route
 	const getPageTitle = () => {
@@ -336,6 +495,8 @@ const Layout = ({ children }) => {
 		if (path === "/docker") return "Docker";
 		if (path === "/pro-action") return "Pro-Action";
 		if (path === "/automation") return "Automation";
+		if (path === "/patching" || path.startsWith("/patching/"))
+			return "Patching";
 		if (path === "/compliance" || path.startsWith("/compliance/"))
 			return "Compliance";
 		if (path === "/users") return "Users";
@@ -360,125 +521,6 @@ const Layout = ({ children }) => {
 		navigate("/hosts?action=add");
 	};
 
-	// Generate clean radial gradient background with subtle triangular accents for dark mode
-	useEffect(() => {
-		const generateBackground = () => {
-			if (
-				!bgCanvasRef.current ||
-				!themeConfig?.login ||
-				!document.documentElement.classList.contains("dark")
-			) {
-				return;
-			}
-
-			const canvas = bgCanvasRef.current;
-			canvas.width = window.innerWidth;
-			canvas.height = window.innerHeight;
-			const ctx = canvas.getContext("2d");
-
-			// Get theme colors - pick first color from each palette
-			const xColors = themeConfig.login.xColors || [
-				"#667eea",
-				"#764ba2",
-				"#f093fb",
-				"#4facfe",
-			];
-			const yColors = themeConfig.login.yColors || [
-				"#667eea",
-				"#764ba2",
-				"#f093fb",
-				"#4facfe",
-			];
-
-			// Use date for daily color rotation
-			const today = new Date();
-			const seed =
-				today.getFullYear() * 10000 + today.getMonth() * 100 + today.getDate();
-			const random = (s) => {
-				const x = Math.sin(s) * 10000;
-				return x - Math.floor(x);
-			};
-
-			const color1 = xColors[Math.floor(random(seed) * xColors.length)];
-			const color2 = yColors[Math.floor(random(seed + 1000) * yColors.length)];
-
-			// Create clean radial gradient from center to bottom-right corner
-			const gradient = ctx.createRadialGradient(
-				canvas.width * 0.3, // Center slightly left
-				canvas.height * 0.3, // Center slightly up
-				0,
-				canvas.width * 0.5, // Expand to cover screen
-				canvas.height * 0.5,
-				Math.max(canvas.width, canvas.height) * 1.2,
-			);
-
-			// Subtle gradient with darker corners
-			gradient.addColorStop(0, color1);
-			gradient.addColorStop(0.6, color2);
-			gradient.addColorStop(1, "#0a0a0a"); // Very dark edges
-
-			ctx.fillStyle = gradient;
-			ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-			// Add subtle triangular shapes as accents across entire background
-			const cellSize = 180;
-			const cols = Math.ceil(canvas.width / cellSize) + 1;
-			const rows = Math.ceil(canvas.height / cellSize) + 1;
-
-			for (let y = 0; y < rows; y++) {
-				for (let x = 0; x < cols; x++) {
-					const idx = y * cols + x;
-					// Draw more triangles (less sparse)
-					if (random(seed + idx + 5000) > 0.4) {
-						const baseX =
-							x * cellSize + random(seed + idx * 3) * cellSize * 0.8;
-						const baseY =
-							y * cellSize + random(seed + idx * 3 + 100) * cellSize * 0.8;
-						const size = 50 + random(seed + idx * 4) * 100;
-
-						ctx.beginPath();
-						ctx.moveTo(baseX, baseY);
-						ctx.lineTo(baseX + size, baseY);
-						ctx.lineTo(baseX + size / 2, baseY - size * 0.866);
-						ctx.closePath();
-
-						// More visible white with slightly higher opacity
-						ctx.fillStyle = `rgba(255, 255, 255, ${0.05 + random(seed + idx * 5) * 0.08})`;
-						ctx.fill();
-					}
-				}
-			}
-		};
-
-		generateBackground();
-
-		// Regenerate on window resize or theme change
-		const handleResize = () => {
-			generateBackground();
-		};
-
-		window.addEventListener("resize", handleResize);
-
-		// Watch for dark mode changes
-		const observer = new MutationObserver((mutations) => {
-			mutations.forEach((mutation) => {
-				if (mutation.attributeName === "class") {
-					generateBackground();
-				}
-			});
-		});
-
-		observer.observe(document.documentElement, {
-			attributes: true,
-			attributeFilter: ["class"],
-		});
-
-		return () => {
-			window.removeEventListener("resize", handleResize);
-			observer.disconnect();
-		};
-	}, [themeConfig]);
-
 	// Short format for navigation area
 	const formatRelativeTimeShort = (date) => {
 		if (!date) return "Never";
@@ -501,10 +543,37 @@ const Layout = ({ children }) => {
 		return `${seconds}s ago`;
 	};
 
-	// Save sidebar collapsed state to localStorage
+	// Auto-collapse main sidebar on settings pages, restore when leaving
+	const sidebarStateBeforeSettings = useRef(null);
+	const isSettingsPage = location.pathname.startsWith("/settings");
+	const prevIsSettingsPage = useRef(isSettingsPage);
+
 	useEffect(() => {
-		localStorage.setItem("sidebarCollapsed", JSON.stringify(sidebarCollapsed));
-	}, [sidebarCollapsed]);
+		const wasSettings = prevIsSettingsPage.current;
+		prevIsSettingsPage.current = isSettingsPage;
+
+		if (isSettingsPage && !wasSettings) {
+			// Entering settings — remember current state and collapse
+			sidebarStateBeforeSettings.current = pinnedCollapsed;
+			setPinnedCollapsed(true);
+		} else if (
+			!isSettingsPage &&
+			wasSettings &&
+			sidebarStateBeforeSettings.current !== null
+		) {
+			// Leaving settings — restore previous state
+			setPinnedCollapsed(sidebarStateBeforeSettings.current);
+			sidebarStateBeforeSettings.current = null;
+		}
+	}, [isSettingsPage, pinnedCollapsed]);
+
+	// Persist only the pinned state (not the ephemeral hover state) to localStorage,
+	// and skip while auto-collapsed for settings.
+	useEffect(() => {
+		if (!isSettingsPage) {
+			localStorage.setItem("sidebarCollapsed", JSON.stringify(pinnedCollapsed));
+		}
+	}, [pinnedCollapsed, isSettingsPage]);
 
 	// Close user menu when clicking outside
 	useEffect(() => {
@@ -527,6 +596,9 @@ const Layout = ({ children }) => {
 			const root = document.documentElement;
 
 			if (isDark && themeConfig?.app) {
+				// App background tracks the active dark theme preset.
+				root.style.setProperty("--app-bg-primary", themeConfig.app.bgPrimary);
+
 				// Glass navigation bars - very light for pattern visibility
 				root.style.setProperty("--sidebar-bg", "rgba(0, 0, 0, 0.15)");
 				root.style.setProperty("--sidebar-blur", "blur(12px)");
@@ -546,6 +618,7 @@ const Layout = ({ children }) => {
 				);
 			} else {
 				// Light mode - standard colors
+				root.style.setProperty("--app-bg-primary", "#f8fafc");
 				root.style.setProperty("--sidebar-bg", "white");
 				root.style.setProperty("--sidebar-blur", "none");
 				root.style.setProperty("--topbar-bg", "white");
@@ -582,16 +655,21 @@ const Layout = ({ children }) => {
 				sidebarCollapsed,
 			}}
 		>
-			<div className="min-h-screen bg-secondary-50 dark:bg-black relative overflow-hidden">
-				{/* Full-screen Trianglify Background (Dark Mode Only) */}
-				<canvas
-					ref={bgCanvasRef}
-					className="fixed inset-0 w-full h-full hidden dark:block"
+			<div
+				className="min-h-screen relative overflow-hidden"
+				style={{ backgroundColor: "var(--app-bg-primary)" }}
+			>
+				{/* Static triangle mesh background. Dark mode only on the authenticated app. */}
+				<div
+					aria-hidden="true"
+					className="patchmon-mesh-bg fixed inset-0 w-full h-full pointer-events-none hidden dark:block"
 					style={{ zIndex: 0 }}
 				/>
+				{/* Subtle dark vignette — only in dark mode, where the base bg is black. */}
 				<div
+					aria-hidden="true"
 					className="fixed inset-0 bg-gradient-to-br from-black/10 to-black/20 hidden dark:block pointer-events-none"
-					style={{ zIndex: 1 }}
+					style={{ zIndex: 2 }}
 				/>
 				{/* Mobile sidebar */}
 				<div
@@ -648,8 +726,9 @@ const Layout = ({ children }) => {
 											className={`group flex items-center px-2 py-3 text-sm font-medium rounded-md min-h-[44px] ${
 												isActive(item.href)
 													? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
-													: "text-secondary-600 dark:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700 hover:text-secondary-900 dark:hover:text-white"
+													: "text-secondary-600 dark:text-white hover:bg-secondary-50 dark:hover:bg-secondary-700 hover:text-secondary-900 dark:hover:text-white"
 											}`}
+											onMouseEnter={() => prefetchRoute(item.href)}
 											onClick={() => setSidebarOpen(false)}
 										>
 											<item.icon className="mr-3 h-5 w-5" />
@@ -660,7 +739,7 @@ const Layout = ({ children }) => {
 									// Section with items
 									return (
 										<div key={item.section}>
-											<h3 className="text-xs font-semibold text-secondary-500 dark:text-secondary-400 uppercase tracking-wider mb-2">
+											<h3 className="text-xs font-semibold text-secondary-500 dark:text-white uppercase tracking-wider mb-2">
 												{item.section}
 											</h3>
 											<div className="space-y-1">
@@ -675,8 +754,11 @@ const Layout = ({ children }) => {
 																	className={`group flex items-center px-2 py-3 text-sm font-medium rounded-md min-h-[44px] ${
 																		isActive(subItem.href)
 																			? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
-																			: "text-secondary-600 dark:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700 hover:text-secondary-900 dark:hover:text-white"
+																			: "text-secondary-600 dark:text-white hover:bg-secondary-50 dark:hover:bg-secondary-700 hover:text-secondary-900 dark:hover:text-white"
 																	}`}
+																	onMouseEnter={() =>
+																		prefetchRoute(subItem.href)
+																	}
 																	onClick={() => setSidebarOpen(false)}
 																>
 																	<subItem.icon className="mr-3 h-5 w-5" />
@@ -705,81 +787,158 @@ const Layout = ({ children }) => {
 																</Link>
 															) : (
 																// Standard navigation item (mobile)
-																<Link
-																	to={subItem.href}
-																	className={`group flex items-center px-2 py-2 text-sm font-medium rounded-md ${
-																		isActive(subItem.href)
-																			? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
-																			: "text-secondary-600 dark:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700 hover:text-secondary-900 dark:hover:text-white"
-																	} ${subItem.comingSoon ? "opacity-50 cursor-not-allowed" : ""}`}
-																	onClick={
-																		subItem.comingSoon
-																			? (e) => e.preventDefault()
-																			: () => setSidebarOpen(false)
-																	}
-																>
-																	<subItem.icon className="mr-3 h-5 w-5" />
-																	<span className="flex items-center gap-2 flex-1">
-																		{subItem.name}
-																		{subItem.name === "Hosts" &&
-																			stats?.cards?.totalHosts !==
-																				undefined && (
-																				<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-200">
-																					{stats.cards.totalHosts}
+																<>
+																	<Link
+																		to={subItem.href}
+																		className={`group flex items-center px-2 py-2 text-sm font-medium rounded-md ${
+																			isActive(subItem.href)
+																				? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
+																				: "text-secondary-600 dark:text-white hover:bg-secondary-50 dark:hover:bg-secondary-700 hover:text-secondary-900 dark:hover:text-white"
+																		} ${subItem.comingSoon ? "opacity-50 cursor-not-allowed" : ""}`}
+																		onMouseEnter={() =>
+																			!subItem.comingSoon &&
+																			prefetchRoute(subItem.href)
+																		}
+																		onClick={(e) => {
+																			if (subItem.comingSoon) {
+																				e.preventDefault();
+																				return;
+																			}
+																			if (subItem.children) {
+																				if (subItem.href.startsWith("#")) {
+																					e.preventDefault();
+																				}
+																				setExpandedNav(
+																					expandedNav === subItem.name
+																						? null
+																						: subItem.name,
+																				);
+																			} else {
+																				setSidebarOpen(false);
+																			}
+																		}}
+																	>
+																		<subItem.icon className="mr-3 h-5 w-5" />
+																		<span className="flex items-center gap-2 flex-1">
+																			{subItem.name}
+																			{subItem.name === "Hosts" &&
+																				stats?.cards?.totalHosts !==
+																					undefined && (
+																					<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-200">
+																						{stats.cards.totalHosts}
+																					</span>
+																				)}
+																			{subItem.name === "Reporting" &&
+																				alertStats && (
+																					<div className="ml-2 flex items-center gap-0.5">
+																						{(alertStats.informational || 0) >
+																							0 && (
+																							<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200">
+																								{alertStats.informational}
+																							</span>
+																						)}
+																						{(alertStats.warning || 0) > 0 && (
+																							<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-200">
+																								{alertStats.warning}
+																							</span>
+																						)}
+																						{(alertStats.error || 0) > 0 && (
+																							<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-200">
+																								{alertStats.error}
+																							</span>
+																						)}
+																						{(alertStats.critical || 0) > 0 && (
+																							<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200">
+																								{alertStats.critical}
+																							</span>
+																						)}
+																					</div>
+																				)}
+																			{subItem.comingSoon && (
+																				<span className="text-xs bg-secondary-100 dark:bg-secondary-600 text-secondary-600 dark:text-secondary-200 px-1.5 py-0.5 rounded">
+																					Soon
 																				</span>
 																			)}
-																		{subItem.name === "Reporting" &&
-																			alertStats && (
-																				<div className="ml-2 flex items-center gap-0.5">
-																					{/* Informational - Blue */}
-																					{(alertStats.informational || 0) >
-																						0 && (
-																						<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200">
-																							{alertStats.informational}
-																						</span>
-																					)}
-																					{/* Warning - Yellow */}
-																					{(alertStats.warning || 0) > 0 && (
-																						<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-200">
-																							{alertStats.warning}
-																						</span>
-																					)}
-																					{/* Error - Orange/Red */}
-																					{(alertStats.error || 0) > 0 && (
-																						<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-200">
-																							{alertStats.error}
-																						</span>
-																					)}
-																					{/* Critical - Red */}
-																					{(alertStats.critical || 0) > 0 && (
-																						<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200">
-																							{alertStats.critical}
-																						</span>
-																					)}
-																				</div>
+																			{subItem.alpha && (
+																				<span className="text-[10px] bg-purple-50 dark:bg-purple-900/50 text-purple-600 dark:text-purple-300 px-1 py-px rounded font-medium leading-tight">
+																					Alpha
+																				</span>
 																			)}
-																		{subItem.comingSoon && (
-																			<span className="text-xs bg-secondary-100 dark:bg-secondary-600 text-secondary-600 dark:text-secondary-200 px-1.5 py-0.5 rounded">
-																				Soon
-																			</span>
+																			{subItem.beta && (
+																				<span className="text-[10px] bg-blue-50 dark:bg-blue-900/50 text-blue-600 dark:text-blue-300 px-1 py-px rounded font-medium leading-tight">
+																					Beta
+																				</span>
+																			)}
+																			{subItem.new && (
+																				<span className="text-[10px] bg-green-50 dark:bg-green-900/50 text-green-600 dark:text-green-300 px-1 py-px rounded font-medium leading-tight">
+																					New
+																				</span>
+																			)}
+																			{subItem.lockedTier && (
+																				<TierBadge tier={subItem.lockedTier} />
+																			)}
+																			{subItem.children && (
+																				<ChevronDown
+																					className={`ml-auto h-4 w-4 shrink-0 text-secondary-400 transition-transform duration-200 ${
+																						expandedNav === subItem.name
+																							? "rotate-180"
+																							: ""
+																					}`}
+																				/>
+																			)}
+																		</span>
+																	</Link>
+																	{/* Expandable children (mobile) */}
+																	{subItem.children &&
+																		expandedNav === subItem.name && (
+																			<ul className="ml-8 mt-0.5 space-y-0.5 border-l border-secondary-200 dark:border-secondary-700 pl-2">
+																				{subItem.children.map((child) => (
+																					<li key={child.name}>
+																						{child.external ? (
+																							<a
+																								href={child.href}
+																								target={
+																									child.href.startsWith(
+																										"mailto:",
+																									)
+																										? undefined
+																										: "_blank"
+																								}
+																								rel="noopener noreferrer"
+																								className="block text-sm py-2 px-2 rounded transition-colors min-h-[44px] flex items-center text-secondary-500 dark:text-white hover:text-secondary-900 dark:hover:text-primary-400"
+																								onClick={() =>
+																									setSidebarOpen(false)
+																								}
+																							>
+																								{child.name}
+																							</a>
+																						) : (
+																							<Link
+																								to={child.href}
+																								className={`text-sm py-2 px-2 rounded transition-colors min-h-[44px] flex items-center gap-2 ${
+																									location.pathname +
+																										location.search ===
+																									child.href
+																										? "text-primary-600 dark:text-primary-400 font-medium"
+																										: "text-secondary-500 dark:text-white hover:text-secondary-900 dark:hover:text-primary-400"
+																								}`}
+																								onClick={() =>
+																									setSidebarOpen(false)
+																								}
+																							>
+																								<span>{child.name}</span>
+																								{child.lockedTier && (
+																									<TierBadge
+																										tier={child.lockedTier}
+																									/>
+																								)}
+																							</Link>
+																						)}
+																					</li>
+																				))}
+																			</ul>
 																		)}
-																		{subItem.alpha && (
-																			<span className="text-xs bg-purple-100 dark:bg-purple-900 text-purple-600 dark:text-purple-200 px-1.5 py-0.5 rounded font-medium">
-																				Alpha
-																			</span>
-																		)}
-																		{subItem.beta && (
-																			<span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-200 px-1.5 py-0.5 rounded font-medium">
-																				Beta
-																			</span>
-																		)}
-																		{subItem.new && (
-																			<span className="text-xs bg-green-100 dark:bg-green-900 text-green-600 dark:text-green-200 px-1.5 py-0.5 rounded font-medium">
-																				New
-																			</span>
-																		)}
-																	</span>
-																</Link>
+																</>
 															)}
 														</div>
 													))}
@@ -798,11 +957,11 @@ const Layout = ({ children }) => {
 										className={`group flex items-center px-2 py-2 text-sm font-medium rounded-md ${
 											isActive("/settings/profile")
 												? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
-												: "text-secondary-600 dark:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700 hover:text-secondary-900 dark:hover:text-white"
+												: "text-secondary-600 dark:text-white hover:bg-secondary-50 dark:hover:bg-secondary-700 hover:text-secondary-900 dark:hover:text-white"
 										}`}
 										onClick={() => setSidebarOpen(false)}
 									>
-										{user?.avatar_url ? (
+										{isRenderableAvatarSrc(user?.avatar_url) ? (
 											<img
 												src={user.avatar_url}
 												alt={user.username}
@@ -836,7 +995,7 @@ const Layout = ({ children }) => {
 											handleLogout();
 											setSidebarOpen(false);
 										}}
-										className="w-full group flex items-center px-2 py-3 text-sm font-medium rounded-md text-secondary-600 dark:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700 hover:text-secondary-900 dark:hover:text-white min-h-[44px]"
+										className="w-full group flex items-center px-2 py-3 text-sm font-medium rounded-md text-secondary-600 dark:text-white hover:bg-secondary-50 dark:hover:bg-secondary-700 hover:text-secondary-900 dark:hover:text-white min-h-[44px]"
 									>
 										<LogOut className="mr-3 h-5 w-5" />
 										Sign out
@@ -852,20 +1011,27 @@ const Layout = ({ children }) => {
 					className={`hidden lg:fixed lg:inset-y-0 z-[100] lg:flex lg:flex-col transition-all duration-300 relative ${
 						sidebarCollapsed ? "lg:w-16" : "lg:w-64"
 					} bg-white dark:bg-transparent`}
+					onMouseEnter={() => setIsSidebarHovered(true)}
+					onMouseLeave={() => setIsSidebarHovered(false)}
 				>
-					{/* Collapse/Expand button on border */}
+					{/* Pin/unpin button: toggles the persisted pinned state. When pinned-expanded
+					    the sidebar stays static; when pinned-collapsed, hover temporarily expands it. */}
 					<button
 						type="button"
-						onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+						onClick={() => setPinnedCollapsed(!pinnedCollapsed)}
 						className="absolute top-5 -right-3 z-[200] flex items-center justify-center w-6 h-6 rounded-full bg-white border border-secondary-300 dark:border-white/20 shadow-md hover:bg-secondary-50 transition-colors"
 						style={{
 							backgroundColor: "var(--button-bg, white)",
 							backdropFilter: "var(--button-blur, none)",
 							WebkitBackdropFilter: "var(--button-blur, none)",
 						}}
-						title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+						title={
+							pinnedCollapsed
+								? "Pin sidebar expanded"
+								: "Collapse sidebar (hover to peek)"
+						}
 					>
-						{sidebarCollapsed ? (
+						{pinnedCollapsed ? (
 							<ChevronRight className="h-4 w-4 text-secondary-700 dark:text-white" />
 						) : (
 							<ChevronLeft className="h-4 w-4 text-secondary-700 dark:text-white" />
@@ -892,27 +1058,15 @@ const Layout = ({ children }) => {
 							{sidebarCollapsed ? (
 								<Link to="/" className="flex items-center">
 									<img
-										src={
-											settings?.favicon
-												? `${(() => {
-														const parts = settings.favicon.split("/");
-														const filename = parts.pop();
-														const directory = parts.join("/");
-														const encodedPath = directory
-															? `${directory}/${encodeURIComponent(filename)}`
-															: encodeURIComponent(filename);
-														return `${encodedPath}?v=${
-															settings?.updated_at
-																? new Date(settings.updated_at).getTime()
-																: Date.now()
-														}`;
-													})()}`
-												: "/assets/favicon.svg"
-										}
+										src={`${resolveLogoPath(settings?.favicon, "favicon")}?v=${
+											settings?.updated_at
+												? new Date(settings.updated_at).getTime()
+												: Date.now()
+										}`}
 										alt="PatchMon"
 										className="h-12 w-12 object-contain"
 										onError={(e) => {
-											e.target.src = "/assets/favicon.svg";
+											e.target.src = `/assets/logo_square_default.svg?v=${Date.now()}`;
 										}}
 									/>
 								</Link>
@@ -923,7 +1077,7 @@ const Layout = ({ children }) => {
 							)}
 						</div>
 						<nav className="flex-1 flex flex-col overflow-y-auto overflow-x-hidden min-h-0">
-							<ul className="flex flex-1 flex-col space-y-2">
+							<ul className="flex flex-col space-y-1">
 								{/* Show message for users with very limited permissions */}
 								{navigation.length === 0 && settingsNavigation.length === 0 && (
 									<li className="px-2 py-4 text-center">
@@ -939,14 +1093,15 @@ const Layout = ({ children }) => {
 									if (item.name) {
 										// Single item (Dashboard)
 										return (
-											<li key={item.name} className="mb-4">
+											<li key={item.name} className="mb-1">
 												<Link
 													to={item.href}
-													className={`group flex items-center gap-x-3 rounded-lg text-sm leading-6 font-medium transition-all duration-200 min-h-[44px] ${
+													className={`group flex items-center gap-x-2.5 rounded-lg text-sm leading-6 font-medium transition-all duration-200 min-h-[36px] ${
 														isActive(item.href)
 															? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
 															: "text-secondary-700 dark:text-secondary-200 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
-													} ${sidebarCollapsed ? "justify-center px-2 py-2" : "px-2 py-3"}`}
+													} ${sidebarCollapsed ? "justify-center px-2 py-1.5" : "px-2 py-2"}`}
+													onMouseEnter={() => prefetchRoute(item.href)}
 													title={sidebarCollapsed ? item.name : ""}
 												>
 													<item.icon
@@ -964,7 +1119,7 @@ const Layout = ({ children }) => {
 											return (
 												<li key={item.section} className="mt-4">
 													{!sidebarCollapsed && (
-														<h3 className="text-xs font-semibold text-secondary-500 dark:text-secondary-300 uppercase tracking-wider mb-2">
+														<h3 className="text-xs font-semibold text-secondary-500 dark:text-white uppercase tracking-wider mb-2">
 															{item.section}
 														</h3>
 													)}
@@ -984,7 +1139,7 @@ const Layout = ({ children }) => {
 																			? "noopener noreferrer"
 																			: undefined
 																	}
-																	className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+																	className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
 																	title={linkItem.name}
 																>
 																	<linkItem.icon className="h-5 w-5" />
@@ -1007,7 +1162,7 @@ const Layout = ({ children }) => {
 																			? "noopener noreferrer"
 																			: undefined
 																	}
-																	className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
+																	className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-white hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
 																	title={linkItem.name}
 																>
 																	<linkItem.icon className="h-5 w-5" />
@@ -1020,35 +1175,33 @@ const Layout = ({ children }) => {
 										}
 										// Section with items
 										return (
-											<li key={item.section} className="mt-4">
+											<li
+												key={item.section}
+												className="mt-2 pt-2 border-t border-secondary-100 dark:border-white/5 first:mt-0 first:pt-0 first:border-t-0"
+											>
 												{!sidebarCollapsed && (
-													<h3 className="text-xs font-semibold text-secondary-500 dark:text-secondary-300 uppercase tracking-wider mb-2">
+													<h3 className="text-[11px] font-medium text-secondary-400 dark:text-white/50 uppercase tracking-widest mb-1.5 px-2">
 														{item.section}
 													</h3>
 												)}
-												<ul className="space-y-0.1">
-													{item.items.map((subItem, index) => {
-														const isLastItem = index === item.items.length - 1;
-														const shouldAddSpacing =
-															isLastItem &&
-															(item.section === "INVENTORY" ||
-																item.section === "INTEGRATIONS");
+												<ul className="space-y-0.5">
+													{item.items.map((subItem) => {
 														return (
-															<li
-																key={subItem.name}
-																className={shouldAddSpacing ? "mb-4" : ""}
-															>
+															<li key={subItem.name}>
 																{subItem.name === "Hosts" &&
 																canManageHosts() ? (
 																	// Special handling for Hosts item with integrated + button
 																	<div className="flex items-center gap-1">
 																		<Link
 																			to={subItem.href}
-																			className={`group flex items-center gap-x-3 rounded-lg text-sm leading-6 font-medium transition-all duration-200 flex-1 min-h-[44px] ${
+																			className={`group flex items-center gap-x-2.5 rounded-lg text-sm leading-6 font-medium transition-all duration-200 flex-1 min-h-[36px] ${
 																				isActive(subItem.href)
 																					? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
 																					: "text-secondary-700 dark:text-secondary-200 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
-																			} ${sidebarCollapsed ? "justify-center px-2 py-2" : "px-2 py-3"}`}
+																			} ${sidebarCollapsed ? "justify-center px-2 py-1.5" : "px-2 py-2"}`}
+																			onMouseEnter={() =>
+																				prefetchRoute(subItem.href)
+																			}
 																			title={
 																				sidebarCollapsed ? subItem.name : ""
 																			}
@@ -1143,117 +1296,179 @@ const Layout = ({ children }) => {
 																	</div>
 																) : (
 																	// Standard navigation item
-																	<Link
-																		to={subItem.href}
-																		className={`group flex items-center gap-x-3 rounded-lg text-sm leading-6 font-medium transition-all duration-200 min-h-[44px] ${
-																			isActive(subItem.href)
-																				? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
-																				: "text-secondary-700 dark:text-secondary-200 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
-																		} ${sidebarCollapsed ? "justify-center px-2 py-2 relative" : "px-2 py-3"} ${
-																			subItem.comingSoon
-																				? "opacity-50 cursor-not-allowed"
-																				: ""
-																		}`}
-																		title={sidebarCollapsed ? subItem.name : ""}
-																		onClick={
-																			subItem.comingSoon
-																				? (e) => e.preventDefault()
-																				: undefined
-																		}
-																	>
-																		<div
-																			className={`flex items-center ${sidebarCollapsed ? "justify-center" : ""}`}
+																	<>
+																		<Link
+																			to={subItem.href}
+																			className={`group flex items-center gap-x-2.5 rounded-lg text-sm leading-6 font-medium transition-all duration-200 min-h-[36px] ${
+																				isActive(subItem.href)
+																					? "bg-primary-100 dark:bg-primary-600 text-primary-900 dark:text-white"
+																					: "text-secondary-700 dark:text-secondary-200 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700"
+																			} ${sidebarCollapsed ? "justify-center px-2 py-1.5 relative" : "px-2 py-2"} ${
+																				subItem.comingSoon
+																					? "opacity-50 cursor-not-allowed"
+																					: ""
+																			}`}
+																			title={
+																				sidebarCollapsed ? subItem.name : ""
+																			}
+																			onMouseEnter={() =>
+																				!subItem.comingSoon &&
+																				prefetchRoute(subItem.href)
+																			}
+																			onClick={(e) => {
+																				if (subItem.comingSoon) {
+																					e.preventDefault();
+																					return;
+																				}
+																				if (subItem.children) {
+																					if (subItem.href.startsWith("#")) {
+																						e.preventDefault();
+																					}
+																					setExpandedNav(
+																						expandedNav === subItem.name
+																							? null
+																							: subItem.name,
+																					);
+																				}
+																			}}
 																		>
-																			<subItem.icon
-																				className={`h-5 w-5 shrink-0 ${sidebarCollapsed ? "mx-auto" : ""}`}
-																			/>
-																			{sidebarCollapsed &&
-																				subItem.showUpgradeIcon && (
-																					<UpgradeNotificationIcon className="h-3 w-3 absolute -top-1 -right-1" />
-																				)}
-																		</div>
-																		{!sidebarCollapsed && (
-																			<span className="truncate flex items-center gap-2">
-																				{subItem.name}
-																				{subItem.name === "Hosts" &&
-																					stats?.cards?.totalHosts !==
-																						undefined && (
-																						<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
-																							{stats.cards.totalHosts}
+																			<div
+																				className={`flex items-center ${sidebarCollapsed ? "justify-center" : ""}`}
+																			>
+																				<subItem.icon
+																					className={`h-5 w-5 shrink-0 ${sidebarCollapsed ? "mx-auto" : ""}`}
+																				/>
+																				{sidebarCollapsed &&
+																					subItem.showUpgradeIcon && (
+																						<UpgradeNotificationIcon className="h-3 w-3 absolute -top-1 -right-1" />
+																					)}
+																			</div>
+																			{!sidebarCollapsed && (
+																				<span className="truncate flex items-center gap-2 flex-1">
+																					{subItem.name}
+																					{subItem.name === "Hosts" &&
+																						stats?.cards?.totalHosts !==
+																							undefined && (
+																							<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
+																								{stats.cards.totalHosts}
+																							</span>
+																						)}
+																					{subItem.name === "Reporting" &&
+																						alertStats && (
+																							<div className="ml-2 flex items-center gap-0.5">
+																								{(alertStats.informational ||
+																									0) > 0 && (
+																									<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200">
+																										{alertStats.informational}
+																									</span>
+																								)}
+																								{(alertStats.warning || 0) >
+																									0 && (
+																									<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-200">
+																										{alertStats.warning}
+																									</span>
+																								)}
+																								{(alertStats.error || 0) >
+																									0 && (
+																									<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-200">
+																										{alertStats.error}
+																									</span>
+																								)}
+																								{(alertStats.critical || 0) >
+																									0 && (
+																									<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200">
+																										{alertStats.critical}
+																									</span>
+																								)}
+																							</div>
+																						)}
+																					{subItem.comingSoon && (
+																						<span className="text-xs bg-secondary-100 text-secondary-600 px-1.5 py-0.5 rounded">
+																							Soon
 																						</span>
 																					)}
-																				{subItem.name === "Reporting" &&
-																					alertStats && (
-																						<div className="ml-2 flex items-center gap-0.5">
-																							{/* Informational - Blue */}
-																							{(alertStats.informational || 0) >
-																								0 && (
-																								<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200">
-																									{alertStats.informational}
-																								</span>
-																							)}
-																							{/* Warning - Yellow */}
-																							{(alertStats.warning || 0) >
-																								0 && (
-																								<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-200">
-																									{alertStats.warning}
-																								</span>
-																							)}
-																							{/* Error - Orange/Red */}
-																							{(alertStats.error || 0) > 0 && (
-																								<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-200">
-																									{alertStats.error}
-																								</span>
-																							)}
-																							{/* Critical - Red */}
-																							{(alertStats.critical || 0) >
-																								0 && (
-																								<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200">
-																									{alertStats.critical}
-																								</span>
-																							)}
-																						</div>
+																					{subItem.alpha && (
+																						<span className="text-[10px] bg-purple-50 dark:bg-purple-900/50 text-purple-600 dark:text-purple-300 px-1 py-px rounded font-medium leading-tight">
+																							Alpha
+																						</span>
 																					)}
-																				{/* {subItem.name === "Packages" &&
-																			stats?.cards?.totalOutdatedPackages !==
-																				undefined && (
-																				<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
-																					{stats.cards.totalOutdatedPackages}
+																					{subItem.beta && (
+																						<span className="text-[10px] bg-blue-50 dark:bg-blue-900/50 text-blue-600 dark:text-blue-300 px-1 py-px rounded font-medium leading-tight">
+																							Beta
+																						</span>
+																					)}
+																					{subItem.new && (
+																						<span className="text-[10px] bg-green-50 dark:bg-green-900/50 text-green-600 dark:text-green-300 px-1 py-px rounded font-medium leading-tight">
+																							New
+																						</span>
+																					)}
+																					{subItem.lockedTier && (
+																						<TierBadge
+																							tier={subItem.lockedTier}
+																						/>
+																					)}
+																					{subItem.showUpgradeIcon && (
+																						<UpgradeNotificationIcon className="h-3 w-3" />
+																					)}
+																					{subItem.children &&
+																						!sidebarCollapsed && (
+																							<ChevronDown
+																								className={`ml-auto h-4 w-4 shrink-0 text-secondary-400 transition-transform duration-200 ${
+																									expandedNav === subItem.name
+																										? "rotate-180"
+																										: ""
+																								}`}
+																							/>
+																						)}
 																				</span>
-																			)} */}
-																				{/* {subItem.name === "Repos" &&
-																			stats?.cards?.totalRepos !==
-																				undefined && (
-																				<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
-																					{stats.cards.totalRepos}
-																				</span>
-																			)} */}
-																				{subItem.comingSoon && (
-																					<span className="text-xs bg-secondary-100 text-secondary-600 px-1.5 py-0.5 rounded">
-																						Soon
-																					</span>
-																				)}
-																				{subItem.alpha && (
-																					<span className="text-xs bg-purple-100 dark:bg-purple-900 text-purple-600 dark:text-purple-200 px-1.5 py-0.5 rounded font-medium">
-																						Alpha
-																					</span>
-																				)}
-																				{subItem.beta && (
-																					<span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-200 px-1.5 py-0.5 rounded font-medium">
-																						Beta
-																					</span>
-																				)}
-																				{subItem.new && (
-																					<span className="text-xs bg-green-100 dark:bg-green-900 text-green-600 dark:text-green-200 px-1.5 py-0.5 rounded font-medium">
-																						New
-																					</span>
-																				)}
-																				{subItem.showUpgradeIcon && (
-																					<UpgradeNotificationIcon className="h-3 w-3" />
-																				)}
-																			</span>
-																		)}
-																	</Link>
+																			)}
+																		</Link>
+																		{/* Expandable children */}
+																		{subItem.children &&
+																			!sidebarCollapsed &&
+																			expandedNav === subItem.name && (
+																				<ul className="ml-7 mt-0.5 space-y-0.5 border-l border-secondary-200 dark:border-secondary-700 pl-2">
+																					{subItem.children.map((child) => (
+																						<li key={child.name}>
+																							{child.external ? (
+																								<a
+																									href={child.href}
+																									target={
+																										child.href.startsWith(
+																											"mailto:",
+																										)
+																											? undefined
+																											: "_blank"
+																									}
+																									rel="noopener noreferrer"
+																									className="block text-[13px] py-1 px-2 rounded transition-colors text-secondary-500 dark:text-white hover:text-secondary-900 dark:hover:text-primary-400"
+																								>
+																									{child.name}
+																								</a>
+																							) : (
+																								<Link
+																									to={child.href}
+																									className={`text-[13px] py-1 px-2 rounded transition-colors flex items-center gap-2 ${
+																										location.pathname +
+																											location.search ===
+																										child.href
+																											? "text-primary-600 dark:text-primary-400 font-medium"
+																											: "text-secondary-500 dark:text-white hover:text-secondary-900 dark:hover:text-primary-400"
+																									}`}
+																								>
+																									<span>{child.name}</span>
+																									{child.lockedTier && (
+																										<TierBadge
+																											tier={child.lockedTier}
+																										/>
+																									)}
+																								</Link>
+																							)}
+																						</li>
+																					))}
+																				</ul>
+																			)}
+																	</>
 																)}
 															</li>
 														);
@@ -1267,106 +1482,21 @@ const Layout = ({ children }) => {
 							</ul>
 						</nav>
 
-						{/* LINKS Section - Bottom of Navigation */}
-						<div className="flex-shrink-0 pt-1 pb-2 px-2">
-							{!sidebarCollapsed && (
-								<h3 className="text-xs font-semibold text-secondary-500 dark:text-secondary-300 uppercase tracking-wider mb-2">
-									LINKS
-								</h3>
-							)}
-							{!sidebarCollapsed ? (
-								<div className="flex items-center justify-center gap-2">
-									<a
-										href="https://github.com/orgs/PatchMon/projects/2/views/1"
-										target="_blank"
-										rel="noopener noreferrer"
-										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
-										title="Roadmap"
-									>
-										<Route className="h-5 w-5" />
-									</a>
-									<a
-										href="https://docs.patchmon.net"
-										target="_blank"
-										rel="noopener noreferrer"
-										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
-										title="Documentation"
-									>
-										<BookOpen className="h-5 w-5" />
-									</a>
-									<a
-										href="mailto:support@patchmon.net"
-										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
-										title="Email Support"
-									>
-										<Mail className="h-5 w-5" />
-									</a>
-									<a
-										href="https://patchmon.net"
-										target="_blank"
-										rel="noopener noreferrer"
-										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
-										title="Website"
-									>
-										<Globe className="h-5 w-5" />
-									</a>
-								</div>
-							) : (
-								<div className="flex flex-col items-center gap-1">
-									<a
-										href="https://github.com/orgs/PatchMon/projects/2/views/1"
-										target="_blank"
-										rel="noopener noreferrer"
-										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
-										title="Roadmap"
-									>
-										<Route className="h-5 w-5" />
-									</a>
-									<a
-										href="https://docs.patchmon.net"
-										target="_blank"
-										rel="noopener noreferrer"
-										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
-										title="Documentation"
-									>
-										<BookOpen className="h-5 w-5" />
-									</a>
-									<a
-										href="mailto:support@patchmon.net"
-										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
-										title="Email Support"
-									>
-										<Mail className="h-5 w-5" />
-									</a>
-									<a
-										href="https://patchmon.net"
-										target="_blank"
-										rel="noopener noreferrer"
-										className="flex items-center justify-center w-10 h-10 bg-secondary-50 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-lg transition-colors"
-										title="Website"
-									>
-										<Globe className="h-5 w-5" />
-									</a>
-								</div>
-							)}
-						</div>
-
-						{/* Profile Section - Bottom of Sidebar */}
-						<div className="flex-shrink-0 pt-0 pb-1 px-2">
+						{/* Profile - Bottom of Sidebar */}
+						<div className="flex-shrink-0 px-2 pb-1">
 							{!sidebarCollapsed ? (
 								<div>
-									{/* User Info with Sign Out - Username is clickable */}
-									<div className="flex items-center justify-between py-1">
+									<div className="flex items-center justify-between">
 										<Link
 											to="/settings/profile"
-											className={`flex-1 min-w-0 rounded-md p-2 transition-all duration-200 ${
+											className={`flex-1 min-w-0 rounded-md px-2 py-1.5 transition-all duration-200 ${
 												isActive("/settings/profile")
 													? "bg-primary-50 dark:bg-primary-600"
 													: "hover:bg-secondary-50 dark:hover:bg-secondary-700"
 											}`}
 										>
 											<div className="flex items-center gap-x-3">
-												{user?.avatar_url ? (
+												{isRenderableAvatarSrc(user?.avatar_url) ? (
 													<img
 														src={user.avatar_url}
 														alt={user.username}
@@ -1377,7 +1507,7 @@ const Layout = ({ children }) => {
 														className={`h-5 w-5 shrink-0 ${
 															isActive("/settings/profile")
 																? "text-primary-700 dark:text-white"
-																: "text-secondary-500 dark:text-secondary-400"
+																: "text-secondary-500 dark:text-white"
 														}`}
 													/>
 												)}
@@ -1418,10 +1548,9 @@ const Layout = ({ children }) => {
 											<LogOut className="h-4 w-4" />
 										</button>
 									</div>
-									{/* Updated info */}
 									{stats && (
-										<div className="pt-1">
-											<div className="flex items-center gap-x-1 text-xs text-secondary-500 dark:text-white/70">
+										<div className="px-2">
+											<div className="flex items-center gap-x-1 text-[11px] text-secondary-400 dark:text-white/50">
 												<Clock className="h-3 w-3 flex-shrink-0" />
 												<span className="truncate">
 													Updated: {formatRelativeTimeShort(stats.lastUpdated)}
@@ -1437,11 +1566,6 @@ const Layout = ({ children }) => {
 														className={`h-3 w-3 ${isFetching ? "animate-spin" : ""}`}
 													/>
 												</button>
-												{versionInfo && (
-													<span className="text-xs text-secondary-400 dark:text-white/60 flex-shrink-0">
-														v{versionInfo.version}
-													</span>
-												)}
 											</div>
 										</div>
 									)}
@@ -1457,7 +1581,7 @@ const Layout = ({ children }) => {
 										}`}
 										title={`My Profile (${user?.username})`}
 									>
-										{user?.avatar_url ? (
+										{isRenderableAvatarSrc(user?.avatar_url) ? (
 											<img
 												src={user.avatar_url}
 												alt={user.username}
@@ -1489,11 +1613,6 @@ const Layout = ({ children }) => {
 													className={`h-3 w-3 ${isFetching ? "animate-spin" : ""}`}
 												/>
 											</button>
-											{versionInfo && (
-												<span className="text-xs text-secondary-400 dark:text-white/60 mt-1">
-													v{versionInfo.version}
-												</span>
-											)}
 										</div>
 									)}
 								</div>
@@ -1502,7 +1621,8 @@ const Layout = ({ children }) => {
 					</div>
 				</div>
 
-				{/* Main content */}
+				{/* Main content — tracks the effective sidebar state (including hover
+				    expansion) so the page reflows instead of being overlapped by the sidebar. */}
 				<div
 					className={`flex flex-col min-h-screen transition-all duration-300 relative z-10 ${
 						sidebarCollapsed ? "lg:pl-16" : "lg:pl-64"
@@ -1544,11 +1664,13 @@ const Layout = ({ children }) => {
 								"/automation",
 								"/compliance",
 								"/docker",
+								"/patching",
 							].includes(location.pathname) &&
 								!location.pathname.startsWith("/hosts/") &&
 								!location.pathname.startsWith("/compliance/") &&
 								!location.pathname.startsWith("/docker/") &&
 								!location.pathname.startsWith("/packages/") &&
+								!location.pathname.startsWith("/patching/") &&
 								!location.pathname.startsWith("/settings/") && (
 									<div className="relative flex items-center flex-shrink-0">
 										<h2 className="text-base sm:text-lg font-semibold text-secondary-900 dark:text-secondary-100 whitespace-nowrap">
@@ -1559,7 +1681,7 @@ const Layout = ({ children }) => {
 
 							{/* Global Search Bar */}
 							<div
-								className={`flex items-center min-w-0 ${["/", "/hosts", "/repositories", "/packages", "/reporting", "/automation", "/compliance", "/docker"].includes(location.pathname) || location.pathname.startsWith("/hosts/") || location.pathname.startsWith("/compliance/") || location.pathname.startsWith("/docker/") || location.pathname.startsWith("/packages/") || location.pathname.startsWith("/settings/") ? "flex-1 max-w-none" : "flex-1 md:flex-none md:max-w-sm"}`}
+								className={`flex items-center min-w-0 ${["/", "/hosts", "/repositories", "/packages", "/reporting", "/automation", "/compliance", "/docker", "/patching"].includes(location.pathname) || location.pathname.startsWith("/hosts/") || location.pathname.startsWith("/compliance/") || location.pathname.startsWith("/docker/") || location.pathname.startsWith("/packages/") || location.pathname.startsWith("/patching/") || location.pathname.startsWith("/settings/") ? "flex-1 max-w-none" : "flex-1 md:flex-none md:max-w-sm"}`}
 							>
 								<GlobalSearch />
 							</div>
@@ -1570,7 +1692,7 @@ const Layout = ({ children }) => {
 									<button
 										type="button"
 										onClick={() => setMobileLinksOpen(!mobileLinksOpen)}
-										className="flex items-center justify-center w-10 h-10 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-secondary-300 hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm min-w-[44px] min-h-[44px]"
+										className="flex items-center justify-center w-10 h-10 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm min-w-[44px] min-h-[44px]"
 										style={{
 											backgroundColor: "var(--button-bg, rgb(249, 250, 251))",
 											backdropFilter: "var(--button-blur, none)",
@@ -1597,197 +1719,147 @@ const Layout = ({ children }) => {
 											/>
 											<div className="absolute right-0 mt-2 w-64 rounded-lg border border-secondary-200 dark:border-secondary-600 bg-white dark:bg-secondary-800 shadow-lg z-50 max-h-[80vh] overflow-y-auto">
 												<div className="p-2 space-y-1">
-													{/* GitHub */}
-													<a
-														href="https://github.com/PatchMon/PatchMon"
-														target="_blank"
-														rel="noopener noreferrer"
-														className="flex items-center gap-3 px-3 py-3 bg-gray-50 dark:bg-gray-800 text-secondary-600 dark:text-secondary-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors min-h-[44px]"
-														onClick={() => setMobileLinksOpen(false)}
-													>
-														<Github className="h-5 w-5 flex-shrink-0" />
-														<span className="text-sm font-medium flex-1">
-															GitHub
-														</span>
-														<div className="flex items-center gap-1">
-															<Star className="h-4 w-4 fill-current text-yellow-500" />
-															<span className="text-sm">2.1K</span>
-														</div>
-													</a>
-													{/* Buy Me a Coffee */}
-													<a
-														href="https://buymeacoffee.com/iby___"
-														target="_blank"
-														rel="noopener noreferrer"
-														className="flex items-center gap-3 px-3 py-3 bg-gray-50 dark:bg-gray-800 text-secondary-600 dark:text-secondary-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors min-h-[44px]"
-														onClick={() => setMobileLinksOpen(false)}
-													>
-														<svg
-															className="h-5 w-5 text-yellow-500 flex-shrink-0"
-															viewBox="0 0 900 1300"
-															fill="currentColor"
-														>
-															<title>Buy Me a Coffee</title>
-															<path d="M879.567 341.849L872.53 306.352C866.215 274.503 851.882 244.409 819.19 232.898C808.711 229.215 796.821 227.633 788.786 220.01C780.751 212.388 778.376 200.55 776.518 189.572C773.076 169.423 769.842 149.257 766.314 129.143C763.269 111.85 760.86 92.4243 752.928 76.56C742.604 55.2584 721.182 42.8009 699.88 34.559C688.965 30.4844 677.826 27.0375 666.517 24.2352C613.297 10.1947 557.342 5.03277 502.591 2.09047C436.875 -1.53577 370.983 -0.443234 305.422 5.35968C256.625 9.79894 205.229 15.1674 158.858 32.0469C141.91 38.224 124.445 45.6399 111.558 58.7341C95.7448 74.8221 90.5829 99.7026 102.128 119.765C110.336 134.012 124.239 144.078 138.985 150.737C158.192 159.317 178.251 165.846 198.829 170.215C256.126 182.879 315.471 187.851 374.007 189.968C438.887 192.586 503.87 190.464 568.44 183.618C584.408 181.863 600.347 179.758 616.257 177.304C634.995 174.43 647.022 149.928 641.499 132.859C634.891 112.453 617.134 104.538 597.055 107.618C594.095 108.082 591.153 108.512 588.193 108.942L586.06 109.252C579.257 110.113 572.455 110.915 565.653 111.661C551.601 113.175 537.515 114.414 523.394 115.378C491.768 117.58 460.057 118.595 428.363 118.647C397.219 118.647 366.058 117.769 334.983 115.722C320.805 114.793 306.661 113.611 292.552 112.177C286.134 111.506 279.733 110.801 273.333 110.009L267.241 109.235L265.917 109.046L259.602 108.134C246.697 106.189 233.792 103.953 221.025 101.251C219.737 100.965 218.584 100.249 217.758 99.2193C216.932 98.1901 216.482 96.9099 216.482 95.5903C216.482 94.2706 216.932 92.9904 217.758 91.9612C218.584 90.9319 219.737 90.2152 221.025 89.9293H221.266C232.33 87.5721 243.479 85.5589 254.663 83.8038C258.392 83.2188 262.131 82.6453 265.882 82.0832H265.985C272.988 81.6186 280.026 80.3625 286.994 79.5366C347.624 73.2301 408.614 71.0801 469.538 73.1014C499.115 73.9618 528.676 75.6996 558.116 78.6935C564.448 79.3474 570.746 80.0357 577.043 80.8099C579.452 81.1025 581.878 81.4465 584.305 81.7391L589.191 82.4445C603.438 84.5667 617.61 87.1419 631.708 90.1703C652.597 94.7128 679.422 96.1925 688.713 119.077C691.673 126.338 693.015 134.408 694.649 142.03L696.732 151.752C696.786 151.926 696.826 152.105 696.852 152.285C701.773 175.227 706.7 198.169 711.632 221.111C711.994 222.806 712.002 224.557 711.657 226.255C711.312 227.954 710.621 229.562 709.626 230.982C708.632 232.401 707.355 233.6 705.877 234.504C704.398 235.408 702.75 235.997 701.033 236.236H700.895L697.884 236.649L694.908 237.044C685.478 238.272 676.038 239.419 666.586 240.486C647.968 242.608 629.322 244.443 610.648 245.992C573.539 249.077 536.356 251.102 499.098 252.066C480.114 252.57 461.135 252.806 442.162 252.771C366.643 252.712 291.189 248.322 216.173 239.625C208.051 238.662 199.93 237.629 191.808 236.58C198.106 237.389 187.231 235.96 185.029 235.651C179.867 234.928 174.705 234.177 169.543 233.397C152.216 230.798 134.993 227.598 117.7 224.793C96.7944 221.352 76.8005 223.073 57.8906 233.397C42.3685 241.891 29.8055 254.916 21.8776 270.735C13.7217 287.597 11.2956 305.956 7.64786 324.075C4.00009 342.193 -1.67805 361.688 0.472751 380.288C5.10128 420.431 33.165 453.054 73.5313 460.35C111.506 467.232 149.687 472.807 187.971 477.556C338.361 495.975 490.294 498.178 641.155 484.129C653.44 482.982 665.708 481.732 677.959 480.378C681.786 479.958 685.658 480.398 689.292 481.668C692.926 482.938 696.23 485.005 698.962 487.717C701.694 490.429 703.784 493.718 705.08 497.342C706.377 500.967 706.846 504.836 706.453 508.665L702.633 545.797C694.936 620.828 687.239 695.854 679.542 770.874C671.513 849.657 663.431 928.434 655.298 1007.2C653.004 1029.39 650.71 1051.57 648.416 1073.74C646.213 1095.58 645.904 1118.1 641.757 1139.68C635.218 1173.61 612.248 1194.45 578.73 1202.07C548.022 1209.06 516.652 1212.73 485.161 1213.01C450.249 1213.2 415.355 1211.65 380.443 1211.84C343.173 1212.05 297.525 1208.61 268.756 1180.87C243.479 1156.51 239.986 1118.36 236.545 1085.37C231.957 1041.7 227.409 998.039 222.9 954.381L197.607 711.615L181.244 554.538C180.968 551.94 180.693 549.376 180.435 546.76C178.473 528.023 165.207 509.681 144.301 510.627C126.407 511.418 106.069 526.629 108.168 546.76L120.298 663.214L145.385 904.104C152.532 972.528 159.661 1040.96 166.773 1109.41C168.15 1122.52 169.44 1135.67 170.885 1148.78C178.749 1220.43 233.465 1259.04 301.224 1269.91C340.799 1276.28 381.337 1277.59 421.497 1278.24C472.979 1279.07 524.977 1281.05 575.615 1271.72C650.653 1257.95 706.952 1207.85 714.987 1130.13C717.282 1107.69 719.576 1085.25 721.87 1062.8C729.498 988.559 737.115 914.313 744.72 840.061L769.601 597.451L781.009 486.263C781.577 480.749 783.905 475.565 787.649 471.478C791.392 467.391 796.352 464.617 801.794 463.567C823.25 459.386 843.761 452.245 859.023 435.916C883.318 409.918 888.153 376.021 879.567 341.849ZM72.4301 365.835C72.757 365.68 72.1548 368.484 71.8967 369.792C71.8451 367.813 71.9483 366.058 72.4301 365.835ZM74.5121 381.94C74.6842 381.819 75.2003 382.508 75.7337 383.334C74.925 382.576 74.4089 382.009 74.4949 381.94H74.5121ZM76.5597 384.641C77.2996 385.897 77.6953 386.689 76.5597 384.641V384.641ZM80.672 387.979H80.7752C80.7752 388.1 80.9645 388.22 81.0333 388.341C80.9192 388.208 80.7925 388.087 80.6548 387.979H80.672ZM800.796 382.989C793.088 390.319 781.473 393.726 769.996 395.43C641.292 414.529 510.713 424.199 380.597 419.932C287.476 416.749 195.336 406.407 103.144 393.382C94.1102 392.109 84.3197 390.457 78.1082 383.798C66.4078 371.237 72.1548 345.944 75.2003 330.768C77.9878 316.865 83.3218 298.334 99.8572 296.355C125.667 293.327 155.64 304.218 181.175 308.09C211.917 312.781 242.774 316.538 273.745 319.36C405.925 331.405 540.325 329.529 671.92 311.91C695.906 308.686 719.805 304.941 743.619 300.674C764.835 296.871 788.356 289.731 801.175 311.703C809.967 326.673 811.137 346.701 809.778 363.615C809.359 370.984 806.139 377.915 800.779 382.989H800.796Z" />
-														</svg>
-														<span className="text-sm font-medium flex-1">
-															Buy Me a Coffee
-														</span>
-													</a>
-													{/* Discord */}
-													<a
-														href="https://patchmon.net/discord"
-														target="_blank"
-														rel="noopener noreferrer"
-														className="flex items-center gap-3 px-3 py-3 bg-gray-50 dark:bg-gray-800 text-secondary-600 dark:text-secondary-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors min-h-[44px]"
-														onClick={() => setMobileLinksOpen(false)}
-													>
-														<DiscordIcon className="h-5 w-5 flex-shrink-0 text-[#5865F2]" />
-														<span className="text-sm font-medium flex-1">
-															Discord
-														</span>
-														<div className="flex items-center gap-1">
-															<span className="text-sm">500</span>
-														</div>
-													</a>
-													{/* LinkedIn */}
-													<a
-														href="https://linkedin.com/company/patchmon"
-														target="_blank"
-														rel="noopener noreferrer"
-														className="flex items-center gap-3 px-3 py-3 bg-gray-50 dark:bg-gray-800 text-secondary-600 dark:text-secondary-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors min-h-[44px]"
-														onClick={() => setMobileLinksOpen(false)}
-													>
-														<FaLinkedin className="h-5 w-5 flex-shrink-0 text-[#0077B5]" />
-														<span className="text-sm font-medium flex-1">
-															LinkedIn
-														</span>
-														<div className="flex items-center gap-1">
-															<span className="text-sm">250</span>
-														</div>
-													</a>
-													{/* YouTube */}
-													<a
-														href="https://youtube.com/@patchmonTV"
-														target="_blank"
-														rel="noopener noreferrer"
-														className="flex items-center gap-3 px-3 py-3 bg-gray-50 dark:bg-gray-800 text-secondary-600 dark:text-secondary-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors min-h-[44px]"
-														onClick={() => setMobileLinksOpen(false)}
-													>
-														<FaYoutube className="h-5 w-5 flex-shrink-0 text-[#FF0000]" />
-														<span className="text-sm font-medium flex-1">
-															YouTube
-														</span>
-														<div className="flex items-center gap-1">
-															<span className="text-sm">100</span>
-														</div>
-													</a>
+													{communityLinks
+														.filter((l) =>
+															[
+																"github",
+																"discord",
+																"linkedin",
+																"youtube",
+															].includes(l.id),
+														)
+														.map((link) => {
+															const Icon =
+																link.id === "discord"
+																	? DiscordIcon
+																	: link.id === "github"
+																		? Github
+																		: link.id === "linkedin"
+																			? FaLinkedin
+																			: FaYoutube;
+															return (
+																<a
+																	key={link.id}
+																	href={link.url}
+																	target="_blank"
+																	rel="noopener noreferrer"
+																	className="flex items-center gap-3 px-3 py-3 bg-gray-50 dark:bg-gray-800 text-secondary-600 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors min-h-[44px]"
+																	onClick={() => setMobileLinksOpen(false)}
+																>
+																	<Icon
+																		className={`h-5 w-5 flex-shrink-0 ${
+																			link.id === "discord"
+																				? "text-[#5865F2]"
+																				: link.id === "linkedin"
+																					? "text-[#0077B5]"
+																					: link.id === "youtube"
+																						? "text-[#FF0000]"
+																						: ""
+																		}`}
+																	/>
+																	<span className="text-sm font-medium flex-1">
+																		{link.label}
+																	</span>
+																	{link.stat && (
+																		<div className="flex items-center gap-1">
+																			{link.statLabel === "stars" && (
+																				<Star className="h-4 w-4 fill-current text-yellow-500" />
+																			)}
+																			<span className="text-sm">
+																				{link.stat}
+																			</span>
+																		</div>
+																	)}
+																</a>
+															);
+														})}
 												</div>
 											</div>
 										</>
 									)}
 								</div>
 
+								{/* Donate Button — hidden when buymeacoffee link is absent (e.g. AdminMode) */}
+								{communityLinks.some((l) => l.id === "buymeacoffee") && (
+									<button
+										type="button"
+										onClick={() => setShowDonateModal(true)}
+										className="hidden md:flex items-center justify-center gap-1.5 px-2.5 h-10 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm"
+										style={{
+											backgroundColor: "var(--button-bg, rgb(249, 250, 251))",
+											backdropFilter: "var(--button-blur, none)",
+											WebkitBackdropFilter: "var(--button-blur, none)",
+										}}
+										title="Donate a coffee"
+									>
+										<BuyMeACoffeeIcon className="h-5 w-5 text-yellow-500 flex-shrink-0" />
+									</button>
+								)}
+
 								{/* Desktop External Links */}
 								<div className="hidden md:flex items-center gap-1">
-									{/* 1) GitHub */}
-									<a
-										href="https://github.com/PatchMon/PatchMon"
-										target="_blank"
-										rel="noopener noreferrer"
-										className="flex items-center justify-center gap-1.5 w-auto px-2.5 h-10 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-secondary-300 hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm group relative"
-										style={{
-											backgroundColor: "var(--button-bg, rgb(249, 250, 251))",
-											backdropFilter: "var(--button-blur, none)",
-											WebkitBackdropFilter: "var(--button-blur, none)",
-										}}
-										title="GitHub"
-										aria-label="GitHub"
-									>
-										<Github className="h-5 w-5 flex-shrink-0" />
-										<div className="flex items-center gap-1">
-											<Star className="h-4 w-4 fill-current text-yellow-500" />
-											<span className="text-sm font-medium">2.1K</span>
-										</div>
-									</a>
-									{/* 2) Buy Me a Coffee */}
-									<a
-										href="https://buymeacoffee.com/iby___"
-										target="_blank"
-										rel="noopener noreferrer"
-										className="flex items-center justify-center gap-1.5 w-auto px-2.5 h-10 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-secondary-300 hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm"
-										style={{
-											backgroundColor: "var(--button-bg, rgb(249, 250, 251))",
-											backdropFilter: "var(--button-blur, none)",
-											WebkitBackdropFilter: "var(--button-blur, none)",
-										}}
-										title="Buy Me a Coffee"
-										aria-label="Buy Me a Coffee"
-									>
-										<svg
-											className="h-5 w-5 text-yellow-500"
-											viewBox="0 0 900 1300"
-											fill="currentColor"
-										>
-											<title>Buy Me a Coffee</title>
-											<path d="M879.567 341.849L872.53 306.352C866.215 274.503 851.882 244.409 819.19 232.898C808.711 229.215 796.821 227.633 788.786 220.01C780.751 212.388 778.376 200.55 776.518 189.572C773.076 169.423 769.842 149.257 766.314 129.143C763.269 111.85 760.86 92.4243 752.928 76.56C742.604 55.2584 721.182 42.8009 699.88 34.559C688.965 30.4844 677.826 27.0375 666.517 24.2352C613.297 10.1947 557.342 5.03277 502.591 2.09047C436.875 -1.53577 370.983 -0.443234 305.422 5.35968C256.625 9.79894 205.229 15.1674 158.858 32.0469C141.91 38.224 124.445 45.6399 111.558 58.7341C95.7448 74.8221 90.5829 99.7026 102.128 119.765C110.336 134.012 124.239 144.078 138.985 150.737C158.192 159.317 178.251 165.846 198.829 170.215C256.126 182.879 315.471 187.851 374.007 189.968C438.887 192.586 503.87 190.464 568.44 183.618C584.408 181.863 600.347 179.758 616.257 177.304C634.995 174.43 647.022 149.928 641.499 132.859C634.891 112.453 617.134 104.538 597.055 107.618C594.095 108.082 591.153 108.512 588.193 108.942L586.06 109.252C579.257 110.113 572.455 110.915 565.653 111.661C551.601 113.175 537.515 114.414 523.394 115.378C491.768 117.58 460.057 118.595 428.363 118.647C397.219 118.647 366.058 117.769 334.983 115.722C320.805 114.793 306.661 113.611 292.552 112.177C286.134 111.506 279.733 110.801 273.333 110.009L267.241 109.235L265.917 109.046L259.602 108.134C246.697 106.189 233.792 103.953 221.025 101.251C219.737 100.965 218.584 100.249 217.758 99.2193C216.932 98.1901 216.482 96.9099 216.482 95.5903C216.482 94.2706 216.932 92.9904 217.758 91.9612C218.584 90.9319 219.737 90.2152 221.025 89.9293H221.266C232.33 87.5721 243.479 85.5589 254.663 83.8038C258.392 83.2188 262.131 82.6453 265.882 82.0832H265.985C272.988 81.6186 280.026 80.3625 286.994 79.5366C347.624 73.2301 408.614 71.0801 469.538 73.1014C499.115 73.9618 528.676 75.6996 558.116 78.6935C564.448 79.3474 570.746 80.0357 577.043 80.8099C579.452 81.1025 581.878 81.4465 584.305 81.7391L589.191 82.4445C603.438 84.5667 617.61 87.1419 631.708 90.1703C652.597 94.7128 679.422 96.1925 688.713 119.077C691.673 126.338 693.015 134.408 694.649 142.03L696.732 151.752C696.786 151.926 696.826 152.105 696.852 152.285C701.773 175.227 706.7 198.169 711.632 221.111C711.994 222.806 712.002 224.557 711.657 226.255C711.312 227.954 710.621 229.562 709.626 230.982C708.632 232.401 707.355 233.6 705.877 234.504C704.398 235.408 702.75 235.997 701.033 236.236H700.895L697.884 236.649L694.908 237.044C685.478 238.272 676.038 239.419 666.586 240.486C647.968 242.608 629.322 244.443 610.648 245.992C573.539 249.077 536.356 251.102 499.098 252.066C480.114 252.57 461.135 252.806 442.162 252.771C366.643 252.712 291.189 248.322 216.173 239.625C208.051 238.662 199.93 237.629 191.808 236.58C198.106 237.389 187.231 235.96 185.029 235.651C179.867 234.928 174.705 234.177 169.543 233.397C152.216 230.798 134.993 227.598 117.7 224.793C96.7944 221.352 76.8005 223.073 57.8906 233.397C42.3685 241.891 29.8055 254.916 21.8776 270.735C13.7217 287.597 11.2956 305.956 7.64786 324.075C4.00009 342.193 -1.67805 361.688 0.472751 380.288C5.10128 420.431 33.165 453.054 73.5313 460.35C111.506 467.232 149.687 472.807 187.971 477.556C338.361 495.975 490.294 498.178 641.155 484.129C653.44 482.982 665.708 481.732 677.959 480.378C681.786 479.958 685.658 480.398 689.292 481.668C692.926 482.938 696.23 485.005 698.962 487.717C701.694 490.429 703.784 493.718 705.08 497.342C706.377 500.967 706.846 504.836 706.453 508.665L702.633 545.797C694.936 620.828 687.239 695.854 679.542 770.874C671.513 849.657 663.431 928.434 655.298 1007.2C653.004 1029.39 650.71 1051.57 648.416 1073.74C646.213 1095.58 645.904 1118.1 641.757 1139.68C635.218 1173.61 612.248 1194.45 578.73 1202.07C548.022 1209.06 516.652 1212.73 485.161 1213.01C450.249 1213.2 415.355 1211.65 380.443 1211.84C343.173 1212.05 297.525 1208.61 268.756 1180.87C243.479 1156.51 239.986 1118.36 236.545 1085.37C231.957 1041.7 227.409 998.039 222.9 954.381L197.607 711.615L181.244 554.538C180.968 551.94 180.693 549.376 180.435 546.76C178.473 528.023 165.207 509.681 144.301 510.627C126.407 511.418 106.069 526.629 108.168 546.76L120.298 663.214L145.385 904.104C152.532 972.528 159.661 1040.96 166.773 1109.41C168.15 1122.52 169.44 1135.67 170.885 1148.78C178.749 1220.43 233.465 1259.04 301.224 1269.91C340.799 1276.28 381.337 1277.59 421.497 1278.24C472.979 1279.07 524.977 1281.05 575.615 1271.72C650.653 1257.95 706.952 1207.85 714.987 1130.13C717.282 1107.69 719.576 1085.25 721.87 1062.8C729.498 988.559 737.115 914.313 744.72 840.061L769.601 597.451L781.009 486.263C781.577 480.749 783.905 475.565 787.649 471.478C791.392 467.391 796.352 464.617 801.794 463.567C823.25 459.386 843.761 452.245 859.023 435.916C883.318 409.918 888.153 376.021 879.567 341.849ZM72.4301 365.835C72.757 365.68 72.1548 368.484 71.8967 369.792C71.8451 367.813 71.9483 366.058 72.4301 365.835ZM74.5121 381.94C74.6842 381.819 75.2003 382.508 75.7337 383.334C74.925 382.576 74.4089 382.009 74.4949 381.94H74.5121ZM76.5597 384.641C77.2996 385.897 77.6953 386.689 76.5597 384.641V384.641ZM80.672 387.979H80.7752C80.7752 388.1 80.9645 388.22 81.0333 388.341C80.9192 388.208 80.7925 388.087 80.6548 387.979H80.672ZM800.796 382.989C793.088 390.319 781.473 393.726 769.996 395.43C641.292 414.529 510.713 424.199 380.597 419.932C287.476 416.749 195.336 406.407 103.144 393.382C94.1102 392.109 84.3197 390.457 78.1082 383.798C66.4078 371.237 72.1548 345.944 75.2003 330.768C77.9878 316.865 83.3218 298.334 99.8572 296.355C125.667 293.327 155.64 304.218 181.175 308.09C211.917 312.781 242.774 316.538 273.745 319.36C405.925 331.405 540.325 329.529 671.92 311.91C695.906 308.686 719.805 304.941 743.619 300.674C764.835 296.871 788.356 289.731 801.175 311.703C809.967 326.673 811.137 346.701 809.778 363.615C809.359 370.984 806.139 377.915 800.779 382.989H800.796Z" />
-										</svg>
-									</a>
-									{/* 3) Discord */}
-									<a
-										href="https://patchmon.net/discord"
-										target="_blank"
-										rel="noopener noreferrer"
-										className="flex items-center justify-center gap-1.5 w-auto px-2.5 h-10 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-secondary-300 hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm"
-										style={{
-											backgroundColor: "var(--button-bg, rgb(249, 250, 251))",
-											backdropFilter: "var(--button-blur, none)",
-											WebkitBackdropFilter: "var(--button-blur, none)",
-										}}
-										title="Discord"
-									>
-										<DiscordIcon className="h-5 w-5 text-[#5865F2]" />
-										<span className="text-sm font-medium">500</span>
-									</a>
-									{/* 4) LinkedIn */}
-									<a
-										href="https://linkedin.com/company/patchmon"
-										target="_blank"
-										rel="noopener noreferrer"
-										className="flex items-center justify-center gap-1.5 w-auto px-2.5 h-10 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-secondary-300 hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm"
-										style={{
-											backgroundColor: "var(--button-bg, rgb(249, 250, 251))",
-											backdropFilter: "var(--button-blur, none)",
-											WebkitBackdropFilter: "var(--button-blur, none)",
-										}}
-										title="LinkedIn Company Page"
-									>
-										<FaLinkedin className="h-5 w-5 text-[#0077B5]" />
-										<span className="text-sm font-medium">250</span>
-									</a>
-									{/* 5) YouTube */}
-									<a
-										href="https://youtube.com/@patchmonTV"
-										target="_blank"
-										rel="noopener noreferrer"
-										className="flex items-center justify-center gap-1.5 w-auto px-2.5 h-10 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-secondary-300 hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm"
-										style={{
-											backgroundColor: "var(--button-bg, rgb(249, 250, 251))",
-											backdropFilter: "var(--button-blur, none)",
-											WebkitBackdropFilter: "var(--button-blur, none)",
-										}}
-										title="YouTube Channel"
-									>
-										<FaYoutube className="h-5 w-5 text-[#FF0000]" />
-										<span className="text-sm font-medium">100</span>
-									</a>
+									{communityLinks
+										.filter((l) =>
+											["github", "discord", "linkedin", "youtube"].includes(
+												l.id,
+											),
+										)
+										.map((link) => {
+											const Icon =
+												link.id === "discord"
+													? DiscordIcon
+													: link.id === "github"
+														? Github
+														: link.id === "linkedin"
+															? FaLinkedin
+															: FaYoutube;
+											return (
+												<a
+													key={link.id}
+													href={link.url}
+													target="_blank"
+													rel="noopener noreferrer"
+													className="flex items-center justify-center gap-1.5 w-auto px-2.5 h-10 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm"
+													style={{
+														backgroundColor:
+															"var(--button-bg, rgb(249, 250, 251))",
+														backdropFilter: "var(--button-blur, none)",
+														WebkitBackdropFilter: "var(--button-blur, none)",
+													}}
+													title={link.label}
+													aria-label={link.label}
+												>
+													<Icon
+														className={`h-5 w-5 flex-shrink-0 ${
+															link.id === "discord"
+																? "text-[#5865F2]"
+																: link.id === "linkedin"
+																	? "text-[#0077B5]"
+																	: link.id === "youtube"
+																		? "text-[#FF0000]"
+																		: ""
+														}`}
+													/>
+													{link.stat && (
+														<div className="flex items-center gap-1">
+															{link.statLabel === "stars" && (
+																<Star className="h-4 w-4 fill-current text-yellow-500" />
+															)}
+															<span className="text-sm font-medium">
+																{link.stat}
+															</span>
+														</div>
+													)}
+												</a>
+											);
+										})}
 								</div>
 							</div>
 						</div>
 					</div>
 
 					<main className="flex-1 py-6 bg-secondary-50 dark:bg-transparent pt-24">
-						<div className="px-4 sm:px-6 lg:px-8">{children}</div>
+						<div className="px-4 sm:px-6 lg:px-8">{content}</div>
 					</main>
 				</div>
 
@@ -1795,6 +1867,12 @@ const Layout = ({ children }) => {
 				<ReleaseNotesModal
 					isOpen={showReleaseNotes}
 					onAccept={() => setShowReleaseNotes(false)}
+				/>
+
+				{/* Donate Modal */}
+				<DonateModal
+					isOpen={showDonateModal}
+					onClose={() => setShowDonateModal(false)}
 				/>
 			</div>
 		</SidebarContext.Provider>

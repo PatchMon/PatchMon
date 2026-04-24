@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import cors from "cors";
 import express from "express";
+import rateLimit from "express-rate-limit";
 import { createProxyMiddleware } from "http-proxy-middleware";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -41,13 +42,24 @@ app.use((_req, res, next) => {
 	next();
 });
 
-// Enable CORS for API calls
+// Enable CORS for API calls. In production, require explicit CORS_ORIGIN to avoid allowing any origin.
 app.use(
 	cors({
-		origin: process.env.CORS_ORIGIN || "*",
+		origin:
+			process.env.CORS_ORIGIN ||
+			(process.env.NODE_ENV === "production" ? false : "*"),
 		credentials: true,
 	}),
 );
+
+// Rate limit static and SPA routes to reduce abuse
+const limiter = rateLimit({
+	windowMs: 60 * 1000,
+	max: 100,
+	standardHeaders: true,
+	legacyHeaders: false,
+});
+app.use(limiter);
 
 // Proxy API requests to backend
 app.use(

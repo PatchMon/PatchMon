@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -64,49 +65,117 @@ func sendReport(outputJSON bool) error {
 
 	// Initialise managers
 	systemDetector := system.New(logger)
-	packageMgr := packages.New(logger)
+	packageMgr := packages.New(logger, packages.CacheRefreshConfig{
+		Mode:   cfgManager.GetPackageCacheRefreshMode(),
+		MaxAge: cfgManager.GetPackageCacheRefreshMaxAge(),
+	})
 	repoMgr := repositories.New(logger)
 	hardwareMgr := hardware.New(logger)
 	networkMgr := network.New(logger)
 
-	// Detect OS
-	logger.Info("Detecting operating system...")
-	osType, osVersion, err := systemDetector.DetectOS()
-	if err != nil {
-		return fmt.Errorf("failed to detect OS: %w", err)
+	// OPTIMIZATION: Run all independent collectors concurrently. Each of these
+	// pieces of work is IO-bound (file reads, subprocess spawns) with no data
+	// dependency on the others, so a goroutine-per-task layout cuts wall time
+	// down to roughly max(task_duration) instead of sum(task_duration).
+	var (
+		osType, osVersion             string
+		osErr                         error
+		hostname                      string
+		hostnameErr                   error
+		architecture                  string
+		systemInfo                    models.SystemInfo
+		ipAddress                     string
+		hardwareInfo                  models.HardwareInfo
+		networkInfo                   models.NetworkInfo
+		needsReboot                   bool
+		rebootReason                  string
+		installedKernel               string
+		packageList                   []models.Package
+		pkgErr                        error
+		repoList                      []models.Repository
+		repoErr                       error
+		machineID, detectedPackageMgr string
+	)
+
+	// Track panics from collector goroutines so that a panic in a critical
+	// task is escalated to a fatal error rather than silently producing an
+	// empty/partial report.
+	var (
+		panicMu    sync.Mutex
+		taskPanics = make(map[string]any)
+	)
+
+	var wg sync.WaitGroup
+	runTask := func(name string, fn func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					panicMu.Lock()
+					taskPanics[name] = r
+					panicMu.Unlock()
+					logger.WithFields(logrus.Fields{"task": name, "panic": r}).Error("Collector panicked")
+				}
+			}()
+			fn()
+		}()
 	}
-	logger.WithFields(logrus.Fields{
-		"osType":    osType,
-		"osVersion": osVersion,
-	}).Info("Detected OS")
 
-	// Get system information
-	logger.Info("Collecting system information...")
-	hostname, err := systemDetector.GetHostname()
-	if err != nil {
-		return fmt.Errorf("failed to get hostname: %w", err)
+	runTask("os", func() { osType, osVersion, osErr = systemDetector.DetectOS() })
+	runTask("hostname", func() { hostname, hostnameErr = systemDetector.GetHostname() })
+	runTask("architecture", func() { architecture = systemDetector.GetArchitecture() })
+	runTask("systemInfo", func() { systemInfo = systemDetector.GetSystemInfo() })
+	runTask("ip", func() { ipAddress = systemDetector.GetIPAddress() })
+	runTask("hardware", func() { hardwareInfo = hardwareMgr.GetHardwareInfo() })
+	runTask("network", func() {
+		networkInfo = networkMgr.GetNetworkInfo()
+		if networkInfo.DNSServers == nil {
+			networkInfo.DNSServers = []string{}
+		}
+	})
+	runTask("reboot", func() { needsReboot, rebootReason = systemDetector.CheckRebootRequired() })
+	runTask("kernel", func() { installedKernel = systemDetector.GetLatestInstalledKernel() })
+	runTask("machineID", func() { machineID = systemDetector.GetMachineID() })
+	runTask("packageMgr", func() { detectedPackageMgr = packageMgr.DetectPackageManager() })
+	runTask("packages", func() { packageList, pkgErr = packageMgr.GetPackages() })
+	runTask("repos", func() { repoList, repoErr = repoMgr.GetRepositories() })
+
+	wg.Wait()
+
+	// Escalate panics in critical collectors to fatal errors. Without this
+	// we'd silently emit a report with zero packages, which the server would
+	// happily accept and overwrite the host's previous (correct) state.
+	for _, name := range []string{"os", "hostname", "packages"} {
+		if p, ok := taskPanics[name]; ok {
+			return fmt.Errorf("%s collector panicked: %v", name, p)
+		}
 	}
 
-	architecture := systemDetector.GetArchitecture()
-	systemInfo := systemDetector.GetSystemInfo()
-	ipAddress := systemDetector.GetIPAddress()
-
-	// Get hardware information
-	logger.Info("Collecting hardware information...")
-	hardwareInfo := hardwareMgr.GetHardwareInfo()
-
-	// Get network information
-	logger.Info("Collecting network information...")
-	networkInfo := networkMgr.GetNetworkInfo()
-	// Ensure DNSServers is never nil (should be empty slice, not nil)
-	if networkInfo.DNSServers == nil {
-		networkInfo.DNSServers = []string{}
+	// Surface fatal errors in the same priority order the original code used
+	if osErr != nil {
+		return fmt.Errorf("failed to detect OS: %w", osErr)
+	}
+	if hostnameErr != nil {
+		return fmt.Errorf("failed to get hostname: %w", hostnameErr)
+	}
+	if pkgErr != nil {
+		return fmt.Errorf("failed to get packages: %w", pkgErr)
+	}
+	if repoErr != nil {
+		logger.WithError(repoErr).Warn("Failed to get repositories")
+		repoList = []models.Repository{}
 	}
 
-	// Check if reboot is required and get installed kernel
-	logger.Info("Checking reboot status...")
-	needsReboot, rebootReason := systemDetector.CheckRebootRequired()
-	installedKernel := systemDetector.GetLatestInstalledKernel()
+	// Guarantee non-nil slices so JSON marshals as [] not null
+	if packageList == nil {
+		packageList = []models.Package{}
+	}
+	if repoList == nil {
+		repoList = []models.Repository{}
+	}
+
+	logger.WithFields(logrus.Fields{"osType": osType, "osVersion": osVersion}).Info("Detected OS")
 	logger.WithFields(logrus.Fields{
 		"needs_reboot":     needsReboot,
 		"reason":           rebootReason,
@@ -114,21 +183,9 @@ func sendReport(outputJSON bool) error {
 		"running_kernel":   systemInfo.KernelVersion,
 	}).Info("Reboot status check completed")
 
-	// Get package information
-	logger.Info("Collecting package information...")
-	packageList, err := packageMgr.GetPackages()
-	if err != nil {
-		return fmt.Errorf("failed to get packages: %w", err)
-	}
-	// Ensure packageList is never nil (should be empty slice, not nil)
-	if packageList == nil {
-		packageList = []models.Package{}
-	}
-
-	// Count packages for debug logging
+	// Count packages for debug logging (skip the per-package Debug loop below info level)
 	needsUpdateCount := 0
 	securityUpdateCount := 0
-	logger.WithField("count", len(packageList)).Info("Found packages")
 	for i := range packageList {
 		pkg := &packageList[i]
 		if pkg.NeedsUpdate {
@@ -139,39 +196,37 @@ func sendReport(outputJSON bool) error {
 		}
 	}
 	logger.WithField("count", len(packageList)).Info("Found packages")
-	for _, pkg := range packageList {
-		updateMsg := ""
-		if pkg.NeedsUpdate {
-			updateMsg = "update available"
-		} else {
-			updateMsg = "latest"
+	// OPTIMIZATION: Only iterate the package list for per-package debug output
+	// when debug logging is actually enabled. At info level the original loop
+	// still paid the cost of building a logrus Entry for every package.
+	if logger.IsLevelEnabled(logrus.DebugLevel) {
+		for _, pkg := range packageList {
+			updateMsg := "latest"
+			if pkg.NeedsUpdate {
+				updateMsg = "update available"
+			}
+			logger.WithFields(logrus.Fields{
+				"name":    pkg.Name,
+				"version": pkg.CurrentVersion,
+				"status":  updateMsg,
+			}).Debug("Package info")
 		}
 		logger.WithFields(logrus.Fields{
-			"name":    pkg.Name,
-			"version": pkg.CurrentVersion,
-			"status":  updateMsg,
-		}).Debug("Package info")
+			"total_updates":    needsUpdateCount,
+			"security_updates": securityUpdateCount,
+		}).Debug("Package summary")
 	}
-	logger.WithFields(logrus.Fields{
-		"total_updates":    needsUpdateCount,
-		"security_updates": securityUpdateCount,
-	}).Debug("Package summary")
 
-	// Get repository information
-	logger.Info("Collecting repository information...")
-	repoList, err := repoMgr.GetRepositories()
-	if err != nil {
-		logger.WithError(err).Warn("Failed to get repositories")
-		repoList = []models.Repository{}
-	}
 	logger.WithField("count", len(repoList)).Info("Found repositories")
-	for _, repo := range repoList {
-		logger.WithFields(logrus.Fields{
-			"name":    repo.Name,
-			"type":    repo.RepoType,
-			"url":     repo.URL,
-			"enabled": repo.IsEnabled,
-		}).Debug("Repository info")
+	if logger.IsLevelEnabled(logrus.DebugLevel) {
+		for _, repo := range repoList {
+			logger.WithFields(logrus.Fields{
+				"name":    repo.Name,
+				"type":    repo.RepoType,
+				"url":     repo.URL,
+				"enabled": repo.IsEnabled,
+			}).Debug("Repository info")
+		}
 	}
 
 	// Calculate execution time (in seconds, with millisecond precision)
@@ -188,7 +243,7 @@ func sendReport(outputJSON bool) error {
 		IP:                     ipAddress,
 		Architecture:           architecture,
 		AgentVersion:           pkgversion.Version,
-		MachineID:              systemDetector.GetMachineID(),
+		MachineID:              machineID,
 		KernelVersion:          systemInfo.KernelVersion,
 		InstalledKernelVersion: installedKernel,
 		SELinuxStatus:          systemInfo.SELinuxStatus,
@@ -205,6 +260,7 @@ func sendReport(outputJSON bool) error {
 		ExecutionTime:          executionTime,
 		NeedsReboot:            needsReboot,
 		RebootReason:           rebootReason,
+		PackageManager:         detectedPackageMgr,
 	}
 
 	// If --report-json flag is set, output JSON and exit
@@ -330,30 +386,10 @@ func sendIntegrationData() {
 	// Register available integrations
 	integrationMgr.Register(docker.New(logger))
 
-	// Register compliance integration based on mode
-	// Three states: disabled (false), on-demand ("on-demand"), enabled (true)
-	// Check if compliance is enabled and not in on-demand mode
-	if cfgManager.IsIntegrationEnabled("compliance") && !cfgManager.IsComplianceOnDemandOnly() {
-		// Compliance is enabled (true) - register for automatic scheduled scans
-		complianceInteg := compliance.New(logger)
-		complianceInteg.SetDockerIntegrationEnabled(cfgManager.IsIntegrationEnabled("docker"))
-		integrationMgr.Register(complianceInteg)
-		logger.Debug("Compliance integration registered for automatic scheduled scans")
-	} else if cfgManager.IsIntegrationEnabled("compliance") && cfgManager.IsComplianceOnDemandOnly() {
-		// Compliance is in on-demand mode - skip scheduled scans
-		// Note: UI-triggered scans work independently and are not affected by this check
-		logger.Info("Skipping compliance scan in scheduled report (mode=on-demand). UI-triggered scans from the web interface work independently and will run normally.")
-	} else {
-		// Compliance is disabled
-		logger.Debug("Compliance integration is disabled in config")
-	}
 	// Future: integrationMgr.Register(proxmox.New(logger))
 	// Future: integrationMgr.Register(kubernetes.New(logger))
 
-	// Discover and collect from all available integrations
-	// 25 minute timeout to allow OpenSCAP scans to complete (they can take 15+ minutes on complex systems)
-	// This gives time for both OpenSCAP and Docker Bench to complete
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	integrationData := integrationMgr.CollectAll(ctx)
@@ -374,11 +410,6 @@ func sendIntegrationData() {
 	// Send Docker data if available
 	if dockerData, exists := integrationData["docker"]; exists && dockerData.Error == "" {
 		sendDockerData(httpClient, dockerData, hostname, machineID)
-	}
-
-	// Send Compliance data if available
-	if complianceData, exists := integrationData["compliance"]; exists && complianceData.Error == "" {
-		sendComplianceData(httpClient, complianceData, hostname, machineID)
 	}
 
 	// Future: Send other integration data here
@@ -426,7 +457,7 @@ func sendDockerData(httpClient *client.Client, integrationData *models.Integrati
 }
 
 // sendComplianceData sends compliance scan data to server
-func sendComplianceData(httpClient *client.Client, integrationData *models.IntegrationData, hostname, machineID string) {
+func sendComplianceData(httpClient *client.Client, integrationData *models.IntegrationData, hostname, machineID, scanType string) {
 	// Extract Compliance data from integration data
 	complianceData, ok := integrationData.Data.(*models.ComplianceData)
 	if !ok {
@@ -444,6 +475,7 @@ func sendComplianceData(httpClient *client.Client, integrationData *models.Integ
 		Hostname:       hostname,
 		MachineID:      machineID,
 		AgentVersion:   pkgversion.Version,
+		ScanType:       scanType,
 	}
 
 	totalRules := 0
@@ -469,4 +501,86 @@ func sendComplianceData(httpClient *client.Client, integrationData *models.Integ
 		"scans_received": response.ScansReceived,
 		"message":        response.Message,
 	}).Info("Compliance data sent successfully")
+}
+
+func runScheduledComplianceScan() {
+	if !cfgManager.IsIntegrationEnabled("compliance") || cfgManager.IsComplianceOnDemandOnly() {
+		logger.Debug("Skipping scheduled compliance scan (not in enabled mode)")
+		return
+	}
+
+	if !complianceScanRunning.CompareAndSwap(false, true) {
+		complianceScanCancelMu.Lock()
+		source := complianceScanSource
+		complianceScanCancelMu.Unlock()
+		logger.WithField("running_source", source).Debug("Skipping scheduled compliance scan (scan already running)")
+		return
+	}
+
+	complianceScanCancelMu.Lock()
+	complianceScanSource = "scheduled"
+	complianceScanCancelMu.Unlock()
+
+	defer func() {
+		complianceScanCancelMu.Lock()
+		complianceScanSource = ""
+		complianceScanCancelMu.Unlock()
+		complianceScanRunning.Store(false)
+	}()
+
+	startTime := time.Now()
+	logger.Info("Starting scheduled compliance scan")
+
+	if err := cfgManager.LoadConfig(); err != nil {
+		logger.WithError(err).Debug("Failed to load config for scheduled compliance scan")
+	}
+
+	complianceInteg := compliance.New(logger)
+	complianceInteg.SetDockerIntegrationEnabled(cfgManager.IsIntegrationEnabled("docker"))
+	complianceInteg.SetScannerOptionsGetter(func() (bool, bool) {
+		return cfgManager.GetComplianceOpenscapEnabled(), cfgManager.GetComplianceDockerBenchEnabled()
+	})
+
+	if !complianceInteg.IsAvailable() {
+		logger.Debug("Compliance scanning not available on this system, skipping scheduled scan")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
+	defer cancel()
+
+	complianceScanCancelMu.Lock()
+	complianceScanCancel = cancel
+	complianceScanCancelMu.Unlock()
+	defer func() {
+		complianceScanCancelMu.Lock()
+		complianceScanCancel = nil
+		complianceScanCancelMu.Unlock()
+	}()
+
+	integrationData, err := complianceInteg.Collect(ctx)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			logger.Info("Scheduled compliance scan was cancelled")
+		} else {
+			logger.WithError(err).Warn("Scheduled compliance scan failed")
+		}
+		return
+	}
+
+	if integrationData == nil || integrationData.Error != "" {
+		if integrationData != nil {
+			logger.WithField("error", integrationData.Error).Warn("Scheduled compliance scan returned error")
+		}
+		return
+	}
+
+	systemDetector := system.New(logger)
+	hostname, _ := systemDetector.GetHostname()
+	machineID := systemDetector.GetMachineID()
+
+	httpClient := client.New(cfgManager, logger)
+	sendComplianceData(httpClient, integrationData, hostname, machineID, "scheduled")
+
+	logger.WithField("elapsed_ms", time.Since(startTime).Milliseconds()).Info("Scheduled compliance scan completed")
 }

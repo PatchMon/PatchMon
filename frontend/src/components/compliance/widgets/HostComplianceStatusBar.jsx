@@ -4,8 +4,10 @@ import {
 	ShieldCheck,
 	ShieldOff,
 } from "lucide-react";
+import { Fragment } from "react";
+import { Link } from "react-router-dom";
 
-const HostComplianceStatusBar = ({ data }) => {
+const HostComplianceStatusBar = ({ data, onTabChange }) => {
 	const summary = data?.summary || {};
 	const compliant = summary.hosts_compliant ?? 0;
 	const warning = summary.hosts_warning ?? 0;
@@ -18,24 +20,28 @@ const HostComplianceStatusBar = ({ data }) => {
 			value: compliant,
 			Icon: ShieldCheck,
 			icon_class: "text-green-600",
+			to: "/compliance",
 		},
 		{
 			label: "Warning",
 			value: warning,
 			Icon: AlertTriangle,
 			icon_class: "text-yellow-600",
+			to: "/compliance",
 		},
 		{
 			label: "Critical",
 			value: critical,
 			Icon: ShieldAlert,
 			icon_class: "text-red-600",
+			to: "/compliance",
 		},
 		{
 			label: "Never scanned",
 			value: unscanned,
 			Icon: ShieldOff,
-			icon_class: "text-secondary-600",
+			icon_class: "text-secondary-600 dark:text-white",
+			to: "/compliance",
 		},
 	];
 
@@ -47,23 +53,41 @@ const HostComplianceStatusBar = ({ data }) => {
 			<div className="grid grid-cols-2 gap-3 flex-1 min-h-0">
 				{boxes.map((box) => {
 					const Icon = box.Icon;
-					return (
-						<div
-							key={box.label}
-							className="card p-4 cursor-default text-left w-full"
-						>
-							<div className="flex items-center">
-								<Icon className={`h-5 w-5 ${box.icon_class} mr-2`} />
-								<div>
-									<p className="text-sm text-secondary-500 dark:text-white">
-										{box.label}
-									</p>
-									<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-										{box.value}
-									</p>
-								</div>
+					const content = (
+						<div className="flex items-center">
+							<Icon
+								className={`h-5 w-5 ${box.icon_class} mr-2 flex-shrink-0`}
+							/>
+							<div>
+								<p className="text-sm text-secondary-500 dark:text-white">
+									{box.label}
+								</p>
+								<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+									{box.value}
+								</p>
 							</div>
 						</div>
+					);
+					return (
+						<Fragment key={box.label}>
+							{onTabChange ? (
+								<button
+									type="button"
+									onClick={() => onTabChange("hosts")}
+									className="card p-4 text-left w-full hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
+								>
+									{content}
+								</button>
+							) : (
+								<Link
+									to={box.to}
+									state={{ complianceTab: "hosts" }}
+									className="card p-4 text-left w-full hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
+								>
+									{content}
+								</Link>
+							)}
+						</Fragment>
 					);
 				})}
 			</div>

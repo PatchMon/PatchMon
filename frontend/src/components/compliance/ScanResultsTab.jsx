@@ -23,7 +23,7 @@ const SEVERITY_COLORS = {
 		"bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
 	low: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
 	unknown:
-		"bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-400",
+		"bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-white",
 };
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "unknown"];
@@ -131,7 +131,7 @@ const ScanResultsTab = ({
 						handle_sort(column);
 					}
 				}}
-				className={`px-4 py-2 text-xs font-medium text-secondary-500 dark:text-secondary-300 select-none cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600 ${className}`}
+				className={`px-4 py-2 text-xs font-medium text-secondary-500 dark:text-white select-none cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-600 ${className}`}
 			>
 				<span className="inline-flex items-center gap-1">
 					{label}
@@ -252,7 +252,7 @@ const ScanResultsTab = ({
 			) : sorted_rules.length === 0 ? (
 				<div className="card p-8 text-center">
 					<Shield className="h-8 w-8 text-secondary-400 mx-auto mb-3" />
-					<p className="text-secondary-500 dark:text-secondary-400">
+					<p className="text-secondary-500 dark:text-white">
 						{search || severity_filter || status_filter
 							? "No rules match your filters"
 							: "No compliance rules found. Run a scan to populate rules."}
@@ -263,7 +263,7 @@ const ScanResultsTab = ({
 					{/* Top pagination */}
 					{total_pages > 1 && (
 						<div className="flex items-center justify-between px-4 py-2 border-b border-secondary-200 dark:border-secondary-700 bg-secondary-50 dark:bg-secondary-800">
-							<p className="text-sm text-secondary-500 dark:text-secondary-400">
+							<p className="text-sm text-secondary-500 dark:text-white">
 								Showing {page * limit + 1}–{Math.min((page + 1) * limit, total)}{" "}
 								of {total} rules
 							</p>
@@ -272,11 +272,11 @@ const ScanResultsTab = ({
 									type="button"
 									onClick={() => setPage((p) => Math.max(0, p - 1))}
 									disabled={page === 0}
-									className="p-1.5 rounded-lg bg-secondary-100 dark:bg-secondary-700 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-200 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+									className="p-1.5 rounded-lg bg-secondary-100 dark:bg-secondary-700 text-secondary-600 dark:text-white hover:bg-secondary-200 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
 								>
 									<ChevronLeft className="h-4 w-4" />
 								</button>
-								<span className="text-sm text-secondary-500 dark:text-secondary-400">
+								<span className="text-sm text-secondary-500 dark:text-white">
 									Page {page + 1} of {total_pages}
 								</span>
 								<button
@@ -285,7 +285,7 @@ const ScanResultsTab = ({
 										setPage((p) => Math.min(total_pages - 1, p + 1))
 									}
 									disabled={page >= total_pages - 1}
-									className="p-1.5 rounded-lg bg-secondary-100 dark:bg-secondary-700 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-200 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+									className="p-1.5 rounded-lg bg-secondary-100 dark:bg-secondary-700 text-secondary-600 dark:text-white hover:bg-secondary-200 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
 								>
 									<ChevronRight className="h-4 w-4" />
 								</button>
@@ -359,7 +359,7 @@ const ScanResultsTab = ({
 											<span
 												className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
 													SEVERITY_COLORS[rule.severity || "unknown"] ||
-													"bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-400"
+													"bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-white"
 												}`}
 											>
 												{(rule.severity || "unknown").charAt(0).toUpperCase() +
@@ -385,7 +385,7 @@ const ScanResultsTab = ({
 													{rule.hosts_passed}
 												</span>
 											) : (
-												<span className="text-secondary-400">—</span>
+												<span className="text-secondary-400"> -</span>
 											)}
 										</td>
 										<td className="px-4 py-2 text-center whitespace-nowrap">
@@ -394,7 +394,7 @@ const ScanResultsTab = ({
 													{rule.hosts_failed}
 												</span>
 											) : (
-												<span className="text-secondary-400">—</span>
+												<span className="text-secondary-400"> -</span>
 											)}
 										</td>
 										<td className="px-4 py-2 text-center whitespace-nowrap">
@@ -403,10 +403,10 @@ const ScanResultsTab = ({
 													{rule.hosts_warned}
 												</span>
 											) : (
-												<span className="text-secondary-400">—</span>
+												<span className="text-secondary-400"> -</span>
 											)}
 										</td>
-										<td className="px-4 py-2 text-center whitespace-nowrap text-secondary-500 dark:text-secondary-400">
+										<td className="px-4 py-2 text-center whitespace-nowrap text-secondary-500 dark:text-white">
 											{rule.total_hosts}
 										</td>
 									</tr>
@@ -415,9 +415,9 @@ const ScanResultsTab = ({
 						</table>
 					</div>
 
-					{/* Pagination — always visible when results exist */}
+					{/* Pagination - always visible when results exist */}
 					<div className="flex items-center justify-between px-4 py-3 border-t border-secondary-200 dark:border-secondary-700">
-						<p className="text-sm text-secondary-500 dark:text-secondary-400">
+						<p className="text-sm text-secondary-500 dark:text-white">
 							{total > 0
 								? `Showing ${page * limit + 1}–${Math.min((page + 1) * limit, total)} of ${total} rules`
 								: "No rules"}
@@ -428,11 +428,11 @@ const ScanResultsTab = ({
 									type="button"
 									onClick={() => setPage((p) => Math.max(0, p - 1))}
 									disabled={page === 0}
-									className="p-1.5 rounded-lg bg-secondary-100 dark:bg-secondary-700 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-200 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+									className="p-1.5 rounded-lg bg-secondary-100 dark:bg-secondary-700 text-secondary-600 dark:text-white hover:bg-secondary-200 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
 								>
 									<ChevronLeft className="h-4 w-4" />
 								</button>
-								<span className="text-sm text-secondary-500 dark:text-secondary-400">
+								<span className="text-sm text-secondary-500 dark:text-white">
 									Page {page + 1} of {total_pages}
 								</span>
 								<button
@@ -441,7 +441,7 @@ const ScanResultsTab = ({
 										setPage((p) => Math.min(total_pages - 1, p + 1))
 									}
 									disabled={page >= total_pages - 1}
-									className="p-1.5 rounded-lg bg-secondary-100 dark:bg-secondary-700 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-200 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+									className="p-1.5 rounded-lg bg-secondary-100 dark:bg-secondary-700 text-secondary-600 dark:text-white hover:bg-secondary-200 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
 								>
 									<ChevronRight className="h-4 w-4" />
 								</button>

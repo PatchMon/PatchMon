@@ -15,6 +15,7 @@ import {
 	useSortable,
 } from "@dnd-kit/sortable";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import confetti from "canvas-confetti";
 import {
 	ArcElement,
 	BarElement,
@@ -50,6 +51,16 @@ import { useCallback, useEffect, useState } from "react";
 import { Bar, Doughnut, Line, Pie } from "react-chartjs-2";
 import { useNavigate } from "react-router-dom";
 import {
+	ALERTING_WIDGET_CARD_IDS,
+	AlertResponderWorkload,
+	AlertSeverityDoughnut,
+	AlertStatusBoxes,
+	AlertsByType,
+	AlertVolumeTrend,
+	DeliveryByDestination,
+	RecentAlerts,
+} from "../components/alerting/widgets";
+import {
 	ActiveBenchmarkScans,
 	COMPLIANCE_WIDGET_CARD_IDS,
 	ComplianceProfilesPie,
@@ -59,15 +70,28 @@ import {
 	LastScanAgeBar,
 	OpenSCAPDistributionDoughnut,
 } from "../components/compliance/widgets";
+import {
+	PATCHING_WIDGET_CARD_IDS,
+	PatchingActivePolicies,
+	PatchingPendingApproval,
+	PatchingRecentRuns,
+	PatchRunOutcomesDoughnut,
+	PatchRunStatusBoxes,
+	PatchRunsByType,
+} from "../components/patching/widgets";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
+import { useToast } from "../contexts/ToastContext";
 import {
+	adminUsersAPI,
+	alertsAPI,
 	dashboardAPI,
 	dashboardPreferencesAPI,
 	formatRelativeTime,
 	settingsAPI,
 } from "../utils/api";
 import { complianceAPI } from "../utils/complianceApi";
+import { patchingAPI } from "../utils/patchingApi";
 
 // Register Chart.js components
 ChartJS.register(
@@ -209,8 +233,22 @@ const Dashboard = () => {
 	const [active_drag_rect, set_active_drag_rect] = useState(null);
 	const navigate = useNavigate();
 	const query_client = useQueryClient();
+	const toast = useToast();
 	const { isDark } = useTheme();
-	const { user, permissions } = useAuth();
+	const { user, permissions, hasModule } = useAuth();
+
+	// First-time setup celebration
+	useEffect(() => {
+		if (localStorage.getItem("patchmon_first_time_complete") === "1") {
+			localStorage.removeItem("patchmon_first_time_complete");
+			confetti({
+				particleCount: 100,
+				spread: 70,
+				origin: { y: 0.6 },
+			});
+			toast.success("Welcome to PatchMon!");
+		}
+	}, [toast]);
 
 	// Navigation handlers
 	const handleTotalHostsClick = () => {
@@ -272,16 +310,19 @@ const Dashboard = () => {
 		navigate("/hosts?filter=needsUpdates", { replace: true });
 	};
 
-	// Chart click handlers
+	// Chart click handlers - OS distribution (bar/pie/doughnut) click navigates to hosts filtered by os_type + os_version
 	const handleOSChartClick = (_, elements) => {
 		if (elements.length > 0 && stats?.charts?.osDistribution) {
 			const elementIndex = elements[0].index;
 			const osItem = stats.charts.osDistribution[elementIndex];
 			if (osItem?.name) {
-				navigate(
-					`/hosts?osFilter=${osItem.name.toLowerCase()}&showFilters=true`,
-					{ replace: true },
-				);
+				const params = new URLSearchParams();
+				params.set("osFilter", (osItem.os_type || osItem.name).toLowerCase());
+				if (osItem.os_version) {
+					params.set("osVersionFilter", osItem.os_version);
+				}
+				params.set("showFilters", "true");
+				navigate(`/hosts?${params.toString()}`, { replace: true });
 			}
 		}
 	};
@@ -373,12 +414,11 @@ const Dashboard = () => {
 		isFetching: packageTrendsFetching,
 	} = useQuery({
 		queryKey: ["packageTrends", packageTrendsPeriod, packageTrendsHost],
-		queryFn: () => {
-			const params = {
-				days: packageTrendsPeriod,
-			};
-			if (packageTrendsHost !== "all") {
-				params.hostId = packageTrendsHost;
+		queryFn: ({ queryKey }) => {
+			const [, period, host] = queryKey;
+			const params = { days: period };
+			if (host && host !== "all") {
+				params.hostId = host;
 			}
 			return dashboardAPI.getPackageTrends(params).then((res) => res.data);
 		},
@@ -428,7 +468,61 @@ const Dashboard = () => {
 		queryFn: () => complianceAPI.getDashboard().then((res) => res.data),
 		staleTime: 60 * 1000,
 		refetchOnWindowFocus: false,
-		enabled: has_view_hosts && is_any_compliance_card_enabled,
+		enabled:
+			has_view_hosts &&
+			is_any_compliance_card_enabled &&
+			hasModule("compliance"),
+	});
+
+	// Fetch patching dashboard only when at least one patching card is enabled
+	const is_any_patching_card_enabled = cardPreferences.some(
+		(c) => PATCHING_WIDGET_CARD_IDS.includes(c.cardId) && c.enabled,
+	);
+	const { data: patching_dashboard } = useQuery({
+		queryKey: ["patching-dashboard"],
+		queryFn: () => patchingAPI.getDashboard(),
+		staleTime: 30 * 1000,
+		refetchInterval: 30 * 1000,
+		enabled:
+			has_view_hosts && is_any_patching_card_enabled && hasModule("patching"),
+	});
+
+	// Fetch alerting data only when at least one alerting card is enabled
+	const is_any_alerting_card_enabled = cardPreferences.some(
+		(c) => ALERTING_WIDGET_CARD_IDS.includes(c.cardId) && c.enabled,
+	);
+	const { data: alerting_alerts } = useQuery({
+		queryKey: ["alerts"],
+		queryFn: async () => {
+			const response = await alertsAPI.getAlerts();
+			return response.data.data || [];
+		},
+		staleTime: 30 * 1000,
+		refetchInterval: 30 * 1000,
+		enabled: is_any_alerting_card_enabled,
+	});
+	const { data: alerting_stats } = useQuery({
+		queryKey: ["alert-stats"],
+		queryFn: async () => {
+			const response = await alertsAPI.getAlertStats();
+			return response.data.data || {};
+		},
+		staleTime: 30 * 1000,
+		refetchInterval: 30 * 1000,
+		enabled: is_any_alerting_card_enabled,
+	});
+	const { data: alerting_users } = useQuery({
+		queryKey: ["users", "for-assignment"],
+		queryFn: async () => {
+			try {
+				const response = await adminUsersAPI.listForAssignment();
+				return response.data.data || [];
+			} catch (_e) {
+				return [];
+			}
+		},
+		staleTime: 5 * 60 * 1000,
+		enabled: is_any_alerting_card_enabled,
 	});
 
 	// Fetch settings to get the agent update interval
@@ -686,6 +780,16 @@ const Dashboard = () => {
 				return false; // Hide compliance cards if user can't view hosts
 			}
 		}
+		if (PATCHING_WIDGET_CARD_IDS.includes(cardId)) {
+			if (permissions?.can_view_hosts !== true) {
+				return false;
+			}
+		}
+		if (ALERTING_WIDGET_CARD_IDS.includes(cardId)) {
+			if (permissions?.can_view_hosts !== true) {
+				return false;
+			}
+		}
 
 		return card.enabled;
 	};
@@ -718,6 +822,8 @@ const Dashboard = () => {
 				"recentUsers",
 				"recentCollection",
 				...COMPLIANCE_WIDGET_CARD_IDS,
+				...PATCHING_WIDGET_CARD_IDS,
+				...ALERTING_WIDGET_CARD_IDS,
 			].includes(cardId)
 		) {
 			return "charts";
@@ -1187,10 +1293,10 @@ const Dashboard = () => {
 			case "osDistribution":
 				return (
 					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
-						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex-shrink-0">
 							OS Distribution
 						</h3>
-						<div className="h-64 w-full flex items-center justify-center flex-1 min-h-0">
+						<div className="h-56 w-full flex items-center justify-center flex-1 min-h-0">
 							<div className="w-full h-full max-w-sm">
 								<Pie data={osChartData} options={chartOptions} />
 							</div>
@@ -1201,10 +1307,10 @@ const Dashboard = () => {
 			case "osDistributionDoughnut":
 				return (
 					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
-						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex-shrink-0">
 							OS Distribution
 						</h3>
-						<div className="h-64 w-full flex items-center justify-center flex-1 min-h-0">
+						<div className="h-56 w-full flex items-center justify-center flex-1 min-h-0">
 							<div className="w-full h-full max-w-sm">
 								<Doughnut data={osChartData} options={doughnutChartOptions} />
 							</div>
@@ -1237,10 +1343,10 @@ const Dashboard = () => {
 							}
 						}}
 					>
-						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex-shrink-0">
 							Update Status
 						</h3>
-						<div className="h-64 w-full flex items-center justify-center flex-1 min-h-0">
+						<div className="h-56 w-full flex items-center justify-center flex-1 min-h-0">
 							<div className="w-full h-full max-w-sm">
 								<Pie
 									data={updateStatusChartData}
@@ -1254,10 +1360,10 @@ const Dashboard = () => {
 			case "packagePriority":
 				return (
 					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
-						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex-shrink-0">
 							Outdated Packages by Priority
 						</h3>
-						<div className="h-64 w-full flex items-center justify-center flex-1 min-h-0">
+						<div className="h-56 w-full flex items-center justify-center flex-1 min-h-0">
 							<div className="w-full h-full max-w-sm">
 								<Pie
 									data={packagePriorityChartData}
@@ -1343,6 +1449,52 @@ const Dashboard = () => {
 
 			case "complianceActiveBenchmarkScans":
 				return <ActiveBenchmarkScans />;
+
+			case "patchingRunStatus":
+				return <PatchRunStatusBoxes data={patching_dashboard} />;
+
+			case "patchingRunOutcomesDoughnut":
+				return <PatchRunOutcomesDoughnut data={patching_dashboard} />;
+
+			case "patchingPendingApproval":
+				return <PatchingPendingApproval data={patching_dashboard} />;
+
+			case "patchingRunsByType":
+				return <PatchRunsByType data={patching_dashboard} />;
+
+			case "patchingActivePolicies":
+				return <PatchingActivePolicies data={patching_dashboard} />;
+
+			case "patchingRecentRuns":
+				return <PatchingRecentRuns data={patching_dashboard} />;
+
+			case "alertStatusBoxes":
+				return (
+					<AlertStatusBoxes stats={alerting_stats} alerts={alerting_alerts} />
+				);
+
+			case "alertSeverityDoughnut":
+				return <AlertSeverityDoughnut stats={alerting_stats} />;
+
+			case "alertVolumeTrend":
+				return <AlertVolumeTrend alerts={alerting_alerts} />;
+
+			case "alertsByType":
+				return <AlertsByType alerts={alerting_alerts} />;
+
+			case "recentAlerts":
+				return <RecentAlerts alerts={alerting_alerts} />;
+
+			case "alertResponderWorkload":
+				return (
+					<AlertResponderWorkload
+						alerts={alerting_alerts}
+						users={alerting_users}
+					/>
+				);
+
+			case "deliveryByDestination":
+				return <DeliveryByDestination />;
 
 			case "packageTrends":
 				return (
@@ -1463,6 +1615,7 @@ const Dashboard = () => {
 								</div>
 							) : packageTrendsData?.chartData ? (
 								<Line
+									key={`${packageTrendsPeriod}-${packageTrendsHost}`}
 									data={packageTrendsData.chartData}
 									options={packageTrendsChartOptions}
 								/>
@@ -1579,14 +1732,14 @@ const Dashboard = () => {
 								Recent Users Logged in
 							</h3>
 							{recentUsers?.length > 0 && (
-								<span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+								<span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
 									<Users className="h-3 w-3" />
 									{recentUsers.length} users
 								</span>
 							)}
 						</div>
 						{!recentUsers || recentUsers.length === 0 ? (
-							<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-secondary-500 flex-1">
+							<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-white flex-1">
 								<Users className="h-8 w-8 mb-2" />
 								<p className="text-sm">No users found</p>
 							</div>
@@ -1595,10 +1748,10 @@ const Dashboard = () => {
 								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700 text-sm">
 									<thead className="bg-secondary-50 dark:bg-secondary-700/50">
 										<tr>
-											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase">
+											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase">
 												Username
 											</th>
-											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase">
+											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase">
 												Last Login
 											</th>
 										</tr>
@@ -1614,7 +1767,7 @@ const Dashboard = () => {
 														{u.username}
 													</span>
 												</td>
-												<td className="px-3 py-1.5 whitespace-nowrap text-secondary-500 dark:text-secondary-400 text-xs">
+												<td className="px-3 py-1.5 whitespace-nowrap text-secondary-500 dark:text-white text-xs">
 													{u.last_login
 														? formatRelativeTime(u.last_login)
 														: "Never"}
@@ -1636,14 +1789,14 @@ const Dashboard = () => {
 								Recent Collection
 							</h3>
 							{recentCollection?.length > 0 && (
-								<span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+								<span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
 									<Server className="h-3 w-3" />
 									{recentCollection.length} hosts
 								</span>
 							)}
 						</div>
 						{!recentCollection || recentCollection.length === 0 ? (
-							<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-secondary-500 flex-1">
+							<div className="flex flex-col items-center justify-center py-6 text-secondary-400 dark:text-white flex-1">
 								<Server className="h-8 w-8 mb-2" />
 								<p className="text-sm">No hosts found</p>
 							</div>
@@ -1652,10 +1805,10 @@ const Dashboard = () => {
 								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700 text-sm">
 									<thead className="bg-secondary-50 dark:bg-secondary-700/50">
 										<tr>
-											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase">
+											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase">
 												Host
 											</th>
-											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-secondary-400 uppercase">
+											<th className="px-3 py-1.5 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase">
 												Last Update
 											</th>
 										</tr>
@@ -1675,7 +1828,7 @@ const Dashboard = () => {
 														{host.friendly_name || host.hostname}
 													</button>
 												</td>
-												<td className="px-3 py-1.5 whitespace-nowrap text-secondary-500 dark:text-secondary-400 text-xs">
+												<td className="px-3 py-1.5 whitespace-nowrap text-secondary-500 dark:text-white text-xs">
 													{host.last_update
 														? formatRelativeTime(host.last_update)
 														: "Never"}
@@ -1730,6 +1883,9 @@ const Dashboard = () => {
 	const chartOptions = {
 		responsive: true,
 		maintainAspectRatio: false,
+		elements: {
+			arc: { borderRadius: 5 },
+		},
 		plugins: {
 			legend: {
 				position: isMobile ? "bottom" : "right",
@@ -1755,6 +1911,10 @@ const Dashboard = () => {
 	const doughnutChartOptions = {
 		responsive: true,
 		maintainAspectRatio: false,
+		cutout: "70%",
+		elements: {
+			arc: { borderRadius: 5 },
+		},
 		plugins: {
 			legend: {
 				position: isMobile ? "bottom" : "right",
@@ -1780,6 +1940,9 @@ const Dashboard = () => {
 	const updateStatusChartOptions = {
 		responsive: true,
 		maintainAspectRatio: false,
+		elements: {
+			arc: { borderRadius: 5 },
+		},
 		plugins: {
 			legend: {
 				position: "right",
@@ -1805,6 +1968,9 @@ const Dashboard = () => {
 	const packagePriorityChartOptions = {
 		responsive: true,
 		maintainAspectRatio: false,
+		elements: {
+			arc: { borderRadius: 5 },
+		},
 		plugins: {
 			legend: {
 				position: "right",
@@ -2098,8 +2264,7 @@ const Dashboard = () => {
 					"#8B5CF6", // Purple
 					"#06B6D4", // Cyan
 				],
-				borderWidth: 2,
-				borderColor: "#ffffff",
+				borderWidth: 0,
 			},
 		],
 	};
@@ -2118,8 +2283,7 @@ const Dashboard = () => {
 					"#8B5CF6", // Purple
 					"#06B6D4", // Cyan
 				],
-				borderWidth: 1,
-				borderColor: isDark ? "#374151" : "#ffffff",
+				borderWidth: 0,
 				borderRadius: 4,
 				borderSkipped: false,
 			},
@@ -2136,8 +2300,7 @@ const Dashboard = () => {
 					"#F59E0B", // Yellow - Needs updates
 					"#EF4444", // Red - Errored
 				],
-				borderWidth: 2,
-				borderColor: "#ffffff",
+				borderWidth: 0,
 			},
 		],
 	};
@@ -2151,8 +2314,7 @@ const Dashboard = () => {
 					"#EF4444", // Red - Security
 					"#3B82F6", // Blue - Regular
 				],
-				borderWidth: 2,
-				borderColor: "#ffffff",
+				borderWidth: 0,
 			},
 		],
 	};
@@ -2353,6 +2515,12 @@ const Dashboard = () => {
 								) {
 									if (permissions?.can_view_hosts !== true) return false;
 								}
+								if (PATCHING_WIDGET_CARD_IDS.includes(c.cardId)) {
+									if (permissions?.can_view_hosts !== true) return false;
+								}
+								if (ALERTING_WIDGET_CARD_IDS.includes(c.cardId)) {
+									if (permissions?.can_view_hosts !== true) return false;
+								}
 								return true;
 							});
 							const card_groups = [];
@@ -2390,19 +2558,19 @@ const Dashboard = () => {
 							};
 							return (
 								<>
-									{card_groups.map((group, group_index) => (
+									{card_groups.map((group) => (
 										<div
-											key={`edit-group-${group.type}-${group_index}`}
+											key={`edit-group-${group.type}`}
 											className={getGroupClassNameForLayout(group.type, layout)}
 										>
-											{group.cards.map((card, card_index) => {
+											{group.cards.map((card) => {
 												const is_drop_target =
 													card.enabled &&
 													over_id === card.cardId &&
 													active_drag_id !== card.cardId;
 												return (
 													<div
-														key={`card-${card.cardId}-${group_index}-${card_index}`}
+														key={`card-${card.cardId}`}
 														className={
 															"relative h-full min-h-0 " +
 															get_card_col_span_class(card) +
@@ -2542,14 +2710,14 @@ const Dashboard = () => {
 
 					return (
 						<>
-							{cardGroups.map((group, groupIndex) => (
+							{cardGroups.map((group) => (
 								<div
-									key={`group-${group.type}-${groupIndex}`}
+									key={`group-${group.type}`}
 									className={getGroupClassName(group.type)}
 								>
-									{group.cards.map((card, cardIndex) => (
+									{group.cards.map((card) => (
 										<div
-											key={`card-${card.cardId}-${groupIndex}-${cardIndex}`}
+											key={`card-${card.cardId}`}
 											className={`h-full ${get_card_col_span_class(card)}`}
 										>
 											{renderCard(card.cardId)}

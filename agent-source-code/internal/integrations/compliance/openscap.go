@@ -11,9 +11,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"patchmon-agent/internal/logutil"
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
@@ -25,33 +27,30 @@ const (
 	osReleasePath  = "/etc/os-release"
 )
 
-// sanitizeForLog replaces newlines and carriage returns so logged values cannot inject extra log lines.
-func sanitizeForLog(s string) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "\r", " ")
-	return s
-}
-
 // Profile mappings for different OS families
 var profileMappings = map[string]map[string]string{
 	"level1_server": {
-		"ubuntu":   "xccdf_org.ssgproject.content_profile_cis_level1_server",
-		"debian":   "xccdf_org.ssgproject.content_profile_cis_level1_server",
-		"rhel":     "xccdf_org.ssgproject.content_profile_cis",
-		"centos":   "xccdf_org.ssgproject.content_profile_cis",
-		"rocky":    "xccdf_org.ssgproject.content_profile_cis",
-		"alma":     "xccdf_org.ssgproject.content_profile_cis",
-		"fedora":   "xccdf_org.ssgproject.content_profile_cis",
-		"sles":     "xccdf_org.ssgproject.content_profile_cis",
-		"opensuse": "xccdf_org.ssgproject.content_profile_cis",
+		"ubuntu":    "xccdf_org.ssgproject.content_profile_cis_level1_server",
+		"debian":    "xccdf_org.ssgproject.content_profile_cis_level1_server",
+		"rhel":      "xccdf_org.ssgproject.content_profile_cis",
+		"centos":    "xccdf_org.ssgproject.content_profile_cis",
+		"rocky":     "xccdf_org.ssgproject.content_profile_cis",
+		"alma":      "xccdf_org.ssgproject.content_profile_cis",
+		"almalinux": "xccdf_org.ssgproject.content_profile_cis",
+		"ol":        "xccdf_org.ssgproject.content_profile_cis",
+		"fedora":    "xccdf_org.ssgproject.content_profile_cis",
+		"sles":      "xccdf_org.ssgproject.content_profile_cis",
+		"opensuse":  "xccdf_org.ssgproject.content_profile_cis",
 	},
 	"level2_server": {
-		"ubuntu": "xccdf_org.ssgproject.content_profile_cis_level2_server",
-		"debian": "xccdf_org.ssgproject.content_profile_cis_level2_server",
-		"rhel":   "xccdf_org.ssgproject.content_profile_cis_server_l1",
-		"centos": "xccdf_org.ssgproject.content_profile_cis_server_l1",
-		"rocky":  "xccdf_org.ssgproject.content_profile_cis_server_l1",
-		"alma":   "xccdf_org.ssgproject.content_profile_cis_server_l1",
+		"ubuntu":    "xccdf_org.ssgproject.content_profile_cis_level2_server",
+		"debian":    "xccdf_org.ssgproject.content_profile_cis_level2_server",
+		"rhel":      "xccdf_org.ssgproject.content_profile_cis_server_l1",
+		"centos":    "xccdf_org.ssgproject.content_profile_cis_server_l1",
+		"rocky":     "xccdf_org.ssgproject.content_profile_cis_server_l1",
+		"alma":      "xccdf_org.ssgproject.content_profile_cis_server_l1",
+		"almalinux": "xccdf_org.ssgproject.content_profile_cis_server_l1",
+		"ol":        "xccdf_org.ssgproject.content_profile_cis_server_l1",
 	},
 }
 
@@ -240,66 +239,41 @@ func (s *OpenSCAPScanner) getDefaultProfiles() []models.ScanProfileInfo {
 	}
 }
 
-// GetScannerDetails returns comprehensive scanner information
+// GetScannerDetails returns comprehensive scanner information.
+// The server's embedded SSG version is the single source of truth for whether
+// an upgrade is needed -- the 24h scheduled task handles that comparison.
+// This method only reports content mismatch (does the content file match the OS?).
 func (s *OpenSCAPScanner) GetScannerDetails() *models.ComplianceScannerDetails {
 	contentFile := s.getContentFile()
 	contentVersion := s.GetContentPackageVersion()
 
-	// Determine minimum required SSG version for this OS
-	// Use base distribution name (from ID_LIKE) for version checks
-	baseOSName := s.getContentOSName()
-	minVersion := ""
-	if baseOSName == "ubuntu" && s.osInfo.Version >= "24.04" {
-		minVersion = "0.1.76"
-	} else if baseOSName == "ubuntu" && s.osInfo.Version >= "22.04" {
-		minVersion = "0.1.60"
-	}
-
-	// Check if SSG needs upgrade
-	ssgNeedsUpgrade := false
-	ssgUpgradeMessage := ""
-	if minVersion != "" && contentVersion != "" {
-		if compareVersions(contentVersion, minVersion) < 0 {
-			ssgNeedsUpgrade = true
-			ssgUpgradeMessage = fmt.Sprintf("ssg-base %s is installed, but %s %s requires v%s+ for proper CIS/STIG content.",
-				contentVersion, s.osInfo.Name, s.osInfo.Version, minVersion)
-		}
-	} else if minVersion != "" && contentVersion == "" {
-		ssgNeedsUpgrade = true
-		ssgUpgradeMessage = fmt.Sprintf("ssg-base is not installed. %s %s requires ssg-base v%s+ for CIS/STIG scanning.",
-			s.osInfo.Name, s.osInfo.Version, minVersion)
-	}
-
-	// Check for content mismatch
+	// Check for content mismatch (content file vs OS version)
+	// SSG files use major version (e.g. ssg-rhel9-ds.xml for RHEL 9.x), not full version (9.7)
 	contentMismatch := false
 	mismatchWarning := ""
 	if contentFile != "" && s.osInfo.Version != "" {
-		osVersion := strings.ReplaceAll(s.osInfo.Version, ".", "")
 		baseName := filepath.Base(contentFile)
-		if !strings.Contains(baseName, osVersion) {
+		osVersion := strings.ReplaceAll(s.osInfo.Version, ".", "")
+		majorVersion := strings.Split(s.osInfo.Version, ".")[0]
+		contentOSName := s.getContentOSName()
+		// Match if file contains full version (e.g. 2204) or distro+major (e.g. rhel9, almalinux9)
+		versionMatch := strings.Contains(baseName, osVersion) ||
+			strings.Contains(baseName, contentOSName+majorVersion)
+		if !versionMatch {
 			contentMismatch = true
-			if ssgNeedsUpgrade {
-				mismatchWarning = ssgUpgradeMessage
-			} else {
-				mismatchWarning = fmt.Sprintf("Content file %s may not match OS version %s.", baseName, s.osInfo.Version)
-			}
+			mismatchWarning = fmt.Sprintf("Content file %s may not match OS version %s.", baseName, s.osInfo.Version)
 		}
-	} else if contentFile == "" && baseOSName == "ubuntu" && s.osInfo.Version >= "24.04" {
+	} else if contentFile == "" && s.osInfo.Version != "" {
 		contentMismatch = true
-		mismatchWarning = ssgUpgradeMessage
-		if mismatchWarning == "" {
-			mismatchWarning = "No SCAP content found for Ubuntu 24.04."
-		}
+		mismatchWarning = fmt.Sprintf("No SCAP content found for %s %s.", s.osInfo.Name, s.osInfo.Version)
 	}
 
-	// Discover available profiles dynamically
 	profiles := s.DiscoverProfiles()
 
-	// Determine content package source
 	contentPackage := fmt.Sprintf("ssg-base %s", contentVersion)
 	githubVersion := s.getInstalledSSGVersion()
 	if githubVersion != "" {
-		contentPackage = fmt.Sprintf("SSG %s (GitHub)", githubVersion)
+		contentPackage = fmt.Sprintf("SSG %s (server)", githubVersion)
 	}
 
 	return &models.ComplianceScannerDetails{
@@ -308,9 +282,6 @@ func (s *OpenSCAPScanner) GetScannerDetails() *models.ComplianceScannerDetails {
 		ContentFile:       filepath.Base(contentFile),
 		ContentPackage:    contentPackage,
 		SSGVersion:        contentVersion,
-		SSGMinVersion:     minVersion,
-		SSGNeedsUpgrade:   ssgNeedsUpgrade,
-		SSGUpgradeMessage: ssgUpgradeMessage,
 		AvailableProfiles: profiles,
 		OSName:            s.osInfo.Name,
 		OSVersion:         s.osInfo.Version,
@@ -318,41 +289,6 @@ func (s *OpenSCAPScanner) GetScannerDetails() *models.ComplianceScannerDetails {
 		ContentMismatch:   contentMismatch,
 		MismatchWarning:   mismatchWarning,
 	}
-}
-
-// compareVersions compares two semantic version strings
-// Returns -1 if v1 < v2, 0 if equal, 1 if v1 > v2
-func compareVersions(v1, v2 string) int {
-	parts1 := strings.Split(v1, ".")
-	parts2 := strings.Split(v2, ".")
-
-	maxLen := len(parts1)
-	if len(parts2) > maxLen {
-		maxLen = len(parts2)
-	}
-
-	for i := 0; i < maxLen; i++ {
-		var n1, n2 int
-		if i < len(parts1) {
-			if _, err := fmt.Sscanf(parts1[i], "%d", &n1); err != nil {
-				// If parsing fails, treat as 0
-				n1 = 0
-			}
-		}
-		if i < len(parts2) {
-			if _, err := fmt.Sscanf(parts2[i], "%d", &n2); err != nil {
-				// If parsing fails, treat as 0
-				n2 = 0
-			}
-		}
-		if n1 < n2 {
-			return -1
-		}
-		if n1 > n2 {
-			return 1
-		}
-	}
-	return 0
 }
 
 // EnsureInstalled installs OpenSCAP and SCAP content if not present
@@ -375,39 +311,6 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 	case "debian":
 		// Ubuntu/Debian - always update and upgrade to get latest content
 		s.logger.Info("Installing/upgrading OpenSCAP on Debian-based system...")
-
-		// Check if Ubuntu 24.04+ (Noble Numbat) - also check Ubuntu-based distros like Pop!_OS
-		baseOSName := s.getContentOSName()
-		isUbuntu2404Plus := (s.osInfo.Name == "ubuntu" || baseOSName == "ubuntu") && s.osInfo.Version >= "24.04"
-		if isUbuntu2404Plus {
-			s.logger.Info("Ubuntu 24.04+ detected: CIS/STIG content requires ssg-base >= 0.1.76 or Canonical's Ubuntu Security Guide (USG)")
-
-			// Check current version and auto-upgrade if needed
-			currentVersion := s.GetContentPackageVersion()
-			if currentVersion != "" {
-				if compareVersions(currentVersion, "0.1.76") < 0 {
-					s.logger.Info("ssg-base version is below 0.1.76, attempting to upgrade from GitHub...")
-					if upgradeErr := s.UpgradeSSGContent(); upgradeErr != nil {
-						s.logger.WithError(upgradeErr).Warn("Failed to auto-upgrade SSG content from GitHub. Manual upgrade recommended.")
-					} else {
-						s.logger.Info("SSG content successfully upgraded from GitHub")
-						// Re-check version after upgrade
-						newVersion := s.GetContentPackageVersion()
-						if newVersion != "" && compareVersions(newVersion, "0.1.76") >= 0 {
-							s.logger.WithField("new_version", newVersion).Info("SSG content upgraded successfully")
-						}
-					}
-				} else {
-					s.logger.WithField("version", currentVersion).Debug("SSG content version is sufficient")
-				}
-			} else {
-				// No version detected - try GitHub upgrade
-				s.logger.Info("No SSG version detected, attempting to install from GitHub...")
-				if upgradeErr := s.UpgradeSSGContent(); upgradeErr != nil {
-					s.logger.WithError(upgradeErr).Warn("Failed to install SSG content from GitHub")
-				}
-			}
-		}
 
 		// Update package cache first (with timeout)
 		updateCmd := exec.CommandContext(ctx, "apt-get", "update", "-qq")
@@ -438,7 +341,7 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 				s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
 				return fmt.Errorf("installation timed out after 5 minutes")
 			}
-			s.logger.WithError(err).WithField("output", string(output)).Warn("Failed to install OpenSCAP core packages")
+			s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP core packages")
 			// Truncate output for error message
 			outputStr := string(output)
 			if len(outputStr) > 500 {
@@ -456,10 +359,7 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 		ssgCmd.Env = nonInteractiveEnv
 		ssgOutput, ssgErr := ssgCmd.CombinedOutput()
 		if ssgErr != nil {
-			s.logger.WithField("output", string(ssgOutput)).Warn("SSG content packages not available or failed to install. CIS scanning may have limited functionality.")
-			if isUbuntu2404Plus {
-				s.logger.Info("For Ubuntu 24.04+, consider using Canonical's Ubuntu Security Guide (USG) with Ubuntu Pro for official CIS benchmarks.")
-			}
+			s.logger.WithField("output", logutil.Sanitize(string(ssgOutput))).Warn("SSG content packages not available or failed to install. CIS scanning may have limited functionality.")
 		} else {
 			s.logger.Info("SSG content packages installed successfully")
 
@@ -474,7 +374,7 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 			upgradeCmd.Env = nonInteractiveEnv
 			upgradeOutput, upgradeErr := upgradeCmd.CombinedOutput()
 			if upgradeErr != nil {
-				s.logger.WithField("output", string(upgradeOutput)).Debug("Package upgrade returned non-zero (may already be latest)")
+				s.logger.WithField("output", logutil.Sanitize(string(upgradeOutput))).Debug("Package upgrade returned non-zero (may already be latest)")
 			} else {
 				s.logger.Info("SCAP content packages upgraded to latest version")
 			}
@@ -495,7 +395,7 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 				s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
 				return fmt.Errorf("installation timed out after 5 minutes")
 			}
-			s.logger.WithError(err).WithField("output", string(output)).Warn("Failed to install OpenSCAP")
+			s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP")
 			outputStr := string(output)
 			if len(outputStr) > 500 {
 				outputStr = outputStr[:500] + "... (truncated)"
@@ -513,7 +413,7 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 				s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
 				return fmt.Errorf("installation timed out after 5 minutes")
 			}
-			s.logger.WithError(err).WithField("output", string(output)).Warn("Failed to install OpenSCAP")
+			s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP")
 			outputStr := string(output)
 			if len(outputStr) > 500 {
 				outputStr = outputStr[:500] + "... (truncated)"
@@ -531,7 +431,8 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 	if s.osInfo.Family == "debian" && s.osInfo.Name == "debian" {
 		ver := s.osInfo.Version
 		major := strings.Split(ver, ".")[0]
-		if ver >= "12" || strings.HasPrefix(ver, "13") {
+		majorInt, _ := strconv.Atoi(major)
+		if majorInt >= 12 {
 			contentFile := s.getContentFile()
 			needGitHub := contentFile == ""
 			if contentFile != "" && major != "" {
@@ -579,11 +480,13 @@ func (s *OpenSCAPScanner) checkContentCompatibility() {
 		"content_file": baseName,
 	}).Debug("Checking SCAP content compatibility")
 
-	// Check if content file matches OS version
+	// Check if content file matches OS version (SSG uses major version, e.g. ssg-rhel9 for 9.x)
+	contentOSName := s.getContentOSName()
+	majorVersion := strings.Split(s.osInfo.Version, ".")[0]
 	osVersion := strings.ReplaceAll(s.osInfo.Version, ".", "")
-	expectedPattern := fmt.Sprintf("ssg-%s%s", s.osInfo.Name, osVersion)
-
-	if !strings.Contains(baseName, osVersion) && !strings.HasPrefix(baseName, expectedPattern) {
+	versionMatch := strings.Contains(baseName, osVersion) ||
+		strings.Contains(baseName, contentOSName+majorVersion)
+	if !versionMatch {
 		s.logger.WithFields(logrus.Fields{
 			"os_version":   s.osInfo.Version,
 			"content_file": baseName,
@@ -591,21 +494,119 @@ func (s *OpenSCAPScanner) checkContentCompatibility() {
 	}
 }
 
-// UpgradeSSGContent upgrades the SCAP Security Guide content from GitHub releases
-func (s *OpenSCAPScanner) UpgradeSSGContent() error {
-	s.logger.Info("Upgrading SCAP Security Guide content from GitHub...")
+// SSGContentDownloader abstracts the ability to download SSG content from the PatchMon server.
+type SSGContentDownloader interface {
+	GetSSGVersion(ctx context.Context) (version string, files []string, err error)
+	DownloadSSGContent(ctx context.Context, filename, destPath string) error
+}
 
-	// Download and install from GitHub
+// UpgradeSSGContentFromServer downloads the specific datastream file this OS needs
+// from the PatchMon server, replacing the old GitHub-based approach.
+// If targetVersion is empty, the server's current version is used (sync mode).
+func (s *OpenSCAPScanner) UpgradeSSGContentFromServer(downloader SSGContentDownloader, targetVersion string) error {
+	s.logger.WithField("target_version", targetVersion).Info("Upgrading SSG content from PatchMon server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	serverVersion, availableFiles, err := downloader.GetSSGVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to query server SSG version: %w", err)
+	}
+	if serverVersion == "" {
+		return fmt.Errorf("server has no SSG content available")
+	}
+
+	// If no target version specified, use whatever the server has.
+	if targetVersion == "" {
+		targetVersion = serverVersion
+	}
+
+	currentVersion := s.getInstalledSSGVersion()
+	if currentVersion == targetVersion {
+		s.logger.Info("SSG content already at target version, skipping")
+		return nil
+	}
+
+	filename := s.pickSSGFile(availableFiles)
+	if filename == "" {
+		return fmt.Errorf("no matching SSG datastream file available on server for %s %s", s.osInfo.Name, s.osInfo.Version)
+	}
+
+	targetDir := scapContentDir
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return fmt.Errorf("failed to create content directory: %w", err)
+	}
+
+	destPath := filepath.Join(targetDir, filename)
+	s.logger.WithFields(logrus.Fields{"file": filename, "version": serverVersion}).Info("Downloading SSG content from server...")
+
+	if err := downloader.DownloadSSGContent(ctx, filename, destPath); err != nil {
+		return fmt.Errorf("failed to download SSG content: %w", err)
+	}
+
+	versionFile := filepath.Join(targetDir, ".ssg-version")
+	if err := os.WriteFile(versionFile, []byte(serverVersion+"\n"), 0644); err != nil {
+		return fmt.Errorf("failed to write version marker: %w", err)
+	}
+
+	s.checkAvailability()
+	s.checkContentCompatibility()
+
+	s.logger.WithField("version", serverVersion).Info("SSG content upgraded from server")
+	return nil
+}
+
+// pickSSGFile selects the best datastream file for this OS from the available server files.
+func (s *OpenSCAPScanner) pickSSGFile(available []string) string {
+	contentOSName := s.getContentOSName()
+	major := strings.Split(s.osInfo.Version, ".")[0]
+
+	candidates := []string{
+		fmt.Sprintf("ssg-%s%s-ds.xml", contentOSName, strings.ReplaceAll(s.osInfo.Version, ".", "")),
+		fmt.Sprintf("ssg-%s%s-ds.xml", contentOSName, major),
+		fmt.Sprintf("ssg-%s-ds.xml", contentOSName),
+	}
+
+	avail := make(map[string]bool, len(available))
+	for _, f := range available {
+		avail[f] = true
+	}
+
+	for _, c := range candidates {
+		if avail[c] {
+			return c
+		}
+	}
+
+	if contentOSName != s.osInfo.Name {
+		fallbacks := []string{
+			fmt.Sprintf("ssg-%s%s-ds.xml", s.osInfo.Name, strings.ReplaceAll(s.osInfo.Version, ".", "")),
+			fmt.Sprintf("ssg-%s%s-ds.xml", s.osInfo.Name, major),
+			fmt.Sprintf("ssg-%s-ds.xml", s.osInfo.Name),
+		}
+		for _, c := range fallbacks {
+			if avail[c] {
+				return c
+			}
+		}
+	}
+
+	return ""
+}
+
+// UpgradeSSGContent upgrades the SCAP Security Guide content from GitHub releases (legacy fallback).
+func (s *OpenSCAPScanner) UpgradeSSGContent() error {
+	s.logger.Info("Upgrading SCAP Security Guide content from GitHub (fallback)...")
+
 	if err := s.installSSGFromGitHub(); err != nil {
 		s.logger.WithError(err).Warn("Failed to install SSG from GitHub")
 		return err
 	}
 
-	// Re-check availability after upgrade
 	s.checkAvailability()
 	s.checkContentCompatibility()
 
-	// Verify the new version
 	newVersion := s.getInstalledSSGVersion()
 	s.logger.WithField("version", newVersion).Info("SSG content upgrade completed")
 
@@ -618,10 +619,10 @@ func (s *OpenSCAPScanner) installSSGFromGitHub() error {
 	const ssgVersion = "0.1.79"
 	const ssgURL = "https://github.com/ComplianceAsCode/content/releases/download/v" + ssgVersion + "/scap-security-guide-" + ssgVersion + ".zip"
 
-	s.logger.WithFields(map[string]interface{}{
+	s.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 		"version": ssgVersion,
 		"url":     ssgURL,
-	}).Info("Downloading SSG from GitHub...")
+	})).Info("Downloading SSG from GitHub...")
 
 	// Create temp directory
 	tmpDir, err := os.MkdirTemp("", "ssg-upgrade-")
@@ -1020,18 +1021,29 @@ func (s *OpenSCAPScanner) detectOS() models.ComplianceOSInfo {
 	return info
 }
 
-// getContentOSName determines the base distribution name for SCAP content file lookup
-// Uses ID_LIKE from /etc/os-release to automatically detect Ubuntu/Debian/RHEL-based distributions
+// getContentOSName determines the base distribution name for SCAP content file lookup.
+// Prefers distribution-specific SSG content (e.g. ssg-almalinux9-ds.xml for AlmaLinux)
+// over generic RHEL content when available. Uses ID_LIKE as fallback for RHEL-based distros.
 func (s *OpenSCAPScanner) getContentOSName() string {
-	// Known base distributions that have SCAP content files
-	baseDistributions := []string{"ubuntu", "debian", "rhel", "centos", "rocky", "alma", "fedora", "sles", "opensuse"}
-
-	// First, check if the OS name itself is a base distribution
-	for _, base := range baseDistributions {
+	// Distribution-specific names that have their own SSG content files (ssg-{name}{version}-ds.xml).
+	// Order matters: check specific names first so AlmaLinux uses ssg-almalinux9, not ssg-rhel9.
+	specificDistros := []string{
+		"almalinux", "ol", "ubuntu", "debian", "centos", "rhel", "rocky", "fedora",
+		"sles", "opensuse", "al2023", "alinux2", "alinux3",
+	}
+	for _, base := range specificDistros {
 		if s.osInfo.Name == base {
 			return s.osInfo.Name
 		}
 	}
+
+	// Legacy "alma" (AlmaLinux 8 and older used this in some configs)
+	if s.osInfo.Name == "alma" {
+		return "alma"
+	}
+
+	// Fallback: use ID_LIKE for base distribution (e.g. rhel from "rhel centos fedora")
+	baseDistributions := []string{"rhel", "centos", "fedora", "debian", "ubuntu", "suse"}
 
 	// If not, check ID_LIKE for base distributions
 	// ID_LIKE typically contains space-separated values like "ubuntu debian" or "rhel fedora"
@@ -1238,21 +1250,32 @@ func (s *OpenSCAPScanner) getProfileIDFromContent(contentFile string, preferredI
 	if len(list) == 0 {
 		return preferredID
 	}
-	// Prefer exact or CIS match
+	// Prefer exact or CIS match (workstation vs server must match to avoid wrong profile)
 	for _, p := range list {
 		if p.id == preferredID {
 			return p.id
 		}
+		// Workstation profiles
+		if strings.HasSuffix(p.id, "cis_level1_workstation") && strings.HasSuffix(preferredID, "cis_level1_workstation") {
+			return p.id
+		}
+		if strings.HasSuffix(p.id, "cis_level2_workstation") && strings.HasSuffix(preferredID, "cis_level2_workstation") {
+			return p.id
+		}
+		// Server profiles
 		if strings.HasSuffix(p.id, "cis_level1_server") && strings.HasSuffix(preferredID, "cis_level1_server") {
 			return p.id
 		}
 		if strings.HasSuffix(p.id, "cis_level2_server") && strings.HasSuffix(preferredID, "cis_level2_server") {
 			return p.id
 		}
-		if strings.Contains(preferredID, "cis_level1") && strings.Contains(p.id, "cis_level1") {
+		// Generic level match only when workstation/server not distinguished
+		if strings.Contains(preferredID, "cis_level1") && strings.Contains(p.id, "cis_level1") &&
+			strings.Contains(preferredID, "workstation") == strings.Contains(p.id, "workstation") {
 			return p.id
 		}
-		if strings.Contains(preferredID, "cis_level2") && strings.Contains(p.id, "cis_level2") {
+		if strings.Contains(preferredID, "cis_level2") && strings.Contains(p.id, "cis_level2") &&
+			strings.Contains(preferredID, "workstation") == strings.Contains(p.id, "workstation") {
 			return p.id
 		}
 	}
@@ -1260,8 +1283,8 @@ func (s *OpenSCAPScanner) getProfileIDFromContent(contentFile string, preferredI
 	for _, p := range list {
 		if strings.Contains(p.id, "profile_standard") {
 			s.logger.WithFields(logrus.Fields{
-				"requested": sanitizeForLog(preferredID),
-				"using":     sanitizeForLog(p.id),
+				"requested": logutil.Sanitize(preferredID),
+				"using":     logutil.Sanitize(p.id),
 			}).Info("Requested profile not in content; using Standard System Security profile")
 			return p.id
 		}
@@ -1269,8 +1292,8 @@ func (s *OpenSCAPScanner) getProfileIDFromContent(contentFile string, preferredI
 	// Last resort: first profile in the list
 	fallback := list[0].id
 	s.logger.WithFields(logrus.Fields{
-		"requested": sanitizeForLog(preferredID),
-		"using":     sanitizeForLog(fallback),
+		"requested": logutil.Sanitize(preferredID),
+		"using":     logutil.Sanitize(fallback),
 	}).Info("Requested profile not in content; using first available profile")
 	return fallback
 }
@@ -1445,7 +1468,7 @@ func (s *OpenSCAPScanner) RunScanWithOptions(ctx context.Context, options *model
 				if len(preview) > 1500 {
 					preview = preview[:1500] + "... (truncated)"
 				}
-				s.logger.WithField("oscap_output", preview).Warn("OpenSCAP stdout/stderr")
+				s.logger.WithField("oscap_output", logutil.Sanitize(preview)).Warn("OpenSCAP stdout/stderr")
 			}
 		} else {
 			s.logger.WithField("results_file_size_bytes", fileInfo.Size()).Debug("Results file has content")
@@ -1590,10 +1613,10 @@ func (s *OpenSCAPScanner) parseResults(resultsPath string, contentFile string, p
 	}
 
 	// Try results file first (might have embedded benchmark), then fall back to benchmark file
-	s.logger.WithFields(map[string]interface{}{
+	s.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 		"results_content_len":   len(resultsContent),
 		"benchmark_content_len": len(benchmarkContent),
-	}).Info("Starting metadata extraction")
+	})).Info("Starting metadata extraction")
 
 	ruleMetadataMap := s.extractRuleMetadata(resultsContent)
 	s.logger.WithField("rules_from_results", len(ruleMetadataMap)).Info("Extracted metadata from results file")
@@ -1686,7 +1709,7 @@ func (s *OpenSCAPScanner) parseResults(resultsPath string, contentFile string, p
 
 			// Debug logging for result assembly (only for failed rules to reduce noise)
 			if status == "fail" {
-				s.logger.WithFields(map[string]interface{}{
+				s.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 					"rule_id":         ruleID,
 					"title":           title,
 					"status":          status,
@@ -1694,7 +1717,7 @@ func (s *OpenSCAPScanner) parseResults(resultsPath string, contentFile string, p
 					"desc_len":        len(metadata.Description),
 					"has_remediation": len(metadata.Remediation) > 0,
 					"severity":        metadata.Severity,
-				}).Debug("Assembled failed rule result")
+				})).Debug("Assembled failed rule result")
 			}
 		}
 	}
@@ -1973,7 +1996,7 @@ func (s *OpenSCAPScanner) extractRuleMetadata(content string) map[string]ruleMet
 		metadata[ruleID] = meta
 
 		// Debug logging for metadata extraction verification
-		s.logger.WithFields(map[string]interface{}{
+		s.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 			"rule_id":         ruleID,
 			"title":           meta.Title,
 			"title_len":       len(meta.Title),
@@ -1982,7 +2005,7 @@ func (s *OpenSCAPScanner) extractRuleMetadata(content string) map[string]ruleMet
 			"remediation_len": len(meta.Remediation),
 			"severity":        meta.Severity,
 			"section":         meta.Section,
-		}).Debug("Extracted rule metadata")
+		})).Debug("Extracted rule metadata")
 	}
 
 	// Count rules with actual content for debugging
@@ -2001,12 +2024,12 @@ func (s *OpenSCAPScanner) extractRuleMetadata(content string) map[string]ruleMet
 		}
 	}
 
-	s.logger.WithFields(map[string]interface{}{
+	s.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 		"total_rules":      len(metadata),
 		"with_title":       withTitle,
 		"with_description": withDesc,
 		"with_remediation": withRemediation,
-	}).Info("Extracted rule metadata summary")
+	})).Info("Extracted rule metadata summary")
 
 	return metadata
 }
@@ -2134,7 +2157,7 @@ func (s *OpenSCAPScanner) Cleanup() error {
 			s.logger.Warn("OpenSCAP removal timed out after 3 minutes")
 			return fmt.Errorf("removal timed out after 3 minutes")
 		}
-		s.logger.WithError(err).WithField("output", string(output)).Warn("Failed to remove OpenSCAP packages")
+		s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to remove OpenSCAP packages")
 		// Don't return error - cleanup is best-effort
 		return nil
 	}

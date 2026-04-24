@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"patchmon-agent/pkg/models"
 
@@ -16,17 +17,44 @@ import (
 const (
 	// DefaultAPIVersion is the default API version to use
 	DefaultAPIVersion = "v1"
-	// DefaultConfigFile is the default path to the configuration file
+	// DefaultConfigFile is the default path to the configuration file (Unix)
 	DefaultConfigFile = "/etc/patchmon/config.yml"
-	// DefaultCredentialsFile is the default path to the credentials file
+	// DefaultCredentialsFile is the default path to the credentials file (Unix)
 	DefaultCredentialsFile = "/etc/patchmon/credentials.yml"
-	// DefaultLogFile is the default path to the log file
+	// DefaultLogFile is the default path to the log file (Unix)
 	DefaultLogFile = "/etc/patchmon/logs/patchmon-agent.log"
 	// DefaultLogLevel is the default logging level
 	DefaultLogLevel = "info"
-	// CronFilePath is the path to the cron configuration file
+	// CronFilePath is the path to the cron configuration file (Unix only)
 	CronFilePath = "/etc/cron.d/patchmon-agent"
 )
+
+// Windows default paths
+const (
+	DefaultConfigFileWindows      = "C:\\ProgramData\\PatchMon\\config.yml"
+	DefaultCredentialsFileWindows = "C:\\ProgramData\\PatchMon\\credentials.yml"
+	DefaultLogFileWindows         = "C:\\ProgramData\\PatchMon\\patchmon-agent.log"
+)
+
+// getDefaultPaths returns config, credentials, and log file paths based on OS
+func getDefaultPaths() (configFile, credentialsFile, logFile string) {
+	if runtime.GOOS == "windows" {
+		return DefaultConfigFileWindows, DefaultCredentialsFileWindows, DefaultLogFileWindows
+	}
+	return DefaultConfigFile, DefaultCredentialsFile, DefaultLogFile
+}
+
+// DefaultConfigFilePath returns the default config file path for the current OS
+func DefaultConfigFilePath() string {
+	cfg, _, _ := getDefaultPaths()
+	return cfg
+}
+
+// DefaultLogFilePath returns the default log file path for the current OS
+func DefaultLogFilePath() string {
+	_, _, log := getDefaultPaths()
+	return log
+}
 
 // AvailableIntegrations lists all integrations that can be enabled/disabled
 // Add new integrations here as they are implemented
@@ -34,6 +62,7 @@ var AvailableIntegrations = []string{
 	"docker",
 	"compliance",
 	"ssh-proxy-enabled",
+	"rdp-proxy-enabled",
 	// Future: "proxmox", "kubernetes", etc.
 }
 
@@ -46,17 +75,20 @@ type Manager struct {
 
 // New creates a new configuration manager
 func New() *Manager {
+	configFile, credentialsFile, logFile := getDefaultPaths()
 	return &Manager{
 		config: &models.Config{
-			PatchmonServer:  "", // No default server - user must provide
-			APIVersion:      DefaultAPIVersion,
-			CredentialsFile: DefaultCredentialsFile,
-			LogFile:         DefaultLogFile,
-			LogLevel:        DefaultLogLevel,
-			UpdateInterval:  60, // Default to 60 minutes
-			Integrations:    make(map[string]interface{}),
+			PatchmonServer:            "", // No default server - user must provide
+			APIVersion:                DefaultAPIVersion,
+			CredentialsFile:           credentialsFile,
+			LogFile:                   logFile,
+			LogLevel:                  DefaultLogLevel,
+			UpdateInterval:            60,       // Default to 60 minutes
+			PackageCacheRefreshMode:   "always", // Default to always refresh package cache
+			PackageCacheRefreshMaxAge: 60,       // Default max age in minutes (used when mode is if_stale)
+			Integrations:              make(map[string]interface{}),
 		},
-		configFile: DefaultConfigFile,
+		configFile: configFile,
 	}
 }
 
@@ -144,10 +176,82 @@ func (m *Manager) LoadConfig() error {
 		m.config.Integrations["compliance"] = "on-demand"
 	}
 
+	// Ensure compliance is a nested object for YAML output
+	m.ensureComplianceNested()
+
+	// Persist normalized config so new defaults (e.g. scan_interval) appear on disk
+	if err := m.SaveConfig(); err != nil {
+		// Non-fatal: config is correct in memory even if save fails
+		_ = err
+	}
+
 	// ReportOffset can be 0 - it will be recalculated if missing
 	// No need to set a default here as it's calculated dynamically
 
 	return nil
+}
+
+// ensureComplianceNested ensures integrations.compliance is a nested map with enabled, openscap_enabled, docker_bench_enabled.
+// Migrates flat keys into the nested structure for cleaner YAML output.
+func (m *Manager) ensureComplianceNested() {
+	if m.config.Integrations == nil {
+		m.config.Integrations = make(map[string]interface{})
+	}
+	var nested map[string]interface{}
+	if v, ok := m.config.Integrations["compliance"]; ok {
+		if nm, ok := v.(map[string]interface{}); ok {
+			nested = nm
+		}
+	}
+	if nested == nil {
+		nested = make(map[string]interface{})
+	}
+	if _, hasEnabled := nested["enabled"]; !hasEnabled {
+		if v, ok := m.config.Integrations["compliance"]; ok {
+			switch val := v.(type) {
+			case bool:
+				nested["enabled"] = val
+			case string:
+				if val == "disabled" || val == "false" {
+					nested["enabled"] = false
+				} else {
+					nested["enabled"] = val
+				}
+			default:
+				nested["enabled"] = "on-demand"
+			}
+		} else {
+			nested["enabled"] = "on-demand"
+		}
+	}
+	if _, has := nested["openscap_enabled"]; !has {
+		if v, ok := m.config.Integrations["compliance_openscap_enabled"]; ok {
+			if b, ok := v.(bool); ok {
+				nested["openscap_enabled"] = b
+			} else {
+				nested["openscap_enabled"] = true
+			}
+		} else {
+			nested["openscap_enabled"] = true
+		}
+	}
+	if _, has := nested["docker_bench_enabled"]; !has {
+		if v, ok := m.config.Integrations["compliance_docker_bench_enabled"]; ok {
+			if b, ok := v.(bool); ok {
+				nested["docker_bench_enabled"] = b
+			} else {
+				nested["docker_bench_enabled"] = false
+			}
+		} else {
+			nested["docker_bench_enabled"] = false
+		}
+	}
+	if _, has := nested["scan_interval"]; !has {
+		nested["scan_interval"] = 1440
+	}
+	m.config.Integrations["compliance"] = nested
+	delete(m.config.Integrations, "compliance_openscap_enabled")
+	delete(m.config.Integrations, "compliance_docker_bench_enabled")
 }
 
 // LoadCredentials loads API credentials from file
@@ -265,46 +369,29 @@ func (m *Manager) SaveConfig() error {
 	configViper.Set("skip_ssl_verify", m.config.SkipSSLVerify)
 	configViper.Set("update_interval", m.config.UpdateInterval)
 	configViper.Set("report_offset", m.config.ReportOffset)
+	configViper.Set("package_cache_refresh_mode", m.config.PackageCacheRefreshMode)
+	configViper.Set("package_cache_refresh_max_age", m.config.PackageCacheRefreshMaxAge)
 
 	// Always save integrations map with all available integrations
-	// This ensures config.yml always shows all integrations with their current state
-	// Ensure all available integrations are present before saving
 	if m.config.Integrations == nil {
 		m.config.Integrations = make(map[string]interface{})
 	}
+	m.ensureComplianceNested()
 	for _, integrationName := range AvailableIntegrations {
 		if _, exists := m.config.Integrations[integrationName]; !exists {
 			switch integrationName {
 			case "compliance":
-				m.config.Integrations[integrationName] = "on-demand"
+				m.config.Integrations[integrationName] = map[string]interface{}{
+					"enabled": "on-demand", "openscap_enabled": true, "docker_bench_enabled": false,
+				}
 			case "ssh-proxy-enabled":
-				// Default SSH proxy to disabled (security: must be explicitly enabled)
+				m.config.Integrations[integrationName] = false
+			case "rdp-proxy-enabled":
 				m.config.Integrations[integrationName] = false
 			default:
 				m.config.Integrations[integrationName] = false
 			}
 		}
-	}
-	// Ensure compliance has a valid value (normalize if needed)
-	if complianceVal, exists := m.config.Integrations["compliance"]; exists {
-		// Normalize compliance value
-		switch v := complianceVal.(type) {
-		case bool:
-			// Keep bool as-is (false = disabled, true = enabled with auto-scans)
-		case string:
-			// Normalize string values
-			switch v {
-			case "on-demand", "on_demand":
-				m.config.Integrations["compliance"] = "on-demand"
-			case "true":
-				m.config.Integrations["compliance"] = true
-			case "false":
-				m.config.Integrations["compliance"] = false
-			}
-		}
-	} else {
-		// Default to "on-demand" if not set
-		m.config.Integrations["compliance"] = "on-demand"
 	}
 
 	configViper.Set("integrations", m.config.Integrations)
@@ -334,6 +421,35 @@ func (m *Manager) SetReportOffset(offsetSeconds int) error {
 	return m.SaveConfig()
 }
 
+// SetPackageCacheRefresh sets the package cache refresh mode and max age, and saves to config file
+func (m *Manager) SetPackageCacheRefresh(mode string, maxAge int) error {
+	if mode != "always" && mode != "if_stale" && mode != "never" {
+		return fmt.Errorf("invalid package cache refresh mode: %s", mode)
+	}
+	if maxAge < 1 || maxAge > 1440 {
+		return fmt.Errorf("invalid package cache refresh max age: %d (must be 1-1440)", maxAge)
+	}
+	m.config.PackageCacheRefreshMode = mode
+	m.config.PackageCacheRefreshMaxAge = maxAge
+	return m.SaveConfig()
+}
+
+// GetPackageCacheRefreshMode returns the package cache refresh mode, defaulting to "always"
+func (m *Manager) GetPackageCacheRefreshMode() string {
+	if m.config.PackageCacheRefreshMode == "" {
+		return "always"
+	}
+	return m.config.PackageCacheRefreshMode
+}
+
+// GetPackageCacheRefreshMaxAge returns the max age in minutes for stale cache checks, defaulting to 60
+func (m *Manager) GetPackageCacheRefreshMaxAge() int {
+	if m.config.PackageCacheRefreshMaxAge <= 0 {
+		return 60
+	}
+	return m.config.PackageCacheRefreshMaxAge
+}
+
 // IsIntegrationEnabled checks if an integration is enabled
 // Returns false if not specified (default behavior - integrations are disabled by default)
 // For compliance, returns true if enabled (true) or on-demand ("on-demand"), false if disabled
@@ -346,11 +462,15 @@ func (m *Manager) IsIntegrationEnabled(name string) bool {
 		return false
 	}
 
-	// Special handling for compliance (can be false, "on-demand", or true)
+	// Special handling for compliance (can be false, "on-demand", or true; may be nested)
 	if name == "compliance" {
-		switch v := val.(type) {
+		enabledVal := m.getComplianceVal("enabled")
+		if enabledVal == nil {
+			return false
+		}
+		switch v := enabledVal.(type) {
 		case bool:
-			return v // false = disabled, true = enabled
+			return v
 		case string:
 			return v == "on-demand" || v == "on_demand" || v == "true"
 		default:
@@ -371,13 +491,13 @@ func (m *Manager) SetIntegrationEnabled(name string, enabled bool) error {
 	if m.config.Integrations == nil {
 		m.config.Integrations = make(map[string]interface{})
 	}
-
-	// Special handling for compliance - convert bool to appropriate mode
 	if name == "compliance" {
+		m.ensureComplianceNested()
+		nested := m.config.Integrations["compliance"].(map[string]interface{})
 		if enabled {
-			m.config.Integrations[name] = true // true = enabled with auto-scans
+			nested["enabled"] = true
 		} else {
-			m.config.Integrations[name] = false // false = disabled
+			nested["enabled"] = false
 		}
 	} else {
 		m.config.Integrations[name] = enabled
@@ -401,20 +521,18 @@ const (
 // Returns: "disabled" (false), "on-demand" ("on-demand"), or "enabled" (true)
 func (m *Manager) GetComplianceMode() ComplianceMode {
 	if m.config.Integrations == nil {
-		return ComplianceOnDemand // Default to on-demand
+		return ComplianceOnDemand
 	}
-
-	val, exists := m.config.Integrations["compliance"]
-	if !exists {
-		return ComplianceOnDemand // Default to on-demand
+	val := m.getComplianceVal("enabled")
+	if val == nil {
+		return ComplianceOnDemand
 	}
-
 	switch v := val.(type) {
 	case bool:
 		if v {
-			return ComplianceEnabled // true = enabled with auto-scans
+			return ComplianceEnabled
 		}
-		return ComplianceDisabled // false = disabled
+		return ComplianceDisabled
 	case string:
 		if v == "on-demand" || v == "on_demand" {
 			return ComplianceOnDemand
@@ -425,10 +543,31 @@ func (m *Manager) GetComplianceMode() ComplianceMode {
 		if v == "false" {
 			return ComplianceDisabled
 		}
-		return ComplianceOnDemand // Default for unknown strings
+		return ComplianceOnDemand
 	default:
 		return ComplianceOnDemand
 	}
+}
+
+// getComplianceVal returns a value from the compliance nested map, or from flat keys for backward compat.
+func (m *Manager) getComplianceVal(key string) interface{} {
+	if v, ok := m.config.Integrations["compliance"]; ok {
+		if nm, ok := v.(map[string]interface{}); ok {
+			if val, exists := nm[key]; exists {
+				return val
+			}
+		}
+	}
+	// Flat key fallback
+	switch key {
+	case "enabled":
+		return m.config.Integrations["compliance"]
+	case "openscap_enabled":
+		return m.config.Integrations["compliance_openscap_enabled"]
+	case "docker_bench_enabled":
+		return m.config.Integrations["compliance_docker_bench_enabled"]
+	}
+	return nil
 }
 
 // SetComplianceMode sets the compliance integration mode
@@ -437,18 +576,18 @@ func (m *Manager) SetComplianceMode(mode ComplianceMode) error {
 	if m.config.Integrations == nil {
 		m.config.Integrations = make(map[string]interface{})
 	}
-
+	m.ensureComplianceNested()
+	nested := m.config.Integrations["compliance"].(map[string]interface{})
 	switch mode {
 	case ComplianceDisabled:
-		m.config.Integrations["compliance"] = false
+		nested["enabled"] = false
 	case ComplianceOnDemand:
-		m.config.Integrations["compliance"] = "on-demand"
+		nested["enabled"] = "on-demand"
 	case ComplianceEnabled:
-		m.config.Integrations["compliance"] = true
+		nested["enabled"] = true
 	default:
 		return fmt.Errorf("invalid compliance mode: %s (must be disabled, on-demand, or enabled)", mode)
 	}
-
 	return m.SaveConfig()
 }
 
@@ -466,6 +605,89 @@ func (m *Manager) SetComplianceOnDemandOnly(onDemandOnly bool) error {
 	}
 	// If setting to false, default to enabled (auto-scans)
 	return m.SetComplianceMode(ComplianceEnabled)
+}
+
+// GetComplianceOpenscapEnabled returns whether OpenSCAP scans are enabled for scheduled compliance scans.
+func (m *Manager) GetComplianceOpenscapEnabled() bool {
+	if m.config.Integrations == nil {
+		return true
+	}
+	val := m.getComplianceVal("openscap_enabled")
+	if val == nil {
+		return true
+	}
+	if b, ok := val.(bool); ok {
+		return b
+	}
+	return true
+}
+
+// GetComplianceDockerBenchEnabled returns whether Docker Bench scans are enabled for scheduled compliance scans.
+func (m *Manager) GetComplianceDockerBenchEnabled() bool {
+	if m.config.Integrations == nil {
+		return false
+	}
+	val := m.getComplianceVal("docker_bench_enabled")
+	if val == nil {
+		return false
+	}
+	if b, ok := val.(bool); ok {
+		return b
+	}
+	return false
+}
+
+// SetComplianceScanners sets the OpenSCAP and Docker Bench scanner toggles for scheduled scans.
+func (m *Manager) SetComplianceScanners(openscapEnabled, dockerBenchEnabled bool) error {
+	if m.config.Integrations == nil {
+		m.config.Integrations = make(map[string]interface{})
+	}
+	m.ensureComplianceNested()
+	nested := m.config.Integrations["compliance"].(map[string]interface{})
+	nested["openscap_enabled"] = openscapEnabled
+	nested["docker_bench_enabled"] = dockerBenchEnabled
+	return m.SaveConfig()
+}
+
+// GetComplianceScanInterval returns the compliance scan interval in minutes (default 1440, min 60, max 10080).
+func (m *Manager) GetComplianceScanInterval() int {
+	if m.config.Integrations == nil {
+		return 1440
+	}
+	val := m.getComplianceVal("scan_interval")
+	if val == nil {
+		return 1440
+	}
+	var minutes int
+	switch v := val.(type) {
+	case int:
+		minutes = v
+	case float64:
+		minutes = int(v)
+	default:
+		return 1440
+	}
+	if minutes < 60 {
+		minutes = 60
+	}
+	if minutes > 10080 {
+		minutes = 10080
+	}
+	return minutes
+}
+
+// SetComplianceScanInterval sets the compliance scan interval and saves it to config file.
+func (m *Manager) SetComplianceScanInterval(minutes int) error {
+	if minutes < 60 || minutes > 10080 {
+		return fmt.Errorf("invalid compliance scan interval: %d (must be between 60 and 10080 minutes)", minutes)
+	}
+	if m.config.Integrations == nil {
+		m.config.Integrations = make(map[string]interface{})
+	}
+	m.ensureComplianceNested()
+	nested := m.config.Integrations["compliance"].(map[string]interface{})
+	nested["scan_interval"] = minutes
+	return m.SaveConfig()
 }
 
 // setupDirectories creates necessary directories

@@ -1,7 +1,7 @@
 /**
  * Authentication phases for the centralized auth state machine
  *
- * Flow: INITIALISING → CHECKING_SETUP → READY
+ * Flow: INITIALISING -> CHECKING_SETUP -> READY
  */
 export const AUTH_PHASES = {
 	INITIALISING: "INITIALISING",

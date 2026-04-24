@@ -12,6 +12,7 @@ import {
 	Play,
 	RefreshCw,
 	Server,
+	Settings,
 	ShieldAlert,
 	ShieldCheck,
 	ShieldOff,
@@ -22,18 +23,18 @@ import {
 	X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Doughnut } from "react-chartjs-2";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import {
 	Bar,
 	BarChart,
 	Cell,
-	Pie,
-	PieChart,
 	ResponsiveContainer,
 	Tooltip,
 	XAxis,
 	YAxis,
 } from "recharts";
+import ComplianceSettings from "../components/compliance/ComplianceSettings";
 import ScanHistoryTab from "../components/compliance/ScanHistoryTab";
 import ScanResultsTab from "../components/compliance/ScanResultsTab";
 import {
@@ -44,6 +45,8 @@ import {
 	LastScanAgeBar,
 	OpenSCAPDistributionDoughnut,
 } from "../components/compliance/widgets";
+import { getDoughnutOptions } from "../components/compliance/widgets/chartOptions";
+import { useTheme } from "../contexts/ThemeContext";
 import { useToast } from "../contexts/ToastContext";
 import { adminHostsAPI } from "../utils/api";
 import { complianceAPI } from "../utils/complianceApi";
@@ -65,7 +68,7 @@ const CustomTooltip = ({ active, payload, label, type }) => {
 		<div className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 shadow-lg">
 			<p className="text-white font-medium text-sm mb-1">{getTitle()}</p>
 			<div className="space-y-1">
-				{payload.map((entry, index) => {
+				{payload.map((entry) => {
 					let name = entry.name;
 					let color = entry.color;
 
@@ -84,7 +87,7 @@ const CustomTooltip = ({ active, payload, label, type }) => {
 
 					return (
 						<div
-							key={`entry-${index}-${entry.name || entry.dataKey || ""}`}
+							key={`entry-${entry.name || entry.dataKey}`}
 							className="flex items-center justify-between gap-4 text-sm"
 						>
 							<div className="flex items-center gap-2">
@@ -110,13 +113,18 @@ const COMPLIANCE_TABS = [
 	{ id: "hosts", label: "Hosts", icon: Users },
 	{ id: "scan-results", label: "Scan Results", icon: ListChecks },
 	{ id: "history", label: "History", icon: History },
+	{ id: "settings", label: "Settings", icon: Settings },
 ];
 
 const Compliance = () => {
 	const queryClient = useQueryClient();
+	const { isDark } = useTheme();
 	const toast = useToast();
 	const location = useLocation();
+	const [searchParams] = useSearchParams();
 	const [activeTab, setActiveTab] = useState(() => {
+		const urlTab = searchParams.get("tab");
+		if (urlTab && COMPLIANCE_TABS.some((t) => t.id === urlTab)) return urlTab;
 		const requested = location.state?.complianceTab;
 		if (requested && COMPLIANCE_TABS.some((t) => t.id === requested))
 			return requested;
@@ -124,6 +132,19 @@ const Compliance = () => {
 	});
 
 	const [scanResultsFilters, setScanResultsFilters] = useState(null);
+
+	// Sync tab and filters on actual URL navigation (not in-page tab clicks)
+	useEffect(() => {
+		const params = new URLSearchParams(location.search);
+		const tab = params.get("tab");
+		if (tab && COMPLIANCE_TABS.some((t) => t.id === tab)) {
+			setActiveTab(tab);
+		}
+		const profileType = params.get("profile_type");
+		if (profileType && ["openscap", "docker-bench"].includes(profileType)) {
+			setProfileTypeFilter(profileType);
+		}
+	}, [location.search]);
 
 	// Handle tab navigation and filters from external links (e.g. host compliance cards)
 	useEffect(() => {
@@ -144,7 +165,12 @@ const Compliance = () => {
 	const [bulkScanResult, setBulkScanResult] = useState(null);
 	const [pendingScans, setPendingScans] = useState([]); // Hosts where scan was triggered but not yet in database
 	const prevActiveScanIds = useRef(new Set());
-	const [profileTypeFilter, _setProfileTypeFilter] = useState("all"); // "all", "openscap", "docker-bench"
+	const [profileTypeFilter, setProfileTypeFilter] = useState(() => {
+		const urlProfileType = searchParams.get("profile_type");
+		if (urlProfileType && ["openscap", "docker-bench"].includes(urlProfileType))
+			return urlProfileType;
+		return "all";
+	}); // "all", "openscap", "docker-bench"
 	const [tableFilter, setTableFilter] = useState(null); // null = compliance-enabled only, 'never-scanned' = only never-scanned hosts
 
 	// Fetch active/running scans first so we can use it for dashboard refetch rate
@@ -471,18 +497,16 @@ const Compliance = () => {
 
 	return (
 		<div className="space-y-6">
-			{/* Page Header */}
-			<div className="mb-6">
+			<div>
 				<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
 					Security Compliance
 				</h1>
-				<p className="text-sm text-secondary-600 dark:text-secondary-400 mt-1">
+				<p className="text-sm text-secondary-600 dark:text-white mt-1">
 					Monitor and manage compliance across your hosts
 				</p>
 			</div>
 
-			{/* Top: 5 host status cards - same layout/style as Hosts page */}
-			<div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 mb-6">
+			<div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
 				<div className="card p-4 cursor-default text-left w-full">
 					<div className="flex items-center">
 						<Server className="h-5 w-5 text-primary-600 mr-2" />
@@ -543,10 +567,10 @@ const Compliance = () => {
 						);
 						setActiveTab("hosts");
 					}}
-					className={`card p-4 text-left w-full transition-shadow duration-200 ${
+					className={`card p-4 text-left w-full transition-colors ${
 						tableFilter === "never-scanned"
 							? "ring-2 ring-primary-500 dark:ring-primary-400 bg-primary-50 dark:bg-primary-900/20"
-							: "cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark"
+							: "cursor-pointer hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
 					}`}
 				>
 					<div className="flex items-center">
@@ -569,8 +593,11 @@ const Compliance = () => {
 			</div>
 
 			{/* Tab Navigation - same pattern as Docker page */}
-			<div className="border-b border-secondary-200 dark:border-secondary-600">
-				<nav className="-mb-px flex space-x-8 px-4" aria-label="Tabs">
+			<div className="border-b border-secondary-200 dark:border-secondary-600 overflow-x-auto scrollbar-hide">
+				<nav
+					className="-mb-px flex space-x-4 sm:space-x-8 px-4"
+					aria-label="Tabs"
+				>
 					{COMPLIANCE_TABS.map((tab) => {
 						const Icon = tab.icon;
 						return (
@@ -581,7 +608,7 @@ const Compliance = () => {
 								className={`${
 									activeTab === tab.id
 										? "border-primary-500 text-primary-600 dark:text-primary-400"
-										: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-secondary-400 dark:hover:text-secondary-300"
+										: "border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300 dark:text-white dark:hover:text-primary-400"
 								} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
 							>
 								<Icon className="h-4 w-4 mr-2" />
@@ -607,37 +634,37 @@ const Compliance = () => {
 							<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 								<thead className="bg-secondary-50 dark:bg-secondary-700">
 									<tr>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 whitespace-nowrap w-16">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white whitespace-nowrap w-16">
 											Run
 										</th>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white">
 											Host name
 										</th>
 										<th
-											className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 w-12"
+											className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white w-12"
 											title="Compliance status"
 										>
 											Status
 										</th>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white">
 											Last activity
 										</th>
-										<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300">
+										<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-white">
 											Passed
 										</th>
-										<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300">
+										<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-white">
 											Failed
 										</th>
-										<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300">
+										<th className="px-4 py-2 text-right text-xs font-medium text-secondary-500 dark:text-white">
 											Skipped
 										</th>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white">
 											Scanner status
 										</th>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white">
 											Mode
 										</th>
-										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300">
+										<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white">
 											Scanners
 										</th>
 									</tr>
@@ -647,7 +674,7 @@ const Compliance = () => {
 										<tr>
 											<td
 												colSpan={10}
-												className="px-4 py-8 text-center text-secondary-500 dark:text-secondary-400"
+												className="px-4 py-8 text-center text-secondary-500 dark:text-white"
 											>
 												No hosts
 											</td>
@@ -726,7 +753,7 @@ const Compliance = () => {
 															to={`/compliance/hosts/${row.host_id}`}
 															className="text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 hover:underline font-medium"
 														>
-															{row.friendly_name || row.hostname || "—"}
+															{row.friendly_name || row.hostname || " -"}
 														</Link>
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap">
@@ -749,13 +776,13 @@ const Compliance = () => {
 															)
 														) : (
 															<ShieldOff
-																className="h-5 w-5 text-secondary-400"
+																className="h-5 w-5 text-secondary-400 dark:text-white"
 																title="Not scanned"
 															/>
 														)}
 													</td>
 													<td
-														className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-secondary-300"
+														className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-white"
 														title={
 															is_scanning
 																? `Scan running${active_scan?.startedAt ? ` · started ${formatDistanceToNow(new Date(active_scan.startedAt), { addSuffix: true })}` : ""}`
@@ -780,7 +807,7 @@ const Compliance = () => {
 															</span>
 														) : (
 															row.last_activity_title ||
-															(row.last_scan_date ? "Scan" : "—")
+															(row.last_scan_date ? "Scan" : " -")
 														)}
 													</td>
 													<td className="px-4 py-2 text-right whitespace-nowrap">
@@ -800,7 +827,7 @@ const Compliance = () => {
 																{row.passed}
 															</button>
 														) : (
-															"—"
+															" -"
 														)}
 													</td>
 													<td className="px-4 py-2 text-right whitespace-nowrap">
@@ -820,7 +847,7 @@ const Compliance = () => {
 																{row.failed}
 															</button>
 														) : (
-															"—"
+															" -"
 														)}
 													</td>
 													<td className="px-4 py-2 text-right whitespace-nowrap">
@@ -834,13 +861,13 @@ const Compliance = () => {
 																	});
 																	setActiveTab("scan-results");
 																}}
-																className="text-secondary-600 dark:text-secondary-400 hover:underline font-medium tabular-nums"
+																className="text-secondary-600 dark:text-white hover:underline font-medium tabular-nums"
 																title="View skipped/N/A rules for this host"
 															>
 																{row.skipped}
 															</button>
 														) : (
-															"—"
+															" -"
 														)}
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap">
@@ -850,7 +877,7 @@ const Compliance = () => {
 																	? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
 																	: row.scanner_status === "Enabled"
 																		? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
-																		: "bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-400"
+																		: "bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-white"
 															}`}
 														>
 															{row.scanner_status}
@@ -858,7 +885,7 @@ const Compliance = () => {
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap">
 														{row.compliance_mode === "disabled" ? (
-															<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-400">
+															<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-white">
 																Disabled
 															</span>
 														) : (
@@ -875,14 +902,14 @@ const Compliance = () => {
 															</span>
 														)}
 													</td>
-													<td className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-secondary-300">
+													<td className="px-4 py-2 whitespace-nowrap text-secondary-700 dark:text-white">
 														{row.compliance_enabled && row.docker_enabled
 															? "OpenSCAP, Docker"
 															: row.compliance_enabled
 																? "OpenSCAP"
 																: row.docker_enabled
 																	? "Docker"
-																	: "—"}
+																	: " -"}
 													</td>
 												</tr>
 											);
@@ -909,7 +936,7 @@ const Compliance = () => {
 									setShowBulkScanModal(false);
 									setBulkScanResult(null);
 								}}
-								className="text-secondary-400 hover:text-white"
+								className="text-white hover:text-white"
 							>
 								<X className="h-5 w-5" />
 							</button>
@@ -919,12 +946,10 @@ const Compliance = () => {
 						<div className="p-4 space-y-4 max-h-[60vh] overflow-y-auto">
 							{/* Scan Options */}
 							<div className="space-y-3">
-								<h3 className="text-sm font-medium text-secondary-300">
-									Scan Options
-								</h3>
+								<h3 className="text-sm font-medium text-white">Scan Options</h3>
 								<div className="flex flex-wrap gap-4">
 									<div className="flex-1 min-w-[200px]">
-										<label className="block text-xs text-secondary-400 mb-1">
+										<label className="block text-xs text-white mb-1">
 											Profile Type
 										</label>
 										<select
@@ -957,7 +982,7 @@ const Compliance = () => {
 										/>
 										<label
 											htmlFor="enableRemediation"
-											className="text-sm text-secondary-300"
+											className="text-sm text-white"
 										>
 											Enable Remediation
 										</label>
@@ -968,7 +993,7 @@ const Compliance = () => {
 							{/* Host Selection */}
 							<div className="space-y-3">
 								<div className="flex items-center justify-between">
-									<h3 className="text-sm font-medium text-secondary-300">
+									<h3 className="text-sm font-medium text-white">
 										Select Hosts ({selectedHosts.length} of {allHosts.length})
 									</h3>
 									<button
@@ -1000,7 +1025,7 @@ const Compliance = () => {
 												<p className="text-sm font-medium text-white truncate">
 													{host.friendly_name || host.hostname}
 												</p>
-												<p className="text-xs text-secondary-400 truncate">
+												<p className="text-xs text-white truncate">
 													{host.hostname}
 												</p>
 											</div>
@@ -1026,8 +1051,8 @@ const Compliance = () => {
 										<div className="mt-2 text-xs text-yellow-400">
 											<p>Failed hosts:</p>
 											<ul className="list-disc list-inside">
-												{bulkScanResult.failed.map((f, i) => (
-													<li key={`failed-${i}-${f.hostName || ""}`}>
+												{bulkScanResult.failed.map((f) => (
+													<li key={`failed-${f.hostName}`}>
 														{f.hostName}: {f.error}
 													</li>
 												))}
@@ -1045,7 +1070,7 @@ const Compliance = () => {
 									setShowBulkScanModal(false);
 									setBulkScanResult(null);
 								}}
-								className="px-4 py-2 text-secondary-300 hover:text-white transition-colors"
+								className="px-4 py-2 text-white hover:text-white transition-colors"
 							>
 								Cancel
 							</button>
@@ -1078,13 +1103,31 @@ const Compliance = () => {
 			{activeTab === "overview" && (
 				<>
 					{/* Compliance dashboard widgets - same 6 cards as main Dashboard */}
-					<div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 mb-6">
-						<FailuresBySeverityDoughnut data={dashboard} />
+					<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6">
+						<FailuresBySeverityDoughnut
+							data={dashboard}
+							onTabChange={(tab, filters) => {
+								setActiveTab(tab);
+								setScanResultsFilters(filters ?? null);
+							}}
+						/>
 						<OpenSCAPDistributionDoughnut data={dashboard} />
-						<ComplianceProfilesPie data={dashboard} />
-						<LastScanAgeBar data={dashboard} />
+						<ComplianceProfilesPie
+							data={dashboard}
+							onTabChange={(tab) => {
+								setActiveTab(tab);
+								setScanResultsFilters(null);
+							}}
+						/>
+						<LastScanAgeBar
+							data={dashboard}
+							onTabChange={(tab) => setActiveTab(tab)}
+						/>
 						<ComplianceTrendLinePlaceholder />
-						<HostComplianceStatusBar data={dashboard} />
+						<HostComplianceStatusBar
+							data={dashboard}
+							onTabChange={(tab) => setActiveTab(tab)}
+						/>
 					</div>
 
 					{/* Active Scans Section - Only show if there are running scans */}
@@ -1130,7 +1173,7 @@ const Compliance = () => {
 												/>
 											)}
 										</div>
-										<div className="flex items-center gap-2 text-sm text-secondary-400">
+										<div className="flex items-center gap-2 text-sm text-white">
 											<span
 												className={`px-2 py-0.5 rounded text-xs ${
 													scan.isPending
@@ -1188,7 +1231,7 @@ const Compliance = () => {
 							>
 								<div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6">
 									<div className="text-center">
-										<p className="text-xs text-secondary-400 uppercase tracking-wide mb-1">
+										<p className="text-xs text-white uppercase tracking-wide mb-1">
 											Hosts
 										</p>
 										<p className="text-3xl font-bold text-white">
@@ -1196,7 +1239,7 @@ const Compliance = () => {
 										</p>
 									</div>
 									<div className="text-center">
-										<p className="text-xs text-secondary-400 uppercase tracking-wide mb-1">
+										<p className="text-xs text-white uppercase tracking-wide mb-1">
 											Avg Score
 										</p>
 										<p
@@ -1241,7 +1284,7 @@ const Compliance = () => {
 										</div>
 									)}
 									<div className="text-center">
-										<p className="text-xs text-secondary-400 uppercase tracking-wide mb-1">
+										<p className="text-xs text-white uppercase tracking-wide mb-1">
 											Total Rules
 										</p>
 										<p className="text-3xl font-bold text-white">
@@ -1249,7 +1292,7 @@ const Compliance = () => {
 										</p>
 									</div>
 									<div className="text-center">
-										<p className="text-xs text-secondary-400 uppercase tracking-wide mb-1">
+										<p className="text-xs text-white uppercase tracking-wide mb-1">
 											Pass Rate
 										</p>
 										<p className="text-3xl font-bold text-white">
@@ -1267,9 +1310,7 @@ const Compliance = () => {
 								{profileTypeFilter === "docker-bench" &&
 									filteredSummary.total_rules > 0 && (
 										<div className="mt-4 pt-4 border-t border-secondary-700 text-center">
-											<span className="text-sm text-secondary-400">
-												Warning Rate:{" "}
-											</span>
+											<span className="text-sm text-white">Warning Rate: </span>
 											<span className="text-sm font-bold text-yellow-400">
 												{(
 													(filteredSummary.total_warnings /
@@ -1287,7 +1328,7 @@ const Compliance = () => {
 					{/* No data message */}
 					{!filteredSummary && (
 						<div className="card p-8 text-center">
-							<p className="text-secondary-400">
+							<p className="text-white">
 								No {getFilterDisplayName()} scan data available
 							</p>
 						</div>
@@ -1314,44 +1355,29 @@ const Compliance = () => {
 											<CheckCircle className="h-4 w-4 text-green-400" />
 											Rule Results
 										</h3>
-										<p className="text-xs text-secondary-500 mb-3">
+										<p className="text-xs text-secondary-500 dark:text-white mb-3">
 											{(
 												openscapStats.total_passed + openscapStats.total_failed
 											).toLocaleString()}{" "}
 											rules evaluated
 										</p>
 										<div className="h-40">
-											<ResponsiveContainer width="100%" height="100%">
-												<PieChart>
-													<Pie
-														data={[
-															{
-																name: "Passed",
-																value: openscapStats.total_passed || 0,
-																color: "#22c55e",
-															},
-															{
-																name: "Failed",
-																value: openscapStats.total_failed || 0,
-																color: "#ef4444",
-															},
-														].filter((d) => d.value > 0)}
-														cx="50%"
-														cy="50%"
-														innerRadius={35}
-														outerRadius={60}
-														dataKey="value"
-														label={({ value }) => `${value.toLocaleString()}`}
-														labelLine={false}
-													>
-														<Cell fill="#22c55e" />
-														<Cell fill="#ef4444" />
-													</Pie>
-													<Tooltip
-														content={<CustomTooltip type="ruleStatus" />}
-													/>
-												</PieChart>
-											</ResponsiveContainer>
+											<Doughnut
+												data={{
+													labels: ["Passed", "Failed"],
+													datasets: [
+														{
+															data: [
+																openscapStats.total_passed || 0,
+																openscapStats.total_failed || 0,
+															],
+															backgroundColor: ["#22c55e", "#ef4444"],
+															borderWidth: 0,
+														},
+													],
+												}}
+												options={getDoughnutOptions(isDark)}
+											/>
 										</div>
 										<div className="flex justify-center gap-6 mt-2 text-sm">
 											<div className="flex items-center gap-2">
@@ -1410,7 +1436,7 @@ const Compliance = () => {
 													<AlertTriangle className="h-4 w-4 text-red-400" />
 													Failures by Severity
 												</h3>
-												<p className="text-xs text-secondary-500 mb-3">
+												<p className="text-xs text-secondary-500 dark:text-white mb-3">
 													{totalFailures.toLocaleString()} total failures
 												</p>
 												<div className="h-40">
@@ -1432,9 +1458,9 @@ const Compliance = () => {
 																content={<CustomTooltip type="severity" />}
 															/>
 															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-																{chartData.map((entry, index) => (
+																{chartData.map((entry) => (
 																	<Cell
-																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		key={`cell-${entry.name || entry.color || entry.dataKey}`}
 																		fill={entry.color}
 																	/>
 																))}
@@ -1490,7 +1516,7 @@ const Compliance = () => {
 													<BarChart3 className="h-4 w-4 text-green-400" />
 													Score Distribution
 												</h3>
-												<p className="text-xs text-secondary-500 mb-3">
+												<p className="text-xs text-secondary-500 dark:text-white mb-3">
 													{filteredScans.length} scans
 												</p>
 												<div className="h-40">
@@ -1512,9 +1538,9 @@ const Compliance = () => {
 																content={<CustomTooltip type="scoreRange" />}
 															/>
 															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-																{scoreRanges.map((entry, index) => (
+																{scoreRanges.map((entry) => (
 																	<Cell
-																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		key={`cell-${entry.name || entry.color || entry.dataKey}`}
 																		fill={entry.color}
 																	/>
 																))}
@@ -1564,7 +1590,7 @@ const Compliance = () => {
 													<Clock className="h-4 w-4 text-green-400" />
 													Scan Freshness
 												</h3>
-												<p className="text-xs text-secondary-500 mb-3">
+												<p className="text-xs text-secondary-500 dark:text-white mb-3">
 													{totalScans} OpenSCAP scans
 												</p>
 												<div className="h-40">
@@ -1586,9 +1612,9 @@ const Compliance = () => {
 																content={<CustomTooltip type="scanAge" />}
 															/>
 															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-																{chartData.map((entry, index) => (
+																{chartData.map((entry) => (
 																	<Cell
-																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		key={`cell-${entry.name || entry.color || entry.dataKey}`}
 																		fill={entry.color}
 																	/>
 																))}
@@ -1624,7 +1650,7 @@ const Compliance = () => {
 											<CheckCircle className="h-4 w-4 text-blue-400" />
 											Rule Results
 										</h3>
-										<p className="text-xs text-secondary-500 mb-3">
+										<p className="text-xs text-secondary-500 dark:text-white mb-3">
 											{(
 												dockerBenchStats.total_passed +
 												dockerBenchStats.total_warnings
@@ -1632,37 +1658,22 @@ const Compliance = () => {
 											rules evaluated
 										</p>
 										<div className="h-40">
-											<ResponsiveContainer width="100%" height="100%">
-												<PieChart>
-													<Pie
-														data={[
-															{
-																name: "Passed",
-																value: dockerBenchStats.total_passed || 0,
-																color: "#22c55e",
-															},
-															{
-																name: "Warnings",
-																value: dockerBenchStats.total_warnings || 0,
-																color: "#eab308",
-															},
-														].filter((d) => d.value > 0)}
-														cx="50%"
-														cy="50%"
-														innerRadius={35}
-														outerRadius={60}
-														dataKey="value"
-														label={({ value }) => `${value.toLocaleString()}`}
-														labelLine={false}
-													>
-														<Cell fill="#22c55e" />
-														<Cell fill="#eab308" />
-													</Pie>
-													<Tooltip
-														content={<CustomTooltip type="ruleStatus" />}
-													/>
-												</PieChart>
-											</ResponsiveContainer>
+											<Doughnut
+												data={{
+													labels: ["Passed", "Warnings"],
+													datasets: [
+														{
+															data: [
+																dockerBenchStats.total_passed || 0,
+																dockerBenchStats.total_warnings || 0,
+															],
+															backgroundColor: ["#22c55e", "#eab308"],
+															borderWidth: 0,
+														},
+													],
+												}}
+												options={getDoughnutOptions(isDark)}
+											/>
 										</div>
 										<div className="flex justify-center gap-6 mt-2 text-sm">
 											<div className="flex items-center gap-2">
@@ -1716,7 +1727,7 @@ const Compliance = () => {
 													<Container className="h-4 w-4 text-yellow-400" />
 													Warnings by Section
 												</h3>
-												<p className="text-xs text-secondary-500 mb-3">
+												<p className="text-xs text-secondary-500 dark:text-white mb-3">
 													{totalWarnings.toLocaleString()} total warnings
 												</p>
 												<div className="h-40">
@@ -1767,9 +1778,9 @@ const Compliance = () => {
 																}}
 															/>
 															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-																{chartData.map((entry, index) => (
+																{chartData.map((entry) => (
 																	<Cell
-																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		key={`cell-${entry.name || entry.color || entry.dataKey}`}
 																		fill={entry.color}
 																	/>
 																))}
@@ -1825,7 +1836,7 @@ const Compliance = () => {
 													<BarChart3 className="h-4 w-4 text-blue-400" />
 													Score Distribution
 												</h3>
-												<p className="text-xs text-secondary-500 mb-3">
+												<p className="text-xs text-secondary-500 dark:text-white mb-3">
 													{filteredScans.length} scans
 												</p>
 												<div className="h-40">
@@ -1847,9 +1858,9 @@ const Compliance = () => {
 																content={<CustomTooltip type="scoreRange" />}
 															/>
 															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-																{scoreRanges.map((entry, index) => (
+																{scoreRanges.map((entry) => (
 																	<Cell
-																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		key={`cell-${entry.name || entry.color || entry.dataKey}`}
 																		fill={entry.color}
 																	/>
 																))}
@@ -1905,7 +1916,7 @@ const Compliance = () => {
 													<Clock className="h-4 w-4 text-blue-400" />
 													Scan Freshness
 												</h3>
-												<p className="text-xs text-secondary-500 mb-3">
+												<p className="text-xs text-secondary-500 dark:text-white mb-3">
 													{totalScans} Docker Bench scans
 												</p>
 												<div className="h-40">
@@ -1927,9 +1938,9 @@ const Compliance = () => {
 																content={<CustomTooltip type="scanAge" />}
 															/>
 															<Bar dataKey="count" radius={[0, 4, 4, 0]}>
-																{chartData.map((entry, index) => (
+																{chartData.map((entry) => (
 																	<Cell
-																		key={`cell-${index}-${entry.color || entry.dataKey || ""}`}
+																		key={`cell-${entry.name || entry.color || entry.dataKey}`}
 																		fill={entry.color}
 																	/>
 																))}
@@ -1959,6 +1970,9 @@ const Compliance = () => {
 			{activeTab === "history" && (
 				<ScanHistoryTab scanned_hosts={hosts_with_latest_scan} />
 			)}
+
+			{/* ==================== SETTINGS TAB ==================== */}
+			{activeTab === "settings" && <ComplianceSettings />}
 		</div>
 	);
 };
