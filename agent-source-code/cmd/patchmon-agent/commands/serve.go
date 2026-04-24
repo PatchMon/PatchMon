@@ -1409,7 +1409,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 		// Operator-gated insecure TLS for lab/air-gapped deployments with self-signed certs.
 		dialer = &websocket.Dialer{
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, // lgtm[go/disabled-certificate-check]
+				InsecureSkipVerify: true,
 			},
 		}
 	}

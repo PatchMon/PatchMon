@@ -341,7 +341,7 @@ func getServerVersionInfo() (*ServerVersionInfo, error) {
 		httpClient.Transport = &http.Transport{
 			ResponseHeaderTimeout: 5 * time.Second,
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, // lgtm[go/disabled-certificate-check]
+				InsecureSkipVerify: true,
 			},
 		}
 	}
@@ -406,7 +406,7 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 		httpClient = &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true, // lgtm[go/disabled-certificate-check]
+					InsecureSkipVerify: true,
 				},
 			},
 		}

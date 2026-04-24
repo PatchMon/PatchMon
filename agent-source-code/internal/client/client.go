@@ -57,7 +57,7 @@ func New(configMgr *config.Manager, logger *logrus.Logger) *Client {
 		// Operator-gated insecure TLS for lab/air-gapped deployments.
 		logger.Warn("TLS certificate verification disabled - use only with trusted self-signed or internal CA certificates")
 		client.SetTLSClientConfig(&tls.Config{
-			InsecureSkipVerify: true, // lgtm[go/disabled-certificate-check]
+			InsecureSkipVerify: true,
 		})
 	}
 
