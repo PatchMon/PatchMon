@@ -335,14 +335,13 @@ func getServerVersionInfo() (*ServerVersionInfo, error) {
 		},
 	}
 
-	// SECURITY: Configure for insecure SSL if needed (config or env)
-	// CodeQL: InsecureSkipVerify is configurable for lab/air-gapped deployments.
+	// Operator-gated insecure TLS for lab/air-gapped deployments.
 	if cfg.SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
 		logger.Warn("TLS verification disabled for version check")
 		httpClient.Transport = &http.Transport{
 			ResponseHeaderTimeout: 5 * time.Second,
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
+				InsecureSkipVerify: true, // lgtm[go/disabled-certificate-check]
 			},
 		}
 	}
@@ -399,16 +398,15 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 	req.Header.Set("X-API-ID", credentials.APIID)
 	req.Header.Set("X-API-KEY", credentials.APIKey)
 
-	// SECURITY: Configure HTTP client for insecure SSL if needed
+	// Operator-gated insecure TLS for lab/air-gapped deployments.
 	// WARNING: This is dangerous for binary downloads even with hash verification!
-	// CodeQL: InsecureSkipVerify is configurable for lab/air-gapped deployments.
 	httpClient := http.DefaultClient
 	if cfg.SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
 		logger.Warn("TLS verification disabled for binary download")
 		httpClient = &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
+					InsecureSkipVerify: true, // lgtm[go/disabled-certificate-check]
 				},
 			},
 		}

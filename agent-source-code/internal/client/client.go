@@ -54,10 +54,10 @@ func New(configMgr *config.Manager, logger *logrus.Logger) *Client {
 	cfg := configMgr.GetConfig()
 	skipVerify := cfg.SkipSSLVerify || IsSkipSSLVerifyEnvSet()
 	if skipVerify {
-		// CodeQL: InsecureSkipVerify is configurable for lab/air-gapped deployments.
+		// Operator-gated insecure TLS for lab/air-gapped deployments.
 		logger.Warn("TLS certificate verification disabled - use only with trusted self-signed or internal CA certificates")
 		client.SetTLSClientConfig(&tls.Config{
-			InsecureSkipVerify: true,
+			InsecureSkipVerify: true, // lgtm[go/disabled-certificate-check]
 		})
 	}
 

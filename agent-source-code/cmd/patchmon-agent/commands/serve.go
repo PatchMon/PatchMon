@@ -1406,10 +1406,10 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 	dialer := websocket.DefaultDialer
 	if cfgManager.GetConfig().SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
 		logger.Warn("TLS verification disabled for WebSocket")
-		// CodeQL: InsecureSkipVerify is configurable for lab/air-gapped deployments with self-signed certs.
+		// Operator-gated insecure TLS for lab/air-gapped deployments with self-signed certs.
 		dialer = &websocket.Dialer{
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
+				InsecureSkipVerify: true, // lgtm[go/disabled-certificate-check]
 			},
 		}
 	}
