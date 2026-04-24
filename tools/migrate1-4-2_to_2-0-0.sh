@@ -1,6 +1,6 @@
 #!/bin/bash
-# Migration script: PatchMon 1.4.2 → 1.5.0
-# Backs up current docker-compose.yml and .env, downloads the new 1.5.0
+# Migration script: PatchMon 1.4.2 → 2.0.0
+# Backs up current docker-compose.yml and .env, downloads the new 2.0.0
 # versions, then carries forward all matching variable values from the old .env
 # and from inline environment values in the old docker-compose.yml.
 
@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo ""
-echo "=== PatchMon 1.4.2 → 1.5.0 Migration ==="
+echo "=== PatchMon 1.4.2 → 2.0.0 Migration ==="
 echo ""
 
 # ── 1. Back up existing files ─────────────────────────────────────────────────
@@ -35,10 +35,10 @@ mv docker-compose.yml docker-compose-1-4-2.yml
 echo "Backing up .env → .env-1-4-2"
 cp .env .env-1-4-2
 
-# ── 2. Download new 1.5.0 files ───────────────────────────────────────────────
+# ── 2. Download new 2.0.0 files ───────────────────────────────────────────────
 
 echo ""
-echo "Downloading new docker-compose.yml (1.5.0)..."
+echo "Downloading new docker-compose.yml (2.0.0)..."
 curl -s -o docker-compose.yml \
     https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/docker-compose.yml
 
@@ -47,7 +47,7 @@ curl -s -o docker-compose.yml \
 # "# ==...==" banner, leaving the file starting cleanly at "name: patchmon".
 sed -i '/^# To set up your/,/^# =\{10,\}/d' docker-compose.yml
 
-echo "Downloading new .env template (1.5.0)..."
+echo "Downloading new .env template (2.0.0)..."
 curl -s -o .env \
     https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/env.example
 
@@ -197,7 +197,7 @@ rm -f "$OLD_ENV_WORK"
 #     ports:
 #       - "3000:3000"   ← host:container
 #
-# In 1.5.0 it is defined on the "server" service.  If the user had changed the
+# In 2.0.0 it is defined on the "server" service.  If the user had changed the
 # host-side port (e.g. "8080:3000") we must reflect that in the new compose file
 # and also set PORT= in the new .env so the container internal port matches.
 
@@ -272,8 +272,8 @@ echo "Migration complete."
 echo ""
 echo "  docker-compose-1-4-2.yml  ← your old compose file (backup)"
 echo "  .env-1-4-2                ← your old .env (backup)"
-echo "  docker-compose.yml        ← new 1.5.0 compose file"
-echo "  .env                      ← new 1.5.0 .env (values carried over)"
+echo "  docker-compose.yml        ← new 2.0.0 compose file"
+echo "  .env                      ← new 2.0.0 .env (values carried over)"
 echo ""
 echo "Please review the new .env and docker-compose.yml before starting your stack."
 echo ""
@@ -281,7 +281,7 @@ echo "────────────────────────�
 echo "CLEANUP REMINDER"
 echo "─────────────────────────────────────────────────────────────────────────────"
 echo ""
-echo "Once you have confirmed everything is working correctly on 1.5.0, you can"
+echo "Once you have confirmed everything is working correctly on 2.0.0, you can"
 echo "safely remove the following Docker volumes that are no longer needed:"
 echo ""
 echo "  • patchmon_agent_files"
