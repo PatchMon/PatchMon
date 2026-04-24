@@ -94,7 +94,7 @@ const AgentManagementTab = () => {
 			case "update-available":
 				return {
 					status: "update-available",
-					message: `Update available: ${versionInfo.latestVersion}`,
+					message: `Update available: ${versionInfo.upstreamVersion}`,
 					Icon: Clock,
 					color: "text-yellow-600",
 				};
@@ -108,7 +108,7 @@ const AgentManagementTab = () => {
 			case "up-to-date":
 				return {
 					status: "up-to-date",
-					message: `Up to date: ${versionInfo.latestVersion}`,
+					message: `Up to date: ${versionInfo.upstreamVersion}`,
 					Icon: CheckCircle,
 					color: "text-green-600",
 				};
@@ -122,7 +122,7 @@ const AgentManagementTab = () => {
 			case "github-unavailable":
 				return {
 					status: "github-unavailable",
-					message: `Agent running: ${versionInfo.currentVersion} (GitHub API unavailable)`,
+					message: `Agent running: ${versionInfo.currentVersion} (upstream version check unavailable)`,
 					Icon: CheckCircle,
 					color: "text-purple-600",
 				};
@@ -335,9 +335,9 @@ const AgentManagementTab = () => {
 						Latest Available
 					</h4>
 					<p className="text-xl md:text-2xl font-bold text-secondary-900 dark:text-white">
-						{versionInfo?.latestVersion || (
+						{versionInfo?.upstreamVersion || (
 							<span className="text-base md:text-lg text-secondary-400 dark:text-white">
-								Unknown
+								Unable to check
 							</span>
 						)}
 					</p>

@@ -168,9 +168,7 @@ jobs:
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
           tags: |
             ${{ github.event_name == 'pull_request_target' && format('{0}/pr/patchmon-server:pr-{1}', env.HARBOR_REGISTRY, github.event.pull_request.number) || '' }}
-            ${{ github.event_name != 'pull_request_target' && format('{0}/patchmon-server:edge', env.HARBOR_REGISTRY) || '' }}
-            ${{ github.ref_type == 'tag' && format('{0}/patchmon-server:{1}', env.HARBOR_REGISTRY, github.ref_name) || '' }}
-            ${{ github.ref_type == 'tag' && format('{0}/patchmon-server:latest', env.HARBOR_REGISTRY) || '' }}
+            ${{ github.event_name != 'pull_request_target' && github.ref_type != 'tag' && format('{0}/pr/patchmon-server:edge', env.HARBOR_REGISTRY) || '' }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=server
           cache-to: type=gha,mode=max,scope=server

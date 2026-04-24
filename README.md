@@ -1,9 +1,5 @@
 <div align="center">
 
-# PLEASE NOTE VERSION 1.5.0 IS BEING RELEASED ON ~~10TH~~ 26th APRIL 2026 - SEE OTHER BRANCH "1-5-0-POST-JOBS"
-## So please don't work on any PRs for the node backend as we have replaced it totally with GO
-## Give me more time please :) - I need to still fix some bugs and create relevant documentation etc <3 Thank you for your patience
-
 # PatchMon
 
 ### Enterprise-grade Linux patch & server management platform
@@ -119,7 +115,7 @@ The core of PatchMon - orchestrate updates across your fleet with validation, ap
 
 Fully managed PatchMon hosting with zero infrastructure overhead. We handle provisioning, updates, backups and scaling so you can focus on your fleet instead of the tooling behind it.
 
-### Self-Hosted - Docker (recommended)
+### Self-Hosted - Docker (Officially supported)
 
 Docker is the preferred and supported self-hosted deployment. We use hardened images for security.
 
