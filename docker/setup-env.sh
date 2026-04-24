@@ -10,7 +10,7 @@
 # 4. Interactively configures CORS_ORIGIN, TRUST_PROXY, and TZ
 #
 # Run from any directory:
-#   curl -fsSL https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/setup-env.sh | bash
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/setup-env.sh)"
 # Or if already downloaded:
 #   ./setup-env.sh
 # =============================================================================
