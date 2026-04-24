@@ -70,6 +70,8 @@ The core of PatchMon - orchestrate updates across your fleet with validation, ap
 | **Selective Patching** | Target specific packages, security-only updates or a full upgrade. Works across apt, dnf, yum, apk, pacman and FreeBSD pkg. |
 | **Patch History & Audit** | Full searchable history of every run - exit code, duration, packages touched, approver and host. |
 
+![Patching Screenshot](https://raw.githubusercontent.com/PatchMon/PatchMon/main/patching.png)
+
 ### Visibility & Inventory
 
 | Capability | What It Does |
@@ -90,6 +92,10 @@ The core of PatchMon - orchestrate updates across your fleet with validation, ap
 | **RBAC** | Multi-user accounts with fully customisable roles and granular permissions - every team member sees only what they need. |
 | **OIDC Single Sign-On** | Authenticate with Authentik, Keycloak, Okta or any OIDC provider. Supports auto user provisioning, group-to-role mapping and SSO-only enforcement. |
 
+![Reporting & Alerts Screenshot](https://raw.githubusercontent.com/PatchMon/PatchMon/main/reporting.png)
+
+![Notification Routing Screenshot](https://raw.githubusercontent.com/PatchMon/PatchMon/main/notifications.png)
+
 ### Access & Operations
 
 | Capability | What It Does |
@@ -97,6 +103,8 @@ The core of PatchMon - orchestrate updates across your fleet with validation, ap
 | **Web SSH Terminal** | Browser-based SSH to any host directly from the UI. Direct or proxy mode (route through the agent, no SSH port exposure). |
 | **AI Terminal Assistant** | Built-in AI chat panel inside the SSH terminal for command suggestions, error diagnosis and context-aware help. Works with OpenRouter, Anthropic, OpenAI or Google Gemini. |
 | **Branding & Theming** | Upload custom logos and favicon, choose colour themes and toggle light / dark mode per user. |
+
+![AI Terminal Assistant Screenshot](https://raw.githubusercontent.com/PatchMon/PatchMon/main/ai-remote-ssh.png)
 
 ### Platform
 
