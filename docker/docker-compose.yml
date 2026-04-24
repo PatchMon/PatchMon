@@ -80,7 +80,7 @@ services:
         max-file: "3"
 
   guacd:
-    image: guacamole/guacd:1.5.5
+    image: guacamole/guacd:latest
     restart: unless-stopped
     read_only: true
     tmpfs:

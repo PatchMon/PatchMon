@@ -1,309 +1,295 @@
 #!/bin/bash
-# Migration script: PatchMon 1.4.x (Node stack) -> 2.0.0 (Go binary, native install)
-#
-# Converts the legacy split-env layout
-#   /opt/patchmon/backend/.env   (Node/Prisma: DATABASE_URL, JWT_SECRET, PORT=3001,
-#                                  CORS_ORIGIN, TRUST_PROXY, OIDC_*, rate-limits, ...)
-#   /opt/patchmon/frontend/.env  (Vite: VITE_APP_NAME, VITE_APP_VERSION)
-# into a single /opt/patchmon/.env consumed by the Go binary.
-#
-# Usage (standalone):
-#   ./migrate1-4-2_to_2-0-0.sh <old_backend_env> <old_frontend_env|-> <new_env_output> [redis_password] [local_ip]
-#
-# Example:
-#   ./migrate1-4-2_to_2-0-0.sh \
-#       /opt/patchmon/backend/.env \
-#       /opt/patchmon/frontend/.env \
-#       /opt/patchmon/.env \
-#       "$(openssl rand -hex 32)" \
-#       192.168.1.50
-#
-# Pass "-" for the frontend env argument if it does not exist.
-#
-# The Proxmox community-scripts update_script() fetches this file from the repo
-# and runs it after wiping the legacy Node directories. This keeps the env-merge
-# logic in one place (tested + reviewed here, not duplicated in shell-one-liners).
+# Migration script: PatchMon 1.4.2 → 1.5.0
+# Backs up current docker-compose.yml and .env, downloads the new 1.5.0
+# versions, then carries forward all matching variable values from the old .env
+# and from inline environment values in the old docker-compose.yml.
 
 set -euo pipefail
 
-usage() {
-  cat >&2 <<EOF
-Usage: $0 <old_backend_env> <old_frontend_env|-> <new_env_output> [redis_password] [local_ip]
-EOF
-  exit 1
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+echo ""
+echo "=== PatchMon 1.4.2 → 1.5.0 Migration ==="
+echo ""
+
+# ── 1. Back up existing files ─────────────────────────────────────────────────
+
+if [[ ! -f docker-compose.yml ]]; then
+    echo "ERROR: docker-compose.yml not found in $(pwd). Are you running this from the docker directory?"
+    exit 1
+fi
+
+if [[ ! -f .env ]]; then
+    echo "ERROR: .env not found in $(pwd). Please ensure your .env file exists before migrating."
+    exit 1
+fi
+
+echo "Bringing down the stack with 'docker compose down'..."
+docker compose down
+
+echo ""
+echo "Backing up docker-compose.yml → docker-compose-1-4-2.yml"
+mv docker-compose.yml docker-compose-1-4-2.yml
+
+echo "Backing up .env → .env-1-4-2"
+cp .env .env-1-4-2
+
+# ── 2. Download new 1.5.0 files ───────────────────────────────────────────────
+
+echo ""
+echo "Downloading new docker-compose.yml (1.5.0)..."
+curl -s -o docker-compose.yml \
+    https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/docker-compose.yml
+
+# Strip the setup-instructions block from the top of the new compose file.
+# Removes everything from "# To set up your environment..." through the closing
+# "# ==...==" banner, leaving the file starting cleanly at "name: patchmon".
+sed -i '/^# To set up your/,/^# =\{10,\}/d' docker-compose.yml
+
+echo "Downloading new .env template (1.5.0)..."
+curl -s -o .env \
+    https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/env.example
+
+# ── 3. Extract inline values from the old docker-compose.yml ──────────────────
+#
+# In 1.4.2 these variables were defined inline in docker-compose.yml as YAML
+# ( "KEY: value" ) rather than being sourced from .env.  We extract them here
+# so they can be used as a fallback when the old .env has no value for them.
+#
+# Variables known to live in the old compose file:
+#   REDIS_HOST, REDIS_PORT, REDIS_DB
+#   POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD
+
+OLD_COMPOSE="docker-compose-1-4-2.yml"
+
+# Extract a value from "  KEY: value" YAML lines (strips leading whitespace).
+extract_from_compose() {
+    local key="$1"
+    # Match "  KEY: value" - capture everything after ": ", trimming whitespace.
+    # Ignore lines where the value is a ${...} interpolation (already in .env).
+    local val
+    val=$(grep -m1 "^\s\+${key}:\s" "$OLD_COMPOSE" 2>/dev/null \
+          | sed "s/.*${key}:[[:space:]]*//" \
+          | sed 's/[[:space:]]*$//' \
+          || true)
+    # Discard if the value is a variable interpolation — .env already covers it
+    if [[ "$val" == \$\{* ]]; then
+        val=""
+    fi
+    echo "$val"
 }
 
-[[ $# -lt 3 ]] && usage
+COMPOSE_REDIS_HOST=$(extract_from_compose "REDIS_HOST")
+COMPOSE_REDIS_PORT=$(extract_from_compose "REDIS_PORT")
+COMPOSE_REDIS_DB=$(extract_from_compose "REDIS_DB")
+COMPOSE_POSTGRES_DB=$(extract_from_compose "POSTGRES_DB")
+COMPOSE_POSTGRES_USER=$(extract_from_compose "POSTGRES_USER")
+COMPOSE_POSTGRES_PASSWORD=$(extract_from_compose "POSTGRES_PASSWORD")
 
-OLD_BACKEND_ENV="$1"
-OLD_FRONTEND_ENV="$2"
-NEW_ENV="$3"
-REDIS_PASSWORD_IN="${4:-}"
-LOCAL_IP_IN="${5:-}"
+# ── 4. Carry forward values into the new .env ─────────────────────────────────
+#
+# Priority order for each variable:
+#   1. Old .env  (most explicit — user set it there intentionally)
+#   2. Old docker-compose.yml inline value
+#   3. New template default (keep as-is)
 
-[[ ! -f "${OLD_BACKEND_ENV}" ]] && { echo "ERROR: backend env not found: ${OLD_BACKEND_ENV}" >&2; exit 1; }
-[[ "${OLD_FRONTEND_ENV}" != "-" && ! -f "${OLD_FRONTEND_ENV}" ]] && { echo "ERROR: frontend env not found: ${OLD_FRONTEND_ENV}" >&2; exit 1; }
+echo ""
+echo "Migrating variable values from .env-1-4-2 and docker-compose-1-4-2.yml into new .env..."
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 1. Load legacy backend env into an associative array of active KEY=VALUE
-# ──────────────────────────────────────────────────────────────────────────────
-# We do NOT `source` the old file because it may contain `${VAR}` interpolations
-# that bash would expand to empty strings. We read lines verbatim and split on
-# the first `=`. Quotes around values are stripped only when the FIRST and LAST
-# character form a matched pair AND the value is not empty.
+OLD_ENV=".env-1-4-2"
+NEW_ENV=".env"
+TMP_ENV="$(mktemp)"
 
-declare -A OLD
-while IFS= read -r line || [[ -n "${line}" ]]; do
-  [[ -z "${line}" ]] && continue
-  [[ "${line}" =~ ^[[:space:]]*# ]] && continue
-  [[ ! "${line}" =~ ^[A-Z_][A-Z0-9_]*= ]] && continue
-  key="${line%%=*}"
-  value="${line#*=}"
-  # Strip surrounding quotes only when first and last chars match and len >= 2.
-  # Guards against greedy-match errors on values like `FOO="bar"baz"`.
-  if [[ ${#value} -ge 2 ]]; then
-    first="${value:0:1}"
-    last="${value: -1}"
-    if [[ "${first}" == '"' && "${last}" == '"' ]] || [[ "${first}" == "'" && "${last}" == "'" ]]; then
-      value="${value:1:${#value}-2}"
+# ── CORS_ORIGINS → CORS_ORIGIN merge ──────────────────────────────────────────
+# The old .env may have had both CORS_ORIGIN and CORS_ORIGINS (plural).
+# Merge them into a single deduplicated comma-separated CORS_ORIGIN value so
+# nothing is lost, then remove CORS_ORIGINS from the working copy.
+
+OLD_ENV_WORK="$(mktemp)"
+cp "$OLD_ENV" "$OLD_ENV_WORK"
+
+_cors_singular=$(grep -m1 "^CORS_ORIGIN=" "$OLD_ENV_WORK" | cut -d= -f2- || true)
+_cors_plural=$(grep -m1 "^CORS_ORIGINS=" "$OLD_ENV_WORK" | cut -d= -f2- || true)
+
+if [[ -n "$_cors_plural" ]]; then
+    # Combine both, split on commas, deduplicate, rejoin
+    _combined=$(printf '%s,%s' "$_cors_singular" "$_cors_plural" \
+        | tr ',' '\n' | sed '/^$/d' | sort -u | tr '\n' ',' | sed 's/,$//')
+    # Replace (or insert) CORS_ORIGIN in the working copy and drop CORS_ORIGINS
+    if grep -q "^CORS_ORIGIN=" "$OLD_ENV_WORK"; then
+        sed -i "s|^CORS_ORIGIN=.*|CORS_ORIGIN=${_combined}|" "$OLD_ENV_WORK"
+    else
+        echo "CORS_ORIGIN=${_combined}" >> "$OLD_ENV_WORK"
     fi
-  fi
-  OLD["${key}"]="${value}"
-done <"${OLD_BACKEND_ENV}"
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 2. CORS_ORIGIN / CORS_ORIGINS merge (historic plural variant was used briefly)
-# ──────────────────────────────────────────────────────────────────────────────
-# Combine both into a single deduplicated comma-separated CORS_ORIGIN.
-if [[ -n "${OLD[CORS_ORIGINS]:-}" ]]; then
-  combined="${OLD[CORS_ORIGIN]:-},${OLD[CORS_ORIGINS]}"
-  OLD[CORS_ORIGIN]="$(echo "${combined}" | tr ',' '\n' | sed '/^$/d' | awk '!seen[$0]++' | tr '\n' ',' | sed 's/,$//')"
-  unset 'OLD[CORS_ORIGINS]'
+    sed -i '/^CORS_ORIGINS=/d' "$OLD_ENV_WORK"
+    echo "  [cors merge] CORS_ORIGIN=${_combined}"
 fi
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 3. Deterministic transforms required by the Node → Go move
-# ──────────────────────────────────────────────────────────────────────────────
-# PORT: Node backend listened on 3001 and nginx proxied :80/:443 → :3001.
-# Go server serves frontend + API on a single port. Default is 3000.
-if [[ "${OLD[PORT]:-}" == "3001" ]]; then
-  OLD[PORT]="3000"
-fi
+OLD_ENV="$OLD_ENV_WORK"
 
-# CORS_ORIGIN: drop any entries that point at the old :3001 backend port
-# (users may have added internal hosts like http://localhost:3001). Replace
-# :3001 with :3000 so the new origin list matches the new server port.
-# Also ensure the LXC LAN IP is present so users can hit http://<LOCAL_IP>:3000.
-if [[ -n "${OLD[CORS_ORIGIN]:-}" ]]; then
-  mapped="$(echo "${OLD[CORS_ORIGIN]}" | sed -E 's/:3001\b/:3000/g')"
-  OLD[CORS_ORIGIN]="${mapped}"
-fi
-if [[ -n "${LOCAL_IP_IN}" ]]; then
-  new_origin="http://${LOCAL_IP_IN}:3000"
-  if [[ -z "${OLD[CORS_ORIGIN]:-}" ]]; then
-    OLD[CORS_ORIGIN]="${new_origin}"
-  elif ! echo ",${OLD[CORS_ORIGIN]}," | grep -q ",${new_origin},"; then
-    OLD[CORS_ORIGIN]="${OLD[CORS_ORIGIN]},${new_origin}"
-  fi
-fi
+# Map of variable name → value extracted from old compose
+declare -A COMPOSE_VALS
+COMPOSE_VALS["REDIS_HOST"]="$COMPOSE_REDIS_HOST"
+COMPOSE_VALS["REDIS_PORT"]="$COMPOSE_REDIS_PORT"
+COMPOSE_VALS["REDIS_DB"]="$COMPOSE_REDIS_DB"
+COMPOSE_VALS["POSTGRES_DB"]="$COMPOSE_POSTGRES_DB"
+COMPOSE_VALS["POSTGRES_USER"]="$COMPOSE_POSTGRES_USER"
+COMPOSE_VALS["POSTGRES_PASSWORD"]="$COMPOSE_POSTGRES_PASSWORD"
 
-# Drop legacy-only vars — the Go server does not read these.
-unset 'OLD[SERVER_PROTOCOL]'
-unset 'OLD[SERVER_HOST]'
-unset 'OLD[SERVER_PORT]'
+while IFS= read -r line; do
+    # Pure blank lines pass through unchanged
+    if [[ -z "$line" ]]; then
+        echo "$line" >> "$TMP_ENV"
+        continue
+    fi
 
-# POSTGRES_HOST=database is a Docker-compose remnant; native install is always localhost.
-[[ "${OLD[POSTGRES_HOST]:-}" == "database" ]] && OLD[POSTGRES_HOST]="localhost"
-# REDIS_HOST=redis is a Docker-compose remnant; native install is always 127.0.0.1.
-[[ "${OLD[REDIS_HOST]:-}" == "redis" ]] && OLD[REDIS_HOST]="127.0.0.1"
-[[ -z "${OLD[REDIS_HOST]:-}" ]] && OLD[REDIS_HOST]="127.0.0.1"
-[[ -z "${OLD[REDIS_PORT]:-}" ]] && OLD[REDIS_PORT]="6379"
+    # Comment lines: check if the old .env had this variable *uncommented* and
+    # active. If so, promote the old value (uncommented) into the new .env.
+    # This handles optional vars like TRUST_PROXY, OIDC_*, TZ, LOG_LEVEL, etc.
+    # that are commented out in the new template but may have been set by the user.
+    # Only match "# VAR=" style (space after #), not "#VAR=" inline examples.
+    if [[ "$line" =~ ^[[:space:]]*#[[:space:]]+([A-Z_][A-Z0-9_]*)= ]]; then
+        commented_var="${BASH_REMATCH[1]}"
+        old_active=$(grep -m1 "^${commented_var}=" "$OLD_ENV" 2>/dev/null || true)
+        if [[ -n "$old_active" ]]; then
+            # User had this set — write it uncommented so it stays active
+            echo "$old_active" >> "$TMP_ENV"
+            continue
+        fi
+        # Not set in old .env — keep the comment line as-is
+        echo "$line" >> "$TMP_ENV"
+        continue
+    fi
 
-# AGENTS_DIR — must point at the absolute native-install path regardless of
-# what the old value was (Docker default was "agents", relative to the server
-# working dir; Go server still honours relative paths but absolute is clearer).
-OLD[AGENTS_DIR]="/opt/patchmon/agents"
+    # Plain comment / section header lines
+    if [[ "$line" =~ ^[[:space:]]*# ]]; then
+        echo "$line" >> "$TMP_ENV"
+        continue
+    fi
 
-# Redis password — the native install requires one; if the old install never
-# set it (Node stack happily ran without), use the password passed in by the
-# upgrade driver.
-if [[ -z "${OLD[REDIS_PASSWORD]:-}" && -n "${REDIS_PASSWORD_IN}" ]]; then
-  OLD[REDIS_PASSWORD]="${REDIS_PASSWORD_IN}"
-fi
+    # Active variable line — extract name
+    var_name="${line%%=*}"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 4. Critical secrets — generate if absent, NEVER overwrite an existing value.
-# ──────────────────────────────────────────────────────────────────────────────
-# SESSION_SECRET is used as a fallback AES-GCM key when AI_ENCRYPTION_KEY is
-# unset (internal/util/encryption.go). If any 1.4.x install ever set it, rows
-# encrypted with that key must remain decryptable. DO NOT regenerate if old
-# value exists.
-if [[ -z "${OLD[SESSION_SECRET]:-}" ]]; then
-  OLD[SESSION_SECRET]="$(openssl rand -hex 64)"
-fi
+    # 1. Try the old .env first
+    old_env_value=$(grep -m1 "^${var_name}=" "$OLD_ENV" 2>/dev/null || true)
 
-# AI_ENCRYPTION_KEY is the primary AES-GCM key. Introduced in 1.5.x; 1.4.x
-# installs won't have it. Generating a new one is safe because legacy rows
-# were encrypted with SESSION_SECRET (the fallback), which we preserve above.
-if [[ -z "${OLD[AI_ENCRYPTION_KEY]:-}" ]]; then
-  OLD[AI_ENCRYPTION_KEY]="$(openssl rand -hex 64)"
-fi
+    if [[ -n "$old_env_value" ]]; then
+        echo "$old_env_value" >> "$TMP_ENV"
+    # 2. Fall back to value extracted from old docker-compose.yml
+    elif [[ -n "${COMPOSE_VALS[$var_name]:-}" ]]; then
+        echo "${var_name}=${COMPOSE_VALS[$var_name]}" >> "$TMP_ENV"
+        echo "  [compose fallback] ${var_name}=${COMPOSE_VALS[$var_name]}"
+    else
+        # 3. Keep the new template line as-is
+        echo "$line" >> "$TMP_ENV"
+    fi
+done < "$NEW_ENV"
 
-# JWT_SECRET — if missing, generate. Existing sessions signed with the old
-# value will be invalidated (users log in again).
-if [[ -z "${OLD[JWT_SECRET]:-}" ]]; then
-  OLD[JWT_SECRET]="$(openssl rand -hex 64)"
-fi
+mv "$TMP_ENV" "$NEW_ENV"
+rm -f "$OLD_ENV_WORK"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 5. Write new single .env. Order: core → secrets → server → optional overrides.
-# ──────────────────────────────────────────────────────────────────────────────
-# Allowlist of optional env vars that the Go server reads. Any value the user
-# had set in the legacy env is carried forward; otherwise the line is omitted
-# (the server uses its built-in defaults).
+# ── 5. Carry forward the frontend host port into the new docker-compose.yml ───
+#
+# In 1.4.2 the exposed port was defined on the "frontend" service:
+#
+#   frontend:
+#     ports:
+#       - "3000:3000"   ← host:container
+#
+# In 1.5.0 it is defined on the "server" service.  If the user had changed the
+# host-side port (e.g. "8080:3000") we must reflect that in the new compose file
+# and also set PORT= in the new .env so the container internal port matches.
 
-OPTIONAL_VARS=(
-  # Server
-  TRUST_PROXY ENABLE_HSTS TZ TIMEZONE FRONTEND_URL
-  # Logging
-  ENABLE_LOGGING LOG_LEVEL
-  # Auth / lockout
-  MAX_LOGIN_ATTEMPTS LOCKOUT_DURATION_MINUTES SESSION_INACTIVITY_TIMEOUT_MINUTES
-  AUTH_BROWSER_SESSION_COOKIES JWT_EXPIRES_IN
-  # TFA
-  MAX_TFA_ATTEMPTS TFA_LOCKOUT_DURATION_MINUTES
-  TFA_REMEMBER_ME_EXPIRES_IN TFA_MAX_REMEMBER_SESSIONS
-  # Password policy
-  PASSWORD_MIN_LENGTH PASSWORD_REQUIRE_UPPERCASE PASSWORD_REQUIRE_LOWERCASE
-  PASSWORD_REQUIRE_NUMBER PASSWORD_REQUIRE_SPECIAL
-  # Body / rate limits
-  JSON_BODY_LIMIT AGENT_UPDATE_BODY_LIMIT
-  RATE_LIMIT_WINDOW_MS RATE_LIMIT_MAX
-  AUTH_RATE_LIMIT_WINDOW_MS AUTH_RATE_LIMIT_MAX
-  AGENT_RATE_LIMIT_WINDOW_MS AGENT_RATE_LIMIT_MAX
-  PASSWORD_RATE_LIMIT_WINDOW_MS PASSWORD_RATE_LIMIT_MAX
-  # DB pool / startup
-  PM_DB_CONN_MAX_ATTEMPTS PM_DB_CONN_WAIT_INTERVAL
-  DB_CONNECTION_LIMIT DB_CONNECT_TIMEOUT DB_TRANSACTION_LONG_TIMEOUT
-  # Default role
-  DEFAULT_USER_ROLE
-  # Redis TLS
-  REDIS_TLS REDIS_TLS_VERIFY REDIS_TLS_CA
-  REDIS_CONNECT_TIMEOUT_MS REDIS_COMMAND_TIMEOUT_MS
-  # OIDC / SSO
-  OIDC_ENABLED OIDC_ISSUER_URL OIDC_CLIENT_ID OIDC_CLIENT_SECRET OIDC_REDIRECT_URI
-  OIDC_SCOPES OIDC_AUTO_CREATE_USERS OIDC_DEFAULT_ROLE OIDC_DISABLE_LOCAL_AUTH
-  OIDC_BUTTON_TEXT OIDC_SESSION_TTL OIDC_POST_LOGOUT_URI OIDC_SYNC_ROLES
-  OIDC_ADMIN_GROUP OIDC_SUPERADMIN_GROUP OIDC_HOST_MANAGER_GROUP
-  OIDC_READONLY_GROUP OIDC_USER_GROUP OIDC_ENFORCE_HTTPS
-  # RDP / Guacamole
-  GUACD_PATH GUACD_ADDRESS
-  # Agent binaries
-  AGENT_BINARIES_DIR
+echo ""
+echo "Checking for custom frontend port in docker-compose-1-4-2.yml..."
+
+# Extract the host port from the first "- \"<host>:3000\"" line under the
+# frontend service.  We look for a ports entry of the form "HOST:CONTAINER" or
+# just "PORT" (bare).  The container-side port in 1.4.2 was always 3000.
+OLD_FRONTEND_HOST_PORT=$(
+    awk '
+        /^[[:space:]]+frontend:/ { in_frontend=1 }
+        in_frontend && /^[[:space:]]+ports:/ { in_ports=1; next }
+        in_frontend && in_ports && /^[[:space:]]+-[[:space:]]+["'"'"']?[0-9]+:[0-9]+["'"'"']?/ {
+            # Extract host port from "HOST:CONTAINER"
+            match($0, /[0-9]+:[0-9]+/)
+            pair=substr($0, RSTART, RLENGTH)
+            split(pair, a, ":")
+            print a[1]
+            exit
+        }
+        in_frontend && in_ports && /^[[:space:]]+-[[:space:]]+["'"'"']?[0-9]+["'"'"']?[[:space:]]*$/ {
+            # Bare port — host and container are the same
+            match($0, /[0-9]+/)
+            print substr($0, RSTART, RLENGTH)
+            exit
+        }
+        # A new top-level service key ends the frontend block
+        in_frontend && /^[a-zA-Z]/ { in_frontend=0; in_ports=0 }
+    ' "$OLD_COMPOSE"
 )
 
-write_kv() {
-  # Emit KEY=VALUE in a form the Go server's godotenv parser
-  # (github.com/joho/godotenv v1.5.1) will interpret verbatim. godotenv treats
-  # unquoted `#` preceded by whitespace as a comment start and expands
-  # `$[A-Z0-9_]+` in both unquoted and double-quoted values (but NOT in
-  # single-quoted values). Escape rules for double-quoted: `\\` → `\`,
-  # `\"` → `"`, `\$` → `$` (preserved literal).
-  #
-  # Strategy: if the value contains ONLY characters safe to write unquoted,
-  # emit it raw. Otherwise, wrap in double quotes and escape `\`, `"`, `$`.
-  local k="$1" v="$2"
-  if [[ -z "${v}" ]]; then
-    printf '%s=\n' "${k}" >>"${NEW_ENV}"
-    return
-  fi
-  # Safe chars: alphanumerics, and . + - _ = : / @ , ; ? & %
-  # Everything else (whitespace, #, $, `, ", \, !, (, ), [, ], {, }, <, >, *,
-  # quotes, etc.) → quote + escape.
-  if [[ "${v}" =~ ^[A-Za-z0-9._+=:/@,\;\?\&%-]+$ ]]; then
-    printf '%s=%s\n' "${k}" "${v}" >>"${NEW_ENV}"
-  else
-    local escaped="${v//\\/\\\\}"   # \ → \\
-    escaped="${escaped//\"/\\\"}"   # " → \"
-    escaped="${escaped//\$/\\\$}"   # $ → \$
-    printf '%s="%s"\n' "${k}" "${escaped}" >>"${NEW_ENV}"
-  fi
-}
+if [[ -z "$OLD_FRONTEND_HOST_PORT" ]]; then
+    echo "  No frontend ports entry found — no port migration needed."
+elif [[ "$OLD_FRONTEND_HOST_PORT" == "3000" ]]; then
+    echo "  Frontend host port was 3000 (default) — no change needed."
+else
+    echo "  Custom frontend host port detected: ${OLD_FRONTEND_HOST_PORT}"
 
-redact_db_url() {
-  # Show scheme + user, hide password + host. "postgresql://u:p@h/db" → "postgresql://u:…@…"
-  local url="$1"
-  if [[ "${url}" =~ ^([^:]+://[^:@/]+): ]]; then
-    printf '%s:…@…' "${BASH_REMATCH[1]}"
-  else
-    printf '…'
-  fi
-}
+    # Patch the server.ports line in the new compose file:
+    #   "3000:3000"  →  "<custom>:3000"
+    # Uses awk to scope the replacement strictly within the "server:" service
+    # block, so no other service's ports line is ever touched.
+    awk -v port="${OLD_FRONTEND_HOST_PORT}" '
+        /^  server:$/         { in_server=1 }
+        in_server && /^  [a-z]/ && !/^  server:$/ { in_server=0 }
+        in_server             { sub(/"3000:3000"/, "\"" port ":3000\"") }
+        { print }
+    ' docker-compose.yml > docker-compose.yml.tmp && mv docker-compose.yml.tmp docker-compose.yml
+    echo "  Updated docker-compose.yml server ports: \"${OLD_FRONTEND_HOST_PORT}:3000\""
 
-{
-  echo "# PatchMon 2.0.0 .env (converted from 1.4.x by $(basename "$0") on $(date -u +%Y-%m-%dT%H:%M:%SZ))"
-  echo "# Full variable reference: https://docs.patchmon.net"
-  echo ""
-  echo "APP_ENV=${OLD[APP_ENV]:-production}"
-  echo ""
-  echo "# ── Database ──────────────────────────────────────────────────────────"
-} >"${NEW_ENV}"
-
-write_kv DATABASE_URL "${OLD[DATABASE_URL]}"
-{
-  echo ""
-  echo "# ── Redis ─────────────────────────────────────────────────────────────"
-} >>"${NEW_ENV}"
-write_kv REDIS_HOST "${OLD[REDIS_HOST]}"
-write_kv REDIS_PORT "${OLD[REDIS_PORT]}"
-write_kv REDIS_PASSWORD "${OLD[REDIS_PASSWORD]:-}"
-write_kv REDIS_DB "${OLD[REDIS_DB]:-0}"
-
-{
-  echo ""
-  echo "# ── Secrets (preserved from 1.4.x when present — do not rotate) ──────"
-} >>"${NEW_ENV}"
-write_kv JWT_SECRET "${OLD[JWT_SECRET]}"
-write_kv SESSION_SECRET "${OLD[SESSION_SECRET]}"
-write_kv AI_ENCRYPTION_KEY "${OLD[AI_ENCRYPTION_KEY]}"
-
-{
-  echo ""
-  echo "# ── Server ────────────────────────────────────────────────────────────"
-} >>"${NEW_ENV}"
-write_kv PORT "${OLD[PORT]:-3000}"
-write_kv CORS_ORIGIN "${OLD[CORS_ORIGIN]:-}"
-
-{
-  echo ""
-  echo "# ── Agents ────────────────────────────────────────────────────────────"
-} >>"${NEW_ENV}"
-write_kv AGENTS_DIR "${OLD[AGENTS_DIR]}"
-
-# Optional vars — only write if the legacy env had them explicitly set.
-emitted_optional=0
-for key in "${OPTIONAL_VARS[@]}"; do
-  if [[ -n "${OLD[$key]+x}" ]]; then
-    if [[ "${emitted_optional}" -eq 0 ]]; then
-      {
-        echo ""
-        echo "# ── Preserved overrides from 1.4.x backend/.env ──────────────────────"
-      } >>"${NEW_ENV}"
-      emitted_optional=1
+    # Also write PORT= into the new .env so the Go server binds to the right port
+    # inside the container (the container-side port stays 3000 in this model, but
+    # set it explicitly so it is visible to the user).
+    if grep -q "^#\?[[:space:]]*PORT=" "$NEW_ENV"; then
+        sed -i "s|^#\?[[:space:]]*PORT=.*|PORT=3000|" "$NEW_ENV"
+    else
+        echo "PORT=3000" >> "$NEW_ENV"
     fi
-    write_kv "${key}" "${OLD[$key]}"
-  fi
-done
+    echo "  Ensured PORT=3000 is set in .env (container-internal port)."
+    echo ""
+    echo "  NOTE: The server container now listens internally on port 3000 and is"
+    echo "  exposed to your host on port ${OLD_FRONTEND_HOST_PORT}."
+    echo "  Update CORS_ORIGIN in .env to use port ${OLD_FRONTEND_HOST_PORT} if it"
+    echo "  references the old port."
+fi
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 6. Summary to stderr so the caller (Proxmox upgrade script) can log it.
-# ──────────────────────────────────────────────────────────────────────────────
-{
-  echo ""
-  echo "Wrote ${NEW_ENV}"
-  echo "  PORT         = ${OLD[PORT]:-3000}"
-  echo "  DATABASE_URL = $(redact_db_url "${OLD[DATABASE_URL]}")"
-  echo "  REDIS_HOST   = ${OLD[REDIS_HOST]}"
-  echo "  CORS_ORIGIN  = ${OLD[CORS_ORIGIN]:-}"
-  [[ -n "${OLD[SESSION_SECRET]:-}" ]] && echo "  SESSION_SECRET: preserved (length=${#OLD[SESSION_SECRET]})"
-} >&2
+# ── 6. Done ───────────────────────────────────────────────────────────────────
+
+echo ""
+echo "Migration complete."
+echo ""
+echo "  docker-compose-1-4-2.yml  ← your old compose file (backup)"
+echo "  .env-1-4-2                ← your old .env (backup)"
+echo "  docker-compose.yml        ← new 1.5.0 compose file"
+echo "  .env                      ← new 1.5.0 .env (values carried over)"
+echo ""
+echo "Please review the new .env and docker-compose.yml before starting your stack."
+echo ""
+echo "─────────────────────────────────────────────────────────────────────────────"
+echo "CLEANUP REMINDER"
+echo "─────────────────────────────────────────────────────────────────────────────"
+echo ""
+echo "Once you have confirmed everything is working correctly on 1.5.0, you can"
+echo "safely remove the following Docker volumes that are no longer needed:"
+echo ""
+echo "  • patchmon_agent_files"
+echo "  • patchmon_branding_assets"
+echo ""
+echo "To remove them run:"
+echo ""
+echo "  docker volume rm patchmon_agent_files patchmon_branding_assets"
+echo ""
+echo "Do NOT do this until you are confident the new stack is running as expected."
+echo ""
