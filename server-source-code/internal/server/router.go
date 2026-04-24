@@ -199,7 +199,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		rdpSessions := rdpproxy.NewSessions(log, registry)
 		rdpHandler = handler.NewRDPHandler(
 			rdpTicketStore, rdpSessions, hostsStore, usersStore, permissionsStore,
-			registry, cfg.GuacdAddress, resolved.CORSOrigin, log, dbProvider, notifyEmit,
+			registry, cfg.GuacdAddress, resolved.CORSOrigin, corsOriginResolver(ctxRegistry), log, dbProvider, notifyEmit,
 		)
 	}
 	var agentWsHandler *handler.AgentWSHandler

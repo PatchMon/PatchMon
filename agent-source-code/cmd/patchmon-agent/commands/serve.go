@@ -1263,11 +1263,26 @@ var complianceProgressChan = make(chan ComplianceScanProgress, 10)
 // Global WebSocket connection for SSH proxy (set in connectOnce)
 var globalWsConn *websocket.Conn
 var globalWsConnMu sync.RWMutex
+var globalWsWriteMu sync.Mutex
 
 var complianceScanRunning atomic.Bool
 var complianceScanCancel context.CancelFunc
 var complianceScanCancelMu sync.Mutex
 var complianceScanSource string
+
+func writeWebSocketTextMessage(conn *websocket.Conn, payload []byte) error {
+	globalWsWriteMu.Lock()
+	defer globalWsWriteMu.Unlock()
+
+	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		logger.WithError(err).Debug("Failed to set WebSocket write deadline")
+	}
+
+	if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+		return err
+	}
+	return nil
+}
 
 // patchRunCancels maps patchRunID -> context.CancelFunc for in-flight patch runs.
 // Allows the server to request an interrupt via the "patch_run_stop" WS message.
@@ -1340,20 +1355,26 @@ func (cs *complianceScheduler) loop() {
 func wsLoop(out chan<- wsMsg, dockerEvents <-chan interface{}) {
 	backoff := time.Second
 	for {
-		if err := connectOnce(out, dockerEvents); err != nil {
+		// connectOnce resets backoff to 1s on successful dial so a long-lived
+		// agent that drops its WS (e.g. Windows bouncing TermService/firewall
+		// when RDP settings change) reconnects fast instead of waiting out the
+		// escalated backoff from its prior drops.
+		connected, err := connectOnce(out, dockerEvents, &backoff)
+		if err != nil {
 			logger.WithError(err).Warn("ws disconnected; retrying")
 		}
-		time.Sleep(backoff)
-		if backoff < 30*time.Second {
+		sleepFor := backoff
+		if !connected && backoff < 30*time.Second {
 			backoff *= 2
 		}
+		time.Sleep(sleepFor)
 	}
 }
 
-func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
+func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *time.Duration) (connected bool, err error) {
 	server := cfgManager.GetConfig().PatchmonServer
 	if server == "" {
-		return nil
+		return false, nil
 	}
 	apiID := cfgManager.GetCredentials().APIID
 	apiKey := cfgManager.GetCredentials().APIKey
@@ -1395,8 +1416,14 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 
 	conn, _, err := dialer.Dial(wsURL, header)
 	if err != nil {
-		return err
+		return false, err
 	}
+	// Reset reconnect backoff now that the session is live. Without this, a
+	// long-lived agent that has escalated backoff from earlier drops would wait
+	// the full capped interval on the next disconnect even though the link
+	// recovered immediately.
+	connected = true
+	*backoff = time.Second
 
 	// Create a done channel to signal goroutines to stop when connection closes
 	done := make(chan struct{})
@@ -1475,12 +1502,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 						continue
 					}
 
-					// OPTIMIZATION: Set write deadline to prevent blocking forever
-					if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
-						logger.WithError(err).Debug("Failed to set write deadline")
-					}
-
-					if err := conn.WriteMessage(websocket.TextMessage, eventJSON); err != nil {
+					if err := writeWebSocketTextMessage(conn, eventJSON); err != nil {
 						logger.WithError(err).Debug("Failed to send Docker event via WebSocket")
 						return
 					}
@@ -1520,12 +1542,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 					continue
 				}
 
-				// OPTIMIZATION: Set write deadline to prevent blocking forever
-				if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
-					logger.WithError(err).Debug("Failed to set write deadline")
-				}
-
-				if err := conn.WriteMessage(websocket.TextMessage, progressJSON); err != nil {
+				if err := writeWebSocketTextMessage(conn, progressJSON); err != nil {
 					logger.WithError(err).Debug("Failed to send compliance progress via WebSocket")
 					return
 				}
@@ -1540,9 +1557,8 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 	for {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
-			return err
+			return connected, err
 		}
-		logger.WithField("raw_message", logutil.Sanitize(string(data))).Debug("WebSocket message received")
 		var payload struct {
 			Type                      string                 `json:"type"`
 			UpdateInterval            int                    `json:"update_interval"`
@@ -1587,7 +1603,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 			DryRun       bool     `json:"dry_run"`
 		}
 		if err := json.Unmarshal(data, &payload); err != nil {
-			logger.WithError(err).WithField("data", logutil.Sanitize(string(data))).Warn("Failed to parse WebSocket message")
+			logger.WithError(err).WithField("message_bytes", len(data)).Warn("Failed to parse WebSocket message")
 			continue
 		}
 		logger.WithField("type", logutil.Sanitize(payload.Type)).Debug("Parsed WebSocket message type")
@@ -1783,8 +1799,10 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				wsConn := globalWsConn
 				globalWsConnMu.RUnlock()
 				if wsConn != nil {
+					// Resolve the config path per-OS so Windows hosts see
+					// C:\ProgramData\PatchMon\config.yml, not the Linux path.
 					errorMsg := "SSH proxy is not enabled.\n\n" +
-						"To enable SSH proxy, edit the file /etc/patchmon/config.yml and add the following:\n\n" +
+						"To enable SSH proxy, edit the file " + cfgManager.GetConfigFile() + " and add the following:\n\n" +
 						"integrations:\n" +
 						"    ssh-proxy-enabled: true\n\n" +
 						"Note: This cannot be pushed from the server to the agent and should require you to manually do this for security reasons."
@@ -1875,8 +1893,10 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 				wsConn := globalWsConn
 				globalWsConnMu.RUnlock()
 				if wsConn != nil {
+					// Resolve the config path per-OS so Windows hosts see
+					// C:\ProgramData\PatchMon\config.yml, not the Linux path.
 					errorMsg := "RDP proxy is not enabled.\n\n" +
-						"To enable RDP proxy, edit the file /etc/patchmon/config.yml and add:\n\n" +
+						"To enable RDP proxy, edit the file " + cfgManager.GetConfigFile() + " and add:\n\n" +
 						"integrations:\n" +
 						"    rdp-proxy-enabled: true\n\n" +
 						"Note: This cannot be pushed from the server and requires manual configuration for security."
@@ -3634,7 +3654,7 @@ func sendSSHProxyMessage(conn *websocket.Conn, msgType string, sessionID string,
 		logger.WithError(err).Error("Failed to marshal SSH proxy message")
 		return
 	}
-	if err := conn.WriteMessage(websocket.TextMessage, msgJSON); err != nil {
+	if err := writeWebSocketTextMessage(conn, msgJSON); err != nil {
 		logger.WithError(err).Error("Failed to send SSH proxy message")
 	}
 }
@@ -4002,7 +4022,7 @@ func sendRDPProxyMessage(conn *websocket.Conn, msgType string, sessionID string,
 		logger.WithError(err).Error("Failed to marshal RDP proxy message")
 		return
 	}
-	if err := conn.WriteMessage(websocket.TextMessage, msgJSON); err != nil {
+	if err := writeWebSocketTextMessage(conn, msgJSON); err != nil {
 		logger.WithError(err).Error("Failed to send RDP proxy message")
 	}
 }
@@ -4040,8 +4060,12 @@ func handleRDPProxy(m wsMsg, conn *websocket.Conn) {
 		"port":       port,
 	})).Info("Establishing RDP proxy connection")
 
+	// Dial localhost:3389. Kept at 8s so the server's 12s handshake budget has
+	// room for the WebSocket round trip; a slow-to-accept TermService still gets
+	// through, and an actually-closed port fails fast with a specific error
+	// (rdp_port_unreachable) instead of a generic agent-timeout.
 	address := net.JoinHostPort(host, strconv.Itoa(port))
-	tcpConn, err := net.DialTimeout("tcp", address, 15*time.Second)
+	tcpConn, err := net.DialTimeout("tcp", address, 8*time.Second)
 	if err != nil {
 		logger.WithError(err).Error("Failed to connect to RDP server")
 		sendRDPProxyError(conn, sessionID, fmt.Sprintf("Failed to connect: %v", err))

@@ -30,8 +30,38 @@ import { rdpAPI } from "../utils/api";
 // https://guacamole.apache.org/doc/gug/protocol-reference.html#status-codes
 const GUAC_STATUS_CLIENT_UNAUTHORIZED = 0x0301; // 769
 const GUAC_STATUS_CLIENT_FORBIDDEN = 0x0303; // 771
-const GUAC_STATUS_UPSTREAM_NOT_FOUND = 0x0204; // 516 — host unreachable via guacd
-const GUAC_STATUS_UPSTREAM_UNAVAILABLE = 0x0207; // 519 — NLA/auth failure (Guacamole remaps)
+const GUAC_STATUS_RESOURCE_NOT_FOUND = 0x0204; // 516 — missing ticket/resource
+const GUAC_STATUS_UPSTREAM_NOT_FOUND = 0x0207; // 519 — upstream host/port not reachable
+const GUAC_STATUS_UPSTREAM_UNAVAILABLE = 0x0208; // 520 — upstream reached, session setup failed
+
+const SECURITY_NEGOTIATION_PATTERNS = [
+	"wrong security type",
+	"security type",
+	"security negotiation",
+	"protocol security negotiation",
+	"certificate",
+	"tls",
+	"ssl",
+	"credssp",
+	"self-signed",
+];
+
+const AUTH_FAILURE_PATTERNS = [
+	"logon failure",
+	"authentication failed",
+	"authentication failure",
+	"access denied",
+	"account restriction",
+	"invalid credentials",
+	"login failed",
+	"password expired",
+	"not allowed to log in",
+	"log in through remote desktop",
+	"status_logon_failure",
+	"status_account_restriction",
+	"status_password_expired",
+	"status_logon_type_not_granted",
+];
 
 /**
  * Guidance blocks rendered in the error panel. Keyed by code returned from the
@@ -61,16 +91,16 @@ dnf install guacd
 			"Check the agent service status on the Windows host:",
 		],
 		code: `# PowerShell (as Administrator)
-Get-Service patchmon-agent
-Start-Service patchmon-agent
+Get-Service -Name PatchMonAgent
+Start-Service -Name PatchMonAgent
 
 # Or inspect recent logs
-Get-Content "C:\\ProgramData\\PatchMon\\agent.log" -Tail 200`,
+Get-Content "C:\\ProgramData\\PatchMon\\patchmon-agent.log" -Tail 200`,
 	},
 	agent_timeout: {
 		title: "The agent did not respond in time",
 		body: [
-			"The RDP proxy request was sent but no reply arrived within 5 seconds.",
+			"The RDP proxy request was sent but no reply arrived within 12 seconds.",
 			"Usually this means the agent is unhealthy or the network link is saturated. Try again, and if it keeps failing, restart the agent service.",
 		],
 	},
@@ -85,22 +115,23 @@ integrations:
     rdp-proxy-enabled: true
 
 # Then restart the agent
-Restart-Service patchmon-agent`,
+Restart-Service -Name PatchMonAgent`,
 	},
 	rdp_port_unreachable: {
 		title: "The Windows host's RDP service is not reachable on port 3389",
 		body: [
 			"The agent connected to the server but could not open a TCP connection to localhost:3389 on the host.",
+			"PatchMon only needs the service listening locally on the host. You do not need to expose RDP publicly just to make browser RDP work.",
 			"On the Windows host, confirm Remote Desktop is enabled and listening:",
 		],
 		code: `# PowerShell (as Administrator)
 # 1. Enable Remote Desktop
 Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name fDenyTSConnections -Value 0
-Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-# 2. Confirm the service is running and listening
+# 2. Confirm the service is running and listening locally
 Get-Service TermService
-Test-NetConnection -ComputerName localhost -Port 3389`,
+Test-NetConnection -ComputerName localhost -Port 3389
+Get-NetTCPConnection -LocalPort 3389 -State Listen`,
 	},
 	agent_invalid_host: {
 		title: "The agent rejected the proxy host",
@@ -111,7 +142,8 @@ Test-NetConnection -ComputerName localhost -Port 3389`,
 	agent_error: {
 		title: "The agent reported an error",
 		body: [
-			"The RDP proxy could not be established. The agent's message is shown above — follow its instructions.",
+			"The RDP proxy could not be established. The raw diagnostic text from the agent is shown above for troubleshooting.",
+			"Treat that text as untrusted diagnostic output and verify it against the curated guidance in PatchMon before acting on it.",
 		],
 	},
 	agent_send_failed: {
@@ -140,11 +172,18 @@ Test-NetConnection -ComputerName localhost -Port 3389`,
 			"If you left credentials blank, try providing them explicitly — some hosts do not allow NLA with empty credentials.",
 		],
 	},
-	rdp_gateway_failed: {
-		title: "guacd could not complete the RDP handshake",
+	rdp_security_negotiation_failed: {
+		title: "The Windows host rejected the RDP security negotiation",
 		body: [
-			"The RDP gateway reached the host but the protocol handshake failed. This is often a certificate/TLS issue on the Windows side or an unsupported RDP security level.",
-			"On the host, ensure Remote Desktop security is set to 'Negotiate' or 'SSL (TLS 1.0)'. Verify the host certificate is valid.",
+			"PatchMon reached the host, but Windows and guacd could not agree on the RDP security layer or certificate checks.",
+			"Verify the host's RDP certificate is valid and that its Remote Desktop security policy is compatible with the mode PatchMon requested. If the host was recently hardened, compare the host policy with the PatchMon server logs before changing it.",
+		],
+	},
+	rdp_gateway_failed: {
+		title: "The Windows host refused the RDP session after TCP connected",
+		body: [
+			"PatchMon reached the host's RDP service through the agent, but Windows refused the session setup after the TCP connection opened.",
+			"This can still be caused by credentials, NLA policy, Remote Desktop permissions, or an RDP security-layer mismatch. Try explicit credentials first, then verify the account is allowed to sign in via Remote Desktop and compare the host's RDP policy with the requested mode in the PatchMon server logs.",
 		],
 	},
 	rdp_unknown: {
@@ -173,16 +212,31 @@ const deriveCodeFromHttpError = (err) => {
 	return "rdp_unknown";
 };
 
-const deriveCodeFromGuacStatus = (status) => {
+export const classifyGuacUpstreamFailure = (message) => {
+	const lower = (message || "").toLowerCase();
+	if (
+		SECURITY_NEGOTIATION_PATTERNS.some((pattern) => lower.includes(pattern))
+	) {
+		return "rdp_security_negotiation_failed";
+	}
+	if (AUTH_FAILURE_PATTERNS.some((pattern) => lower.includes(pattern))) {
+		return "rdp_auth_failed";
+	}
+	return "rdp_gateway_failed";
+};
+
+export const deriveCodeFromGuacStatus = (status) => {
 	const code = status?.code;
 	switch (code) {
 		case GUAC_STATUS_CLIENT_UNAUTHORIZED:
 		case GUAC_STATUS_CLIENT_FORBIDDEN:
 			return "rdp_auth_failed";
+		case GUAC_STATUS_RESOURCE_NOT_FOUND:
+			return "rdp_unknown";
 		case GUAC_STATUS_UPSTREAM_NOT_FOUND:
 			return "rdp_port_unreachable";
 		case GUAC_STATUS_UPSTREAM_UNAVAILABLE:
-			return "rdp_gateway_failed";
+			return classifyGuacUpstreamFailure(status?.message);
 		default:
 			return "rdp_unknown";
 	}
@@ -288,8 +342,9 @@ const RequirementsChecklist = ({ open, onToggle }) => (
 					</Requirement>
 				</ul>
 				<p className="text-xs text-secondary-500">
-					Valid credentials for a user with Remote Desktop access are required.
-					Leave blank only if the host allows unauthenticated NLA prompts.
+					Valid credentials for a user with Remote Desktop access are usually
+					required. If blank credentials fail, retry with an explicit username
+					and password.
 				</p>
 			</div>
 		)}
@@ -315,6 +370,13 @@ const RdpViewer = ({ host, isOpen }) => {
 		password: "",
 	});
 
+	const clearCredentials = useCallback(() => {
+		setCredentials({
+			username: "",
+			password: "",
+		});
+	}, []);
+
 	/** Scale the Guacamole display to fit the container */
 	const scaleDisplay = useCallback(() => {
 		const client = clientRef.current;
@@ -336,46 +398,59 @@ const RdpViewer = ({ host, isOpen }) => {
 		display.scale(scale);
 	}, []);
 
-	const disconnect = useCallback(() => {
-		if (pasteHandlerRef.current && displayRef.current) {
-			displayRef.current.removeEventListener("paste", pasteHandlerRef.current);
-			pasteHandlerRef.current = null;
-		}
-		if (resizeObserverRef.current) {
-			resizeObserverRef.current.disconnect();
-			resizeObserverRef.current = null;
-		}
-		if (clientRef.current) {
-			try {
-				clientRef.current.disconnect();
-			} catch {
-				// ignore
+	const disconnect = useCallback(
+		(options = {}) => {
+			if (pasteHandlerRef.current && displayRef.current) {
+				displayRef.current.removeEventListener(
+					"paste",
+					pasteHandlerRef.current,
+				);
+				pasteHandlerRef.current = null;
 			}
-			clientRef.current = null;
-		}
-		if (tunnelRef.current) {
-			try {
-				tunnelRef.current.disconnect();
-			} catch {
-				// ignore
+			if (resizeObserverRef.current) {
+				resizeObserverRef.current.disconnect();
+				resizeObserverRef.current = null;
 			}
-			tunnelRef.current = null;
-		}
-		if (mouseRef.current) {
-			mouseRef.current = null;
-		}
-		if (keyboardRef.current) {
-			keyboardRef.current = null;
-		}
-		setIsConnected(false);
-	}, []);
+			if (clientRef.current) {
+				try {
+					clientRef.current.disconnect();
+				} catch {
+					// ignore
+				}
+				clientRef.current = null;
+			}
+			if (tunnelRef.current) {
+				try {
+					tunnelRef.current.disconnect();
+				} catch {
+					// ignore
+				}
+				tunnelRef.current = null;
+			}
+			if (mouseRef.current) {
+				mouseRef.current = null;
+			}
+			if (keyboardRef.current) {
+				keyboardRef.current = null;
+			}
+			if (options.clearCredentials) {
+				clearCredentials();
+			}
+			setIsConnected(false);
+		},
+		[clearCredentials],
+	);
+
+	const handleDisconnect = useCallback(() => {
+		disconnect({ clearCredentials: true });
+	}, [disconnect]);
 
 	// Disconnect when tab closes or host changes
 	useEffect(() => {
 		if (!isOpen || !host) {
-			disconnect();
+			disconnect({ clearCredentials: true });
 		}
-		return () => disconnect();
+		return () => disconnect({ clearCredentials: true });
 	}, [isOpen, host, disconnect]);
 
 	// Reset transient state when the host changes so stale errors and creds
@@ -412,6 +487,7 @@ const RdpViewer = ({ host, isOpen }) => {
 		} catch (err) {
 			setIsConnecting(false);
 			const serverMsg = err.response?.data?.error || err.message || "";
+			clearCredentials();
 			setError({
 				code: deriveCodeFromHttpError(err),
 				message: serverMsg,
@@ -455,6 +531,7 @@ const RdpViewer = ({ host, isOpen }) => {
 				);
 				setIsConnecting(false);
 				setIsConnected(false);
+				clearCredentials();
 			};
 
 			tunnel.onstatechange = (state) => {
@@ -472,6 +549,7 @@ const RdpViewer = ({ host, isOpen }) => {
 					setIsConnecting(false);
 					setIsConnected(true);
 					setError(null);
+					clearCredentials();
 
 					// Auto-focus the display element for keyboard input
 					if (displayRef.current) {
@@ -505,6 +583,7 @@ const RdpViewer = ({ host, isOpen }) => {
 				);
 				setIsConnecting(false);
 				setIsConnected(false);
+				clearCredentials();
 			};
 
 			// Clipboard sync: receive remote clipboard data
@@ -550,7 +629,7 @@ const RdpViewer = ({ host, isOpen }) => {
 						};
 				mouseRef.current = mouse;
 
-				const keyboard = new Guacamole.Keyboard(element);
+				const keyboard = new Guacamole.Keyboard(displayRef.current);
 				keyboard.onkeydown = (keysym) => {
 					client.sendKeyEvent(1, keysym);
 				};
@@ -587,9 +666,10 @@ const RdpViewer = ({ host, isOpen }) => {
 				message: err?.message || "Failed to connect",
 			});
 			setIsConnecting(false);
-			disconnect();
+			disconnect({ clearCredentials: true });
 		}
 	}, [
+		clearCredentials,
 		host?.id,
 		isOpen,
 		credentials.username,
@@ -661,6 +741,7 @@ const RdpViewer = ({ host, isOpen }) => {
 							<input
 								type="text"
 								placeholder="Username (optional)"
+								autoComplete="off"
 								value={credentials.username}
 								onChange={(e) =>
 									setCredentials((c) => ({
@@ -674,6 +755,7 @@ const RdpViewer = ({ host, isOpen }) => {
 							<input
 								type="password"
 								placeholder="Password (optional)"
+								autoComplete="new-password"
 								value={credentials.password}
 								onChange={(e) =>
 									setCredentials((c) => ({
@@ -705,7 +787,7 @@ const RdpViewer = ({ host, isOpen }) => {
 						<>
 							<button
 								type="button"
-								onClick={disconnect}
+								onClick={handleDisconnect}
 								className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-red-700 hover:bg-red-600 text-white text-sm font-medium"
 							>
 								<Power className="h-4 w-4" />

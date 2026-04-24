@@ -28,10 +28,10 @@ const (
 	// before issuing a ticket. Kept short so the UI fails fast on a dead daemon.
 	guacdPreflightTimeout = 2 * time.Second
 	// agentHandshakeTimeout bounds the wait for the agent's rdp_proxy_connected
-	// or rdp_proxy_error response. The agent dials localhost:3389, so a handful
-	// of seconds is plenty; we do not wait for the full RDP/NLA handshake here
-	// (that happens later through guacd).
-	agentHandshakeTimeout = 5 * time.Second
+	// or rdp_proxy_error response. The agent dials localhost:3389 with its own
+	// 8s timeout (see agent serve.go); this gives the WebSocket round trip 4s
+	// of headroom so the server never times out before the agent finishes.
+	agentHandshakeTimeout = 12 * time.Second
 )
 
 var ErrRDPTicketRequired = errors.New("valid RDP ticket required")
@@ -46,6 +46,7 @@ type RDPHandler struct {
 	registry       *agentregistry.Registry
 	guacdAddress   string
 	allowedOrigins []string // parsed from CORS_ORIGIN for WebSocket origin validation
+	originResolver middleware.OriginResolver
 	log            *slog.Logger
 	db             database.DBProvider
 	notify         *notifications.Emitter
@@ -61,6 +62,7 @@ func NewRDPHandler(
 	registry *agentregistry.Registry,
 	guacdAddress string,
 	corsOrigin string,
+	originResolver middleware.OriginResolver,
 	log *slog.Logger,
 	db database.DBProvider,
 	notify *notifications.Emitter,
@@ -74,10 +76,25 @@ func NewRDPHandler(
 		registry:       registry,
 		guacdAddress:   guacdAddress,
 		allowedOrigins: parseAllowedOrigins(corsOrigin),
+		originResolver: originResolver,
 		log:            log,
 		db:             db,
 		notify:         notify,
 	}
+}
+
+func (h *RDPHandler) userCanUseRemoteAccess(ctx context.Context, user *models.User) (bool, error) {
+	if user == nil || !user.IsActive {
+		return false, nil
+	}
+	if user.Role == "admin" || user.Role == "superadmin" {
+		return true, nil
+	}
+	perm, err := h.permissions.GetByRole(ctx, user.Role)
+	if err != nil {
+		return false, err
+	}
+	return perm != nil && perm.CanUseRemoteAccess && perm.CanViewHosts, nil
 }
 
 // parseAllowedOrigins splits the CORS_ORIGIN config value into individual origins.
@@ -91,13 +108,20 @@ func parseAllowedOrigins(corsOrigin string) []string {
 	return origins
 }
 
-// isOriginAllowed checks whether the given Origin header value matches configured CORS origins.
-func (h *RDPHandler) isOriginAllowed(origin string) bool {
+// isOriginAllowed checks whether the request Origin matches the effective CORS origins.
+func (h *RDPHandler) isOriginAllowed(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
 	if origin == "" {
 		// Non-browser clients (agents, curl) do not send Origin; allow them.
 		return true
 	}
-	for _, allowed := range h.allowedOrigins {
+	effectiveOrigins := h.allowedOrigins
+	if h.originResolver != nil {
+		if dynamicOrigin, ok := h.originResolver(r); ok && dynamicOrigin != "" {
+			effectiveOrigins = []string{dynamicOrigin}
+		}
+	}
+	for _, allowed := range effectiveOrigins {
 		if allowed == "*" || allowed == origin {
 			return true
 		}
@@ -151,13 +175,16 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if user.Role != "admin" && user.Role != "superadmin" {
-		perm, err := h.permissions.GetByRole(r.Context(), user.Role)
-		if err != nil || perm == nil || !perm.CanUseRemoteAccess {
-			h.log.Info("rdp-ticket access denied", "user_id", userID, "role", user.Role)
-			JSON(w, http.StatusForbidden, map[string]string{"error": "Access denied"})
-			return
-		}
+	canUseRemoteAccess, err := h.userCanUseRemoteAccess(r.Context(), user)
+	if err != nil {
+		h.log.Warn("rdp-ticket permission lookup failed", "user_id", userID, "role", user.Role, "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to verify permissions"})
+		return
+	}
+	if !canUseRemoteAccess {
+		h.log.Info("rdp-ticket access denied", "user_id", userID, "role", user.Role)
+		JSON(w, http.StatusForbidden, map[string]string{"error": "Access denied"})
+		return
 	}
 
 	host, err := h.hosts.GetByID(r.Context(), req.HostID)
@@ -387,9 +414,8 @@ func (h *RDPHandler) WebsocketTunnelHandler() http.Handler {
 		// Validate Origin header before handing off to guac's WebSocket upgrader.
 		// The guac library unconditionally sets CheckOrigin to return true, so we
 		// enforce origin policy here at the HTTP layer.
-		origin := r.Header.Get("Origin")
-		if !h.isOriginAllowed(origin) {
-			h.log.Info("rdp tunnel origin rejected", "origin", origin)
+		if !h.isOriginAllowed(r) {
+			h.log.Info("rdp tunnel origin rejected", "origin", r.Header.Get("Origin"))
 			http.Error(w, "Forbidden: origin not allowed", http.StatusForbidden)
 			return
 		}
@@ -418,6 +444,15 @@ func (h *RDPHandler) doGuacConnect(r *http.Request) (guac.Tunnel, error) {
 		h.log.Info("rdp tunnel user revoked or inactive", "user_id", data.UserID)
 		return nil, ErrRDPTicketRequired
 	}
+	canUseRemoteAccess, err := h.userCanUseRemoteAccess(r.Context(), user)
+	if err != nil {
+		h.log.Warn("rdp tunnel permission lookup failed", "user_id", data.UserID, "role", user.Role, "error", err)
+		return nil, ErrRDPTicketRequired
+	}
+	if !canUseRemoteAccess {
+		h.log.Info("rdp tunnel user lacks remote access permission", "user_id", data.UserID, "role", user.Role)
+		return nil, ErrRDPTicketRequired
+	}
 
 	// Verify session still exists
 	port, ok := h.rdpSessions.Get(data.SessionID)
@@ -436,12 +471,18 @@ func (h *RDPHandler) doGuacConnect(r *http.Request) (guac.Tunnel, error) {
 	stream := guac.NewStream(conn, guac.SocketTimeout)
 	config := guac.NewGuacamoleConfiguration()
 	config.Protocol = "rdp"
+	// security=any lets FreeRDP negotiate the strongest common mode (NLA → TLS →
+	// legacy RDP), matching mstsc.exe behaviour. Hardcoding nla breaks hosts with
+	// Negotiate/TLS-only security layers and refuses blank-credential sessions.
+	// ignore-cert=true accepts the self-signed RDP cert Windows generates by
+	// default. If a customer needs hardened RDP later, expose per-host overrides.
 	config.Parameters = map[string]string{
-		"hostname": "127.0.0.1",
-		"port":     strconv.Itoa(port),
-		"username": data.Username,
-		"password": data.Password,
-		"security": "nla",
+		"hostname":    "127.0.0.1",
+		"port":        strconv.Itoa(port),
+		"username":    data.Username,
+		"password":    data.Password,
+		"security":    "any",
+		"ignore-cert": "true",
 	}
 	// Resolve screen dimensions: ticket data > query params > defaults.
 	screenW, screenH := 1024, 768
@@ -480,9 +521,30 @@ func (h *RDPHandler) doGuacConnect(r *http.Request) (guac.Tunnel, error) {
 
 	if err := stream.Handshake(config); err != nil {
 		_ = conn.Close()
-		h.log.Error("rdp tunnel guacd handshake failed", "error", err)
+		h.log.Error("rdp tunnel guacd handshake failed",
+			"session_id", data.SessionID,
+			"user_id", data.UserID,
+			"host_id", data.HostID,
+			"requested_security_mode", config.Parameters["security"],
+			"requested_ignore_cert", config.Parameters["ignore-cert"],
+			"missing_username_or_password", data.Username == "" || data.Password == "",
+			"error", err,
+		)
 		return nil, err
 	}
+
+	// Audit trail: record which RDP security posture we requested for this
+	// session. guacd does not expose the negotiated mode back to PatchMon, so
+	// these fields are intentionally named as requested values rather than the
+	// final session state.
+	h.log.Info("rdp session opened",
+		"session_id", data.SessionID,
+		"user_id", data.UserID,
+		"host_id", data.HostID,
+		"requested_security_mode", config.Parameters["security"],
+		"requested_ignore_cert", config.Parameters["ignore-cert"],
+		"missing_username_or_password", data.Username == "" || data.Password == "",
+	)
 
 	// Clean up session when tunnel closes (handled by caller)
 	return guac.NewSimpleTunnel(stream), nil

@@ -21,14 +21,24 @@ const (
 	agentVersionRe = `(?i)(?:PatchMon Agent v|patchmon-agent v|version )?([0-9]+\.[0-9]+\.[0-9]+)`
 )
 
-// AgentVersionHandler handles agent version routes (current from binary, latest from DNS).
+// AgentVersionHandler handles agent version routes.
+//
+// Version sources:
+//   - currentVersion:  the Linux agent binary this server ships on disk. This is
+//     also what the server will hand to Windows/FreeBSD/Darwin agents (all
+//     platform binaries are built from the same commit), so it is the
+//     authoritative "latest the agent can receive from this server".
+//   - upstreamVersion: a DNS TXT record at agent.vcheck.patchmon.net, used as a
+//     "is there a newer release upstream than this server has" signal for the
+//     admin UI. It is NOT used as the agent's update target because a stale or
+//     unresolvable record used to produce "0.0.0" for agents.
 type AgentVersionHandler struct {
 	agentsDir string
 	log       *slog.Logger
 	// Cached values (in-memory, same as Node agentVersionService)
-	currentVersion string
-	latestVersion  string
-	lastChecked    *time.Time
+	currentVersion  string
+	upstreamVersion string
+	lastChecked     *time.Time
 }
 
 // NewAgentVersionHandler creates a new agent version handler.
@@ -118,8 +128,15 @@ func (h *AgentVersionHandler) getLatestVersionFromDNS(ctx context.Context) (stri
 	return v, nil
 }
 
-// GetVersionInfo returns current (from binary cache), latest (from DNS), and updateStatus.
-// Use RefreshCurrentVersion to update current from binary, CheckForUpdates to refresh latest from DNS.
+// GetVersionInfo returns:
+//   - currentVersion: the agent version this server has bundled on disk.
+//   - latestVersion:  what the agent should consider "latest" — the bundled
+//     binary version. Historically this was the DNS TXT record, which produced
+//     "0.0.0" whenever the record was stale or unresolvable and then tricked
+//     agents into "updating" to a nonsense version.
+//   - upstreamVersion: DNS TXT value (when resolvable), for the admin UI to
+//     flag "your PatchMon server is behind upstream".
+//   - hasUpdate / updateStatus: whether the server itself is behind upstream.
 func (h *AgentVersionHandler) GetVersionInfo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -128,43 +145,58 @@ func (h *AgentVersionHandler) GetVersionInfo(w http.ResponseWriter, r *http.Requ
 		h.currentVersion = h.getCurrentAgentVersion(ctx)
 	}
 
-	// Latest from DNS - refresh if stale or never checked (matches Node's periodic check)
+	// Upstream from DNS - refresh if stale or never checked. A WARN is
+	// intentional: silently falling back used to produce "0.0.0" downstream.
 	now := time.Now()
-	if h.latestVersion == "" || h.lastChecked == nil || now.Sub(*h.lastChecked) > 5*time.Minute {
+	if h.upstreamVersion == "" || h.lastChecked == nil || now.Sub(*h.lastChecked) > 5*time.Minute {
 		if v, err := h.getLatestVersionFromDNS(ctx); err == nil {
-			h.latestVersion = v
+			h.upstreamVersion = v
 			h.lastChecked = &now
+		} else {
+			h.log.Warn("agent version: upstream DNS lookup failed, falling back to bundled binary version", "domain", agentDNSDomain, "error", err)
 		}
 	}
 
-	// Determine updateStatus (matches Node getVersionInfo)
+	// latestVersion returned to agents is always the bundled binary — never the
+	// DNS value — so a missing/invalid DNS record cannot mislead the agent's
+	// self-update logic.
+	latestVersion := h.currentVersion
+
+	// Server-vs-upstream staleness, for the admin UI.
 	var hasUpdate bool
-	updateStatus := "unknown"
-	if h.currentVersion != "" && h.latestVersion != "" {
-		cmp := util.CompareVersions(h.currentVersion, h.latestVersion)
-		if cmp < 0 {
+	var updateStatus string
+	switch {
+	case h.currentVersion != "" && h.upstreamVersion != "":
+		cmp := util.CompareVersions(h.currentVersion, h.upstreamVersion)
+		switch {
+		case cmp < 0:
 			hasUpdate = true
 			updateStatus = "update-available"
-		} else if cmp > 0 {
+		case cmp > 0:
 			updateStatus = "newer-version"
-		} else {
+		default:
 			updateStatus = "up-to-date"
 		}
-	} else if h.latestVersion != "" && h.currentVersion == "" {
+	case h.upstreamVersion != "" && h.currentVersion == "":
 		hasUpdate = true
 		updateStatus = "no-agent"
-	} else if h.currentVersion != "" && h.latestVersion == "" {
+	case h.currentVersion != "" && h.upstreamVersion == "":
+		// "github-unavailable" is kept for wire compat with the shipped frontend
+		// bundle (AgentManagementTab.jsx keys on this exact string). It no longer
+		// reflects the true source (DNS TXT), but the user-facing semantics —
+		// "we can't compare to upstream right now" — still hold.
 		updateStatus = "github-unavailable"
-	} else if h.currentVersion == "" && h.latestVersion == "" {
+	default:
 		updateStatus = "no-data"
 	}
 
 	resp := map[string]interface{}{
-		"currentVersion": h.currentVersion,
-		"latestVersion":  h.latestVersion,
-		"hasUpdate":      hasUpdate,
-		"updateStatus":   updateStatus,
-		"lastChecked":    h.lastChecked,
+		"currentVersion":  h.currentVersion,
+		"latestVersion":   latestVersion,
+		"upstreamVersion": h.upstreamVersion,
+		"hasUpdate":       hasUpdate,
+		"updateStatus":    updateStatus,
+		"lastChecked":     h.lastChecked,
 		"supportedArchitectures": []string{
 			"linux-amd64", "linux-arm64", "linux-386", "linux-arm",
 			"freebsd-amd64", "freebsd-arm64", "freebsd-386", "freebsd-arm",
@@ -172,7 +204,7 @@ func (h *AgentVersionHandler) GetVersionInfo(w http.ResponseWriter, r *http.Requ
 		},
 		"status": "ready",
 	}
-	if h.latestVersion == "" {
+	if latestVersion == "" {
 		resp["status"] = "no-version"
 	}
 	JSON(w, http.StatusOK, resp)
@@ -260,28 +292,33 @@ func (h *AgentVersionHandler) ServeAgentDownload(w http.ResponseWriter, r *http.
 	http.ServeContent(w, r, binaryName, info.ModTime(), f)
 }
 
-// CheckForUpdates refreshes latest version from DNS.
+// CheckForUpdates refreshes the upstream version from DNS and reports whether
+// this server's bundled binary is behind upstream. Agents get the bundled
+// binary regardless, so `latestVersion` in the response is always the bundled
+// version (what the agent will receive on download).
 func (h *AgentVersionHandler) CheckForUpdates(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	v, err := h.getLatestVersionFromDNS(ctx)
 	now := time.Now()
 	if err != nil {
-		h.log.Warn("agent version: DNS check failed", "error", err)
+		h.log.Warn("agent version: DNS check failed", "domain", agentDNSDomain, "error", err)
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"latestVersion":  h.latestVersion,
-			"currentVersion": h.currentVersion,
-			"hasUpdate":      false,
-			"lastChecked":    h.lastChecked,
+			"latestVersion":   h.currentVersion,
+			"upstreamVersion": h.upstreamVersion,
+			"currentVersion":  h.currentVersion,
+			"hasUpdate":       false,
+			"lastChecked":     h.lastChecked,
 		})
 		return
 	}
-	h.latestVersion = v
+	h.upstreamVersion = v
 	h.lastChecked = &now
 	hasUpdate := h.currentVersion != "" && util.CompareVersions(h.currentVersion, v) < 0
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"latestVersion":  v,
-		"currentVersion": h.currentVersion,
-		"hasUpdate":      hasUpdate,
-		"lastChecked":    now,
+		"latestVersion":   h.currentVersion,
+		"upstreamVersion": v,
+		"currentVersion":  h.currentVersion,
+		"hasUpdate":       hasUpdate,
+		"lastChecked":     now,
 	})
 }
