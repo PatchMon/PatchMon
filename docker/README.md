@@ -31,7 +31,7 @@ Run the setup script from an empty directory. It will download `docker-compose.y
 
 ```bash
 mkdir patchmon && cd patchmon
-curl -fsSL https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/setup-env.sh | bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/setup-env.sh)"
 ```
 
 Once the script finishes, start PatchMon:

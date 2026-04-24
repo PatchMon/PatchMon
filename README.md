@@ -45,7 +45,7 @@ Docker is the fastest way to try PatchMon:
 
 ```bash
 mkdir patchmon && cd patchmon
-curl -fsSL https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/setup-env.sh | bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/setup-env.sh)"
 docker compose up -d
 ```
 
@@ -123,7 +123,7 @@ Docker is the preferred and supported self-hosted deployment. We use hardened im
 
 ```bash
 mkdir patchmon && cd patchmon
-curl -fsSL https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/setup-env.sh | bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/setup-env.sh)"
 docker compose up -d
 ```
 
