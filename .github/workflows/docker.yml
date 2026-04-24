@@ -130,15 +130,42 @@ jobs:
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}-server
+          # `latest=auto` tags release builds (semver pushes) as `:latest` but
+          # leaves branch/edge builds alone.
+          flavor: |
+            latest=auto
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=edge,branch=main
+            type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+
+      - name: Extract metadata (tags, labels) for Harbor
+        id: meta-harbor
+        if: env.HAS_HARBOR == 'true'
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051
+        with:
+          # Release tag pushes publish to `cr.dev.patchmon.cloud/patchmon-server`.
+          # PR and edge builds publish to the `/pr/` staging namespace
+          # (`cr.dev.patchmon.cloud/pr/patchmon-server`) so production pulls
+          # never accidentally resolve to an in-flight build.
+          images: |
+            name=${{ env.HARBOR_REGISTRY }}/patchmon-server,enable=${{ github.ref_type == 'tag' }}
+            name=${{ env.HARBOR_REGISTRY }}/pr/patchmon-server,enable=${{ github.ref_type != 'tag' }}
+          flavor: |
+            latest=auto
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=edge,branch=main
+            type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+            type=ref,event=pr,prefix=pr-
 
       - name: Build and push server image to GHCR (main/tags only)
         id: build
-        if: github.event_name != 'pull_request_target'
+        if: github.event_name != 'pull_request_target' && steps.meta.outputs.tags != ''
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
@@ -153,11 +180,12 @@ jobs:
           cache-to: type=gha,mode=max,scope=server
           provenance: false
 
-      - name: Build and push server image to Harbor (PRs and main)
+      - name: Build and push server image to Harbor (PRs, main, and tags)
         id: build-harbor
-        # Only run when Harbor credentials are set. Forks / test repos simply
-        # skip this step; GHCR push above still happens.
-        if: env.HAS_HARBOR == 'true'
+        # Only run when Harbor credentials are set and metadata-action produced
+        # at least one tag. Forks / test repos simply skip this step; GHCR push
+        # above still happens.
+        if: env.HAS_HARBOR == 'true' && steps.meta-harbor.outputs.tags != ''
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
@@ -166,10 +194,8 @@ jobs:
           build-args: |
             VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
-          tags: |
-            ${{ github.event_name == 'pull_request_target' && format('{0}/pr/patchmon-server:pr-{1}', env.HARBOR_REGISTRY, github.event.pull_request.number) || '' }}
-            ${{ github.event_name != 'pull_request_target' && github.ref_type != 'tag' && format('{0}/pr/patchmon-server:edge', env.HARBOR_REGISTRY) || '' }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta-harbor.outputs.tags }}
+          labels: ${{ steps.meta-harbor.outputs.labels }}
           cache-from: type=gha,scope=server
           cache-to: type=gha,mode=max,scope=server
           provenance: false
@@ -202,5 +228,6 @@ jobs:
             ```yaml
             services:
               patchmon-server:
-                image: ${{ env.HARBOR_REGISTRY }}/pr/patchmon-server@${{ steps.build.outputs.digest }}
-            ``
+                image: ${{ env.HARBOR_REGISTRY }}/pr/patchmon-server@${{ steps.build-harbor.outputs.digest }}
+            ```
+
