@@ -30,7 +30,7 @@ var defaultCommunityLinks = []CommunityLink{
 	{ID: "youtube", URL: "https://www.youtube.com/@PatchMonTV", Label: "YouTube", Stat: "130"},
 	{ID: "buymeacoffee", URL: "https://buymeacoffee.com/iby___", Label: "Buy Me a Coffee"},
 	{ID: "roadmap", URL: "https://github.com/orgs/PatchMon/projects/2/views/1", Label: "Roadmap"},
-	{ID: "docs", URL: "https://docs.patchmon.net", Label: "Documentation"},
+	{ID: "docs", URL: "https://patchmon.net/docs", Label: "Documentation"},
 	{ID: "website", URL: "https://patchmon.net", Label: "Website"},
 }
 

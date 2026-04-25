@@ -65,7 +65,7 @@ Access the application at the URL you configured (default: `http://localhost:300
    sed -i "s/^AI_ENCRYPTION_KEY=.*/AI_ENCRYPTION_KEY=$(openssl rand -hex 64)/" .env
    ```
 
-4. Edit `.env` and configure the required variables. See `env.example` for the full list and [docs.patchmon.net](https://docs.patchmon.net/books/patchmon-application-documentation/page/patchmon-environment-variables-reference) for detailed explanations.
+4. Edit `.env` and configure the required variables. See `env.example` for the full list and [patchmon.net/docs](https://patchmon.net/docs/patchmon-operator-guide#patchmon-environment-variables-reference) for detailed explanations.
 
 5. Start the application:
    ```bash
@@ -121,7 +121,7 @@ All configuration is managed through the `.env` file.
 
 **For the full list of available variables**, see `env.example` in this directory.
 
-**For detailed explanations** of each variable (defaults, usage, and examples), see the [PatchMon Environment Variables Reference](https://docs.patchmon.net/books/patchmon-application-documentation/page/patchmon-environment-variables-reference) at docs.patchmon.net.
+**For detailed explanations** of each variable (defaults, usage, and examples), see the [PatchMon Environment Variables Reference](https://patchmon.net/docs/patchmon-operator-guide#patchmon-environment-variables-reference) at patchmon.net/docs.
 
 ### Volumes
 

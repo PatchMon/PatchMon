@@ -279,12 +279,12 @@ AI disclosure is used for review context, not as a judgement. Maintainers may as
 User-facing changes must include documentation updates in the same PR.
 
 - **README.md** - high-level project overview, quick start, deployment options.
-- **docs.patchmon.net** - full user documentation, hosted on BookStack. Sign in with GitHub; request editor access via Discord or email once you've verified.
+- **patchmon.net/docs** - full user documentation, hosted on BookStack. Sign in with GitHub; request editor access via Discord or email once you've verified.
 - **Internal docs** - in `docs/Internal documentation/` (architecture, database, OIDC, WebSocket protocol, testing, etc.).
 
 If you're adding or changing:
 
-- An environment variable → update the env vars reference page on docs.patchmon.net.
+- An environment variable → update the env vars reference page on patchmon.net/docs.
 - An API endpoint → update the integration/auto-enrolment API docs.
 - An agent config option → update the agent config reference.
 - The OIDC flow → update the OIDC setup guide.

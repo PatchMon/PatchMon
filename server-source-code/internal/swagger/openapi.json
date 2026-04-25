@@ -3,7 +3,7 @@
 	"info": {
 		"title": "PatchMon Integration API",
 		"version": "1.0.0",
-		"description": "PatchMon API documentation for integrations. Covers scoped credentials, GetHomepage widget, agent endpoints, and auto-enrollment. For full application documentation, see: https://docs.patchmon.net/books/patchmon-application-documentation/page/integration-api-documentation"
+		"description": "PatchMon API documentation for integrations. Covers scoped credentials, GetHomepage widget, agent endpoints, and auto-enrollment. For full application documentation, see: https://patchmon.net/docs/patchmon-api-integrations-guide#integration-api-documentation"
 	},
 	"servers": [
 		{

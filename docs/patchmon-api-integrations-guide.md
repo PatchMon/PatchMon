@@ -901,7 +901,7 @@ The `/api/v1/gethomepage/*` endpoints are subject to PatchMon's general API rate
 
 ### Support and resources
 
-- **PatchMon documentation:** [docs.patchmon.net](https://docs.patchmon.net)
+- **PatchMon documentation:** [patchmon.net/docs](https://patchmon.net/docs)
 - **GetHomepage documentation:** [gethomepage.dev](https://gethomepage.dev)
 - **PatchMon Discord:** [patchmon.net/discord](https://patchmon.net/discord)
 - **GitHub issues:** [github.com/PatchMon/PatchMon/issues](https://github.com/PatchMon/PatchMon/issues)
@@ -2715,9 +2715,9 @@ A: Use debug mode: `DEBUG=true ./proxmox_auto_enroll.sh`
 
 #### Documentation
 
-- **PatchMon Documentation**: https://docs.patchmon.net
-- **API Reference**: https://docs.patchmon.net/api
-- **Agent Documentation**: https://docs.patchmon.net/agent
+- **PatchMon Documentation**: https://patchmon.net/docs
+- **API Reference**: https://patchmon.net/docs/api-reference
+- **Agent Documentation**: https://patchmon.net/docs/patchmon-operator-guide#managing-the-patchmon-agent
 
 #### Community
 

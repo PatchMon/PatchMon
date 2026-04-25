@@ -76,7 +76,7 @@ Each section below documents what changed in a PatchMon release. Versions are li
 
 This covers migration for Docker, Proxmox community scripts, and legacy `setup.sh` installs:
 
-[Migrating from 1.4.2 to 2.0.0](https://docs.patchmon.net/books/patchmon-application-documentation/page/migrating-from-142-to-200)
+[Migrating from 1.4.2 to 2.0.0](https://patchmon.net/docs/patchmon-release-notes#v2-0-0)
 
 ---
 
