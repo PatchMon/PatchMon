@@ -385,6 +385,8 @@ func sendScheduledEmail(plain, subject, html, csv string) error {
 	}
 	tlsCfg := &tls.Config{ServerName: cfg.SMTPHost, MinVersion: tls.VersionTLS12}
 
+	// use_tls controls STARTTLS: when false, do not upgrade even if the server advertises it
+	// (matches notification email delivery; see sendEmail in notification_worker.go).
 	c, conn, err := func() (*smtp.Client, net.Conn, error) {
 		plainConn, dialErr := net.DialTimeout("tcp", addr, 30*time.Second)
 		if dialErr != nil {
@@ -395,14 +397,15 @@ func sendScheduledEmail(plain, subject, html, csv string) error {
 			_ = plainConn.Close()
 			return nil, nil, clientErr
 		}
-		if ok, _ := client.Extension("STARTTLS"); ok {
+		startTLS, _ := client.Extension("STARTTLS")
+		if startTLS && cfg.UseTLS {
 			if tlsErr := client.StartTLS(tlsCfg); tlsErr != nil {
 				_ = client.Close()
 				return nil, nil, tlsErr
 			}
 			return client, plainConn, nil
 		}
-		if cfg.UseTLS {
+		if cfg.UseTLS && !startTLS {
 			_ = client.Close()
 			tlsConn, tlsErr := tls.DialWithDialer(&net.Dialer{Timeout: 30 * time.Second}, "tcp", addr, tlsCfg)
 			if tlsErr != nil {
