@@ -857,7 +857,7 @@ const Integrations = () => {
 										Proxmox hosts.
 									</p>
 									<a
-										href="https://docs.patchmon.net/books/patchmon-application-documentation/page/proxmox-lxc-auto-enrollment-guide"
+										href="https://patchmon.net/docs/patchmon-api-integrations-guide#proxmox-lxc-auto-enrollment-guide"
 										target="_blank"
 										rel="noopener noreferrer"
 										className="inline-flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg text-sm transition-colors"
@@ -1066,7 +1066,7 @@ const Integrations = () => {
 										infrastructure.
 									</p>
 									<a
-										href="https://docs.patchmon.net/books/patchmon-application-documentation/page/proxmox-lxc-auto-enrollment-guide"
+										href="https://patchmon.net/docs/patchmon-api-integrations-guide#proxmox-lxc-auto-enrollment-guide"
 										target="_blank"
 										rel="noopener noreferrer"
 										className="inline-flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg text-sm transition-colors"
@@ -1266,7 +1266,7 @@ const Integrations = () => {
 									</p>
 									<div className="flex flex-wrap gap-2">
 										<a
-											href="https://docs.patchmon.net/books/patchmon-application-documentation/page/integration-api-documentation"
+											href="https://patchmon.net/docs/patchmon-api-integrations-guide#integration-api-documentation"
 											target="_blank"
 											rel="noopener noreferrer"
 											className="inline-flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg text-sm transition-colors"
@@ -1440,7 +1440,7 @@ const Integrations = () => {
 										How to Use GetHomepage Integration
 									</h3>
 									<a
-										href="https://docs.patchmon.net/books/patchmon-application-documentation/page/gethomepagedev-dashboard-card"
+										href="https://patchmon.net/docs/patchmon-api-integrations-guide#gethomepage-dashboard-card"
 										target="_blank"
 										rel="noopener noreferrer"
 										className="px-4 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg flex items-center gap-2 transition-colors w-full sm:w-auto justify-center sm:justify-start"

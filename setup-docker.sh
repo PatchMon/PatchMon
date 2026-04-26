@@ -382,5 +382,5 @@ echo "    Stop:           docker compose -f $PATCHMON_DIR/docker-compose.yml dow
 echo "    Start:          docker compose -f $PATCHMON_DIR/docker-compose.yml up -d"
 echo "    Update:         sudo $0 --update"
 echo ""
-echo "  Documentation:    https://docs.patchmon.net"
+echo "  Documentation:    https://patchmon.net/docs"
 echo ""

@@ -9,7 +9,7 @@
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-blue?style=for-the-badge&logo=discord)](https://patchmon.net/discord)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-black?style=for-the-badge&logo=github)](https://github.com/PatchMon/PatchMon)
 [![Roadmap](https://img.shields.io/badge/Roadmap-View%20Progress-green?style=for-the-badge&logo=github)](https://github.com/orgs/PatchMon/projects/2)
-[![Documentation](https://img.shields.io/badge/Docs-docs.patchmon.net-blue?style=for-the-badge)](https://docs.patchmon.net/)
+[![Documentation](https://img.shields.io/badge/Docs-patchmon.net%2Fdocs-blue?style=for-the-badge)](https://patchmon.net/docs/)
 
 [![Latest Release](https://img.shields.io/github/v/release/PatchMon/PatchMon?style=for-the-badge&color=blue)](https://github.com/PatchMon/PatchMon/releases)
 [![Stars](https://img.shields.io/github/stars/PatchMon/PatchMon?style=for-the-badge&color=yellow)](https://github.com/PatchMon/PatchMon/stargazers)
@@ -137,7 +137,7 @@ docker compose up -d
 
 Access the application at the URL you configured (default: `http://localhost:3000`).
 
-**Manual Docker setup:** see [Installing PatchMon Server on Docker](https://docs.patchmon.net/books/patchmon-application-documentation/page/installing-patchmon-server-on-docker).
+**Manual Docker setup:** see [Installing PatchMon Server on Docker](https://patchmon.net/docs/patchmon-operator-guide#installing-patchmon-server-on-docker).
 
 ### Self-Hosted - Proxmox LXC
 
@@ -193,16 +193,16 @@ Ensure that **Websockets** is supported by your proxy when passing the traffic t
 
 ## Documentation
 
-Full documentation at **[docs.patchmon.net](https://docs.patchmon.net)**.
+Full documentation at **[patchmon.net/docs](https://patchmon.net/docs)**.
 
 | Topic | Link |
 |-------|------|
-| Installing on Docker | [Docker install guide](https://docs.patchmon.net/books/patchmon-application-documentation/page/installing-patchmon-server-on-docker) |
-| Environment variables | [Env vars reference](https://docs.patchmon.net/books/patchmon-application-documentation/page/patchmon-environment-variables-reference) |
-| Integration API | [Integration API docs](https://docs.patchmon.net/books/patchmon-application-documentation/page/integration-api-documentation) |
-| Proxmox LXC auto-enrolment | [Proxmox guide](https://docs.patchmon.net/books/patchmon-application-documentation/page/proxmox-lxc-auto-enrollment-guide) |
-| getHomepage dashboard card | [getHomepage integration](https://docs.patchmon.net/books/patchmon-application-documentation/page/gethomepagedev-dashboard-card) |
-| Metrics collection | [Metrics info](https://docs.patchmon.net/books/patchmon-application-documentation/page/metrics-collection-information) |
+| Installing on Docker | [Docker install guide](https://patchmon.net/docs/patchmon-operator-guide#installing-patchmon-server-on-docker) |
+| Environment variables | [Env vars reference](https://patchmon.net/docs/patchmon-operator-guide#patchmon-environment-variables-reference) |
+| Integration API | [Integration API docs](https://patchmon.net/docs/patchmon-api-integrations-guide#integration-api-documentation) |
+| Proxmox LXC auto-enrolment | [Proxmox guide](https://patchmon.net/docs/patchmon-api-integrations-guide#proxmox-lxc-auto-enrollment-guide) |
+| getHomepage dashboard card | [getHomepage integration](https://patchmon.net/docs/patchmon-api-integrations-guide#gethomepage-dashboard-card) |
+| Metrics collection | [Metrics info](https://patchmon.net/docs/patchmon-admin-guide#metrics-and-telemetry) |
 
 ---
 
@@ -278,6 +278,6 @@ This project represents hundreds of hours of development work. If PatchMon has s
 [![Cloud](https://img.shields.io/badge/Cloud-patchmon.net%2Fcloud-purple?style=for-the-badge)](https://patchmon.net/cloud)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-blue?style=for-the-badge&logo=discord)](https://patchmon.net/discord)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-black?style=for-the-badge&logo=github)](https://github.com/PatchMon/PatchMon)
-[![Documentation](https://img.shields.io/badge/Docs-docs.patchmon.net-blue?style=for-the-badge)](https://docs.patchmon.net/)
+[![Documentation](https://img.shields.io/badge/Docs-patchmon.net%2Fdocs-blue?style=for-the-badge)](https://patchmon.net/docs/)
 
 </div>
