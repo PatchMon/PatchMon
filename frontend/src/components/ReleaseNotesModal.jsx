@@ -1,118 +1,156 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, ExternalLink, Heart, Sparkles } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import {
+	ArrowRight,
+	Bell,
+	ExternalLink,
+	Heart,
+	RefreshCw,
+	Sparkles,
+} from "lucide-react";
+import { useCallback, useEffect, useId, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { useAuth } from "../contexts/AuthContext";
-import { versionAPI } from "../utils/api";
+import { useSettings } from "../contexts/SettingsContext";
+import { authAPI, versionAPI } from "../utils/api";
 
+// Closing the modal or finishing the last step calls `acceptReleaseNotes` so
+// the version is marked read even if the user skips later steps.
 const ReleaseNotesModal = ({ isOpen, onAccept }) => {
-	const [currentStep, setCurrentStep] = useState(1); // 1 = release notes, 2 = founder's note
-	const [isAccepting, setIsAccepting] = useState(false);
-	const { acceptReleaseNotes } = useAuth();
+	const { acceptReleaseNotes, user } = useAuth();
+	const { settings: publicSettings } = useSettings();
 
-	// Get current app version
+	// Steps are captured when the modal opens so mid-session context updates
+	// don't reshape `steps` under the current `stepIndex`. Newsletter signup
+	// is deferred until the user finishes the flow (close / coffee) so we never
+	// refetch profile mid-wizard. The subscribe step is self-hosted only and
+	// omitted when `admin_mode` or already subscribed at open.
+	const buildSteps = () => {
+		const showSubscribeStep =
+			!publicSettings?.admin_mode && !user?.newsletter_subscribed;
+		return [
+			"whatsNew",
+			...(showSubscribeStep ? ["subscribe"] : []),
+			"personalNote",
+		];
+	};
+
+	const [steps, setSteps] = useState(buildSteps);
+	const [stepIndex, setStepIndex] = useState(0);
+	const [isAccepting, setIsAccepting] = useState(false);
+	const [optIn, setOptIn] = useState(false);
+	const stayUpdatedId = useId();
+	const stepKey = steps[stepIndex] ?? "whatsNew";
+
 	const { data: versionInfo } = useQuery({
 		queryKey: ["versionInfo"],
 		queryFn: () => versionAPI.getCurrent().then((res) => res.data),
 		staleTime: 300000,
 	});
 
-	// Get release notes for current version
 	const { data: releaseNotes, isLoading } = useQuery({
 		queryKey: ["releaseNotes", versionInfo?.version],
 		queryFn: async () => {
 			if (!versionInfo?.version) return null;
 			const response = await fetch(
 				`/api/v1/release-notes/${versionInfo.version}`,
-				{
-					credentials: "include",
-				},
+				{ credentials: "include" },
 			);
 			return response.json();
 		},
 		enabled: isOpen && !!versionInfo?.version,
 	});
 
-	// Check if running on PatchMon Cloud
 	const isCloudVersion = window.location.hostname.endsWith(".patchmon.cloud");
 
+	const handleAccept = useCallback(async () => {
+		const maybeSubscribe = () => {
+			if (!optIn || user?.newsletter_subscribed) return;
+			void authAPI.subscribeNewsletter().catch(() => {});
+		};
+
+		const currentVersion = versionInfo?.version;
+		if (!currentVersion) {
+			maybeSubscribe();
+			onAccept();
+			return;
+		}
+		setIsAccepting(true);
+		try {
+			const result = await acceptReleaseNotes(currentVersion);
+			if (!result.success) {
+				console.error("Failed to accept release notes:", result.error);
+			}
+			maybeSubscribe();
+			onAccept();
+		} catch (error) {
+			console.error("Error accepting release notes:", error);
+			maybeSubscribe();
+			onAccept();
+		} finally {
+			setIsAccepting(false);
+		}
+	}, [
+		versionInfo?.version,
+		acceptReleaseNotes,
+		onAccept,
+		optIn,
+		user?.newsletter_subscribed,
+	]);
+
+	const handleClose = useCallback(async () => {
+		await handleAccept();
+	}, [handleAccept]);
+
 	const handleNext = () => {
-		setCurrentStep(2);
+		setStepIndex((idx) => Math.min(idx + 1, steps.length - 1));
+	};
+
+	const handleBack = () => {
+		setStepIndex((idx) => Math.max(idx - 1, 0));
+	};
+
+	const handleSubscribeNext = () => {
+		handleNext();
 	};
 
 	const handleDonateNow = async () => {
-		// Open donation page in new tab
 		window.open(
 			"https://buymeacoffee.com/iby___",
 			"_blank",
 			"noopener,noreferrer",
 		);
-		// Update database to mark as accepted
 		await handleAccept();
 	};
 
 	const handleMembershipNow = async () => {
-		// Open membership page in new tab
 		window.open(
 			"https://buymeacoffee.com/iby___/membership",
 			"_blank",
 			"noopener,noreferrer",
 		);
-		// Update database to mark as accepted
 		await handleAccept();
 	};
 
-	const handleAccept = useCallback(async () => {
-		const currentVersion = versionInfo?.version;
-		if (!currentVersion) {
-			onAccept();
-			return;
-		}
-
-		setIsAccepting(true);
-
-		try {
-			// This updates DB, state, and localStorage
-			const result = await acceptReleaseNotes(currentVersion);
-
-			if (result.success) {
-				// Success - state is already updated, modal will close
-				onAccept();
-			} else {
-				console.error("Failed to accept release notes:", result.error);
-				// Still close modal even if API call fails
-				onAccept();
-			}
-		} catch (error) {
-			console.error("Error accepting release notes:", error);
-			onAccept();
-		} finally {
-			setIsAccepting(false);
-		}
-	}, [versionInfo?.version, acceptReleaseNotes, onAccept]);
-
-	const handleClose = useCallback(async () => {
-		// Update database to mark as accepted
-		await handleAccept();
-	}, [handleAccept]);
-
-	// Reset to step 1 when modal opens
+	// Reset state and capture the step list whenever the modal opens. Deps
+	// are intentionally limited to `isOpen` so the running flow is stable.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: capture steps once on open
 	useEffect(() => {
 		if (isOpen) {
-			setCurrentStep(1);
+			setSteps(buildSteps());
+			setStepIndex(0);
+			setOptIn(false);
 		}
 	}, [isOpen]);
 
-	// Dismiss with Esc key
 	useEffect(() => {
 		if (!isOpen) return;
-		const handleKeyDown = (e) => {
+		const onKeyDown = (e) => {
 			if (e.key === "Escape") {
 				handleClose();
 			}
 		};
-		window.addEventListener("keydown", handleKeyDown);
-		return () => window.removeEventListener("keydown", handleKeyDown);
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
 	}, [isOpen, handleClose]);
 
 	if (!isOpen) return null;
@@ -120,7 +158,6 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 	const currentVersion = versionInfo?.version || "unknown";
 	const hasReleaseNotes = releaseNotes?.exists && releaseNotes?.content;
 
-	// Buy Me a Coffee SVG
 	const BuyMeACoffeeIcon = () => (
 		<svg
 			className="h-5 w-5 text-yellow-500 flex-shrink-0"
@@ -135,53 +172,55 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 	return (
 		<div className="fixed inset-0 z-50 overflow-y-auto">
 			<div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-				{/* Backdrop - lighter and more subtle */}
 				<button
 					type="button"
 					className="fixed inset-0 bg-secondary-500 bg-opacity-75 transition-opacity cursor-default"
-					onClick={currentStep === 2 ? handleClose : undefined}
+					onClick={handleClose}
 					aria-label="Close modal"
-					disabled={currentStep === 1}
 				/>
 
-				{/* Modal - matches DashboardSettingsModal styling */}
 				<div className="inline-block align-bottom bg-white dark:bg-secondary-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
 					<div className="bg-white dark:bg-secondary-800 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
 						{/* Header */}
 						<div className="flex items-center justify-between mb-4">
 							<div className="flex items-center gap-2">
-								{currentStep === 1 ? (
+								{stepKey === "whatsNew" && (
 									<Sparkles className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-								) : (
+								)}
+								{stepKey === "subscribe" && (
+									<Bell className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+								)}
+								{stepKey === "personalNote" && (
 									<Heart className="h-5 w-5 text-primary-600 dark:text-primary-400 fill-current" />
 								)}
 								<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
-									{currentStep === 1 ? "What's New" : "A Personal Note"}
+									{stepKey === "whatsNew" && "What's New"}
+									{stepKey === "subscribe" && "Stay Updated"}
+									{stepKey === "personalNote" && "A Personal Note"}
 								</h3>
-								{currentStep === 1 && (
+								{stepKey === "whatsNew" && (
 									<span className="text-xs bg-primary-100 dark:bg-primary-900 text-primary-800 dark:text-primary-200 px-2 py-1 rounded font-medium">
 										v{currentVersion}
 									</span>
 								)}
 							</div>
-							{currentStep === 2 && (
-								<button
-									type="button"
-									onClick={handleClose}
-									className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-secondary-700 dark:text-white bg-secondary-100 dark:bg-secondary-700 border border-secondary-300 dark:border-secondary-600 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500 transition-colors"
-									aria-label="Close"
-								>
-									Close
-								</button>
-							)}
+							<button
+								type="button"
+								onClick={handleClose}
+								disabled={isAccepting}
+								className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-secondary-700 dark:text-white bg-secondary-100 dark:bg-secondary-700 border border-secondary-300 dark:border-secondary-600 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+								aria-label="Close"
+							>
+								Close
+							</button>
 						</div>
 
-						{/* Content - Step 1: Release Notes */}
-						{currentStep === 1 && (
+						{/* Step: What's New */}
+						{stepKey === "whatsNew" && (
 							<div className="max-h-[60vh] overflow-y-auto pr-2">
 								{isLoading ? (
 									<div className="flex items-center justify-center py-12">
-										<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+										<RefreshCw className="h-8 w-8 animate-spin text-primary-600" />
 									</div>
 								) : hasReleaseNotes ? (
 									<div className="prose prose-sm dark:prose-invert max-w-none">
@@ -253,11 +292,58 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 							</div>
 						)}
 
-						{/* Content - Step 2: Founder's Note */}
-						{currentStep === 2 && (
+						{/* Step: Subscribe (self-hosted, not yet subscribed) */}
+						{stepKey === "subscribe" && (
+							<div className="max-h-[60vh] overflow-y-auto pr-2">
+								<div className="space-y-5">
+									<p className="text-sm text-secondary-600 dark:text-white leading-relaxed">
+										Get security advisories and heads-up emails when important
+										updates or releases affect how you run PatchMon. Optional —
+										you can turn this on below.
+									</p>
+
+									<div className="flex items-start justify-between gap-4 p-4 bg-secondary-50 dark:bg-secondary-800/50 rounded-lg border border-secondary-200 dark:border-secondary-600">
+										<div className="flex-1">
+											<span
+												id={stayUpdatedId}
+												className="text-sm font-medium text-secondary-900 dark:text-secondary-100"
+											>
+												Email me security and release updates for PatchMon
+											</span>
+											{optIn && user?.email && (
+												<div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-secondary-600 dark:text-secondary-400">
+													<span>Using:</span>
+													<span>{user.email}</span>
+												</div>
+											)}
+										</div>
+										<button
+											type="button"
+											role="switch"
+											aria-checked={optIn}
+											aria-labelledby={stayUpdatedId}
+											onClick={() => setOptIn((v) => !v)}
+											className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-md border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+												optIn
+													? "bg-primary-600 dark:bg-primary-500"
+													: "bg-secondary-200 dark:bg-secondary-600"
+											}`}
+										>
+											<span
+												className={`pointer-events-none inline-block h-5 w-5 transform rounded-md bg-white shadow ring-0 transition duration-200 ease-in-out ${
+													optIn ? "translate-x-5" : "translate-x-0"
+												}`}
+											/>
+										</button>
+									</div>
+								</div>
+							</div>
+						)}
+
+						{/* Step: Personal Note */}
+						{stepKey === "personalNote" && (
 							<div className="max-h-[60vh] overflow-y-auto pr-2">
 								<div className="space-y-6">
-									{/* Personal note from founder */}
 									<div>
 										<h2 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4">
 											A personal note from the founder Iby
@@ -276,7 +362,6 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 									</div>
 
 									<div className="border-t border-secondary-200 dark:border-secondary-600 pt-6">
-										{/* Support request - different for cloud vs self-hosted */}
 										<div className="space-y-3">
 											<h3 className="text-base font-medium text-secondary-900 dark:text-white">
 												{isCloudVersion
@@ -295,13 +380,13 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 						)}
 					</div>
 
-					{/* Footer - Step 1: Next button */}
-					{currentStep === 1 && (
+					{/* Footer: What's New */}
+					{stepKey === "whatsNew" && (
 						<div className="bg-secondary-50 dark:bg-secondary-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
 							<button
 								type="button"
 								onClick={handleNext}
-								className="w-full inline-flex justify-center items-center gap-2 rounded-md border border-transparent shadow-sm px-4 py-2 text-base font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:ml-3 sm:w-auto sm:text-sm transition-colors"
+								className="w-full inline-flex justify-center items-center gap-2 rounded-md border border-transparent shadow-sm px-4 py-2 text-base font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:ml-3 sm:w-auto sm:text-sm transition-colors min-h-[44px]"
 							>
 								Next
 								<ArrowRight className="h-4 w-4" />
@@ -309,46 +394,62 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 						</div>
 					)}
 
-					{/* Footer - Step 2: Support buttons (different for cloud vs self-hosted) */}
-					{currentStep === 2 && (
+					{/* Footer: Subscribe */}
+					{stepKey === "subscribe" && (
 						<div className="bg-secondary-50 dark:bg-secondary-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse sm:items-center sm:gap-3">
-							<div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full sm:w-auto">
-								{/* Primary button - Membership for cloud, Donation for self-hosted */}
-								<button
-									type="button"
-									onClick={
-										isCloudVersion ? handleMembershipNow : handleDonateNow
-									}
-									disabled={isAccepting}
-									className={`w-full inline-flex justify-center items-center gap-2 rounded-md border border-transparent shadow-sm px-4 py-2 text-base font-medium text-white sm:w-auto sm:text-sm transition-colors ${
-										isAccepting
-											? "bg-secondary-400 cursor-not-allowed"
-											: "bg-secondary-800 dark:bg-secondary-800 hover:bg-secondary-700 dark:hover:bg-secondary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500"
-									}`}
-								>
-									{isAccepting ? (
-										<>
-											<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-											Saving...
-										</>
-									) : (
-										<>
-											{isCloudVersion ? (
-												<>
-													<Heart className="h-4 w-4" />
-													Join Membership
-												</>
-											) : (
-												<>
-													<BuyMeACoffeeIcon />
-													Buy me a Coffee
-												</>
-											)}
-											<ExternalLink className="h-4 w-4" />
-										</>
-									)}
-								</button>
-							</div>
+							<button
+								type="button"
+								onClick={handleSubscribeNext}
+								className="w-full inline-flex justify-center items-center gap-2 rounded-md border border-transparent shadow-sm px-4 py-2 text-base font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:ml-3 sm:w-auto sm:text-sm transition-colors min-h-[44px]"
+							>
+								Next
+								<ArrowRight className="h-4 w-4" />
+							</button>
+							<button
+								type="button"
+								onClick={handleBack}
+								className="mt-3 sm:mt-0 w-full sm:w-auto inline-flex justify-center items-center px-4 py-2 text-sm font-medium text-secondary-700 dark:text-white bg-white dark:bg-secondary-800 border border-secondary-300 dark:border-secondary-600 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500 transition-colors min-h-[44px]"
+							>
+								Back
+							</button>
+						</div>
+					)}
+
+					{/* Footer: Personal Note (terminal — fires acceptance) */}
+					{stepKey === "personalNote" && (
+						<div className="bg-secondary-50 dark:bg-secondary-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse sm:items-center sm:gap-3">
+							<button
+								type="button"
+								onClick={isCloudVersion ? handleMembershipNow : handleDonateNow}
+								disabled={isAccepting}
+								className={`w-full inline-flex justify-center items-center gap-2 rounded-md border border-transparent shadow-sm px-4 py-2 text-base font-medium text-white sm:w-auto sm:text-sm transition-colors min-h-[44px] ${
+									isAccepting
+										? "bg-secondary-400 cursor-not-allowed"
+										: "bg-secondary-800 dark:bg-secondary-800 hover:bg-secondary-700 dark:hover:bg-secondary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500"
+								}`}
+							>
+								{isAccepting ? (
+									<>
+										<RefreshCw className="h-4 w-4 animate-spin" />
+										Saving...
+									</>
+								) : (
+									<>
+										{isCloudVersion ? (
+											<>
+												<Heart className="h-4 w-4" />
+												Join Membership
+											</>
+										) : (
+											<>
+												<BuyMeACoffeeIcon />
+												Buy me a Coffee
+											</>
+										)}
+										<ExternalLink className="h-4 w-4" />
+									</>
+								)}
+							</button>
 						</div>
 					)}
 				</div>

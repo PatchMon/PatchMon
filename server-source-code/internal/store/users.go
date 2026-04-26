@@ -398,3 +398,8 @@ func (s *UsersStore) UpdateDiscordProfile(ctx context.Context, userID string, la
 		DiscordAvatar:   avatar,
 	})
 }
+
+// SetNewsletterSubscribed marks the user as subscribed to the newsletter and stamps the timestamp.
+func (s *UsersStore) SetNewsletterSubscribed(ctx context.Context, userID string) error {
+	return s.db.DB(ctx).Queries.SetNewsletterSubscribed(ctx, userID)
+}

@@ -986,6 +986,68 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// newsletterDisplayName builds the name passed to Listmonk: trimmed
+// "first last" if either is set, otherwise the local-part of the email.
+func newsletterDisplayName(u *models.User) string {
+	first := ""
+	last := ""
+	if u.FirstName != nil {
+		first = strings.TrimSpace(*u.FirstName)
+	}
+	if u.LastName != nil {
+		last = strings.TrimSpace(*u.LastName)
+	}
+	combined := strings.TrimSpace(first + " " + last)
+	if combined != "" {
+		return combined
+	}
+	if at := strings.IndexByte(u.Email, '@'); at > 0 {
+		return u.Email[:at]
+	}
+	return u.Email
+}
+
+// SubscribeNewsletter handles POST /auth/subscribe-newsletter.
+// Subscribes the authenticated user to the marketing newsletter via the public
+// Listmonk list, then stamps the local newsletter_subscribed flag on success.
+func (h *AuthHandler) SubscribeNewsletter(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+	if userID == "" {
+		Error(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	user, err := h.users.GetByID(r.Context(), userID)
+	if err != nil || user == nil {
+		Error(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	name := newsletterDisplayName(user)
+	if err := SubscribeToList(r.Context(), name, user.Email); err != nil {
+		if h.log != nil {
+			h.log.Error("newsletter subscribe failed", "user_id", userID, "error", err)
+		}
+		Error(w, http.StatusBadGateway, "Failed to subscribe to newsletter")
+		return
+	}
+
+	if err := h.users.SetNewsletterSubscribed(r.Context(), userID); err != nil {
+		if h.log != nil {
+			h.log.Error("newsletter flag update failed", "user_id", userID, "error", err)
+		}
+		Error(w, http.StatusInternalServerError, "Failed to record newsletter subscription")
+		return
+	}
+
+	updated, err := h.users.GetByID(r.Context(), userID)
+	if err != nil || updated == nil {
+		updated = user
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"user": h.buildUserResponse(r.Context(), updated),
+	})
+}
+
 // ChangePassword handles PUT /auth/change-password.
 func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(middleware.UserIDKey).(string)
@@ -1288,6 +1350,7 @@ func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to create admin")
 		return
 	}
+	AutoSubscribeIfHosted(h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
 
 	expiresIn := int64(3600)
 	accessToken, _ := h.createToken(u.ID, u.Role, expiresIn, "")
@@ -1374,6 +1437,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to create account")
 		return
 	}
+	AutoSubscribeIfHosted(h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
 
 	accessToken, _ := h.createToken(u.ID, u.Role, 3600, "")
 
@@ -1415,6 +1479,10 @@ func userToResponse(u *models.User, acceptedVersions []string) map[string]interf
 	}
 	if u.DiscordUsername != nil {
 		res["discord_username"] = *u.DiscordUsername
+	}
+	res["newsletter_subscribed"] = u.NewsletterSubscribed
+	if u.NewsletterSubscribedAt != nil {
+		res["newsletter_subscribed_at"] = u.NewsletterSubscribedAt.Format(time.RFC3339)
 	}
 	if acceptedVersions != nil {
 		res["accepted_release_notes_versions"] = acceptedVersions

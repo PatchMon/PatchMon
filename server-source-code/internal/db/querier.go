@@ -335,6 +335,7 @@ type Querier interface {
 	RevokeSessionByID(ctx context.Context, arg RevokeSessionByIDParams) error
 	RevokeTrustedDeviceByID(ctx context.Context, arg RevokeTrustedDeviceByIDParams) error
 	SetHostAwaitingPostPatchReport(ctx context.Context, arg SetHostAwaitingPostPatchReportParams) error
+	SetNewsletterSubscribed(ctx context.Context, id string) error
 	SetPatchRunPolicySnapshot(ctx context.Context, arg SetPatchRunPolicySnapshotParams) error
 	ToggleHostRepository(ctx context.Context, arg ToggleHostRepositoryParams) error
 	TouchTrustedDeviceLastUsed(ctx context.Context, arg TouchTrustedDeviceLastUsedParams) error

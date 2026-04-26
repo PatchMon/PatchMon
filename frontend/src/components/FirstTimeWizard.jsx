@@ -8,7 +8,7 @@ import {
 import { useEffect, useId, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { marketingAPI, settingsAPI } from "../utils/api";
+import { authAPI, settingsAPI } from "../utils/api";
 import { WizardCommunityLinks } from "./CommunityLinks";
 import FormInput, { FORM_INPUT_CLASS } from "./FormInput";
 import WizardTfaSetup from "./WizardTfaSetup";
@@ -464,15 +464,13 @@ const FirstTimeWizard = () => {
 				}
 			}
 
-			// 3. Newsletter subscribe (optional, no auth)
+			// 3. Newsletter subscribe (optional). Uses the authenticated endpoint so
+			// the server also flips users.newsletter_subscribed=true — that way the
+			// Release Notes modal will not re-prompt the user on the first release.
 			if (wizardData.newsletterSubscribed) {
 				setSetupStatus("Subscribing to newsletter...");
 				try {
-					const name = `${wizardData.firstName} ${wizardData.lastName}`.trim();
-					const email = wizardData.email.trim();
-					if (name && email) {
-						await marketingAPI.subscribe({ name, email });
-					}
+					await authAPI.subscribeNewsletter();
 				} catch {
 					// Non-fatal; continue
 				}
@@ -987,13 +985,13 @@ const FirstTimeWizard = () => {
 							</div>
 							<div className="flex items-start justify-between gap-4 p-4 bg-secondary-50 dark:bg-secondary-800/50 rounded-lg border border-secondary-200 dark:border-secondary-600">
 								<div className="flex-1">
-									<label
-										htmlFor={stayUpdatedId}
+									<span
+										id={stayUpdatedId}
 										className="text-sm font-medium text-secondary-900 dark:text-secondary-100"
 									>
 										Opt-in to stay updated with security and important
 										information about PatchMon instance
-									</label>
+									</span>
 									{wizardData.newsletterSubscribed && (
 										<div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-secondary-600 dark:text-secondary-400">
 											<span>
@@ -1010,7 +1008,9 @@ const FirstTimeWizard = () => {
 								</div>
 								<button
 									type="button"
-									id={stayUpdatedId}
+									role="switch"
+									aria-checked={wizardData.newsletterSubscribed}
+									aria-labelledby={stayUpdatedId}
 									onClick={() =>
 										updateWizardData({
 											newsletterSubscribed: !wizardData.newsletterSubscribed,

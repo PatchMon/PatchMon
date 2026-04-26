@@ -545,6 +545,7 @@ export const authAPI = {
 			firstName,
 			lastName,
 		}),
+	subscribeNewsletter: () => api.post("/auth/subscribe-newsletter"),
 };
 
 // TFA API
