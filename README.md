@@ -261,7 +261,7 @@ PatchMon is trusted by teams managing production infrastructure worldwide. We of
 ## License
 
 AGPL v3 - see [LICENSE](LICENSE) for details.
-
+ 
 ---
 
 <div align="center">
