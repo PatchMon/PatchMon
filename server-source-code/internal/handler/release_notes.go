@@ -7,6 +7,9 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+//go:embed release_notes_data/RELEASE_NOTES_2.0.1.md
+var releaseNotes2_0_1 string
+
 //go:embed release_notes_data/RELEASE_NOTES_2.0.0.md
 var releaseNotes2_0_0 string
 
@@ -29,6 +32,7 @@ var releaseNotesContent = map[string]string{
 	"1.4.1": releaseNotes1_4_1,
 	"1.4.2": releaseNotes1_4_2,
 	"2.0.0": releaseNotes2_0_0,
+	"2.0.1": releaseNotes2_0_1,
 }
 
 // ReleaseNotesHandler serves release notes embedded in the binary.
