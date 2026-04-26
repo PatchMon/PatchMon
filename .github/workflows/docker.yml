@@ -179,6 +179,11 @@ jobs:
           cache-from: type=gha,scope=server
           cache-to: type=gha,mode=max,scope=server
           provenance: false
+          # Force gzip on all layers (including base image layers from dhi.io/alpine-base
+          # which ship as zstd). Without force-compression, mixed zstd/gzip manifests
+          # break Podman <5.7 and Docker without the containerd image store.
+          # See: https://github.com/PatchMon/PatchMon/issues/679
+          outputs: type=image,compression=gzip,force-compression=true
 
       - name: Build and push server image to Harbor (PRs, main, and tags)
         id: build-harbor
@@ -199,6 +204,11 @@ jobs:
           cache-from: type=gha,scope=server
           cache-to: type=gha,mode=max,scope=server
           provenance: false
+          # Force gzip on all layers (including base image layers from dhi.io/alpine-base
+          # which ship as zstd). Without force-compression, mixed zstd/gzip manifests
+          # break Podman <5.7 and Docker without the containerd image store.
+          # See: https://github.com/PatchMon/PatchMon/issues/679
+          outputs: type=image,compression=gzip,force-compression=true
 
       - name: Comment on PR with image URL
         if: github.event_name == 'pull_request_target' && steps.build-harbor.outcome == 'success' && steps.build-harbor.outputs.digest != ''
