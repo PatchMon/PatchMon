@@ -768,10 +768,10 @@ func (h *NotificationDeliverHandler) sendEmail(ctx context.Context, plain string
 	}
 	tlsCfg := &tls.Config{ServerName: cfg.SMTPHost, MinVersion: tls.VersionTLS12}
 
-	// Connect to the SMTP server. We always try the smart path:
-	// 1. Plain connect -> STARTTLS upgrade (port 587 standard)
-	// 2. If STARTTLS not available and use_tls=true, retry with implicit TLS (port 465)
-	// 3. If STARTTLS not available and use_tls=false, continue plain
+	// Plain TCP first, then:
+	// - use_tls=true and server offers STARTTLS: upgrade with STARTTLS (typical 587)
+	// - use_tls=true and no STARTTLS: retry with implicit TLS (e.g. wrong host/port 465 on 25/587)
+	// - use_tls=false: never call StartTLS even if the server advertises it (e.g. local relay)
 	c, conn, err := func() (*smtp.Client, net.Conn, error) {
 		plainConn, dialErr := net.DialTimeout("tcp", addr, 30*time.Second)
 		if dialErr != nil {
@@ -782,17 +782,15 @@ func (h *NotificationDeliverHandler) sendEmail(ctx context.Context, plain string
 			_ = plainConn.Close()
 			return nil, nil, clientErr
 		}
-		// Try STARTTLS if the server advertises it (works for both use_tls modes)
-		if ok, _ := client.Extension("STARTTLS"); ok {
+		startTLS, _ := client.Extension("STARTTLS")
+		if startTLS && cfg.UseTLS {
 			if tlsErr := client.StartTLS(tlsCfg); tlsErr != nil {
 				_ = client.Close()
 				return nil, nil, tlsErr
 			}
 			return client, plainConn, nil
 		}
-		// No STARTTLS support from server
-		if cfg.UseTLS {
-			// use_tls=true: close plain and retry with implicit TLS (port 465 style)
+		if cfg.UseTLS && !startTLS {
 			_ = client.Close()
 			tlsConn, tlsErr := tls.DialWithDialer(&net.Dialer{Timeout: 30 * time.Second}, "tcp", addr, tlsCfg)
 			if tlsErr != nil {
@@ -805,7 +803,6 @@ func (h *NotificationDeliverHandler) sendEmail(ctx context.Context, plain string
 			}
 			return client, tlsConn, nil
 		}
-		// use_tls=false: continue on plain connection
 		return client, plainConn, nil
 	}()
 	if err != nil {

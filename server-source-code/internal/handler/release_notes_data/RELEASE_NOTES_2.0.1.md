@@ -10,6 +10,7 @@ A small follow-up release on top of 2.0.0 covering documentation, packaging, and
 
 - **Docker image format on older clients**: fixed an image format issue that prevented older Docker and Podman versions from pulling `ghcr.io/patchmon/patchmon-server:2.0.0`. Image layers are now published with gzip compression instead of zstd, so clients without zstd support (Podman versions before 5.7, and Docker installations without the containerd image store) can pull cleanly. See [issue #679](https://github.com/PatchMon/PatchMon/issues/679).
 - **Database migration failure at migration 30**: fixed an upgrade path that could fail at migration `000030` on some installations. The migration is now safe to re-run on a partially-upgraded database, so retries succeed without manual intervention.
+- **SMTP / TLS**: the **Use TLS** option for email destinations is now respected end-to-end. Notification and scheduled-report delivery no longer upgrade the connection with **STARTTLS** when the server advertises it if you have turned TLS off in the UI.
 
 ## New features
 
