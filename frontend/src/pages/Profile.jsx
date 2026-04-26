@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	AlertCircle,
+	Bell,
 	CheckCircle,
 	Clock,
 	Copy,
@@ -30,8 +31,11 @@ import DiscordIcon from "../components/DiscordIcon";
 import { FORM_INPUT_CLASS } from "../components/FormInput";
 import { useAuth } from "../contexts/AuthContext";
 import { THEME_PRESETS, useColorTheme } from "../contexts/ColorThemeContext";
+import { useSettings } from "../contexts/SettingsContext";
 import { useTheme } from "../contexts/ThemeContext";
+import { useToast } from "../contexts/ToastContext";
 import {
+	authAPI,
 	discordAPI,
 	formatDate,
 	isCorsError,
@@ -51,9 +55,33 @@ const Profile = () => {
 	const { user, updateProfile, changePassword, refetchUser } = useAuth();
 	const { toggleTheme, isDark } = useTheme();
 	const { colorTheme, setColorTheme } = useColorTheme();
+	const { settings: publicSettings } = useSettings();
+	const { success: toastSuccess, error: toastError } = useToast();
 	const [activeTab, setActiveTab] = useState("profile");
 	const [isLoading, setIsLoading] = useState(false);
 	const [message, setMessage] = useState({ type: "", text: "" });
+	const [newsletterLoading, setNewsletterLoading] = useState(false);
+
+	// Self-hosted only — hidden under SaaS/managed (admin_mode === true)
+	const showNewsletterSection = !publicSettings?.admin_mode;
+	const isNewsletterSubscribed = !!user?.newsletter_subscribed;
+	const newsletterSubscribedAt = user?.newsletter_subscribed_at;
+
+	const handleNewsletterSubscribe = async () => {
+		setNewsletterLoading(true);
+		try {
+			await authAPI.subscribeNewsletter();
+			await refetchUser?.();
+			toastSuccess("Subscribed to release & product notifications");
+		} catch (err) {
+			const apiMessage = err?.response?.data?.error;
+			toastError(
+				apiMessage || "Could not subscribe right now. Please try again.",
+			);
+		} finally {
+			setNewsletterLoading(false);
+		}
+	};
 
 	// Check if user is OIDC user
 	const isOIDCUser = user?.oidc_sub || user?.oidc_provider;
@@ -374,268 +402,335 @@ const Profile = () => {
 
 					{/* Profile Information Tab */}
 					{activeTab === "profile" && (
-						<form onSubmit={handleProfileSubmit} className="space-y-6">
-							<div>
-								<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
-									Profile Information
-								</h3>
-								<div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-									<div>
-										<label
-											htmlFor={usernameId}
-											className="block text-sm font-medium text-secondary-700 dark:text-secondary-200"
-										>
-											Username
-											{isOIDCUser && (
-												<span className="ml-2 text-xs text-secondary-500 dark:text-white italic">
-													(Managed by OIDC provider)
-												</span>
-											)}
-										</label>
-										<div className="mt-1 relative">
-											<input
-												type="text"
-												name="username"
-												id={usernameId}
-												value={profileData.username}
-												onChange={handleInputChange}
-												disabled={isOIDCUser}
-												className={`${FORM_INPUT_CLASS} pl-10 ${
-													isOIDCUser
-														? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-white cursor-not-allowed"
-														: ""
-												}`}
-												required
-											/>
-											<User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-white" />
-										</div>
-									</div>
-
-									<div>
-										<label
-											htmlFor={emailId}
-											className="block text-sm font-medium text-secondary-700 dark:text-secondary-200"
-										>
-											Email Address
-											{isOIDCUser && (
-												<span className="ml-2 text-xs text-secondary-500 dark:text-white italic">
-													(Managed by OIDC provider)
-												</span>
-											)}
-										</label>
-										<div className="mt-1 relative">
-											<input
-												type="email"
-												name="email"
-												id={emailId}
-												value={profileData.email}
-												onChange={handleInputChange}
-												disabled={isOIDCUser}
-												className={`${FORM_INPUT_CLASS} pl-10 ${
-													isOIDCUser
-														? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-white cursor-not-allowed"
-														: ""
-												}`}
-												required
-											/>
-											<Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-white" />
-										</div>
-									</div>
-
-									<div>
-										<label
-											htmlFor={firstNameId}
-											className="block text-sm font-medium text-secondary-700 dark:text-secondary-200"
-										>
-											First Name
-											{isOIDCUser && (
-												<span className="ml-2 text-xs text-secondary-500 dark:text-white italic">
-													(Managed by OIDC provider)
-												</span>
-											)}
-										</label>
-										<div className="mt-1">
-											<input
-												type="text"
-												name="first_name"
-												id={firstNameId}
-												value={profileData.first_name}
-												onChange={handleInputChange}
-												disabled={isOIDCUser}
-												className={`${FORM_INPUT_CLASS} ${
-													isOIDCUser
-														? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-white cursor-not-allowed"
-														: ""
-												}`}
-											/>
-										</div>
-									</div>
-
-									<div>
-										<label
-											htmlFor={lastNameId}
-											className="block text-sm font-medium text-secondary-700 dark:text-secondary-200"
-										>
-											Last Name
-											{isOIDCUser && (
-												<span className="ml-2 text-xs text-secondary-500 dark:text-white italic">
-													(Managed by OIDC provider)
-												</span>
-											)}
-										</label>
-										<div className="mt-1">
-											<input
-												type="text"
-												name="last_name"
-												id={lastNameId}
-												value={profileData.last_name}
-												onChange={handleInputChange}
-												disabled={isOIDCUser}
-												className={`${FORM_INPUT_CLASS} ${
-													isOIDCUser
-														? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-white cursor-not-allowed"
-														: ""
-												}`}
-											/>
-										</div>
-									</div>
-								</div>
-							</div>
-
-							{/* Theme Settings */}
-							<div className="border-t border-secondary-200 dark:border-secondary-600 pt-4 md:pt-6">
-								<h4 className="text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-3">
-									Appearance
-								</h4>
-								<div className="max-w-md">
-									<div className="flex items-center justify-between gap-3">
-										<div className="flex items-center space-x-2 md:space-x-3 flex-1 min-w-0">
-											<div className="flex-shrink-0">
-												{isDark ? (
-													<Moon className="h-5 w-5 text-secondary-600 dark:text-white" />
-												) : (
-													<Sun className="h-5 w-5 text-secondary-600 dark:text-white" />
+						<div className="space-y-6">
+							<form onSubmit={handleProfileSubmit} className="space-y-6">
+								<div>
+									<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+										Profile Information
+									</h3>
+									<div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+										<div>
+											<label
+												htmlFor={usernameId}
+												className="block text-sm font-medium text-secondary-700 dark:text-secondary-200"
+											>
+												Username
+												{isOIDCUser && (
+													<span className="ml-2 text-xs text-secondary-500 dark:text-white italic">
+														(Managed by OIDC provider)
+													</span>
 												)}
+											</label>
+											<div className="mt-1 relative">
+												<input
+													type="text"
+													name="username"
+													id={usernameId}
+													value={profileData.username}
+													onChange={handleInputChange}
+													disabled={isOIDCUser}
+													className={`${FORM_INPUT_CLASS} pl-10 ${
+														isOIDCUser
+															? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-white cursor-not-allowed"
+															: ""
+													}`}
+													required
+												/>
+												<User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-white" />
 											</div>
-											<div className="min-w-0">
-												<p className="text-sm font-medium text-secondary-900 dark:text-white truncate">
-													{isDark ? "Dark Mode" : "Light Mode"}
-												</p>
-												<p className="text-xs text-secondary-500 dark:text-white truncate">
-													{isDark
-														? "Switch to light mode"
-														: "Switch to dark mode"}
+										</div>
+
+										<div>
+											<label
+												htmlFor={emailId}
+												className="block text-sm font-medium text-secondary-700 dark:text-secondary-200"
+											>
+												Email Address
+												{isOIDCUser && (
+													<span className="ml-2 text-xs text-secondary-500 dark:text-white italic">
+														(Managed by OIDC provider)
+													</span>
+												)}
+											</label>
+											<div className="mt-1 relative">
+												<input
+													type="email"
+													name="email"
+													id={emailId}
+													value={profileData.email}
+													onChange={handleInputChange}
+													disabled={isOIDCUser}
+													className={`${FORM_INPUT_CLASS} pl-10 ${
+														isOIDCUser
+															? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-white cursor-not-allowed"
+															: ""
+													}`}
+													required
+												/>
+												<Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-white" />
+											</div>
+										</div>
+
+										<div>
+											<label
+												htmlFor={firstNameId}
+												className="block text-sm font-medium text-secondary-700 dark:text-secondary-200"
+											>
+												First Name
+												{isOIDCUser && (
+													<span className="ml-2 text-xs text-secondary-500 dark:text-white italic">
+														(Managed by OIDC provider)
+													</span>
+												)}
+											</label>
+											<div className="mt-1">
+												<input
+													type="text"
+													name="first_name"
+													id={firstNameId}
+													value={profileData.first_name}
+													onChange={handleInputChange}
+													disabled={isOIDCUser}
+													className={`${FORM_INPUT_CLASS} ${
+														isOIDCUser
+															? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-white cursor-not-allowed"
+															: ""
+													}`}
+												/>
+											</div>
+										</div>
+
+										<div>
+											<label
+												htmlFor={lastNameId}
+												className="block text-sm font-medium text-secondary-700 dark:text-secondary-200"
+											>
+												Last Name
+												{isOIDCUser && (
+													<span className="ml-2 text-xs text-secondary-500 dark:text-white italic">
+														(Managed by OIDC provider)
+													</span>
+												)}
+											</label>
+											<div className="mt-1">
+												<input
+													type="text"
+													name="last_name"
+													id={lastNameId}
+													value={profileData.last_name}
+													onChange={handleInputChange}
+													disabled={isOIDCUser}
+													className={`${FORM_INPUT_CLASS} ${
+														isOIDCUser
+															? "bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-white cursor-not-allowed"
+															: ""
+													}`}
+												/>
+											</div>
+										</div>
+									</div>
+								</div>
+
+								{/* Theme Settings */}
+								<div className="border-t border-secondary-200 dark:border-secondary-600 pt-4 md:pt-6">
+									<h4 className="text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-3">
+										Appearance
+									</h4>
+									<div className="max-w-md">
+										<div className="flex items-center justify-between gap-3">
+											<div className="flex items-center space-x-2 md:space-x-3 flex-1 min-w-0">
+												<div className="flex-shrink-0">
+													{isDark ? (
+														<Moon className="h-5 w-5 text-secondary-600 dark:text-white" />
+													) : (
+														<Sun className="h-5 w-5 text-secondary-600 dark:text-white" />
+													)}
+												</div>
+												<div className="min-w-0">
+													<p className="text-sm font-medium text-secondary-900 dark:text-white truncate">
+														{isDark ? "Dark Mode" : "Light Mode"}
+													</p>
+													<p className="text-xs text-secondary-500 dark:text-white truncate">
+														{isDark
+															? "Switch to light mode"
+															: "Switch to dark mode"}
+													</p>
+												</div>
+											</div>
+											<button
+												type="button"
+												onClick={toggleTheme}
+												className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-md border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+													isDark ? "bg-primary-600" : "bg-secondary-200"
+												}`}
+												role="switch"
+												aria-checked={isDark}
+											>
+												<span
+													aria-hidden="true"
+													className={`pointer-events-none inline-block h-5 w-5 transform rounded-md bg-white shadow ring-0 transition duration-200 ease-in-out ${
+														isDark ? "translate-x-5" : "translate-x-0"
+													}`}
+												/>
+											</button>
+										</div>
+									</div>
+
+									{/* Color Theme Settings */}
+									<div className="mt-4 md:mt-6 pt-4 md:pt-6 border-t border-secondary-200 dark:border-secondary-600">
+										<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-2">
+											Color Theme
+										</h4>
+										<p className="text-xs text-secondary-500 dark:text-white mb-4">
+											Choose your preferred color scheme for the application
+										</p>
+
+										<div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
+											{Object.entries(THEME_PRESETS).map(
+												([themeKey, theme]) => {
+													const isSelected = colorTheme === themeKey;
+													const gradientColors = theme.login.xColors;
+
+													return (
+														<button
+															key={themeKey}
+															type="button"
+															onClick={() => setColorTheme(themeKey)}
+															className={`relative p-4 rounded-lg border-2 transition-all ${
+																isSelected
+																	? "border-primary-500 ring-2 ring-primary-200 dark:ring-primary-800"
+																	: "border-secondary-200 dark:border-secondary-600 hover:border-primary-300"
+															} cursor-pointer`}
+														>
+															{/* Theme Preview */}
+															<div
+																className="h-20 rounded-md mb-3 overflow-hidden"
+																style={{
+																	background: `linear-gradient(135deg, ${gradientColors.join(", ")})`,
+																}}
+															/>
+
+															{/* Theme Name */}
+															<div className="text-sm font-medium text-secondary-900 dark:text-white mb-1">
+																{theme.name}
+															</div>
+
+															{/* Selected Indicator */}
+															{isSelected && (
+																<div className="absolute top-2 right-2 bg-primary-500 text-white rounded-full p-1">
+																	<svg
+																		className="w-4 h-4"
+																		fill="currentColor"
+																		viewBox="0 0 20 20"
+																		aria-label="Selected theme"
+																	>
+																		<title>Selected</title>
+																		<path
+																			fillRule="evenodd"
+																			d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+																			clipRule="evenodd"
+																		/>
+																	</svg>
+																</div>
+															)}
+														</button>
+													);
+												},
+											)}
+										</div>
+									</div>
+								</div>
+
+								<div className="flex justify-end">
+									<button
+										type="submit"
+										disabled={isLoading || isOIDCUser}
+										className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 w-full sm:w-auto justify-center sm:justify-end"
+									>
+										<Save className="h-4 w-4 mr-2" />
+										{isLoading ? "Saving..." : "Save Changes"}
+									</button>
+								</div>
+								{isOIDCUser && (
+									<div className="mt-4 rounded-md p-4 bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700">
+										<div className="flex">
+											<AlertCircle className="h-5 w-5 text-blue-400 dark:text-blue-300" />
+											<div className="ml-3">
+												<p className="text-sm font-medium text-blue-800 dark:text-blue-200">
+													Profile information is managed by your OIDC provider.
+													To update your username, email, or name, please
+													contact your administrator or update your information
+													in the OIDC provider.
 												</p>
 											</div>
 										</div>
-										<button
-											type="button"
-											onClick={toggleTheme}
-											className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-md border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
-												isDark ? "bg-primary-600" : "bg-secondary-200"
-											}`}
-											role="switch"
-											aria-checked={isDark}
-										>
-											<span
-												aria-hidden="true"
-												className={`pointer-events-none inline-block h-5 w-5 transform rounded-md bg-white shadow ring-0 transition duration-200 ease-in-out ${
-													isDark ? "translate-x-5" : "translate-x-0"
-												}`}
-											/>
-										</button>
 									</div>
-								</div>
+								)}
+							</form>
 
-								{/* Color Theme Settings */}
-								<div className="mt-4 md:mt-6 pt-4 md:pt-6 border-t border-secondary-200 dark:border-secondary-600">
-									<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-2">
-										Color Theme
-									</h4>
-									<p className="text-xs text-secondary-500 dark:text-white mb-4">
-										Choose your preferred color scheme for the application
-									</p>
-
-									<div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
-										{Object.entries(THEME_PRESETS).map(([themeKey, theme]) => {
-											const isSelected = colorTheme === themeKey;
-											const gradientColors = theme.login.xColors;
-
-											return (
-												<button
-													key={themeKey}
-													type="button"
-													onClick={() => setColorTheme(themeKey)}
-													className={`relative p-4 rounded-lg border-2 transition-all ${
-														isSelected
-															? "border-primary-500 ring-2 ring-primary-200 dark:ring-primary-800"
-															: "border-secondary-200 dark:border-secondary-600 hover:border-primary-300"
-													} cursor-pointer`}
-												>
-													{/* Theme Preview */}
-													<div
-														className="h-20 rounded-md mb-3 overflow-hidden"
-														style={{
-															background: `linear-gradient(135deg, ${gradientColors.join(", ")})`,
-														}}
-													/>
-
-													{/* Theme Name */}
-													<div className="text-sm font-medium text-secondary-900 dark:text-white mb-1">
-														{theme.name}
-													</div>
-
-													{/* Selected Indicator */}
-													{isSelected && (
-														<div className="absolute top-2 right-2 bg-primary-500 text-white rounded-full p-1">
-															<svg
-																className="w-4 h-4"
-																fill="currentColor"
-																viewBox="0 0 20 20"
-																aria-label="Selected theme"
-															>
-																<title>Selected</title>
-																<path
-																	fillRule="evenodd"
-																	d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-																	clipRule="evenodd"
-																/>
-															</svg>
-														</div>
-													)}
-												</button>
-											);
-										})}
-									</div>
-								</div>
-							</div>
-
-							<div className="flex justify-end">
-								<button
-									type="submit"
-									disabled={isLoading || isOIDCUser}
-									className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 w-full sm:w-auto justify-center sm:justify-end"
-								>
-									<Save className="h-4 w-4 mr-2" />
-									{isLoading ? "Saving..." : "Save Changes"}
-								</button>
-							</div>
-							{isOIDCUser && (
-								<div className="mt-4 rounded-md p-4 bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700">
-									<div className="flex">
-										<AlertCircle className="h-5 w-5 text-blue-400 dark:text-blue-300" />
-										<div className="ml-3">
-											<p className="text-sm font-medium text-blue-800 dark:text-blue-200">
-												Profile information is managed by your OIDC provider. To
-												update your username, email, or name, please contact
-												your administrator or update your information in the
-												OIDC provider.
+							{/* Email notifications (self-hosted only) */}
+							{showNewsletterSection && (
+								<div className="card p-4 sm:p-6">
+									<div className="flex items-start gap-3 mb-4">
+										<Bell className="h-5 w-5 text-primary-600 dark:text-primary-400 flex-shrink-0 mt-0.5" />
+										<div>
+											<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+												Email notifications
+											</h3>
+											<p className="text-sm text-secondary-600 dark:text-white mt-1">
+												Stay informed about new releases and product updates.
 											</p>
 										</div>
 									</div>
+
+									<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-4 border-t border-secondary-200 dark:border-secondary-600">
+										<div className="flex items-center gap-3 flex-wrap">
+											{isNewsletterSubscribed ? (
+												<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+													Subscribed
+												</span>
+											) : (
+												<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
+													Not subscribed
+												</span>
+											)}
+											{isNewsletterSubscribed && newsletterSubscribedAt && (
+												<span className="text-xs text-secondary-500 dark:text-white">
+													since {formatDate(newsletterSubscribedAt)}
+												</span>
+											)}
+										</div>
+										{isNewsletterSubscribed ? (
+											<span className="text-xs text-secondary-600 dark:text-secondary-300 sm:text-right">
+												To unsubscribe, email{" "}
+												<a
+													href="mailto:support@patchmon.net"
+													className="text-primary-600 dark:text-primary-400 hover:underline"
+												>
+													support@patchmon.net
+												</a>
+											</span>
+										) : (
+											<button
+												type="button"
+												onClick={handleNewsletterSubscribe}
+												disabled={newsletterLoading}
+												className="btn-primary inline-flex items-center justify-center gap-2 min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed w-full sm:w-auto"
+											>
+												{newsletterLoading ? (
+													<>
+														<RefreshCw className="h-4 w-4 animate-spin" />
+														Subscribing...
+													</>
+												) : (
+													"Subscribe"
+												)}
+											</button>
+										)}
+									</div>
 								</div>
 							)}
-						</form>
+						</div>
 					)}
 
 					{/* Change Password Tab */}

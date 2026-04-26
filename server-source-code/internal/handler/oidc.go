@@ -883,5 +883,6 @@ func (h *OidcHandler) createOidcUser(ctx context.Context, info *oidc.UserInfo) *
 		}
 		return nil
 	}
+	AutoSubscribeIfHosted(h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
 	return u
 }

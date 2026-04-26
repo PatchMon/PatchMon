@@ -146,3 +146,6 @@ WHERE id = $1;
 UPDATE users SET
     last_login = $1, discord_username = $2, discord_avatar = $3, updated_at = NOW()
 WHERE id = $4;
+
+-- name: SetNewsletterSubscribed :exec
+UPDATE users SET newsletter_subscribed = true, newsletter_subscribed_at = NOW(), updated_at = NOW() WHERE id = $1;

@@ -88,7 +88,8 @@ const Layout = ({ children }) => {
 		hasModule,
 		hasPermission,
 	} = useAuth();
-	const { settings: publicSettings } = useSettings();
+	const { settings: publicSettings, isLoading: publicSettingsLoading } =
+		useSettings();
 	const canManageBilling =
 		publicSettings?.admin_mode === true && hasPermission("can_manage_billing");
 	const { updateAvailable } = useUpdateNotification();
@@ -201,9 +202,11 @@ const Layout = ({ children }) => {
 		};
 	}, [hosts]);
 
-	// Check for new release notes when user or version changes
+	// Check for new release notes when user or version changes.
+	// Wait until public settings have loaded so ReleaseNotesModal can snapshot
+	// admin_mode vs self-hosted correctly on first paint (avoids wrong steps).
 	useEffect(() => {
-		if (!user || !versionInfo?.version) return;
+		if (!user || !versionInfo?.version || publicSettingsLoading) return;
 
 		// Get accepted versions from user object (loaded on login)
 		const acceptedVersions = user.accepted_release_notes_versions || [];
@@ -228,7 +231,7 @@ const Layout = ({ children }) => {
 			.catch((error) => {
 				console.error("Error checking release notes:", error);
 			});
-	}, [user, versionInfo]);
+	}, [user, versionInfo, publicSettingsLoading]);
 
 	// Build navigation based on permissions
 	const buildNavigation = () => {

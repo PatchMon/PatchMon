@@ -147,7 +147,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	userPrefsHandler := handler.NewUserPreferencesHandler(usersStore)
 	settingsHandler := handler.NewSettingsHandlerWithConfig(settingsStore, usersStore, enc, registry, cfg.AssetsDir, cfg, resolved)
 	permissionsHandler := handler.NewPermissionsHandler(permissionsStore)
-	usersHandler := handler.NewUsersHandler(usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, permissionsStore, settingsStore, resolved, dbProvider, notifyEmit, log)
+	usersHandler := handler.NewUsersHandler(usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, permissionsStore, settingsStore, resolved, cfg, dbProvider, notifyEmit, log)
 	hostsStore := store.NewHostsStore(dbProvider)
 	billingHandler := handler.NewBillingHandler(cfg, log, hostsStore)
 	metricsHandler := handler.NewMetricsHandler(settingsStore, hostsStore, cfg)
@@ -401,6 +401,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.Post("/release-notes-acceptance/accept", releaseNotesAcceptanceHandler.Accept)
 			r.Get("/auth/profile", authHandler.Profile)
 			r.Put("/auth/profile", authHandler.UpdateProfile)
+			r.Post("/auth/subscribe-newsletter", authHandler.SubscribeNewsletter)
 			// Multi-context info: returns user + tenant (modules) for frontend feature flagging.
 			r.Get("/me/context", authHandler.MeContext)
 			// PatchMon-native Billing page (managed/cloud only). Both endpoints are

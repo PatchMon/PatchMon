@@ -29,11 +29,15 @@ type UsersHandler struct {
 	db             database.DBProvider
 	notify         *notifications.Emitter
 	log            *slog.Logger
+	// adminMode mirrors cfg.AdminMode at construction time. Used to drive
+	// auto-newsletter-subscription for SaaS-hosted users on creation.
+	adminMode bool
 }
 
 // NewUsersHandler creates a new users handler.
-func NewUsersHandler(users *store.UsersStore, sessions *store.SessionsStore, trustedDevices *store.TrustedDevicesStore, permissions *store.PermissionsStore, settings *store.SettingsStore, resolved *config.ResolvedConfig, db database.DBProvider, notify *notifications.Emitter, log *slog.Logger) *UsersHandler {
-	return &UsersHandler{users: users, sessions: sessions, trustedDevices: trustedDevices, permissions: permissions, settings: settings, resolved: resolved, db: db, notify: notify, log: log}
+func NewUsersHandler(users *store.UsersStore, sessions *store.SessionsStore, trustedDevices *store.TrustedDevicesStore, permissions *store.PermissionsStore, settings *store.SettingsStore, resolved *config.ResolvedConfig, cfg *config.Config, db database.DBProvider, notify *notifications.Emitter, log *slog.Logger) *UsersHandler {
+	adminMode := cfg != nil && cfg.AdminMode
+	return &UsersHandler{users: users, sessions: sessions, trustedDevices: trustedDevices, permissions: permissions, settings: settings, resolved: resolved, db: db, notify: notify, log: log, adminMode: adminMode}
 }
 
 // roleRank returns a numeric rank for role hierarchy (higher = more privileged).
@@ -233,6 +237,7 @@ func (h *UsersHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to create user")
 		return
 	}
+	AutoSubscribeIfHosted(h.adminMode, h.users, h.log, u)
 
 	// Emit user_created event
 	if h.notify != nil {

@@ -308,6 +308,7 @@ func (h *DiscordHandler) Callback(w http.ResponseWriter, r *http.Request) {
 			DiscordUsername: &discordUser.Username,
 			DiscordAvatar:   avatarPtr,
 		}
+		AutoSubscribeIfHosted(h.cfg != nil && h.cfg.AdminMode, h.users, h.log, user)
 	}
 
 	// Auto-link by email if verified

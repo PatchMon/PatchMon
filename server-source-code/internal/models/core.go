@@ -4,30 +4,32 @@ import "time"
 
 // User matches users table.
 type User struct {
-	ID              string     `db:"id"`
-	Username        string     `db:"username"`
-	Email           string     `db:"email"`
-	PasswordHash    *string    `db:"password_hash"`
-	Role            string     `db:"role"`
-	IsActive        bool       `db:"is_active"`
-	LastLogin       *time.Time `db:"last_login"`
-	CreatedAt       time.Time  `db:"created_at"`
-	UpdatedAt       time.Time  `db:"updated_at"`
-	TfaBackupCodes  *string    `db:"tfa_backup_codes"`
-	TfaEnabled      bool       `db:"tfa_enabled"`
-	TfaSecret       *string    `db:"tfa_secret"`
-	FirstName       *string    `db:"first_name"`
-	LastName        *string    `db:"last_name"`
-	ThemePreference *string    `db:"theme_preference"`
-	ColorTheme      *string    `db:"color_theme"`
-	UIPreferences   JSON       `db:"ui_preferences"`
-	OidcSub         *string    `db:"oidc_sub"`
-	OidcProvider    *string    `db:"oidc_provider"`
-	AvatarURL       *string    `db:"avatar_url"`
-	DiscordID       *string    `db:"discord_id"`
-	DiscordUsername *string    `db:"discord_username"`
-	DiscordAvatar   *string    `db:"discord_avatar"`
-	DiscordLinkedAt *time.Time `db:"discord_linked_at"`
+	ID                     string     `db:"id"`
+	Username               string     `db:"username"`
+	Email                  string     `db:"email"`
+	PasswordHash           *string    `db:"password_hash"`
+	Role                   string     `db:"role"`
+	IsActive               bool       `db:"is_active"`
+	LastLogin              *time.Time `db:"last_login"`
+	CreatedAt              time.Time  `db:"created_at"`
+	UpdatedAt              time.Time  `db:"updated_at"`
+	TfaBackupCodes         *string    `db:"tfa_backup_codes"`
+	TfaEnabled             bool       `db:"tfa_enabled"`
+	TfaSecret              *string    `db:"tfa_secret"`
+	FirstName              *string    `db:"first_name"`
+	LastName               *string    `db:"last_name"`
+	ThemePreference        *string    `db:"theme_preference"`
+	ColorTheme             *string    `db:"color_theme"`
+	UIPreferences          JSON       `db:"ui_preferences"`
+	OidcSub                *string    `db:"oidc_sub"`
+	OidcProvider           *string    `db:"oidc_provider"`
+	AvatarURL              *string    `db:"avatar_url"`
+	DiscordID              *string    `db:"discord_id"`
+	DiscordUsername        *string    `db:"discord_username"`
+	DiscordAvatar          *string    `db:"discord_avatar"`
+	DiscordLinkedAt        *time.Time `db:"discord_linked_at"`
+	NewsletterSubscribed   bool       `db:"newsletter_subscribed"`
+	NewsletterSubscribedAt *time.Time `db:"newsletter_subscribed_at"`
 }
 
 // UserSession matches user_sessions table.

@@ -188,7 +188,9 @@ CREATE TABLE IF NOT EXISTS users (
     discord_id TEXT UNIQUE,
     discord_username TEXT,
     discord_avatar TEXT,
-    discord_linked_at TIMESTAMP(3)
+    discord_linked_at TIMESTAMP(3),
+    newsletter_subscribed BOOLEAN NOT NULL DEFAULT false,
+    newsletter_subscribed_at TIMESTAMP(3)
 );
 
 -- hosts

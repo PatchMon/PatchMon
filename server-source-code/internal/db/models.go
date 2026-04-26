@@ -669,30 +669,32 @@ type UpdateHistory struct {
 }
 
 type User struct {
-	ID              string           `json:"id"`
-	Username        string           `json:"username"`
-	Email           string           `json:"email"`
-	PasswordHash    *string          `json:"password_hash"`
-	Role            string           `json:"role"`
-	IsActive        bool             `json:"is_active"`
-	LastLogin       pgtype.Timestamp `json:"last_login"`
-	CreatedAt       pgtype.Timestamp `json:"created_at"`
-	UpdatedAt       pgtype.Timestamp `json:"updated_at"`
-	TfaBackupCodes  *string          `json:"tfa_backup_codes"`
-	TfaEnabled      bool             `json:"tfa_enabled"`
-	TfaSecret       *string          `json:"tfa_secret"`
-	FirstName       *string          `json:"first_name"`
-	LastName        *string          `json:"last_name"`
-	ThemePreference *string          `json:"theme_preference"`
-	ColorTheme      *string          `json:"color_theme"`
-	UiPreferences   []byte           `json:"ui_preferences"`
-	OidcSub         *string          `json:"oidc_sub"`
-	OidcProvider    *string          `json:"oidc_provider"`
-	AvatarUrl       *string          `json:"avatar_url"`
-	DiscordID       *string          `json:"discord_id"`
-	DiscordUsername *string          `json:"discord_username"`
-	DiscordAvatar   *string          `json:"discord_avatar"`
-	DiscordLinkedAt pgtype.Timestamp `json:"discord_linked_at"`
+	ID                     string           `json:"id"`
+	Username               string           `json:"username"`
+	Email                  string           `json:"email"`
+	PasswordHash           *string          `json:"password_hash"`
+	Role                   string           `json:"role"`
+	IsActive               bool             `json:"is_active"`
+	LastLogin              pgtype.Timestamp `json:"last_login"`
+	CreatedAt              pgtype.Timestamp `json:"created_at"`
+	UpdatedAt              pgtype.Timestamp `json:"updated_at"`
+	TfaBackupCodes         *string          `json:"tfa_backup_codes"`
+	TfaEnabled             bool             `json:"tfa_enabled"`
+	TfaSecret              *string          `json:"tfa_secret"`
+	FirstName              *string          `json:"first_name"`
+	LastName               *string          `json:"last_name"`
+	ThemePreference        *string          `json:"theme_preference"`
+	ColorTheme             *string          `json:"color_theme"`
+	UiPreferences          []byte           `json:"ui_preferences"`
+	OidcSub                *string          `json:"oidc_sub"`
+	OidcProvider           *string          `json:"oidc_provider"`
+	AvatarUrl              *string          `json:"avatar_url"`
+	DiscordID              *string          `json:"discord_id"`
+	DiscordUsername        *string          `json:"discord_username"`
+	DiscordAvatar          *string          `json:"discord_avatar"`
+	DiscordLinkedAt        pgtype.Timestamp `json:"discord_linked_at"`
+	NewsletterSubscribed   bool             `json:"newsletter_subscribed"`
+	NewsletterSubscribedAt pgtype.Timestamp `json:"newsletter_subscribed_at"`
 }
 
 type UserSession struct {
