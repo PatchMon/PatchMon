@@ -1,0 +1,32 @@
+fullnameOverride: patchmon
+
+config:
+  corsOrigin: "http://patchmon.example.com,https://patchmon.example.com"
+
+secret:
+  create: false
+  existingSecretName: patchmon-app-secrets
+
+server:
+  image:
+    repository: ghcr.io/patchmon/patchmon-server
+    tag: "2.0.1"
+
+database:
+  enabled: true
+  persistence:
+    enabled: false
+
+redis:
+  enabled: true
+  persistence:
+    enabled: false
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: patchmon.example.com
+      paths:
+        - path: /
+          pathType: Prefix

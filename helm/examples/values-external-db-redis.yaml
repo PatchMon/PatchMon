@@ -1,0 +1,33 @@
+fullnameOverride: patchmon
+
+config:
+  corsOrigin: "https://patchmon.example.com"
+  postgresHost: "my-postgres.example.internal"
+  redisHost: "my-redis.example.internal"
+  redisPort: "6379"
+  guacdAddress: "guacd:4822"
+
+secret:
+  # Use an existing secret to avoid storing databaseUrl credentials in values files.
+  create: false
+  existingSecretName: patchmon-app-secrets
+
+database:
+  enabled: false
+
+redis:
+  enabled: false
+
+server:
+  waitFor:
+    database: false
+    redis: false
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: patchmon.example.com
+      paths:
+        - path: /
+          pathType: Prefix

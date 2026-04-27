@@ -1,0 +1,23 @@
+{{- if .Values.guacd.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "patchmon.guacdServiceName" . }}
+  labels:
+    {{- include "patchmon.labels" . | nindent 4 }}
+    app.kubernetes.io/component: guacd
+  {{- with .Values.guacd.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.guacd.service.type }}
+  ports:
+    - name: guacd
+      port: {{ .Values.guacd.service.port }}
+      targetPort: {{ .Values.guacd.service.port }}
+      protocol: TCP
+  selector:
+    {{- include "patchmon.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: guacd
+{{- end }}

@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "patchmon.fullname" . }}-config
+  labels:
+    {{- include "patchmon.labels" . | nindent 4 }}
+data:
+  {{- $corsOrigin := .Values.config.corsOrigin }}
+  {{- if and (eq $corsOrigin "") .Values.ingress.enabled (gt (len .Values.ingress.hosts) 0) (ne (index .Values.ingress.hosts 0).host "") }}
+  {{- $scheme := ternary "https" "http" (gt (len .Values.ingress.tls) 0) }}
+  {{- $corsOrigin = printf "%s://%s" $scheme (index .Values.ingress.hosts 0).host }}
+  {{- end }}
+  {{- if eq $corsOrigin "" }}
+  {{- $corsOrigin = "http://localhost:3000" }}
+  {{- end }}
+  {{- $postgresHost := .Values.config.postgresHost }}
+  {{- if and (eq $postgresHost "") .Values.database.enabled }}
+  {{- $postgresHost = include "patchmon.databaseServiceName" . }}
+  {{- end }}
+  {{- $redisHost := .Values.config.redisHost }}
+  {{- if and (eq $redisHost "") .Values.redis.enabled }}
+  {{- $redisHost = include "patchmon.redisServiceName" . }}
+  {{- end }}
+  {{- $guacdAddress := .Values.config.guacdAddress }}
+  {{- if and (eq $guacdAddress "") .Values.guacd.enabled }}
+  {{- $guacdAddress = printf "%s:%v" (include "patchmon.guacdServiceName" .) .Values.guacd.service.port }}
+  {{- end }}
+  CORS_ORIGIN: {{ $corsOrigin | quote }}
+  POSTGRES_HOST: {{ $postgresHost | quote }}
+  POSTGRES_PORT: {{ .Values.config.postgresPort | quote }}
+  POSTGRES_USER: {{ .Values.config.postgresUser | quote }}
+  POSTGRES_DB: {{ .Values.config.postgresDb | quote }}
+  REDIS_HOST: {{ $redisHost | quote }}
+  REDIS_PORT: {{ .Values.config.redisPort | quote }}
+  REDIS_DB: {{ .Values.config.redisDb | quote }}
+  GUACD_ADDRESS: {{ $guacdAddress | quote }}
+  {{- range .Values.config.extraEnv }}
+  {{ .name }}: {{ .value | quote }}
+  {{- end }}

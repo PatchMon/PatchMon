@@ -1,0 +1,7 @@
+apiVersion: v2
+name: patchmon
+description: Custom PatchMon Helm chart derived from the working Docker Compose stack.
+type: application
+version: 0.2.0
+appVersion: "2.0.1"
+icon: https://raw.githubusercontent.com/PatchMon/PatchMon/main/dashboard.png

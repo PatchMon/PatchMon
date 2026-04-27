@@ -1,0 +1,19 @@
+PatchMon has been deployed.
+
+Release: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+Useful commands:
+  kubectl get pods -n {{ .Release.Namespace }}
+  kubectl logs -n {{ .Release.Namespace }} deploy/{{ include "patchmon.fullname" . }}-server --tail=100 -f
+  helm get values {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+{{- if .Values.ingress.enabled }}
+Access URLs:
+{{- range .Values.ingress.hosts }}
+  http://{{ .host }}
+{{- end }}
+{{- else }}
+Ingress is disabled. Port-forward to access:
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "patchmon.fullname" . }}-server 3000:{{ .Values.server.service.port }}
+{{- end }}

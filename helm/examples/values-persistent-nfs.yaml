@@ -1,0 +1,34 @@
+fullnameOverride: patchmon
+
+config:
+  corsOrigin: "https://patchmon.example.com,http://patchmon.example.com"
+
+secret:
+  create: false
+  existingSecretName: patchmon-app-secrets
+
+database:
+  enabled: true
+  persistence:
+    enabled: true
+    storageClass: nfs-csi
+    size: 10Gi
+  # Enable this only if your NFS export permissions allow it.
+  # podSecurityContext:
+  #   fsGroup: 999
+
+redis:
+  enabled: true
+  persistence:
+    enabled: true
+    storageClass: nfs-csi
+    size: 5Gi
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: patchmon.example.com
+      paths:
+        - path: /
+          pathType: Prefix

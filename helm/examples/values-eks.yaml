@@ -1,0 +1,94 @@
+fullnameOverride: patchmon
+
+secret:
+  create: false
+  existingSecretName: patchmon-app-secrets
+
+config:
+  # Auto-derived from ingress host because this is left empty.
+  corsOrigin: ""
+  extraEnv:
+    - name: TRUST_PROXY
+      value: "true"
+    - name: ENABLE_HSTS
+      value: "true"
+    - name: APP_ENV
+      value: "production"
+
+server:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+database:
+  enabled: true
+  persistence:
+    enabled: true
+    storageClass: gp3
+    size: 20Gi
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+redis:
+  enabled: true
+  persistence:
+    enabled: true
+    storageClass: gp3
+    size: 8Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+guacd:
+  enabled: true
+  image:
+    repository: guacamole/guacd
+    # 1.6.0 includes arm64 support; avoids exec format errors on Graviton nodes.
+    tag: "1.6.0"
+  # Keep defaults for this image on EKS to avoid container startup conflicts.
+  securityContext: {}
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/success-codes: "200"
+  hosts:
+    - host: patchmon.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []

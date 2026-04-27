@@ -1,0 +1,18 @@
+{{- if and .Values.database.enabled .Values.database.persistence.enabled (eq .Values.database.persistence.existingClaim "") }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "patchmon.databasePvcName" . }}
+  labels:
+    {{- include "patchmon.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  accessModes:
+    {{- toYaml .Values.database.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.database.persistence.size }}
+  {{- if ne .Values.database.persistence.storageClass "" }}
+  storageClassName: {{ .Values.database.persistence.storageClass | quote }}
+  {{- end }}
+{{- end }}

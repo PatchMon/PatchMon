@@ -1,0 +1,153 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "patchmon.fullname" . }}-server
+  labels:
+    {{- include "patchmon.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  replicas: {{ .Values.server.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "patchmon.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      {{- with .Values.server.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "patchmon.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: server
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.server.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- if and .Values.server.waitFor.database (or .Values.database.enabled (ne .Values.config.postgresHost "")) }}
+        - name: wait-for-database
+          image: {{ .Values.server.initContainers.waitImage | quote }}
+          imagePullPolicy: {{ .Values.server.initContainers.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "patchmon.fullname" . }}-config
+          command:
+            - /bin/sh
+            - -c
+            - >-
+              until nc -z "$POSTGRES_HOST" "$POSTGRES_PORT";
+              do echo "waiting for database"; sleep 2; done
+        {{- end }}
+        {{- if and .Values.server.waitFor.redis (or .Values.redis.enabled (ne .Values.config.redisHost "")) }}
+        - name: wait-for-redis
+          image: {{ .Values.server.initContainers.waitImage | quote }}
+          imagePullPolicy: {{ .Values.server.initContainers.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "patchmon.fullname" . }}-config
+          command:
+            - /bin/sh
+            - -c
+            - >-
+              until nc -z "$REDIS_HOST" "$REDIS_PORT";
+              do echo "waiting for redis"; sleep 2; done
+        {{- end }}
+        {{- if and .Values.server.waitFor.guacd (or .Values.guacd.enabled (ne .Values.config.guacdAddress "")) }}
+        - name: wait-for-guacd
+          image: {{ .Values.server.initContainers.waitImage | quote }}
+          imagePullPolicy: {{ .Values.server.initContainers.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "patchmon.fullname" . }}-config
+          command:
+            - /bin/sh
+            - -c
+            - >-
+              host="$(echo "$GUACD_ADDRESS" | cut -d: -f1)";
+              port="$(echo "$GUACD_ADDRESS" | cut -d: -f2)";
+              until nc -z "$host" "$port";
+              do echo "waiting for guacd"; sleep 2; done
+        {{- end }}
+      containers:
+        - name: server
+          image: "{{ .Values.server.image.repository }}:{{ .Values.server.image.tag }}"
+          imagePullPolicy: {{ .Values.server.image.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "patchmon.fullname" . }}-config
+            - secretRef:
+                name: {{ include "patchmon.secretName" . }}
+          {{- if .Values.database.enabled }}
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "patchmon.secretName" . }}
+                  key: POSTGRES_PASSWORD
+            - name: DATABASE_URL
+              value: "postgresql://patchmon_user:$(POSTGRES_PASSWORD)@database:5432/patchmon_db"
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.server.service.targetPort }}
+              protocol: TCP
+          {{- if .Values.server.probes.startup.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.server.probes.startup.path }}
+              port: {{ .Values.server.service.targetPort }}
+              httpHeaders:
+                - name: Host
+                  value: localhost
+            periodSeconds: {{ .Values.server.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.server.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ .Values.server.probes.startup.failureThreshold }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.server.probes.liveness.path }}
+              port: {{ .Values.server.service.targetPort }}
+              httpHeaders:
+                - name: Host
+                  value: localhost
+            initialDelaySeconds: {{ .Values.server.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.server.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.server.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.server.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.server.probes.readiness.path }}
+              port: {{ .Values.server.service.targetPort }}
+              httpHeaders:
+                - name: Host
+                  value: localhost
+            initialDelaySeconds: {{ .Values.server.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.server.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.server.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.server.probes.readiness.failureThreshold }}
+          {{- with .Values.server.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.server.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.server.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.server.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.server.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

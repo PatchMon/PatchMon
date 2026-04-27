@@ -1,0 +1,174 @@
+nameOverride: ""
+fullnameOverride: "patchmon"
+
+imagePullSecrets: []
+
+secret:
+  create: false
+  # When create=false, this secret must include required PatchMon keys.
+  existingSecretName: "patchmon-app-secrets"
+  values:
+    jwtSecret: ""
+    sessionSecret: ""
+    aiEncryptionKey: ""
+    postgresPassword: ""
+    redisPassword: ""
+    # Optional for create=true when using external DB URL directly.
+    databaseUrl: ""
+
+config:
+  # Leave empty to auto-derive from ingress host:
+  # - https://<host> when ingress.tls is configured
+  # - http://<host> otherwise
+  # Falls back to http://localhost:3000 when ingress is disabled.
+  corsOrigin: ""
+  # Internal service name for in-chart Postgres.
+  postgresHost: "database"
+  postgresPort: "5432"
+  postgresUser: "patchmon_user"
+  postgresDb: "patchmon_db"
+  # Internal service name for in-chart Redis.
+  redisHost: "redis"
+  redisPort: "6379"
+  redisDb: "0"
+  # Internal service endpoint for in-chart guacd.
+  guacdAddress: "guacd:4822"
+  extraEnv: []
+  # extraEnv example:
+  # - name: TRUST_PROXY
+  #   value: "true"
+
+server:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/patchmon/patchmon-server
+    tag: "2.0.1"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3000
+    targetPort: 3000
+    annotations: {}
+  initContainers:
+    waitImage: "busybox:latest"
+    pullPolicy: IfNotPresent
+  waitFor:
+    database: true
+    redis: true
+    guacd: true
+  probes:
+    startup:
+      enabled: true
+      path: /health
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 24
+    liveness:
+      path: /health
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 6
+    readiness:
+      path: /health
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 12
+  resources: {}
+  podAnnotations: {}
+  podSecurityContext: {}
+  securityContext: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+database:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "17-alpine"
+    pullPolicy: IfNotPresent
+  service:
+    name: "database"
+    type: ClusterIP
+    port: 5432
+    annotations: {}
+  persistence:
+    enabled: false
+    existingClaim: ""
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 5Gi
+  resources: {}
+  podAnnotations: {}
+  podSecurityContext: {}
+  securityContext: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  service:
+    name: "redis"
+    type: ClusterIP
+    port: 6379
+    annotations: {}
+  persistence:
+    enabled: false
+    existingClaim: ""
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 5Gi
+  resources: {}
+  podAnnotations: {}
+  podSecurityContext: {}
+  securityContext: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+guacd:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: guacamole/guacd
+    tag: "1.5.5"
+    pullPolicy: IfNotPresent
+  service:
+    name: "guacd"
+    type: ClusterIP
+    port: 4822
+    annotations: {}
+  resources:
+    limits:
+      memory: 512Mi
+  podAnnotations: {}
+  podSecurityContext: {}
+  securityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations: {}
+  hosts:
+    - host: "patchmon.local"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
