@@ -55,11 +55,20 @@ build-windows:
 	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-windows-amd64.exe ./cmd/patchmon-agent
 	@GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-windows-arm64.exe ./cmd/patchmon-agent
 
-# Build all (Linux + FreeBSD + Windows) and copy to backend serve dirs
+# Build OpenBSD binaries only (amd64, arm64)
+.PHONY: build-openbsd
+build-openbsd:
+	@mkdir -p $(BUILD_DIR)
+	@GOOS=openbsd GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-openbsd-amd64 ./cmd/patchmon-agent
+	@GOOS=openbsd GOARCH=386 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-openbsd-386 ./cmd/patchmon-agent
+	@GOOS=openbsd GOARCH=arm64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-openbsd-arm64 ./cmd/patchmon-agent
+	@GOOS=openbsd GOARCH=arm GOARM=6 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-openbsd-arm ./cmd/patchmon-agent
+
+# Build all (Linux + FreeBSD + OpenBSD + Windows) and copy to backend serve dirs
 .PHONY: build-all
-build-all: build-linux build-freebsd build-windows
+build-all: build-linux build-freebsd build-openbsd build-windows
 	@mkdir -p $(AGENTS_REPO) $(AGENTS_DOCKER)
-	@for f in $(GOBIN)/$(BINARY_NAME)-linux-* $(GOBIN)/$(BINARY_NAME)-freebsd-* $(GOBIN)/$(BINARY_NAME)-windows-*.exe; do \
+	@for f in $(GOBIN)/$(BINARY_NAME)-linux-* $(GOBIN)/$(BINARY_NAME)-freebsd-* $(GOBIN)/$(BINARY_NAME)-openbsd-* $(GOBIN)/$(BINARY_NAME)-windows-*.exe; do \
 		[ -f "$$f" ] && cp "$$f" $(AGENTS_REPO)/ && cp "$$f" $(AGENTS_DOCKER)/; \
 	done
 	@echo "Done. agents/ and docker/compose_dev_data/agents/ updated."
@@ -69,7 +78,7 @@ build-all: build-linux build-freebsd build-windows
 build-all-for-docker:
 	@mkdir -p ../agents-prebuilt
 	@$(MAKE) build-all
-	@cp $(BUILD_DIR)/$(BINARY_NAME)-linux-* $(BUILD_DIR)/$(BINARY_NAME)-freebsd-* $(BUILD_DIR)/$(BINARY_NAME)-windows-*.exe ../agents-prebuilt/ 2>/dev/null || true
+	@cp $(BUILD_DIR)/$(BINARY_NAME)-linux-* $(BUILD_DIR)/$(BINARY_NAME)-freebsd-* $(BUILD_DIR)/$(BINARY_NAME)-openbsd-* $(BUILD_DIR)/$(BINARY_NAME)-windows-*.exe ../agents-prebuilt/ 2>/dev/null || true
 	@echo "Agent binaries copied to agents-prebuilt/"
 
 # Install dependencies
@@ -141,8 +150,9 @@ help:
 	@echo "  build         Build the application"
 	@echo "  build-linux   Build Linux binaries (amd64, 386, arm64, arm)"
 	@echo "  build-freebsd Build FreeBSD binaries (amd64, 386, arm64, arm)"
+	@echo "  build-openbsd Build OpenBSD binaries (amd64, 386, arm64, arm)"
 	@echo "  build-windows Build Windows binaries (amd64, arm64)"
-	@echo "  build-all     Build Linux + FreeBSD + Windows and copy to agents/"
+	@echo "  build-all     Build Linux + FreeBSD + OpenBSD + Windows and copy to agents/"
 	@echo "  build-all-for-docker  Build all binaries into agents-prebuilt/ for local Docker build"
 	@echo "  deps          Install dependencies"
 	@echo "  test          Run tests"

@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, Copy, Download, RefreshCw, Wifi, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DiWindows } from "react-icons/di";
-import { SiFreebsd, SiLinux } from "react-icons/si";
+import { SiFreebsd, SiLinux, SiOpenbsd } from "react-icons/si";
 import { useNavigate } from "react-router-dom";
 import {
 	adminHostsAPI,
@@ -37,7 +37,7 @@ const hasInitialReport = (hostData) => {
 
 const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 	const [step, setStep] = useState(1);
-	const [platform, setPlatform] = useState("linux"); // linux | freebsd | windows
+	const [platform, setPlatform] = useState("linux"); // linux | freebsd | openbsd | windows
 	const [formData, setFormData] = useState({
 		friendly_name: "",
 		hostGroupIds: [],
@@ -92,6 +92,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 		const base = `${serverUrl}/api/v1/hosts/install`;
 		const params = new URLSearchParams();
 		if (platform === "freebsd") params.set("os", "freebsd");
+		if (platform === "openbsd") params.set("os", "openbsd");
 		if (platform === "windows") params.set("os", "windows");
 		if (force && platform !== "windows") params.set("force", "true");
 		const qs = params.toString();
@@ -114,7 +115,8 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 	};
 
 	const getShellCommand = (force) => {
-		const use_sudo = platform !== "freebsd";
+		// BSDs don't ship with sudo by default
+		const use_sudo = platform !== "freebsd" && platform !== "openbsd";
 		const base = use_sudo ? "sudo sh" : "sh";
 		return force ? `${base} -s -- --force` : base;
 	};
@@ -341,11 +343,11 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 							Select the operating system of the host you want to add. The
 							install command will match this choice.
 						</p>
-						<div className="grid grid-cols-3 gap-4">
+						<div className="grid grid-cols-4 gap-3">
 							<button
 								type="button"
 								onClick={() => setPlatform("linux")}
-								className={`flex flex-col items-center justify-center p-6 rounded-lg border-2 transition-all ${
+								className={`flex flex-col items-center justify-center p-4 rounded-lg border-2 transition-all ${
 									platform === "linux"
 										? "border-primary-500 bg-primary-50 dark:bg-primary-900/30"
 										: "border-secondary-300 dark:border-secondary-600 hover:border-primary-400"
@@ -357,7 +359,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 							<button
 								type="button"
 								onClick={() => setPlatform("freebsd")}
-								className={`flex flex-col items-center justify-center p-6 rounded-lg border-2 transition-all ${
+								className={`flex flex-col items-center justify-center p-4 rounded-lg border-2 transition-all ${
 									platform === "freebsd"
 										? "border-primary-500 bg-primary-50 dark:bg-primary-900/30"
 										: "border-secondary-300 dark:border-secondary-600 hover:border-primary-400"
@@ -368,8 +370,20 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 							</button>
 							<button
 								type="button"
+								onClick={() => setPlatform("openbsd")}
+								className={`flex flex-col items-center justify-center p-4 rounded-lg border-2 transition-all ${
+									platform === "openbsd"
+										? "border-primary-500 bg-primary-50 dark:bg-primary-900/30"
+										: "border-secondary-300 dark:border-secondary-600 hover:border-primary-400"
+								}`}
+							>
+								<SiOpenbsd className="h-12 w-12 text-secondary-700 dark:text-secondary-200 mb-2" />
+								<span className="text-sm font-medium">OpenBSD</span>
+							</button>
+							<button
+								type="button"
 								onClick={() => setPlatform("windows")}
-								className={`flex flex-col items-center justify-center p-6 rounded-lg border-2 transition-all ${
+								className={`flex flex-col items-center justify-center p-4 rounded-lg border-2 transition-all ${
 									platform === "windows"
 										? "border-primary-500 bg-primary-50 dark:bg-primary-900/30"
 										: "border-secondary-300 dark:border-secondary-600 hover:border-primary-400"
@@ -556,7 +570,9 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 								? "Windows"
 								: platform === "freebsd"
 									? "FreeBSD"
-									: "Linux"}{" "}
+									: platform === "openbsd"
+										? "OpenBSD"
+										: "Linux"}{" "}
 							host to install the agent
 							{platform === "windows"
 								? " (run PowerShell as Administrator)"

@@ -386,7 +386,7 @@ const PackageDetail = () => {
 						</div>
 					</div>
 				</h4>
-				<p className="text-sm text-secondary-600 dark:text-white">
+				<p className="text-sm text-secondary-600 dark:text-white whitespace-pre-wrap">
 					{pkg.description || "No description available."}
 				</p>
 			</div>
