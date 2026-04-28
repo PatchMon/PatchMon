@@ -97,6 +97,36 @@ func (d *Detector) parseOSRelease() (*OSReleaseInfo, error) {
 	return info, nil
 }
 
+// isOpenBSD checks if running on OpenBSD
+func (d *Detector) isOpenBSD() bool {
+	return runtime.GOOS == "openbsd"
+}
+
+// getOpenBSDInfo gets OpenBSD OS type and version
+func (d *Detector) getOpenBSDInfo() (osType, osVersion string, err error) {
+	osType = "OpenBSD"
+
+	// uname -r returns the release version (e.g. "7.5")
+	cmd := exec.Command("uname", "-r")
+	output, err := cmd.Output()
+	if err != nil {
+		d.logger.WithError(err).Warn("Failed to get OpenBSD version via uname -r")
+		return osType, "Unknown", nil
+	}
+
+	osVersion = strings.TrimSpace(string(output))
+	if osVersion == "" {
+		osVersion = "Unknown"
+	}
+
+	d.logger.WithFields(logrus.Fields{
+		"os_type":    osType,
+		"os_version": osVersion,
+	}).Debug("Detected OpenBSD system")
+
+	return osType, osVersion, nil
+}
+
 // isFreeBSD checks if running on FreeBSD using uname -s
 func (d *Detector) isFreeBSD() bool {
 	cmd := exec.Command("uname", "-s")
@@ -176,6 +206,10 @@ func (d *Detector) DetectOS() (osType, osVersion string, err error) {
 			osVer = "Unknown"
 		}
 		return "Windows", osVer, nil
+	}
+	// Check for OpenBSD first (doesn't have /etc/os-release)
+	if d.isOpenBSD() {
+		return d.getOpenBSDInfo()
 	}
 	// Check for FreeBSD first (doesn't have /etc/os-release)
 	if d.isFreeBSD() {
@@ -330,8 +364,8 @@ func (d *Detector) GetKernelVersion() string {
 
 // getSELinuxStatus gets SELinux status using file reading
 func (d *Detector) getSELinuxStatus() string {
-	// Windows and FreeBSD don't use SELinux
-	if runtime.GOOS == "windows" || d.isFreeBSD() {
+	// Windows, FreeBSD, and OpenBSD don't use SELinux
+	if runtime.GOOS == "windows" || d.isFreeBSD() || d.isOpenBSD() {
 		return constants.SELinuxDisabled
 	}
 
@@ -414,14 +448,23 @@ func (d *Detector) GetMachineID() string {
 	// Use gopsutil's HostID which reads from standard locations
 	// (/etc/machine-id, /var/lib/dbus/machine-id, etc.)
 	hostID, err := host.HostIDWithContext(ctx)
-	if err != nil {
-		d.logger.WithError(err).Warn("Failed to get host ID, using hostname as fallback")
-		// Fallback to hostname if we can't get machine ID
-		if hostname, err := os.Hostname(); err == nil {
-			return hostname
-		}
-		return "unknown"
+	if err == nil {
+		return hostID
 	}
 
-	return hostID
+	// OpenBSD: gopsutil does not implement HostID, use sysctl hw.uuid instead
+	if runtime.GOOS == "openbsd" {
+		out, sysErr := exec.CommandContext(ctx, "sysctl", "-n", "hw.uuid").Output()
+		if sysErr == nil {
+			if uuid := strings.TrimSpace(string(out)); uuid != "" {
+				return uuid
+			}
+		}
+	}
+
+	d.logger.WithError(err).Warn("Failed to get host ID, using hostname as fallback")
+	if hostname, err := os.Hostname(); err == nil {
+		return hostname
+	}
+	return "unknown"
 }

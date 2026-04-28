@@ -200,6 +200,7 @@ func (h *AgentVersionHandler) GetVersionInfo(w http.ResponseWriter, r *http.Requ
 		"supportedArchitectures": []string{
 			"linux-amd64", "linux-arm64", "linux-386", "linux-arm",
 			"freebsd-amd64", "freebsd-arm64", "freebsd-386", "freebsd-arm",
+			"openbsd-amd64", "openbsd-arm64", "openbsd-386", "openbsd-arm",
 			"windows-amd64", "windows-arm64",
 		},
 		"status": "ready",
@@ -239,18 +240,21 @@ func (h *AgentVersionHandler) ServeAgentDownload(w http.ResponseWriter, r *http.
 	if osParam == "" {
 		osParam = "linux"
 	}
-	validOss := map[string]bool{"linux": true, "freebsd": true, "windows": true}
+	validOss := map[string]bool{"linux": true, "freebsd": true, "openbsd": true, "windows": true}
 	if !validOss[osParam] {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid os. Must be one of: linux, freebsd, windows"})
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid os. Must be one of: linux, freebsd, openbsd, windows"})
 		return
 	}
 	validArchLinux := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
 	validArchFreebsd := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
+	validArchOpenbsd := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
 	validArchWindows := map[string]bool{"amd64": true, "arm64": true}
 	var validArch map[string]bool
 	switch osParam {
 	case "freebsd":
 		validArch = validArchFreebsd
+	case "openbsd":
+		validArch = validArchOpenbsd
 	case "windows":
 		validArch = validArchWindows
 	default:

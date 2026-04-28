@@ -340,6 +340,7 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 	reposByName := make(map[string]string)        // repo.Name -> repo ID
 	reposByURLDistComp := make(map[string]string) // "url|dist|comp" -> repo ID
 	reposByComponent := make(map[string]string)   // components -> repo ID
+	reposByURL := make(map[string]string)         // bare repo URL -> repo ID (for prefix matching)
 
 	if len(payload.Repositories) > 0 {
 		if err := q.DeleteHostRepositoriesByHostID(ctx, hostID); err != nil {
@@ -393,6 +394,7 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 
 			// Build lookup maps for package -> repo resolution
 			reposByName[repoData.Name] = repoID
+			reposByURL[repoData.URL] = repoID
 			key := repoData.URL + "|" + repoData.Distribution + "|" + repoData.Components
 			reposByURLDistComp[key] = repoID
 			// Also index by url|distribution with each individual component for APT.
@@ -453,7 +455,7 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 		// errors if any payload.Packages name is missing from nameToID.
 
 		hpPayload, err := buildHostPackagesPayload(hostID, payload.Packages, nameToID,
-			reposByName, reposByURLDistComp, reposByComponent)
+			reposByName, reposByURLDistComp, reposByComponent, reposByURL)
 		if err != nil {
 			return nil, fmt.Errorf("build host_packages payload: %w", err)
 		}
@@ -496,7 +498,7 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 
 // resolveSourceRepoID matches an agent's sourceRepository string to a repository ID
 // using the lookup maps built during repo processing.
-func resolveSourceRepoID(sourceRepo string, reposByName, reposByURLDistComp, reposByComponent map[string]string) *string {
+func resolveSourceRepoID(sourceRepo string, reposByName, reposByURLDistComp, reposByComponent, reposByURL map[string]string) *string {
 	if sourceRepo == "" || sourceRepo == "local" || sourceRepo == "unknown" || sourceRepo == "foreign" || sourceRepo == "@System" {
 		return nil
 	}
@@ -527,6 +529,19 @@ func resolveSourceRepoID(sourceRepo string, reposByName, reposByURLDistComp, rep
 	// Try component match (APK: "main", "community")
 	if id, ok := reposByComponent[sourceRepo]; ok {
 		return &id
+	}
+
+	// Try URL-prefix match: the agent sends the full mirror directory URL
+	// (e.g. "https://mirror.example.com/OpenBSD/7.8/packages/amd64") while the
+	// repository record stores only the base mirror URL
+	// (e.g. "https://mirror.example.com/OpenBSD"). Walk reposByURL and return
+	// the first entry whose URL is a prefix of sourceRepo.
+	if strings.HasPrefix(sourceRepo, "http://") || strings.HasPrefix(sourceRepo, "https://") {
+		for repoURL, id := range reposByURL {
+			if strings.HasPrefix(sourceRepo, repoURL) {
+				return &id
+			}
+		}
 	}
 
 	return nil
@@ -609,7 +624,7 @@ func buildHostPackagesPayload(
 	hostID string,
 	packages []ReportPackage,
 	nameToID map[string]string,
-	reposByName, reposByURLDistComp, reposByComponent map[string]string,
+	reposByName, reposByURLDistComp, reposByComponent, reposByURL map[string]string,
 ) ([]byte, error) {
 	rows := make([]hostPackageRow, 0, len(packages))
 	for i := range packages {
@@ -624,7 +639,7 @@ func buildHostPackagesPayload(
 			availableVersion = *p.AvailableVersion
 		}
 		sourceRepoID := ""
-		if id := resolveSourceRepoID(p.SourceRepository, reposByName, reposByURLDistComp, reposByComponent); id != nil {
+		if id := resolveSourceRepoID(p.SourceRepository, reposByName, reposByURLDistComp, reposByComponent, reposByURL); id != nil {
 			sourceRepoID = *id
 		}
 

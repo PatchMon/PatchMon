@@ -26,6 +26,7 @@ type Manager struct {
 	apkManager     *APKManager
 	pacmanManager  *PacmanManager
 	freebsdManager *FreeBSDManager
+	openbsdManager *OpenBSDManager
 	winManager     *WindowsManager
 }
 
@@ -36,6 +37,7 @@ func New(logger *logrus.Logger, cacheRefresh CacheRefreshConfig) *Manager {
 	apkManager := NewAPKManager(logger)
 	pacmanManager := NewPacmanManager(logger)
 	freebsdManager := NewFreeBSDManager(logger)
+	openbsdManager := NewOpenBSDManager(logger)
 	winManager := NewWindowsManager(logger)
 
 	return &Manager{
@@ -45,6 +47,7 @@ func New(logger *logrus.Logger, cacheRefresh CacheRefreshConfig) *Manager {
 		apkManager:     apkManager,
 		pacmanManager:  pacmanManager,
 		freebsdManager: freebsdManager,
+		openbsdManager: openbsdManager,
 		winManager:     winManager,
 	}
 }
@@ -68,17 +71,25 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 		return m.pacmanManager.GetPackages()
 	case "pkg":
 		return m.freebsdManager.GetPackages()
+	case "pkg_info":
+		return m.openbsdManager.GetPackages()
 	default:
 		return nil, fmt.Errorf("unsupported package manager: %s", packageManager)
 	}
 }
 
 // DetectPackageManager detects which package manager is available on the system.
-// Returns one of: apt, dnf, yum, apk, pacman, pkg, windows, or unknown.
+// Returns one of: apt, dnf, yum, apk, pacman, pkg, pkg_info, windows, or unknown.
 func (m *Manager) DetectPackageManager() string {
 	// Check for Windows first (runtime check, no exec)
 	if runtime.GOOS == "windows" {
 		return "windows"
+	}
+	// Check for OpenBSD: pkg_info is the package tool
+	if runtime.GOOS == "openbsd" {
+		if _, err := exec.LookPath("pkg_info"); err == nil {
+			return "pkg_info"
+		}
 	}
 	// Check for FreeBSD pkg first (avoid confusion with other 'pkg' tools).
 	// When the agent runs as an rc.d service, PATH may be minimal, so also check
@@ -176,13 +187,16 @@ func CombinePackageData(installedPackages map[string]models.Package, upgradableP
 		upgradableMap[pkg.Name] = true
 	}
 
-	// Then add installed packages that are not upgradable (with full info including description)
+	// Then add installed packages that are not upgradable (with full info including description).
+	// AvailableVersion is set to CurrentVersion because if the package manager did not report an
+	// upgrade candidate, the installed version is already the latest available from the repository.
 	for packageName, installed := range installedPackages {
 		if !upgradableMap[packageName] {
 			packages = append(packages, models.Package{
 				Name:             packageName,
 				Description:      installed.Description,
 				CurrentVersion:   installed.CurrentVersion,
+				AvailableVersion: installed.CurrentVersion,
 				SourceRepository: installed.SourceRepository,
 				NeedsUpdate:      false,
 				IsSecurityUpdate: false,
