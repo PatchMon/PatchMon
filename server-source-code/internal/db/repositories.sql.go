@@ -323,39 +323,6 @@ func (q *Queries) GetRepositoryByID(ctx context.Context, id string) (Repository,
 	return i, err
 }
 
-const getRepositoryByURLDistComponents = `-- name: GetRepositoryByURLDistComponents :one
-SELECT id, name, url, distribution, components, repo_type, is_active, is_secure, priority, description, created_at, updated_at
-FROM repositories
-WHERE url = $1 AND distribution = $2 AND components = $3
-LIMIT 1
-`
-
-type GetRepositoryByURLDistComponentsParams struct {
-	Url          string `json:"url"`
-	Distribution string `json:"distribution"`
-	Components   string `json:"components"`
-}
-
-func (q *Queries) GetRepositoryByURLDistComponents(ctx context.Context, arg GetRepositoryByURLDistComponentsParams) (Repository, error) {
-	row := q.db.QueryRow(ctx, getRepositoryByURLDistComponents, arg.Url, arg.Distribution, arg.Components)
-	var i Repository
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Url,
-		&i.Distribution,
-		&i.Components,
-		&i.RepoType,
-		&i.IsActive,
-		&i.IsSecure,
-		&i.Priority,
-		&i.Description,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getRepositoryForDelete = `-- name: GetRepositoryForDelete :one
 SELECT r.id, r.name, r.url, COUNT(hr.id)::int as count
 FROM repositories r
@@ -404,56 +371,6 @@ func (q *Queries) InsertHostRepository(ctx context.Context, arg InsertHostReposi
 		arg.IsEnabled,
 	)
 	return err
-}
-
-const insertRepository = `-- name: InsertRepository :one
-INSERT INTO repositories (id, name, url, distribution, components, repo_type, is_active, is_secure, priority, description, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
-RETURNING id, name, url, distribution, components, repo_type, is_active, is_secure, priority, description, created_at, updated_at
-`
-
-type InsertRepositoryParams struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	Url          string  `json:"url"`
-	Distribution string  `json:"distribution"`
-	Components   string  `json:"components"`
-	RepoType     string  `json:"repo_type"`
-	IsActive     bool    `json:"is_active"`
-	IsSecure     bool    `json:"is_secure"`
-	Priority     *int32  `json:"priority"`
-	Description  *string `json:"description"`
-}
-
-func (q *Queries) InsertRepository(ctx context.Context, arg InsertRepositoryParams) (Repository, error) {
-	row := q.db.QueryRow(ctx, insertRepository,
-		arg.ID,
-		arg.Name,
-		arg.Url,
-		arg.Distribution,
-		arg.Components,
-		arg.RepoType,
-		arg.IsActive,
-		arg.IsSecure,
-		arg.Priority,
-		arg.Description,
-	)
-	var i Repository
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Url,
-		&i.Distribution,
-		&i.Components,
-		&i.RepoType,
-		&i.IsActive,
-		&i.IsSecure,
-		&i.Priority,
-		&i.Description,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
 }
 
 const listOrphanedRepositories = `-- name: ListOrphanedRepositories :many
@@ -583,4 +500,66 @@ func (q *Queries) UpdateRepository(ctx context.Context, arg UpdateRepositoryPara
 		arg.ID,
 	)
 	return err
+}
+
+const upsertRepository = `-- name: UpsertRepository :one
+INSERT INTO repositories (id, name, url, distribution, components, repo_type, is_active, is_secure, priority, description, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+ON CONFLICT (url, distribution, components) DO UPDATE SET
+    name        = EXCLUDED.name,
+    repo_type   = EXCLUDED.repo_type,
+    is_active   = EXCLUDED.is_active,
+    is_secure   = EXCLUDED.is_secure,
+    priority    = EXCLUDED.priority,
+    description = COALESCE(EXCLUDED.description, repositories.description),
+    updated_at  = NOW()
+RETURNING id
+`
+
+type UpsertRepositoryParams struct {
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	Url          string  `json:"url"`
+	Distribution string  `json:"distribution"`
+	Components   string  `json:"components"`
+	RepoType     string  `json:"repo_type"`
+	IsActive     bool    `json:"is_active"`
+	IsSecure     bool    `json:"is_secure"`
+	Priority     *int32  `json:"priority"`
+	Description  *string `json:"description"`
+}
+
+// Replaces the previous GetRepositoryByURLDistComponents + InsertRepository
+// SELECT-then-INSERT pattern. Migration 000040 added a UNIQUE constraint on
+// (url, distribution, components), making this a true upsert and closing
+// the TOCTOU race where two concurrent host reports could both see "no row"
+// and both INSERT.
+//
+// DO UPDATE touches non-key columns only, so the row lock taken is FOR NO
+// KEY UPDATE — safe vs concurrent FK FOR KEY SHARE locks held by
+// host_packages inserts pointing at this row.
+//
+// Returns the canonical id whether the row was newly inserted, updated, or
+// (in the no-op case where every column matches) updated to identical
+// values. There is no skip-no-op WHERE here because reports rarely repeat
+// identical repository metadata across runs and the row count per host is
+// small (typically 1-10) — the WAL/lock cost of unconditional UPDATE is
+// negligible compared with packages, and avoiding the WHERE keeps RETURNING
+// always-populated for a simpler caller contract.
+func (q *Queries) UpsertRepository(ctx context.Context, arg UpsertRepositoryParams) (string, error) {
+	row := q.db.QueryRow(ctx, upsertRepository,
+		arg.ID,
+		arg.Name,
+		arg.Url,
+		arg.Distribution,
+		arg.Components,
+		arg.RepoType,
+		arg.IsActive,
+		arg.IsSecure,
+		arg.Priority,
+		arg.Description,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }

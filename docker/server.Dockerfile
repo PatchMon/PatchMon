@@ -25,7 +25,7 @@ RUN go mod download
 EXPOSE 3000
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=5 \
-  CMD curl -f http://localhost:3000/health || exit 1
+  CMD curl -f http://localhost:${PORT:-3000}/health || exit 1
 
 # Default: run server. Override CMD or use volume mount for live reload
 ENV AGENTS_DIR=/app/agents
@@ -125,6 +125,6 @@ ENV GOMEMLIMIT=256MiB
 EXPOSE 3000
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 \
-  CMD wget -q -O /dev/null http://localhost:3000/health || exit 1
+  CMD wget -q -O /dev/null http://localhost:${PORT:-3000}/health || exit 1
 
 ENTRYPOINT ["./entrypoint.sh"]

@@ -402,14 +402,9 @@ const FirstTimeWizard = () => {
 	const runSetup = async (skipOnError = false) => {
 		setSettingUp(true);
 		setSetupError("");
-		let initialStatus;
-		if (!userCreatedEarly) {
-			initialStatus = "Creating admin account...";
-		} else if (adminMode) {
-			initialStatus = "Finishing setup...";
-		} else {
-			initialStatus = "Saving server URL...";
-		}
+		const initialStatus = !userCreatedEarly
+			? "Creating admin account..."
+			: "Saving server URL...";
 		setSetupStatus(initialStatus);
 
 		let setupData = null;
@@ -443,23 +438,35 @@ const FirstTimeWizard = () => {
 			}
 
 			// 2. Save server URL (requires auth - cookies from step 1 or existing session).
-			// In admin mode the URL is managed externally and the user never saw the Confirm URL step,
-			// so do not overwrite settings with wizard defaults.
-			if (!adminMode) {
-				setSetupStatus("Saving server URL...");
-				try {
+			// In admin mode the user never saw the Confirm URL step, but they reached this
+			// wizard via the correct browser URL — persist that so the DB ServerURL is set
+			// (agent install commands, links in alerts, etc. depend on it).
+			setSetupStatus("Saving server URL...");
+			try {
+				if (adminMode) {
+					const parsed = parseServerUrl(window.location.origin);
+					await settingsAPI.update({
+						server_protocol: parsed.serverProtocol,
+						server_host: parsed.serverHost,
+						server_port: parsed.serverPort,
+					});
+				} else {
 					await settingsAPI.update({
 						server_protocol: wizardData.serverProtocol,
 						server_host: wizardData.serverHost.trim(),
 						server_port: Number(wizardData.serverPort) || 3001,
 						ignore_ssl_self_signed: wizardData.ignoreSslSelfSigned,
 					});
-				} catch (err) {
-					if (skipOnError && setupData?.token && setupData?.user) {
-						// Admin created; skip URL save and continue
-						gotoDashboard(setupData);
-						return;
-					}
+				}
+			} catch (err) {
+				if (adminMode) {
+					// Non-fatal in admin mode: the URL can be reconciled later via the
+					// managed control plane; do not block first-time setup on it.
+				} else if (skipOnError && setupData?.token && setupData?.user) {
+					// Admin created; skip URL save and continue
+					gotoDashboard(setupData);
+					return;
+				} else {
 					throw err;
 				}
 			}

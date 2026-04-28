@@ -361,20 +361,22 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 										</div>
 									</div>
 
-									<div className="border-t border-secondary-200 dark:border-secondary-600 pt-6">
-										<div className="space-y-3">
-											<h3 className="text-base font-medium text-secondary-900 dark:text-white">
-												{isCloudVersion
-													? "Upgrade Your PatchMon Cloud Experience"
-													: "Do you find PatchMon useful?"}
-											</h3>
-											<p className="text-sm text-secondary-600 dark:text-white leading-relaxed">
-												{isCloudVersion
-													? "Join as a member to unlock premium features like isolated resources, custom domains, priority support, and more. Help support the project while getting enhanced capabilities for your PatchMon Cloud instance."
-													: "Please consider supporting the project to keep the project OpenSource to help me maintain the infrastructure and develop new features."}
-											</p>
+									{!publicSettings?.admin_mode && (
+										<div className="border-t border-secondary-200 dark:border-secondary-600 pt-6">
+											<div className="space-y-3">
+												<h3 className="text-base font-medium text-secondary-900 dark:text-white">
+													{isCloudVersion
+														? "Upgrade Your PatchMon Cloud Experience"
+														: "Do you find PatchMon useful?"}
+												</h3>
+												<p className="text-sm text-secondary-600 dark:text-white leading-relaxed">
+													{isCloudVersion
+														? "Join as a member to unlock premium features like isolated resources, custom domains, priority support, and more. Help support the project while getting enhanced capabilities for your PatchMon Cloud instance."
+														: "Please consider supporting the project to keep the project OpenSource to help me maintain the infrastructure and develop new features."}
+												</p>
+											</div>
 										</div>
-									</div>
+									)}
 								</div>
 							</div>
 						)}
@@ -418,38 +420,62 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 					{/* Footer: Personal Note (terminal — fires acceptance) */}
 					{stepKey === "personalNote" && (
 						<div className="bg-secondary-50 dark:bg-secondary-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse sm:items-center sm:gap-3">
-							<button
-								type="button"
-								onClick={isCloudVersion ? handleMembershipNow : handleDonateNow}
-								disabled={isAccepting}
-								className={`w-full inline-flex justify-center items-center gap-2 rounded-md border border-transparent shadow-sm px-4 py-2 text-base font-medium text-white sm:w-auto sm:text-sm transition-colors min-h-[44px] ${
-									isAccepting
-										? "bg-secondary-400 cursor-not-allowed"
-										: "bg-secondary-800 dark:bg-secondary-800 hover:bg-secondary-700 dark:hover:bg-secondary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500"
-								}`}
-							>
-								{isAccepting ? (
-									<>
-										<RefreshCw className="h-4 w-4 animate-spin" />
-										Saving...
-									</>
-								) : (
-									<>
-										{isCloudVersion ? (
-											<>
-												<Heart className="h-4 w-4" />
-												Join Membership
-											</>
-										) : (
-											<>
-												<BuyMeACoffeeIcon />
-												Buy me a Coffee
-											</>
-										)}
-										<ExternalLink className="h-4 w-4" />
-									</>
-								)}
-							</button>
+							{publicSettings?.admin_mode ? (
+								<button
+									type="button"
+									onClick={handleClose}
+									disabled={isAccepting}
+									className={`w-full inline-flex justify-center items-center gap-2 rounded-md border border-transparent shadow-sm px-4 py-2 text-base font-medium text-white sm:w-auto sm:text-sm transition-colors min-h-[44px] ${
+										isAccepting
+											? "bg-secondary-400 cursor-not-allowed"
+											: "bg-secondary-800 dark:bg-secondary-800 hover:bg-secondary-700 dark:hover:bg-secondary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500"
+									}`}
+								>
+									{isAccepting ? (
+										<>
+											<RefreshCw className="h-4 w-4 animate-spin" />
+											Saving...
+										</>
+									) : (
+										"Close"
+									)}
+								</button>
+							) : (
+								<button
+									type="button"
+									onClick={
+										isCloudVersion ? handleMembershipNow : handleDonateNow
+									}
+									disabled={isAccepting}
+									className={`w-full inline-flex justify-center items-center gap-2 rounded-md border border-transparent shadow-sm px-4 py-2 text-base font-medium text-white sm:w-auto sm:text-sm transition-colors min-h-[44px] ${
+										isAccepting
+											? "bg-secondary-400 cursor-not-allowed"
+											: "bg-secondary-800 dark:bg-secondary-800 hover:bg-secondary-700 dark:hover:bg-secondary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500"
+									}`}
+								>
+									{isAccepting ? (
+										<>
+											<RefreshCw className="h-4 w-4 animate-spin" />
+											Saving...
+										</>
+									) : (
+										<>
+											{isCloudVersion ? (
+												<>
+													<Heart className="h-4 w-4" />
+													Join Membership
+												</>
+											) : (
+												<>
+													<BuyMeACoffeeIcon />
+													Buy me a Coffee
+												</>
+											)}
+											<ExternalLink className="h-4 w-4" />
+										</>
+									)}
+								</button>
+							)}
 						</div>
 					)}
 				</div>

@@ -12,7 +12,7 @@ import (
 )
 
 // DefaultVersion is the default server version. Bump this when releasing; config_test.go uses it.
-const DefaultVersion = "2.0.1"
+const DefaultVersion = "2.0.2"
 
 // Config holds application configuration loaded from environment.
 // Uses same variable names as PatchMon/server for compatibility.
@@ -246,10 +246,17 @@ func Load() (*Config, error) {
 		BillingInternalSecret: getEnv("BILLING_INTERNAL_SECRET", ""),
 		ProvisionerURL:        getEnv("PROVISIONER_URL", ""),
 
-		MaxLoginAttempts:            getEnvInt("MAX_LOGIN_ATTEMPTS", 5),
-		LockoutDurationMin:          getEnvInt("LOCKOUT_DURATION_MINUTES", 15),
-		EnableHSTS:                  getEnv("ENABLE_HSTS", "") == "true",
-		TrustProxy:                  getEnv("TRUST_PROXY", "") == "true",
+		MaxLoginAttempts:   getEnvInt("MAX_LOGIN_ATTEMPTS", 5),
+		LockoutDurationMin: getEnvInt("LOCKOUT_DURATION_MINUTES", 15),
+		EnableHSTS:         getEnv("ENABLE_HSTS", "") == "true",
+		// Default true: PatchMon's officially supported deployment is Docker
+		// behind a reverse proxy (Traefik, Caddy, nginx, NPM), where the proxy
+		// terminates TLS and sends X-Forwarded-Proto / X-Forwarded-For. With
+		// this off, OIDC's HTTPS gate rejects requests, real client IPs do not
+		// reach the audit log, and rate limiting keys on the proxy's IP.
+		// Set TRUST_PROXY=false explicitly only when PatchMon is exposed
+		// directly to the internet without a reverse proxy.
+		TrustProxy:                  getEnv("TRUST_PROXY", "true") != "false",
 		RateLimitWindowMs:           getEnvInt("RATE_LIMIT_WINDOW_MS", 900000),
 		RateLimitMax:                getEnvInt("RATE_LIMIT_MAX", 5000),
 		AuthRateLimitWindowMs:       getEnvInt("AUTH_RATE_LIMIT_WINDOW_MS", 600000),
@@ -264,7 +271,7 @@ func Load() (*Config, error) {
 		PasswordRequireNumber:       getEnv("PASSWORD_REQUIRE_NUMBER", "true") != "false",
 		PasswordRequireSpecial:      getEnv("PASSWORD_REQUIRE_SPECIAL", "true") != "false",
 		JSONBodyLimitBytes:          getEnvBytes("JSON_BODY_LIMIT", 5),
-		AgentUpdateBodyLimitBytes:   getEnvBytes("AGENT_UPDATE_BODY_LIMIT", 2),
+		AgentUpdateBodyLimitBytes:   getEnvBytes("AGENT_UPDATE_BODY_LIMIT", 5),
 		RedisTLSCA:                  getEnv("REDIS_TLS_CA", ""),
 		Timezone:                    getEnv("TZ", getEnv("TIMEZONE", "UTC")),
 		DefaultUserRole:             getEnv("DEFAULT_USER_ROLE", "user"),

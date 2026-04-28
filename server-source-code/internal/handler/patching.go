@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/alerts"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
@@ -46,6 +48,8 @@ type PatchingHandler struct {
 	assignments    *store.PatchPolicyAssignmentsStore
 	exclusions     *store.PatchPolicyExclusionsStore
 	hosts          *store.HostsStore
+	settings       *store.SettingsStore
+	cfg            *config.Config
 	queueClient    *asynq.Client
 	queueInspector *asynq.Inspector
 	notify         *notifications.Emitter
@@ -65,6 +69,8 @@ func NewPatchingHandler(
 	assignments *store.PatchPolicyAssignmentsStore,
 	exclusions *store.PatchPolicyExclusionsStore,
 	hosts *store.HostsStore,
+	settings *store.SettingsStore,
+	cfg *config.Config,
 	queueClient *asynq.Client,
 	queueInspector *asynq.Inspector,
 	notify *notifications.Emitter,
@@ -79,6 +85,8 @@ func NewPatchingHandler(
 		assignments:    assignments,
 		exclusions:     exclusions,
 		hosts:          hosts,
+		settings:       settings,
+		cfg:            cfg,
 		queueClient:    queueClient,
 		queueInspector: queueInspector,
 		notify:         notify,
@@ -86,9 +94,49 @@ func NewPatchingHandler(
 	}
 }
 
+// resolveOrgTimezone returns the IANA timezone name resolved for the current
+// request context. It prefers TZ / TIMEZONE env vars, then the org-wide
+// settings row, then the config default. On settings-load failure it falls
+// back to env+config so a transient DB hiccup never silently parks a fixed-time
+// policy in the wrong zone.
+func (h *PatchingHandler) resolveOrgTimezone(ctx context.Context) string {
+	if h.settings == nil {
+		return config.ResolveTimezone(nil, h.cfg)
+	}
+	s, err := h.settings.GetFirst(ctx)
+	if err != nil || s == nil {
+		if err != nil {
+			h.log.Warn("patching: resolve org timezone settings load failed", "error", err)
+		}
+		return config.ResolveTimezone(nil, h.cfg)
+	}
+	return config.ResolveTimezone(s.Timezone, h.cfg)
+}
+
 func isValidPatchUUID(s string) bool {
 	_, err := uuid.Parse(s)
 	return err == nil
+}
+
+// policyIDForLog returns a stable, log-safe identifier for a patch policy or
+// "<none>" when the policy is nil. Used in scheduling log lines so a parse
+// failure can be traced back to the offending policy.
+func policyIDForLog(p *db.PatchPolicy) string {
+	if p == nil {
+		return "<none>"
+	}
+	return p.ID
+}
+
+// fixedTimeForLog returns the raw fixed_time_utc value (or "<nil>") for a
+// policy, suitable for inclusion in slog fields. slog escapes control
+// characters in JSON/text output so log injection via this value is contained
+// to the field itself.
+func fixedTimeForLog(p *db.PatchPolicy) string {
+	if p == nil || p.FixedTimeUtc == nil {
+		return "<nil>"
+	}
+	return *p.FixedTimeUtc
 }
 
 func isValidPackageName(s string) bool {
@@ -363,7 +411,14 @@ func (h *PatchingHandler) PreviewRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	policy, _ := h.patchPolicies.ResolveEffectivePolicy(r.Context(), hostID)
-	runAt := h.patchPolicies.ComputeRunAt(policy)
+	runAt, schedMeta := h.patchPolicies.ComputeRunAtWithMeta(policy, h.resolveOrgTimezone(r.Context()))
+	if schedMeta.Err != nil {
+		// Surface malformed legacy policy data in the preview path too, so the
+		// audit trail is complete and operators can find offenders before they
+		// hit the trigger button.
+		h.log.Warn("patching: fixed_time_utc parse failed in preview - returning immediate",
+			"policy_id", policyIDForLog(policy), "fixed_time_utc", fixedTimeForLog(policy), "error", schedMeta.Err)
+	}
 	hostName := host.FriendlyName
 	if hostName == "" && host.Hostname != nil {
 		hostName = *host.Hostname
@@ -529,8 +584,13 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Compute policy and delay.
+	orgTZ := h.resolveOrgTimezone(r.Context())
 	policy, _ := h.patchPolicies.ResolveEffectivePolicy(r.Context(), valRun.HostID)
-	runAt := h.patchPolicies.ComputeRunAt(policy)
+	runAt, schedMeta := h.patchPolicies.ComputeRunAtWithMeta(policy, orgTZ)
+	if schedMeta.Err != nil {
+		h.log.Warn("patching: fixed_time_utc parse failed - running immediately",
+			"policy_id", policyIDForLog(policy), "fixed_time_utc", fixedTimeForLog(policy), "error", schedMeta.Err)
+	}
 	delayMs := time.Until(runAt).Milliseconds()
 	if delayMs < 0 {
 		delayMs = 0
@@ -546,13 +606,23 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 		policyID = &policy.ID
 		n := policy.Name
 		policyNamePtr = &n
-		policySnap, _ = json.Marshal(map[string]interface{}{
+		// schedule_timezone records the IANA zone actually used to compute
+		// run_at; this is what audit views should display, not the legacy
+		// per-policy timezone column (which is no longer read by the
+		// scheduler and may drift if edited later). Only set for fixed-time
+		// schedules — immediate/delayed runs don't depend on timezone, and
+		// recording "UTC" there would be misleading in audit views.
+		snap := map[string]interface{}{
 			"name":             policy.Name,
 			"patch_delay_type": policy.PatchDelayType,
 			"delay_minutes":    policy.DelayMinutes,
 			"fixed_time_utc":   policy.FixedTimeUtc,
 			"timezone":         policy.Timezone,
-		})
+		}
+		if policy.PatchDelayType == "fixed_time" {
+			snap["schedule_timezone"] = schedMeta.Timezone
+		}
+		policySnap, _ = json.Marshal(snap)
 	} else {
 		policySnap, _ = json.Marshal(map[string]interface{}{
 			"patch_delay_type": "immediate",
@@ -852,8 +922,13 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	orgTZ := h.resolveOrgTimezone(r.Context())
 	policy, _ := h.patchPolicies.ResolveEffectivePolicy(r.Context(), body.HostID)
-	runAt := h.patchPolicies.ComputeRunAt(policy)
+	runAt, schedMeta := h.patchPolicies.ComputeRunAtWithMeta(policy, orgTZ)
+	if schedMeta.Err != nil {
+		h.log.Warn("patching: fixed_time_utc parse failed - running immediately",
+			"policy_id", policyIDForLog(policy), "fixed_time_utc", fixedTimeForLog(policy), "error", schedMeta.Err)
+	}
 	delayMs := time.Until(runAt).Milliseconds()
 	if delayMs < 0 {
 		delayMs = 0
@@ -886,13 +961,22 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	var policySnapshot []byte
 	if policy != nil {
 		policyID = &policy.ID
-		policySnapshot, _ = json.Marshal(map[string]interface{}{
+		// schedule_timezone records the IANA zone actually used to compute
+		// run_at (org-resolved). The legacy per-policy timezone field is
+		// included for backward compatibility but is no longer read by the
+		// scheduler. Only set for fixed-time schedules — see ApproveRun for
+		// rationale.
+		snap := map[string]interface{}{
 			"name":             policy.Name,
 			"patch_delay_type": policy.PatchDelayType,
 			"delay_minutes":    policy.DelayMinutes,
 			"fixed_time_utc":   policy.FixedTimeUtc,
 			"timezone":         policy.Timezone,
-		})
+		}
+		if policy.PatchDelayType == "fixed_time" {
+			snap["schedule_timezone"] = schedMeta.Timezone
+		}
+		policySnapshot, _ = json.Marshal(snap)
 		n := policy.Name
 		policyNamePtr = &n
 	} else {
@@ -1052,6 +1136,32 @@ func (h *PatchingHandler) GetPolicy(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// validatePolicyInput enforces shared rules for CreatePolicy and UpdatePolicy.
+// Returns a 400 error string when input is malformed; empty string on success.
+// fixed_time_utc must parse as HH:MM or HH:MM:SS (range-validated). The
+// per-policy timezone field is intentionally accepted but ignored — see
+// CreatePolicy / UpdatePolicy where it is forced to nil before persistence.
+func validatePolicyInput(name, patchDelayType string, delayMinutes *int32, fixedTimeUtc *string) string {
+	if name == "" {
+		return "name is required"
+	}
+	if patchDelayType != "immediate" && patchDelayType != "delayed" && patchDelayType != "fixed_time" {
+		return "patch_delay_type must be immediate, delayed, or fixed_time"
+	}
+	if patchDelayType == "delayed" && (delayMinutes == nil || *delayMinutes < 0) {
+		return "delay_minutes is required for delayed policy"
+	}
+	if patchDelayType == "fixed_time" {
+		if fixedTimeUtc == nil || *fixedTimeUtc == "" {
+			return "fixed_time_utc is required for fixed_time policy"
+		}
+		if _, _, _, err := store.ParseHHMM(*fixedTimeUtc); err != nil {
+			return "fixed_time_utc must be HH:MM or HH:MM:SS"
+		}
+	}
+	return ""
+}
+
 // CreatePolicy handles POST /patching/policies.
 func (h *PatchingHandler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -1060,30 +1170,28 @@ func (h *PatchingHandler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 		PatchDelayType string  `json:"patch_delay_type"`
 		DelayMinutes   *int32  `json:"delay_minutes"`
 		FixedTimeUtc   *string `json:"fixed_time_utc"`
-		Timezone       *string `json:"timezone"`
+		// Timezone is accepted for backward compatibility with older clients
+		// but ignored — fixed-time scheduling now uses the org-resolved
+		// timezone. The DB column is persisted as NULL.
+		Timezone *string `json:"timezone"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
 		return
 	}
-	if body.Name == "" {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+	if msg := validatePolicyInput(body.Name, body.PatchDelayType, body.DelayMinutes, body.FixedTimeUtc); msg != "" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
-	if body.PatchDelayType != "immediate" && body.PatchDelayType != "delayed" && body.PatchDelayType != "fixed_time" {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "patch_delay_type must be immediate, delayed, or fixed_time"})
-		return
-	}
-	if body.PatchDelayType == "delayed" && (body.DelayMinutes == nil || *body.DelayMinutes < 0) {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "delay_minutes is required for delayed policy"})
-		return
-	}
-	if body.PatchDelayType == "fixed_time" && (body.FixedTimeUtc == nil || *body.FixedTimeUtc == "") {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "fixed_time_utc is required for fixed_time policy"})
-		return
+	if body.Timezone != nil && *body.Timezone != "" {
+		// Make the silent deprecation observable. The submitted value comes
+		// from an authenticated can_manage_patching user, so logging it is
+		// fine; slog escapes control chars in attribute values.
+		h.log.Info("patching: ignoring deprecated per-policy timezone on create",
+			"policy_name", body.Name, "submitted_timezone", *body.Timezone)
 	}
 
-	id, err := h.patchPolicies.Create(r.Context(), body.Name, body.Description, body.PatchDelayType, body.DelayMinutes, body.FixedTimeUtc, body.Timezone)
+	id, err := h.patchPolicies.Create(r.Context(), body.Name, body.Description, body.PatchDelayType, body.DelayMinutes, body.FixedTimeUtc, nil)
 	if err != nil {
 		h.log.Error("patching: create policy error", "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create policy"})
@@ -1097,7 +1205,7 @@ func (h *PatchingHandler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 		"patch_delay_type": body.PatchDelayType,
 		"delay_minutes":    body.DelayMinutes,
 		"fixed_time_utc":   body.FixedTimeUtc,
-		"timezone":         body.Timezone,
+		"timezone":         nil,
 		"created_at":       time.Now().UTC().Format(time.RFC3339),
 		"updated_at":       time.Now().UTC().Format(time.RFC3339),
 	}
@@ -1121,30 +1229,25 @@ func (h *PatchingHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
 		PatchDelayType string  `json:"patch_delay_type"`
 		DelayMinutes   *int32  `json:"delay_minutes"`
 		FixedTimeUtc   *string `json:"fixed_time_utc"`
-		Timezone       *string `json:"timezone"`
+		// Timezone is accepted for backward compatibility but ignored — see
+		// CreatePolicy. The DB column is overwritten with NULL on every
+		// update so the column eventually drains across the fleet.
+		Timezone *string `json:"timezone"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
 		return
 	}
-	if body.Name == "" {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+	if msg := validatePolicyInput(body.Name, body.PatchDelayType, body.DelayMinutes, body.FixedTimeUtc); msg != "" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
-	if body.PatchDelayType != "immediate" && body.PatchDelayType != "delayed" && body.PatchDelayType != "fixed_time" {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "patch_delay_type must be immediate, delayed, or fixed_time"})
-		return
-	}
-	if body.PatchDelayType == "delayed" && (body.DelayMinutes == nil || *body.DelayMinutes < 0) {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "delay_minutes is required for delayed policy"})
-		return
-	}
-	if body.PatchDelayType == "fixed_time" && (body.FixedTimeUtc == nil || *body.FixedTimeUtc == "") {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "fixed_time_utc is required for fixed_time policy"})
-		return
+	if body.Timezone != nil && *body.Timezone != "" {
+		h.log.Info("patching: ignoring deprecated per-policy timezone on update",
+			"policy_id", id, "submitted_timezone", *body.Timezone)
 	}
 
-	if err := h.patchPolicies.Update(r.Context(), id, body.Name, body.Description, body.PatchDelayType, body.DelayMinutes, body.FixedTimeUtc, body.Timezone); err != nil {
+	if err := h.patchPolicies.Update(r.Context(), id, body.Name, body.Description, body.PatchDelayType, body.DelayMinutes, body.FixedTimeUtc, nil); err != nil {
 		h.log.Error("patching: update policy error", "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to update policy"})
 		return
@@ -1157,7 +1260,7 @@ func (h *PatchingHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
 		"patch_delay_type": body.PatchDelayType,
 		"delay_minutes":    body.DelayMinutes,
 		"fixed_time_utc":   body.FixedTimeUtc,
-		"timezone":         body.Timezone,
+		"timezone":         nil,
 	}
 	if policy != nil {
 		resp["created_at"] = pgTimeToISO(policy.CreatedAt)

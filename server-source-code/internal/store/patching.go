@@ -770,36 +770,126 @@ func (s *PatchPoliciesStore) ResolveEffectivePolicy(ctx context.Context, hostID 
 	return nil, nil
 }
 
-// ComputeRunAt returns when a patch should run based on policy.
+// ScheduleMeta describes the timezone resolution applied to a fixed-time policy
+// computation. The caller (handler) uses it to populate the policy snapshot
+// stored on the run and to log scheduling decisions for audit.
+type ScheduleMeta struct {
+	// Timezone is the IANA name actually used to compute the run instant.
+	// "UTC" when the policy is not a fixed_time schedule or when the resolved
+	// zone could not be loaded.
+	Timezone string
+	// Source is one of "org", "utc-fallback", or "n/a" (for non-fixed-time
+	// schedules where timezone is irrelevant).
+	Source string
+	// Err is non-nil when fixed_time_utc could not be parsed; the caller
+	// should log it and treat the run as immediate (now).
+	Err error
+}
+
+// ParseHHMM parses an HH:MM or HH:MM:SS string and returns the components.
+// Range-validates each component. Exported so handler-level input validation
+// rejects the same malformed values that the scheduler would later reject.
+func ParseHHMM(s string) (h, m, sec int, err error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, 0, 0, errors.New("empty time value")
+	}
+	parts := strings.Split(s, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return 0, 0, 0, errors.New("expected HH:MM or HH:MM:SS")
+	}
+	hh, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	mm, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	ss := 0
+	if len(parts) == 3 {
+		ss, err = strconv.Atoi(parts[2])
+		if err != nil {
+			return 0, 0, 0, err
+		}
+	}
+	if hh < 0 || hh > 23 || mm < 0 || mm > 59 || ss < 0 || ss > 59 {
+		return 0, 0, 0, errors.New("time component out of range")
+	}
+	return hh, mm, ss, nil
+}
+
+// nextFixedWallClockUTC returns the next absolute time at which the wall-clock
+// time hhmm (HH:MM or HH:MM:SS) elapses in loc, on or after now. The result is
+// returned as a UTC instant. Errors on malformed input.
+//
+// DST behavior (Go's time.Date semantics):
+//   - Spring-forward (the local hour does not exist, e.g. 02:30 on the
+//     transition day): time.Date normalizes forward, so 02:30 local becomes
+//     03:30 local on that day.
+//   - Fall-back (the local hour occurs twice): time.Date selects the
+//     standard-time (post-shift) occurrence — i.e. the later of the two
+//     wall-clock instants.
+//
+// Both behaviors are documented in the admin guide.
+func nextFixedWallClockUTC(now time.Time, hhmm string, loc *time.Location) (time.Time, error) {
+	h, m, s, err := ParseHHMM(hhmm)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if loc == nil {
+		loc = time.UTC
+	}
+	// Anchor "today" in the target location so the calendar date matches the
+	// zone in which the operator set the policy.
+	nowLocal := now.In(loc)
+	candidate := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), h, m, s, 0, loc)
+	if !candidate.After(now) {
+		// Build the next-day instant via time.Date (not AddDate on the
+		// absolute instant) so the wall-clock hour is preserved across DST
+		// transitions.
+		candidate = time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day()+1, h, m, s, 0, loc)
+	}
+	return candidate.UTC(), nil
+}
+
+// ComputeRunAtWithMeta returns when a patch should run based on policy and the
+// timezone resolution that was applied. The orgTimezone parameter should be
+// the resolved organization-wide IANA name (via config.ResolveTimezone in the
+// caller). For fixed_time schedules, the policy's own Timezone column is
+// intentionally ignored: scheduling is governed by the org-resolved zone so
+// there is a single source of truth across the system.
+//
 // Returns UTC; storage via pgtype.Timestamp expects UTC (see pgtime package).
-func (s *PatchPoliciesStore) ComputeRunAt(policy *db.PatchPolicy) time.Time {
+func (s *PatchPoliciesStore) ComputeRunAtWithMeta(policy *db.PatchPolicy, orgTimezone string) (time.Time, ScheduleMeta) {
 	now := time.Now().UTC()
 	if policy == nil || policy.PatchDelayType == "immediate" {
-		return now
+		return now, ScheduleMeta{Timezone: "UTC", Source: "n/a"}
 	}
 	if policy.PatchDelayType == "delayed" && policy.DelayMinutes != nil {
-		return now.Add(time.Duration(*policy.DelayMinutes) * time.Minute)
+		return now.Add(time.Duration(*policy.DelayMinutes) * time.Minute), ScheduleMeta{Timezone: "UTC", Source: "n/a"}
 	}
 	if policy.PatchDelayType == "fixed_time" && policy.FixedTimeUtc != nil && *policy.FixedTimeUtc != "" {
-		// Parse HH:MM or HH:MM:SS in UTC
-		parts := strings.Split(strings.TrimSpace(*policy.FixedTimeUtc), ":")
-		h, m, sec := 0, 0, 0
-		if len(parts) >= 1 {
-			h, _ = strconv.Atoi(parts[0])
+		loc, source, tzName := resolveScheduleLocation(orgTimezone)
+		runAt, err := nextFixedWallClockUTC(now, *policy.FixedTimeUtc, loc)
+		if err != nil {
+			return now, ScheduleMeta{Timezone: tzName, Source: source, Err: err}
 		}
-		if len(parts) >= 2 {
-			m, _ = strconv.Atoi(parts[1])
-		}
-		if len(parts) >= 3 {
-			sec, _ = strconv.Atoi(parts[2])
-		}
-		run := time.Date(now.Year(), now.Month(), now.Day(), h, m, sec, 0, time.UTC)
-		if !run.After(now) {
-			run = run.AddDate(0, 0, 1)
-		}
-		return run
+		return runAt, ScheduleMeta{Timezone: tzName, Source: source}
 	}
-	return now
+	return now, ScheduleMeta{Timezone: "UTC", Source: "n/a"}
+}
+
+// resolveScheduleLocation loads the time.Location for orgTimezone, falling
+// back to UTC when the value is empty or unparseable. Returns the location,
+// the source label ("org" / "utc-fallback"), and the IANA name actually used.
+func resolveScheduleLocation(orgTimezone string) (*time.Location, string, string) {
+	if orgTimezone != "" {
+		if loc, err := time.LoadLocation(orgTimezone); err == nil {
+			return loc, "org", orgTimezone
+		}
+	}
+	return time.UTC, "utc-fallback", "UTC"
 }
 
 // List returns all patch policies.
