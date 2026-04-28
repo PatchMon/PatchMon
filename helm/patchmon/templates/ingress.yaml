@@ -5,10 +5,15 @@ metadata:
   name: {{ include "patchmon.fullname" . }}-ingress
   labels:
     {{- include "patchmon.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
   annotations:
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=3600
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/success-codes: "200"
+    alb.ingress.kubernetes.io/target-group-attributes: stickiness.enabled=true,stickiness.lb_cookie.duration_seconds=86400
+    alb.ingress.kubernetes.io/healthcheck-host: {{ .Values.ingress.healthcheckHost | quote }}
+    {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- end }}
 spec:
   {{- if .Values.ingress.className }}
   ingressClassName: {{ .Values.ingress.className }}

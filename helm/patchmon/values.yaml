@@ -165,6 +165,7 @@ guacd:
 ingress:
   enabled: false
   className: "nginx"
+  healthcheckHost: "patchmon.example.com"
   annotations: {}
   hosts:
     - host: "patchmon.local"
