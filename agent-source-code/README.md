@@ -10,6 +10,13 @@ PatchMon's monitoring agent collects and reports package, system, hardware, and 
 - Arch Linux / Manjaro (pacman)
 - Alpine Linux (apk)
 
+**macOS** (amd64, arm64):
+- macOS 12+ / Monterey+ (darwin)
+- Homebrew package inventory and upgrades when `brew` is installed
+- System update inventory and patching via `softwareupdate`
+- `patch_all` applies Homebrew upgrades and available OS updates; non-Homebrew macOS still reports system updates
+- Auto-start across reboots via `patchmon-agent install-service` and launchd
+
 **FreeBSD** (amd64, 386, arm64, arm):
 - FreeBSD
 
@@ -21,12 +28,14 @@ PatchMon's monitoring agent collects and reports package, system, hardware, and 
 ### Binary Installation
 
 1. **Download** the appropriate binary for your OS and architecture from the releases page, or via the install script served by your PatchMon server.
-2. **Make executable** and move to system path (Linux/FreeBSD):
+2. **Make executable** and move to system path (Linux/macOS/FreeBSD):
 
 ```bash
 chmod +x patchmon-agent-linux-amd64
 sudo mv patchmon-agent-linux-amd64 /usr/local/bin/patchmon-agent
 ```
+
+On **macOS**, use the darwin binary name, for example `patchmon-agent-darwin-amd64` or `patchmon-agent-darwin-arm64`.
 
 On **Windows**, download the `.exe` binary and place it in a suitable location (e.g. `C:\Program Files\PatchMon\`).
 
@@ -61,6 +70,10 @@ sudo patchmon-agent config set-api patchmon_1a2b3c4d abcd1234567890abcdef1234567
 ```
 
 This saves the server URL to the config file and the API credentials to the credentials file, then automatically runs a connectivity test to verify everything is working.
+
+> On macOS, the agent uses the same default Linux-style config paths: `/etc/patchmon/config.yml` and `/etc/patchmon/credentials.yml`.
+>
+> `softwareupdate` is required for macOS system update inventory and OS patching; Homebrew is optional but supported when installed.
 
 2. **Test Connectivity** (optional — already tested during setup):
 
@@ -193,9 +206,12 @@ The agent supports the following init systems for service restarts during update
 - **systemd** (most Linux distributions)
 - **OpenRC** (Alpine Linux)
 - **FreeBSD rc.d** (FreeBSD)
+- **launchd** (macOS)
 - **Windows Service** (Windows Service Control Manager via `golang.org/x/sys/windows/svc`)
 
-If no init system is detected, it falls back to a helper script for safe restarts.
+On macOS, install the service with `patchmon-agent install-service`. This writes a LaunchDaemon plist to `/Library/LaunchDaemons/net.patchmon.patchmon-agent.plist`, loads it into launchd, and enables automatic startup across reboots.
+
+If no init system is detected, it falls back to a helper script for safe restarts during updates.
 
 ## Integrations
 

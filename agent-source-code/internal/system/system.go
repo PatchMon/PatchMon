@@ -185,6 +185,11 @@ func (d *Detector) DetectOS() (osType, osVersion string, err error) {
 		return d.getFreeBSDInfo()
 	}
 
+	// Check for macOS first
+	if runtime.GOOS == "darwin" {
+		return d.getDarwinOSInfo()
+	}
+
 	// Try to parse /etc/os-release first
 	osReleaseInfo, err := d.parseOSRelease()
 	if err != nil {
@@ -316,6 +321,10 @@ func (d *Detector) GetIPAddress() string {
 
 // GetKernelVersion gets the kernel version
 func (d *Detector) GetKernelVersion() string {
+	if runtime.GOOS == "darwin" {
+		return d.getDarwinKernelVersion()
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -330,8 +339,8 @@ func (d *Detector) GetKernelVersion() string {
 
 // getSELinuxStatus gets SELinux status using file reading
 func (d *Detector) getSELinuxStatus() string {
-	// Windows and FreeBSD don't use SELinux
-	if runtime.GOOS == "windows" || d.isFreeBSD() {
+	// Windows, macOS and FreeBSD don't use SELinux
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" || d.isFreeBSD() {
 		return constants.SELinuxDisabled
 	}
 

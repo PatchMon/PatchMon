@@ -35,7 +35,7 @@ A lightweight agent communicates outbound-only to the PatchMon server on your sc
 - **Outbound-only agents** - no inbound firewall changes, no SSH or WinRM exposure, no VPN required.
 - **Single binary, bundled UI** - one Go binary with the React frontend embedded. One container, no Node runtime at deploy time.
 - **Open source, with a managed cloud** - AGPL v3 licensed, free to self-host. Production hosting available at [patchmon.net/cloud](https://patchmon.net/cloud).
-- **Multi-OS by design** - Linux (apt, dnf, yum, apk, pacman), FreeBSD (pkg) and Windows, handled by the same agent and control plane.
+- **Multi-OS by design** - Linux (apt, dnf, yum, apk, pacman), FreeBSD (pkg), macOS (Homebrew + softwareupdate) and Windows, handled by the same agent and control plane.
 
 ---
 
@@ -155,7 +155,9 @@ Once the server is running:
 2. PatchMon generates a one-line install command with a per-host API key.
 3. Paste the command on the target server (requires root/sudo) and the agent enrols itself.
 
-Supported agent platforms: Linux (amd64, 386, arm64, arm), FreeBSD (amd64, 386, arm64, arm), Windows (amd64, 386, arm64).
+Supported agent platforms: Linux (amd64, 386, arm64, arm), FreeBSD (amd64, 386, arm64, arm), macOS (amd64, arm64), Windows (amd64, 386, arm64).
+
+macOS support includes Homebrew package inventory when `brew` is installed, plus built-in system update discovery and patching via `softwareupdate`.
 
 ### Minimum Server Specs
 
@@ -175,7 +177,7 @@ Supported agent platforms: Linux (amd64, 386, arm64, arm), FreeBSD (amd64, 386, 
 | Frontend | React + Vite, embedded in the `patchmon-server` binary |
 | Database | PostgreSQL 17 |
 | Queue | Redis 7 (Asynq) |
-| Agent | Go binary - Linux, FreeBSD, Windows |
+| Agent | Go binary - Linux, FreeBSD, macOS, Windows |
 
 ```mermaid
 flowchart LR
@@ -187,6 +189,8 @@ flowchart LR
 ```
 
 Agents initiate all communication. HTTPS carries reports and config; WSS (WebSocket over TLS) carries real-time events such as live patch streaming and Docker status.
+
+macOS agents use darwin binaries and can be installed as a launchd service for automatic startup and restart handling.
 Ensure that **Websockets** is supported by your proxy when passing the traffic to PatchMon container :3000 or whichever port you decide to use.
 
 ---

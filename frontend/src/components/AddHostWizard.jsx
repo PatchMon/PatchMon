@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, Copy, Download, RefreshCw, Wifi, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DiWindows } from "react-icons/di";
-import { SiFreebsd, SiLinux } from "react-icons/si";
+import { SiFreebsd, SiLinux, SiMacos } from "react-icons/si";
 import { useNavigate } from "react-router-dom";
 import {
 	adminHostsAPI,
@@ -37,7 +37,7 @@ const hasInitialReport = (hostData) => {
 
 const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 	const [step, setStep] = useState(1);
-	const [platform, setPlatform] = useState("linux"); // linux | freebsd | windows
+	const [platform, setPlatform] = useState("linux"); // linux | freebsd | windows | darwin
 	const [formData, setFormData] = useState({
 		friendly_name: "",
 		hostGroupIds: [],
@@ -93,6 +93,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 		const params = new URLSearchParams();
 		if (platform === "freebsd") params.set("os", "freebsd");
 		if (platform === "windows") params.set("os", "windows");
+		if (platform === "darwin") params.set("os", "darwin");
 		if (force && platform !== "windows") params.set("force", "true");
 		const qs = params.toString();
 		return qs ? `${base}?${qs}` : base;
@@ -368,6 +369,18 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 							</button>
 							<button
 								type="button"
+								onClick={() => setPlatform("darwin")}
+								className={`flex flex-col items-center justify-center p-6 rounded-lg border-2 transition-all ${
+									platform === "darwin"
+										? "border-primary-500 bg-primary-50 dark:bg-primary-900/30"
+										: "border-secondary-300 dark:border-secondary-600 hover:border-primary-400"
+								}`}
+							>
+								<SiMacos className="h-12 w-12 text-secondary-700 dark:text-secondary-200 mb-2" />
+								<span className="text-sm font-medium">macOS</span>
+							</button>
+							<button
+								type="button"
 								onClick={() => setPlatform("windows")}
 								className={`flex flex-col items-center justify-center p-6 rounded-lg border-2 transition-all ${
 									platform === "windows"
@@ -555,8 +568,10 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 							{platform === "windows"
 								? "Windows"
 								: platform === "freebsd"
-									? "FreeBSD"
-									: "Linux"}{" "}
+                                        ? "FreeBSD"
+                                            : platform === "darwin"
+                                                ? "macOS"
+                                                : "Linux"}
 							host to install the agent
 							{platform === "windows"
 								? " (run PowerShell as Administrator)"

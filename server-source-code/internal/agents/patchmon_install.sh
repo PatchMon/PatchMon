@@ -138,6 +138,15 @@ get_machine_id() {
         echo "patchmon-freebsd-$(hostname 2>/dev/null)-$(date +%s 2>/dev/null)"
         return
     fi
+    if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
+        _uuid=$(ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | awk -F'"' '/IOPlatformUUID/ {print $4}')
+        if [ -n "$_uuid" ]; then
+            echo "$_uuid"
+            return
+        fi
+        echo "patchmon-darwin-$(hostname 2>/dev/null)-$(date +%s 2>/dev/null)"
+        return
+    fi
     # Linux: try multiple sources
     if [ -f /etc/machine-id ]; then
         cat /etc/machine-id
@@ -154,8 +163,20 @@ if [ -z "$PATCHMON_URL" ] || [ -z "$API_ID" ] || [ -z "$API_KEY" ]; then
     error "Missing required parameters. This script should be called via the PatchMon web interface."
 fi
 
-# Default PATCHMON_OS to linux if not set (backward compatibility when os param not in URL)
-PATCHMON_OS="${PATCHMON_OS:-linux}"
+# Default PATCHMON_OS based on environment or runtime if not set
+if [ -z "$PATCHMON_OS" ]; then
+    case "$(uname -s 2>/dev/null)" in
+        Darwin)
+            PATCHMON_OS="darwin"
+            ;;
+        FreeBSD)
+            PATCHMON_OS="freebsd"
+            ;;
+        *)
+            PATCHMON_OS="linux"
+            ;;
+    esac
+fi
 
 # Auto-detect architecture if not explicitly set
 if [ -z "$ARCHITECTURE" ]; then
@@ -471,6 +492,21 @@ elif command -v apk >/dev/null 2>&1; then
     echo ""
     info "Installing curl..."
     install_apk_packages curl
+elif [ "$(uname -s 2>/dev/null)" = "Darwin" ] || [ "$PATCHMON_OS" = "darwin" ]; then
+    # macOS: curl should be available, otherwise attempt Homebrew install
+    info "Detected macOS"
+    echo ""
+    if ! command -v curl >/dev/null 2>&1; then
+        info "curl is not installed. Attempting to install via Homebrew..."
+        if command -v brew >/dev/null 2>&1; then
+            brew install curl || true
+        else
+            warning "curl not found and Homebrew is not installed."
+            warning "Install Homebrew and run: brew install curl"
+        fi
+    else
+        success "curl already installed"
+    fi
 elif [ "$(uname -s 2>/dev/null)" = "FreeBSD" ] || [ "$PATCHMON_OS" = "freebsd" ]; then
     # FreeBSD/pfSense: only curl is required. Skip pkg if curl already present
     # (on pfSense, pkg repos may be unconfigured and "pkg install curl" can fail with "no match")
@@ -867,9 +903,20 @@ EOF
         success "PatchMon Agent service configured"
     fi
     SERVICE_TYPE="rc.d"
+elif [ "$(uname -s 2>/dev/null)" = "Darwin" ] || [ "$PATCHMON_OS" = "darwin" ]; then
+    # macOS: install launchd service using the agent install-service command
+    info "Setting up macOS launchd service..."
+    if /usr/local/bin/patchmon-agent install-service >/dev/null 2>/dev/null; then
+        success "macOS launchd service installed successfully"
+        info "WebSocket connection established"
+    else
+        warning "Could not install launchd service automatically."
+        warning "Run '/usr/local/bin/patchmon-agent install-service' manually on macOS."
+    fi
+    SERVICE_TYPE="launchd"
 else
     # No init system detected, use crontab as fallback
-    warning "No init system detected (systemd, OpenRC, or FreeBSD). Using crontab for service management."
+    warning "No init system detected (systemd, OpenRC, FreeBSD, or macOS). Using crontab for service management."
     
     # Clean up old crontab entries if they exist
     if crontab -l 2>/dev/null | grep -q "patchmon-agent"; then
@@ -904,6 +951,8 @@ elif [ "$SERVICE_TYPE" = "openrc" ]; then
     echo "   • OpenRC service configured and running"
 elif [ "$SERVICE_TYPE" = "rc.d" ]; then
     echo "   • FreeBSD rc.d service configured and running"
+elif [ "$SERVICE_TYPE" = "launchd" ]; then
+    echo "   • macOS launchd service configured and running"
 else
     echo "   • Service configured via crontab"
 fi
@@ -940,6 +989,10 @@ elif [ "$SERVICE_TYPE" = "rc.d" ]; then
     echo "   • Service status: service patchmon_agent status"
     echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.log"
     echo "   • Restart service: service patchmon_agent restart"
+elif [ "$SERVICE_TYPE" = "launchd" ]; then
+    echo "   • Service status: launchctl print system/net.patchmon.patchmon-agent"
+    echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.out.log /etc/patchmon/logs/patchmon-agent.err.log"
+    echo "   • Restart service: launchctl kickstart -k system/net.patchmon.patchmon-agent"
 else
     echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.log"
     echo "   • Restart service: pkill -f 'patchmon-agent serve' && /usr/local/bin/patchmon-agent serve &"

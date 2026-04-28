@@ -239,6 +239,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 		const base = `${serverUrl}/api/v1/hosts/install`;
 		const params = new URLSearchParams();
 		if (host?.expected_platform === "freebsd") params.set("os", "freebsd");
+		if (host?.expected_platform === "darwin" || host?.expected_platform === "macos") params.set("os", "darwin");
 		const installUrl = params.toString() ? `${base}?${params}` : base;
 		const shell_cmd = host?.expected_platform === "freebsd" ? "sh" : "sudo sh";
 		return `curl ${curlFlags} "${installUrl}" -H "X-API-ID: ${host.api_id}" -H "X-API-KEY: ${host.api_key}" | ${shell_cmd}`;

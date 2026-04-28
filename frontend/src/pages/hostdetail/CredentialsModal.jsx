@@ -80,6 +80,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 		const base = `${serverUrl}/api/v1/hosts/install`;
 		const params = new URLSearchParams();
 		if (host?.expected_platform === "freebsd") params.set("os", "freebsd");
+		if (host?.expected_platform === "darwin" || host?.expected_platform === "macos") params.set("os", "darwin");
 		if (host?.expected_platform === "windows" || host?.os_type === "windows")
 			params.set("os", "windows");
 		if (forceInstall && host?.expected_platform !== "windows")

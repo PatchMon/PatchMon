@@ -664,6 +664,73 @@ rm -f "$0"
 	}
 
 	// Detect init system and use appropriate restart command
+	if runtime.GOOS == "darwin" {
+		logger.Debug("Detected macOS, scheduling launchd service restart via helper script")
+
+		if err := os.MkdirAll("/etc/patchmon", 0700); err != nil {
+			logger.WithError(err).Warn("Failed to create /etc/patchmon directory, will try anyway")
+		}
+
+		helperScript := `#!/bin/sh
+# Wait a moment for the current process to exit
+sleep 2
+if launchctl print system/net.patchmon.patchmon-agent >/dev/null 2>&1; then
+    launchctl kickstart -k system/net.patchmon.patchmon-agent 2>&1
+elif [ -f "/Library/LaunchDaemons/net.patchmon.patchmon-agent.plist" ]; then
+    launchctl bootstrap system /Library/LaunchDaemons/net.patchmon.patchmon-agent.plist 2>&1 || true
+    launchctl kickstart -k system/net.patchmon.patchmon-agent 2>&1
+fi
+rm -f "$0"
+`
+
+		randomBytes := make([]byte, 8)
+		if _, err := rand.Read(randomBytes); err != nil {
+			randomBytes = []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
+		}
+		helperPath := filepath.Join("/etc/patchmon", fmt.Sprintf("restart-%s.sh", hex.EncodeToString(randomBytes)))
+		dirInfo, err := os.Lstat("/etc/patchmon")
+		if err == nil && dirInfo.Mode()&os.ModeSymlink != 0 {
+			logger.Warn("Security: /etc/patchmon is a symlink, refusing to create helper script")
+			os.Exit(0)
+		}
+
+		file, err := os.OpenFile(helperPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
+		if err != nil {
+			logger.WithError(err).Warn("Failed to create restart helper script, exiting to let launchd manage restart")
+			os.Exit(0)
+		}
+		if _, err := file.WriteString(helperScript); err != nil {
+			_ = file.Close()
+			_ = os.Remove(helperPath)
+			os.Exit(0)
+		}
+		_ = file.Close()
+		fileInfo, err := os.Lstat(helperPath)
+		if err != nil || fileInfo.Mode()&os.ModeSymlink != 0 {
+			_ = os.Remove(helperPath)
+			os.Exit(0)
+		}
+
+		var cmd *exec.Cmd
+		if _, nohupErr := exec.LookPath("nohup"); nohupErr == nil {
+			cmd = exec.Command("nohup", helperPath)
+		} else {
+			cmd = exec.Command("/bin/sh", helperPath)
+		}
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		cmd.SysProcAttr = sysProcAttrForDetach()
+		if err := cmd.Start(); err != nil {
+			_ = os.Remove(helperPath)
+			logger.WithError(err).Warn("Failed to start launchd restart helper, exiting to let launchd manage restart")
+			os.Exit(0)
+		}
+		logger.Info("Scheduled launchd service restart via helper script, exiting now...")
+		time.Sleep(500 * time.Millisecond)
+		os.Exit(0)
+		return nil
+	}
+
 	if _, err := exec.LookPath("systemctl"); err == nil {
 		// Systemd is available
 		// Since we're running inside the service, we can't stop ourselves directly

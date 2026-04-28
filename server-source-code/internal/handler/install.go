@@ -142,7 +142,7 @@ func (h *InstallHandler) ServeInstall(w http.ResponseWriter, r *http.Request) {
 		architecture = ""
 	}
 	osParam := r.URL.Query().Get("os")
-	if osParam != "linux" && osParam != "freebsd" && osParam != "windows" {
+	if osParam != "linux" && osParam != "freebsd" && osParam != "windows" && osParam != "darwin" {
 		osParam = "linux"
 	}
 
@@ -537,6 +537,8 @@ func (h *InstallHandler) ServeAgentVersion(w http.ResponseWriter, r *http.Reques
 			osParam = "windows"
 		} else if strings.Contains(ep, "freebsd") || strings.Contains(ep, "pfsense") {
 			osParam = "freebsd"
+		} else if ep == "darwin" || strings.Contains(ep, "mac") {
+			osParam = "darwin"
 		} else {
 			osParam = "linux"
 		}
@@ -547,6 +549,8 @@ func (h *InstallHandler) ServeAgentVersion(w http.ResponseWriter, r *http.Reques
 			osParam = "windows"
 		} else if strings.Contains(reported, "freebsd") || strings.Contains(reported, "pfsense") {
 			osParam = "freebsd"
+		} else if strings.Contains(reported, "darwin") || strings.Contains(reported, "mac") {
+			osParam = "darwin"
 		} else {
 			osParam = "linux"
 		}
@@ -555,9 +559,9 @@ func (h *InstallHandler) ServeAgentVersion(w http.ResponseWriter, r *http.Reques
 		osParam = "linux"
 	}
 
-	validOss := map[string]bool{"linux": true, "freebsd": true, "windows": true}
+	validOss := map[string]bool{"linux": true, "freebsd": true, "windows": true, "darwin": true}
 	if !validOss[osParam] {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid os. Must be one of: linux, freebsd, windows"})
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid os. Must be one of: linux, freebsd, windows, darwin"})
 		return
 	}
 
@@ -721,6 +725,8 @@ func (h *InstallHandler) ServeAgentDownload(w http.ResponseWriter, r *http.Reque
 			osParam = "windows"
 		} else if strings.Contains(ep, "freebsd") || strings.Contains(ep, "pfsense") {
 			osParam = "freebsd"
+		} else if ep == "darwin" || strings.Contains(ep, "mac") {
+			osParam = "darwin"
 		} else {
 			osParam = "linux"
 		}
@@ -731,6 +737,8 @@ func (h *InstallHandler) ServeAgentDownload(w http.ResponseWriter, r *http.Reque
 			osParam = "windows"
 		} else if strings.Contains(reported, "freebsd") || strings.Contains(reported, "pfsense") {
 			osParam = "freebsd"
+		} else if strings.Contains(reported, "darwin") || strings.Contains(reported, "mac") {
+			osParam = "darwin"
 		} else {
 			osParam = "linux"
 		}
@@ -739,9 +747,9 @@ func (h *InstallHandler) ServeAgentDownload(w http.ResponseWriter, r *http.Reque
 		osParam = "linux"
 	}
 
-	validOss := map[string]bool{"linux": true, "freebsd": true, "windows": true}
+	validOss := map[string]bool{"linux": true, "freebsd": true, "windows": true, "darwin": true}
 	if !validOss[osParam] {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid os. Must be one of: linux, freebsd, windows"})
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid os. Must be one of: linux, freebsd, windows, darwin"})
 		return
 	}
 

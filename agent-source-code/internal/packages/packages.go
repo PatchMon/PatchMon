@@ -68,6 +68,10 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 		return m.pacmanManager.GetPackages()
 	case "pkg":
 		return m.freebsdManager.GetPackages()
+	case "brew":
+		return CollectPackages()
+	case "darwin":
+		return CollectDarwinPackages()
 	default:
 		return nil, fmt.Errorf("unsupported package manager: %s", packageManager)
 	}
@@ -122,6 +126,14 @@ func (m *Manager) DetectPackageManager() string {
 	// Check for Pacman
 	if _, err := exec.LookPath("pacman"); err == nil {
 		return "pacman"
+	}
+
+	// Check for Homebrew on macOS
+	if runtime.GOOS == "darwin" {
+		if _, err := exec.LookPath("brew"); err == nil {
+			return "brew"
+		}
+		return "darwin"
 	}
 
 	return "unknown"

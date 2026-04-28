@@ -21,6 +21,11 @@ func (d *Detector) CheckRebootRequired() (bool, string) {
 		return d.checkWindowsRebootRequired()
 	}
 
+	// macOS: use softwareupdate output to infer whether a restart is required
+	if runtime.GOOS == "darwin" {
+		return d.checkDarwinRebootRequired()
+	}
+
 	runningKernel := d.getRunningKernel()
 	latestKernel := d.getLatestInstalledKernel()
 
