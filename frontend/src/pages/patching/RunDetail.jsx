@@ -370,7 +370,10 @@ const RunDetail = () => {
 		if (type === "delayed" && snap.delay_minutes != null)
 			return `Delayed by ${snap.delay_minutes} min after trigger`;
 		if (type === "fixed_time" && snap.fixed_time_utc) {
-			const tz = snap.timezone || "UTC";
+			// Prefer schedule_timezone (the IANA zone actually used to compute
+			// run_at at schedule time) so audit views are immune to later
+			// changes in org settings or the legacy per-policy timezone field.
+			const tz = snap.schedule_timezone || snap.timezone || "UTC";
 			return `Fixed time: ${snap.fixed_time_utc} (${tz})`;
 		}
 		return type || null;

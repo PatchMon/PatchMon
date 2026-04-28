@@ -43,10 +43,10 @@ import {
 	PatchRunsByType,
 } from "../components/patching/widgets";
 import TierBadge from "../components/TierBadge";
-import { TimezoneSelect } from "../components/TimezoneSelect";
 import UpgradeRequiredContent from "../components/UpgradeRequiredContent";
 import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
+import { useSettings } from "../contexts/SettingsContext";
 import { useToast } from "../contexts/ToastContext";
 import { adminHostsAPI, formatDate, hostGroupsAPI } from "../utils/api";
 import { patchingAPI } from "../utils/patchingApi";
@@ -1327,6 +1327,8 @@ const delay_type_labels = {
 function PoliciesTab() {
 	const queryClient = useQueryClient();
 	const toast = useToast();
+	const { settings } = useSettings();
+	const orgTimezone = settings?.timezone || "UTC";
 	const [showModal, setShowModal] = useState(false);
 	const [editingPolicy, setEditingPolicy] = useState(null);
 	const [form, setForm] = useState({
@@ -1335,7 +1337,6 @@ function PoliciesTab() {
 		patch_delay_type: "immediate",
 		delay_minutes: 60,
 		fixed_time_utc: "03:00",
-		timezone: "UTC",
 	});
 	const [expandedPolicyId, setExpandedPolicyId] = useState(null);
 
@@ -1393,7 +1394,6 @@ function PoliciesTab() {
 			patch_delay_type: "immediate",
 			delay_minutes: 60,
 			fixed_time_utc: "03:00",
-			timezone: "UTC",
 		});
 
 	const openCreate = () => {
@@ -1410,7 +1410,6 @@ function PoliciesTab() {
 			patch_delay_type: policy.patch_delay_type || "immediate",
 			delay_minutes: policy.delay_minutes ?? 60,
 			fixed_time_utc: policy.fixed_time_utc || "03:00",
-			timezone: policy.timezone || "UTC",
 		});
 		setShowModal(true);
 	};
@@ -1425,7 +1424,6 @@ function PoliciesTab() {
 				form.patch_delay_type === "delayed" ? Number(form.delay_minutes) : null,
 			fixed_time_utc:
 				form.patch_delay_type === "fixed_time" ? form.fixed_time_utc : null,
-			timezone: form.timezone?.trim() || null,
 		};
 		if (editingPolicy) {
 			updateMutation.mutate({ id: editingPolicy.id, data: payload });
@@ -1441,7 +1439,7 @@ function PoliciesTab() {
 			return `${label} (${policy.delay_minutes} min)`;
 		}
 		if (policy.patch_delay_type === "fixed_time" && policy.fixed_time_utc) {
-			return `${label} at ${policy.fixed_time_utc} ${policy.timezone || "UTC"}`;
+			return `${label} at ${policy.fixed_time_utc} (${orgTimezone})`;
 		}
 		return label;
 	};
@@ -1676,39 +1674,28 @@ function PoliciesTab() {
 								</div>
 							)}
 							{form.patch_delay_type === "fixed_time" && (
-								<>
-									<div>
-										<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
-											Time (HH:MM)
-										</label>
-										<input
-											type="text"
-											placeholder="03:00"
-											value={form.fixed_time_utc}
-											onChange={(e) =>
-												setForm((f) => ({
-													...f,
-													fixed_time_utc: e.target.value,
-												}))
-											}
-											className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
-										/>
-									</div>
-									<div>
-										<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
-											Timezone
-										</label>
-										<TimezoneSelect
-											value={form.timezone}
-											onChange={(e) =>
-												setForm((f) => ({
-													...f,
-													timezone: e.target.value,
-												}))
-											}
-										/>
-									</div>
-								</>
+								<div>
+									<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+										Time (HH:MM)
+									</label>
+									<input
+										type="text"
+										placeholder="03:00"
+										value={form.fixed_time_utc}
+										onChange={(e) =>
+											setForm((f) => ({
+												...f,
+												fixed_time_utc: e.target.value,
+											}))
+										}
+										className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
+									/>
+									<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+										Local time in the organization timezone (
+										<span className="font-medium">{orgTimezone}</span>). Change
+										it under Settings &rarr; General.
+									</p>
+								</div>
 							)}
 							<div className="flex justify-end gap-2 pt-2">
 								<button

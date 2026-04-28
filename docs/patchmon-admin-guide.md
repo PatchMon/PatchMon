@@ -1444,7 +1444,7 @@ Each policy has a **delay type**:
 
 - **Immediate**: run as soon as the task is dequeued.
 - **Delayed**: wait N minutes after the trigger before running (useful for "give me 30 minutes to change my mind").
-- **Fixed time**: run at a specific wall-clock time (`HH:MM` in a named timezone, e.g. `03:00` in `Europe/London`). Used for maintenance windows.
+- **Fixed time**: run at a specific wall-clock time (`HH:MM`) interpreted as local time in the **organization timezone** (Settings → General → Timezone). Used for maintenance windows.
 
 Policies are assigned to **hosts** or **host groups**. You can also add per-host **exclusions** to carve specific hosts out of a group-assigned policy. See [Patch Policies and Scheduling](#patch-policies-and-scheduling) for full details.
 
@@ -1789,8 +1789,8 @@ Each policy has the following fields:
 | `description` | string, optional | Free-text description. |
 | `patch_delay_type` | enum, required | `immediate`, `delayed`, or `fixed_time`. |
 | `delay_minutes` | integer, required when `delayed` | Minutes to wait after the trigger before running. |
-| `fixed_time_utc` | string, required when `fixed_time` | Time of day in `HH:MM` format. **See the timezone note below.** |
-| `timezone` | string, optional | IANA timezone name (e.g. `Europe/London`, `America/New_York`). Used in the UI label only. |
+| `fixed_time_utc` | string, required when `fixed_time` | Time of day in `HH:MM` (or `HH:MM:SS`) format. Interpreted as local wall-clock time in the resolved organization timezone. The column name is retained for backward compatibility — see the timezone note below. |
+| `timezone` | string, deprecated | Legacy IANA timezone field. **No longer read by the scheduler** and ignored on create/update. Persisted as `NULL` going forward. Existing values on old rows are kept for audit purposes only. |
 
 #### The three delay types
 
@@ -1798,21 +1798,24 @@ Each policy has the following fields:
 
 **Delayed.** The run is scheduled for `now + delay_minutes` at the moment it is triggered. Typical values are 30-60 minutes, enough time for an operator to cancel if the trigger was a mistake, but short enough that the patch still lands in the current shift. The delay is counted from the trigger time (or approval time, for `patch_package`), not from policy creation.
 
-**Fixed time.** The run is scheduled for the next occurrence of `HH:MM`. If `HH:MM` has already passed today, the run is scheduled for `HH:MM` tomorrow. Use for maintenance windows (`03:00` daily reboots, for example). Delays can be long: a run triggered at 14:00 for a 03:00 fixed-time policy will sit in `scheduled` status for 13 hours.
+**Fixed time.** The run is scheduled for the next occurrence of `HH:MM` interpreted as local time in the organization timezone. If that time has already passed today (in the local zone), the run is scheduled for the same time on the next local calendar day. Use for maintenance windows (`03:00` daily reboots, for example). Delays can be long: a run triggered at 14:00 for a 03:00 fixed-time policy will sit in `scheduled` status until the next 03:00 local.
 
-#### Timezone handling (important)
+#### Timezone handling
 
-The `fixed_time_utc` column is literally interpreted as **UTC** by the server when computing the next run time. The `timezone` field on the policy is stored and shown in the UI label (`Fixed time at 03:00 Europe/London`), but the scheduler does not apply it. `03:00` always means `03:00 UTC`.
+Fixed-time policies fire at the configured `HH:MM` interpreted as **local wall-clock time** in the **organization timezone**. The org timezone is resolved in this order:
 
-This is a known wrinkle:
+1. `TZ` environment variable on the server process.
+2. `TIMEZONE` environment variable on the server process.
+3. **Settings → General → Timezone** (stored in the DB).
+4. Final fallback: `UTC`.
 
-- The database column is named `fixed_time_utc`, which is the source of truth.
-- The UI builds the "at 03:00 Europe/London" display string from `fixed_time_utc + timezone` purely for labelling.
-- `ComputeRunAt` parses `fixed_time_utc` into a UTC wall-clock time and ignores the stored `timezone`.
+The policy form shows the resolved zone next to the time input so operators can confirm which zone applies before saving. There is no per-policy timezone dropdown — scheduling is governed by a single org-wide timezone for consistency.
 
-**Practical advice:** enter the fixed time as the UTC equivalent of your intended local time and use the timezone field purely as a reminder to yourself. A `03:00 Europe/London` maintenance window in winter (GMT) should be stored as `fixed_time_utc=03:00`; in summer (BST) you would want `02:00`. If you need true local-time scheduling that follows DST, plan patch runs with a `delayed` policy triggered by an external scheduler instead.
+**DST.** During spring-forward, a policy time inside the missing hour is normalized one hour forward (e.g. `02:30` on the EU spring transition day fires at `03:30` local on that day). During fall-back, when a wall-clock time occurs twice, the standard-time (post-shift) occurrence is used. Review fixed-time policies in DST zones if a one-day shift on transition days would affect a maintenance window.
 
-> **Note:** This may change in a future release. Verify the current behaviour in your deployment by triggering a test run and checking the `scheduled_at` timestamp on the run before relying on timezone-aware semantics.
+**Column name.** The DB column is still called `fixed_time_utc` for backward compatibility, but its contents are now local wall-clock time in the resolved timezone — not UTC. Renaming would require a multi-step migration; the name is preserved to avoid churn.
+
+> **Breaking change in this release.** Earlier versions parsed `fixed_time_utc` as a literal UTC time and ignored the per-policy timezone dropdown. Existing fixed-time policies created under the old behavior will now fire at a different absolute instant — review and adjust them after upgrade. The per-policy `timezone` field on the API is silently ignored on create/update going forward.
 
 ---
 
@@ -1826,8 +1829,8 @@ This is a known wrinkle:
     - **Patch delay**: `Immediate`, `Delayed (run after N minutes)`, or `Fixed time (e.g. 3:00 AM)`.
 4. If you picked **Delayed**, enter the number of minutes (minimum 1).
 5. If you picked **Fixed time**:
-    - Enter the time in `HH:MM` format. Remember this is interpreted as UTC.
-    - Pick a timezone from the dropdown. This only changes the label; see the timezone note above.
+    - Enter the time in `HH:MM` format. The form displays the organization timezone next to the field; the time is interpreted as local wall-clock time in that zone (see the timezone handling note above).
+    - There is no per-policy timezone dropdown. Change the org-wide zone under **Settings → General → Timezone** if you need a different default for scheduling.
 6. Click **Create**. The policy appears in the list with `0 assignment(s)`.
 
 Policies are empty until you assign them. A newly-created policy is inert and does not automatically apply to any host.
@@ -1881,11 +1884,13 @@ If a host is in multiple groups with conflicting policies, the oldest policy ass
 
 #### Checking the effective policy
 
-Before triggering a run, the Patch Wizard's Timing step calls `GET /patching/preview-run?host_id=<id>` for each selected host. The response contains the `run_at_iso` time (what `ComputeRunAt` returns *right now*) and the resolved policy's name, ID, and delay type. That's how the wizard tells you "Runs at 03:00 UTC via Nightly-Window" before you click fire.
+Before triggering a run, the Patch Wizard's Timing step calls `GET /patching/preview-run?host_id=<id>` for each selected host. The response contains the `run_at_iso` time (what `ComputeRunAt` returns *right now*, computed in the org timezone for fixed-time policies) and the resolved policy's name, ID, and delay type. That's how the wizard tells you "Runs at 03:00 (Europe/London) via Nightly-Window" before you click fire.
 
 #### The policy snapshot
 
 When a run is created, the server also takes a **snapshot** of the effective policy onto the run row (`policy_snapshot` JSON). The snapshot is what the Run Detail page displays, and it is immutable; changing or deleting the policy later does not rewrite the snapshot. This is important for audit: "which policy was in effect when this run fired on 12 March?" always has an answer, even if the policy has since been deleted.
+
+For fixed-time policies the snapshot also records `schedule_timezone`: the IANA name actually resolved when `run_at` was computed. Run Detail prefers this field when displaying the schedule, so changing the org timezone after the fact does not retroactively rewrite the audit trail.
 
 ---
 
@@ -1897,7 +1902,7 @@ Once the effective policy is resolved, the server converts it into an asynq job 
 |---|---|---|
 | `immediate` | `0` | `queued` immediately |
 | `delayed` | `delay_minutes × 60 × 1000` | `scheduled` for `run_at = now + delay_minutes` |
-| `fixed_time` | ms until next `HH:MM UTC` | `scheduled` for `run_at = next HH:MM UTC` |
+| `fixed_time` | ms until next `HH:MM` in the org timezone | `scheduled` for `run_at = next HH:MM` (local in the org zone, stored as UTC) |
 
 The `patch_runs` row stores both `created_at` (when the run was inserted) and `scheduled_at` (when asynq should release it to the worker). The Runs & History table shows `scheduled_at` as "Started" time if the run has not yet started.
 

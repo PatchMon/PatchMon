@@ -4,6 +4,9 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
+
+	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 )
 
 func TestParsePackagesAffectedFromDryRunOutput(t *testing.T) {
@@ -238,4 +241,259 @@ func TestIsFreeBSD(t *testing.T) {
 			t.Errorf("isFreeBSD(%q) = %v, want %v", c.osType, got, c.want)
 		}
 	}
+}
+
+func TestParseHHMM(t *testing.T) {
+	cases := []struct {
+		in      string
+		wantH   int
+		wantM   int
+		wantS   int
+		wantErr bool
+	}{
+		{"15:00", 15, 0, 0, false},
+		{"01:30:45", 1, 30, 45, false},
+		{" 09:05 ", 9, 5, 0, false},
+		{"00:00", 0, 0, 0, false},
+		{"23:59:59", 23, 59, 59, false},
+		{"", 0, 0, 0, true},
+		{"abc", 0, 0, 0, true},
+		{"25:00", 0, 0, 0, true},
+		{"12:60", 0, 0, 0, true},
+		{"12:30:60", 0, 0, 0, true},
+		{"12", 0, 0, 0, true},
+		{"1:2:3:4", 0, 0, 0, true},
+		{"-1:00", 0, 0, 0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			h, m, s, err := ParseHHMM(c.in)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("ParseHHMM(%q) = (%d,%d,%d, nil), want error", c.in, h, m, s)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseHHMM(%q) unexpected error: %v", c.in, err)
+			}
+			if h != c.wantH || m != c.wantM || s != c.wantS {
+				t.Errorf("ParseHHMM(%q) = (%d,%d,%d), want (%d,%d,%d)", c.in, h, m, s, c.wantH, c.wantM, c.wantS)
+			}
+		})
+	}
+}
+
+func TestNextFixedWallClockUTC(t *testing.T) {
+	mustLoad := func(name string) *time.Location {
+		loc, err := time.LoadLocation(name)
+		if err != nil {
+			t.Fatalf("LoadLocation(%q): %v", name, err)
+		}
+		return loc
+	}
+	berlin := mustLoad("Europe/Berlin")
+
+	cases := []struct {
+		name    string
+		now     time.Time
+		hhmm    string
+		loc     *time.Location
+		wantUTC time.Time
+		wantErr bool
+	}{
+		{
+			name:    "same-day-future-utc",
+			now:     time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC),
+			hhmm:    "15:00",
+			loc:     time.UTC,
+			wantUTC: time.Date(2025, 6, 1, 15, 0, 0, 0, time.UTC),
+		},
+		{
+			name:    "same-day-past-rolls-tomorrow",
+			now:     time.Date(2025, 6, 1, 18, 0, 0, 0, time.UTC),
+			hhmm:    "15:00",
+			loc:     time.UTC,
+			wantUTC: time.Date(2025, 6, 2, 15, 0, 0, 0, time.UTC),
+		},
+		{
+			// Berlin in summer is UTC+2 (CEST). 14:00 Berlin = 12:00 UTC.
+			name:    "berlin-summer-future",
+			now:     time.Date(2025, 7, 15, 10, 0, 0, 0, time.UTC),
+			hhmm:    "14:00",
+			loc:     berlin,
+			wantUTC: time.Date(2025, 7, 15, 12, 0, 0, 0, time.UTC),
+		},
+		{
+			// Berlin in winter is UTC+1 (CET). It is 23:00 UTC = 00:00 Berlin
+			// next day, so policy 01:00 Berlin should fire at 00:00 UTC the
+			// same Berlin day (which is 16 Jan in UTC because the local day
+			// already rolled over).
+			name:    "berlin-winter-rollover",
+			now:     time.Date(2025, 1, 15, 23, 0, 0, 0, time.UTC),
+			hhmm:    "01:00",
+			loc:     berlin,
+			wantUTC: time.Date(2025, 1, 16, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			// Spring-forward: 02:30 local does not exist on the transition
+			// day in Europe/Berlin (clock jumps 02:00 -> 03:00). Go's
+			// time.Date normalises forward, so 02:30 local becomes 03:30
+			// local, which is 01:30 UTC.
+			name:    "dst-spring-forward-gap",
+			now:     time.Date(2025, 3, 30, 0, 30, 0, 0, time.UTC),
+			hhmm:    "02:30",
+			loc:     berlin,
+			wantUTC: time.Date(2025, 3, 30, 1, 30, 0, 0, time.UTC),
+		},
+		{
+			// Fall-back: 02:30 local occurs twice on the transition day in
+			// Europe/Berlin. Go's time.Date selects the standard-time (CET,
+			// post-shift) occurrence at 01:30 UTC.
+			name:    "dst-fall-back-overlap",
+			now:     time.Date(2025, 10, 26, 0, 0, 0, 0, time.UTC),
+			hhmm:    "02:30",
+			loc:     berlin,
+			wantUTC: time.Date(2025, 10, 26, 1, 30, 0, 0, time.UTC),
+		},
+		{
+			name:    "hh-mm-ss-format",
+			now:     time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC),
+			hhmm:    "15:00:30",
+			loc:     time.UTC,
+			wantUTC: time.Date(2025, 6, 1, 15, 0, 30, 0, time.UTC),
+		},
+		{
+			name:    "nil-loc-falls-back-to-utc",
+			now:     time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC),
+			hhmm:    "15:00",
+			loc:     nil,
+			wantUTC: time.Date(2025, 6, 1, 15, 0, 0, 0, time.UTC),
+		},
+		{name: "invalid-malformed", now: time.Now(), hhmm: "abc", loc: time.UTC, wantErr: true},
+		{name: "invalid-out-of-range-hour", now: time.Now(), hhmm: "25:00", loc: time.UTC, wantErr: true},
+		{name: "invalid-empty", now: time.Now(), hhmm: "", loc: time.UTC, wantErr: true},
+		{name: "invalid-too-many-parts", now: time.Now(), hhmm: "1:2:3:4", loc: time.UTC, wantErr: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := nextFixedWallClockUTC(c.now, c.hhmm, c.loc)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("nextFixedWallClockUTC: want error, got %v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("nextFixedWallClockUTC: unexpected error: %v", err)
+			}
+			if !got.Equal(c.wantUTC) {
+				t.Errorf("nextFixedWallClockUTC: got %s, want %s", got.UTC().Format(time.RFC3339), c.wantUTC.Format(time.RFC3339))
+			}
+			if !got.After(c.now) && !got.Equal(c.now) {
+				t.Errorf("nextFixedWallClockUTC: got %s should be >= now %s", got.Format(time.RFC3339), c.now.Format(time.RFC3339))
+			}
+		})
+	}
+}
+
+func TestComputeRunAtWithMeta(t *testing.T) {
+	st := &PatchPoliciesStore{}
+
+	t.Run("nil-policy-returns-immediate", func(t *testing.T) {
+		got, meta := st.ComputeRunAtWithMeta(nil, "Europe/Berlin")
+		if time.Since(got) > time.Second {
+			t.Errorf("nil policy should return now-ish, got %s", got)
+		}
+		if meta.Source != "n/a" {
+			t.Errorf("nil policy meta.Source = %q, want n/a", meta.Source)
+		}
+	})
+
+	t.Run("immediate-policy-ignores-tz", func(t *testing.T) {
+		policy := &db.PatchPolicy{PatchDelayType: "immediate"}
+		_, meta := st.ComputeRunAtWithMeta(policy, "Europe/Berlin")
+		if meta.Source != "n/a" {
+			t.Errorf("immediate policy meta.Source = %q, want n/a", meta.Source)
+		}
+	})
+
+	t.Run("delayed-policy-adds-minutes", func(t *testing.T) {
+		mins := int32(10)
+		policy := &db.PatchPolicy{PatchDelayType: "delayed", DelayMinutes: &mins}
+		got, meta := st.ComputeRunAtWithMeta(policy, "Europe/Berlin")
+		if meta.Source != "n/a" {
+			t.Errorf("delayed policy meta.Source = %q, want n/a", meta.Source)
+		}
+		// Allow a generous skew (CI scheduling jitter).
+		if got.Before(time.Now().Add(9*time.Minute)) || got.After(time.Now().Add(11*time.Minute)) {
+			t.Errorf("delayed policy returned %s, expected ~10 minutes from now", got)
+		}
+	})
+
+	t.Run("fixed-time-uses-org-tz", func(t *testing.T) {
+		hhmm := "02:00"
+		policy := &db.PatchPolicy{PatchDelayType: "fixed_time", FixedTimeUtc: &hhmm}
+		got, meta := st.ComputeRunAtWithMeta(policy, "Europe/Berlin")
+		if meta.Source != "org" {
+			t.Errorf("fixed_time policy meta.Source = %q, want org", meta.Source)
+		}
+		if meta.Timezone != "Europe/Berlin" {
+			t.Errorf("fixed_time policy meta.Timezone = %q, want Europe/Berlin", meta.Timezone)
+		}
+		if !got.After(time.Now()) {
+			t.Errorf("fixed_time policy result %s should be in the future", got)
+		}
+		if time.Until(got) > 25*time.Hour {
+			t.Errorf("fixed_time policy result %s too far in the future", got)
+		}
+	})
+
+	t.Run("fixed-time-invalid-org-tz-falls-back-to-utc", func(t *testing.T) {
+		hhmm := "02:00"
+		policy := &db.PatchPolicy{PatchDelayType: "fixed_time", FixedTimeUtc: &hhmm}
+		_, meta := st.ComputeRunAtWithMeta(policy, "Not/A/Real/Zone")
+		if meta.Source != "utc-fallback" {
+			t.Errorf("invalid org tz meta.Source = %q, want utc-fallback", meta.Source)
+		}
+		if meta.Timezone != "UTC" {
+			t.Errorf("invalid org tz meta.Timezone = %q, want UTC", meta.Timezone)
+		}
+	})
+
+	t.Run("fixed-time-empty-org-tz-falls-back-to-utc", func(t *testing.T) {
+		hhmm := "02:00"
+		policy := &db.PatchPolicy{PatchDelayType: "fixed_time", FixedTimeUtc: &hhmm}
+		_, meta := st.ComputeRunAtWithMeta(policy, "")
+		if meta.Source != "utc-fallback" {
+			t.Errorf("empty org tz meta.Source = %q, want utc-fallback", meta.Source)
+		}
+	})
+
+	t.Run("fixed-time-malformed-returns-immediate", func(t *testing.T) {
+		hhmm := "abc"
+		policy := &db.PatchPolicy{PatchDelayType: "fixed_time", FixedTimeUtc: &hhmm}
+		got, meta := st.ComputeRunAtWithMeta(policy, "Europe/Berlin")
+		if meta.Err == nil {
+			t.Errorf("malformed fixed_time should set meta.Err")
+		}
+		if time.Since(got) > time.Second {
+			t.Errorf("malformed fixed_time should fall back to now-ish, got %s", got)
+		}
+	})
+
+	t.Run("policy-timezone-column-is-ignored", func(t *testing.T) {
+		hhmm := "02:00"
+		nyc := "America/New_York"
+		policy := &db.PatchPolicy{
+			PatchDelayType: "fixed_time",
+			FixedTimeUtc:   &hhmm,
+			Timezone:       &nyc, // legacy column - must NOT win over org tz
+		}
+		_, meta := st.ComputeRunAtWithMeta(policy, "Europe/Berlin")
+		if meta.Timezone != "Europe/Berlin" {
+			t.Errorf("legacy policy.Timezone leaked into scheduler; meta.Timezone = %q, want Europe/Berlin", meta.Timezone)
+		}
+	})
 }
