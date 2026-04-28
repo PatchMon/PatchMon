@@ -1,16 +1,16 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 // ExtractIPFromInterface extracts the first inet (IPv4) address from the named interface in networkInterfaces JSON.
@@ -128,6 +128,37 @@ type ProcessReportResult struct {
 	SecurityUpdates   int
 }
 
+// sortReportInputs sorts payload.Packages and payload.Repositories in-place
+// using the same key order the SQL bulk-upsert paths use. Concurrent host
+// reports against the shared `packages` and `repositories` tables therefore
+// acquire row-locks in the same order, eliminating the 40P01 deadlocks
+// observed in production at 100+ hosts.
+//
+// Mutation is in-place. Note that ProcessReport is wrapped in
+// database.WithRetry at the handler layer, so on a 40P01 / 40001 retry this
+// function may be called multiple times with the same payload pointer. That
+// is safe and intentional: re-sorting an already-sorted slice is an O(n)
+// no-op for slices.SortStableFunc, and dedupePackagesByName below is also
+// idempotent. Callers therefore do not need to copy the payload between
+// retries.
+func sortReportInputs(payload *ReportPayload) {
+	// Packages: sort by name (UNIQUE column on packages table).
+	slices.SortStableFunc(payload.Packages, func(a, b ReportPackage) int {
+		return cmp.Compare(a.Name, b.Name)
+	})
+	// Repositories: sort by the natural uniqueness tuple
+	// (URL, Distribution, Components) — even though there is no DB-level
+	// UNIQUE constraint, this is what GetRepositoryByURLDistComponents
+	// looks up, so it is the relevant lock-acquisition key.
+	slices.SortStableFunc(payload.Repositories, func(a, b ReportRepository) int {
+		return cmp.Or(
+			cmp.Compare(a.URL, b.URL),
+			cmp.Compare(a.Distribution, b.Distribution),
+			cmp.Compare(a.Components, b.Components),
+		)
+	})
+}
+
 // ProcessReport processes an agent report: updates host, replaces packages, records history.
 func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload *ReportPayload) (*ProcessReportResult, error) {
 	d := s.db.DB(ctx)
@@ -139,6 +170,38 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 		}
 		if p.IsSecurityUpdate {
 			securityCount++
+		}
+	}
+
+	// Deterministic ordering eliminates cross-transaction lock-order
+	// inversion that caused 40P01 deadlocks. See sortReportInputs.
+	sortReportInputs(payload)
+
+	// Postgres `ON CONFLICT ... DO UPDATE` cannot affect the same row twice
+	// in one statement (cardinality_violation 21000). Agents in the wild
+	// occasionally send duplicate package names — for example a malformed
+	// dpkg/rpm cache or a race between two manager invocations on the host.
+	// Deduplicate defensively before BulkUpsertPackages so a single noisy
+	// agent cannot 21000 the entire report.
+	//
+	// Last-writer-wins matches the downstream COALESCE(EXCLUDED.x, packages.x)
+	// semantics already applied per-column in BulkUpsertPackages: if a
+	// duplicate carries a non-empty value the latter occurrence sets it.
+	// The slice is already sorted by name, so we walk in that order and keep
+	// the LAST occurrence of each name.
+	if len(payload.Packages) > 1 {
+		seen := make(map[string]int, len(payload.Packages))
+		for i, p := range payload.Packages {
+			seen[p.Name] = i // last wins
+		}
+		if len(seen) != len(payload.Packages) {
+			deduped := make([]ReportPackage, 0, len(seen))
+			for i, p := range payload.Packages {
+				if seen[p.Name] == i {
+					deduped = append(deduped, p)
+				}
+			}
+			payload.Packages = deduped
 		}
 	}
 
@@ -283,7 +346,7 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 			return nil, fmt.Errorf("DeleteHostRepositoriesByHostID: %w", err)
 		}
 
-		// Deduplicate by url|distribution|components
+		// Deduplicate by url|distribution|components.
 		uniqueRepos := make(map[string]ReportRepository)
 		for _, r := range payload.Repositories {
 			key := r.URL + "|" + r.Distribution + "|" + r.Components
@@ -291,40 +354,41 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 				uniqueRepos[key] = r
 			}
 		}
+		// Iterate in sorted-key order so concurrent host reports take the
+		// SELECT-then-INSERT path against `repositories` in the same order.
+		// Plain map iteration is randomised in Go and would re-introduce
+		// the lock-order inversion we just fixed for `packages`.
+		repoKeys := make([]string, 0, len(uniqueRepos))
+		for k := range uniqueRepos {
+			repoKeys = append(repoKeys, k)
+		}
+		slices.Sort(repoKeys)
 
-		for _, repoData := range uniqueRepos {
-			repoID := ""
-			existing, err := q.GetRepositoryByURLDistComponents(ctx, db.GetRepositoryByURLDistComponentsParams{
+		for _, repoKey := range repoKeys {
+			repoData := uniqueRepos[repoKey]
+			// UpsertRepository (migration 000040 added the
+			// (url, distribution, components) UNIQUE constraint that makes
+			// this a true upsert) replaces the previous
+			// GetRepositoryByURLDistComponents + InsertRepository
+			// SELECT-then-INSERT. That two-step pattern had a TOCTOU race —
+			// two concurrent reports could both see "no row" and both INSERT,
+			// producing duplicate (url, distribution, components) rows — and
+			// also cost an extra network round-trip per repository.
+			desc := repoData.RepoType + " repository for " + repoData.Distribution
+			repoID, err := q.UpsertRepository(ctx, db.UpsertRepositoryParams{
+				ID:           uuid.New().String(),
+				Name:         repoData.Name,
 				Url:          repoData.URL,
 				Distribution: repoData.Distribution,
 				Components:   repoData.Components,
+				RepoType:     repoData.RepoType,
+				IsActive:     true,
+				IsSecure:     repoData.IsSecure,
+				Priority:     nil,
+				Description:  &desc,
 			})
 			if err != nil {
-				if errors.Is(err, pgx.ErrNoRows) {
-					// Create new repository
-					newID := uuid.New().String()
-					desc := repoData.RepoType + " repository for " + repoData.Distribution
-					_, err = q.InsertRepository(ctx, db.InsertRepositoryParams{
-						ID:           newID,
-						Name:         repoData.Name,
-						Url:          repoData.URL,
-						Distribution: repoData.Distribution,
-						Components:   repoData.Components,
-						RepoType:     repoData.RepoType,
-						IsActive:     true,
-						IsSecure:     repoData.IsSecure,
-						Priority:     nil,
-						Description:  &desc,
-					})
-					if err != nil {
-						return nil, fmt.Errorf("InsertRepository %s: %w", repoData.URL, err)
-					}
-					repoID = newID
-				} else {
-					return nil, fmt.Errorf("GetRepositoryByURLDistComponents: %w", err)
-				}
-			} else {
-				repoID = existing.ID
+				return nil, fmt.Errorf("UpsertRepository %s: %w", repoData.URL, err)
 			}
 
 			// Build lookup maps for package -> repo resolution
@@ -356,83 +420,55 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 		}
 	}
 
-	// Process packages with source repo attribution
-	for _, pkg := range payload.Packages {
-		av := pkg.AvailableVersion
-		desc := &pkg.Description
-		if pkg.Description == "" {
-			desc = nil
-		}
-		cat := (*string)(nil)
-		if pkg.Category != "" {
-			cat = &pkg.Category
-		}
-
-		pkgID, err := q.InsertPackage(ctx, db.InsertPackageParams{
-			ID:            uuid.New().String(),
-			Name:          pkg.Name,
-			Description:   desc,
-			Category:      cat,
-			LatestVersion: av,
-		})
+	// Process packages with source repo attribution.
+	//
+	// Two single round-trips replace what used to be 2*N per-row INSERTs:
+	//   1. BulkUpsertPackages: one INSERT...SELECT...ON CONFLICT against the
+	//      shared `packages` table, returning (id, name) for each input row.
+	//      Names are pre-sorted (above) so concurrent host reports acquire
+	//      row locks in the same order, eliminating 40P01 deadlocks.
+	//   2. BulkInsertHostPackages: one INSERT...SELECT into `host_packages`.
+	//      DeleteHostPackagesByHostID has already cleared this host's rows,
+	//      so no ON CONFLICT path is needed.
+	if len(payload.Packages) > 0 {
+		pkgPayload, err := buildPackageUpsertPayload(payload.Packages)
 		if err != nil {
-			return nil, fmt.Errorf("InsertPackage %q: %w", pkg.Name, err)
+			return nil, fmt.Errorf("build package upsert payload: %w", err)
 		}
+		upserted, err := q.BulkUpsertPackages(ctx, pkgPayload)
+		if err != nil {
+			return nil, fmt.Errorf("BulkUpsertPackages: %w", err)
+		}
+		// Map name -> package ID for host_packages assembly. With the
+		// no-op-skip WHERE on BulkUpsertPackages, RETURNING only emits rows
+		// that actually fired DO UPDATE; the UNION ALL fallback returns
+		// (id, name) for rows whose values were unchanged. Either way we
+		// get exactly one (id, name) pair per distinct input name.
+		// payload.Packages is deduped above so len(upserted) == len(packages).
+		nameToID := make(map[string]string, len(upserted))
+		for _, row := range upserted {
+			nameToID[row.Name] = row.ID
+		}
+		// buildHostPackagesPayload below is the real correctness check: it
+		// errors if any payload.Packages name is missing from nameToID.
 
-		sourceRepoID := resolveSourceRepoID(pkg.SourceRepository, reposByName, reposByURLDistComp, reposByComponent)
-
-		if pkg.WUAGuid != "" {
-			// Windows Update entry - persist WUA-specific metadata
-			var wuaCats []byte
-			if len(pkg.WUACategories) > 0 {
-				wuaCats, _ = json.Marshal(pkg.WUACategories)
-			}
-			optStr := func(s string) *string {
-				if s == "" {
-					return nil
-				}
-				return &s
-			}
-			var revNum *int32
-			if pkg.WUARevisionNumber != 0 {
-				n := pkg.WUARevisionNumber
-				revNum = &n
-			}
-			if err := q.InsertHostPackageWithWUA(ctx, db.InsertHostPackageWithWUAParams{
-				ID:                 uuid.New().String(),
-				HostID:             hostID,
-				PackageID:          pkgID,
-				CurrentVersion:     pkg.CurrentVersion,
-				AvailableVersion:   pkg.AvailableVersion,
-				NeedsUpdate:        pkg.NeedsUpdate,
-				IsSecurityUpdate:   pkg.IsSecurityUpdate,
-				WuaGuid:            optStr(pkg.WUAGuid),
-				WuaKb:              optStr(pkg.WUAKb),
-				WuaSeverity:        optStr(pkg.WUASeverity),
-				WuaCategories:      wuaCats,
-				WuaDescription:     optStr(pkg.Description),
-				WuaSupportUrl:      optStr(pkg.WUASupportURL),
-				WuaRevisionNumber:  revNum,
-				SourceRepositoryID: sourceRepoID,
-			}); err != nil {
-				return nil, fmt.Errorf("InsertHostPackageWithWUA %q: %w", pkg.Name, err)
-			}
-		} else if err := q.InsertHostPackage(ctx, db.InsertHostPackageParams{
-			ID:                 uuid.New().String(),
-			HostID:             hostID,
-			PackageID:          pkgID,
-			CurrentVersion:     pkg.CurrentVersion,
-			AvailableVersion:   pkg.AvailableVersion,
-			NeedsUpdate:        pkg.NeedsUpdate,
-			IsSecurityUpdate:   pkg.IsSecurityUpdate,
-			SourceRepositoryID: sourceRepoID,
-		}); err != nil {
-			return nil, fmt.Errorf("InsertHostPackage %q: %w", pkg.Name, err)
+		hpPayload, err := buildHostPackagesPayload(hostID, payload.Packages, nameToID,
+			reposByName, reposByURLDistComp, reposByComponent)
+		if err != nil {
+			return nil, fmt.Errorf("build host_packages payload: %w", err)
+		}
+		if err := q.BulkInsertHostPackages(ctx, hpPayload); err != nil {
+			return nil, fmt.Errorf("BulkInsertHostPackages: %w", err)
 		}
 	}
 
 	totalPkg := int32(len(payload.Packages))
 	execTime := payload.ExecutionTime
+	// Retry safety: if WithRetry re-runs ProcessReport after a 40P01/40001,
+	// the BeginLong transaction is rolled back so this update_history row
+	// never commits. Each attempt allocates a fresh id and Postgres NOW()
+	// gives a fresh timestamp — exactly one history row will land per
+	// successful commit. That re-allocation per attempt is intentional.
 	if err := q.InsertUpdateHistory(ctx, db.InsertUpdateHistoryParams{
 		ID:            uuid.New().String(),
 		HostID:        hostID,
@@ -494,4 +530,130 @@ func resolveSourceRepoID(sourceRepo string, reposByName, reposByURLDistComp, rep
 	}
 
 	return nil
+}
+
+// packageUpsertRow is the shape consumed by BulkUpsertPackages.
+// Fields use omitempty so the JSON encoder emits `null` (not "") when the
+// agent omits a value, which jsonb_to_recordset maps to SQL NULL — letting
+// the COALESCE in the ON CONFLICT clause preserve the existing column value.
+type packageUpsertRow struct {
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	Description   *string `json:"description,omitempty"`
+	Category      *string `json:"category,omitempty"`
+	LatestVersion *string `json:"latest_version,omitempty"`
+}
+
+// buildPackageUpsertPayload encodes the package list as a jsonb array suitable
+// for the BulkUpsertPackages query. Caller must have already sorted Packages
+// by Name; this function only assembles the JSON.
+func buildPackageUpsertPayload(packages []ReportPackage) ([]byte, error) {
+	rows := make([]packageUpsertRow, 0, len(packages))
+	for i := range packages {
+		p := &packages[i]
+		row := packageUpsertRow{
+			ID:   uuid.New().String(),
+			Name: p.Name,
+		}
+		if p.Description != "" {
+			d := p.Description
+			row.Description = &d
+		}
+		if p.Category != "" {
+			c := p.Category
+			row.Category = &c
+		}
+		if p.AvailableVersion != nil && *p.AvailableVersion != "" {
+			row.LatestVersion = p.AvailableVersion
+		}
+		rows = append(rows, row)
+	}
+	return json.Marshal(rows)
+}
+
+// hostPackageRow is the shape consumed by BulkInsertHostPackages.
+//
+// All nullable text columns use empty-string sentinels rather than omitempty
+// because the SQL side reads via `elem->>'field'` (text accessor), which
+// returns SQL NULL for missing keys but "" for present-but-empty strings.
+// We always emit the key so the SELECT projection is uniform across rows;
+// NULLIF in the SQL collapses "" to NULL.
+//
+// wua_categories is a JSON array (never a string) and uses omitempty so
+// non-Windows rows omit it entirely; the SQL side uses jsonb_typeof to
+// distinguish.
+type hostPackageRow struct {
+	ID                 string   `json:"id"`
+	HostID             string   `json:"host_id"`
+	PackageID          string   `json:"package_id"`
+	CurrentVersion     string   `json:"current_version"`
+	AvailableVersion   string   `json:"available_version"`
+	NeedsUpdate        bool     `json:"needs_update"`
+	IsSecurityUpdate   bool     `json:"is_security_update"`
+	SourceRepositoryID string   `json:"source_repository_id"`
+	WUAGuid            string   `json:"wua_guid"`
+	WUAKb              string   `json:"wua_kb"`
+	WUASeverity        string   `json:"wua_severity"`
+	WUACategories      []string `json:"wua_categories,omitempty"`
+	WUADescription     string   `json:"wua_description"`
+	WUASupportURL      string   `json:"wua_support_url"`
+	WUARevisionNumber  int32    `json:"wua_revision_number"`
+}
+
+// buildHostPackagesPayload encodes host_packages rows as a jsonb array suitable
+// for BulkInsertHostPackages. Rows are emitted in package_id order (defensive:
+// since payload.Packages is already sorted by name and nameToID provides
+// a stable mapping, the resulting order will be name-stable; the SQL ORDER BY
+// package_id then enforces the on-disk insert order).
+func buildHostPackagesPayload(
+	hostID string,
+	packages []ReportPackage,
+	nameToID map[string]string,
+	reposByName, reposByURLDistComp, reposByComponent map[string]string,
+) ([]byte, error) {
+	rows := make([]hostPackageRow, 0, len(packages))
+	for i := range packages {
+		p := &packages[i]
+		pkgID, ok := nameToID[p.Name]
+		if !ok {
+			return nil, fmt.Errorf("no upserted ID for package %q", p.Name)
+		}
+
+		availableVersion := ""
+		if p.AvailableVersion != nil {
+			availableVersion = *p.AvailableVersion
+		}
+		sourceRepoID := ""
+		if id := resolveSourceRepoID(p.SourceRepository, reposByName, reposByURLDistComp, reposByComponent); id != nil {
+			sourceRepoID = *id
+		}
+
+		row := hostPackageRow{
+			ID:                 uuid.New().String(),
+			HostID:             hostID,
+			PackageID:          pkgID,
+			CurrentVersion:     p.CurrentVersion,
+			AvailableVersion:   availableVersion,
+			NeedsUpdate:        p.NeedsUpdate,
+			IsSecurityUpdate:   p.IsSecurityUpdate,
+			SourceRepositoryID: sourceRepoID,
+		}
+
+		// Windows Update entries carry WUA metadata. The agent flags them by
+		// setting WUAGuid; we keep the same Go-side detection rule the
+		// legacy InsertHostPackageWithWUA path used.
+		if p.WUAGuid != "" {
+			row.WUAGuid = p.WUAGuid
+			row.WUAKb = p.WUAKb
+			row.WUASeverity = p.WUASeverity
+			row.WUADescription = p.Description // matches legacy: WuaDescription = pkg.Description
+			row.WUASupportURL = p.WUASupportURL
+			row.WUARevisionNumber = p.WUARevisionNumber
+			if len(p.WUACategories) > 0 {
+				row.WUACategories = p.WUACategories
+			}
+		}
+		rows = append(rows, row)
+	}
+	return json.Marshal(rows)
 }

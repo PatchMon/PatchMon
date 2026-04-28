@@ -160,7 +160,8 @@ CREATE TABLE IF NOT EXISTS repositories (
     priority INTEGER,
     description TEXT,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP(3) NOT NULL
+    updated_at TIMESTAMP(3) NOT NULL,
+    UNIQUE (url, distribution, components)
 );
 
 -- users

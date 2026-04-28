@@ -72,6 +72,7 @@ func main() {
 	slog.Info("database connected")
 
 	warnOidcSuperadminLockoutRisk(ctx, cfg, settingsStore, store.NewUsersStore(db), slog)
+	warnDBPoolUndersized(ctx, cfg, store.NewHostsStore(db), slog)
 
 	rdb := redis.NewClient()
 	if err := redis.Ping(ctx, rdb); err != nil {

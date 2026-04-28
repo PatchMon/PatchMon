@@ -88,16 +88,35 @@ WHERE NOT EXISTS (SELECT 1 FROM host_repositories hr WHERE hr.repository_id = r.
 -- name: DeleteRepositoriesByIDs :exec
 DELETE FROM repositories WHERE id = ANY($1::text[]);
 
--- name: GetRepositoryByURLDistComponents :one
-SELECT id, name, url, distribution, components, repo_type, is_active, is_secure, priority, description, created_at, updated_at
-FROM repositories
-WHERE url = $1 AND distribution = $2 AND components = $3
-LIMIT 1;
-
--- name: InsertRepository :one
+-- name: UpsertRepository :one
+-- Replaces the previous GetRepositoryByURLDistComponents + InsertRepository
+-- SELECT-then-INSERT pattern. Migration 000040 added a UNIQUE constraint on
+-- (url, distribution, components), making this a true upsert and closing
+-- the TOCTOU race where two concurrent host reports could both see "no row"
+-- and both INSERT.
+--
+-- DO UPDATE touches non-key columns only, so the row lock taken is FOR NO
+-- KEY UPDATE — safe vs concurrent FK FOR KEY SHARE locks held by
+-- host_packages inserts pointing at this row.
+--
+-- Returns the canonical id whether the row was newly inserted, updated, or
+-- (in the no-op case where every column matches) updated to identical
+-- values. There is no skip-no-op WHERE here because reports rarely repeat
+-- identical repository metadata across runs and the row count per host is
+-- small (typically 1-10) — the WAL/lock cost of unconditional UPDATE is
+-- negligible compared with packages, and avoiding the WHERE keeps RETURNING
+-- always-populated for a simpler caller contract.
 INSERT INTO repositories (id, name, url, distribution, components, repo_type, is_active, is_secure, priority, description, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
-RETURNING id, name, url, distribution, components, repo_type, is_active, is_secure, priority, description, created_at, updated_at;
+ON CONFLICT (url, distribution, components) DO UPDATE SET
+    name        = EXCLUDED.name,
+    repo_type   = EXCLUDED.repo_type,
+    is_active   = EXCLUDED.is_active,
+    is_secure   = EXCLUDED.is_secure,
+    priority    = EXCLUDED.priority,
+    description = COALESCE(EXCLUDED.description, repositories.description),
+    updated_at  = NOW()
+RETURNING id;
 
 -- name: DeleteHostRepositoriesByHostID :exec
 DELETE FROM host_repositories WHERE host_id = $1;

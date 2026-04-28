@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agents"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 )
@@ -450,7 +452,16 @@ func (h *InstallHandler) ServeUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.reports.ProcessReport(r.Context(), host.ID, &payload)
+	// Wrap ProcessReport in WithRetry so transient 40P01 (deadlock) and 40001
+	// (serialization) errors are automatically retried with backoff. Each
+	// retry reruns the whole transaction from scratch — see the comment near
+	// InsertUpdateHistory for why this is safe.
+	var result *store.ProcessReportResult
+	err = database.WithRetry(r.Context(), "process_report", database.RetryConfig{}, func(ctx context.Context) error {
+		var procErr error
+		result, procErr = h.reports.ProcessReport(ctx, host.ID, &payload)
+		return procErr
+	})
 	if err != nil {
 		slog.Error("failed to process report", "host_id", host.ID, "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to update host"})
