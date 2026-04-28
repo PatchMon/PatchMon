@@ -264,7 +264,7 @@ func Load() (*Config, error) {
 		PasswordRequireNumber:       getEnv("PASSWORD_REQUIRE_NUMBER", "true") != "false",
 		PasswordRequireSpecial:      getEnv("PASSWORD_REQUIRE_SPECIAL", "true") != "false",
 		JSONBodyLimitBytes:          getEnvBytes("JSON_BODY_LIMIT", 5),
-		AgentUpdateBodyLimitBytes:   getEnvBytes("AGENT_UPDATE_BODY_LIMIT", 2),
+		AgentUpdateBodyLimitBytes:   getEnvBytes("AGENT_UPDATE_BODY_LIMIT", 5),
 		RedisTLSCA:                  getEnv("REDIS_TLS_CA", ""),
 		Timezone:                    getEnv("TZ", getEnv("TIMEZONE", "UTC")),
 		DefaultUserRole:             getEnv("DEFAULT_USER_ROLE", "user"),

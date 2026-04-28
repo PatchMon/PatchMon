@@ -636,7 +636,7 @@ The `server.env.*` keys map directly to the environment variables the PatchMon b
 | `ENABLE_LOGGING` | Enable structured logging to stdout | `false` |
 | `LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) | `info` |
 | `JSON_BODY_LIMIT` | Max JSON body size | `5mb` |
-| `AGENT_UPDATE_BODY_LIMIT` | Max agent update body size | `2mb` |
+| `AGENT_UPDATE_BODY_LIMIT` | Max agent update body size | `5mb` |
 | `TZ` | IANA timezone for log timestamps | `UTC` |
 
 > **Tip:** Many of these can be changed later from the Settings UI without a restart of the whole cluster. See Settings in the web UI.
@@ -1838,7 +1838,7 @@ Accepted suffixes: `b`, `kb`, `mb`, `gb`. Examples: `10mb`, `512kb`.
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
 | `JSON_BODY_LIMIT` | `5mb` | No | Maximum size of JSON request bodies for standard API endpoints (user management, settings, host actions, etc.). |
-| `AGENT_UPDATE_BODY_LIMIT` | `2mb` | No | Maximum size of request bodies on agent check-in and package reporting endpoints. Increase this if agents managing a very large number of packages hit the limit. |
+| `AGENT_UPDATE_BODY_LIMIT` | `5mb` | No | Maximum size of request bodies on agent check-in and package reporting endpoints. Increase this if agents managing a very large number of packages hit the limit. |
 
 ---
 
@@ -5589,9 +5589,9 @@ PatchMon caps JSON request bodies to protect against memory exhaustion. Two sepa
 | Env var | Default | What it caps |
 |---------|---------|---------------|
 | `JSON_BODY_LIMIT` | `5` (MB) | Every non-agent JSON endpoint (UI API, settings, etc.). |
-| `AGENT_UPDATE_BODY_LIMIT` | `2` (MB) | `POST /api/v1/hosts/update` only: the agent report payload. |
+| `AGENT_UPDATE_BODY_LIMIT` | `5` (MB) | `POST /api/v1/hosts/update` only: the agent report payload. |
 
-Both are integers **in megabytes**. A host with thousands of packages + Docker + compliance data can breach the 2 MB default.
+Both are integers **in megabytes**. A host with thousands of packages + Docker + compliance data can breach the 5 MB default; bump this env var on those installations.
 
 #### Fix
 
