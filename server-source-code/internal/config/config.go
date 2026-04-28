@@ -246,10 +246,17 @@ func Load() (*Config, error) {
 		BillingInternalSecret: getEnv("BILLING_INTERNAL_SECRET", ""),
 		ProvisionerURL:        getEnv("PROVISIONER_URL", ""),
 
-		MaxLoginAttempts:            getEnvInt("MAX_LOGIN_ATTEMPTS", 5),
-		LockoutDurationMin:          getEnvInt("LOCKOUT_DURATION_MINUTES", 15),
-		EnableHSTS:                  getEnv("ENABLE_HSTS", "") == "true",
-		TrustProxy:                  getEnv("TRUST_PROXY", "") == "true",
+		MaxLoginAttempts:   getEnvInt("MAX_LOGIN_ATTEMPTS", 5),
+		LockoutDurationMin: getEnvInt("LOCKOUT_DURATION_MINUTES", 15),
+		EnableHSTS:         getEnv("ENABLE_HSTS", "") == "true",
+		// Default true: PatchMon's officially supported deployment is Docker
+		// behind a reverse proxy (Traefik, Caddy, nginx, NPM), where the proxy
+		// terminates TLS and sends X-Forwarded-Proto / X-Forwarded-For. With
+		// this off, OIDC's HTTPS gate rejects requests, real client IPs do not
+		// reach the audit log, and rate limiting keys on the proxy's IP.
+		// Set TRUST_PROXY=false explicitly only when PatchMon is exposed
+		// directly to the internet without a reverse proxy.
+		TrustProxy:                  getEnv("TRUST_PROXY", "true") != "false",
 		RateLimitWindowMs:           getEnvInt("RATE_LIMIT_WINDOW_MS", 900000),
 		RateLimitMax:                getEnvInt("RATE_LIMIT_MAX", 5000),
 		AuthRateLimitWindowMs:       getEnvInt("AUTH_RATE_LIMIT_WINDOW_MS", 600000),

@@ -632,7 +632,7 @@ The `server.env.*` keys map directly to the environment variables the PatchMon b
 |-----|-------------|---------|
 | `CORS_ORIGIN` | Allowed origin for CORS (must match the URL users type in their browser; comma-separate with no spaces to allow multiple, e.g. `https://patchmon.example.com,https://patchmon.internal.lan`) | `http://localhost:3000` |
 | `ENABLE_HSTS` | Enable HSTS header for HTTPS | `false` |
-| `TRUST_PROXY` | Trust proxy headers when behind an Ingress controller | `false` |
+| `TRUST_PROXY` | Trust proxy headers when behind an Ingress controller | `true` |
 | `ENABLE_LOGGING` | Enable structured logging to stdout | `false` |
 | `LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) | `info` |
 | `JSON_BODY_LIMIT` | Max JSON body size | `5mb` |
@@ -1257,7 +1257,7 @@ Open **Hosts → <a host> → SSH Terminal**. The terminal should connect and ec
 | Browser console: "CORS policy" errors | `CORS_ORIGIN` does not match the URL in the address bar | Set `CORS_ORIGIN=https://patchmon.example.com` exactly. To allow more than one origin, comma-separate with no spaces, e.g. `CORS_ORIGIN=https://patchmon.example.com,https://patchmon.internal.lan` |
 | Login works but nothing loads | API requests going to a different origin | Send all traffic (API + SPA) to the same hostname/port |
 | Sudden 413 Request Entity Too Large | Proxy body limit smaller than agent report | `client_max_body_size 20m;` (Nginx) or equivalent |
-| Agent page shows "offline" but agent logs say connected | `TRUST_PROXY=false` on the server, agent IP detection wrong | Set `TRUST_PROXY=true` and add `X-Forwarded-For` |
+| Agent page shows "offline" but agent logs say connected | Reverse proxy is not sending `X-Forwarded-For`, or `TRUST_PROXY=false` was set explicitly | Ensure the reverse proxy adds `X-Forwarded-For` and leave `TRUST_PROXY` at its default of `true` |
 
 ---
 
@@ -1546,7 +1546,7 @@ General HTTP server and network settings.
 | `APP_ENV` | `production` | No | Runtime environment. Accepted values: `production`, `development`. `NODE_ENV` is also read as a backward-compatibility alias; `APP_ENV` takes precedence when both are set. |
 | `CORS_ORIGIN` | `http://localhost:3000` | No | Allowed CORS origin(s). Must match the exact URL you use to access PatchMon in your browser (protocol, hostname, and port; no path, no trailing slash). To allow multiple origins, separate them with a comma and no spaces (e.g. `https://patchmon.example.com,https://patchmon.internal.lan`). |
 | `ENABLE_HSTS` | `false` | No | When `true`, the server adds an `HTTP Strict Transport Security` header to responses. Enable this only when PatchMon is served over HTTPS. |
-| `TRUST_PROXY` | `false` | No | When `true`, the server trusts `X-Forwarded-For` and related headers from a reverse proxy (nginx, Caddy, etc.). Required for accurate client IP detection and correct rate limiting when behind a proxy. |
+| `TRUST_PROXY` | `true` | No | When `true`, the server trusts `X-Forwarded-For` / `X-Forwarded-Proto` and related headers from a reverse proxy (Traefik, Caddy, nginx, NPM, etc.). Required for accurate client IP detection, correct rate limiting, and OIDC's HTTPS check when TLS is terminated at the proxy. Default is `true` because the officially supported deployment is Docker behind a reverse proxy; set to `false` explicitly only if PatchMon is exposed directly to the internet without a proxy. |
 
 **Production example:**
 
