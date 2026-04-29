@@ -645,6 +645,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Get("/notifications/destinations", notificationsHandler.ListDestinations)
 			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Post("/notifications/destinations", notificationsHandler.CreateDestination)
 			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Get("/notifications/destinations/{id}/config", notificationsHandler.GetDestinationConfig)
+			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Post("/notifications/destinations/{id}/test-smtp", notificationsHandler.TestSMTP)
 			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Put("/notifications/destinations/{id}", notificationsHandler.UpdateDestination)
 			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Delete("/notifications/destinations/{id}", notificationsHandler.DeleteDestination)
 			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Get("/notifications/routes", notificationsHandler.ListRoutes)

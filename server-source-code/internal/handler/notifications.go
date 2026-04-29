@@ -12,6 +12,7 @@ import (
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/mailer"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
@@ -465,6 +466,133 @@ func (h *NotificationsHandler) TestDestination(w http.ResponseWriter, r *http.Re
 		return
 	}
 	JSON(w, http.StatusOK, map[string]string{"status": "enqueued"})
+}
+
+// testSMTPRequest mirrors the encrypted destination config blob plus an
+// optional override-`to`. All fields are optional: when the body is empty the
+// handler loads and decrypts the saved destination config instead.
+type testSMTPRequest struct {
+	SMTPHost string `json:"smtp_host"`
+	SMTPPort int    `json:"smtp_port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	From     string `json:"from"`
+	FromName string `json:"from_name"`
+	To       string `json:"to"`
+	UseTLS   *bool  `json:"use_tls"`
+	TLSMode  string `json:"tls_mode"`
+}
+
+// TestSMTP POST /notifications/destinations/{id}/test-smtp
+//
+// Synchronous SMTP probe. On transport failures returns 200 with
+// {ok:false, stage, message} so the GUI can surface the failing stage; only
+// 4xx/5xx is used for input/decrypt/DB errors that would prevent any attempt.
+func (h *NotificationsHandler) TestSMTP(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		Error(w, http.StatusBadRequest, "id required")
+		return
+	}
+
+	var override testSMTPRequest
+	hasOverride := false
+	if r.Body != nil && r.ContentLength != 0 {
+		dec := json.NewDecoder(r.Body)
+		if err := dec.Decode(&override); err == nil {
+			hasOverride = override.SMTPHost != "" || override.From != "" || override.To != "" ||
+				override.SMTPPort != 0 || override.TLSMode != "" || override.UseTLS != nil ||
+				override.Username != "" || override.Password != "" || override.FromName != ""
+		}
+	}
+
+	cfg := override
+	if !hasOverride {
+		dest, err := h.q(r.Context()).GetNotificationDestinationByID(r.Context(), id)
+		if err != nil {
+			Error(w, http.StatusNotFound, "Not found")
+			return
+		}
+		plain := dest.ConfigEncrypted
+		if dest.ConfigEncrypted != "" && h.enc != nil {
+			if d, derr := h.enc.Decrypt(dest.ConfigEncrypted); derr == nil {
+				plain = d
+			}
+		}
+		if plain == "" {
+			Error(w, http.StatusBadRequest, "Destination has no SMTP config")
+			return
+		}
+		var saved testSMTPRequest
+		if err := json.Unmarshal([]byte(plain), &saved); err != nil {
+			Error(w, http.StatusInternalServerError, "Failed to parse destination config")
+			return
+		}
+		cfg = saved
+	}
+
+	if cfg.SMTPPort == 0 {
+		cfg.SMTPPort = 587
+	}
+	if cfg.SMTPHost == "" || cfg.From == "" || cfg.To == "" {
+		Error(w, http.StatusBadRequest, "smtp_host, from, and to are required")
+		return
+	}
+
+	var legacy *bool
+	if cfg.UseTLS != nil {
+		legacy = cfg.UseTLS
+	}
+	mode := mailer.ResolveMode(cfg.TLSMode, legacy, cfg.SMTPPort)
+
+	mc := mailer.Config{
+		Host:     cfg.SMTPHost,
+		Port:     cfg.SMTPPort,
+		Username: cfg.Username,
+		Password: cfg.Password,
+		From:     cfg.From,
+		FromName: cfg.FromName,
+		TLSMode:  mode,
+	}
+	msg := mailer.Message{
+		To:       cfg.To,
+		Subject:  "PatchMon SMTP test",
+		HTMLBody: `<p>If you can read this, your SMTP configuration works.</p><p style="color:#888;font-size:12px;">Sent by PatchMon</p>`,
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+
+	if err := mailer.Send(ctx, mc, msg); err != nil {
+		var se *mailer.SendError
+		if errors.As(err, &se) {
+			out := map[string]interface{}{
+				"ok":       false,
+				"stage":    string(se.Stage),
+				"tls_mode": string(mode),
+				"message":  "",
+			}
+			if se.Err != nil {
+				out["message"] = se.Err.Error()
+			} else {
+				out["message"] = se.Error()
+			}
+			JSON(w, http.StatusOK, out)
+			return
+		}
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"ok":       false,
+			"stage":    "send",
+			"tls_mode": string(mode),
+			"message":  err.Error(),
+		})
+		return
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"ok":       true,
+		"tls_mode": string(mode),
+	})
 }
 
 func (h *NotificationsHandler) scheduledReportToMap(row db.ScheduledReport) map[string]interface{} {

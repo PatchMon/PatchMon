@@ -665,6 +665,7 @@ export const notificationsAPI = {
 	listDeliveryLog: (params = {}) =>
 		api.get("/notifications/delivery-log", { params }),
 	test: (data) => api.post("/notifications/test", data),
+	testSMTP: (id) => api.post(`/notifications/destinations/${id}/test-smtp`, {}),
 	listScheduledReports: () => api.get("/notifications/scheduled-reports"),
 	createScheduledReport: (data) =>
 		api.post("/notifications/scheduled-reports", data),

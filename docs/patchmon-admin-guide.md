@@ -3533,7 +3533,27 @@ Pick this for **generic JSON webhooks, Discord, or Slack**. Discord and Slack UR
 | **Password** | No | SMTP auth password. Stored encrypted. |
 | **From** | Yes | Envelope + header `From` address, e.g. `patchmon@example.com`. Must be accepted by the relay. |
 | **To** | Yes | Comma-separated list of recipients. |
-| **Use TLS** | No | On by default. STARTTLS on port 587, implicit TLS on 465. Disable only for on-prem relays without TLS. |
+| **TLS mode** | Yes | Choose how the SMTP transport secures the connection. See **TLS modes** below. Defaults to **STARTTLS** for new destinations. |
+
+##### TLS modes
+
+PatchMon offers four TLS modes on every email destination. Pick the one your relay actually supports rather than leaving it on **Auto**, so a misconfigured server fails closed instead of silently downgrading to plaintext.
+
+- **STARTTLS (recommended).** PatchMon connects in plaintext on the SMTP port (typically 587) and then requires the server to advertise `STARTTLS`. The connection is upgraded to TLS before any credentials or message body are sent. If the server does not advertise `STARTTLS`, PatchMon refuses to send and reports the failure. This is the right choice for the vast majority of modern relays (Microsoft 365, Google Workspace, SendGrid, Postmark, Mailgun, Amazon SES on port 587, and most on-prem mail servers).
+- **Implicit TLS / SSL.** PatchMon opens a TLS connection from the very first byte, with no plaintext handshake. The default port for this mode is 465. Use it when your relay only accepts TLS on a dedicated port and does not support `STARTTLS`. Some legacy or appliance-based servers only offer this mode.
+- **None (insecure).** Cleartext SMTP, no TLS at any stage. PatchMon refuses to send if a username or password is set on the destination, because it would otherwise leak credentials onto the wire. Use only for trusted internal relays on a private network where TLS is genuinely unavailable.
+- **Auto.** Legacy opportunistic mode kept for backward compatibility. PatchMon tries `STARTTLS` first and falls back to implicit TLS on the same host and port if `STARTTLS` is not advertised. Existing destinations that were saved before the explicit modes were added load as **Auto** so they keep working unchanged. Open the destination, pick **STARTTLS** or **Implicit TLS / SSL** explicitly once you have confirmed which one your relay supports, and save. New destinations should not be configured as **Auto**.
+
+> Port and mode are independent. The port field is just the TCP port to connect to; the TLS mode controls how the connection is secured. The defaults (587 for STARTTLS, 465 for implicit TLS) match the conventional ports, but you can override the port if your relay listens elsewhere.
+
+##### Send test email
+
+Saved email destinations have a **Send test email** button next to the standard **Test** action. Unlike **Test**, which enqueues a synthetic notification through the worker, **Send test email** performs a synchronous live SMTP probe directly from the API request and reports the result inline:
+
+- On success the toast confirms delivery and the recipients should receive a short test message.
+- On failure PatchMon reports which stage of the SMTP exchange failed: `validate` (the configuration is rejected before any network activity, for example a missing host or a username set with TLS mode **None**), `dial` (the TCP connection or implicit TLS handshake could not be established), `starttls` (the server did not advertise `STARTTLS` in the chosen mode), `auth` (the relay rejected the credentials), or `send` (the relay accepted the session but rejected the recipients or message). The toast includes the underlying error message returned by the relay.
+
+This is the fastest way to diagnose a TLS or auth misconfiguration without trawling through server logs. The probe respects the same `can_manage_notifications` permission as editing the destination.
 
 #### ntfy
 
