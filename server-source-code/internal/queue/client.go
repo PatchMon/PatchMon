@@ -38,11 +38,10 @@ func RedisOpts() asynq.RedisClientOpt {
 			MinVersion:         tls.VersionTLS12,
 			InsecureSkipVerify: os.Getenv("REDIS_TLS_VERIFY") == "false",
 		}
-		if ca := os.Getenv("REDIS_TLS_CA"); ca != "" {
+		if ca := strings.TrimSpace(os.Getenv("REDIS_TLS_CA")); ca != "" {
 			pool := x509.NewCertPool()
 			var pem []byte
-			trimmed := strings.TrimSpace(ca)
-			if len(trimmed) >= 5 && trimmed[:5] == "-----" {
+			if strings.HasPrefix(ca, "-----") {
 				pem = []byte(ca)
 			} else {
 				var err error
