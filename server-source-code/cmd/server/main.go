@@ -108,6 +108,22 @@ func main() {
 	}
 
 	registry := agentregistry.New()
+	// Enable distributed registry if Redis is available. Use POD_ID env var or hostname.
+	podID := os.Getenv("POD_ID")
+	if podID == "" {
+		if hn, err := os.Hostname(); err == nil && hn != "" {
+			podID = hn
+		} else {
+			podID = "unknown-pod"
+		}
+	}
+	if rdb != nil {
+		if err := registry.EnableDistributed(ctx, rdb, podID); err != nil {
+			slog.Error("enable distributed registry", "error", err)
+		} else {
+			slog.Info("distributed registry enabled", "pod_id", podID)
+		}
+	}
 	queueOpts := queue.RedisOpts()
 	queueClient := queue.NewClient(queueOpts)
 	defer func() { _ = queueClient.Close() }()
