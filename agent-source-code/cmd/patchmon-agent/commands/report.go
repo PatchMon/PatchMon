@@ -12,6 +12,7 @@ import (
 
 	"patchmon-agent/internal/client"
 	"patchmon-agent/internal/hardware"
+	"patchmon-agent/internal/hashing"
 	"patchmon-agent/internal/integrations"
 	"patchmon-agent/internal/integrations/compliance"
 	"patchmon-agent/internal/integrations/docker"
@@ -46,24 +47,29 @@ func init() {
 	reportCmd.Flags().BoolVar(&reportJSON, "json", false, "Output the JSON report payload to stdout instead of sending to server")
 }
 
-func sendReport(outputJSON bool) error {
-	// Start tracking execution time
-	startTime := time.Now()
-	logger.Debug("Starting report process")
+// collectedReport holds the result of one full local data collection. Used
+// by both sendReport (legacy full-report flow) and runCheckIn (hash-gated
+// periodic check-in).
+type collectedReport struct {
+	Payload  *models.ReportPayload
+	StartAt  time.Time
+	HasFatal bool
+}
 
-	// OPTIMIZATION: Force garbage collection before starting to free up memory
+// collectReportData runs every collector exactly the way sendReport does,
+// then assembles a ReportPayload. Returns a fatal error only if a *required*
+// collector failed (os, hostname, packages); soft failures (repos, network)
+// are logged and replaced with empty slices, matching the legacy behaviour.
+//
+// Both sendReport and runCheckIn call this. Keeping the assembly in one
+// place means hash computation in runCheckIn can use the exact same data
+// the agent would have shipped — drift between the periodic-tick
+// canonicalisation and the follow-up partial /hosts/update payload is
+// therefore impossible.
+func collectReportData() (*collectedReport, error) {
+	startTime := time.Now()
 	runtime.GC()
 
-	// Load API credentials only if we're sending the report (not just outputting JSON)
-	if !outputJSON {
-		logger.Debug("Loading API credentials")
-		if err := cfgManager.LoadCredentials(); err != nil {
-			logger.WithError(err).Debug("Failed to load credentials")
-			return err
-		}
-	}
-
-	// Initialise managers
 	systemDetector := system.New(logger)
 	packageMgr := packages.New(logger, packages.CacheRefreshConfig{
 		Mode:   cfgManager.GetPackageCacheRefreshMode(),
@@ -73,10 +79,6 @@ func sendReport(outputJSON bool) error {
 	hardwareMgr := hardware.New(logger)
 	networkMgr := network.New(logger)
 
-	// OPTIMIZATION: Run all independent collectors concurrently. Each of these
-	// pieces of work is IO-bound (file reads, subprocess spawns) with no data
-	// dependency on the others, so a goroutine-per-task layout cuts wall time
-	// down to roughly max(task_duration) instead of sum(task_duration).
 	var (
 		osType, osVersion             string
 		osErr                         error
@@ -97,9 +99,6 @@ func sendReport(outputJSON bool) error {
 		machineID, detectedPackageMgr string
 	)
 
-	// Track panics from collector goroutines so that a panic in a critical
-	// task is escalated to a fatal error rather than silently producing an
-	// empty/partial report.
 	var (
 		panicMu    sync.Mutex
 		taskPanics = make(map[string]any)
@@ -143,31 +142,25 @@ func sendReport(outputJSON bool) error {
 
 	wg.Wait()
 
-	// Escalate panics in critical collectors to fatal errors. Without this
-	// we'd silently emit a report with zero packages, which the server would
-	// happily accept and overwrite the host's previous (correct) state.
 	for _, name := range []string{"os", "hostname", "packages"} {
 		if p, ok := taskPanics[name]; ok {
-			return fmt.Errorf("%s collector panicked: %v", name, p)
+			return nil, fmt.Errorf("%s collector panicked: %v", name, p)
 		}
 	}
-
-	// Surface fatal errors in the same priority order the original code used
 	if osErr != nil {
-		return fmt.Errorf("failed to detect OS: %w", osErr)
+		return nil, fmt.Errorf("failed to detect OS: %w", osErr)
 	}
 	if hostnameErr != nil {
-		return fmt.Errorf("failed to get hostname: %w", hostnameErr)
+		return nil, fmt.Errorf("failed to get hostname: %w", hostnameErr)
 	}
 	if pkgErr != nil {
-		return fmt.Errorf("failed to get packages: %w", pkgErr)
+		return nil, fmt.Errorf("failed to get packages: %w", pkgErr)
 	}
 	if repoErr != nil {
 		logger.WithError(repoErr).Warn("Failed to get repositories")
 		repoList = []models.Repository{}
 	}
 
-	// Guarantee non-nil slices so JSON marshals as [] not null
 	if packageList == nil {
 		packageList = []models.Package{}
 	}
@@ -175,65 +168,7 @@ func sendReport(outputJSON bool) error {
 		repoList = []models.Repository{}
 	}
 
-	logger.WithFields(logrus.Fields{"osType": osType, "osVersion": osVersion}).Info("Detected OS")
-	logger.WithFields(logrus.Fields{
-		"needs_reboot":     needsReboot,
-		"reason":           rebootReason,
-		"installed_kernel": installedKernel,
-		"running_kernel":   systemInfo.KernelVersion,
-	}).Info("Reboot status check completed")
-
-	// Count packages for debug logging (skip the per-package Debug loop below info level)
-	needsUpdateCount := 0
-	securityUpdateCount := 0
-	for i := range packageList {
-		pkg := &packageList[i]
-		if pkg.NeedsUpdate {
-			needsUpdateCount++
-		}
-		if pkg.IsSecurityUpdate {
-			securityUpdateCount++
-		}
-	}
-	logger.WithField("count", len(packageList)).Info("Found packages")
-	// OPTIMIZATION: Only iterate the package list for per-package debug output
-	// when debug logging is actually enabled. At info level the original loop
-	// still paid the cost of building a logrus Entry for every package.
-	if logger.IsLevelEnabled(logrus.DebugLevel) {
-		for _, pkg := range packageList {
-			updateMsg := "latest"
-			if pkg.NeedsUpdate {
-				updateMsg = "update available"
-			}
-			logger.WithFields(logrus.Fields{
-				"name":    pkg.Name,
-				"version": pkg.CurrentVersion,
-				"status":  updateMsg,
-			}).Debug("Package info")
-		}
-		logger.WithFields(logrus.Fields{
-			"total_updates":    needsUpdateCount,
-			"security_updates": securityUpdateCount,
-		}).Debug("Package summary")
-	}
-
-	logger.WithField("count", len(repoList)).Info("Found repositories")
-	if logger.IsLevelEnabled(logrus.DebugLevel) {
-		for _, repo := range repoList {
-			logger.WithFields(logrus.Fields{
-				"name":    repo.Name,
-				"type":    repo.RepoType,
-				"url":     repo.URL,
-				"enabled": repo.IsEnabled,
-			}).Debug("Repository info")
-		}
-	}
-
-	// Calculate execution time (in seconds, with millisecond precision)
 	executionTime := time.Since(startTime).Seconds()
-	logger.WithField("execution_time_seconds", executionTime).Debug("Data collection completed")
-
-	// Create payload
 	payload := &models.ReportPayload{
 		Packages:               packageList,
 		Repositories:           repoList,
@@ -262,6 +197,74 @@ func sendReport(outputJSON bool) error {
 		RebootReason:           rebootReason,
 		PackageManager:         detectedPackageMgr,
 	}
+	return &collectedReport{Payload: payload, StartAt: startTime}, nil
+}
+
+// computeReportHashes computes the four "main report" canonical hashes from
+// the collected payload. Errors are propagated; an empty hash is never
+// returned silently. Caller wires the returned hashes into the agent's
+// outbound payload (so the server can stamp them on the host row) and into
+// the outbound PingHashes (for the next steady-state hash compare).
+func computeReportHashes(p *models.ReportPayload) (models.ReportHashes, error) {
+	pkgs, err := hashing.PackagesHash(p.Packages)
+	if err != nil {
+		return models.ReportHashes{}, fmt.Errorf("packages hash: %w", err)
+	}
+	repos, err := hashing.ReposHash(p.Repositories)
+	if err != nil {
+		return models.ReportHashes{}, fmt.Errorf("repos hash: %w", err)
+	}
+	ifaces, err := hashing.InterfacesHash(p.NetworkInterfaces)
+	if err != nil {
+		return models.ReportHashes{}, fmt.Errorf("interfaces hash: %w", err)
+	}
+	return models.ReportHashes{
+		PackagesHash:   pkgs,
+		ReposHash:      repos,
+		InterfacesHash: ifaces,
+		HostnameHash:   hashing.HostnameHash(p.Hostname),
+	}, nil
+}
+
+func sendReport(outputJSON bool) error {
+	logger.Debug("Starting report process")
+
+	// Load API credentials only if we're sending the report (not just outputting JSON)
+	if !outputJSON {
+		logger.Debug("Loading API credentials")
+		if err := cfgManager.LoadCredentials(); err != nil {
+			logger.WithError(err).Debug("Failed to load credentials")
+			return err
+		}
+	}
+
+	collected, err := collectReportData()
+	if err != nil {
+		return err
+	}
+	payload := collected.Payload
+
+	// Stamp the canonical hashes on every full report so the server's host
+	// row gets the up-to-date values. Failure here is logged but not fatal —
+	// the payload still goes through; the worst case is the next ping
+	// asks for the same content again.
+	if hashes, err := computeReportHashes(payload); err != nil {
+		logger.WithError(err).Warn("failed to compute canonical report hashes (continuing without)")
+	} else {
+		payload.Hashes = hashes
+	}
+
+	logger.WithFields(logrus.Fields{"osType": payload.OSType, "osVersion": payload.OSVersion}).Info("Detected OS")
+	logger.WithFields(logrus.Fields{
+		"needs_reboot":     payload.NeedsReboot,
+		"reason":           payload.RebootReason,
+		"installed_kernel": payload.InstalledKernelVersion,
+		"running_kernel":   payload.KernelVersion,
+	}).Info("Reboot status check completed")
+
+	logger.WithField("count", len(payload.Packages)).Info("Found packages")
+	logger.WithField("count", len(payload.Repositories)).Info("Found repositories")
+	logger.WithField("execution_time_seconds", payload.ExecutionTime).Debug("Data collection completed")
 
 	// If --report-json flag is set, output JSON and exit
 	if outputJSON {
@@ -430,6 +433,16 @@ func sendDockerData(httpClient *client.Client, integrationData *models.Integrati
 		MachineID:    machineID,
 		AgentVersion: pkgversion.Version,
 	}
+	// Stamp the canonical docker hash so the server can store it and
+	// hash-gate the docker section on the next ping. Failure is logged
+	// but non-fatal — the upload still goes through; the worst case is
+	// the next ping requests docker again.
+	if dh, err := hashing.DockerHash(dockerData); err != nil {
+		logger.WithError(err).Debug("docker hash computation failed; uploading without hash")
+	} else {
+		payload.DockerHash = dh
+		setLastDockerHash(dh)
+	}
 
 	logger.WithFields(logrus.Fields{
 		"containers": len(dockerData.Containers),
@@ -477,6 +490,14 @@ func sendComplianceData(httpClient *client.Client, integrationData *models.Integ
 		AgentVersion:   pkgversion.Version,
 		ScanType:       scanType,
 	}
+	// Stamp the canonical compliance hash so the server can hash-gate
+	// the compliance section on the next ping.
+	if ch, err := hashing.ComplianceHash(complianceData); err != nil {
+		logger.WithError(err).Debug("compliance hash computation failed; uploading without hash")
+	} else {
+		payload.ComplianceHash = ch
+		setLastComplianceHash(ch)
+	}
 
 	totalRules := 0
 	for _, scan := range complianceData.Scans {
@@ -501,6 +522,260 @@ func sendComplianceData(httpClient *client.Client, integrationData *models.Integ
 		"scans_received": response.ScansReceived,
 		"message":        response.Message,
 	}).Info("Compliance data sent successfully")
+}
+
+// runCheckIn is the per-tick hash-gated check-in. It runs all collectors,
+// computes per-section hashes, pings the server, and on a non-empty
+// requestFull response fires a partial /hosts/update for just the stale
+// sections. Docker and compliance staleness routes through their existing
+// dedicated endpoints — runCheckIn never bundles those into /hosts/update.
+//
+// On any failure runCheckIn falls back to legacy full-report behaviour so a
+// hashing bug or a transient ping failure cannot dark out the agent.
+func runCheckIn(ctx context.Context) error {
+	logger.Debug("Starting hash-gated check-in")
+	if err := cfgManager.LoadCredentials(); err != nil {
+		return err
+	}
+	collected, err := collectReportData()
+	if err != nil {
+		// Hard collector failure (os/hostname/packages panic). Fall through
+		// to sendReport-style error propagation — the caller will log and
+		// retry on the next tick.
+		return err
+	}
+	payload := collected.Payload
+
+	hashes, hashErr := computeReportHashes(payload)
+	if hashErr != nil {
+		// Hashing failed — degrade to a full report so the host still gets
+		// updated. The next ping with empty hashes will force a full anyway,
+		// but doing it inline avoids an extra network round-trip.
+		logger.WithError(hashErr).Warn("hash computation failed; falling back to full report")
+		return sendReport(false)
+	}
+	payload.Hashes = hashes
+
+	// Docker / compliance hashes are computed from cached integration data
+	// (the agent does not re-collect docker or run a scan just to hash). If
+	// the agent has no cache yet (cold start) the hash stays empty and the
+	// server will request a fresh upload.
+	dockerHash := lastDockerHash()
+	complianceHash := lastComplianceHash()
+
+	pingReq := &models.PingRequest{
+		AgentVersion: pkgversion.Version,
+		Hashes: models.PingHashes{
+			PackagesHash:   hashes.PackagesHash,
+			ReposHash:      hashes.ReposHash,
+			InterfacesHash: hashes.InterfacesHash,
+			HostnameHash:   hashes.HostnameHash,
+			DockerHash:     dockerHash,
+			ComplianceHash: complianceHash,
+		},
+		Metrics: models.PingMetrics{
+			CPUCores:     intPtr(payload.CPUCores),
+			CPUModel:     strPtrIfNonEmpty(payload.CPUModel),
+			RAMInstalled: float64Ptr(payload.RAMInstalled),
+			SwapSize:     float64Ptr(payload.SwapSize),
+			DiskDetails:  payload.DiskDetails,
+			SystemUptime: strPtrIfNonEmpty(payload.SystemUptime),
+			LoadAverage:  payload.LoadAverage,
+			NeedsReboot:  boolPtr(payload.NeedsReboot),
+			RebootReason: strPtrIfNonEmpty(payload.RebootReason),
+		},
+	}
+
+	httpClient := client.New(cfgManager, logger)
+	resp, err := httpClient.Ping(ctx, pingReq)
+	if err != nil {
+		// Server unreachable / wrong creds — caller logs and retries.
+		return fmt.Errorf("check-in ping failed: %w", err)
+	}
+
+	logger.WithFields(logrus.Fields{
+		"requestFull": resp.RequestFull,
+	}).Debug("Check-in completed")
+
+	if len(resp.RequestFull) == 0 {
+		// Steady state: no work to do. ~1 KB ping is the entire round-trip.
+		return nil
+	}
+
+	// Partition the request into main-report sections and integration
+	// sections. Main-report sections go in one /hosts/update; integrations
+	// go through their dedicated endpoints.
+	var mainSections []string
+	var sendDockerNow, sendComplianceNow bool
+	for _, s := range resp.RequestFull {
+		switch s {
+		case models.SectionPackages, models.SectionRepos, models.SectionInterfaces, models.SectionHostname:
+			mainSections = append(mainSections, s)
+		case models.SectionDocker:
+			sendDockerNow = true
+		case models.SectionCompliance:
+			sendComplianceNow = true
+		}
+	}
+
+	if len(mainSections) > 0 {
+		if err := sendPartialReport(ctx, httpClient, payload, mainSections); err != nil {
+			logger.WithError(err).Warn("partial report failed; will retry on next tick")
+		}
+	}
+
+	if sendDockerNow && cfgManager.IsIntegrationEnabled("docker") {
+		systemDetector := system.New(logger)
+		hostname, _ := systemDetector.GetHostname()
+		machineID := systemDetector.GetMachineID()
+		integrationMgr := integrations.NewManager(logger)
+		integrationMgr.SetEnabledChecker(func(name string) bool { return cfgManager.IsIntegrationEnabled(name) })
+		integrationMgr.Register(docker.New(logger))
+		dctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		integData := integrationMgr.CollectAll(dctx)
+		cancel()
+		if dd, ok := integData["docker"]; ok && dd.Error == "" {
+			sendDockerData(httpClient, dd, hostname, machineID)
+		}
+	}
+
+	if sendComplianceNow && cfgManager.IsIntegrationEnabled("compliance") {
+		// Per user decision: run a fresh on-demand scan when the server
+		// asks for compliance. The scheduled-scan path is intentionally
+		// reused — same compliance integration, same payload shape, just
+		// triggered by a ping response instead of a cron tick.
+		go runScheduledComplianceScan()
+	}
+
+	return nil
+}
+
+// sendPartialReport ships a /hosts/update payload constrained to the listed
+// sections. Empty strings in unrelated payload fields are NOT clobbered —
+// the server's COALESCE-guarded UPDATE preserves the previous value for any
+// column the partial report doesn't touch.
+func sendPartialReport(ctx context.Context, httpClient *client.Client, full *models.ReportPayload, sections []string) error {
+	wantPackages, wantRepos, wantInterfaces, wantHostname := false, false, false, false
+	for _, s := range sections {
+		switch s {
+		case models.SectionPackages:
+			wantPackages = true
+		case models.SectionRepos:
+			wantRepos = true
+		case models.SectionInterfaces:
+			wantInterfaces = true
+		case models.SectionHostname:
+			wantHostname = true
+		}
+	}
+
+	partial := &models.ReportPayload{
+		// Always-included identity fields. The server's UpdateHostFromReport
+		// COALESCEs these with prior values so omitting them is safe; we
+		// include them to keep the payload self-describing.
+		AgentVersion: full.AgentVersion,
+		MachineID:    full.MachineID,
+		OSType:       full.OSType,
+		OSVersion:    full.OSVersion,
+		Architecture: full.Architecture,
+
+		// Section payload fields, gated on what was requested.
+		Sections: sections,
+		Hashes: models.ReportHashes{
+			PackagesHash:   full.Hashes.PackagesHash,
+			ReposHash:      full.Hashes.ReposHash,
+			InterfacesHash: full.Hashes.InterfacesHash,
+			HostnameHash:   full.Hashes.HostnameHash,
+		},
+	}
+	if wantPackages {
+		partial.Packages = full.Packages
+		partial.PackageManager = full.PackageManager
+	} else {
+		partial.Packages = nil
+	}
+	if wantRepos {
+		partial.Repositories = full.Repositories
+	} else {
+		partial.Repositories = nil
+	}
+	if wantInterfaces {
+		partial.IP = full.IP
+		partial.GatewayIP = full.GatewayIP
+		partial.DNSServers = full.DNSServers
+		partial.NetworkInterfaces = full.NetworkInterfaces
+	}
+	if wantHostname {
+		partial.Hostname = full.Hostname
+	}
+
+	logger.WithFields(logrus.Fields{
+		"sections": sections,
+	}).Info("Sending hash-gated partial report")
+	if _, err := httpClient.SendUpdate(ctx, partial); err != nil {
+		return fmt.Errorf("send partial report: %w", err)
+	}
+	return nil
+}
+
+// In-process hash cache for docker and compliance. The agent computes a
+// canonical hash whenever it uploads docker or compliance data, and ships
+// the cached value on subsequent pings so the server can hash-gate. If the
+// cache is empty (e.g. agent just started, integration never ran), the hash
+// is empty and the server treats the section as stale on the next ping —
+// which is the correct cold-start behaviour. The cache is intentionally
+// process-lifetime only; restarts trigger one fresh upload, no persistent
+// state needed.
+var (
+	lastHashMu                    sync.Mutex
+	cachedDockerHash, cachedCompH string
+)
+
+func lastDockerHash() string {
+	lastHashMu.Lock()
+	defer lastHashMu.Unlock()
+	return cachedDockerHash
+}
+
+func lastComplianceHash() string {
+	lastHashMu.Lock()
+	defer lastHashMu.Unlock()
+	return cachedCompH
+}
+
+func setLastDockerHash(h string) {
+	lastHashMu.Lock()
+	defer lastHashMu.Unlock()
+	cachedDockerHash = h
+}
+
+func setLastComplianceHash(h string) {
+	lastHashMu.Lock()
+	defer lastHashMu.Unlock()
+	cachedCompH = h
+}
+
+// Tiny helpers used by runCheckIn to lift Go zero-values into pointers when
+// building the PingMetrics. Keeping these inline lets the body of runCheckIn
+// stay readable.
+func intPtr(v int) *int {
+	if v == 0 {
+		return nil
+	}
+	return &v
+}
+func float64Ptr(v float64) *float64 {
+	if v == 0 {
+		return nil
+	}
+	return &v
+}
+func boolPtr(v bool) *bool { return &v }
+func strPtrIfNonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func runScheduledComplianceScan() {

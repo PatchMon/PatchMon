@@ -300,6 +300,13 @@ type Host struct {
 	PackageManager               *string          `json:"package_manager"`
 	PrimaryInterface             *string          `json:"primary_interface"`
 	AwaitingPostPatchReportRunID *string          `json:"awaiting_post_patch_report_run_id"`
+	PackagesHash                 *string          `json:"packages_hash"`
+	ReposHash                    *string          `json:"repos_hash"`
+	InterfacesHash               *string          `json:"interfaces_hash"`
+	HostnameHash                 *string          `json:"hostname_hash"`
+	DockerHash                   *string          `json:"docker_hash"`
+	ComplianceHash               *string          `json:"compliance_hash"`
+	LastFullReportAt             pgtype.Timestamp `json:"last_full_report_at"`
 }
 
 type HostGroup struct {

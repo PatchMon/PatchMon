@@ -7,6 +7,8 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const bulkInsertHostPackages = `-- name: BulkInsertHostPackages :exec
@@ -269,35 +271,45 @@ UPDATE hosts SET
     needs_reboot = COALESCE($21::boolean, needs_reboot),
     reboot_reason = $22,
     package_manager = COALESCE($23::text, package_manager),
+    packages_hash = COALESCE($24::text, packages_hash),
+    repos_hash = COALESCE($25::text, repos_hash),
+    interfaces_hash = COALESCE($26::text, interfaces_hash),
+    hostname_hash = COALESCE($27::text, hostname_hash),
+    last_full_report_at = COALESCE($28::timestamp, last_full_report_at),
     awaiting_post_patch_report_run_id = NULL
-WHERE id = $24
+WHERE id = $29
 `
 
 type UpdateHostFromReportParams struct {
-	MachineID              *string  `json:"machine_id"`
-	OsType                 *string  `json:"os_type"`
-	OsVersion              *string  `json:"os_version"`
-	Hostname               *string  `json:"hostname"`
-	Ip                     *string  `json:"ip"`
-	Architecture           *string  `json:"architecture"`
-	AgentVersion           *string  `json:"agent_version"`
-	CpuModel               *string  `json:"cpu_model"`
-	CpuCores               *int32   `json:"cpu_cores"`
-	RamInstalled           *float64 `json:"ram_installed"`
-	SwapSize               *float64 `json:"swap_size"`
-	DiskDetails            []byte   `json:"disk_details"`
-	GatewayIp              *string  `json:"gateway_ip"`
-	DnsServers             []byte   `json:"dns_servers"`
-	NetworkInterfaces      []byte   `json:"network_interfaces"`
-	KernelVersion          *string  `json:"kernel_version"`
-	InstalledKernelVersion *string  `json:"installed_kernel_version"`
-	SelinuxStatus          *string  `json:"selinux_status"`
-	SystemUptime           *string  `json:"system_uptime"`
-	LoadAverage            []byte   `json:"load_average"`
-	NeedsReboot            *bool    `json:"needs_reboot"`
-	RebootReason           *string  `json:"reboot_reason"`
-	PackageManager         *string  `json:"package_manager"`
-	ID                     string   `json:"id"`
+	MachineID              *string          `json:"machine_id"`
+	OsType                 *string          `json:"os_type"`
+	OsVersion              *string          `json:"os_version"`
+	Hostname               *string          `json:"hostname"`
+	Ip                     *string          `json:"ip"`
+	Architecture           *string          `json:"architecture"`
+	AgentVersion           *string          `json:"agent_version"`
+	CpuModel               *string          `json:"cpu_model"`
+	CpuCores               *int32           `json:"cpu_cores"`
+	RamInstalled           *float64         `json:"ram_installed"`
+	SwapSize               *float64         `json:"swap_size"`
+	DiskDetails            []byte           `json:"disk_details"`
+	GatewayIp              *string          `json:"gateway_ip"`
+	DnsServers             []byte           `json:"dns_servers"`
+	NetworkInterfaces      []byte           `json:"network_interfaces"`
+	KernelVersion          *string          `json:"kernel_version"`
+	InstalledKernelVersion *string          `json:"installed_kernel_version"`
+	SelinuxStatus          *string          `json:"selinux_status"`
+	SystemUptime           *string          `json:"system_uptime"`
+	LoadAverage            []byte           `json:"load_average"`
+	NeedsReboot            *bool            `json:"needs_reboot"`
+	RebootReason           *string          `json:"reboot_reason"`
+	PackageManager         *string          `json:"package_manager"`
+	PackagesHash           *string          `json:"packages_hash"`
+	ReposHash              *string          `json:"repos_hash"`
+	InterfacesHash         *string          `json:"interfaces_hash"`
+	HostnameHash           *string          `json:"hostname_hash"`
+	LastFullReportAt       pgtype.Timestamp `json:"last_full_report_at"`
+	ID                     string           `json:"id"`
 }
 
 // Host report/update flow (agent sends package and system info)
@@ -326,6 +338,11 @@ func (q *Queries) UpdateHostFromReport(ctx context.Context, arg UpdateHostFromRe
 		arg.NeedsReboot,
 		arg.RebootReason,
 		arg.PackageManager,
+		arg.PackagesHash,
+		arg.ReposHash,
+		arg.InterfacesHash,
+		arg.HostnameHash,
+		arg.LastFullReportAt,
 		arg.ID,
 	)
 	return err

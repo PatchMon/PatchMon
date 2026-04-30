@@ -49,6 +49,36 @@ type Host struct {
 	PackageManager               *string    `db:"package_manager"`
 	PrimaryInterface             *string    `db:"primary_interface"`
 	AwaitingPostPatchReportRunID *string    `db:"awaiting_post_patch_report_run_id"`
+	PackagesHash                 *string    `db:"packages_hash"`
+	ReposHash                    *string    `db:"repos_hash"`
+	InterfacesHash               *string    `db:"interfaces_hash"`
+	HostnameHash                 *string    `db:"hostname_hash"`
+	DockerHash                   *string    `db:"docker_hash"`
+	ComplianceHash               *string    `db:"compliance_hash"`
+	LastFullReportAt             *time.Time `db:"last_full_report_at"`
+}
+
+// NetworkInterface mirrors the agent's outbound NetworkInterface struct for
+// canonical hashing on the server side. Stored on hosts.network_interfaces
+// as opaque JSONB; this type exists so the hash-gating handler can decode +
+// re-hash the agent's payload without forcing other call sites to parse it.
+type NetworkInterface struct {
+	Name       string           `json:"name"`
+	Type       string           `json:"type"`
+	MACAddress string           `json:"macAddress,omitempty"`
+	MTU        int              `json:"mtu,omitempty"`
+	Status     string           `json:"status,omitempty"`
+	LinkSpeed  int              `json:"linkSpeed,omitempty"`
+	Duplex     string           `json:"duplex,omitempty"`
+	Addresses  []NetworkAddress `json:"addresses"`
+}
+
+// NetworkAddress is one IP address bound to a NetworkInterface.
+type NetworkAddress struct {
+	Address string `json:"address"`
+	Family  string `json:"family"`
+	Netmask string `json:"netmask,omitempty"`
+	Gateway string `json:"gateway,omitempty"`
 }
 
 // HostGroup matches host_groups table.

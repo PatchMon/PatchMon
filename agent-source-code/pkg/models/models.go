@@ -109,7 +109,68 @@ type ReportPayload struct {
 	NeedsReboot            bool               `json:"needsReboot"`
 	RebootReason           string             `json:"rebootReason,omitempty"`
 	PackageManager         string             `json:"packageManager,omitempty"`
+	// Sections, when set, restricts which top-level blocks the server
+	// processes. Empty/absent means "full report" for backwards compatibility.
+	Sections []string `json:"sections,omitempty"`
+	// Hashes carries the agent-computed canonical hashes for each section
+	// included in the payload. Server validates against its own canonical
+	// hash and stores them so the next ping can hash-gate.
+	Hashes ReportHashes `json:"hashes,omitempty"`
 }
+
+// ReportHashes is the four "main report" canonical hashes the agent ships
+// alongside a (possibly partial) /hosts/update payload.
+type ReportHashes struct {
+	PackagesHash   string `json:"packagesHash,omitempty"`
+	ReposHash      string `json:"reposHash,omitempty"`
+	InterfacesHash string `json:"interfacesHash,omitempty"`
+	HostnameHash   string `json:"hostnameHash,omitempty"`
+}
+
+// PingHashes carries the agent's per-section content hashes on a check-in.
+// All 64-char lowercase hex (SHA-256). Empty == "agent has nothing to hash"
+// which the server treats as a mismatch (will request a full report).
+type PingHashes struct {
+	PackagesHash   string `json:"packagesHash,omitempty"`
+	ReposHash      string `json:"reposHash,omitempty"`
+	InterfacesHash string `json:"interfacesHash,omitempty"`
+	HostnameHash   string `json:"hostnameHash,omitempty"`
+	DockerHash     string `json:"dockerHash,omitempty"`
+	ComplianceHash string `json:"complianceHash,omitempty"`
+}
+
+// PingMetrics carries volatile metrics shipped on every check-in. Pointer
+// fields preserve "agent did not collect" semantics.
+type PingMetrics struct {
+	CPUCores     *int       `json:"cpuCores,omitempty"`
+	CPUModel     *string    `json:"cpuModel,omitempty"`
+	RAMInstalled *float64   `json:"ramInstalled,omitempty"`
+	SwapSize     *float64   `json:"swapSize,omitempty"`
+	DiskDetails  []DiskInfo `json:"diskDetails,omitempty"`
+	SystemUptime *string    `json:"systemUptime,omitempty"`
+	LoadAverage  []float64  `json:"loadAverage,omitempty"`
+	NeedsReboot  *bool      `json:"needsReboot,omitempty"`
+	RebootReason *string    `json:"rebootReason,omitempty"`
+}
+
+// PingRequest is the agent's check-in body. All fields optional.
+type PingRequest struct {
+	Hashes       PingHashes  `json:"hashes,omitempty"`
+	Metrics      PingMetrics `json:"metrics,omitempty"`
+	AgentVersion string      `json:"agentVersion,omitempty"`
+}
+
+// Section identifiers used in PingResponse.RequestFull and
+// ReportPayload.Sections. Closed set; do not extend without server-side
+// validation update.
+const (
+	SectionPackages   = "packages"
+	SectionRepos      = "repos"
+	SectionInterfaces = "interfaces"
+	SectionHostname   = "hostname"
+	SectionDocker     = "docker"
+	SectionCompliance = "compliance"
+)
 
 // PingResponse represents server ping response
 type PingResponse struct {
@@ -119,6 +180,11 @@ type PingResponse struct {
 	AgentStartup  bool               `json:"agentStartup,omitempty"`
 	Integrations  map[string]bool    `json:"integrations,omitempty"` // Server-side integration enable states
 	CrontabUpdate *CrontabUpdateInfo `json:"crontabUpdate,omitempty"`
+	// RequestFull lists the section identifiers (subset of the closed
+	// SectionXxx constants) whose stored server-side hash differs from
+	// what the agent shipped. Empty array == nothing changed, agent stays
+	// quiet.
+	RequestFull []string `json:"requestFull,omitempty"`
 }
 
 // UpdateResponse represents server update response

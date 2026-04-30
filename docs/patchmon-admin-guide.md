@@ -267,7 +267,7 @@ Groups are the primary way to organise hosts for patching policies, alert routin
 
 Controls how and when PatchMon agents talk to the server and update themselves:
 
-- **Update interval**: how often agents send a full report (default: 60 minutes); hosts with the WebSocket channel open pick up interval changes live.
+- **Update interval**: how often agents perform a check-in (default: 60 minutes); hosts with the WebSocket channel open pick up interval changes live. From v2.0.3 each tick is a hash-gated check-in: the agent ships content hashes per section, and the server only requests full content for sections whose hash has changed. Steady-state cycles are a few KB instead of a few MB.
 - **Auto-update behaviour**: global on/off for automatic agent binary updates. Per-host overrides live on the host detail page.
 - **Signup enabled**: whether the first-time setup wizard still serves the initial-admin endpoint.
 

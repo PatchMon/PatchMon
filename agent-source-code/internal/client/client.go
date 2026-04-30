@@ -69,8 +69,14 @@ func New(configMgr *config.Manager, logger *logrus.Logger) *Client {
 	}
 }
 
-// Ping sends a ping request to the server
-func (c *Client) Ping(ctx context.Context) (*models.PingResponse, error) {
+// Ping sends a hash-gated check-in to the server. Pass a non-nil PingRequest
+// to ship per-section content hashes and volatile metrics; pass nil to send
+// an empty body (legacy heartbeat — useful in pre-collector boot phases).
+//
+// The server compares the supplied hashes against its stored values and
+// replies with a list of stale sections in PingResponse.RequestFull. Caller
+// is responsible for kicking a follow-up partial /hosts/update for each.
+func (c *Client) Ping(ctx context.Context, req *models.PingRequest) (*models.PingResponse, error) {
 	url := fmt.Sprintf("%s/api/%s/hosts/ping", c.config.PatchmonServer, c.config.APIVersion)
 
 	c.logger.WithFields(logrus.Fields{
@@ -78,13 +84,16 @@ func (c *Client) Ping(ctx context.Context) (*models.PingResponse, error) {
 		"method": "POST",
 	}).Debug("Sending ping request to server")
 
-	resp, err := c.client.R().
+	r := c.client.R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("X-API-ID", c.credentials.APIID).
 		SetHeader("X-API-KEY", c.credentials.APIKey).
-		SetResult(&models.PingResponse{}).
-		Post(url)
+		SetResult(&models.PingResponse{})
+	if req != nil {
+		r = r.SetBody(req)
+	}
+	resp, err := r.Post(url)
 
 	if err != nil {
 		return nil, fmt.Errorf("ping request failed: %w", err)

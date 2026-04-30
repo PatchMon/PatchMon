@@ -37,6 +37,7 @@ type ResolvedConfig struct {
 	PasswordRequireSpecial      bool
 	JSONBodyLimitBytes          int64
 	AgentUpdateBodyLimitBytes   int64
+	AgentPingBodyLimitBytes     int64
 	Timezone                    string
 	DefaultUserRole             string
 	SessionInactivityTimeoutMin int
@@ -78,6 +79,10 @@ func ResolveConfig(ctx context.Context, cfg *Config, settings *models.Settings) 
 	out.PasswordRequireSpecial = resolveBool("PASSWORD_REQUIRE_SPECIAL", settings.PasswordRequireSpecial, cfg.PasswordRequireSpecial)
 	out.JSONBodyLimitBytes = resolveBodyLimit("JSON_BODY_LIMIT", settings.JSONBodyLimit, cfg.JSONBodyLimitBytes)
 	out.AgentUpdateBodyLimitBytes = resolveBodyLimit("AGENT_UPDATE_BODY_LIMIT", settings.AgentUpdateBodyLimit, cfg.AgentUpdateBodyLimitBytes)
+	// Agent ping body limit is env / default only — there is no DB-settings
+	// row for it yet. Default 8 KiB. Operators with extremely chatty pings
+	// (custom integrations) can raise via env.
+	out.AgentPingBodyLimitBytes = cfg.AgentPingBodyLimitBytes
 	out.Timezone = resolveTimezone(settings.Timezone, cfg.Timezone)
 	out.DefaultUserRole = resolveString("DEFAULT_USER_ROLE", strPtr(settings.DefaultUserRole), cfg.DefaultUserRole)
 	out.SessionInactivityTimeoutMin = resolveInt("SESSION_INACTIVITY_TIMEOUT_MINUTES", settings.SessionInactivityTimeoutMinutes, cfg.SessionInactivityTimeoutMin)
@@ -115,6 +120,7 @@ func resolveFromEnvAndDefaults(cfg *Config) *ResolvedConfig {
 		PasswordRequireSpecial:      cfg.PasswordRequireSpecial,
 		JSONBodyLimitBytes:          cfg.JSONBodyLimitBytes,
 		AgentUpdateBodyLimitBytes:   cfg.AgentUpdateBodyLimitBytes,
+		AgentPingBodyLimitBytes:     cfg.AgentPingBodyLimitBytes,
 		Timezone:                    validateTimezone(cfg.Timezone),
 		DefaultUserRole:             cfg.DefaultUserRole,
 		SessionInactivityTimeoutMin: cfg.SessionInactivityTimeoutMin,

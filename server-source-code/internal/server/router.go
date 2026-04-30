@@ -291,7 +291,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		r.Get("/hosts/remove", installHandler.ServeRemove)
 		r.Get("/hosts/agent/version", installHandler.ServeAgentVersion)
 		r.Get("/hosts/agent/download", installHandler.ServeAgentDownload)
-		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent)).Post("/hosts/ping", installHandler.ServePing)
+		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent), middleware.BodyLimit(resolved.AgentPingBodyLimitBytes)).Post("/hosts/ping", installHandler.ServePing)
 		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent), middleware.BodyLimit(resolved.AgentUpdateBodyLimitBytes)).Post("/hosts/update", installHandler.ServeUpdate)
 		r.Post("/hosts/bootstrap/exchange", installHandler.BootstrapExchange)
 		r.Get("/hosts/integrations", integrationsHandler.AgentGetIntegrationStatus)

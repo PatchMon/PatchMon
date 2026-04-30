@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agents"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 )
@@ -305,7 +308,17 @@ func (h *InstallHandler) BootstrapExchange(w http.ResponseWriter, r *http.Reques
 }
 
 // ServePing handles POST /api/v1/hosts/ping.
-// Agent connectivity test and credential validation. Updates host last_update and status.
+//
+// Hash-gated agent check-in. The agent ships its per-section content hashes
+// (and volatile metrics like CPU/RAM/uptime) on every cycle; the server
+// compares against stored hashes and replies with the list of stale sections
+// in `requestFull`. The agent then fires a follow-up POST /hosts/update for
+// just those sections.
+//
+// Empty body is supported as a legacy heartbeat path so old agents keep
+// working unmodified — they get the same response shape they always did
+// (without `requestFull`), and their next /hosts/update is treated as a
+// full report.
 func (h *InstallHandler) ServePing(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if err := recover(); err != nil {
@@ -326,47 +339,179 @@ func (h *InstallHandler) ServePing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	host, err := h.hosts.GetByApiID(r.Context(), apiID)
-	if err != nil || host == nil {
+	// Single SELECT loads identity + hashes + integration toggles. Failure
+	// here is the auth failure path — host not found / wrong api_id maps to
+	// 401 like before.
+	checkin, err := h.hosts.GetCheckin(r.Context(), apiID)
+	if err != nil || checkin == nil {
 		JSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid API credentials"})
 		return
 	}
 
-	ok, err := util.VerifyAPIKey(apiKey, host.ApiKey)
+	ok, err := util.VerifyAPIKey(apiKey, checkin.ApiKey)
 	if err != nil || !ok {
 		JSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid API credentials"})
 		return
 	}
 
-	if err := h.hosts.UpdatePing(r.Context(), host.ID); err != nil {
-		slog.Error("failed to update host ping", "host_id", host.ID, "error", err)
-		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Ping failed"})
-		return
+	// Decode body. Empty body (legacy heartbeat, including chunked-encoded
+	// empty bodies that arrive with ContentLength=-1) is supported.
+	// io.EOF on the first read means there were no bytes to decode — fall
+	// through to the legacy heartbeat path. Unknown fields are tolerated
+	// so newer agents shipping additional optional fields keep working
+	// against older servers (forward compat).
+	var req models.PingRequest
+	hasBody := false
+	if r.ContentLength != 0 {
+		err := json.NewDecoder(r.Body).Decode(&req)
+		switch {
+		case err == nil:
+			hasBody = true
+		case errors.Is(err, io.EOF):
+			// Empty body on a chunked or unspecified-length request.
+			// Treat as legacy heartbeat.
+			hasBody = false
+		default:
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+			return
+		}
+	}
+
+	// Volatile metrics ride on every ping body. Apply them via a dedicated
+	// COALESCE-guarded UPDATE so omitted fields don't clobber. Also bumps
+	// last_update + status so the legacy heartbeat side-effect is preserved.
+	if hasBody {
+		mp := buildMetricsParams(&req)
+		if err := h.hosts.UpdateMetrics(r.Context(), checkin.ID, mp); err != nil {
+			slog.Error("failed to update host metrics", "host_id", checkin.ID, "error", err)
+			JSON(w, http.StatusInternalServerError, map[string]string{"error": "Ping failed"})
+			return
+		}
+	} else {
+		// Legacy heartbeat: just bump last_update.
+		if err := h.hosts.UpdatePing(r.Context(), checkin.ID); err != nil {
+			slog.Error("failed to update host ping", "host_id", checkin.ID, "error", err)
+			JSON(w, http.StatusInternalServerError, map[string]string{"error": "Ping failed"})
+			return
+		}
+	}
+
+	// Hash compare. If the agent shipped no body (legacy) we skip this and
+	// `requestFull` stays empty — matches previous behaviour exactly.
+	var requestFull []string
+	if hasBody {
+		requestFull = computeRequestFull(checkin, &req.Hashes)
 	}
 
 	now := time.Now()
-	friendlyName := host.FriendlyName
-	if friendlyName == "" && host.Hostname != nil {
-		friendlyName = *host.Hostname
+	friendlyName := checkin.FriendlyName
+	if friendlyName == "" && checkin.Hostname != nil {
+		friendlyName = *checkin.Hostname
 	}
 	if friendlyName == "" {
-		friendlyName = host.ApiID
+		friendlyName = apiID
 	}
 
 	resp := map[string]interface{}{
 		"message":      "Ping successful",
 		"timestamp":    now.Format(time.RFC3339),
 		"friendlyName": friendlyName,
-		"agentStartup": true, // simplified; Node.js computes from last_update delta
+		"agentStartup": true,
 		"integrations": map[string]bool{
-			"docker":     host.DockerEnabled,
-			"compliance": host.ComplianceEnabled,
+			"docker":     checkin.DockerEnabled,
+			"compliance": checkin.ComplianceEnabled,
 		},
+	}
+	if len(requestFull) > 0 {
+		resp["requestFull"] = requestFull
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// buildMetricsParams maps a PingRequest's metrics into the store's update
+// param shape. Empty / zero-valued fields stay nil so COALESCE preserves the
+// existing column value.
+func buildMetricsParams(req *models.PingRequest) store.HostMetricsParams {
+	mp := store.HostMetricsParams{}
+	m := &req.Metrics
+	if m.CPUCores != nil {
+		c := int32(*m.CPUCores)
+		mp.CPUCores = &c
+	}
+	if m.CPUModel != nil && *m.CPUModel != "" {
+		mp.CPUModel = m.CPUModel
+	}
+	if m.RAMInstalled != nil {
+		mp.RAMInstalled = m.RAMInstalled
+	}
+	if m.SwapSize != nil {
+		mp.SwapSize = m.SwapSize
+	}
+	if m.SystemUptime != nil && *m.SystemUptime != "" {
+		mp.SystemUptime = m.SystemUptime
+	}
+	if m.NeedsReboot != nil {
+		mp.NeedsReboot = m.NeedsReboot
+	}
+	if m.RebootReason != nil {
+		mp.RebootReason = m.RebootReason
+	}
+	if len(m.DiskDetails) > 0 {
+		if b, err := json.Marshal(m.DiskDetails); err == nil {
+			mp.DiskDetails = b
+		}
+	}
+	if len(m.LoadAverage) > 0 {
+		if b, err := json.Marshal(m.LoadAverage); err == nil {
+			mp.LoadAverage = b
+		}
+	}
+	if req.AgentVersion != "" {
+		v := req.AgentVersion
+		mp.AgentVersion = &v
+	}
+	return mp
+}
+
+// computeRequestFull diffs the agent's claimed hashes against the stored
+// hashes and returns the section identifiers the server needs filled in.
+// A NULL stored hash, an empty agent hash, or a mismatch all flag the
+// section as stale. Docker / compliance entries are suppressed when the
+// integration is disabled server-side — the agent should not bother
+// shipping data the operator has switched off.
+func computeRequestFull(c *store.HostCheckin, h *models.PingHashes) []string {
+	out := make([]string, 0, len(models.AllSections))
+	stale := func(stored *string, agent string) bool {
+		if stored == nil || *stored == "" {
+			return true
+		}
+		if agent == "" {
+			return true
+		}
+		return *stored != agent
+	}
+	if stale(c.Hashes.PackagesHash, h.PackagesHash) {
+		out = append(out, models.SectionPackages)
+	}
+	if stale(c.Hashes.ReposHash, h.ReposHash) {
+		out = append(out, models.SectionRepos)
+	}
+	if stale(c.Hashes.InterfacesHash, h.InterfacesHash) {
+		out = append(out, models.SectionInterfaces)
+	}
+	if stale(c.Hashes.HostnameHash, h.HostnameHash) {
+		out = append(out, models.SectionHostname)
+	}
+	if c.DockerEnabled && stale(c.Hashes.DockerHash, h.DockerHash) {
+		out = append(out, models.SectionDocker)
+	}
+	if c.ComplianceEnabled && stale(c.Hashes.ComplianceHash, h.ComplianceHash) {
+		out = append(out, models.SectionCompliance)
+	}
+	return out
 }
 
 // ServeUpdateInterval handles GET /api/v1/settings/update-interval.
@@ -442,14 +587,99 @@ func (h *InstallHandler) ServeUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(payload.Packages) == 0 {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Packages array is required"})
-		return
+	// Resolve which sections this payload claims to deliver. An absent
+	// `sections` field means full report (legacy/old-agent path) — every
+	// claimed top-level block is processed.
+	var sections store.ReportSections
+	if len(payload.Sections) > 0 {
+		sections = store.SectionsFromList(payload.Sections)
+		// Validate: at least one known section must be claimed. An empty
+		// list after parsing means agent sent only unknown section names.
+		if !sections.Packages && !sections.Repos && !sections.Interfaces && !sections.Hostname {
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "sections must contain at least one of packages, repos, interfaces, hostname"})
+			return
+		}
+		// Section/payload coherence — a claimed section MUST have data, an
+		// unclaimed section MUST be empty so we don't accidentally write a
+		// section the agent didn't intend to send.
+		if sections.Packages && len(payload.Packages) == 0 {
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "sections claims 'packages' but packages array is empty"})
+			return
+		}
+		if !sections.Packages && len(payload.Packages) > 0 {
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "packages provided but 'packages' not in sections"})
+			return
+		}
+		if sections.Repos && len(payload.Repositories) == 0 {
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "sections claims 'repos' but repositories array is empty"})
+			return
+		}
+		if !sections.Repos && len(payload.Repositories) > 0 {
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "repositories provided but 'repos' not in sections"})
+			return
+		}
+	} else {
+		sections = store.FullReport()
+		if len(payload.Packages) == 0 {
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "Packages array is required"})
+			return
+		}
 	}
 
 	if len(payload.Packages) > 10000 {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Packages array exceeds maximum size"})
 		return
+	}
+
+	// Drift check: if the agent supplied a hash for a section, recompute the
+	// canonical hash from the data they actually shipped and verify it
+	// matches. Mismatch means the agent's canonicalisation diverged from
+	// ours — a real bug we want to surface immediately rather than silently
+	// store a hash that the next ping will reject.
+	if hash := payload.Hashes.PackagesHash; sections.Packages && hash != "" {
+		got, err := CanonicalPackagesHash(payload.Packages)
+		if err != nil {
+			JSON(w, http.StatusInternalServerError, map[string]string{"error": "hash computation failed"})
+			return
+		}
+		if got != hash {
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "packages hash mismatch"})
+			return
+		}
+	}
+	if hash := payload.Hashes.ReposHash; sections.Repos && hash != "" {
+		got, err := CanonicalReposHash(payload.Repositories)
+		if err != nil {
+			JSON(w, http.StatusInternalServerError, map[string]string{"error": "hash computation failed"})
+			return
+		}
+		if got != hash {
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "repos hash mismatch"})
+			return
+		}
+	}
+	if hash := payload.Hashes.InterfacesHash; sections.Interfaces && hash != "" {
+		ifaces, err := decodeNetworkInterfaces(payload.NetworkInterfaces)
+		if err != nil {
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "invalid networkInterfaces"})
+			return
+		}
+		got, err := CanonicalInterfacesHash(ifaces)
+		if err != nil {
+			JSON(w, http.StatusInternalServerError, map[string]string{"error": "hash computation failed"})
+			return
+		}
+		if got != hash {
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "interfaces hash mismatch"})
+			return
+		}
+	}
+	if hash := payload.Hashes.HostnameHash; sections.Hostname && hash != "" {
+		got := CanonicalHostnameHash(payload.Hostname)
+		if got != hash {
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "hostname hash mismatch"})
+			return
+		}
 	}
 
 	// Wrap ProcessReport in WithRetry so transient 40P01 (deadlock) and 40001
@@ -459,7 +689,7 @@ func (h *InstallHandler) ServeUpdate(w http.ResponseWriter, r *http.Request) {
 	var result *store.ProcessReportResult
 	err = database.WithRetry(r.Context(), "process_report", database.RetryConfig{}, func(ctx context.Context) error {
 		var procErr error
-		result, procErr = h.reports.ProcessReport(ctx, host.ID, &payload)
+		result, procErr = h.reports.ProcessReport(ctx, host.ID, &payload, sections, payload.Hashes)
 		return procErr
 	})
 	if err != nil {

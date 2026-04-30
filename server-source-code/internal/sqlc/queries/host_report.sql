@@ -28,6 +28,11 @@ UPDATE hosts SET
     needs_reboot = COALESCE(sqlc.narg('needs_reboot')::boolean, needs_reboot),
     reboot_reason = sqlc.narg('reboot_reason'),
     package_manager = COALESCE(sqlc.narg('package_manager')::text, package_manager),
+    packages_hash = COALESCE(sqlc.narg('packages_hash')::text, packages_hash),
+    repos_hash = COALESCE(sqlc.narg('repos_hash')::text, repos_hash),
+    interfaces_hash = COALESCE(sqlc.narg('interfaces_hash')::text, interfaces_hash),
+    hostname_hash = COALESCE(sqlc.narg('hostname_hash')::text, hostname_hash),
+    last_full_report_at = COALESCE(sqlc.narg('last_full_report_at')::timestamp, last_full_report_at),
     awaiting_post_patch_report_run_id = NULL
 WHERE id = sqlc.arg('id');
 

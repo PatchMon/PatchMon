@@ -232,7 +232,10 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 
 	// Send startup ping to notify server that agent has started
 	logger.Info("🚀 Agent starting up, notifying server...")
-	if _, err := httpClient.Ping(ctx); err != nil {
+	// Startup ping uses nil request body — no hashes available yet (collectors
+	// haven't run), and metrics will ride on the first tick's check-in.
+	// Server treats this empty-body ping as a legacy heartbeat.
+	if _, err := httpClient.Ping(ctx, nil); err != nil {
 		logger.WithError(err).Warn("startup ping failed, will retry")
 	} else {
 		logger.Info("✅ Startup notification sent to server")
@@ -302,10 +305,16 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 			offsetPassed = true
 			logger.Debug("Offset period completed, periodic reports will now start")
 		case <-ticker.C:
-			// Only process ticker events after offset has passed
+			// Only process ticker events after offset has passed.
+			//
+			// Periodic ticks use hash-gated check-in: the agent ships
+			// per-section content hashes + volatile metrics on /hosts/ping,
+			// then sends a partial /hosts/update only for sections the
+			// server reports stale. In steady state this collapses each
+			// hourly cycle from ~2 MB to ~1 KB.
 			if offsetPassed {
-				if err := sendReport(false); err != nil {
-					logger.WithError(err).Warn("periodic report failed")
+				if err := runCheckIn(ctx); err != nil {
+					logger.WithError(err).Warn("periodic check-in failed")
 				}
 			}
 		case m := <-messages:

@@ -240,7 +240,14 @@ CREATE TABLE IF NOT EXISTS hosts (
     expected_platform TEXT,
     package_manager TEXT,
     primary_interface TEXT,
-    awaiting_post_patch_report_run_id TEXT REFERENCES patch_runs(id) ON DELETE SET NULL
+    awaiting_post_patch_report_run_id TEXT REFERENCES patch_runs(id) ON DELETE SET NULL,
+    packages_hash TEXT,
+    repos_hash TEXT,
+    interfaces_hash TEXT,
+    hostname_hash TEXT,
+    docker_hash TEXT,
+    compliance_hash TEXT,
+    last_full_report_at TIMESTAMP(3)
 );
 
 -- dashboard_preferences

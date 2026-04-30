@@ -492,6 +492,13 @@ func dbHostToModel(h db.Host) *models.Host {
 		PackageManager:               h.PackageManager,
 		PrimaryInterface:             h.PrimaryInterface,
 		AwaitingPostPatchReportRunID: h.AwaitingPostPatchReportRunID,
+		PackagesHash:                 h.PackagesHash,
+		ReposHash:                    h.ReposHash,
+		InterfacesHash:               h.InterfacesHash,
+		HostnameHash:                 h.HostnameHash,
+		DockerHash:                   h.DockerHash,
+		ComplianceHash:               h.ComplianceHash,
+		LastFullReportAt:             pgTimePtr(h.LastFullReportAt),
 	}
 }
 

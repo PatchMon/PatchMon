@@ -90,6 +90,11 @@ type Querier interface {
 	// per-row round-trip — the alternative was a SELECT loop in Go.
 	BulkUpsertPackages(ctx context.Context, payload []byte) ([]BulkUpsertPackagesRow, error)
 	CancelStalledPatchRuns(ctx context.Context, arg CancelStalledPatchRunsParams) (int64, error)
+	ClearHostComplianceHashOnEnable(ctx context.Context, arg ClearHostComplianceHashOnEnableParams) error
+	// Force a fresh docker payload on next check-in by NULLing the hash whenever
+	// the operator re-enables docker. If the agent was already streaming docker
+	// data (docker_enabled stays true) the hash is left alone.
+	ClearHostDockerHashOnEnable(ctx context.Context, arg ClearHostDockerHashOnEnableParams) error
 	ClearScheduledAt(ctx context.Context, id string) error
 	CountActiveAdmins(ctx context.Context) (int64, error)
 	CountActiveRepositories(ctx context.Context) (int32, error)
@@ -232,6 +237,10 @@ type Querier interface {
 	GetHomepageStats(ctx context.Context, since pgtype.Timestamp) (GetHomepageStatsRow, error)
 	GetHostByApiID(ctx context.Context, apiID string) (Host, error)
 	GetHostByID(ctx context.Context, id string) (Host, error)
+	// Single-row read used on the per-ping hot path. Returns the host's identity
+	// and the six per-section hashes the server compares against incoming agent
+	// hashes.
+	GetHostCheckin(ctx context.Context, apiID string) (GetHostCheckinRow, error)
 	GetHostCountsForRepos(ctx context.Context, dollar_1 []string) ([]GetHostCountsForReposRow, error)
 	GetHostDockerStats(ctx context.Context, hostID string) (GetHostDockerStatsRow, error)
 	GetHostGroupByID(ctx context.Context, id string) (HostGroup, error)
@@ -424,16 +433,21 @@ type Querier interface {
 	UpdateHostAutoUpdate(ctx context.Context, arg UpdateHostAutoUpdateParams) error
 	UpdateHostComplianceDefaultProfile(ctx context.Context, arg UpdateHostComplianceDefaultProfileParams) error
 	UpdateHostComplianceEnabled(ctx context.Context, arg UpdateHostComplianceEnabledParams) error
+	UpdateHostComplianceHash(ctx context.Context, arg UpdateHostComplianceHashParams) error
 	UpdateHostComplianceMode(ctx context.Context, arg UpdateHostComplianceModeParams) error
 	UpdateHostComplianceScannerStatus(ctx context.Context, arg UpdateHostComplianceScannerStatusParams) error
 	UpdateHostComplianceScanners(ctx context.Context, arg UpdateHostComplianceScannersParams) error
 	UpdateHostConnection(ctx context.Context, arg UpdateHostConnectionParams) error
 	UpdateHostDockerEnabled(ctx context.Context, arg UpdateHostDockerEnabledParams) error
+	UpdateHostDockerHash(ctx context.Context, arg UpdateHostDockerHashParams) error
 	UpdateHostDownAlerts(ctx context.Context, arg UpdateHostDownAlertsParams) error
 	UpdateHostFriendlyName(ctx context.Context, arg UpdateHostFriendlyNameParams) error
 	// Host report/update flow (agent sends package and system info)
 	UpdateHostFromReport(ctx context.Context, arg UpdateHostFromReportParams) error
 	UpdateHostGroup(ctx context.Context, arg UpdateHostGroupParams) error
+	// Ping-side write of volatile metrics. Each column is COALESCE-guarded so a
+	// ping that omits a metric leaves the previous value intact.
+	UpdateHostMetrics(ctx context.Context, arg UpdateHostMetricsParams) error
 	UpdateHostNotes(ctx context.Context, arg UpdateHostNotesParams) error
 	// Records the outcome of a Windows Update installation for a specific host+GUID combination.
 	UpdateHostPackageWUAInstallResult(ctx context.Context, arg UpdateHostPackageWUAInstallResultParams) error

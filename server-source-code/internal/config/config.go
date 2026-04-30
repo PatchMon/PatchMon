@@ -95,6 +95,10 @@ type Config struct {
 	// Body limits (bytes)
 	JSONBodyLimitBytes        int64
 	AgentUpdateBodyLimitBytes int64
+	// AgentPingBodyLimitBytes caps /hosts/ping bodies. Worst case is ~3-4 KB
+	// of hashes + metrics; 8 KiB gives headroom without letting an attacker
+	// abuse the cheap ping endpoint as a payload sink.
+	AgentPingBodyLimitBytes int64
 	// Redis (env only)
 	RedisTLSCA string
 	// Timezone
@@ -272,6 +276,7 @@ func Load() (*Config, error) {
 		PasswordRequireSpecial:      getEnv("PASSWORD_REQUIRE_SPECIAL", "true") != "false",
 		JSONBodyLimitBytes:          getEnvBytes("JSON_BODY_LIMIT", 5),
 		AgentUpdateBodyLimitBytes:   getEnvBytes("AGENT_UPDATE_BODY_LIMIT", 5),
+		AgentPingBodyLimitBytes:     getEnvBytesKBDefault("AGENT_PING_BODY_LIMIT", 8),
 		RedisTLSCA:                  getEnv("REDIS_TLS_CA", ""),
 		Timezone:                    getEnv("TZ", getEnv("TIMEZONE", "UTC")),
 		DefaultUserRole:             getEnv("DEFAULT_USER_ROLE", "user"),
@@ -372,6 +377,34 @@ func getEnvBytes(key string, defaultMB int) int64 {
 	v, err := strconv.ParseInt(s, 10, 64)
 	if err != nil || v < 1 {
 		return int64(defaultMB) * 1024 * 1024
+	}
+	return v * mult
+}
+
+// getEnvBytesKBDefault parses size strings like getEnvBytes but defaults to
+// `defaultKB` kibibytes (not megabytes) when env is empty or unparseable.
+// Kept separate from getEnvBytes so the existing MB-default sites don't
+// silently shrink to KB if a future caller forgets which helper they're
+// invoking.
+func getEnvBytesKBDefault(key string, defaultKB int) int64 {
+	s := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if s == "" {
+		return int64(defaultKB) * 1024
+	}
+	var mult int64 = 1024
+	if strings.HasSuffix(s, "kb") {
+		s = strings.TrimSuffix(s, "kb")
+	} else if strings.HasSuffix(s, "mb") {
+		mult = 1024 * 1024
+		s = strings.TrimSuffix(s, "mb")
+	} else if strings.HasSuffix(s, "b") {
+		mult = 1
+		s = strings.TrimSuffix(s, "b")
+	}
+	s = strings.TrimSpace(s)
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || v < 1 {
+		return int64(defaultKB) * 1024
 	}
 	return v * mult
 }
