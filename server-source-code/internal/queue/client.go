@@ -1,14 +1,13 @@
 package queue
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/hibiken/asynq"
+
+	patchmonredis "github.com/PatchMon/PatchMon/server-source-code/internal/redis"
 )
 
 const (
@@ -27,37 +26,12 @@ func RedisOpts() asynq.RedisClientOpt {
 	db := getEnvInt("REDIS_DB", defaultRedisDB)
 	password := os.Getenv("REDIS_PASSWORD")
 
-	opts := asynq.RedisClientOpt{
-		Addr:     fmt.Sprintf("%s:%d", host, port),
-		Password: password,
-		DB:       db,
+	return asynq.RedisClientOpt{
+		Addr:      fmt.Sprintf("%s:%d", host, port),
+		Password:  password,
+		DB:        db,
+		TLSConfig: patchmonredis.TLSConfigFromEnv(),
 	}
-
-	if os.Getenv("REDIS_TLS") == "true" {
-		tlsCfg := &tls.Config{
-			MinVersion:         tls.VersionTLS12,
-			InsecureSkipVerify: os.Getenv("REDIS_TLS_VERIFY") == "false",
-		}
-		if ca := strings.TrimSpace(os.Getenv("REDIS_TLS_CA")); ca != "" {
-			pool := x509.NewCertPool()
-			var pem []byte
-			if strings.HasPrefix(ca, "-----") {
-				pem = []byte(ca)
-			} else {
-				var err error
-				pem, err = os.ReadFile(ca)
-				if err != nil {
-					pem = []byte(ca)
-				}
-			}
-			if len(pem) > 0 && pool.AppendCertsFromPEM(pem) {
-				tlsCfg.RootCAs = pool
-			}
-		}
-		opts.TLSConfig = tlsCfg
-	}
-
-	return opts
 }
 
 func getEnvInt(key string, defaultVal int) int {
