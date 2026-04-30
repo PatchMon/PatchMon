@@ -5337,31 +5337,61 @@ PatchMon uses `golang-migrate` with embedded SQL files. On every server start, t
 
 #### Fix: Stuck on Dirty
 
-PatchMon ships a standalone `migrate` binary alongside the server binary. Use it to inspect and unstick the migration state.
+When the server logs report `Dirty database version N. Fix and force version.`, the simplest path is to connect directly to Postgres, confirm whether the migration's actual work landed, and either mark the version clean or rewind one step so the migration re-runs. PatchMon's migrations are written to be idempotent, so re-running a clean migration is safe.
+
+The example below uses the v2.0.2 dirty-30 case (migration `000030_v1-5-0_compliance_scan_dedup`, which adds the partial unique index `idx_compliance_scans_host_profile_completed`). Substitute the version number from your own log line.
+
+##### 1. Connect to the database
+
+**Community script (Proxmox LXC, bare-metal Postgres):**
 
 ```bash
-# 1. Stop the server so nothing is writing
-docker compose stop server
-
-# 2. Open a shell inside a fresh server container (database keeps running)
-docker compose run --rm --entrypoint /bin/sh server
-
-# Inside the container:
-migrate version
-# prints: Version: 42 (dirty: true)
-
-# 3. Review what migration 42 did -- read the SQL file if you have the source
-#    (in the image, migrations are embedded -- you may need to check the repo)
-
-# 4. Manually fix the partial change in Postgres if needed, then force-reset:
-migrate force 42           # tells migrate the schema is at 42, not dirty
-migrate up                 # re-run from 42 onwards (idempotent if SQL is safe)
-
-exit
-docker compose up -d server
+sudo -u postgres psql -d patchmon_db
 ```
 
-> **Only use `migrate force`** after you've verified the schema is actually consistent with version N. Forcing onto an inconsistent schema hides the problem until the next migration.
+**Docker:**
+
+```bash
+docker compose exec database psql -U patchmon_user -d patchmon_db
+```
+
+(Use whatever `POSTGRES_USER` / `POSTGRES_DB` you have set in `.env`. The defaults are `patchmon_user` / `patchmon_db`. Note the compose service is named `database`, not `postgres`.)
+
+##### 2. Check what actually migrated
+
+```sql
+-- Current migration state. Should show version=30, dirty=t
+SELECT * FROM schema_migrations;
+
+-- Did migration 30 finish creating its index?
+SELECT indexname FROM pg_indexes
+WHERE indexname = 'idx_compliance_scans_host_profile_completed';
+```
+
+##### 3. Pick one of these
+
+**A. Index exists.** Migration 30's work is already done. This is the most common case, and the failure was usually a connection blip after the DDL had already committed. Mark the row clean and let migrations continue from 31:
+
+```sql
+UPDATE schema_migrations SET dirty = false WHERE version = 30;
+```
+
+**B. Index does NOT exist.** Migration 30 died before the `CREATE INDEX` ran. Roll the marker back to 29 and let PatchMon re-run 30 cleanly on the next boot:
+
+```sql
+UPDATE schema_migrations SET dirty = false, version = 29;
+```
+
+##### 4. Restart PatchMon
+
+After updating `schema_migrations`, exit psql and restart:
+
+- **Community script (LXC):** reboot the container, or `sudo systemctl restart patchmon-server` and tail the log with `sudo journalctl -u patchmon-server -f`.
+- **Docker:** `docker compose down && docker compose up -d`, then `docker compose logs -f server`.
+
+You should see migrations advance through 31, 32, 33, then `server starting`.
+
+> **Only mark a migration clean** after you've verified the schema is actually consistent. Forcing onto an inconsistent schema hides the problem until the next migration.
 
 #### Fix: Run Migrations Manually
 
