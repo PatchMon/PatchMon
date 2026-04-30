@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -269,7 +269,7 @@ func (r *Registry) snapshotPresence() error {
 			apiID := strings.TrimPrefix(k, "agent:meta:")
 			vals, err := r.rdb.HGetAll(r.distCtx, k).Result()
 			if err != nil {
-				log.Printf("agentregistry: snapshot HGetAll error key=%s err=%v", k, err)
+				slog.Error("agentregistry: snapshot HGetAll error", "key", k, "error", err)
 				continue
 			}
 			pod := vals["pod"]
@@ -289,7 +289,7 @@ func (r *Registry) snapshotPresence() error {
 			break
 		}
 	}
-	log.Printf("agentregistry: snapshotPresence loaded %d keys", total)
+	slog.Info("agentregistry: snapshotPresence loaded", "keys", total)
 	return nil
 }
 
@@ -303,7 +303,7 @@ func (r *Registry) handlePubSubMessage(channel string, payload []byte) {
 			TS     string `json:"ts"`
 		}
 		if err := json.Unmarshal(payload, &ev); err != nil {
-			log.Printf("agentregistry: invalid event payload: %v", err)
+			slog.Error("agentregistry: invalid event payload", "error", err)
 			return
 		}
 		r.mu.Lock()
@@ -330,17 +330,17 @@ func (r *Registry) handlePubSubMessage(channel string, payload []byte) {
 		DataB64     string `json:"data"`
 	}
 	if err := json.Unmarshal(payload, &fwd); err != nil {
-		log.Printf("agentregistry: invalid forward payload: %v", err)
+		slog.Error("agentregistry: invalid forward payload", "error", err)
 		return
 	}
 	data, err := base64.StdEncoding.DecodeString(fwd.DataB64)
 	if err != nil {
-		log.Printf("agentregistry: invalid forward data b64: %v", err)
+		slog.Error("agentregistry: invalid forward data b64", "error", err)
 		return
 	}
 	// attempt local send
 	if err := r.SendMessage(fwd.APIID, fwd.MessageType, data); err != nil {
-		log.Printf("agentregistry: forward to local send failed: %v", err)
+		slog.Error("agentregistry: forward to local send failed", "error", err)
 	}
 }
 
