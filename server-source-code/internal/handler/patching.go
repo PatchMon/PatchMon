@@ -373,6 +373,7 @@ func (h *PatchingHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	statusCounts := map[string]int{
 		"queued": 0, "running": 0, "completed": 0, "failed": 0, "cancelled": 0,
+		"timed_out": 0, "agent_disconnected": 0,
 		"pending_validation": 0, "pending_approval": 0, "validated": 0,
 	}
 	for k, v := range byStatus {
@@ -385,6 +386,8 @@ func (h *PatchingHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		"completed":          statusCounts["completed"],
 		"failed":             statusCounts["failed"],
 		"cancelled":          statusCounts["cancelled"],
+		"timed_out":          statusCounts["timed_out"],
+		"agent_disconnected": statusCounts["agent_disconnected"],
 		"pending_validation": statusCounts["pending_validation"],
 		"pending_approval":   statusCounts["pending_approval"],
 		"validated":          statusCounts["validated"],

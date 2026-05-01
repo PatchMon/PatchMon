@@ -1829,6 +1829,14 @@ Configuration for the Guacamole daemon (`guacd`) that powers in-browser RDP sess
 
 ---
 
+### Patching
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `PATCH_RUN_STALL_TIMEOUT_MIN` | `30` | No | Minutes a patch run can stay in `running` state before the periodic cleanup (every 10 minutes) marks it as `timed_out`. Minimum `5`; values below 5 are clamped at startup with a warning. Also editable via Settings → Environment in the web UI; the env var still wins if set. Changes made in the UI take effect on the next cleanup sweep without a restart. |
+
+---
+
 ### 12. Body Limits
 
 Maximum sizes for request bodies accepted by the API. Increase these only if you encounter HTTP 413 errors caused by legitimate large payloads.

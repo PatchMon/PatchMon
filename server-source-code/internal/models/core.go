@@ -163,6 +163,7 @@ type Settings struct {
 	MaxLoginAttempts                *int       `db:"max_login_attempts"`
 	LockoutDurationMinutes          *int       `db:"lockout_duration_minutes"`
 	SessionInactivityTimeoutMinutes *int       `db:"session_inactivity_timeout_minutes"`
+	PatchRunStallTimeoutMinutes     *int       `db:"patch_run_stall_timeout_minutes"`
 	TfaMaxRememberSessions          *int       `db:"tfa_max_remember_sessions"`
 	PasswordMinLength               *int       `db:"password_min_length"`
 	PasswordRequireUppercase        *bool      `db:"password_require_uppercase"`

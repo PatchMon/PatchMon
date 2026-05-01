@@ -65,6 +65,17 @@ func (s *SettingsStore) UpdateConfigKey(ctx context.Context, settingsID, key str
 		if v, ok := toInt32(value); ok {
 			arg.SessionInactivityTimeoutMinutes = &v
 		}
+	case "PATCH_RUN_STALL_TIMEOUT_MIN":
+		v, ok := toInt32(value)
+		if !ok {
+			return errors.New("PATCH_RUN_STALL_TIMEOUT_MIN requires an integer value")
+		}
+		// Mirror the env-loader minimum: anything below 5 risks killing
+		// patch runs that are still legitimately starting on slow hosts.
+		if v < 5 {
+			return errors.New("PATCH_RUN_STALL_TIMEOUT_MIN must be at least 5")
+		}
+		arg.PatchRunStallTimeoutMinutes = &v
 	case "TFA_MAX_REMEMBER_SESSIONS":
 		if v, ok := toInt32(value); ok {
 			arg.TfaMaxRememberSessions = &v

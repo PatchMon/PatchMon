@@ -1434,7 +1434,9 @@ The server moves a run through these statuses, visible as badges in the Runs & H
 | `completed` | The run finished successfully. The persisted `shell_output` is now authoritative. |
 | `dry_run_completed` | A dry-run finished successfully (terminal state for dry-runs that aren't turned into a real run). |
 | `failed` | The run finished with a non-zero exit status or the host reported an error. |
-| `cancelled` | The run was stopped by an operator (via **Stop Run**) or deleted before execution. |
+| `cancelled` | The run was stopped by an operator clicking **Stop Run** (or deleted before execution). The cancel is applied authoritatively in the database first; if the agent is connected the server also sends a courtesy `patch_run_stop` so the running subprocess is interrupted. With this ordering, an offline or unresponsive agent can't leave the row stuck in `running`. |
+| `timed_out` | The periodic patch-run cleanup found this run still in `running` state past the configured stall timeout (`PATCH_RUN_STALL_TIMEOUT_MIN`, default 30 minutes) and marked it as timed out. The cleanup sweep runs every 10 minutes. |
+| `agent_disconnected` | The agent's WebSocket dropped while this run was `running`. The server marks every in-flight run for that host as `agent_disconnected` so the row doesn't sit at `running` indefinitely. If the agent reconnects and posts a late `completed` / `failed` / `cancelled` for the same run, the server will update the row to that final state. |
 
 #### 2. Patch Policy
 

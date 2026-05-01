@@ -37,8 +37,13 @@ SELECT * FROM patch_runs WHERE id = $1;
 
 -- name: UpdatePatchRunStarted :exec
 -- Clear dry-run output fields so real-run output starts fresh.
+-- Status guard prevents an in-flight agent message from clobbering an
+-- already-terminated run (cancelled/timed_out/etc.). agent_disconnected is
+-- intentionally NOT in the guard so a recovering agent can unwedge the row.
 UPDATE patch_runs SET status = 'running', started_at = NOW(), completed_at = NULL,
-    shell_output = '', packages_affected = NULL, error_message = NULL, updated_at = NOW() WHERE id = $1;
+    shell_output = '', packages_affected = NULL, error_message = NULL, updated_at = NOW()
+WHERE id = $1
+  AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed');
 
 -- name: ClearScheduledAt :exec
 UPDATE patch_runs SET scheduled_at = NULL, updated_at = NOW() WHERE id = $1;
@@ -48,16 +53,37 @@ UPDATE patch_runs SET shell_output = shell_output || $2, updated_at = NOW() WHER
 
 -- name: UpdatePatchRunCompleted :exec
 -- REPLACE (not append) - agent streams progress chunks then sends final full output.
-UPDATE patch_runs SET status = 'completed', shell_output = $2, completed_at = NOW(), updated_at = NOW() WHERE id = $1;
+-- agent_disconnected is intentionally NOT in the guard so a recovering agent
+-- that posts a late "completed" can still unwedge the row.
+UPDATE patch_runs SET status = 'completed', shell_output = $2, completed_at = NOW(), updated_at = NOW()
+WHERE id = $1
+  AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed');
 
 -- name: UpdatePatchRunFailed :exec
 -- REPLACE (not append) - agent streams progress chunks then sends final full output.
-UPDATE patch_runs SET status = 'failed', shell_output = $2, error_message = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1;
+-- agent_disconnected is intentionally NOT in the guard so a recovering agent
+-- that posts a late "failed" can still unwedge the row.
+UPDATE patch_runs SET status = 'failed', shell_output = $2, error_message = $3, completed_at = NOW(), updated_at = NOW()
+WHERE id = $1
+  AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed');
 
--- name: UpdatePatchRunCancelled :exec
--- Terminal cancelled state when a running patch is stopped via patch_run_stop.
+-- name: UpdatePatchRunCancelled :execrows
+-- Terminal cancelled state set by the agent's late "cancelled" stage report.
 -- Replaces shell_output with the full captured output so rollback/cleanup text is preserved.
-UPDATE patch_runs SET status = 'cancelled', shell_output = $2, error_message = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1;
+-- :execrows so the handler can detect concurrent termination (rows=0) cleanly.
+-- agent_disconnected is intentionally NOT in the guard so a recovering agent
+-- that posts a late "cancelled" can still unwedge the row.
+UPDATE patch_runs SET status = 'cancelled', shell_output = $2, error_message = $3, completed_at = NOW(), updated_at = NOW()
+WHERE id = $1
+  AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed');
+
+-- name: MarkPatchRunCancelledByUser :execrows
+-- User-initiated cancel from StopRun. Deliberately does NOT touch shell_output
+-- so progress chunks the agent appended between our read and write are preserved.
+-- Same status guard as UpdatePatchRunCancelled.
+UPDATE patch_runs SET status = 'cancelled', error_message = $2, completed_at = NOW(), updated_at = NOW()
+WHERE id = $1
+  AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed');
 
 -- name: UpdatePatchRunStatus :exec
 UPDATE patch_runs SET status = $2, updated_at = NOW() WHERE id = $1;
@@ -302,8 +328,13 @@ VALUES ($1, $2, $3, NOW(), NOW());
 -- name: DeletePatchPolicyExclusion :exec
 DELETE FROM patch_policy_exclusions WHERE patch_policy_id = $1 AND host_id = $2;
 
--- name: CancelStalledPatchRuns :execrows
+-- name: MarkPatchRunsTimedOut :execrows
 UPDATE patch_runs
-SET status = 'cancelled', error_message = $2, completed_at = NOW(), updated_at = NOW()
+SET status = 'timed_out', error_message = $2, completed_at = NOW(), updated_at = NOW()
 WHERE status = 'running'
-  AND started_at < $1;
+  AND COALESCE(started_at, created_at) < $1;
+
+-- name: MarkPatchRunsAgentDisconnected :execrows
+UPDATE patch_runs
+SET status = 'agent_disconnected', error_message = $1, completed_at = NOW(), updated_at = NOW()
+WHERE host_id = $2 AND status = 'running';

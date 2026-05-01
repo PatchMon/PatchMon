@@ -133,18 +133,30 @@ func main() {
 
 	queueSrv := queue.NewServer(queueOpts, registry, db, slog)
 	notifyEmit := notifications.NewEmitter(queueClient, rdb, slog)
+	// Re-resolve patch-run stall timeout per sweep so DB edits take effect on
+	// the next 10-min cron tick without requiring a server restart. Falls
+	// back to the env-loaded value if the DB read fails.
+	getPatchRunStallTimeoutMin := func() int {
+		s, err := settingsStore.GetFirst(context.Background())
+		if err != nil {
+			return cfg.PatchRunStallTimeoutMin
+		}
+		r := config.ResolveConfig(context.Background(), cfg, s)
+		return r.PatchRunStallTimeoutMin
+	}
 	queueMux := queue.Mux(queue.MuxOpts{
-		Registry:      registry,
-		DB:            db,
-		RDB:           rdb,
-		RedisCache:    redisCache,
-		PoolCache:     poolCache,
-		QueueClient:   queueClient,
-		ServerVersion: cfg.Version,
-		SSGContentDir: cfg.SSGContentDir,
-		Log:           slog,
-		Emit:          notifyEmit,
-		Enc:           enc,
+		Registry:                   registry,
+		DB:                         db,
+		RDB:                        rdb,
+		RedisCache:                 redisCache,
+		PoolCache:                  poolCache,
+		QueueClient:                queueClient,
+		ServerVersion:              cfg.Version,
+		SSGContentDir:              cfg.SSGContentDir,
+		Log:                        slog,
+		Emit:                       notifyEmit,
+		Enc:                        enc,
+		GetPatchRunStallTimeoutMin: getPatchRunStallTimeoutMin,
 	})
 	go func() {
 		if err := queueSrv.Run(queueMux); err != nil {

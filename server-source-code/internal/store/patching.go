@@ -360,12 +360,19 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, osType, stage, ou
 		if errorMessage == "" {
 			errPtr = nil
 		}
-		if err := d.Queries.UpdatePatchRunCancelled(ctx, db.UpdatePatchRunCancelledParams{
+		rows, err := d.Queries.UpdatePatchRunCancelled(ctx, db.UpdatePatchRunCancelledParams{
 			ID:           id,
 			ShellOutput:  output,
 			ErrorMessage: errPtr,
-		}); err != nil {
+		})
+		if err != nil {
 			return err
+		}
+		if rows == 0 {
+			// Status guard blocked the update — another path already terminated
+			// this run. Don't write packages_affected to a terminal row that
+			// would otherwise have stale shell_output.
+			return nil
 		}
 		// Record packages that were actually applied before the stop so the
 		// UI can still show partial state on a cancelled run.
@@ -383,6 +390,37 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, osType, stage, ou
 func (s *PatchRunsStore) UpdateStatus(ctx context.Context, id, status string) error {
 	d := s.db.DB(ctx)
 	return d.Queries.UpdatePatchRunStatus(ctx, db.UpdatePatchRunStatusParams{ID: id, Status: status})
+}
+
+// Cancel transitions a patch run to the cancelled terminal state on a
+// user-initiated stop. Returns the number of rows affected; zero means another
+// caller already terminated the run (status guard). Deliberately does NOT
+// update shell_output so progress chunks streamed after our caller read the
+// row are preserved.
+func (s *PatchRunsStore) Cancel(ctx context.Context, id, errorMessage string) (int64, error) {
+	d := s.db.DB(ctx)
+	var errPtr *string
+	if errorMessage != "" {
+		errPtr = &errorMessage
+	}
+	return d.Queries.MarkPatchRunCancelledByUser(ctx, db.MarkPatchRunCancelledByUserParams{
+		ID:           id,
+		ErrorMessage: errPtr,
+	})
+}
+
+// MarkRunsAgentDisconnected marks every running patch run for the given host
+// as agent_disconnected. Returns the number of rows updated.
+func (s *PatchRunsStore) MarkRunsAgentDisconnected(ctx context.Context, hostID, errorMessage string) (int64, error) {
+	d := s.db.DB(ctx)
+	var errPtr *string
+	if errorMessage != "" {
+		errPtr = &errorMessage
+	}
+	return d.Queries.MarkPatchRunsAgentDisconnected(ctx, db.MarkPatchRunsAgentDisconnectedParams{
+		ErrorMessage: errPtr,
+		HostID:       hostID,
+	})
 }
 
 // MarkValidationApproved marks a validation run as approved (terminal state).

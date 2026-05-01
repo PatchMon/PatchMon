@@ -11,26 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const cancelStalledPatchRuns = `-- name: CancelStalledPatchRuns :execrows
-UPDATE patch_runs
-SET status = 'cancelled', error_message = $2, completed_at = NOW(), updated_at = NOW()
-WHERE status = 'running'
-  AND started_at < $1
-`
-
-type CancelStalledPatchRunsParams struct {
-	StartedAt    pgtype.Timestamp `json:"started_at"`
-	ErrorMessage *string          `json:"error_message"`
-}
-
-func (q *Queries) CancelStalledPatchRuns(ctx context.Context, arg CancelStalledPatchRunsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, cancelStalledPatchRuns, arg.StartedAt, arg.ErrorMessage)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const clearScheduledAt = `-- name: ClearScheduledAt :exec
 UPDATE patch_runs SET scheduled_at = NULL, updated_at = NOW() WHERE id = $1
 `
@@ -1700,6 +1680,67 @@ func (q *Queries) ListRecentPatchRuns(ctx context.Context, limit int32) ([]ListR
 	return items, nil
 }
 
+const markPatchRunCancelledByUser = `-- name: MarkPatchRunCancelledByUser :execrows
+UPDATE patch_runs SET status = 'cancelled', error_message = $2, completed_at = NOW(), updated_at = NOW()
+WHERE id = $1
+  AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed')
+`
+
+type MarkPatchRunCancelledByUserParams struct {
+	ID           string  `json:"id"`
+	ErrorMessage *string `json:"error_message"`
+}
+
+// User-initiated cancel from StopRun. Deliberately does NOT touch shell_output
+// so progress chunks the agent appended between our read and write are preserved.
+// Same status guard as UpdatePatchRunCancelled.
+func (q *Queries) MarkPatchRunCancelledByUser(ctx context.Context, arg MarkPatchRunCancelledByUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markPatchRunCancelledByUser, arg.ID, arg.ErrorMessage)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markPatchRunsAgentDisconnected = `-- name: MarkPatchRunsAgentDisconnected :execrows
+UPDATE patch_runs
+SET status = 'agent_disconnected', error_message = $1, completed_at = NOW(), updated_at = NOW()
+WHERE host_id = $2 AND status = 'running'
+`
+
+type MarkPatchRunsAgentDisconnectedParams struct {
+	ErrorMessage *string `json:"error_message"`
+	HostID       string  `json:"host_id"`
+}
+
+func (q *Queries) MarkPatchRunsAgentDisconnected(ctx context.Context, arg MarkPatchRunsAgentDisconnectedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markPatchRunsAgentDisconnected, arg.ErrorMessage, arg.HostID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markPatchRunsTimedOut = `-- name: MarkPatchRunsTimedOut :execrows
+UPDATE patch_runs
+SET status = 'timed_out', error_message = $2, completed_at = NOW(), updated_at = NOW()
+WHERE status = 'running'
+  AND COALESCE(started_at, created_at) < $1
+`
+
+type MarkPatchRunsTimedOutParams struct {
+	StartedAt    pgtype.Timestamp `json:"started_at"`
+	ErrorMessage *string          `json:"error_message"`
+}
+
+func (q *Queries) MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTimedOutParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markPatchRunsTimedOut, arg.StartedAt, arg.ErrorMessage)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markValidationApproved = `-- name: MarkValidationApproved :exec
 UPDATE patch_runs SET status = 'approved', approved_by_user_id = $2, updated_at = NOW() WHERE id = $1 AND status IN ('validated', 'pending_validation', 'pending_approval')
 `
@@ -1764,8 +1805,10 @@ func (q *Queries) UpdatePatchPolicy(ctx context.Context, arg UpdatePatchPolicyPa
 	return err
 }
 
-const updatePatchRunCancelled = `-- name: UpdatePatchRunCancelled :exec
-UPDATE patch_runs SET status = 'cancelled', shell_output = $2, error_message = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1
+const updatePatchRunCancelled = `-- name: UpdatePatchRunCancelled :execrows
+UPDATE patch_runs SET status = 'cancelled', shell_output = $2, error_message = $3, completed_at = NOW(), updated_at = NOW()
+WHERE id = $1
+  AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed')
 `
 
 type UpdatePatchRunCancelledParams struct {
@@ -1774,15 +1817,23 @@ type UpdatePatchRunCancelledParams struct {
 	ErrorMessage *string `json:"error_message"`
 }
 
-// Terminal cancelled state when a running patch is stopped via patch_run_stop.
+// Terminal cancelled state set by the agent's late "cancelled" stage report.
 // Replaces shell_output with the full captured output so rollback/cleanup text is preserved.
-func (q *Queries) UpdatePatchRunCancelled(ctx context.Context, arg UpdatePatchRunCancelledParams) error {
-	_, err := q.db.Exec(ctx, updatePatchRunCancelled, arg.ID, arg.ShellOutput, arg.ErrorMessage)
-	return err
+// :execrows so the handler can detect concurrent termination (rows=0) cleanly.
+// agent_disconnected is intentionally NOT in the guard so a recovering agent
+// that posts a late "cancelled" can still unwedge the row.
+func (q *Queries) UpdatePatchRunCancelled(ctx context.Context, arg UpdatePatchRunCancelledParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updatePatchRunCancelled, arg.ID, arg.ShellOutput, arg.ErrorMessage)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updatePatchRunCompleted = `-- name: UpdatePatchRunCompleted :exec
-UPDATE patch_runs SET status = 'completed', shell_output = $2, completed_at = NOW(), updated_at = NOW() WHERE id = $1
+UPDATE patch_runs SET status = 'completed', shell_output = $2, completed_at = NOW(), updated_at = NOW()
+WHERE id = $1
+  AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed')
 `
 
 type UpdatePatchRunCompletedParams struct {
@@ -1791,13 +1842,17 @@ type UpdatePatchRunCompletedParams struct {
 }
 
 // REPLACE (not append) - agent streams progress chunks then sends final full output.
+// agent_disconnected is intentionally NOT in the guard so a recovering agent
+// that posts a late "completed" can still unwedge the row.
 func (q *Queries) UpdatePatchRunCompleted(ctx context.Context, arg UpdatePatchRunCompletedParams) error {
 	_, err := q.db.Exec(ctx, updatePatchRunCompleted, arg.ID, arg.ShellOutput)
 	return err
 }
 
 const updatePatchRunFailed = `-- name: UpdatePatchRunFailed :exec
-UPDATE patch_runs SET status = 'failed', shell_output = $2, error_message = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1
+UPDATE patch_runs SET status = 'failed', shell_output = $2, error_message = $3, completed_at = NOW(), updated_at = NOW()
+WHERE id = $1
+  AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed')
 `
 
 type UpdatePatchRunFailedParams struct {
@@ -1807,6 +1862,8 @@ type UpdatePatchRunFailedParams struct {
 }
 
 // REPLACE (not append) - agent streams progress chunks then sends final full output.
+// agent_disconnected is intentionally NOT in the guard so a recovering agent
+// that posts a late "failed" can still unwedge the row.
 func (q *Queries) UpdatePatchRunFailed(ctx context.Context, arg UpdatePatchRunFailedParams) error {
 	_, err := q.db.Exec(ctx, updatePatchRunFailed, arg.ID, arg.ShellOutput, arg.ErrorMessage)
 	return err
@@ -1856,10 +1913,15 @@ func (q *Queries) UpdatePatchRunScheduledAt(ctx context.Context, arg UpdatePatch
 
 const updatePatchRunStarted = `-- name: UpdatePatchRunStarted :exec
 UPDATE patch_runs SET status = 'running', started_at = NOW(), completed_at = NULL,
-    shell_output = '', packages_affected = NULL, error_message = NULL, updated_at = NOW() WHERE id = $1
+    shell_output = '', packages_affected = NULL, error_message = NULL, updated_at = NOW()
+WHERE id = $1
+  AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed')
 `
 
 // Clear dry-run output fields so real-run output starts fresh.
+// Status guard prevents an in-flight agent message from clobbering an
+// already-terminated run (cancelled/timed_out/etc.). agent_disconnected is
+// intentionally NOT in the guard so a recovering agent can unwedge the row.
 func (q *Queries) UpdatePatchRunStarted(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, updatePatchRunStarted, id)
 	return err

@@ -520,42 +520,70 @@ type PatchRunCleanupHandler struct {
 	defaultDB *database.DB
 	poolCache *hostctx.PoolCache
 	log       *slog.Logger
+	// getStallTimeoutMin is invoked once per sweep so DB-edited values take
+	// effect on the next cron tick without a restart.
+	getStallTimeoutMin func() int
 }
 
 // NewPatchRunCleanupHandler creates a patch run cleanup handler.
-func NewPatchRunCleanupHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache, log *slog.Logger) *PatchRunCleanupHandler {
-	return &PatchRunCleanupHandler{defaultDB: defaultDB, poolCache: poolCache, log: log}
+// getStallTimeoutMin is called on each sweep to read the current effective
+// timeout (env -> DB -> default). Passing a callback (rather than baking the
+// value at construction) lets operators tweak the timeout via Settings →
+// Environment without restarting the server.
+func NewPatchRunCleanupHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache, log *slog.Logger, getStallTimeoutMin func() int) *PatchRunCleanupHandler {
+	return &PatchRunCleanupHandler{defaultDB: defaultDB, poolCache: poolCache, log: log, getStallTimeoutMin: getStallTimeoutMin}
 }
 
 // ProcessTask implements asynq.Handler.
 func (h *PatchRunCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
+	// Resolve once per sweep: the timeout is a global tunable, so reading
+	// fresh per-host would just add N redundant DB hits.
+	stallMin := h.resolveStallTimeoutMin()
 	if len(t.Payload()) > 0 {
 		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
-		return h.cleanupDB(ctx, d)
+		count, err := h.cleanupDB(ctx, d, stallMin)
+		if err != nil {
+			return err
+		}
+		if count > 0 {
+			h.log.Info("patch run cleanup: marked timed_out", "count", count, "stall_min", stallMin)
+		}
+		return nil
 	}
 	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
-		if err := h.cleanupDB(ctx, d); err != nil {
+		count, err := h.cleanupDB(ctx, d, stallMin)
+		if err != nil {
 			h.log.Warn("patch run cleanup failed", "host", host, "error", err)
+			return
+		}
+		if count > 0 {
+			h.log.Info("patch run cleanup: marked timed_out", "host", host, "count", count, "stall_min", stallMin)
 		}
 	})
-	h.log.Info("patch run cleanup completed")
+	h.log.Info("patch run cleanup completed", "stall_min", stallMin)
 	return nil
 }
 
-func (h *PatchRunCleanupHandler) cleanupDB(ctx context.Context, d *database.DB) error {
-	pgThreshold := pgtime.From(time.Now().Add(-30 * time.Minute))
-	msg := "Automatically cancelled after running for more than 30 minutes"
-	cancelled, err := d.Queries.CancelStalledPatchRuns(ctx, db.CancelStalledPatchRunsParams{
+func (h *PatchRunCleanupHandler) resolveStallTimeoutMin() int {
+	if h.getStallTimeoutMin == nil {
+		// Defensive: keep cleanup operational even if the constructor
+		// was passed a nil callback (e.g. test fixtures).
+		return 30
+	}
+	v := h.getStallTimeoutMin()
+	if v < 5 {
+		return 5
+	}
+	return v
+}
+
+func (h *PatchRunCleanupHandler) cleanupDB(ctx context.Context, d *database.DB, stallMin int) (int64, error) {
+	pgThreshold := pgtime.From(time.Now().Add(-time.Duration(stallMin) * time.Minute))
+	msg := fmt.Sprintf("Marked as timed_out after running for more than %d minutes", stallMin)
+	return d.Queries.MarkPatchRunsTimedOut(ctx, db.MarkPatchRunsTimedOutParams{
 		StartedAt:    pgThreshold,
 		ErrorMessage: &msg,
 	})
-	if err != nil {
-		return err
-	}
-	if cancelled > 0 {
-		h.log.Info("patch run cleanup: cancelled stale runs", "count", cancelled)
-	}
-	return nil
 }
 
 // AlertCleanupHandler handles alert-cleanup jobs.

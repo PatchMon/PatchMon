@@ -89,6 +89,10 @@ type MuxOpts struct {
 	Log           *slog.Logger
 	Emit          *notifications.Emitter
 	Enc           *util.Encryption
+	// GetPatchRunStallTimeoutMin returns the current effective stall timeout
+	// (env -> DB -> default) at sweep time. Lets operators tune via Settings →
+	// Environment without restarting. If nil, the worker falls back to 30.
+	GetPatchRunStallTimeoutMin func() int
 }
 
 // Mux returns a ServeMux with all handlers registered.
@@ -115,7 +119,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeSystemStatistics, wrap(TypeSystemStatistics, NewSystemStatisticsHandler(db, opts.PoolCache, log)))
 	mux.Handle(TypeVersionUpdateCheck, wrap(TypeVersionUpdateCheck, NewVersionUpdateCheckHandler(db, opts.PoolCache, opts.ServerVersion, opts.Emit, log)))
 	mux.Handle(TypeComplianceScanCleanup, wrap(TypeComplianceScanCleanup, NewComplianceScanCleanupHandler(db, opts.PoolCache, log)))
-	mux.Handle(TypePatchRunCleanup, wrap(TypePatchRunCleanup, NewPatchRunCleanupHandler(db, opts.PoolCache, log)))
+	mux.Handle(TypePatchRunCleanup, wrap(TypePatchRunCleanup, NewPatchRunCleanupHandler(db, opts.PoolCache, log, opts.GetPatchRunStallTimeoutMin)))
 	mux.Handle(TypeSSGUpdateCheck, wrap(TypeSSGUpdateCheck, NewSSGUpdateCheckHandler(registry, db, opts.PoolCache, opts.QueueClient, opts.SSGContentDir, log)))
 	mux.Handle(TypeSSGUpgrade, wrap(TypeSSGUpgrade, NewSSGUpgradeHandler(registry, db, opts.PoolCache, log)))
 	complianceStore := store.NewComplianceStore(db)
@@ -225,7 +229,7 @@ func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) 
 	}
 
 	patchRunCleanupTask := asynq.NewTask(TypePatchRunCleanup, nil)
-	if _, err := scheduler.Register("30 0 * * *", patchRunCleanupTask, asynq.Queue(QueuePatchRunCleanup), asynq.Retention(AutomationRetention)); err != nil {
+	if _, err := scheduler.Register("*/10 * * * *", patchRunCleanupTask, asynq.Queue(QueuePatchRunCleanup), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 

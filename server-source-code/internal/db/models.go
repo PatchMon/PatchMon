@@ -622,6 +622,7 @@ type Setting struct {
 	MaxLoginAttempts                *int32           `json:"max_login_attempts"`
 	LockoutDurationMinutes          *int32           `json:"lockout_duration_minutes"`
 	SessionInactivityTimeoutMinutes *int32           `json:"session_inactivity_timeout_minutes"`
+	PatchRunStallTimeoutMinutes     *int32           `json:"patch_run_stall_timeout_minutes"`
 	TfaMaxRememberSessions          *int32           `json:"tfa_max_remember_sessions"`
 	PasswordMinLength               *int32           `json:"password_min_length"`
 	PasswordRequireUppercase        *bool            `json:"password_require_uppercase"`

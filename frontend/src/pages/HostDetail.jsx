@@ -5072,6 +5072,10 @@ const HostDetail = () => {
 										<option value="completed">Completed</option>
 										<option value="failed">Failed</option>
 										<option value="cancelled">Cancelled</option>
+										<option value="timed_out">Timed out</option>
+										<option value="agent_disconnected">
+											Agent disconnected
+										</option>
 									</select>
 								</div>
 								{(patchingRunsData?.runs?.length === 0 ||

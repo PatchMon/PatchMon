@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"strconv"
@@ -55,6 +56,10 @@ type Config struct {
 	// Profiling (pprof, memstats)
 	EnablePprof         bool
 	MemstatsIntervalSec int
+
+	// Patching: minutes a patch run can stay in "running" before the periodic
+	// cleanup marks it as timed_out. Default 30, minimum 5.
+	PatchRunStallTimeoutMin int
 
 	// Redis (for bootstrap tokens, asynq job queues, TFA lockout, etc.)
 	RedisHost           string
@@ -207,8 +212,9 @@ func Load() (*Config, error) {
 		EnableLogging: getEnv("ENABLE_LOGGING", "") == "true",
 		LogLevel:      getEnv("LOG_LEVEL", "info"),
 
-		EnablePprof:         getEnv("ENABLE_PPROF", "") == "true",
-		MemstatsIntervalSec: getEnvInt("MEMSTATS_INTERVAL_SEC", 60),
+		EnablePprof:             getEnv("ENABLE_PPROF", "") == "true",
+		MemstatsIntervalSec:     getEnvInt("MEMSTATS_INTERVAL_SEC", 60),
+		PatchRunStallTimeoutMin: getEnvInt("PATCH_RUN_STALL_TIMEOUT_MIN", 30),
 
 		RedisHost:           getEnv("REDIS_HOST", "localhost"),
 		RedisPort:           getEnvInt("REDIS_PORT", 6379),
@@ -292,6 +298,13 @@ func Load() (*Config, error) {
 
 		GuacdPath:    getEnv("GUACD_PATH", ""),
 		GuacdAddress: getEnv("GUACD_ADDRESS", "127.0.0.1:4822"),
+	}
+
+	// Clamp pathologically aggressive timeouts: a sub-5 minute window will
+	// kill runs that are still legitimately starting on slow hosts.
+	if cfg.PatchRunStallTimeoutMin < 5 {
+		slog.Warn("PATCH_RUN_STALL_TIMEOUT_MIN below minimum, clamping to 5", "value", cfg.PatchRunStallTimeoutMin)
+		cfg.PatchRunStallTimeoutMin = 5
 	}
 
 	if err := cfg.Validate(); err != nil {

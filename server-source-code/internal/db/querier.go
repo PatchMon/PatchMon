@@ -89,7 +89,6 @@ type Querier interface {
 	// Re-parsing the JSON here is cheap (kilobytes, in-memory) and avoids a
 	// per-row round-trip — the alternative was a SELECT loop in Go.
 	BulkUpsertPackages(ctx context.Context, payload []byte) ([]BulkUpsertPackagesRow, error)
-	CancelStalledPatchRuns(ctx context.Context, arg CancelStalledPatchRunsParams) (int64, error)
 	ClearHostComplianceHashOnEnable(ctx context.Context, arg ClearHostComplianceHashOnEnableParams) error
 	// Force a fresh docker payload on next check-in by NULLing the hash whenever
 	// the operator re-enables docker. If the agent was already streaming docker
@@ -410,6 +409,12 @@ type Querier interface {
 	ListUpdateHistoryByDateRange(ctx context.Context, arg ListUpdateHistoryByDateRangeParams) ([]UpdateHistory, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error)
 	ListVolumes(ctx context.Context, arg ListVolumesParams) ([]DockerVolume, error)
+	// User-initiated cancel from StopRun. Deliberately does NOT touch shell_output
+	// so progress chunks the agent appended between our read and write are preserved.
+	// Same status guard as UpdatePatchRunCancelled.
+	MarkPatchRunCancelledByUser(ctx context.Context, arg MarkPatchRunCancelledByUserParams) (int64, error)
+	MarkPatchRunsAgentDisconnected(ctx context.Context, arg MarkPatchRunsAgentDisconnectedParams) (int64, error)
+	MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTimedOutParams) (int64, error)
 	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) error
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error
 	RevokeAllSessionsForUserExcept(ctx context.Context, arg RevokeAllSessionsForUserExceptParams) error
@@ -461,17 +466,27 @@ type Querier interface {
 	UpdateNotificationRoute(ctx context.Context, arg UpdateNotificationRouteParams) (NotificationRoute, error)
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error
 	UpdatePatchPolicy(ctx context.Context, arg UpdatePatchPolicyParams) error
-	// Terminal cancelled state when a running patch is stopped via patch_run_stop.
+	// Terminal cancelled state set by the agent's late "cancelled" stage report.
 	// Replaces shell_output with the full captured output so rollback/cleanup text is preserved.
-	UpdatePatchRunCancelled(ctx context.Context, arg UpdatePatchRunCancelledParams) error
+	// :execrows so the handler can detect concurrent termination (rows=0) cleanly.
+	// agent_disconnected is intentionally NOT in the guard so a recovering agent
+	// that posts a late "cancelled" can still unwedge the row.
+	UpdatePatchRunCancelled(ctx context.Context, arg UpdatePatchRunCancelledParams) (int64, error)
 	// REPLACE (not append) - agent streams progress chunks then sends final full output.
+	// agent_disconnected is intentionally NOT in the guard so a recovering agent
+	// that posts a late "completed" can still unwedge the row.
 	UpdatePatchRunCompleted(ctx context.Context, arg UpdatePatchRunCompletedParams) error
 	// REPLACE (not append) - agent streams progress chunks then sends final full output.
+	// agent_disconnected is intentionally NOT in the guard so a recovering agent
+	// that posts a late "failed" can still unwedge the row.
 	UpdatePatchRunFailed(ctx context.Context, arg UpdatePatchRunFailedParams) error
 	UpdatePatchRunPackagesAffected(ctx context.Context, arg UpdatePatchRunPackagesAffectedParams) error
 	UpdatePatchRunProgress(ctx context.Context, arg UpdatePatchRunProgressParams) error
 	UpdatePatchRunScheduledAt(ctx context.Context, arg UpdatePatchRunScheduledAtParams) error
 	// Clear dry-run output fields so real-run output starts fresh.
+	// Status guard prevents an in-flight agent message from clobbering an
+	// already-terminated run (cancelled/timed_out/etc.). agent_disconnected is
+	// intentionally NOT in the guard so a recovering agent can unwedge the row.
 	UpdatePatchRunStarted(ctx context.Context, id string) error
 	UpdatePatchRunStatus(ctx context.Context, arg UpdatePatchRunStatusParams) error
 	// Agent streams progress chunks during the run, then sends the final authoritative

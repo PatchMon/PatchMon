@@ -202,9 +202,13 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			registry, cfg.GuacdAddress, resolved.CORSOrigin, corsOriginResolver(ctxRegistry), log, dbProvider, notifyEmit,
 		)
 	}
+	// Patch run store is needed by the agent-disconnect handler (to mark
+	// in-flight runs as agent_disconnected) so it must be constructed before
+	// the AgentWSHandler is wired up.
+	patchRunsStore := store.NewPatchRunsStore(dbProvider)
 	var agentWsHandler *handler.AgentWSHandler
 	agentOpts := []handler.AgentWSHandlerOption{
-		handler.WithOnAgentDisconnect(handler.NewAgentDisconnectHandler(dbProvider, notifyEmit, log)),
+		handler.WithOnAgentDisconnect(handler.NewAgentDisconnectHandler(dbProvider, hostsStore, patchRunsStore, notifyEmit, log)),
 		handler.WithOnAgentConnect(handler.NewAgentConnectHandler(dbProvider, queueClient, queueInspector, notifyEmit, log)),
 	}
 	if rdpHandler != nil {
@@ -239,7 +243,6 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	automationHandler := handler.NewAutomationHandler(queueInspector, queueClient, registry, settingsStore, alertConfigStore)
 	apiHostsHandler := handler.NewApiHostsHandler(hostsStore, hostGroupsStore, dbProvider, dashboardStore, queueInspector)
 
-	patchRunsStore := store.NewPatchRunsStore(dbProvider)
 	patchPoliciesStore := store.NewPatchPoliciesStore(dbProvider)
 	patchAssignmentsStore := store.NewPatchPolicyAssignmentsStore(dbProvider)
 	patchExclusionsStore := store.NewPatchPolicyExclusionsStore(dbProvider)

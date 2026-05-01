@@ -41,6 +41,7 @@ type ResolvedConfig struct {
 	Timezone                    string
 	DefaultUserRole             string
 	SessionInactivityTimeoutMin int
+	PatchRunStallTimeoutMin     int
 	TfaMaxRememberSessions      int
 	DBTransactionLongTimeout    int
 	JwtExpiresIn                string
@@ -86,6 +87,10 @@ func ResolveConfig(ctx context.Context, cfg *Config, settings *models.Settings) 
 	out.Timezone = resolveTimezone(settings.Timezone, cfg.Timezone)
 	out.DefaultUserRole = resolveString("DEFAULT_USER_ROLE", strPtr(settings.DefaultUserRole), cfg.DefaultUserRole)
 	out.SessionInactivityTimeoutMin = resolveInt("SESSION_INACTIVITY_TIMEOUT_MINUTES", settings.SessionInactivityTimeoutMinutes, cfg.SessionInactivityTimeoutMin)
+	// Clamp to the same minimum the env-loader enforces (see config.Load).
+	// A sub-5-minute stall window kills patch runs that are still
+	// legitimately starting on slow hosts.
+	out.PatchRunStallTimeoutMin = clampPatchRunStall(resolveInt("PATCH_RUN_STALL_TIMEOUT_MIN", settings.PatchRunStallTimeoutMinutes, cfg.PatchRunStallTimeoutMin))
 	out.TfaMaxRememberSessions = resolveInt("TFA_MAX_REMEMBER_SESSIONS", settings.TfaMaxRememberSessions, cfg.TfaMaxRememberSessions)
 	out.DBTransactionLongTimeout = resolveInt("DB_TRANSACTION_LONG_TIMEOUT", settings.DBTransactionLongTimeout, cfg.DBTransactionLongTimeout)
 	out.JwtExpiresIn = resolveString("JWT_EXPIRES_IN", settings.JwtExpiresIn, cfg.JWTExpiresIn)
@@ -124,6 +129,7 @@ func resolveFromEnvAndDefaults(cfg *Config) *ResolvedConfig {
 		Timezone:                    validateTimezone(cfg.Timezone),
 		DefaultUserRole:             cfg.DefaultUserRole,
 		SessionInactivityTimeoutMin: cfg.SessionInactivityTimeoutMin,
+		PatchRunStallTimeoutMin:     clampPatchRunStall(cfg.PatchRunStallTimeoutMin),
 		TfaMaxRememberSessions:      cfg.TfaMaxRememberSessions,
 		DBTransactionLongTimeout:    cfg.DBTransactionLongTimeout,
 		JwtExpiresIn:                cfg.JWTExpiresIn,
@@ -132,6 +138,16 @@ func resolveFromEnvAndDefaults(cfg *Config) *ResolvedConfig {
 		TfaLockoutDurationMin:       cfg.TfaLockoutDurationMin,
 		TfaRememberMeExpiresIn:      cfg.TfaRememberMeExpiresIn,
 	}
+}
+
+// clampPatchRunStall enforces the same 5-minute floor as the env loader.
+// Used at every resolve call so DB-edited values can't shrink below the
+// safe minimum even after restart.
+func clampPatchRunStall(v int) int {
+	if v < 5 {
+		return 5
+	}
+	return v
 }
 
 func resolveInt(envKey string, dbVal *int, defaultVal int) int {

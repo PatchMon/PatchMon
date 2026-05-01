@@ -175,7 +175,7 @@ func (h *AutomationHandler) Overview(w http.ResponseWriter, r *http.Request) {
 		{"Alert Cleanup", queue.QueueAlertCleanup, "Cleans up old alerts based on retention policies and auto-resolves expired alerts", "Daily at 3 AM"},
 		{"Host Status Monitor", queue.QueueHostStatus, "Monitors host status and creates alerts when hosts go offline", "Every 5 minutes"},
 		{"Compliance Scan Cleanup", queue.QueueComplianceScanCleanup, "Automatically terminates compliance scans running over 3 hours", "Daily at 1 AM"},
-		{"Patch Run Cleanup", queue.QueuePatchRunCleanup, "Automatically cancels patch runs stuck in running state for over 30 minutes", "Daily at 12:30 AM"},
+		{"Patch Run Cleanup", queue.QueuePatchRunCleanup, "Marks patch runs stuck in running state for over PATCH_RUN_STALL_TIMEOUT_MIN minutes as timed_out", "Every 10 minutes"},
 		{"SSG Content Update Check", queue.QueueSSGUpdateCheck, "Checks for outdated SSG compliance content on hosts and queues upgrades", "Daily at 5 AM"},
 	}
 

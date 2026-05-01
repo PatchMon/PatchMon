@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS settings (
     max_login_attempts INTEGER,
     lockout_duration_minutes INTEGER,
     session_inactivity_timeout_minutes INTEGER,
+    patch_run_stall_timeout_minutes INTEGER,
     tfa_max_remember_sessions INTEGER,
     password_min_length INTEGER,
     password_require_uppercase BOOLEAN,

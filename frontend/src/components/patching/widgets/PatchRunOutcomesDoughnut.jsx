@@ -5,7 +5,13 @@ import { Link, useNavigate } from "react-router-dom";
 import { useTheme } from "../../../contexts/ThemeContext";
 import { getDoughnutOptions } from "../../compliance/widgets/chartOptions";
 
-const STATUS_LINKS = ["completed", "failed", "cancelled"];
+const STATUS_LINKS = [
+	"completed",
+	"failed",
+	"cancelled",
+	"timed_out",
+	"agent_disconnected",
+];
 
 const PatchRunOutcomesDoughnut = ({ data }) => {
 	const { isDark } = useTheme();
@@ -16,16 +22,27 @@ const PatchRunOutcomesDoughnut = ({ data }) => {
 	const completed = summary.completed ?? 0;
 	const failed = summary.failed ?? 0;
 	const cancelled = summary.cancelled ?? 0;
+	const timed_out = summary.timed_out ?? 0;
+	const agent_disconnected = summary.agent_disconnected ?? 0;
 
-	const has_data = completed > 0 || failed > 0 || cancelled > 0;
+	const has_data =
+		completed > 0 ||
+		failed > 0 ||
+		cancelled > 0 ||
+		timed_out > 0 ||
+		agent_disconnected > 0;
 
 	const chart_data = {
-		labels: has_data ? ["Completed", "Failed", "Cancelled"] : ["No runs yet"],
+		labels: has_data
+			? ["Completed", "Failed", "Cancelled", "Timed out", "Agent disconnected"]
+			: ["No runs yet"],
 		datasets: [
 			{
-				data: has_data ? [completed, failed, cancelled] : [1],
+				data: has_data
+					? [completed, failed, cancelled, timed_out, agent_disconnected]
+					: [1],
 				backgroundColor: has_data
-					? ["#10B981", "#EF4444", "#6B7280"]
+					? ["#10B981", "#EF4444", "#6B7280", "#F59E0B", "#FB923C"]
 					: ["#374151"],
 				borderWidth: 0,
 			},
