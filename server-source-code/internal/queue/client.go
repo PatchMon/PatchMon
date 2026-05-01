@@ -6,6 +6,8 @@ import (
 	"strconv"
 
 	"github.com/hibiken/asynq"
+
+	patchmonredis "github.com/PatchMon/PatchMon/server-source-code/internal/redis"
 )
 
 const (
@@ -25,9 +27,10 @@ func RedisOpts() asynq.RedisClientOpt {
 	password := os.Getenv("REDIS_PASSWORD")
 
 	return asynq.RedisClientOpt{
-		Addr:     fmt.Sprintf("%s:%d", host, port),
-		Password: password,
-		DB:       db,
+		Addr:      fmt.Sprintf("%s:%d", host, port),
+		Password:  password,
+		DB:        db,
+		TLSConfig: patchmonredis.TLSConfigFromEnv(),
 	}
 }
 
