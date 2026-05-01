@@ -212,13 +212,14 @@ if [ -n "$machine_id" ]; then
     json_payload=$(echo "$json_payload" | sed "s/\"friendly_name\"/\"machine_id\": \"$machine_id\",\n    \"friendly_name\"/")
 fi
 
-response=$(curl $CURL_FLAGS -X POST \
+curl_exit=0
+response=$(curl $CURL_FLAGS --show-error -X POST \
     -H "X-Auto-Enrollment-Key: $AUTO_ENROLLMENT_KEY" \
     -H "X-Auto-Enrollment-Secret: $AUTO_ENROLLMENT_SECRET" \
     -H "Content-Type: application/json" \
     -d "$json_payload" \
     "$PATCHMON_URL/api/v1/auto-enrollment/enroll" \
-    -w "\n%{http_code}" 2>&1)
+    -w "\n%{http_code}" 2>&1) || curl_exit=$? #if curl fails, we store the exit code
 
 http_code=$(echo "$response" | tail -n 1)
 body=$(echo "$response" | sed '$d')
